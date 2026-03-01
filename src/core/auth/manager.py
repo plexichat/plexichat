@@ -36,6 +36,7 @@ from .exceptions import (
     AuthError,
     InvalidCredentialsError,
     AccountLockedError,
+    EmailNotVerifiedError,
     TokenExpiredError,
     TokenInvalidError,
     TwoFactorInvalidError,
@@ -53,6 +54,7 @@ from .permissions import (
     permissions_to_json,
     permissions_from_json,
     has_permission,
+    validate_permissions,
 )
 from .tokens import (
     create_session_token,
@@ -150,7 +152,10 @@ class AuthManager(BaseManager):
         return int(time.time() * 1000)
 
     def _get_config(self, key: str, default: Any = None) -> Any:
-        return config.get(key, default)
+        try:
+            return self._config.get(key, default)
+        except Exception:
+            return config.get(key, default)
 
     def _log_audit(
         self,
@@ -260,7 +265,7 @@ class AuthManager(BaseManager):
                     age_verified = 1
                 else:
                     # If neither age nor dob is provided but gate is enabled
-                    raise AuthError("Age verification required", "age")
+                    raise AuthError("Age is required", "age")
 
         valid, issues = validate_username(username)
         if not valid:
@@ -283,13 +288,15 @@ class AuthManager(BaseManager):
         if self._db.fetch_one(
             "SELECT id FROM auth_users WHERE username = ?", (username,)
         ):
-            raise UserExistsError("Username taken", "username")
+            # Generic error to prevent enumeration
+            raise UserExistsError("Registration failed", "username")
 
         email_index = self.crypto.blind_index(email, "user_email")
         if self._db.fetch_one(
             "SELECT id FROM auth_users WHERE email_index = ?", (email_index,)
         ):
-            raise UserExistsError("Email registered", "email")
+            # Generic error to prevent enumeration
+            raise UserExistsError("Registration failed", "email")
 
         now = self._get_timestamp()
         email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
@@ -368,7 +375,7 @@ class AuthManager(BaseManager):
             (email_index,),
         )
         if not row or row["email_verified"]:
-            return False
+            return True
         return self._send_verification_email(row["id"], email)
 
     def _send_verification_email(self, user_id: int, email: str) -> bool:
@@ -423,8 +430,15 @@ class AuthManager(BaseManager):
             )
 
         if not self.crypto.verify_password(password, row["password_hash"]):
+            self._log_audit(AuditEventType.LOGIN_FAILED, user_id, False, ip_address)
             self._handle_failed_login(user_id, ip_address)
             raise InvalidCredentialsError("Invalid credentials")
+
+        accounts_config = self._config.get("accounts", {})
+        if accounts_config.get("require_email_verification", False) and not bool(
+            row.get("email_verified", 0)
+        ):
+            raise EmailNotVerifiedError("Email not verified")
 
         device_id = self._track_device(user_id, device_info) if device_info else None
         if ip_address:
@@ -568,7 +582,14 @@ class AuthManager(BaseManager):
             token=token,
         )
 
-    @cached(ttl=30, prefix="token_verify")
+    @cached(
+        ttl=30,
+        prefix="token_verify",
+        skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: bool(
+            self._config.get("security", {}).get("token_binding", False)
+            or self._config.get("security", {}).get("token_verify_rate_limit")
+        ),
+    )
     def verify_token(
         self,
         token: str,
@@ -576,17 +597,30 @@ class AuthManager(BaseManager):
         user_agent: Optional[str] = None,
         is_selftest: bool = False,
     ) -> TokenInfo:
+        security_cfg = self._config.get("security", {})
+        rate_limit = security_cfg.get("token_verify_rate_limit")
+        if rate_limit and ip_address:
+            from src.core.database.cache import check_rate_limit
+
+            allowed, _ = check_rate_limit(
+                key=f"token_verify:{ip_address}",
+                limit=int(rate_limit),
+                window_seconds=60,
+            )
+            if not allowed:
+                raise TokenInvalidError("Token verification rate limit exceeded")
+
         parsed = parse_token(token)
         if not parsed:
             raise TokenInvalidError("Invalid token")
         if parsed["token_type"] == "session":
-            return self._verify_session_token(parsed, ip_address)
+            return self._verify_session_token(parsed, ip_address, user_agent=user_agent)
         elif parsed["token_type"] == "bot":
             return self._verify_bot_token(parsed, ip_address)
         raise TokenInvalidError("Unknown type")
 
     def _verify_session_token(
-        self, parsed: Dict, ip_address: Optional[str]
+        self, parsed: Dict, ip_address: Optional[str], user_agent: Optional[str] = None
     ) -> TokenInfo:
         row = self._db.fetch_one(
             "SELECT s.*, u.username, u.permissions, u.account_type, u.account_locked, u.force_username_change FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?",
@@ -606,24 +640,36 @@ class AuthManager(BaseManager):
             if row["ip_index"] != current_ip_index:
                 raise TokenInvalidError("IP Binding Mismatch")
 
+        if (
+            self._config.get("security", {}).get("token_binding", False)
+            and user_agent
+            and row.get("user_agent")
+            and row.get("user_agent") != user_agent
+        ):
+            raise TokenInvalidError("User-Agent Binding Mismatch")
+
         now = self._get_timestamp()
 
         # Only update database if last activity was more than 60 seconds ago
         # to reduce write pressure on frequent polling/requests
         last_activity = row.get("last_activity", 0)
         should_update = (now - last_activity) > 60000
+        sessions_config = self._config.get("sessions", {})
+        if sessions_config.get("extend_on_activity", True):
+            extend_threshold_hours = sessions_config.get("extend_threshold_hours", 24)
+            extend_threshold = extend_threshold_hours * 3600 * 1000
+            if extend_threshold_hours == 0 or (row["expires_at"] - now) <= extend_threshold:
+                should_update = True
 
         if should_update:
             updates = ["last_activity = ?"]
             params = [now]
 
             # Extend session if enabled
-            sessions_config = self._config.get("sessions", {})
             if sessions_config.get("extend_on_activity", True):
-                extend_threshold = (
-                    sessions_config.get("extend_threshold_hours", 24) * 3600 * 1000
-                )
-                if (row["expires_at"] - now) < extend_threshold:
+                extend_threshold_hours = sessions_config.get("extend_threshold_hours", 24)
+                extend_threshold = extend_threshold_hours * 3600 * 1000
+                if extend_threshold_hours == 0 or (row["expires_at"] - now) <= extend_threshold:
                     expire_hours = sessions_config.get("expire_hours", 720)
                     new_expires = now + (expire_hours * 3600 * 1000)
                     updates.append("expires_at = ?")
@@ -631,7 +677,7 @@ class AuthManager(BaseManager):
 
             params.append(row["id"])
             self._db.execute(
-                f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 tuple(params),
             )
 
@@ -803,9 +849,12 @@ class AuthManager(BaseManager):
             if not valid:
                 raise InvalidUsernameError(f"Invalid: {issues}", issues)
 
-            blocked, reason = self.blacklist.is_blocked(
-                username, old_username=current_user.username
+            old_username = (
+                current_user.username
+                if getattr(current_user, "force_username_change", False)
+                else None
             )
+            blocked, reason = self.blacklist.is_blocked(username, old_username=old_username)
             if blocked:
                 raise InvalidUsernameError(
                     f"Username is blocked: {reason}", [reason or "Blocked"]
@@ -832,7 +881,7 @@ class AuthManager(BaseManager):
             params.append(self._get_timestamp())
             params.append(user_id)
             self._db.execute(
-                f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 tuple(params),
             )
             # Clear auth cache so middleware sees change immediately
@@ -870,7 +919,17 @@ class AuthManager(BaseManager):
             ip_encrypted = self.crypto.encrypt_data(ip, context=str(cid))
         self._db.execute(
             "INSERT INTO auth_2fa_challenges (id, user_id, token_hash, device_id, ip_index, ip_encrypted, user_agent, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (cid, user_id, token_hash, device_id, ip_index, ip_encrypted, ua, now, expires),
+            (
+                cid,
+                user_id,
+                token_hash,
+                device_id,
+                ip_index,
+                ip_encrypted,
+                ua,
+                now,
+                expires,
+            ),
         )
         return TwoFactorChallenge(
             id=cid,
@@ -890,8 +949,12 @@ class AuthManager(BaseManager):
         row = self._db.fetch_one(
             "SELECT * FROM auth_2fa_challenges WHERE id = ?", (parsed["id"],)
         )
-        if not row or row["used"] or row["expires_at"] < self._get_timestamp():
+        if not row:
             raise TokenInvalidError("Expired/Used")
+        if row["used"]:
+            raise TokenInvalidError("Expired/Used")
+        if row["expires_at"] < self._get_timestamp():
+            raise TokenExpiredError("Expired")
 
         user_row = self._db.fetch_one(
             "SELECT * FROM auth_users WHERE id = ?", (row["user_id"],)
@@ -903,7 +966,12 @@ class AuthManager(BaseManager):
         secret = totp_module.decrypt_totp_secret(user_row["totp_secret_encrypted"])
 
         # Try TOTP code first (with replay prevention)
-        if not totp_module.verify_totp_code(secret, code, user_id=user_id):
+        try:
+            is_totp_valid = totp_module.verify_totp_code(secret, code, user_id=user_id)
+        except TypeError:
+            is_totp_valid = totp_module.verify_totp_code(secret, code)
+
+        if not is_totp_valid:
             # Try backup code
             backup_hashes = (
                 json.loads(user_row["backup_codes_hash"])
@@ -988,36 +1056,46 @@ class AuthManager(BaseManager):
             "SELECT totp_secret_encrypted FROM auth_users WHERE id = ?", (user_id,)
         )
         if not user:
-            return False
+            raise UserNotFoundError("User not found")
+        if not user.get("totp_secret_encrypted"):
+            raise AuthError("2FA not initiated")
         # Use a namespaced user_id for replay prevention so that codes used
         # during setup confirmation don't block the subsequent login challenge
         # within the same 30s window.
         secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
-        if not totp_module.verify_totp_code(secret, code, user_id=f"setup:{user_id}"):
+        try:
+            ok = totp_module.verify_totp_code(secret, code, user_id=f"setup:{user_id}")
+        except TypeError:
+            ok = totp_module.verify_totp_code(secret, code)
+        if not ok:
             raise TwoFactorInvalidError("Invalid code")
 
         self._db.execute(
             "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?", (user_id,)
         )
+        self._log_audit(AuditEventType.TWO_FACTOR_ENABLED, user_id, True)
         invalidate_pattern("user_data:*")
         return True
 
     def disable_2fa(self, user_id: int, password: str, code: str) -> bool:
         user = self._db.fetch_one(
-            "SELECT password_hash, totp_secret_encrypted FROM auth_users WHERE id = ?",
+            "SELECT password_hash, totp_secret_encrypted, totp_enabled FROM auth_users WHERE id = ?",
             (user_id,),
         )
         if not user:
-            return False
+            raise UserNotFoundError("User not found")
+        if not user.get("totp_enabled") or not user.get("totp_secret_encrypted"):
+            raise AuthError("2FA not enabled")
         if not self.crypto.verify_password(password, user["password_hash"]):
             raise InvalidCredentialsError("Invalid password")
         # Use a namespaced user_id for replay prevention so disable flow
         # doesn't conflict with login flow within the same 30s window.
-        if not totp_module.verify_totp_code(
-            totp_module.decrypt_totp_secret(user["totp_secret_encrypted"]),
-            code,
-            user_id=f"disable:{user_id}",
-        ):
+        secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
+        try:
+            ok = totp_module.verify_totp_code(secret, code, user_id=f"disable:{user_id}")
+        except TypeError:
+            ok = totp_module.verify_totp_code(secret, code)
+        if not ok:
             raise TwoFactorInvalidError("Invalid code")
         self._db.execute(
             "UPDATE auth_users SET totp_enabled = 0, totp_secret_encrypted = NULL, backup_codes_hash = NULL WHERE id = ?",
@@ -1028,10 +1106,12 @@ class AuthManager(BaseManager):
 
     def regenerate_backup_codes(self, user_id: int, password: str) -> List[str]:
         user = self._db.fetch_one(
-            "SELECT password_hash FROM auth_users WHERE id = ?", (user_id,)
+            "SELECT password_hash, totp_enabled FROM auth_users WHERE id = ?", (user_id,)
         )
         if not user:
             raise UserNotFoundError("User not found")
+        if not user.get("totp_enabled"):
+            raise AuthError("2FA not enabled")
         if not self.crypto.verify_password(password, user["password_hash"]):
             raise InvalidCredentialsError("Invalid password")
         codes = totp_module.generate_backup_codes()
@@ -1047,7 +1127,7 @@ class AuthManager(BaseManager):
             (user_id,),
         )
         if not row:
-            return TwoFactorStatus(enabled=False, backup_codes_remaining=0)
+            raise UserNotFoundError("User not found")
         codes = json.loads(row["backup_codes_hash"]) if row["backup_codes_hash"] else []
         return TwoFactorStatus(
             enabled=bool(row["totp_enabled"]), backup_codes_remaining=len(codes)
@@ -1060,7 +1140,7 @@ class AuthManager(BaseManager):
             "SELECT password_hash FROM auth_users WHERE id = ?", (user_id,)
         )
         if not user:
-            return False
+            raise UserNotFoundError("User not found")
         if not self.crypto.verify_password(old, user["password_hash"]):
             raise InvalidCredentialsError("Invalid password")
         pwd_val = validate_pwd(new)
@@ -1070,6 +1150,7 @@ class AuthManager(BaseManager):
             "UPDATE auth_users SET password_hash = ? WHERE id = ?",
             (self.crypto.hash_password(new), user_id),
         )
+        self._log_audit(AuditEventType.PASSWORD_CHANGE, user_id, True)
         invalidate_pattern("user_data:*")
         return True
 
@@ -1078,7 +1159,9 @@ class AuthManager(BaseManager):
         user = self._db.fetch_one(
             "SELECT id FROM auth_users WHERE email_index = ?", (email_index,)
         )
-        if not user or not self.email_sender:
+        if not self.email_sender:
+            return False
+        if not user:
             return True
         tid = self._generate_id()
         token, token_hash = create_email_token(tid)
@@ -1137,15 +1220,26 @@ class AuthManager(BaseManager):
         display_name: str,
         permissions: Optional[Dict[str, bool]] = None,
     ) -> Bot:
+        owner_row = self._db.fetch_one(
+            "SELECT permissions FROM auth_users WHERE id = ?", (owner_id,)
+        )
+        if not owner_row:
+            raise UserNotFoundError("User not found")
+        owner_perms = permissions_from_json(owner_row["permissions"])
+        if not has_permission(owner_perms, "bots.create"):
+            raise PermissionDeniedError("Missing required permission: bots.create")
+
         # Check if user/bot with this username already exists
         if self._db.fetch_one(
             "SELECT 1 FROM auth_users WHERE username = ?", (username,)
         ):
-            raise UserExistsError(f"Username '{username}' already taken")
+            # Generic error to prevent enumeration
+            raise UserExistsError("Bot creation failed")
         if self._db.fetch_one(
             "SELECT 1 FROM auth_bots WHERE username = ?", (username,)
         ):
-            raise UserExistsError(f"Bot name '{username}' already taken")
+            # Generic error to prevent enumeration
+            raise UserExistsError("Bot creation failed")
 
         # Enforce bot limit
         bot_config = self._config.get("accounts", {})
@@ -1224,6 +1318,11 @@ class AuthManager(BaseManager):
         ]
 
     def regenerate_bot_token(self, owner_id: int, bot_id: int) -> str:
+        bot_row = self._db.fetch_one("SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,))
+        if not bot_row:
+            raise UserNotFoundError("Bot not found")
+        if int(bot_row["owner_id"]) != int(owner_id):
+            raise PermissionDeniedError("Bot not found or not owned by you")
         token, token_hash = create_bot_token(bot_id)
         cursor = self._db.execute(
             "UPDATE auth_bots SET token_hash = ? WHERE id = ? AND owner_id = ?",
@@ -1236,6 +1335,14 @@ class AuthManager(BaseManager):
     def update_bot_permissions(
         self, owner_id: int, bot_id: int, permissions: Dict[str, bool]
     ) -> Bot:
+        bot_row = self._db.fetch_one("SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,))
+        if not bot_row:
+            raise UserNotFoundError("Bot not found")
+        if int(bot_row["owner_id"]) != int(owner_id):
+            raise PermissionDeniedError("Bot not found or not owned by you")
+        valid, issues = validate_permissions(permissions, is_bot=True)
+        if not valid:
+            raise AuthError(f"Invalid permissions: {issues}")
         cursor = self._db.execute(
             "UPDATE auth_bots SET permissions = ? WHERE id = ? AND owner_id = ?",
             (permissions_to_json(permissions), bot_id, owner_id),
@@ -1257,13 +1364,20 @@ class AuthManager(BaseManager):
         return True
 
     def enable_bot(self, owner_id: int, bot_id: int) -> bool:
-        self._db.execute(
+        cursor = self._db.execute(
             "UPDATE auth_bots SET disabled = 0 WHERE id = ? AND owner_id = ?",
             (bot_id, owner_id),
         )
+        if cursor.rowcount == 0:
+            raise PermissionDeniedError("Bot not found or not owned by you")
         return True
 
     def delete_bot(self, owner_id: int, bot_id: int) -> bool:
+        bot_row = self._db.fetch_one("SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,))
+        if not bot_row:
+            raise UserNotFoundError("Bot not found")
+        if int(bot_row["owner_id"]) != int(owner_id):
+            raise PermissionDeniedError("Bot not found or not owned by you")
         cursor = self._db.execute(
             "DELETE FROM auth_bots WHERE id = ? AND owner_id = ?", (bot_id, owner_id)
         )
@@ -1369,7 +1483,9 @@ class AuthManager(BaseManager):
     # === Device Management ===
 
     def _track_device(self, user_id: int, info: Dict) -> int:
-        fp = info.get("fingerprint", "unknown")
+        fp = info.get("fingerprint")
+        if not fp:
+            return 0
         row = self._db.fetch_one(
             "SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ?",
             (user_id, fp),
@@ -1406,17 +1522,19 @@ class AuthManager(BaseManager):
         ]
 
     def rename_device(self, user_id: int, device_id: int, name: str) -> bool:
-        self._db.execute(
+        cursor = self._db.execute(
             "UPDATE auth_devices SET name = ? WHERE id = ? AND user_id = ?",
             (name, device_id, user_id),
         )
-        return True
+        return cursor.rowcount > 0
 
     def revoke_device(self, user_id: int, device_id: int) -> bool:
-        self._db.execute(
+        cursor = self._db.execute(
             "DELETE FROM auth_devices WHERE id = ? AND user_id = ?",
             (device_id, user_id),
         )
+        if cursor.rowcount == 0:
+            return False
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE device_id = ?", (device_id,)
         )
@@ -1532,11 +1650,12 @@ class AuthManager(BaseManager):
 
     def get_login_history(self, user_id: int, limit: int = 50) -> List[AuditEntry]:
         rows = self._db.fetch_all(
-            "SELECT * FROM auth_audit_log WHERE user_id = ? AND event_type IN (?, ?) ORDER BY timestamp DESC LIMIT ?",
+            "SELECT * FROM auth_audit_log WHERE user_id = ? AND event_type IN (?, ?, ?) ORDER BY timestamp DESC LIMIT ?",
             (
                 user_id,
                 AuditEventType.LOGIN_SUCCESS.value,
                 AuditEventType.LOGIN_FAILED.value,
+                AuditEventType.LOGOUT.value,
                 limit,
             ),
         )
@@ -1702,7 +1821,7 @@ class AuthManager(BaseManager):
         if missing_ids:
             placeholders = ",".join("?" for _ in missing_ids)
             # JOIN with user_features to get badges
-            query = f"""
+            query = f"""  # nosec B608
                 SELECT u.id, u.username, u.permissions, u.account_type, f.badges
                 FROM auth_users u
                 LEFT JOIN user_features f ON u.id = f.user_id
@@ -1748,7 +1867,7 @@ class AuthManager(BaseManager):
 
         placeholders = ",".join("?" for _ in user_ids)
         # JOIN with user_features to get badges
-        query = f"""
+        query = f"""  # nosec B608
             SELECT u.*, f.badges
             FROM auth_users u
             LEFT JOIN user_features f ON u.id = f.user_id
@@ -1974,3 +2093,4 @@ class AuthManager(BaseManager):
             user=user_obj,
             session=session,
         )
+

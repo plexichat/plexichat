@@ -10,7 +10,7 @@ import time
 import threading
 import hmac
 import importlib
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, Union
 
 try:
     qrcode = importlib.import_module("qrcode")
@@ -64,16 +64,13 @@ class TOTPReplayCache:
         for k in expired:
             del self._used_codes[k]
 
-    def check_and_mark(self, user_id: int, code: str) -> bool:
+    def check_and_mark(self, user_id: Union[int, str], code: str) -> bool:
         """
         Check if code was already used and mark it as used.
 
         Args:
             user_id: User ID to scope the code
             code: The TOTP code
-
-        Returns:
-            True if code is fresh (not previously used), False if replay detected
         """
         key = f"{user_id}:{code}"
         now = int(time.time())
@@ -173,7 +170,7 @@ def generate_totp_uri(secret: str, username: str, issuer: Optional[str] = None) 
 
 
 def verify_totp_code(
-    secret: str, code: str, window: int = 1, user_id: Optional[int] = None
+    secret: str, code: str, window: int = 1, user_id: Optional[Union[int, str]] = None
 ) -> bool:
     """
     Verify a TOTP code with replay attack prevention.

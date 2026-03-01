@@ -18,6 +18,12 @@ router = APIRouter()
 
 @router.post("/login", response_model=AdminLoginResponse)
 async def admin_login(request: Request, login_data: AdminLoginRequest):
+    """
+    Authenticate an administrator.
+
+    Performs multi-step authentication including password verification and
+    optional 2FA (TOTP) setup or verification based on server configuration.
+    """
     check_host_restriction(request)
     from src.core import admin
 
@@ -59,6 +65,11 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
 
 @router.post("/verify-otp", response_model=AdminLoginResponse)
 async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
+    """
+    Verify a TOTP code for admin login or setup.
+
+    Validates the provided code against the challenge token to complete authentication.
+    """
     check_host_restriction(request)
     from src.core import admin
 
@@ -86,6 +97,11 @@ async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
 
 @router.post("/logout", response_model=SuccessResponse)
 async def admin_logout(request: Request):
+    """
+    Invalidate an administrator session.
+
+    Revokes the current access token and clears associated session data.
+    """
     check_host_restriction(request)
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
@@ -97,6 +113,11 @@ async def admin_logout(request: Request):
 
 @router.post("/auth/change-password", response_model=SuccessResponse)
 async def admin_change_password(request: Request, body: AdminChangePasswordRequest):
+    """
+    Change the password for the current administrator.
+
+    Requires verification of the current password before applying the new one.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin

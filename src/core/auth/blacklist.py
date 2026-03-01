@@ -10,6 +10,11 @@ from difflib import SequenceMatcher
 
 from src.core.base import BaseManager
 
+try:
+    import re2 as _safe_regex  # pyright: ignore[reportMissingImports]
+except ImportError:  # pragma: no cover - fallback when re2 isn't installed
+    _safe_regex = re
+
 
 class BlacklistManager(BaseManager):
     def __init__(self, db):
@@ -36,13 +41,18 @@ class BlacklistManager(BaseManager):
         if not pattern:
             raise ValueError("Pattern cannot be empty")
 
+        # Basic regex validation using re2 (mandated for ReDoS protection)
+        if is_regex:
+            try:
+                _safe_regex.compile(pattern)
+            except Exception as e:
+                raise ValueError(f"Invalid regex pattern: {e}")
+
         try:
             self._db.execute(
                 "INSERT INTO username_blacklist (pattern, is_regex, reason, created_by) VALUES (?, ?, ?, ?)",
                 (pattern, is_regex, reason, admin_id),
             )
-            # In SQLite, last_insert_rowid is usually fetched via a separate call or specific method
-            # BaseManager or Database usually has last_insert_id or similar
             if hasattr(self._db, "last_insert_id"):
                 return self._db.last_insert_id()
             return 0  # Fallback
@@ -76,32 +86,30 @@ class BlacklistManager(BaseManager):
 
             if is_regex:
                 try:
-                    if re.search(pattern, username, re.IGNORECASE) or re.search(
-                        pattern, normalized, re.IGNORECASE
+                    # Prefer re2 for ReDoS protection when available.
+                    # re2 doesn't support re.IGNORECASE as a flag in search(); use (?i).
+                    safe_pattern = f"(?i){pattern}"
+                    if _safe_regex.search(safe_pattern, username) or _safe_regex.search(
+                        safe_pattern, normalized
                     ):
                         return True, reason
-                except re.error:
+                except Exception:
                     continue  # Skip invalid regex
             else:
-                # Substring check in normalized string
-                if pattern in normalized:
+                # Exact-match only (case-insensitive), including normalized matching
+                pat_norm = self._normalize(pattern)
+                if pat_norm and pat_norm == normalized:
                     return True, reason
-                # Also check exact match in original (case-insensitive)
-                if pattern == username.lower():
+                if pattern == username.lower().strip():
                     return True, reason
 
         # Similarity check if old_username is provided (for forced changes)
         if old_username:
             old_norm = self._normalize(old_username)
-            # Only check similarity if the old username was actually "bad" (which implies we are forcing change)
-            # But here we just check if new is similar to old.
-            # If the user is forced to change, they shouldn't pick something similar.
-
             # 1. Sequence similarity (SequenceMatcher)
             seq_similarity = SequenceMatcher(None, normalized, old_norm).ratio()
 
             # 2. Character set similarity (catch anagrams/rearrangements)
-            # Sort normalized strings to compare character sets
             new_sorted = "".join(sorted(normalized))
             old_sorted = "".join(sorted(old_norm))
             charset_similarity = SequenceMatcher(None, new_sorted, old_sorted).ratio()
@@ -154,6 +162,7 @@ class BlacklistManager(BaseManager):
 
         # 4. Remove non-alphanumeric to catch "b.a.d"
         text = "".join(result)
+        # Internal static regex is safe with standard re
         text = re.sub(r"[^a-z0-9]", "", text)
 
         return text
