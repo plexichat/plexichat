@@ -144,7 +144,8 @@
                         document.getElementById('otp-verify').style.display = 'block';
                     } else if (data.token) {
                         console.log("Login successful, token received");
-                        localStorage.setItem('plexichat-admin-token', data.token);
+                        sessionStorage.setItem('plexichat-admin-token', data.token);
+                        localStorage.removeItem('plexichat-admin-token');
                         window.location.href = '/api/v1/admin/ui';
                     } else {
                         throw new Error("Invalid response from server: " + JSON.stringify(data));
@@ -183,7 +184,8 @@
                     });
                     const data = await res.json();
                     if (!res.ok) throw new Error(data.detail || 'Verification failed');
-                    localStorage.setItem('plexichat-admin-token', data.token);
+                    sessionStorage.setItem('plexichat-admin-token', data.token);
+                    localStorage.removeItem('plexichat-admin-token');
                     window.location.href = '/api/v1/admin/ui';
                 } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
             }
@@ -204,13 +206,16 @@
             if (otpVerifyForm) otpVerifyForm.addEventListener('submit', (e) => handleOTP(e, false));
 
             // Check if already logged in
-            const token = localStorage.getItem('plexichat-admin-token');
+            const token = sessionStorage.getItem('plexichat-admin-token') || localStorage.getItem('plexichat-admin-token');
             if (token) {
                 fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
                     .then(r => { 
                         if (r.ok) {
+                            sessionStorage.setItem('plexichat-admin-token', token);
+                            localStorage.removeItem('plexichat-admin-token');
                             window.location.href = '/api/v1/admin/ui';
                         } else if (r.status === 401) {
+                            sessionStorage.removeItem('plexichat-admin-token');
                             localStorage.removeItem('plexichat-admin-token');
                         }
                     }).catch(err => console.log("Silent dashboard check failed"));

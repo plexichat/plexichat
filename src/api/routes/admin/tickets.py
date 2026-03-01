@@ -24,6 +24,11 @@ async def get_tickets(
     limit: int = 50,
     offset: int = 0,
 ):
+    """
+    Retrieve a list of user feedback tickets.
+
+    Allows filtering by status and supports pagination.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -54,6 +59,9 @@ async def get_tickets(
 
 @router.get("/tickets/{ticket_id}", response_model=TicketResponse)
 async def get_ticket(ticket_id: int, request: Request):
+    """
+    Retrieve detailed information for a specific feedback ticket.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -82,6 +90,9 @@ async def get_ticket(ticket_id: int, request: Request):
 async def update_ticket_status(
     ticket_id: int, update: TicketStatusUpdate, request: Request
 ):
+    """
+    Update the processing status of a feedback ticket.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
@@ -97,6 +108,9 @@ async def update_ticket_status(
 
 @router.get("/tickets/{ticket_id}/notes", response_model=List[NoteResponse])
 async def get_ticket_notes(ticket_id: int, request: Request):
+    """
+    Retrieve all internal administrator notes associated with a ticket.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -122,6 +136,9 @@ async def get_ticket_notes(ticket_id: int, request: Request):
 
 @router.post("/tickets/{ticket_id}/notes", response_model=NoteResponse)
 async def add_ticket_note(ticket_id: int, note: InternalNoteCreate, request: Request):
+    """
+    Add a new internal administrator note to a ticket.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin

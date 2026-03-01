@@ -23,6 +23,9 @@ router = APIRouter()
 
 @router.get("/security/blocked-ips", response_model=List[BlockedIPResponse])
 async def get_blocked_ips(request: Request):
+    """
+    Retrieve a list of all currently blocked IP addresses.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import auth
@@ -32,6 +35,9 @@ async def get_blocked_ips(request: Request):
 
 @router.post("/security/block-ip", response_model=SuccessResponse)
 async def block_ip(request: Request, body: IPBlockRequest):
+    """
+    Block a specific IP address from accessing the platform.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import auth
@@ -42,6 +48,9 @@ async def block_ip(request: Request, body: IPBlockRequest):
 
 @router.get("/security/access-tokens", response_model=List[AccessTokenResponse])
 async def list_access_tokens(request: Request, include_revoked: bool = True):
+    """
+    List all API access tokens created by administrators.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import auth
@@ -64,6 +73,9 @@ async def list_access_tokens(request: Request, include_revoked: bool = True):
 
 @router.post("/security/access-tokens", response_model=AccessTokenCreateResponse)
 async def create_access_token(request: Request, body: AccessTokenCreateRequest):
+    """
+    Create a new permanent API access token for administrative use.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import auth
@@ -94,6 +106,9 @@ async def create_access_token(request: Request, body: AccessTokenCreateRequest):
     "/security/access-tokens/{token_id}/revoke", response_model=SuccessResponse
 )
 async def revoke_access_token(request: Request, token_id: int):
+    """
+    Revoke a specific API access token.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import auth
@@ -109,6 +124,9 @@ async def revoke_access_token(request: Request, token_id: int):
 
 @router.delete("/security/unblock-ip/{ip_address:path}", response_model=SuccessResponse)
 async def unblock_ip(request: Request, ip_address: str):
+    """
+    Remove an IP address from the blocklist.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import auth
@@ -119,6 +137,9 @@ async def unblock_ip(request: Request, ip_address: str):
 
 @router.get("/security/banned-usernames", response_model=List[BannedUsernameResponse])
 async def get_banned_usernames(request: Request):
+    """
+    Retrieve the list of patterns used to ban specific usernames.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -131,6 +152,9 @@ async def get_banned_usernames(request: Request):
 
 @router.post("/security/banned-usernames", response_model=SuccessResponse)
 async def add_banned_username(request: Request, body: BannedUsernameCreate):
+    """
+    Add a new pattern to the list of banned usernames.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
@@ -143,6 +167,9 @@ async def add_banned_username(request: Request, body: BannedUsernameCreate):
     "/security/banned-usernames/{pattern_id}", response_model=SuccessResponse
 )
 async def remove_banned_username(request: Request, pattern_id: int):
+    """
+    Remove a pattern from the list of banned usernames.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -153,6 +180,9 @@ async def remove_banned_username(request: Request, pattern_id: int):
 
 @router.post("/security/force-logout", response_model=SuccessResponse)
 async def force_logout(request: Request, body: ForceLogoutRequest):
+    """
+    Immediately invalidate all active sessions for a specific user.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     try:
@@ -184,6 +214,9 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
 
 @router.post("/security/lock-user", response_model=SuccessResponse)
 async def admin_lock_user(request: Request, body: UserLockRequest):
+    """
+    Lock a user account, preventing all access for a specified duration.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     try:
@@ -215,6 +248,9 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
 
 @router.post("/security/unlock-user", response_model=SuccessResponse)
 async def admin_unlock_user(request: Request, body: ForceLogoutRequest):
+    """
+    Unlock a previously locked user account.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     try:
@@ -232,6 +268,9 @@ async def admin_unlock_user(request: Request, body: ForceLogoutRequest):
 
 @router.post("/security/logout-all", response_model=SuccessResponse)
 async def logout_all_users(request: Request):
+    """
+    Invalidate all active sessions for every user on the platform.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import auth

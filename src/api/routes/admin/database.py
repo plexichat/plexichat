@@ -12,6 +12,11 @@ router = APIRouter()
 
 @router.get("/database/pool-health")
 async def get_db_pool_health(request: Request):
+    """
+    Retrieve the current health and connection pool statistics for the database.
+
+    Provides information on active, idle, and total connections.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     db = api.get_db()

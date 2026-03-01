@@ -12,6 +12,11 @@ router = APIRouter()
 
 @router.get("/logs", response_model=List[LogFileInfo])
 async def list_admin_logs(request: Request):
+    """
+    List all available system log files.
+
+    Returns a list of log file names, sizes, and last modification times.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core.admin import logs
@@ -28,6 +33,11 @@ async def read_admin_log(
     search: Optional[str] = None,
     level: Optional[str] = None,
 ):
+    """
+    Read the contents of a specific log file.
+
+    Supports pagination, filtering by log level, and text searching within the log.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core.admin import logs

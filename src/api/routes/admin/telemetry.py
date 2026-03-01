@@ -2,7 +2,7 @@
 Admin telemetry routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException, Response, Query
+from fastapi import APIRouter, Request, HTTPException, Response
 from typing import Optional
 import time
 import urllib.parse
@@ -29,6 +29,11 @@ async def get_telemetry_stats(
     endpoint: Optional[str] = None,
     source: Optional[str] = None,
 ):
+    """
+    Retrieve aggregated performance statistics for API endpoints.
+
+    Provides latency percentiles, error rates, and database query metrics.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     try:
@@ -85,6 +90,11 @@ async def get_telemetry_history(
     hours: int = 24,
     bucket_minutes: int = 5,
 ):
+    """
+    Retrieve historical latency data for a specific endpoint.
+
+    Returns data points grouped into time buckets for trend analysis.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     try:
@@ -111,6 +121,9 @@ async def get_telemetry_history(
 
 @router.post("/telemetry/reset", response_model=TelemetryResetResponse)
 async def reset_telemetry_stats(request: Request):
+    """
+    Clear all collected telemetry data from the system.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     try:
@@ -133,20 +146,14 @@ async def export_telemetry_stats(
     request: Request,
     format: str = "json",
     hours: int = 24,
-    token: Optional[str] = Query(None, alias="Authorization"),
 ):
-    # Allow token in query param for downloads
-    if token:
-        if token.startswith("Bearer "):
-            token = token[7:]
-        # Manual validation if using query param
-        from src.core import admin
+    """
+    Export system telemetry data in JSON, CSV, or plain text format.
 
-        if not admin.validate_session(token):
-            raise HTTPException(status_code=401, detail="Unauthorized")
-    else:
-        check_host_restriction(request)
-        get_admin_from_token(request)
+    Requires header-based admin authentication.
+    """
+    check_host_restriction(request)
+    get_admin_from_token(request)
 
     try:
         from src.core import telemetry

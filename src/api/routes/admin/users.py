@@ -22,6 +22,11 @@ router = APIRouter()
 
 @router.get("/users/search", response_model=UserSearchListResponse)
 async def admin_user_search(request: Request, q: str, limit: int = 20, offset: int = 0):
+    """
+    Search for users based on a query string.
+
+    Supports matching by username or email and provides paginated results.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -50,6 +55,9 @@ async def admin_user_search(request: Request, q: str, limit: int = 20, offset: i
 
 @router.get("/users/{user_id}", response_model=UserDetailsResponse)
 async def get_user_details(request: Request, user_id: str):
+    """
+    Retrieve comprehensive information for a specific user.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -83,6 +91,9 @@ async def get_user_details(request: Request, user_id: str):
 
 @router.put("/users/{user_id}/tier", response_model=SuccessResponse)
 async def update_user_tier(request: Request, user_id: str, update: UserTierUpdate):
+    """
+    Change the account tier (e.g., standard, premium) for a user.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -104,6 +115,9 @@ async def update_user_tier(request: Request, user_id: str, update: UserTierUpdat
 
 @router.post("/users/{user_id}/badges/{badge}", response_model=UserBadgeUpdateResponse)
 async def add_user_badge(request: Request, user_id: str, badge: str):
+    """
+    Assign a specific badge to a user's profile.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
@@ -128,6 +142,9 @@ async def add_user_badge(request: Request, user_id: str, badge: str):
     "/users/{user_id}/badges/{badge}", response_model=UserBadgeUpdateResponse
 )
 async def remove_user_badge(request: Request, user_id: str, badge: str):
+    """
+    Remove a badge from a user's profile.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
@@ -150,6 +167,9 @@ async def remove_user_badge(request: Request, user_id: str, badge: str):
 
 @router.get("/users/{user_id}/notes", response_model=UserNotesResponse)
 async def get_user_notes(request: Request, user_id: str):
+    """
+    Retrieve internal administrator notes for a specific user.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -167,6 +187,9 @@ async def get_user_notes(request: Request, user_id: str):
 
 @router.post("/users/{user_id}/notes", response_model=SuccessResponse)
 async def update_user_notes(request: Request, user_id: str, body: UserNotesUpdate):
+    """
+    Update the internal administrator notes for a user.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
@@ -186,6 +209,9 @@ async def update_user_notes(request: Request, user_id: str, body: UserNotesUpdat
 async def admin_force_username_change(
     request: Request, user_id: str, body: ForceUsernameChangeRequest
 ):
+    """
+    Flag a user account to require a username change upon their next login.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin

@@ -12,11 +12,17 @@ router = APIRouter()
 
 @router.get("/", include_in_schema=False)
 async def admin_root(request: Request):
+    """
+    Redirect the root administrator URL to the login page.
+    """
     return RedirectResponse(url=request.url_for("admin_login_page"))
 
 
 @router.get("/login", include_in_schema=False)
 async def admin_login_page(request: Request):
+    """
+    Serve the administrator login HTML page.
+    """
     check_host_restriction(request)
     nonce = generate_csp_nonce()
     content = load_admin_template("login.html", csp_nonce=nonce)
@@ -28,11 +34,17 @@ async def admin_login_page(request: Request):
 
 @router.get("/ui", include_in_schema=False)
 async def admin_ui_redirect(request: Request):
+    """
+    Redirect the generic UI path to the dashboard.
+    """
     return RedirectResponse(url=request.url_for("admin_dashboard_page"))
 
 
 @router.get("/ui-dashboard", include_in_schema=False)
 async def admin_dashboard_page(request: Request):
+    """
+    Serve the administrator dashboard HTML page.
+    """
     check_host_restriction(request)
     nonce = generate_csp_nonce()
     content = load_admin_template("dashboard.html", csp_nonce=nonce)

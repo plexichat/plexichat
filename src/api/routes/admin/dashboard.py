@@ -18,6 +18,11 @@ router = APIRouter()
 
 @router.get("/dashboard", response_model=AdminDashboardResponse)
 async def get_dashboard(request: Request):
+    """
+    Retrieve overview statistics for the administrator dashboard.
+
+    Returns a summary of system health, active sessions, and recent activity.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
