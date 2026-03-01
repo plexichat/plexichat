@@ -112,6 +112,8 @@ def create_tables(db) -> None:
 class ChunkedUploadManager:
     """Manages chunked file uploads."""
 
+    _MAX_COMPLETE_SESSION_BYTES = 2 * 1024 * 1024  # 2 MiB safety cap
+
     def __init__(self, db):
         """Initialize chunked upload manager."""
         self._db = db
@@ -349,10 +351,12 @@ class ChunkedUploadManager:
                 error=f"Invalid chunk index: {chunk_index}",
             )
 
-        # Verify checksum if provided
+        # Verify checksum if provided using SHA-256.
         if chunk_checksum:
-            actual_checksum = hashlib.md5(chunk_data).hexdigest()
-            if actual_checksum != chunk_checksum:
+            checksum = chunk_checksum.strip().lower()
+            actual_checksum = hashlib.sha256(chunk_data).hexdigest()
+
+            if actual_checksum != checksum:
                 return ChunkUploadResult(
                     success=False,
                     session_id=session_id,
@@ -415,6 +419,127 @@ class ChunkedUploadManager:
             is_complete=is_complete,
         )
 
+    def upload_chunk_stream(
+        self,
+        session_id: str,
+        user_id: int,
+        chunk_index: int,
+        chunk_stream,
+        chunk_checksum: Optional[str] = None,
+    ) -> ChunkUploadResult:
+        session = self.get_session(session_id, user_id)
+
+        if not session:
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=0,
+                total_chunks=0,
+                progress_percent=0,
+                is_complete=False,
+                error="Session not found",
+            )
+
+        now = int(time.time() * 1000)
+        if now > session.expires_at:
+            self._expire_session(session_id)
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=0,
+                is_complete=False,
+                error="Session expired",
+            )
+
+        if chunk_index < 0 or chunk_index >= session.total_chunks:
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                is_complete=False,
+                error=f"Invalid chunk index: {chunk_index}",
+            )
+
+        checksum = hashlib.sha256()
+        bytes_written = 0
+
+        try:
+            offset = chunk_index * session.chunk_size
+            if session.temp_path is None:
+                raise RuntimeError("Upload session temp file missing")
+            with open(session.temp_path, "r+b") as f:
+                f.seek(offset)
+                while True:
+                    chunk = chunk_stream.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    checksum.update(chunk)
+                    bytes_written += len(chunk)
+        except Exception as e:
+            logger.error(f"Failed to write chunk stream: {e}")
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                is_complete=False,
+                error=f"Write failed: {e}",
+            )
+
+        if chunk_checksum:
+            expected = chunk_checksum.strip().lower()
+            actual_checksum = checksum.hexdigest()
+            if actual_checksum != expected:
+                return ChunkUploadResult(
+                    success=False,
+                    session_id=session_id,
+                    chunk_index=chunk_index,
+                    uploaded_chunks=session.uploaded_chunks,
+                    total_chunks=session.total_chunks,
+                    progress_percent=(session.uploaded_chunks / session.total_chunks)
+                    * 100,
+                    is_complete=False,
+                    error="Checksum mismatch",
+                )
+
+        uploaded_chunks = session.uploaded_chunks + 1
+        uploaded_bytes = session.uploaded_bytes + bytes_written
+        is_complete = uploaded_chunks >= session.total_chunks
+        status = "completed" if is_complete else "in_progress"
+
+        self._db.execute(
+            """UPDATE media_upload_sessions 
+               SET uploaded_chunks = ?, uploaded_bytes = ?, status = ?, updated_at = ?
+               WHERE id = ?""",
+            (uploaded_chunks, uploaded_bytes, status, now, session_id),
+        )
+
+        progress = (uploaded_chunks / session.total_chunks) * 100
+
+        logger.debug(
+            f"Chunk {chunk_index + 1}/{session.total_chunks} streamed for session {session_id} ({progress:.1f}%)"
+        )
+
+        return ChunkUploadResult(
+            success=True,
+            session_id=session_id,
+            chunk_index=chunk_index,
+            uploaded_chunks=uploaded_chunks,
+            total_chunks=session.total_chunks,
+            progress_percent=progress,
+            is_complete=is_complete,
+        )
+
     def complete_session(self, session_id: str, user_id: int) -> Optional[bytes]:
         """
         Complete an upload session and return the assembled file.
@@ -436,6 +561,13 @@ class ChunkedUploadManager:
             return None
 
         try:
+            if session.total_size > self._MAX_COMPLETE_SESSION_BYTES:
+                logger.warning(
+                    f"Refusing in-memory completion for session {session_id} ({session.total_size} bytes). "
+                    "Use complete_session_stream() for large uploads."
+                )
+                return None
+
             if session.temp_path is None:
                 raise RuntimeError("Upload session temp file missing")
             with open(session.temp_path, "rb") as f:
@@ -448,6 +580,22 @@ class ChunkedUploadManager:
         except Exception as e:
             logger.error(f"Failed to read completed upload: {e}")
             return None
+
+    def complete_session_stream(self, session_id: str, user_id: int) -> Optional[UploadSession]:
+        session = self.get_session(session_id, user_id)
+
+        if not session:
+            return None
+
+        if session.status != UploadSessionStatus.COMPLETED:
+            logger.warning(f"Session {session_id} not complete: {session.status}")
+            return None
+
+        if session.temp_path is None:
+            logger.error("Upload session temp file missing")
+            return None
+
+        return session
 
     def cancel_session(self, session_id: str, user_id: int) -> bool:
         """Cancel an upload session."""

@@ -28,7 +28,7 @@ class ResponseStreamWrapper(io.RawIOBase):
     """
 
     def __init__(self, response_iterator: Iterator[bytes], max_size: int):
-        self._iterator = response_iterator
+        self._iterator = iter(response_iterator)
         self._max_size = max_size
         self._bytes_read = 0
         self._hash = hashlib.sha256()
@@ -312,9 +312,15 @@ class ExternalProxy:
                 allow_redirects=False,
             )
 
-            if 300 <= response.status_code < 400:
+            status_code = getattr(response, "status_code", 200)
+            try:
+                status_code = int(status_code)
+            except Exception:
+                status_code = 200
+
+            if 300 <= status_code < 400:
                 raise ProxyFetchError(
-                    f"Redirects are not allowed for security reasons (status {response.status_code})",
+                    f"Redirects are not allowed for security reasons (status {status_code})",
                     url,
                 )
 

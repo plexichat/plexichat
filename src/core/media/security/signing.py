@@ -35,6 +35,7 @@ class UrlSigner:
         self,
         url: str,
         file_id: int,
+        user_id: Optional[int] = None,
         expires_in: Optional[int] = None,
         extra_data: Optional[dict] = None,
     ) -> SignedUrl:
@@ -44,6 +45,7 @@ class UrlSigner:
         Args:
             url: URL to sign
             file_id: File ID for verification
+            user_id: User ID authorized to view (None for public)
             expires_in: Expiration time in seconds (None for default)
             extra_data: Additional data to include in signature
 
@@ -54,12 +56,17 @@ class UrlSigner:
         now_ms = int(time.time() * 1000)
         expires_at = now_ms + (expiry_seconds * 1000)
 
+        # Include user_id in extra_data for signature binding
+        if user_id:
+            extra_data = extra_data or {}
+            extra_data["uid"] = user_id
+
         signature_data = self._build_signature_data(
             url, file_id, expires_at, extra_data
         )
         signature = self._generate_signature(signature_data)
 
-        signed_url = self._append_signature_params(url, file_id, expires_at, signature)
+        signed_url = self._append_signature_params(url, file_id, expires_at, signature, user_id)
 
         return SignedUrl(
             url=signed_url,
@@ -68,12 +75,13 @@ class UrlSigner:
             file_id=file_id,
         )
 
-    def verify_url(self, url: str) -> Tuple[bool, int]:
+    def verify_url(self, url: str, current_user_id: Optional[int] = None) -> Tuple[bool, int]:
         """
         Verify a signed URL.
 
         Args:
             url: Signed URL to verify
+            current_user_id: Current user ID for authorization check
 
         Returns:
             Tuple of (is_valid, file_id)
@@ -81,6 +89,7 @@ class UrlSigner:
         Raises:
             SignatureExpiredError: If URL has expired
             SignatureInvalidError: If signature is invalid
+            AuthorizationError: If user is not authorized
         """
         parsed = urlparse(url)
         params = parse_qs(parsed.query)
@@ -88,6 +97,7 @@ class UrlSigner:
         signature = params.get("sig", [None])[0]
         expires_str = params.get("exp", [None])[0]
         file_id_str = params.get("fid", [None])[0]
+        user_id_str = params.get("uid", [None])[0]
 
         if not all([signature, expires_str, file_id_str]):
             raise SignatureInvalidError("Missing signature parameters")
@@ -101,11 +111,17 @@ class UrlSigner:
         try:
             expires_at = int(expires_str)
             file_id = int(file_id_str)
+            user_id = int(user_id_str) if user_id_str else None
         except ValueError:
             raise SignatureInvalidError("Invalid signature parameters")
 
         if int(time.time() * 1000) > expires_at:
             raise SignatureExpiredError("Signed URL has expired")
+
+        # SECURITY: Verify that the current user matches the signed user_id
+        if user_id is not None:
+            if current_user_id is None or int(current_user_id) != user_id:
+                raise SignatureInvalidError("User not authorized to access this URL")
 
         base_url = self._remove_signature_params(url)
 
@@ -114,11 +130,13 @@ class UrlSigner:
         path = parsed_base.path
         query = f"?{parsed_base.query}" if parsed_base.query else ""
 
+        extra_data = {"uid": user_id} if user_id else None
+
         # Check permutations: with and without leading slash
         for p in [path, path.lstrip("/"), "/" + path.lstrip("/")]:
             check_url = f"{p}{query}"
             expected_data = self._build_signature_data(
-                check_url, file_id, expires_at, None
+                check_url, file_id, expires_at, extra_data
             )
             expected_sig = self._generate_signature(expected_data)
             if hmac.compare_digest(signature, expected_sig):
@@ -126,7 +144,7 @@ class UrlSigner:
 
         # Fallback to full URL check (for absolute signed URLs)
         expected_data_full = self._build_signature_data(
-            base_url, file_id, expires_at, None
+            base_url, file_id, expires_at, extra_data
         )
         expected_sig_full = self._generate_signature(expected_data_full)
 
@@ -153,6 +171,7 @@ class UrlSigner:
         parts = [clean_url, str(file_id), str(expires_at)]
 
         if extra_data:
+            # Sort extra data to ensure consistent signature
             for key in sorted(extra_data.keys()):
                 parts.append(f"{key}={extra_data[key]}")
 
@@ -174,6 +193,7 @@ class UrlSigner:
         file_id: int,
         expires_at: int,
         signature: str,
+        user_id: Optional[int] = None,
     ) -> str:
         """Append signature parameters to URL."""
         parsed = urlparse(url)
@@ -182,6 +202,8 @@ class UrlSigner:
         params["fid"] = [str(file_id)]
         params["exp"] = [str(expires_at)]
         params["sig"] = [signature]
+        if user_id:
+            params["uid"] = [str(user_id)]
 
         flat_params = []
         for key, values in params.items():
@@ -206,7 +228,7 @@ class UrlSigner:
         parsed = urlparse(url)
         params = parse_qs(parsed.query)
 
-        for key in ["sig", "exp", "fid"]:
+        for key in ["sig", "exp", "fid", "uid"]:
             params.pop(key, None)
 
         flat_params = []

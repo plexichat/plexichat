@@ -322,6 +322,36 @@ class FileValidator:
         if not is_valid:
             return False, error, safe_filename
 
+        # SECURITY: Basic SVG sanitization to prevent XSS (script execution)
+        if content_type.lower() == "image/svg+xml":
+            danger_patterns = [
+                b"<script",
+                b"onabort",
+                b"onactivate",
+                b"onbegin",
+                b"onclick",
+                b"onerror",
+                b"onfocusin",
+                b"onfocusout",
+                b"onload",
+                b"onmousedown",
+                b"onmousemove",
+                b"onmouseout",
+                b"onmouseover",
+                b"onmouseup",
+                b"onrepeat",
+                b"onresize",
+                b"onscroll",
+                b"onunload",
+                b"href=\"javascript:",
+                b"xlink:href=\"javascript:",
+            ]
+            file_data_lower = file_data.lower()
+            for pattern in danger_patterns:
+                if pattern in file_data_lower:
+                    logger.warning(f"Unsafe content detected in SVG file: {pattern.decode()}")
+                    return False, "Unsafe content detected in SVG file", safe_filename
+
         return True, None, safe_filename
 
 

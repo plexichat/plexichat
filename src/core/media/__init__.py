@@ -29,6 +29,7 @@ from .models import (
     SignedUrl,
     ProxiedContent,
 )
+from .chunked import UploadSession
 from .exceptions import (
     MediaError,
     FileNotFoundError,
@@ -129,7 +130,9 @@ __all__ = [
     # Chunked uploads
     "create_upload_session",
     "upload_chunk",
+    "upload_chunk_stream",
     "complete_upload_session",
+    "complete_upload_session_stream",
     "cancel_upload_session",
 ]
 
@@ -334,17 +337,18 @@ def sign_url(
     return _get_manager().sign_url(file_id, expires_in, params)
 
 
-def verify_signed_url(url: str) -> Tuple[bool, int]:
+def verify_signed_url(url: str, current_user_id: Optional[int] = None) -> Tuple[bool, int]:
     """
     Verify a signed URL.
 
     Args:
         url: Signed URL
+        current_user_id: Optional ID of the user attempting access
 
     Returns:
         Tuple of (is_valid, file_id)
     """
-    return _get_manager().verify_signed_url(url)
+    return _get_manager().verify_signed_url(url, current_user_id=current_user_id)
 
 
 # === Thumbnails ===
@@ -628,6 +632,18 @@ def upload_chunk(
     )
 
 
+def upload_chunk_stream(
+    session_id: str,
+    user_id: int,
+    chunk_index: int,
+    chunk_stream,
+    chunk_checksum: Optional[str] = None,
+):
+    return _get_chunked_manager().upload_chunk_stream(
+        session_id, user_id, chunk_index, chunk_stream, chunk_checksum
+    )
+
+
 def complete_upload_session(session_id: str, user_id: int) -> Optional[bytes]:
     """
     Complete an upload session and return the assembled file.
@@ -640,6 +656,12 @@ def complete_upload_session(session_id: str, user_id: int) -> Optional[bytes]:
         Complete file bytes or None
     """
     return _get_chunked_manager().complete_session(session_id, user_id)
+
+
+def complete_upload_session_stream(
+    session_id: str, user_id: int
+) -> Optional["UploadSession"]:
+    return _get_chunked_manager().complete_session_stream(session_id, user_id)
 
 
 def cancel_upload_session(session_id: str, user_id: int) -> bool:

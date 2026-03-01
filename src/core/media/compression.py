@@ -11,6 +11,7 @@ Provides:
 import os
 import subprocess
 import tempfile
+import shutil
 import importlib.util
 from dataclasses import dataclass
 from enum import Enum
@@ -263,14 +264,16 @@ class VideoCompressor:
 
     def _find_ffmpeg(self) -> Optional[str]:
         """Find ffmpeg executable."""
-        try:
-            result = subprocess.run(
-                ["ffmpeg", "-version"], capture_output=True, timeout=5
-            )
-            if result.returncode == 0:
-                return "ffmpeg"
-        except (subprocess.SubprocessError, FileNotFoundError):
-            pass
+        ffmpeg_path = shutil.which("ffmpeg")
+        if ffmpeg_path:
+            try:
+                result = subprocess.run(
+                    [ffmpeg_path, "-version"], capture_output=True, timeout=5
+                )
+                if result.returncode == 0:
+                    return ffmpeg_path
+            except (subprocess.SubprocessError, FileNotFoundError):
+                pass
 
         # Try common paths
         common_paths = [

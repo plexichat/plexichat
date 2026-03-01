@@ -10,8 +10,9 @@ import hashlib
 import mimetypes
 import uuid
 import threading
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Dict, Any, BinaryIO, Tuple
+from typing import Optional, Dict, Any, BinaryIO, Tuple, List
 
 import utils.config as config
 import utils.logger as logger
@@ -110,12 +111,13 @@ class MediaManager(BaseManager):
 
         Args:
             db: Database instance (must be connected)
-            messaging_module: Optional messaging module for attachment integration
         """
         super().__init__(db)
+        self._db = db
         self._messaging = messaging_module
         self._config = self._load_config()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+
         self._rl_prefix = f"media:{uuid.uuid4().hex}"
 
         self._storage = self._init_storage()
@@ -276,11 +278,15 @@ class MediaManager(BaseManager):
 
         uploads_minute = manager.increment_custom_usage(minute_key, "count", 0, ttl=120)
         uploads_hour = manager.increment_custom_usage(hour_key, "count", 0, ttl=7200)
-        day_size = manager.increment_custom_usage(day_size_key, "total_size", 0, ttl=172800)
+        day_size = manager.increment_custom_usage(
+            day_size_key, "total_size", 0, ttl=172800
+        )
 
         max_per_minute = int(rate_config.get("uploads_per_minute", 10))
         max_per_hour = int(rate_config.get("uploads_per_hour", 100))
-        max_daily_size = int(rate_config.get("max_total_size_per_day", 512 * 1024 * 1024))
+        max_daily_size = int(
+            rate_config.get("max_total_size_per_day", 512 * 1024 * 1024)
+        )
 
         if uploads_minute >= max_per_minute:
             retry_after = 60 - (now_seconds % 60)
@@ -319,7 +325,9 @@ class MediaManager(BaseManager):
 
         manager.increment_custom_usage(minute_key, "count", 1, ttl=120)
         manager.increment_custom_usage(hour_key, "count", 1, ttl=7200)
-        manager.increment_custom_usage(day_size_key, "total_size", file_size, ttl=172800)
+        manager.increment_custom_usage(
+            day_size_key, "total_size", file_size, ttl=172800
+        )
 
     def _get_daily_size(self, user_id: int, day_window: int) -> int:
         """Get total upload size for day."""
@@ -330,7 +338,9 @@ class MediaManager(BaseManager):
         # Since we don't have a public read method, we can increment by 0
         return manager.increment_custom_usage(size_key, "total_size", 0)
 
-    def _get_rate_limit_count(self, user_id: int, window_type: str, window_start: int) -> int:
+    def _get_rate_limit_count(
+        self, user_id: int, window_type: str, window_start: int
+    ) -> int:
         """Get upload count for a given window (minute/hour)."""
         self._ensure_ratelimit_setup()
         manager = ratelimit.get_manager()
@@ -343,7 +353,9 @@ class MediaManager(BaseManager):
             return manager.increment_custom_usage(key, "count", 0, ttl=7200)
         return 0
 
-    def _get_rate_limit_size(self, user_id: int, window_type: str, window_start: int) -> int:
+    def _get_rate_limit_size(
+        self, user_id: int, window_type: str, window_start: int
+    ) -> int:
         """Get size usage for a given window (day)."""
         self._ensure_ratelimit_setup()
         manager = ratelimit.get_manager()
@@ -478,6 +490,21 @@ class MediaManager(BaseManager):
 
         # Fall back to primary storage
         return self._storage, self._config.get("storage_backend", "local")
+
+    def _should_route_to_database(self, content_type: str, size: int) -> bool:
+        auto_route = self._config.get("auto_route_to_database", {})
+        if not auto_route.get("enabled", False):
+            return False
+        if not self._db_storage:
+            return False
+        if size > auto_route.get("max_size", 512 * 1024):
+            return False
+
+        allowed_types = auto_route.get(
+            "allowed_types",
+            ["text/plain", "application/json", "application/javascript"],
+        )
+        return content_type in allowed_types or "*" in allowed_types
 
     def _detect_media_type(self, content_type: str) -> MediaType:
         """Detect media type from content type."""
@@ -638,6 +665,26 @@ class MediaManager(BaseManager):
         """Compute SHA-256 checksum."""
         return hashlib.sha256(data).hexdigest()
 
+    def _read_stream_to_temp(self, stream: BinaryIO) -> Tuple[str, int, str, bytes]:
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
+        bytes_read = 0
+        hasher = hashlib.sha256()
+        header = b""
+        try:
+            while True:
+                chunk = stream.read(65536)
+                if not chunk:
+                    break
+                if not header:
+                    header = chunk[:64]
+                temp_file.write(chunk)
+                hasher.update(chunk)
+                bytes_read += len(chunk)
+        finally:
+            temp_file.flush()
+            temp_file.close()
+        return temp_file.name, bytes_read, hasher.hexdigest(), header
+
     def upload_file(
         self,
         user_id: int,
@@ -659,8 +706,8 @@ class MediaManager(BaseManager):
         """
         filename = self._sanitize_filename(filename)
         if not content_type:
-            content_type, _ = mimetypes.guess_type(filename)
-            content_type = content_type or "application/octet-stream"
+            guessed_type, _ = mimetypes.guess_type(filename)
+            content_type = guessed_type or "application/octet-stream"
 
         media_type = self._detect_media_type(content_type)
         file_size = len(file_data)
@@ -673,13 +720,16 @@ class MediaManager(BaseManager):
         self._check_rate_limit(user_id, file_size)
 
         # Delegate to internal logic
-        return self._do_upload(
+        result = self._do_upload(
             user_id=user_id,
             file_data=file_data,
             filename=filename,
             content_type=content_type,
             media_type=media_type,
         )
+
+        self._update_rate_limit(user_id, result.size)
+        return result
 
     def _do_upload(
         self,
@@ -943,20 +993,187 @@ class MediaManager(BaseManager):
             UploadResult with file info and URLs
         """
         filename = self._sanitize_filename(filename)
+        if not content_type:
+            guessed_type, _ = mimetypes.guess_type(filename)
+            content_type = guessed_type or "application/octet-stream"
+
         media_type = self._detect_media_type(content_type)
-
         self._validate_content_type(content_type, media_type)
-        self._validate_file_size(size, media_type)
+        if size and size > 0:
+            self._validate_file_size(size, media_type)
 
-        with self._lock:
-            # Check rate limits under lock
-            self._check_rate_limit(user_id, size)
+        max_in_memory = self._config.get("stream_processing_max_bytes", 8 * 1024 * 1024)
+        temp_path = None
+        file_data = None
+        try:
+            temp_path, bytes_read, checksum_raw, header = self._read_stream_to_temp(
+                stream
+            )
+            file_size = size if size and size > 0 else bytes_read
+            if not size or size <= 0:
+                self._validate_file_size(file_size, media_type)
 
+            detected_type = self._detect_content_type(header, content_type)
+            generic_types = [
+                "application/octet-stream",
+                "text/plain",
+                "application/binary",
+            ]
+            if not content_type or content_type.lower() in generic_types:
+                content_type = detected_type
+                media_type = self._detect_media_type(content_type)
+
+            if content_type.lower() in BLOCKED_MIME_TYPES:
+                raise FileTypeError(
+                    f"Content type not allowed: {content_type}",
+                    content_type,
+                    ["This content type is blocked for security"],
+                )
+
+            ext = os.path.splitext(filename.lower())[1]
+            if ext in BLOCKED_EXTENSIONS:
+                raise FileTypeError(
+                    f"File type not allowed: {ext}",
+                    content_type,
+                    ["Executable and script files are blocked for security"],
+                )
+
+            if not self._validate_magic_bytes(header, content_type):
+                raise FileTypeError(
+                    f"File content does not match declared type: {content_type}",
+                    content_type,
+                    ["File signature mismatch - content does not match declared MIME type"],
+                )
+
+            with self._lock:
+                self._check_rate_limit(user_id, file_size)
+
+            dedup_result = None
+            phash_value = None
+            if media_type == MediaType.IMAGE and file_size <= max_in_memory:
+                with open(temp_path, "rb") as f:
+                    file_data = f.read()
+                if self._dedup_manager:
+                    try:
+                        phash_value = self._dedup_manager.compute_phash(
+                            file_data, content_type
+                        )
+                    except Exception:
+                        phash_value = None
+            if self._dedup_manager:
+                try:
+                    dedup_result = self._dedup_manager.check_duplicate_by_hash(
+                        hash_value=checksum_raw,
+                        content_type=content_type,
+                        file_size=file_size,
+                        user_id=user_id,
+                        phash_value=phash_value,
+                    )
+                    if dedup_result.is_blocked:
+                        raise FileUploadError(
+                            f"This content has been blocked: {dedup_result.block_reason}",
+                            filename,
+                        )
+                except Exception as e:
+                    logger.warning(f"Deduplication check failed: {e}")
+                    dedup_result = None
+
+            scan_status = ScanStatus.SKIPPED
+            scan_result = None
+            if self._scanner and self._scanner.is_available():
+                try:
+                    scan_status, scan_result = self._scanner.scan_file(temp_path)
+                    if scan_status == ScanStatus.INFECTED:
+                        raise FileUploadError(
+                            f"Malware detected: {scan_result}", filename
+                        )
+                except Exception as e:
+                    logger.warning(f"Scan failed: {e}")
+                    scan_status = ScanStatus.ERROR
+                    scan_result = str(e)
+
+            compression_applied = False
+            final_data = None
+            if (
+                self._compression_manager
+                and self._compression_manager.is_enabled()
+                and file_size <= max_in_memory
+            ):
+                if file_data is None:
+                    with open(temp_path, "rb") as f:
+                        file_data = f.read()
+                try:
+                    compression_result = self._compression_manager.compress(
+                        file_data, content_type
+                    )
+                    if compression_result.success and compression_result.data:
+                        if compression_result.compressed_size < file_size:
+                            final_data = compression_result.data
+                            compression_applied = True
+                            if compression_result.format:
+                                content_type = compression_result.format
+                                media_type = self._detect_media_type(content_type)
+                except Exception as e:
+                    logger.warning(f"Compression failed, using original: {e}")
+
+            metadata = {}
+            if media_type == MediaType.IMAGE and self._image_processor:
+                if file_data is None and file_size <= max_in_memory:
+                    with open(temp_path, "rb") as f:
+                        file_data = f.read()
+                if file_data is not None:
+                    try:
+                        img_meta = self._image_processor.get_metadata(file_data)
+                        metadata = {
+                            "width": img_meta.width,
+                            "height": img_meta.height,
+                            "format": img_meta.format,
+                            "has_alpha": img_meta.has_alpha,
+                            "animated": img_meta.animated,
+                        }
+                    except ImageProcessingError as e:
+                        raise FileUploadError(str(e), filename)
+                    except Exception as e:
+                        logger.warning(f"Failed to extract image metadata: {e}")
+            elif (
+                media_type == MediaType.VIDEO
+                and self._video_processor
+                and self._video_processor.is_available()
+            ):
+                try:
+                    vid_meta = self._video_processor.get_metadata(temp_path)
+                    metadata = {
+                        "width": vid_meta.width,
+                        "height": vid_meta.height,
+                        "duration": vid_meta.duration,
+                        "codec": vid_meta.codec,
+                    }
+                except Exception as e:
+                    logger.warning(f"Failed to extract video metadata: {e}")
+
+            stored_data_size = file_size
+            checksum = checksum_raw
+
+            storage, storage_backend = self._get_storage_for_file(
+                content_type, file_size
+            )
             storage_path = self._generate_storage_path(filename, media_type)
-            self._storage.store_stream(stream, storage_path, content_type, size)
+
+            if final_data is not None:
+                storage.store(final_data, storage_path, content_type)
+                stored_data_size = len(final_data)
+                checksum = self._compute_checksum(final_data)
+            else:
+                with open(temp_path, "rb") as f:
+                    storage.store_stream(f, storage_path, content_type, file_size)
 
             file_id = self._generate_id()
             now = self._get_timestamp()
+            metadata_json = None
+            if metadata:
+                import json
+
+                metadata_json = json.dumps(metadata)
 
             self._db.execute(
                 """INSERT INTO media_files
@@ -969,36 +1186,70 @@ class MediaManager(BaseManager):
                     os.path.basename(storage_path),
                     filename,
                     content_type,
-                    size,
+                    stored_data_size,
                     media_type.value,
-                    self._config.get("storage_backend", "local"),
+                    storage_backend,
                     storage_path,
-                    None,
+                    checksum,
                     user_id,
                     now,
-                    None,
-                    ScanStatus.PENDING.value,
-                    None,
+                    metadata_json,
+                    scan_status.value,
+                    scan_result,
                 ),
             )
 
-        # Use our API proxy URL instead of direct storage URL
-        stored_filename = os.path.basename(storage_path)
-        url = f"/api/v1/media/attachments/{stored_filename}"
+            if dedup_result and self._dedup_manager is not None:
+                try:
+                    self._dedup_manager.register_file(
+                        hash_value=checksum,
+                        file_size=stored_data_size,
+                        content_type=content_type,
+                        storage_path=storage_path,
+                        storage_backend=storage_backend,
+                        timestamp=now,
+                        phash_value=phash_value,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to register file hash: {e}")
 
-        logger.debug(
-            f"File {file_id} uploaded via stream by user {user_id}: {filename}"
-        )
+            thumbnails = {}
+            if (
+                media_type == MediaType.IMAGE
+                and self._image_processor
+                and file_data is not None
+            ):
+                thumbnails = self._generate_thumbnails(file_id, file_data)
 
-        return UploadResult(
-            file_id=file_id,
-            filename=filename,
-            content_type=content_type,
-            size=size,
-            url=url,
-            thumbnails={},
-            metadata=None,
-        )
+            stored_filename = os.path.basename(storage_path)
+            url = f"/api/v1/media/attachments/{stored_filename}"
+
+            compression_info = (
+                f", compressed from {file_size}" if compression_applied else ""
+            )
+            logger.debug(
+                f"File {file_id} uploaded via stream by user {user_id}: {filename} (backend: {storage_backend}, size: {stored_data_size}{compression_info})"
+            )
+
+            result = UploadResult(
+                file_id=file_id,
+                filename=filename,
+                content_type=content_type,
+                size=stored_data_size,
+                url=url,
+                thumbnails=thumbnails,
+                metadata=metadata if metadata else None,
+                checksum=checksum,
+            )
+
+            self._update_rate_limit(user_id, result.size)
+            return result
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
 
     def _generate_thumbnails(self, file_id: int, image_data: bytes) -> Dict[int, str]:
         """Generate thumbnails for image."""
@@ -1065,6 +1316,22 @@ class MediaManager(BaseManager):
             return None
 
         return self._row_to_media_file(row)
+
+    def get_files_by_filenames(self, filenames: List[str]) -> Dict[str, MediaFile]:
+        """Get multiple files by filenames (batch)."""
+        if not filenames:
+            return {}
+
+        placeholders = ",".join("?" for _ in filenames)
+        rows = self._db.fetch_all(
+            f"SELECT * FROM media_files WHERE filename IN ({placeholders}) AND deleted = 0",
+            tuple(filenames),
+        )
+
+        result = {}
+        for row in rows:
+            result[row["filename"]] = self._row_to_media_file(row)
+        return result
 
     def get_file_data(self, file_id: int) -> Tuple[bytes, str]:
         """
@@ -1196,7 +1463,6 @@ class MediaManager(BaseManager):
         self._ensure_ratelimit_setup()
 
         now_seconds = self._get_timestamp() // 1000
-        from src.core.ratelimit.models import BucketType
 
         # Daily size usage
         day_window = now_seconds - (now_seconds % 86400)
@@ -1264,7 +1530,7 @@ class MediaManager(BaseManager):
         if is_encrypted:
             # Sign our proxy URL
             proxy_url = f"/api/v1/media/attachments/{file.filename}"
-            return self._url_signer.sign_url(proxy_url, file_id, expires_in)
+            return self._url_signer.sign_url(proxy_url, file_id, expires_in=expires_in)
 
         # If using S3 and not encrypted, prefer native S3 presigning
         if file.storage_backend == StorageBackend.S3:
@@ -1286,23 +1552,24 @@ class MediaManager(BaseManager):
                 f"S3 native signing unavailable for {file.filename}, falling back to proxy"
             )
             proxy_url = f"/api/v1/media/attachments/{file.filename}"
-            return self._url_signer.sign_url(proxy_url, file_id, expires_in)
+            return self._url_signer.sign_url(proxy_url, file_id, expires_in=expires_in)
 
         # Fallback to signing the default URL (Local/Database storage)
         url = storage.get_url(file.storage_path)
-        return self._url_signer.sign_url(url, file_id, expires_in)
+        return self._url_signer.sign_url(url, file_id, expires_in=expires_in)
 
-    def verify_signed_url(self, url: str) -> Tuple[bool, int]:
+    def verify_signed_url(self, url: str, current_user_id: Optional[int] = None) -> Tuple[bool, int]:
         """
         Verify a signed URL.
 
         Args:
             url: Signed URL
+            current_user_id: Optional ID of the user attempting access
 
         Returns:
             Tuple of (is_valid, file_id)
         """
-        return self._url_signer.verify_url(url)
+        return self._url_signer.verify_url(url, current_user_id=current_user_id)
 
     def get_thumbnails(self, file_id: int) -> Dict[int, str]:
         """Get thumbnail URLs for file."""

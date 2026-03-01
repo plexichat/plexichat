@@ -375,6 +375,71 @@ class DeduplicationManager:
 
         return DeduplicationResult(is_duplicate=False, hash_value=hash_value)
 
+    def check_duplicate_by_hash(
+        self,
+        hash_value: str,
+        content_type: str,
+        file_size: int,
+        user_id: Optional[int] = None,
+        phash_value: Optional[str] = None,
+    ) -> DeduplicationResult:
+        if not self._config["enabled"]:
+            return DeduplicationResult(is_duplicate=False, hash_value=hash_value)
+
+        if user_id:
+            user_blocked, user_reason = self.is_user_blocked(user_id)
+            if user_blocked:
+                return DeduplicationResult(
+                    is_duplicate=False,
+                    hash_value=hash_value,
+                    is_blocked=True,
+                    block_reason=f"User blocked: {user_reason}",
+                )
+
+        if file_size < self._config["min_size"]:
+            return DeduplicationResult(is_duplicate=False, hash_value=hash_value)
+
+        is_blocked, block_reason = self.is_blocked(hash_value, phash_value)
+        if is_blocked:
+            return DeduplicationResult(
+                is_duplicate=False,
+                hash_value=hash_value,
+                is_blocked=True,
+                block_reason=block_reason,
+            )
+
+        row = self._db.fetch_one(
+            """SELECT id, storage_path, storage_backend 
+               FROM media_file_hashes WHERE hash_value = ?""",
+            (hash_value,),
+        )
+
+        if row:
+            if isinstance(row, dict):
+                file_id = row["id"]
+                storage_path = row["storage_path"]
+            else:
+                file_id, storage_path, _ = row
+
+            return DeduplicationResult(
+                is_duplicate=True,
+                hash_value=hash_value,
+                existing_file_id=file_id,
+                existing_url=storage_path,
+            )
+
+        if phash_value:
+            similar = self._find_similar_by_phash(phash_value)
+            if similar:
+                return DeduplicationResult(
+                    is_duplicate=True,
+                    hash_value=hash_value,
+                    existing_file_id=similar["id"],
+                    existing_url=similar["storage_path"],
+                )
+
+        return DeduplicationResult(is_duplicate=False, hash_value=hash_value)
+
     def _find_similar_by_phash(self, phash_value: str) -> Optional[Dict[str, Any]]:
         """Find existing file with similar pHash."""
         if not self._config.get("phash_enabled", True):

@@ -9,6 +9,7 @@ Provides endpoints for:
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
 from typing import Optional
+from starlette.concurrency import run_in_threadpool
 
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -225,15 +226,18 @@ async def upload_chunk(
     from src.core import media
 
     try:
-        chunk_data = await file.read()
+        def _upload_chunk_stream():
+            stream = file.file
+            stream.seek(0)
+            return media.upload_chunk_stream(
+                session_id=session_id,
+                user_id=user.user_id,
+                chunk_index=chunk_index,
+                chunk_stream=stream,
+                chunk_checksum=chunk_checksum,
+            )
 
-        result = media.upload_chunk(
-            session_id=session_id,
-            user_id=user.user_id,
-            chunk_index=chunk_index,
-            chunk_data=chunk_data,
-            chunk_checksum=chunk_checksum,
-        )
+        result = await run_in_threadpool(_upload_chunk_stream)
 
         if not result.success:
             logger.warning(
@@ -296,10 +300,9 @@ async def complete_upload_session(
     from src.core import media
 
     try:
-        # Get the assembled file data
-        file_data = media.complete_upload_session(session_id, user.user_id)
+        session = media.complete_upload_session_stream(session_id, user.user_id)
 
-        if file_data is None:
+        if session is None:
             logger.warning(
                 f"Failed to complete upload session {session_id} for user {user.user_id} (not complete or not found)"
             )
@@ -313,13 +316,32 @@ async def complete_upload_session(
                 },
             )
 
+        try:
+            def _upload_complete_file():
+                assert session.temp_path is not None
+                with open(session.temp_path, "rb") as f:
+                    return media.upload_stream(
+                        user_id=user.user_id,
+                        stream=f,
+                        filename=session.filename,
+                        content_type=session.content_type,
+                        size=session.total_size,
+                    )
+
+            await run_in_threadpool(_upload_complete_file)
+        finally:
+            try:
+                media.cancel_upload_session(session_id, user.user_id)
+            except Exception:
+                pass
+
         logger.info(
-            f"User {user.user_id} completed upload session {session_id} ({len(file_data)} bytes)"
+            f"User {user.user_id} completed upload session {session_id} ({session.total_size} bytes)"
         )
 
         return CompleteUploadResponse(
             success=True,
-            size=len(file_data),
+            size=session.total_size,
             message="Upload complete. File ready for processing.",
         )
     except HTTPException:
