@@ -111,7 +111,7 @@ class AttachmentRepository(BaseRepository[Attachment]):
 
         in_clause, params = self._build_in_clause(message_ids)
         rows = self._fetch_all(
-            f"SELECT * FROM msg_attachments WHERE message_id IN {in_clause} AND deleted = 0",  # nosec B608
+            f"SELECT * FROM msg_attachments WHERE message_id IN {in_clause} AND deleted = 0",
             params,
         )
 
@@ -162,4 +162,6 @@ class AttachmentRepository(BaseRepository[Attachment]):
             checksum=row.get("checksum"),
             deleted=bool(row["deleted"]),
         )
+
+
 

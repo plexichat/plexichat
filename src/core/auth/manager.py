@@ -677,7 +677,7 @@ class AuthManager(BaseManager):
 
             params.append(row["id"])
             self._db.execute(
-                f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",  # nosec B608
+                f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
 
@@ -881,7 +881,7 @@ class AuthManager(BaseManager):
             params.append(self._get_timestamp())
             params.append(user_id)
             self._db.execute(
-                f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",  # nosec B608
+                f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
             # Clear auth cache so middleware sees change immediately
@@ -1205,7 +1205,9 @@ class AuthManager(BaseManager):
         self._db.execute(
             "UPDATE auth_email_tokens SET used = 1 WHERE id = ?", (rec["id"],)
         )
-        invalidate_pattern("user_data:*")
+        # Invalidate cache for this user
+        invalidate_pattern(f"user_data:{user_id}*")
+        invalidate_pattern(f"user_api:{user_id}*")
         return True
 
     def validate_password(self, password: str) -> PasswordValidation:
@@ -1821,7 +1823,7 @@ class AuthManager(BaseManager):
         if missing_ids:
             placeholders = ",".join("?" for _ in missing_ids)
             # JOIN with user_features to get badges
-            query = f"""  # nosec B608
+            query = f"""
                 SELECT u.id, u.username, u.permissions, u.account_type, f.badges
                 FROM auth_users u
                 LEFT JOIN user_features f ON u.id = f.user_id
@@ -1867,8 +1869,8 @@ class AuthManager(BaseManager):
 
         placeholders = ",".join("?" for _ in user_ids)
         # JOIN with user_features to get badges
-        query = f"""  # nosec B608
-            SELECT u.*, f.badges
+        query = f"""
+            SELECT u.*, f.tier, f.badges, f.is_bot
             FROM auth_users u
             LEFT JOIN user_features f ON u.id = f.user_id
             WHERE u.id IN ({placeholders})
@@ -2093,4 +2095,6 @@ class AuthManager(BaseManager):
             user=user_obj,
             session=session,
         )
+
+
 

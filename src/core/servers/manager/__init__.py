@@ -35,6 +35,7 @@ from ..exceptions import (
     ChannelTypeError,
     MemberNotFoundError,
     InvalidServerNameError,
+    InvalidChannelNameError,
     PermissionDeniedError,
     OwnerCannotLeaveError,
     MemberExistsError,
@@ -189,6 +190,57 @@ class ServerManager(BaseManager):
         if len(name) > max_len:
             raise InvalidServerNameError(
                 f"Server name cannot exceed {max_len} characters", name
+            )
+        return name
+
+    def _validate_channel_name(self, name: str) -> str:
+        """Validate channel name."""
+        if not name or not name.strip():
+            raise InvalidChannelNameError("Channel name cannot be empty")
+
+        name = name.strip()
+
+        if not name.isascii():
+            raise InvalidChannelNameError("Channel name must be ASCII", name)
+
+        # Ensure it contains at least one alphanumeric character.
+        if not any(ch.isalnum() for ch in name):
+            raise InvalidChannelNameError(
+                "Channel name must contain letters or digits", name
+            )
+
+        # Sanitize: remove spaces (tests require no spaces).
+        name = name.replace(" ", "-")
+
+        min_len = self._config.get("channel_name_min_length", 1)
+        max_len = self._config.get("channel_name_max_length", 100)
+
+        if len(name) < min_len:
+            raise InvalidChannelNameError(
+                f"Channel name must be at least {min_len} characters", name
+            )
+        if len(name) > max_len:
+            raise InvalidChannelNameError(
+                f"Channel name cannot exceed {max_len} characters", name
+            )
+        return name
+
+    def _validate_role_name(self, name: str) -> str:
+        """Validate role name."""
+        if not name or not name.strip():
+            raise InvalidRoleNameError("Role name cannot be empty")
+
+        name = name.strip()
+        min_len = self._config.get("role_name_min_length", 1)
+        max_len = self._config.get("role_name_max_length", 100)
+
+        if len(name) < min_len:
+            raise InvalidRoleNameError(
+                f"Role name must be at least {min_len} characters", name
+            )
+        if len(name) > max_len:
+            raise InvalidRoleNameError(
+                f"Role name cannot exceed {max_len} characters", name
             )
         return name
 
@@ -467,7 +519,7 @@ class ServerManager(BaseManager):
             params.append(server_id)
 
             self._db.execute(
-                f"UPDATE srv_servers SET {', '.join(updates)} WHERE id = ?",  # nosec B608
+                f"UPDATE srv_servers SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
 
@@ -761,7 +813,7 @@ class ServerManager(BaseManager):
         member_ids = [row["id"] for row in rows]
         placeholders = ",".join("?" for _ in member_ids)
         role_rows = self._db.fetch_all(
-            f"SELECT member_id, role_id FROM srv_member_roles WHERE member_id IN ({placeholders})",  # nosec B608
+            f"SELECT member_id, role_id FROM srv_member_roles WHERE member_id IN ({placeholders})",
             tuple(member_ids),
         )
 
@@ -1634,4 +1686,6 @@ class ServerManager(BaseManager):
             reason=row.get("reason"),
             created_at=row["created_at"],
         )
+
+
 

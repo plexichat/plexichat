@@ -45,7 +45,7 @@ class PinRepository(BaseRepository[PinnedMessage]):
 
         in_clause, params = self._build_in_clause(message_ids)
         rows = self._fetch_all(
-            f"SELECT * FROM msg_pinned WHERE message_id IN {in_clause}",  # nosec B608
+            f"SELECT * FROM msg_pinned WHERE message_id IN {in_clause}",
             params,
         )
 
@@ -94,4 +94,6 @@ class PinRepository(BaseRepository[PinnedMessage]):
             pinned_by=row["pinned_by"],
             pinned_at=row["pinned_at"],
         )
+
+
 

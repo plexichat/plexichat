@@ -105,11 +105,24 @@ class HardwareVault:
         try:
             key_file.parent.mkdir(parents=True, exist_ok=True)
             key_file.write_bytes(self._master_key)
-            # Restrict permissions (Unix only, Windows ignores)
-            try:
-                os.chmod(key_file, 0o600)
-            except (OSError, AttributeError):
-                pass
+            # Restrict permissions
+            if os.name == "nt":
+                # On Windows, use icacls to restrict access to current user only
+                try:
+                    import subprocess
+                    # Remove inheritance and all permissions, then grant full to current user
+                    subprocess.run(
+                        ["icacls", str(key_file), "/inheritance:r", "/grant:r", f"*S-1-5-32-544:F", "/grant:r", f"%USERNAME%:F"],
+                        capture_output=True,
+                        check=False
+                    )
+                except Exception:
+                    pass
+            else:
+                try:
+                    os.chmod(key_file, 0o600)
+                except (OSError, AttributeError):
+                    pass
             logger.info(f"Machine-local key saved to {key_file}")
         except Exception as e:
             logger.error(f"Failed to persist machine key: {e}")

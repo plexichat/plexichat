@@ -453,7 +453,7 @@ class VoiceManager(BaseManager):
             params.append(user_id)
 
             self._db.execute(
-                f"UPDATE voice_states SET {', '.join(updates)} WHERE user_id = ?",  # nosec B608
+                f"UPDATE voice_states SET {', '.join(updates)} WHERE user_id = ?",
                 tuple(params),
             )
 
@@ -1303,4 +1303,6 @@ class VoiceManager(BaseManager):
             "SELECT user_id FROM voice_states WHERE channel_id = ?", (channel_id,)
         )
         return [row["user_id"] for row in rows]
+
+
 

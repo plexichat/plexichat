@@ -66,7 +66,7 @@ class MessageRepository(BaseRepository[Message]):
             return []
         in_clause, params = self._build_in_clause(msg_ids)
         return self._fetch_all(
-            f"SELECT * FROM msg_messages WHERE id IN {in_clause}",  # nosec B608
+            f"SELECT * FROM msg_messages WHERE id IN {in_clause}",
             params,
         )
 
@@ -292,4 +292,6 @@ class MessageRepository(BaseRepository[Message]):
             metadata=metadata,
             embeds=embeds,
         )
+
+
 

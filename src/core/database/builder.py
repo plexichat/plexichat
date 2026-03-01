@@ -341,8 +341,7 @@ class InsertQuery(TableQuery):
         # Build SQL with placeholders
         placeholders = ", ".join(["?" for _ in columns])
         columns_str = ", ".join(validated_columns)
-        sql = f"INSERT INTO {self.table_name} ({columns_str}) VALUES ({placeholders})"  # nosec B608
-
+        sql = f"INSERT INTO {self.table_name} ({columns_str}) VALUES ({placeholders})"
         # Create parameters in same order as columns
         params = [Parameter(self.data[col]) for col in columns]
 
@@ -475,7 +474,7 @@ class SelectQuery(TableQuery):
             columns_str = "*"
 
         # Start building SQL
-        sql = f"SELECT {columns_str} FROM {self.table_name}"  # nosec B608
+        sql = f"SELECT {columns_str} FROM {self.table_name}"
         params: List[Parameter] = []
 
         # Add WHERE conditions
@@ -600,8 +599,7 @@ class UpdateQuery(TableQuery):
 
         # Build SET clause
         set_parts = [f"{col} = ?" for col in validated_columns]
-        sql = f"UPDATE {self.table_name} SET {', '.join(set_parts)}"  # nosec B608
-
+        sql = f"UPDATE {self.table_name} SET {', '.join(set_parts)}"
         # Add parameters from data
         params = [Parameter(self.data[col]) for col in columns]
 
@@ -667,7 +665,7 @@ class DeleteQuery(TableQuery):
                 "DELETE requires at least one WHERE condition (safety feature)"
             )
 
-        sql = f"DELETE FROM {self.table_name}"  # nosec B608
+        sql = f"DELETE FROM {self.table_name}"
         params: List[Parameter] = []
 
         # Add WHERE conditions
@@ -838,4 +836,6 @@ class QueryBuilder:
                 "Schema registry not enabled. Initialize QueryBuilder with enable_schema_validation=True"
             )
         self.schema_registry.register_tables(schemas)
+
+
 

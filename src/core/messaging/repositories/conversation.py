@@ -117,7 +117,7 @@ class ConversationRepository(BaseRepository[Conversation]):
 
         params.append(conv_id)
         self._execute(
-            f"UPDATE msg_conversations SET {', '.join(updates)} WHERE id = ?",  # nosec B608
+            f"UPDATE msg_conversations SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
             auto_commit=auto_commit,
         )
@@ -210,4 +210,6 @@ class ConversationRepository(BaseRepository[Conversation]):
             participant_count=participant_count,
             metadata=self._json_loads(row["metadata"]) if row["metadata"] else None,
         )
+
+
 

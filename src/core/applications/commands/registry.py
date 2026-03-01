@@ -325,7 +325,7 @@ class CommandRegistry:
             params.append(command_id)
 
             self._db.execute(
-                f"UPDATE app_commands SET {', '.join(updates)} WHERE id = ?",  # nosec B608
+                f"UPDATE app_commands SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
 
@@ -431,4 +431,6 @@ class CommandRegistry:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+
 

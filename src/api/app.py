@@ -249,6 +249,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         """Serve uploaded attachment files. Handles local and S3 storage with redirect optimization."""
         import src.api as api_module
 
+        # SECURITY: Prevent path traversal. Filenames must be a single segment.
+        # If a traversal attempt is made, reject immediately before touching media/auth.
+        if (
+            not filename
+            or ".." in filename
+            or "/" in filename
+            or "\\" in filename
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": {"code": 400, "message": "Invalid filename"}
+                },
+            )
+
         try:
             token = None
             token_info = None

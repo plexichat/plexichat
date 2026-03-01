@@ -184,8 +184,7 @@ class S3Storage(StorageBackendBase):
             return True
         except self._ClientError as e:
             logger.error(f"Failed to delete file at s3://{self._bucket}/{key}: {e}")
-            raise StorageDeleteError(f"Failed to delete from S3: {e}", "s3")  # nosec B608
-
+            raise StorageDeleteError(f"Failed to delete from S3: {e}", "s3")
     def exists(self, path: str) -> bool:
         """Check if file exists in storage."""
         key = self._full_path(path)
@@ -316,4 +315,6 @@ class S3Storage(StorageBackendBase):
         except self._ClientError as e:
             logger.error(f"Failed to generate presigned POST: {e}")
             raise StorageError(f"Failed to generate presigned POST: {e}", "s3")
+
+
 

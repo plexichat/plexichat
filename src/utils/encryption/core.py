@@ -436,19 +436,14 @@ class EncryptionManager:
 
     def fast_blind_index(self, data: str, scope: str) -> str:
         """
-        Generate a fast keyed hash (xxhash) for high-volume enforcement fields (e.g. IPs).
-        Falls back to blind_index (BLAKE2b) if xxhash is not available.
+        Generate a secure keyed hash for high-volume enforcement fields.
+        
+        SECURITY: This previously used xxhash for performance, but xxhash is 
+        non-cryptographic and allows easy brute-force deanonymization of 
+        small spaces like IP addresses. We now use a truncated BLAKE2b
+        which is still very fast but cryptographically secure.
         """
-        if not XXHASH_AVAILABLE or xxhash is None:
-            return self.blind_index(data, scope)
-
-        kek = self.keyring._get_kek()
-        # Derive a 64-bit seed from KEK + Scope
-        seed_bytes = hashlib.blake2b(kek, key=scope.encode(), digest_size=8).digest()
-        seed = int.from_bytes(seed_bytes, byteorder="big")
-
-        # Use xxhash with seed
-        return xxhash.xxh64(data.lower().strip().encode(), seed=seed).hexdigest()
+        return self.blind_index(data, scope)
 
     def rotate_keys(self, force: bool = False) -> bool:
         """Rotate keys if enough time has passed."""

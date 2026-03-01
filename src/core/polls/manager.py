@@ -272,7 +272,7 @@ class PollManager(BaseManager):
         # Validate all options exist in this poll (optimized single query)
         placeholders = ",".join("?" * len(unique_option_ids))
         valid_options = self._db.fetch_all(
-            f"SELECT id FROM poll_options WHERE poll_id = ? AND id IN ({placeholders})",  # nosec B608
+            f"SELECT id FROM poll_options WHERE poll_id = ? AND id IN ({placeholders})",
             (poll_id, *unique_option_ids),
         )
 
@@ -521,4 +521,6 @@ class PollManager(BaseManager):
             total_votes=total_votes,
             is_ended=is_ended,
         )
+
+
 

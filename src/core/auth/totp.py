@@ -233,23 +233,21 @@ def generate_backup_codes(count: Optional[int] = None) -> List[str]:
     return codes
 
 
-def hash_backup_codes(codes: List[str]) -> List[Tuple[str, str]]:
+def hash_backup_codes(codes: List[str]) -> List[str]:
     """
-    Hash backup codes for storage with prefix for quick filtering.
+    Hash backup codes for storage.
 
     Args:
         codes: List of plain backup codes
 
     Returns:
-        List of (prefix, hash) tuples for efficient lookup
+        List of hashes for storage
     """
     result = []
     for code in codes:
         normalized = code.replace("-", "").lower()
-        # Store first 4 chars as prefix for quick filtering (DoS mitigation)
-        prefix = normalized[:4]
         hashed = hash_password(normalized)
-        result.append((prefix, hashed))
+        result.append(hashed)
     return result
 
 
@@ -259,11 +257,9 @@ def verify_backup_code(
     """
     Verify a backup code against stored hashes with DoS mitigation.
 
-    Uses prefix matching to limit expensive Argon2 operations.
-
     Args:
         code: Backup code to verify (with or without dash)
-        hashed_codes: List of hashed backup codes (either strings or (prefix, hash) tuples)
+        hashed_codes: List of hashed backup codes
         max_checks: Maximum number of Argon2 verifications (DoS protection)
 
     Returns:
@@ -275,24 +271,18 @@ def verify_backup_code(
 
     # Normalize code (remove dash, lowercase)
     normalized = code.replace("-", "").lower()
-    prefix = normalized[:4]
 
     checks_performed = 0
 
     for i, entry in enumerate(hashed_codes):
-        # Support both old format (just hash string) and new format (prefix, hash)
+        # Support both old format (prefix, hash) and new format (just hash string)
         if isinstance(entry, (list, tuple)) and len(entry) == 2:
-            stored_prefix, hashed = entry
-            # Quick prefix check to avoid expensive hash verification
-            if not hmac.compare_digest(prefix, stored_prefix):
-                continue
+            _, hashed = entry
         else:
-            # Legacy format: just the hash, no prefix optimization
             hashed = entry
 
         # Rate limit expensive Argon2 operations
         if checks_performed >= max_checks:
-            # Log potential DoS attempt but don't reveal to caller
             break
 
         checks_performed += 1

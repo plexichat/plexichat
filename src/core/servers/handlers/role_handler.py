@@ -172,7 +172,7 @@ class RoleHandler:
             params.append(role_id)
 
             self.db.execute(
-                f"UPDATE srv_roles SET {', '.join(updates)} WHERE id = ?",  # nosec B608
+                f"UPDATE srv_roles SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
 
@@ -417,7 +417,7 @@ class RoleHandler:
             )
             query_params.extend(role_ids)
 
-        query = f"""SELECT * FROM srv_channel_overrides   # nosec B608
+        query = f"""SELECT * FROM srv_channel_overrides
                     WHERE channel_id IN ({placeholders}) 
                     AND ({" OR ".join(or_parts)})"""
 
@@ -509,7 +509,7 @@ class RoleHandler:
             if role_ids:
                 placeholders = ",".join("?" * len(role_ids))
                 override_rows = self.db.fetch_all(
-                    f"""SELECT * FROM srv_channel_overrides   # nosec B608
+                    f"""SELECT * FROM srv_channel_overrides
                        WHERE channel_id = ? AND target_type = 'role' AND target_id IN ({placeholders})""",
                     (channel_id, *role_ids),
                 )
@@ -692,4 +692,6 @@ class RoleHandler:
             {"role_id": role_id},
         )
         return True
+
+
 

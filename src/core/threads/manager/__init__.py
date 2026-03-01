@@ -1141,7 +1141,7 @@ class ThreadManager(BaseManager):
         if updates:
             params.append(thread_id)
             self._db.execute(
-                f"UPDATE thread_threads SET {', '.join(updates)} WHERE id = ?",  # nosec B608
+                f"UPDATE thread_threads SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
 
@@ -1256,4 +1256,6 @@ class ThreadManager(BaseManager):
             )
 
         return False
+
+
 

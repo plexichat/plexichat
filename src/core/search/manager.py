@@ -954,7 +954,7 @@ class SearchManager(BaseManager):
         if missing:
             placeholders = ",".join("?" for _ in missing)
             rows = self._db.fetch_all(
-                f"SELECT user_id, server_id FROM srv_members WHERE user_id IN ({placeholders})",  # nosec B608
+                f"SELECT user_id, server_id FROM srv_members WHERE user_id IN ({placeholders})",
                 tuple(missing),
             )
             for row in rows:
@@ -996,7 +996,7 @@ class SearchManager(BaseManager):
         if missing:
             placeholders = ",".join("?" for _ in missing)
             rows = self._db.fetch_all(
-                f"SELECT {id_col} as id, {name_col} as name FROM {table} WHERE {id_col} IN ({placeholders})",  # nosec B608
+                f"SELECT {id_col} as id, {name_col} as name FROM {table} WHERE {id_col} IN ({placeholders})",
                 tuple(missing),
             )
             for row in rows:
@@ -1006,4 +1006,5 @@ class SearchManager(BaseManager):
                 if redis_available():
                     cache_set(f"{cache_prefix}:{i}", n, ttl=ttl)
         return cached
+
 

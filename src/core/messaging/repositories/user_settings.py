@@ -221,10 +221,11 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
 
         in_clause, params = self._build_in_clause(user_ids)
         rows = self._fetch_all(
-            f"SELECT id FROM auth_users WHERE id IN {in_clause}",  # nosec B608
+            f"SELECT id FROM auth_users WHERE id IN {in_clause}",
             params,
         )
 
         existing = {row["id"] for row in rows}
         return {uid: uid in existing for uid in user_ids}
+
 

@@ -562,7 +562,7 @@ class PresenceManager(BaseManager):
         # 2. Batch fetch missing from DB
         placeholders = ",".join("?" * len(missing_ids))
         presence_rows = self._db.fetch_all(
-            f"SELECT * FROM pres_presence WHERE user_id IN ({placeholders})",  # nosec B608
+            f"SELECT * FROM pres_presence WHERE user_id IN ({placeholders})",
             tuple(missing_ids),
         )
         presence_map = {row["user_id"]: row for row in presence_rows}
@@ -570,14 +570,14 @@ class PresenceManager(BaseManager):
         # Batch fetch all custom statuses
         self._cleanup_expired_custom_status_batch(missing_ids)
         custom_rows = self._db.fetch_all(
-            f"SELECT * FROM pres_custom_status WHERE user_id IN ({placeholders})",  # nosec B608
+            f"SELECT * FROM pres_custom_status WHERE user_id IN ({placeholders})",
             tuple(missing_ids),
         )
         custom_map = {row["user_id"]: row for row in custom_rows}
 
         # Batch fetch all activities
         activity_rows = self._db.fetch_all(
-            f"SELECT * FROM pres_activity WHERE user_id IN ({placeholders})",  # nosec B608
+            f"SELECT * FROM pres_activity WHERE user_id IN ({placeholders})",
             tuple(missing_ids),
         )
         activity_map = {row["user_id"]: row for row in activity_rows}
@@ -654,7 +654,7 @@ class PresenceManager(BaseManager):
         now = self._get_timestamp()
         placeholders = ",".join("?" * len(user_ids))
         self._db.execute(
-            f"DELETE FROM pres_custom_status WHERE user_id IN ({placeholders}) AND expires_at IS NOT NULL AND expires_at < ?",  # nosec B608
+            f"DELETE FROM pres_custom_status WHERE user_id IN ({placeholders}) AND expires_at IS NOT NULL AND expires_at < ?",
             tuple(user_ids) + (now,),
         )
 
@@ -900,7 +900,7 @@ class PresenceManager(BaseManager):
         status_placeholders = ",".join("?" * len(online_statuses))
 
         rows = self._db.fetch_all(
-            f"""SELECT user_id FROM pres_presence   # nosec B608
+            f"""SELECT user_id FROM pres_presence
                 WHERE user_id IN ({placeholders}) 
                 AND status IN ({status_placeholders})""",
             tuple(friend_ids) + tuple(online_statuses),
@@ -949,7 +949,7 @@ class PresenceManager(BaseManager):
         status_placeholders = ",".join("?" * len(online_statuses))
 
         rows = self._db.fetch_all(
-            f"""SELECT user_id FROM pres_presence   # nosec B608
+            f"""SELECT user_id FROM pres_presence
                 WHERE user_id IN ({placeholders}) 
                 AND status IN ({status_placeholders})""",
             tuple(member_ids) + tuple(online_statuses),
@@ -1235,4 +1235,6 @@ class PresenceManager(BaseManager):
             current_channel_id=data.get("current_channel_id"),
             current_server_id=data.get("current_server_id"),
         )
+
+
 

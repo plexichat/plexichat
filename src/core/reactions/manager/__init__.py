@@ -1270,7 +1270,7 @@ class ReactionManager(BaseManager):
         placeholders = ",".join("?" * len(message_ids))
 
         # Base query
-        query = f"""SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,  # nosec B608
+        query = f"""SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,
                            COUNT(*) as count,
                            MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
                     FROM react_reactions r
@@ -1372,7 +1372,7 @@ class ReactionManager(BaseManager):
 
         placeholders = ",".join("?" * len(message_ids))
         rows = self._db.fetch_all(
-            f"SELECT DISTINCT message_id FROM react_reactions WHERE user_id = ? AND message_id IN ({placeholders})",  # nosec B608
+            f"SELECT DISTINCT message_id FROM react_reactions WHERE user_id = ? AND message_id IN ({placeholders})",
             (user_id, *message_ids),
         )
         return [row["message_id"] for row in rows]
@@ -1389,4 +1389,6 @@ class ReactionManager(BaseManager):
     ) -> Dict[int, List[Dict[str, Any]]]:
         """Legacy helper for tests."""
         return self.get_reactions_batch(user_id=1, message_ids=message_ids)
+
+
 

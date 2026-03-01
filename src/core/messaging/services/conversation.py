@@ -294,7 +294,6 @@ class ConversationService(BaseService):
             metadata=metadata,
         )
 
-    @cached(ttl=60, prefix="conv_data")
     def get_conversation(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Conversation]:
