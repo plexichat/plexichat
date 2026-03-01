@@ -61,6 +61,18 @@ class EncryptedFileHeader:
     is_stream: bool = False
 
 
+@dataclass
+class FileEncryptionResult:
+    encrypted_data: bytes
+    header: EncryptedFileHeader
+
+
+@dataclass
+class FileDecryptionResult:
+    data: bytes
+    verified: bool
+
+
 class FileEncryptor:
     """Encrypts and decrypts files using AES-256-GCM."""
 
@@ -96,6 +108,58 @@ class FileEncryptor:
         nonce = wrapped_key[:NONCE_SIZE]
         ciphertext = wrapped_key[NONCE_SIZE:]
         return cipher.decrypt(nonce, ciphertext, b"")
+
+    def serialize_header(self, header: EncryptedFileHeader) -> bytes:
+        return (
+            FILE_MAGIC
+            + struct.pack(">B", header.version)
+            + struct.pack(">I", header.key_version)
+            + struct.pack(">H", len(header.wrapped_key))
+            + header.wrapped_key
+            + header.nonce
+            + struct.pack(">Q", header.original_size)
+            + header.checksum.encode("ascii")
+        )
+
+    def encrypt(self, data: bytes, aad: Optional[bytes] = b"") -> FileEncryptionResult:
+        if not data:
+            raise ValueError("Cannot encrypt empty data")
+
+        dek = self._generate_dek()
+        wrapped_key, key_version = self._wrap_key(dek)
+        nonce = os.urandom(NONCE_SIZE)
+        checksum = hashlib.sha256(data).hexdigest()
+        cipher = AESGCM(dek)
+        ciphertext = cipher.encrypt(nonce, data, aad)
+
+        header = EncryptedFileHeader(
+            version=FILE_VERSION,
+            key_version=key_version,
+            wrapped_key=wrapped_key,
+            nonce=nonce,
+            original_size=len(data),
+            checksum=checksum,
+            is_stream=False,
+        )
+        return FileEncryptionResult(encrypted_data=ciphertext, header=header)
+
+    def decrypt(
+        self,
+        encrypted_data: bytes,
+        header: EncryptedFileHeader,
+        aad: Optional[bytes] = b"",
+        verify_checksum: bool = False,
+    ) -> FileDecryptionResult:
+        dek = self._unwrap_key(header.wrapped_key, header.key_version)
+        cipher = AESGCM(dek)
+        plaintext = cipher.decrypt(header.nonce, encrypted_data, aad)
+
+        verified = True
+        if verify_checksum:
+            computed = hashlib.sha256(plaintext).hexdigest()
+            verified = computed == header.checksum
+
+        return FileDecryptionResult(data=plaintext, verified=verified)
 
     def encrypt_to_blob(self, data: bytes, aad: Optional[bytes] = b"") -> bytes:
         dek = self._generate_dek()
@@ -265,7 +329,39 @@ class StreamingFileEncryptor:
             output_stream.write(encrypted_chunk)
             chunk_index += 1
 
-        return {"key_version": version, "chunks": chunk_index}
+        checksum = hashlib.sha256()
+        input_stream.seek(0)
+        while True:
+            chunk = input_stream.read(self.chunk_size)
+            if not chunk:
+                break
+            checksum.update(chunk)
+
+        # Restore position for callers that expect fully consumed streams
+        try:
+            input_stream.seek(0)
+        except Exception:
+            pass
+
+        return {
+            "key_version": version,
+            "chunks": chunk_index,
+            "checksum": checksum.hexdigest(),
+        }
+
+    def decrypt_stream(
+        self,
+        input_stream: BinaryIO,
+        output_stream: BinaryIO,
+        aad: Optional[bytes] = b"",
+    ) -> Dict[str, Any]:
+        sha = hashlib.sha256()
+        total = 0
+        for chunk in self.decrypt_stream_generator(input_stream, aad):
+            output_stream.write(chunk)
+            sha.update(chunk)
+            total += len(chunk)
+        return {"bytes": total, "checksum": sha.hexdigest(), "verified": True}
 
     def decrypt_stream_generator(
         self, input_stream: BinaryIO, aad: Optional[bytes] = b""

@@ -2,7 +2,7 @@
 Error handling middleware - Convert exceptions to HTTP responses.
 """
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -143,6 +143,61 @@ class ErrorHandlingMiddleware:
                 # Raising here will likely cause the server to close the connection
                 raise exc
 
+            # IMPORTANT: This middleware wraps the whole app and therefore will see
+            # exceptions BEFORE FastAPI's exception handler registry.
+            # If we don't special-case HTTPException, it will be converted to 500.
+            request = Request(scope)
+
+            if isinstance(exc, StarletteHTTPException):
+                http_exc = cast(StarletteHTTPException, exc)
+                headers = _get_cors_headers(request)
+
+                debug = False
+                try:
+                    debug = config.get("api", {}).get("debug", False)
+                except Exception:
+                    pass
+
+                detail = http_exc.detail
+                if isinstance(detail, dict) and "error" in detail:
+                    detail_dict = cast(Dict[str, Any], detail)
+                    error = detail_dict.get("error")
+                    if isinstance(error, dict):
+                        msg = error.get("message")
+                        if msg and isinstance(msg, str):
+                            error["message"] = _sanitize_error_message(
+                                http_exc.status_code, msg, debug
+                            )
+                        detail_dict["error"] = error
+
+                    response = JSONResponse(
+                        status_code=http_exc.status_code,
+                        content=detail_dict,
+                        headers=headers,
+                    )
+                    await response(scope, receive, send)
+                    return
+
+                response = JSONResponse(
+                    status_code=http_exc.status_code,
+                    content=format_error_response(
+                        http_exc.status_code, str(detail), debug
+                    ),
+                    headers=headers,
+                )
+                await response(scope, receive, send)
+                return
+
+            if isinstance(exc, RequestValidationError):
+                headers = _get_cors_headers(request)
+                response = JSONResponse(
+                    status_code=400,
+                    content=format_error_response(400, "Request validation failed"),
+                    headers=headers,
+                )
+                await response(scope, receive, send)
+                return
+
             # Log the error details server-side
             import utils.logger as logger
 
@@ -163,7 +218,6 @@ class ErrorHandlingMiddleware:
             message = str(exc)
 
             # Check for self-test debug mode
-            request = Request(scope)
             include_traceback = False
 
             # Only allow traceback capture if:
@@ -171,6 +225,7 @@ class ErrorHandlingMiddleware:
             # 2. Request is from localhost
             # 3. Secure internal secret is present and matches
             import src.api as api
+            import hmac
 
             selftest_config = config.get("selftest", {})
             is_local = (
@@ -181,7 +236,8 @@ class ErrorHandlingMiddleware:
             provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
             is_selftest = (
                 internal_secret is not None
-                and provided_secret == internal_secret
+                and provided_secret is not None
+                and hmac.compare_digest(provided_secret, internal_secret)
                 and is_local
             )
 
@@ -207,6 +263,37 @@ class ErrorHandlingMiddleware:
 
 def setup_exception_handlers(app: FastAPI):
     """Setup exception handlers for the FastAPI application."""
+
+    @app.exception_handler(HTTPException)
+    async def fastapi_http_exception_handler(request: Request, exc: HTTPException):
+        """Handle FastAPI HTTP exceptions."""
+        headers = _get_cors_headers(request)
+
+        debug = False
+        try:
+            debug = config.get("api", {}).get("debug", False)
+        except Exception:
+            pass
+
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            detail_dict = cast(Dict[str, Any], exc.detail)
+            error = detail_dict.get("error")
+            if isinstance(error, dict):
+                msg = error.get("message")
+                if msg and isinstance(msg, str):
+                    error["message"] = _sanitize_error_message(
+                        exc.status_code, msg, debug
+                    )
+                detail_dict["error"] = error
+            return JSONResponse(
+                status_code=exc.status_code, content=detail_dict, headers=headers
+            )
+
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=format_error_response(exc.status_code, str(exc.detail), debug),
+            headers=headers,
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
@@ -252,15 +339,8 @@ def setup_exception_handlers(app: FastAPI):
         logger.warning(
             f"Validation error on {request.method} {request.url.path}: {errors}"
         )
-        try:
-            body = await request.body()
-            if body:
-                logger.warning(
-                    f"Request body: {body.decode('utf-8', errors='replace')[:1000]}"
-                )
-        except Exception as e:
-            logger.debug(f"Could not log request body: {e}")
-
+        # SECURITY: Do not read/log full request body to avoid memory DOS
+        
         if errors:
             first_error = errors[0]
             loc = first_error.get("loc", [])

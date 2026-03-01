@@ -60,7 +60,7 @@ class URLValidator:
         "localhost",
         "127.0.0.1",
         "::1",
-        "0.0.0.0",
+        "0.0.0.0",  # nosec B104
         "localhost.localdomain",
         "local",
     }
@@ -170,3 +170,4 @@ class URLValidator:
         except ValueError:
             # If not a valid IP, it might be a hostname that escaped previous checks
             return True
+

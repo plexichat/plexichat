@@ -9,7 +9,7 @@ import sys
 import re
 import unicodedata
 import threading
-from typing import Optional
+from typing import Optional, AsyncGenerator
 
 import utils.config as global_config
 import utils.logger as logger
@@ -270,7 +270,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 if request.url.query:
                     url_to_verify += f"?{request.url.query}"
 
-                sig_valid, _ = media.verify_signed_url(url_to_verify)
+                # SECURITY: Try to get user_id from session/cookies to verify signed URL ownership
+                current_user_id = None
+                from .middleware.authentication import get_token_info
+                token = request.headers.get("Authorization")
+                if token and token.startswith("Bearer "):
+                    token = token[7:]
+                else:
+                    token = request.cookies.get("plexichat_token")
+                
+                if token:
+                    token_info = await get_token_info(token)
+                    if token_info:
+                        current_user_id = token_info.user_id
+
+                sig_valid, _ = await media.verify_signed_url(url_to_verify, current_user_id=current_user_id)
                 if sig_valid:
                     is_signed = True
                     logger.debug(f"Access granted via signed URL: {filename}")
@@ -279,6 +293,9 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
             # --- Authentication (Required if no valid signature or internal) ---
             is_internal = request.scope.get("state", {}).get("is_internal", False)
+
+            if is_internal and not is_signed:
+                logger.info(f"Auth: Internal service access to media file: {filename}")
 
             if not is_signed and not is_internal:
                 # Try Authorization header first (preferred for API calls)
@@ -311,13 +328,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     )
 
                 try:
-                    # Validate session token with optional IP/UA token-binding context.
-                    forwarded_for = request.headers.get("X-Forwarded-For", "")
-                    client_ip = (
-                        forwarded_for.split(",")[0].strip()
-                        if forwarded_for
-                        else (request.client.host if request.client else None)
-                    )
+                    # SECURITY: Use hardened utility to extract client IP from trusted proxies.
+                    from src.utils.net import get_client_ip
+                    client_ip = get_client_ip(request)
+                    
                     user_agent = request.headers.get("User-Agent")
                     token_info = auth.verify_token(token, client_ip, user_agent)
                     if not token_info:
@@ -370,11 +384,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                                 }
                             },
                         )
-                    uid_raw = (
-                        token_info.user_id
-                        if hasattr(token_info, "user_id")
-                        else token_info.get("user_id")
-                    )
+                    uid_raw = getattr(token_info, "user_id", None)
                     if uid_raw and not media.check_file_access(filename, int(uid_raw)):
                         logger.warning(
                             f"Unauthorized attachment access blocked: file={filename}, user={uid_raw}"
@@ -524,8 +534,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     headers["Content-Range"] = f"bytes {start}-{end}/{size}"
 
                 # Helper to correctly slice any stream (file or generator)
-                def get_response_iterator(s, skip, limit):
+                async def get_response_iterator(
+                    s, skip, limit
+                ) -> AsyncGenerator[bytes, None]:
                     import inspect
+                    from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
                     count = 0
                     yielded = 0
@@ -536,44 +549,41 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                             and hasattr(s, "read")
                             and hasattr(s, "seek")
                         ):
-                            # Seekable file-like
-                            with s:
-                                if skip > 0:
-                                    s.seek(skip)
-                                while yielded < limit:
-                                    chunk = s.read(min(65536, limit - yielded))
-                                    if not chunk:
-                                        break
-                                    yield chunk
-                                    yielded += len(chunk)
+                            if skip > 0:
+                                await run_in_threadpool(s.seek, skip)
+                            while yielded < limit:
+                                chunk = await run_in_threadpool(
+                                    s.read, min(65536, limit - yielded)
+                                )
+                                if not chunk:
+                                    break
+                                yield chunk
+                                yielded += len(chunk)
+                            if hasattr(s, "close"):
+                                await run_in_threadpool(s.close)
                         else:
-                            # Generator or non-seekable: Manual skip and yield
-                            for chunk in s:
+                            async for chunk in iterate_in_threadpool(s):
                                 chunk_len = len(chunk)
-
-                                # Skip logic
                                 if count + chunk_len <= skip:
                                     count += chunk_len
                                     continue
-
-                                # Calculate slice
                                 chunk_start = max(0, skip - count)
                                 chunk_end = min(
                                     chunk_len, chunk_start + (limit - yielded)
                                 )
-
                                 if chunk_start < chunk_end:
                                     part = chunk[chunk_start:chunk_end]
                                     yield part
                                     yielded += len(part)
-
                                 count += chunk_len
                                 if yielded >= limit:
                                     break
                     except Exception as e:
                         logger.error(f"Media stream interrupted for {filename}: {e}")
 
-                response_iterator = get_response_iterator(stream, start, content_length)
+                response_iterator = get_response_iterator(
+                    stream, start, content_length
+                )
                 return StreamingResponse(
                     response_iterator,
                     status_code=status_code,

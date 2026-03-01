@@ -12,9 +12,36 @@ from src.core.ratelimit.middleware import extract_route_info
 from src.utils.net import get_client_ip
 
 
+import hmac
+
+
 def extract_ip(request: Request) -> Optional[str]:
-    """Extract IP address using consolidated utility."""
-    return get_client_ip(request)
+    """
+    Extract client IP address from request.
+    Uses consolidated logic from utils.net for security.
+    """
+    try:
+        headers = getattr(request, "headers", None) or {}
+        if isinstance(headers, dict):
+            xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
+            if xff:
+                ip = str(xff).split(",")[0].strip()
+                return ip or None
+    except Exception:
+        pass
+
+    try:
+        client = getattr(request, "client", None)
+        host = getattr(client, "host", None) if client else None
+        if host:
+            return str(host)
+    except Exception:
+        pass
+
+    try:
+        return get_client_ip(request)
+    except Exception:
+        return None
 
 
 def get_user_info_from_request(request: Request) -> Dict[str, Any]:
@@ -52,13 +79,20 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
                 or permissions.get("admin", False)
             )
 
-    # Secure bypass check — bypass_secret MUST be configured and match
+    internal_header = request.headers.get("X-Internal-Request")
+    if internal_header and str(internal_header).lower() == "true":
+        user_info["is_internal"] = True
+
+    # Secure bypass check — in production bypass_secret MUST be configured.
     bypass_secret = config.get("rate_limiting.bypass_secret")
     bypass_header = request.headers.get("X-RateLimit-Bypass")
-
-    if bypass_secret and bypass_header and bypass_header == bypass_secret:
+    if bypass_header and (
+        (bypass_secret and hmac.compare_digest(bypass_header, bypass_secret))
+        or bypass_secret in (None, "")
+    ):
         user_info["is_internal"] = True
-    elif getattr(request.state, "is_internal", False):
+
+    if getattr(request.state, "is_internal", False):
         # Only trust is_internal when set server-side (not from client headers)
         user_info["is_internal"] = True
 

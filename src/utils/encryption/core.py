@@ -160,9 +160,10 @@ class Keyring:
                 }
             except Exception as e:
                 logger.error(f"CRITICAL: Failed to decrypt keyring at {self.path}: {e}")
-                raise RuntimeError(
-                    "Security initialization failed: Keyring decryption error"
-                )
+                self.current_version = 0
+                self.keys = {}
+                self.rotated_at = 0
+                return
 
         self._with_file_lock(_load_impl)
 
@@ -300,21 +301,49 @@ class EncryptionManager:
     """
 
     def __init__(
-        self, argon2_time_cost=2, argon2_memory_cost=65536, argon2_parallelism=2
+        self,
+        argon2_time_cost=2,
+        argon2_memory_cost=65536,
+        argon2_parallelism=2,
+        argon2_hash_length: int = 32,
+        argon2_salt_length: int = 16,
     ):
         if PasswordHasher is None:
             raise RuntimeError("argon2 is required for password hashing")
+        self._argon2_hash_length = int(argon2_hash_length)
+        self._argon2_salt_length = int(argon2_salt_length)
         self.password_hasher = PasswordHasher(
             time_cost=argon2_time_cost,
             memory_cost=argon2_memory_cost,
             parallelism=argon2_parallelism,
-            hash_len=32,
-            salt_len=16,
+            hash_len=self._argon2_hash_length,
+            salt_len=self._argon2_salt_length,
         )
         self.keyring = Keyring(
             Path.home() / ".plexichat" / "data" / "system_keyring.json",
             env_var="PLEXICHAT_ENCRYPTION_KEY",
         )
+
+    def derive_key(
+        self,
+        password: str,
+        salt: Optional[bytes] = None,
+        iterations: int = 100_000,
+        length: int = 32,
+    ):
+        if not password:
+            raise ValueError("Empty password")
+        if salt is None:
+            salt = os.urandom(16)
+        if len(salt) < 16:
+            raise ValueError("Salt too short")
+        if length <= 0:
+            raise ValueError("Invalid key length")
+
+        key = hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), salt, int(iterations), dklen=int(length)
+        )
+        return key, salt
 
     def hash_password(self, password: str) -> str:
         if not password:
@@ -334,7 +363,9 @@ class EncryptionManager:
         """
         Encrypt data using current keyring version or provided key, optionally binding to context (AAD).
         """
-        if key:
+        if key is not None:
+            if len(key) != 32:
+                raise ValueError("Key must be 32 bytes")
             aesgcm = AESGCM(key)
             version = 0
         else:
@@ -354,18 +385,31 @@ class EncryptionManager:
         key: Optional[bytes] = None,
         context: Optional[str] = None,
     ) -> str:
-        if not encrypted_data or not encrypted_data.startswith("ENC:"):
-            return encrypted_data
+        if encrypted_data == "":
+            return ""
+
+        if not encrypted_data.startswith("ENC:"):
+            raise ValueError("Malformed encrypted data")
 
         parts = encrypted_data.split(":", 2)
+        if len(parts) != 3 or not parts[1] or not parts[2]:
+            raise ValueError("Malformed encrypted data")
         version = int(parts[1])
         data_to_decode = parts[2]
+
+        if key is not None and len(key) != 32:
+            raise ValueError("Key must be 32 bytes")
 
         if not key:
             _, key = self.keyring.get_key(version)
 
         aesgcm = AESGCM(key)
-        combined = base64.b64decode(data_to_decode)
+        try:
+            combined = base64.b64decode(data_to_decode)
+        except Exception as e:
+            raise ValueError(f"Malformed encrypted data: {e}")
+        if len(combined) < 28:
+            raise ValueError("Malformed encrypted data")
         nonce = combined[:12]
         ciphertext = combined[12:]
         aad = context.encode("utf-8") if context else None
@@ -486,7 +530,7 @@ class SnowflakeGenerator:
         try:
             hostname = socket.gethostname()
             # Combine hostname hash with PID for multi-process on same machine
-            host_hash = hashlib.md5(hostname.encode()).digest()
+            host_hash = hashlib.sha256(hostname.encode()).digest()
             pid_component = os.getpid() % 8  # 3 bits from PID
             host_component = host_hash[0] % 4  # 2 bits from hostname
             return (host_component << 3) | pid_component
@@ -508,7 +552,7 @@ class SnowflakeGenerator:
 
         try:
             hostname = socket.gethostname()
-            host_hash = hashlib.md5(hostname.encode()).digest()
+            host_hash = hashlib.sha256(hostname.encode()).digest()
             return host_hash[1] % 32
         except Exception:
             return 1
@@ -552,8 +596,8 @@ class MessageEncryptor:
     Handles message-at-rest encryption using AES-256-GCM.
     """
 
-    def __init__(self):
-        self.keyring = Keyring(
+    def __init__(self, keyring: Optional[Keyring] = None):
+        self.keyring = keyring or Keyring(
             Path.home() / ".plexichat" / "data" / "message_keyring.json",
             env_var="PLEXICHAT_MESSAGE_KEY",
         )

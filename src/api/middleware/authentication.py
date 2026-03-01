@@ -37,9 +37,14 @@ class AuthenticationMiddleware:
             request = Request(scope)
             path = scope.get("path", "")
 
+            import hmac
             internal_secret = api.get_internal_secret()
             provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
-            is_internal = bool(internal_secret and provided_secret == internal_secret)
+            is_internal = bool(
+                internal_secret
+                and provided_secret
+                and hmac.compare_digest(provided_secret, internal_secret)
+            )
 
             if is_internal:
                 import utils.logger as logger
@@ -105,11 +110,19 @@ class AuthenticationMiddleware:
             except Exception:
                 is_docs_path = False
 
+            path_parts = path.split("/")
+            is_webhook_execute = (
+                scope.get("method") == "POST"
+                and path.startswith("/api/v1/webhooks/")
+                and len(path_parts) == 6
+                and path_parts[-1] != "regenerate-token"
+            )
+
             is_public_endpoint = (
                 path in public_endpoints
                 or is_docs_path
                 or path.startswith("/api/v1/auth/password-requirements")
-                or (path.startswith("/api/v1/webhooks/") and len(path.split("/")) > 4)  # Webhook execution endpoints
+                or is_webhook_execute
             )
 
             if (
@@ -208,7 +221,9 @@ class AuthenticationMiddleware:
                     auth = api.get_auth()
                     if auth:
                         try:
-                            ip = request.client.host if request.client else None
+                            # SECURITY: Use hardened utility to extract real client IP from trusted proxies
+                            from src.utils.net import get_client_ip
+                            ip = get_client_ip(request)
                             ua = request.headers.get("User-Agent")
 
                             # Use a wrapper to ensure DB connection is returned to pool in the worker thread
@@ -356,6 +371,26 @@ async def get_current_user(request: Request) -> TokenInfo:
             )
 
     return user
+
+
+async def get_token_info(token: str) -> Optional[TokenInfo]:
+    """Verify a raw token string and return token info when valid."""
+    if not token:
+        return None
+
+    auth = api.get_auth()
+    if not auth:
+        return None
+
+    from fastapi.concurrency import run_in_threadpool
+
+    def _verify_token(token_str: str):
+        return auth.verify_token(token_str, None, None)
+
+    try:
+        return await run_in_threadpool(_verify_token, token)
+    except Exception:
+        return None
 
 
 async def get_optional_user(request: Request) -> Optional[TokenInfo]:
