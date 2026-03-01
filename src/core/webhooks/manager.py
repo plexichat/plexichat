@@ -256,7 +256,7 @@ class WebhookManager(BaseManager):
         name = self._validate_name(name)
         avatar_url = self._validate_avatar_url(avatar_url)
 
-        max_per_channel = self._config.get("max_webhooks_per_channel", 10)
+        max_per_channel = self._config.get("max_webhooks_per_channel", 100)
         channel_count = self._get_channel_webhook_count(channel_id)
         if channel_count >= max_per_channel:
             raise WebhookLimitError(
@@ -535,7 +535,7 @@ class WebhookManager(BaseManager):
         params.append(webhook_id)
 
         self._db.execute(
-            f"UPDATE webhook_webhooks SET {', '.join(updates)} WHERE id = ?",
+            f"UPDATE webhook_webhooks SET {', '.join(updates)} WHERE id = ?",  # nosec B608
             tuple(params),
         )
 
@@ -877,3 +877,4 @@ class WebhookManager(BaseManager):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+

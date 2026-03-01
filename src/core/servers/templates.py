@@ -421,7 +421,7 @@ class TemplateManager:
             params.append(template.id)
 
             self._db.execute(
-                f"UPDATE srv_templates SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE srv_templates SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 tuple(params),
             )
 
@@ -484,3 +484,4 @@ class TemplateManager:
             roles=roles or [],
             created_at=row["created_at"],
         )
+

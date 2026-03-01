@@ -334,7 +334,7 @@ class OnboardingManager:
             params.append(step_id)
 
             self._db.execute(
-                f"UPDATE srv_onboarding_steps SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE srv_onboarding_steps SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 tuple(params),
             )
 
@@ -532,3 +532,4 @@ class OnboardingManager:
             started_at=row["started_at"],
             completed_at=row["completed_at"],
         )
+

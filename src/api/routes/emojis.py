@@ -446,10 +446,10 @@ async def create_emoji(
                 image_data=image_data,
                 content_type=content_type,
             )
-            
+
             # Dispatch WebSocket event
             await _dispatch_emoji_update(sid)
-            
+
             return _emoji_to_response(emoji)
         except Exception as e:
             exc_name = type(e).__name__
@@ -574,10 +574,10 @@ async def update_emoji(
                 emoji_id=eid,
                 name=body.name,
             )
-            
+
             # Dispatch WebSocket event
             await _dispatch_emoji_update(sid)
-            
+
             return _emoji_to_response(emoji)
         except Exception as e:
             exc_name = type(e).__name__
@@ -684,10 +684,10 @@ async def delete_emoji(
 
         try:
             reactions.delete_custom_emoji(current_user.user_id, eid)
-            
+
             # Dispatch WebSocket event
             await _dispatch_emoji_update(sid)
-            
+
             return SuccessResponse(success=True)
         except Exception as e:
             exc_name = type(e).__name__

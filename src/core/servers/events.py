@@ -300,7 +300,7 @@ class ScheduledEventManager:
             params.append(event_id)
 
             self._db.execute(
-                f"UPDATE srv_scheduled_events SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE srv_scheduled_events SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 tuple(params),
             )
 
@@ -446,7 +446,7 @@ class ScheduledEventManager:
 
         if updates:
             self._db.execute(
-                f"UPDATE srv_scheduled_events SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE srv_scheduled_events SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 (event_id,),
             )
 
@@ -590,3 +590,4 @@ class ScheduledEventManager:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+

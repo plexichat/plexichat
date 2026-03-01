@@ -18,7 +18,9 @@ class EmojiResponse(BaseModel):
     url: str = Field("", description="Emoji image URL")
     available: bool = Field(True, description="Whether emoji is available for use")
     created_by: str = Field(..., description="User ID who created the emoji")
-    uploader_username: Optional[str] = Field(None, description="Username of the uploader")
+    uploader_username: Optional[str] = Field(
+        None, description="Username of the uploader"
+    )
     created_at: int = Field(..., description="Creation timestamp")
 
     @field_serializer("id", "server_id", "created_by")

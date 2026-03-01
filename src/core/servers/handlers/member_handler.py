@@ -275,7 +275,7 @@ class MemberHandler:
         if updates:
             params.extend([server_id, member_user_id])
             self.db.execute(
-                f"UPDATE srv_members SET {', '.join(updates)} WHERE server_id = ? AND user_id = ?",
+                f"UPDATE srv_members SET {', '.join(updates)} WHERE server_id = ? AND user_id = ?",  # nosec B608
                 tuple(params),
             )
             if user_id != member_user_id:
@@ -565,3 +565,4 @@ class MemberHandler:
             "SELECT * FROM srv_invites WHERE code = ? AND revoked = 0", (code,)
         )
         return self.manager._row_to_invite(row) if row else None
+

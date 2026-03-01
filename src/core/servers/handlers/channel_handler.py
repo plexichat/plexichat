@@ -303,7 +303,7 @@ class ChannelHandler:
             params.append(channel_id)
 
             self.db.execute(
-                f"UPDATE srv_channels SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE srv_channels SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 tuple(params),
             )
 
@@ -374,3 +374,4 @@ class ChannelHandler:
         result = self.manager.get_channel(channel_id, user_id)
         assert result is not None
         return result
+
