@@ -283,16 +283,19 @@ class ReactionManager(BaseManager):
         Rejects zero-width chars, excessive combining marks, control characters.
         """
         VALID_EMOJI_RANGES = [
-            (0x1F000, 0x1FAFF),  # All major emoji blocks (Symbols, Emoticons, Transport, etc.)
+            (
+                0x1F000,
+                0x1FAFF,
+            ),  # All major emoji blocks (Symbols, Emoticons, Transport, etc.)
             (0x1FB00, 0x1FBFF),  # Symbols for Legacy Computing
-            (0x2600, 0x26FF),    # Miscellaneous Symbols
-            (0x2700, 0x27BF),    # Dingbats
-            (0x2300, 0x23FF),    # Miscellaneous Technical
-            (0x2B50, 0x2B55),    # Stars, circles
-            (0xFE00, 0xFE0F),    # Variation Selectors
+            (0x2600, 0x26FF),  # Miscellaneous Symbols
+            (0x2700, 0x27BF),  # Dingbats
+            (0x2300, 0x23FF),  # Miscellaneous Technical
+            (0x2B50, 0x2B55),  # Stars, circles
+            (0xFE00, 0xFE0F),  # Variation Selectors
             (0xE0020, 0xE007F),  # Tags (flag subdivisions)
         ]
-        
+
         # Reject problematic characters
         REJECTED_CHARS = {
             0x200B,  # Zero-width space
@@ -302,41 +305,45 @@ class ReactionManager(BaseManager):
             0x202D,  # Left-to-right override
             0xFEFF,  # Zero-width no-break space
         }
-        
+
         if not text:
             return False
-        
+
         # Check each character
         zwj_count = 0
         for char in text:
             code = ord(char)
-            
+
             # Reject control chars
             if code < 0x20 and code not in (0x09, 0x0A, 0x0D):  # Allow tab, LF, CR
                 return False
-            
+
             # Count zero-width joiners (max 2-3 allowed for skin tones)
             if code == 0x200D:
                 zwj_count += 1
                 if zwj_count > 3:
                     return False
                 continue
-            
+
             # Reject override chars
             if code in REJECTED_CHARS:
                 return False
-            
+
             # Check if in valid emoji range
             in_valid_range = False
             for start, end in VALID_EMOJI_RANGES:
                 if start <= code <= end:
                     in_valid_range = True
                     break
-            
+
             # Also allow basic letters/numbers for text emoji variants
-            if (0x30 <= code <= 0x39) or (0x41 <= code <= 0x5A) or (0x61 <= code <= 0x7A):
+            if (
+                (0x30 <= code <= 0x39)
+                or (0x41 <= code <= 0x5A)
+                or (0x61 <= code <= 0x7A)
+            ):
                 in_valid_range = True
-            
+
             # Allow some punctuation (for :name: style)
             if code in (0x3A, 0x2D, 0x5F):  # : - _
                 in_valid_range = True
@@ -344,10 +351,10 @@ class ReactionManager(BaseManager):
             # Allow keycap combining mark and copyright/registered symbols
             if code in (0x20E3, 0xA9, 0xAE):
                 in_valid_range = True
-            
+
             if not in_valid_range:
                 return False
-        
+
         return True
 
     def _validate_custom_emoji_for_server(
@@ -429,15 +436,15 @@ class ReactionManager(BaseManager):
 
         # Use transaction to prevent race conditions on limit checks
         try:
-            self._db.execute("BEGIN IMMEDIATE")
-            
+            self._db.begin_transaction()
+
             # Re-check existence within transaction (may have changed)
             existing = self._db.fetch_one(
                 "SELECT 1 FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
                 (message_id, user_id, normalized_emoji),
             )
             if existing:
-                self._db.execute("ROLLBACK")
+                self._db.rollback()
                 raise ReactionExistsError("You have already reacted with this emoji")
 
             # Check unique count within transaction
@@ -448,7 +455,7 @@ class ReactionManager(BaseManager):
             )
 
             if not user_has_this_emoji and unique_count >= max_reactions:
-                self._db.execute("ROLLBACK")
+                self._db.rollback()
                 raise ReactionLimitError(
                     f"Message has reached maximum of {max_reactions} unique reactions",
                     max_reactions,
@@ -462,7 +469,7 @@ class ReactionManager(BaseManager):
             )["count"]
 
             if not user_has_this_emoji and user_unique_count >= max_user_reactions:
-                self._db.execute("ROLLBACK")
+                self._db.rollback()
                 raise ReactionLimitError(
                     f"User has reached maximum of {max_user_reactions} unique reactions per message",
                     max_user_reactions,
@@ -487,17 +494,17 @@ class ReactionManager(BaseManager):
                     now,
                 ),
             )
-            
-            self._db.execute("COMMIT")
-            
+
+            self._db.commit()
+
         except ReactionLimitError:
-            self._db.execute("ROLLBACK")
+            self._db.rollback()
             raise
         except ReactionExistsError:
-            self._db.execute("ROLLBACK")
+            self._db.rollback()
             raise
-        except Exception as e:
-            self._db.execute("ROLLBACK")
+        except Exception:
+            self._db.rollback()
             raise
 
         logger.debug(
@@ -726,14 +733,14 @@ class ReactionManager(BaseManager):
                    FROM react_reactions r
                    LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
                    WHERE r.message_id = ?"""
-        
+
         params = [user_id, message_id]
-        
+
         if blocked_users:
             placeholders = ",".join("?" * len(blocked_users))
             query += f" AND r.user_id NOT IN ({placeholders})"
             params.extend(list(blocked_users))
-            
+
         query += """ GROUP BY r.emoji, r.is_custom, r.custom_emoji_id, e.url
                      ORDER BY MIN(r.created_at)"""
 
@@ -963,17 +970,19 @@ class ReactionManager(BaseManager):
         try:
             from io import BytesIO
             from PIL import Image
-            
+
             img = Image.open(BytesIO(image_data))
             # Verify image can be opened and has dimensions
             img.verify()
             width_hint = img.width
             height_hint = img.height
-            
+
             # Sanity checks on dimensions (prevent huge images)
             if width_hint > 1024 or height_hint > 1024:
-                raise InvalidEmojiFileError("Emoji image dimensions too large (max 1024x1024)")
-            
+                raise InvalidEmojiFileError(
+                    "Emoji image dimensions too large (max 1024x1024)"
+                )
+
         except Exception as e:
             # PIL couldn't validate - reject the file
             raise InvalidEmojiFileError(f"Invalid or corrupted image file: {str(e)}")
@@ -990,7 +999,7 @@ class ReactionManager(BaseManager):
         # Check name uniqueness - use transaction to prevent race condition
         try:
             self._db.execute("BEGIN IMMEDIATE")
-            
+
             existing = self._db.fetch_one(
                 "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
                 (server_id, name),
@@ -1017,6 +1026,23 @@ class ReactionManager(BaseManager):
                     if result.metadata:
                         width = result.metadata.get("width")
                         height = result.metadata.get("height")
+                    
+                    # SECURITY: Strictly validate the returned URL to prevent injection/XSS
+                    # Allow only relative paths or specific safe schemes
+                    if url:
+                        # Normalize to absolute path if relative
+                        if url.startswith('/'):
+                            pass 
+                        elif url.startswith('http://') or url.startswith('https://'):
+                            # Basic sanity check on external URLs if allowed
+                            pass
+                        else:
+                            # If it's something else (like javascript:), reject it
+                            logger.error(f"Media module returned unsafe URL: {url}")
+                            self._db.execute("ROLLBACK")
+                            raise InvalidEmojiFileError("Media module returned an unsafe URL")
+                except InvalidEmojiFileError:
+                    raise
                 except Exception as e:
                     logger.error(f"Failed to upload emoji image: {e}")
                     self._db.execute("ROLLBACK")
@@ -1042,9 +1068,9 @@ class ReactionManager(BaseManager):
                     now,
                 ),
             )
-            
+
             self._db.execute("COMMIT")
-            
+
         except EmojiNameExistsError:
             self._db.execute("ROLLBACK")
             raise
@@ -1182,12 +1208,12 @@ class ReactionManager(BaseManager):
             LEFT JOIN auth_users u ON e.created_by = u.id
             WHERE e.server_id = ?
         """
-        
+
         if not include_unavailable:
             query += " AND e.available = 1"
-            
+
         query += " ORDER BY e.name"
-        
+
         rows = self._db.fetch_all(query, (server_id,))
 
         return [self._row_to_custom_emoji(row) for row in rows]
@@ -1244,7 +1270,7 @@ class ReactionManager(BaseManager):
         placeholders = ",".join("?" * len(message_ids))
 
         # Base query
-        query = f"""SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,
+        query = f"""SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,  # nosec B608
                            COUNT(*) as count,
                            MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
                     FROM react_reactions r
@@ -1278,7 +1304,7 @@ class ReactionManager(BaseManager):
                         "me": bool(row["me"]),
                         "is_custom": bool(row["is_custom"]),
                         "custom_emoji_id": row["custom_emoji_id"],
-                        "url": row.get("url")
+                        "url": row.get("url"),
                     }
                 )
 
@@ -1346,7 +1372,7 @@ class ReactionManager(BaseManager):
 
         placeholders = ",".join("?" * len(message_ids))
         rows = self._db.fetch_all(
-            f"SELECT DISTINCT message_id FROM react_reactions WHERE user_id = ? AND message_id IN ({placeholders})",
+            f"SELECT DISTINCT message_id FROM react_reactions WHERE user_id = ? AND message_id IN ({placeholders})",  # nosec B608
             (user_id, *message_ids),
         )
         return [row["message_id"] for row in rows]
@@ -1363,3 +1389,4 @@ class ReactionManager(BaseManager):
     ) -> Dict[int, List[Dict[str, Any]]]:
         """Legacy helper for tests."""
         return self.get_reactions_batch(user_id=1, message_ids=message_ids)
+

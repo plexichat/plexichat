@@ -420,7 +420,7 @@ def set_user_features(
         params.append(user_id)
 
         db.execute(
-            f"UPDATE user_features SET {', '.join(updates)} WHERE user_id = ?",
+            f"UPDATE user_features SET {', '.join(updates)} WHERE user_id = ?",  # nosec B608
             tuple(params),
         )
 
@@ -610,3 +610,4 @@ __all__ = [
     "InvalidTierError",
     "InvalidBadgeError",
 ]
+

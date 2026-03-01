@@ -95,10 +95,7 @@ async def add_reaction(
     """
     # Rate limit reactions: 10 per second per user
     rl_result = ratelimit.check_rate_limit(
-        user_id=current_user.user_id, 
-        route="PUT /reactions",
-        limit=10,
-        window=1
+        user_id=current_user.user_id, route="PUT /reactions"
     )
     if not rl_result.allowed:
         raise HTTPException(
@@ -106,12 +103,12 @@ async def add_reaction(
             detail={
                 "error": {
                     "code": 429,
-                    "message": f"Rate limited. Try again in {rl_result.retry_after}s"
+                    "message": f"Rate limited. Try again in {rl_result.retry_after}s",
                 }
             },
             headers={"Retry-After": str(rl_result.retry_after)},
         )
-    
+
     reactions = api.get_reactions()
     if not reactions:
         logger.error("Reactions module not available")
@@ -160,7 +157,7 @@ async def add_reaction(
                                 },
                             )
             except Exception as e:
-                if isinstance(e, HTTPException) and e.status_code == 403:
+                if isinstance(e, HTTPException) and getattr(e, "status_code", None) == 403:
                     raise
 
         try:
@@ -261,12 +258,9 @@ async def remove_reaction(
 
     Removes the specified emoji reaction from the message.
     """
-    # Rate limit reactions: 10 per second per user
+    # Rate limit reaction removal: 15 per second per user
     rl_result = ratelimit.check_rate_limit(
-        user_id=current_user.user_id, 
-        route="DELETE /reactions",
-        limit=10,
-        window=1
+        user_id=current_user.user_id, route="DELETE /reactions"
     )
     if not rl_result.allowed:
         raise HTTPException(
@@ -274,12 +268,12 @@ async def remove_reaction(
             detail={
                 "error": {
                     "code": 429,
-                    "message": f"Rate limited. Try again in {rl_result.retry_after}s"
+                    "message": f"Rate limited. Try again in {rl_result.retry_after}s",
                 }
             },
             headers={"Retry-After": str(rl_result.retry_after)},
         )
-    
+
     reactions = api.get_reactions()
     if not reactions:
         logger.error("Reactions module not available")
@@ -501,7 +495,14 @@ async def get_reactions(
             result = reactions.get_reactions(current_user.user_id, mid)
 
             return [
-                ReactionResponse(emoji=r.emoji, count=r.count, me=r.me)
+                ReactionResponse(
+                    emoji=r.emoji,
+                    count=r.count,
+                    me=r.me,
+                    url=getattr(r, "url", None),
+                    is_custom=getattr(r, "is_custom", False),
+                    custom_emoji_id=getattr(r, "custom_emoji_id", None),
+                )
                 for r in result.reactions
             ]
         except Exception as e:

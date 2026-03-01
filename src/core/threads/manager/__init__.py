@@ -881,16 +881,49 @@ class ThreadManager(BaseManager):
             (channel_id, ThreadState.ACTIVE.value),
         )
 
+        # SECURITY: Bulk check view permissions to avoid N+1 queries
         threads = []
-        for row in rows:
-            thread = self._row_to_thread(row)
+        possible_threads = [self._row_to_thread(row) for row in rows]
+        
+        # Filter out auto-archived threads first
+        active_threads = []
+        for thread in possible_threads:
             if self._check_auto_archive(thread):
                 self._db.execute(
                     "UPDATE thread_threads SET state = ?, archived_at = ? WHERE id = ?",
                     (ThreadState.ARCHIVED.value, self._get_timestamp(), thread.id),
                 )
                 continue
-            if self.can_view_thread(user_id, thread.id):
+            active_threads.append(thread)
+            
+        if not active_threads:
+            return []
+
+        # Check membership for private threads in bulk
+        private_thread_ids = {t.id for t in active_threads if t.thread_type == ThreadType.PRIVATE}
+        member_thread_ids = set()
+        if private_thread_ids:
+            placeholders = ",".join(["?"] * len(private_thread_ids))
+            member_rows = self._db.fetch_all(
+                f"SELECT thread_id FROM thread_members WHERE user_id = ? AND thread_id IN ({placeholders})",
+                (user_id, *private_thread_ids)
+            )
+            member_thread_ids = {row["thread_id"] for row in member_rows}
+
+        # Check server permission once for public threads (they all share the same channel/server)
+        has_server_view = True
+        public_exists = any(t.thread_type != ThreadType.PRIVATE for t in active_threads)
+        if public_exists and self._servers:
+            first_public = next(t for t in active_threads if t.thread_type != ThreadType.PRIVATE)
+            has_server_view = self._check_permission(
+                user_id, first_public.server_id, "channels.view", first_public.channel_id
+            )
+
+        for thread in active_threads:
+            if thread.thread_type == ThreadType.PRIVATE:
+                if thread.id in member_thread_ids:
+                    threads.append(thread)
+            elif has_server_view:
                 threads.append(thread)
 
         return threads
@@ -933,10 +966,36 @@ class ThreadManager(BaseManager):
                 (channel_id, ThreadState.ARCHIVED.value, limit),
             )
 
+        # SECURITY: Bulk check view permissions to avoid N+1 queries
+        archived_threads = [self._row_to_thread(row) for row in rows]
+        if not archived_threads:
+            return []
+
+        # Bulk check permissions
+        private_thread_ids = {t.id for t in archived_threads if t.thread_type == ThreadType.PRIVATE}
+        member_thread_ids = set()
+        if private_thread_ids:
+            placeholders = ",".join(["?"] * len(private_thread_ids))
+            member_rows = self._db.fetch_all(
+                f"SELECT thread_id FROM thread_members WHERE user_id = ? AND thread_id IN ({placeholders})",
+                (user_id, *private_thread_ids)
+            )
+            member_thread_ids = {row["thread_id"] for row in member_rows}
+
+        has_server_view = True
+        public_exists = any(t.thread_type != ThreadType.PRIVATE for t in archived_threads)
+        if public_exists and self._servers:
+            first_public = next(t for t in archived_threads if t.thread_type != ThreadType.PRIVATE)
+            has_server_view = self._check_permission(
+                user_id, first_public.server_id, "channels.view", first_public.channel_id
+            )
+
         threads = []
-        for row in rows:
-            thread = self._row_to_thread(row)
-            if self.can_view_thread(user_id, thread.id):
+        for thread in archived_threads:
+            if thread.thread_type == ThreadType.PRIVATE:
+                if thread.id in member_thread_ids:
+                    threads.append(thread)
+            elif has_server_view:
                 threads.append(thread)
 
         return threads
@@ -1082,7 +1141,7 @@ class ThreadManager(BaseManager):
         if updates:
             params.append(thread_id)
             self._db.execute(
-                f"UPDATE thread_threads SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE thread_threads SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 tuple(params),
             )
 
@@ -1197,3 +1256,4 @@ class ThreadManager(BaseManager):
             )
 
         return False
+

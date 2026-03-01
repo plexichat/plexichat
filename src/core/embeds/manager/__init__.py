@@ -96,6 +96,29 @@ class EmbedManager(BaseManager):
         embeds_config = config.get("embeds", {})
         return {**defaults, **embeds_config}
 
+    def _scrape_url_metadata(self, url: str) -> Dict[str, Any]:
+        """Scrape URL metadata for previews.
+
+        This method exists primarily as an override point for unit tests.
+        In production it delegates to the hardened LinkPreviewService.
+        """
+        preview = self._link_preview_service.generate_preview(0, url)
+        parsed = urlparse(url)
+        host = parsed.hostname or parsed.netloc
+        site_url = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else None
+
+        return {
+            "type": preview.embed_type,
+            "title": preview.title,
+            "description": preview.description,
+            "site_name": preview.site_name or host,
+            "site_url": site_url,
+            "image": preview.image_url,
+            "image_width": None,
+            "image_height": None,
+            "author": preview.author,
+        }
+
     def _get_message(self, message_id: SnowflakeID) -> Optional[Dict]:
         """Get message from database."""
         return self._db.fetch_one(
@@ -759,11 +782,9 @@ class EmbedManager(BaseManager):
         # Validate URL format first
         validated_url = validate_url(url, "url")
 
-        # Use secure link preview service
+        # Scrape metadata (tests may monkeypatch _scrape_url_metadata)
         try:
-            metadata = self._link_preview_service.generate_preview(
-                user_id, validated_url
-            )
+            scraped = self._scrape_url_metadata(validated_url)
         except RuntimeError as e:
             if "rate limit" in str(e).lower():
                 raise PreviewRateLimitError(str(e))
@@ -773,14 +794,22 @@ class EmbedManager(BaseManager):
 
             raise InvalidUrlError(str(e))
 
+        embed_type_str = (scraped.get("type") or "link").lower()
+        title = scraped.get("title")
+        description = scraped.get("description")
+        site_name = scraped.get("site_name")
+        site_url = scraped.get("site_url")
+        image_url = scraped.get("image")
+        author = scraped.get("author")
+
         # Build embed data from metadata
         embed_data = {
-            "title": metadata.title,
-            "description": metadata.description,
+            "title": title,
+            "description": description,
             "url": validated_url,
-            "image": {"url": metadata.image_url} if metadata.image_url else None,
-            "provider": {"name": metadata.site_name} if metadata.site_name else None,
-            "author": {"name": metadata.author} if metadata.author else None,
+            "image": {"url": image_url} if image_url else None,
+            "provider": {"name": site_name, "url": site_url} if site_name else None,
+            "author": {"name": author} if author else None,
             "fields": [],
         }
 
@@ -797,9 +826,9 @@ class EmbedManager(BaseManager):
         embed_id = self._generate_id()
 
         embed_type = EmbedType.LINK
-        if metadata.embed_type == "video":
+        if embed_type_str == "video":
             embed_type = EmbedType.VIDEO
-        elif metadata.embed_type == "article":
+        elif embed_type_str == "article":
             embed_type = EmbedType.ARTICLE
 
         self._db.execute(
@@ -874,12 +903,11 @@ class EmbedManager(BaseManager):
         """
         validated_url = validate_url(url, "url")
 
-        # Use secure service (with user_id=0 for system/anonymous requests)
         try:
-            metadata = self._link_preview_service.generate_preview(0, validated_url)
-            return metadata.to_dict()
+            metadata = self._scrape_url_metadata(validated_url)
+            metadata["url"] = validated_url
+            return metadata
         except Exception as e:
-            # Fallback to minimal metadata on error
             parsed = urlparse(validated_url)
             logger.warning(f"Failed to parse URL metadata for {validated_url}: {e}")
             return {

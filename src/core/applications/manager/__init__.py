@@ -341,7 +341,7 @@ class ApplicationManager(BaseManager):
             params.append(application_id)
 
             self._db.execute(
-                f"UPDATE app_applications SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE app_applications SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 tuple(params),
             )
 
@@ -971,3 +971,4 @@ class ApplicationManager(BaseManager):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+

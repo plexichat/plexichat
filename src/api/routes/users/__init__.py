@@ -59,17 +59,30 @@ def get_current_user_info(
         )
 
     try:
-        account_type = getattr(current_user, "account_type", None)
-        if hasattr(account_type, "value"):
-            account_type = account_type.value  # type: ignore
+        if getattr(current_user, "token_type", None) == "bot":
+            bot = auth.get_bot(current_user.account_id)
+            if not bot:
+                logger.warning(f"Bot not found for account {current_user.account_id}")
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "User not found"}},
+                )
 
-        lookup_id = (
-            current_user.account_id if account_type == "bot" else current_user.user_id
-        )
+            return UserResponse(
+                id=SnowflakeID(int(bot.id)),
+                username=str(bot.username),
+                email=None,
+                avatar_url=None,
+                created_at=int(bot.created_at),
+                email_verified=False,
+                totp_enabled=False,
+                age_verified=False,
+                badges=[],
+            )
 
-        user = _get_user_cached(lookup_id)
+        user = _get_user_cached(current_user.user_id)
         if not user:
-            logger.warning(f"User profile not found for account {lookup_id}")
+            logger.warning(f"User profile not found for account {current_user.user_id}")
             raise HTTPException(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "User not found"}},

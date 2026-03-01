@@ -99,6 +99,9 @@ async def create_poll(
     body: PollCreateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> PollResponse:
+    """
+    Create a new interactive poll attached to a message.
+    """
     polls_module = api.get_polls()
     messaging = api.get_messaging()
     if not polls_module:
@@ -169,6 +172,9 @@ async def get_poll(
     poll_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> PollResponse:
+    """
+    Retrieve information about a specific poll.
+    """
     polls_module = api.get_polls()
     if not polls_module:
         raise HTTPException(
@@ -217,6 +223,9 @@ async def get_poll_results(
     poll_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> PollResultsResponse:
+    """
+    Retrieve current voting results for a specific poll.
+    """
     polls_module = api.get_polls()
     if not polls_module:
         raise HTTPException(
@@ -264,6 +273,9 @@ async def vote_on_poll(
     body: PollVoteRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> PollResultsResponse:
+    """
+    Cast or update a vote on a specific poll.
+    """
     polls_module = api.get_polls()
     if not polls_module:
         raise HTTPException(
@@ -328,6 +340,9 @@ async def close_poll(
     poll_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> PollResponse:
+    """
+    Manually end a poll, preventing further voting.
+    """
     polls_module = api.get_polls()
     if not polls_module:
         raise HTTPException(
@@ -383,6 +398,9 @@ async def delete_poll(
     poll_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    """
+    Permanently delete a poll and all associated votes.
+    """
     polls_module = api.get_polls()
     if not polls_module:
         raise HTTPException(

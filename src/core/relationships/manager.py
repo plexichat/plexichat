@@ -70,17 +70,11 @@ class RelationshipManager(BaseManager):
 
     def _is_blocked(self, blocker_id: SnowflakeID, blocked_id: SnowflakeID) -> bool:
         """Check if blocker has blocked blocked_id."""
-        blocked_ids = self.get_blocked_user_ids(blocker_id)
-        return (
-            int(blocked_id)
-            in [
-                int(bid)
-                for rid in blocked_ids
-                for bid in ([rid] if not isinstance(rid, list) else rid)
-            ]
-            if blocked_ids
-            else False
+        row = self._db.fetch_one(
+            "SELECT 1 as ok FROM rel_blocked WHERE blocker_id = ? AND blocked_id = ?",
+            (blocker_id, blocked_id),
         )
+        return row is not None
 
     def _is_blocked_by(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
         """Check if user is blocked by other."""
@@ -88,17 +82,11 @@ class RelationshipManager(BaseManager):
 
     def _are_friends(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
         """Check if two users are friends."""
-        friend_ids = self.get_friend_ids(user_id)
-        return (
-            int(other_id)
-            in [
-                int(fid)
-                for rid in friend_ids
-                for fid in ([rid] if not isinstance(rid, list) else rid)
-            ]
-            if friend_ids
-            else False
+        row = self._db.fetch_one(
+            "SELECT 1 as ok FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+            (user_id, other_id),
         )
+        return row is not None
 
     def _get_pending_request(
         self, sender_id: SnowflakeID, recipient_id: SnowflakeID
@@ -245,8 +233,8 @@ class RelationshipManager(BaseManager):
 
         # Invalidate friends cache for both users
         # from src.core.database import invalidate_cached
-        self.get_friend_ids.invalidate(row["sender_id"])  # type: ignore
-        self.get_friend_ids.invalidate(row["recipient_id"])  # type: ignore
+        self.get_friend_ids.invalidate(self, row["sender_id"])  # type: ignore
+        self.get_friend_ids.invalidate(self, row["recipient_id"])  # type: ignore
         invalidate_pattern(f"all_relationships:*{row['sender_id']}*")
         invalidate_pattern(f"all_relationships:*{row['recipient_id']}*")
 
@@ -432,8 +420,8 @@ class RelationshipManager(BaseManager):
 
         # Invalidate friends cache for both users
         # from src.core.database import invalidate_cached
-        self.get_friend_ids.invalidate(user_id)  # type: ignore
-        self.get_friend_ids.invalidate(friend_id)  # type: ignore
+        self.get_friend_ids.invalidate(self, user_id)  # type: ignore
+        self.get_friend_ids.invalidate(self, friend_id)  # type: ignore
         invalidate_pattern(f"all_relationships:*{user_id}*")
         invalidate_pattern(f"all_relationships:*{friend_id}*")
 
@@ -501,10 +489,10 @@ class RelationshipManager(BaseManager):
 
         # Invalidate caches
         # from src.core.database import invalidate_cached
-        self.get_blocked_user_ids.invalidate(blocker_id)  # type: ignore
+        self.get_blocked_user_ids.invalidate(self, blocker_id)  # type: ignore
         # Also invalidate friends in case they were friends
-        self.get_friend_ids.invalidate(blocker_id)  # type: ignore
-        self.get_friend_ids.invalidate(blocked_id)  # type: ignore
+        self.get_friend_ids.invalidate(self, blocker_id)  # type: ignore
+        self.get_friend_ids.invalidate(self, blocked_id)  # type: ignore
         invalidate_pattern(f"all_relationships:*{blocker_id}*")
         invalidate_pattern(f"all_relationships:*{blocked_id}*")
 
@@ -537,7 +525,7 @@ class RelationshipManager(BaseManager):
         )
 
         # Invalidate cache
-        self.get_blocked_user_ids.invalidate(blocker_id)  # type: ignore
+        self.get_blocked_user_ids.invalidate(self, blocker_id)  # type: ignore
         invalidate_pattern(f"all_relationships:*{blocker_id}*")
         invalidate_pattern(f"all_relationships:*{blocked_id}*")
 
