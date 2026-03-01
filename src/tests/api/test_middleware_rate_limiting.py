@@ -352,14 +352,14 @@ class TestBypassFunctionality:
         """Test admin users bypass rate limiting."""
         unique_id = uuid.uuid4().hex[:8]
         user = modules.auth.register(
-            username=f"admin_{unique_id}",
-            email=f"admin_{unique_id}@example.com",
+            username=f"teststaff_{unique_id}",
+            email=f"teststaff_{unique_id}@example.com",
             password="TestPass123!",
         )
 
         modules.auth.grant_permission(user.id, "admin.*")
 
-        login_result = modules.auth.login(f"admin_{unique_id}", "TestPass123!")
+        login_result = modules.auth.login(f"teststaff_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
         client = TestClient(bypass_app)

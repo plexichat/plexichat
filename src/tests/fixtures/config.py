@@ -81,7 +81,7 @@ def get_test_config():
             "invite_code_length": 8,
         },
         "webhooks": {
-            "max_webhooks_per_channel": 10,
+            "max_webhooks_per_channel": 100,
             "max_webhooks_per_server": 50,
             "max_message_length": 2000,
             "max_embeds_per_message": 10,

@@ -28,6 +28,8 @@ import os
 import sys
 import uuid
 
+import unittest.mock
+
 from src.utils import encryption
 
 # Load custom pytest plugins
@@ -45,6 +47,47 @@ for path in [project_root, src_path, utils_path, common_utils_path]:
 
 import utils.config as config  # noqa: E402
 import utils.version as version  # noqa: E402
+
+
+@pytest.fixture
+def mocker():
+    class _PatchProxy:
+        def __init__(self, patches):
+            self._patches = patches
+
+        def __call__(self, *args, **kwargs):
+            p = unittest.mock.patch(*args, **kwargs)
+            started = p.start()
+            self._patches.append(p)
+            return started
+
+        def object(self, *args, **kwargs):
+            p = unittest.mock.patch.object(*args, **kwargs)
+            started = p.start()
+            self._patches.append(p)
+            return started
+
+    class _Mocker:
+        MagicMock = unittest.mock.MagicMock
+
+        def __init__(self):
+            self._patches = []
+
+            self.patch = _PatchProxy(self._patches)
+
+        def stopall(self):
+            while self._patches:
+                p = self._patches.pop()
+                try:
+                    p.stop()
+                except Exception:
+                    pass
+
+    m = _Mocker()
+    try:
+        yield m
+    finally:
+        m.stopall()
 
 DEFAULT_TEST_CONFIG = {
     "authentication": {
@@ -274,7 +317,10 @@ def session_users(modules):
 
     # Increased for performance/integration tests that consume many pooled users
     for i in range(200):
-        username = f"pooluser_{i}_{uuid.uuid4().hex[:4]}"
+        # IMPORTANT: username blacklist normalization maps digits to letters (0->o, 1->i, 5->s, 7->t, etc.).
+        # To avoid accidental matches like "bot" from hex fragments, generate random suffix using letters.
+        random_suffix = "".join([chr(97 + int(c, 16)) for c in uuid.uuid4().hex[:12]])
+        username = f"testuser_{i}_{random_suffix}"
         email = f"{username}@test.example.com"
         password = TEST_PASSWORD
 

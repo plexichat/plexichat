@@ -72,6 +72,17 @@ def _mock_url_preview_scraper(db_and_modules, monkeypatch):
 
     monkeypatch.setattr(manager, "_scrape_url_metadata", _fake_scrape)
 
+    def _create_url_preview_no_net(user_id: int, url: str, message_id=None):
+        return manager.create_url_preview(
+            user_id=user_id, url=url, message_id=message_id
+        )
+
+    def _parse_url_metadata_no_net(url: str):
+        return manager.parse_url_metadata(url)
+
+    monkeypatch.setattr(embeds, "create_url_preview", _create_url_preview_no_net)
+    monkeypatch.setattr(embeds, "parse_url_metadata", _parse_url_metadata_no_net)
+
 
 class TestCreateUrlPreview:
     """Tests for creating URL preview embeds."""
@@ -143,8 +154,8 @@ class TestCreateUrlPreview:
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
-            username=f"url4_{unique_id}",
-            email=f"url4_{unique_id}@example.com",
+            username=f"preview4_{unique_id}",
+            email=f"preview4_{unique_id}@example.com",
             password="TestPass123!",
         )
 
@@ -210,8 +221,8 @@ class TestCreateUrlPreview:
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
-            username=f"url7_{unique_id}",
-            email=f"url7_{unique_id}@example.com",
+            username=f"preview7_{unique_id}",
+            email=f"preview7_{unique_id}@example.com",
             password="TestPass123!",
         )
 

@@ -29,7 +29,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "version": version,
             "environment": "development",
         },
-        "server": {"host": "0.0.0.0", "port": 8000, "workers": 1, "reload": False},
+        "server": {"host": "127.0.0.1", "port": 8000, "workers": 1, "reload": False},
         "logging": {
             "level": "DEBUG",
             "max_bytes": 10485760,  # 10MB
@@ -535,7 +535,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "max_cooldown_seconds": 30.0,
         },
         "webhooks": {
-            "max_webhooks_per_channel": 10,
+            "max_webhooks_per_channel": 100,
             "max_webhooks_per_server": 50,
             "max_message_length": 2000,
             "max_embeds_per_message": 10,

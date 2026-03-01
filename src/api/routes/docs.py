@@ -597,11 +597,17 @@ async def _serve_page(
 @router.get("")
 @router.get("/")
 async def docs_index(request: Request):
+    """
+    Serve the documentation homepage.
+    """
     return await _serve_page(request, Path("docs/index.md"), "Home", "/")
 
 
 @router.get("/getting-started")
 async def docs_getting_started(request: Request):
+    """
+    Serve the 'Getting Started' documentation page.
+    """
     return await _serve_page(
         request, Path("docs/getting-started.md"), "Getting Started", "/getting-started"
     )
@@ -609,6 +615,9 @@ async def docs_getting_started(request: Request):
 
 @router.get("/deployment")
 async def docs_deployment(request: Request):
+    """
+    Serve the 'Deployment' documentation page.
+    """
     return await _serve_page(
         request, Path("docs/deployment.md"), "Deployment", "/deployment"
     )
@@ -616,6 +625,9 @@ async def docs_deployment(request: Request):
 
 @router.get("/configuration")
 async def docs_configuration(request: Request):
+    """
+    Serve the 'Configuration' documentation page.
+    """
     return await _serve_page(
         request, Path("docs/configuration.md"), "Configuration", "/configuration"
     )
@@ -623,6 +635,9 @@ async def docs_configuration(request: Request):
 
 @router.get("/reference")
 async def docs_api_reference(request: Request):
+    """
+    Serve the API reference index page.
+    """
     return await _serve_page(
         request, Path("docs/api/index.md"), "API Reference", "/reference"
     )
@@ -630,6 +645,9 @@ async def docs_api_reference(request: Request):
 
 @router.get("/reference/{page}")
 async def docs_api_page(request: Request, page: str):
+    """
+    Serve a specific API reference documentation page.
+    """
     return await _serve_page(
         request, Path(f"docs/api/{page}.md"), page.title(), f"/reference/{page}"
     )
@@ -637,6 +655,9 @@ async def docs_api_page(request: Request, page: str):
 
 @router.get("/websocket")
 async def docs_websocket_index(request: Request):
+    """
+    Serve the WebSocket documentation index page.
+    """
     return await _serve_page(
         request, Path("docs/websocket/index.md"), "WebSocket", "/websocket"
     )
@@ -644,6 +665,9 @@ async def docs_websocket_index(request: Request):
 
 @router.get("/websocket/{page}")
 async def docs_websocket_page(request: Request, page: str):
+    """
+    Serve a specific WebSocket documentation page.
+    """
     return await _serve_page(
         request, Path(f"docs/websocket/{page}.md"), page.title(), f"/websocket/{page}"
     )
@@ -651,6 +675,9 @@ async def docs_websocket_page(request: Request, page: str):
 
 @router.get("/rate-limits")
 async def docs_rate_limits(request: Request):
+    """
+    Serve the dynamically generated rate limits documentation page.
+    """
     content = _generate_dynamic_rate_limits_content()
     return HTMLResponse(
         _markdown_to_html(content, "Rate Limits", get_docs_config(), "/rate-limits")
@@ -659,11 +686,17 @@ async def docs_rate_limits(request: Request):
 
 @router.get("/errors")
 async def docs_errors(request: Request):
+    """
+    Serve the 'Errors' documentation page.
+    """
     return await _serve_page(request, Path("docs/errors.md"), "Errors", "/errors")
 
 
 @router.get("/security-logout")
 async def docs_security_logout(request: Request):
+    """
+    Serve the 'Security Logout' documentation page.
+    """
     return await _serve_page(
         request, Path("docs/security-logout.md"), "Security Logout", "/security-logout"
     )
@@ -671,6 +704,9 @@ async def docs_security_logout(request: Request):
 
 @router.get("/data-types")
 async def docs_data_types(request: Request):
+    """
+    Serve the 'Data Types' documentation page.
+    """
     return await _serve_page(
         request, Path("docs/data-types.md"), "Data Types", "/data-types"
     )

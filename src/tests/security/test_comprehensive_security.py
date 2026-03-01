@@ -312,7 +312,7 @@ class TestPrivilegeEscalation:
         try:
             bot = modules.auth.create_bot(
                 owner_id=owner.id,
-                username=f"adminbot_{owner.id}",
+                username=f"sysbot_{owner.id}",
                 display_name="Admin Bot",
                 permissions={"admin.*": True},
             )

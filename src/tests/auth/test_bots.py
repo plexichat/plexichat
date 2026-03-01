@@ -18,7 +18,7 @@ def unique_name(prefix):
 def fresh_user(db_and_auth):
     """Create a fresh user for bot tests."""
     db, auth = db_and_auth
-    name = unique_name("botuser")
+    name = unique_name("testuser")
     user = auth.register(name, f"{name}@example.com", "TestPass123!")
     return user, auth
 
@@ -134,8 +134,8 @@ class TestBots:
         """Test regenerating bot token by non-owner fails."""
         db, auth = db_and_auth
 
-        name1 = unique_name("botowner")
-        name2 = unique_name("notowner")
+        name1 = unique_name("usera")
+        name2 = unique_name("userb")
         user1 = auth.register(name1, f"{name1}@example.com", "TestPass123!")
         user2 = auth.register(name2, f"{name2}@example.com", "TestPass123!")
 

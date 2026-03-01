@@ -33,6 +33,7 @@ PyYAML>=6.0.1
 
 # HTTP Client (for webhooks, etc.)
 requests>=2.31.0
+urllib3>=2.6.3             # Fixed for GHSA-2xpw-w6gg-jr37, GHSA-38jv-5279-wg99, GHSA-gm62-xv2j-4w53, GHSA-pq67-6m6q-mj2v
 httpx>=0.26.0
 aiohttp>=3.9.0
 

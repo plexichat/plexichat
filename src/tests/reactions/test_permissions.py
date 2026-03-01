@@ -131,13 +131,13 @@ class TestModeratorActions:
         unique_id = uuid.uuid4().hex[:8]
 
         owner = auth.register(
-            username=f"admin_owner_{unique_id}",
-            email=f"admin_owner_{unique_id}@example.com",
+            username=f"testowner_{unique_id}",
+            email=f"testowner_{unique_id}@example.com",
             password="TestPass123!",
         )
         admin = auth.register(
-            username=f"admin_user_{unique_id}",
-            email=f"admin_user_{unique_id}@example.com",
+            username=f"teststaff_{unique_id}",
+            email=f"teststaff_{unique_id}@example.com",
             password="TestPass123!",
         )
 
