@@ -114,23 +114,26 @@ class TestGetUserInfoFromRequest:
         user_info = get_user_info_from_request(mock_request)
         assert user_info["is_admin"] is True
 
-    def test_internal_request_header(self, mock_request):
-        """Test internal request detection via X-Internal-Request header."""
+    def test_internal_request_header_ignored(self, mock_request):
+        """Test that X-Internal-Request header is now ignored for security."""
         mock_request.headers = {"X-Internal-Request": "true"}
         user_info = get_user_info_from_request(mock_request)
-        assert user_info["is_internal"] is True
+        assert user_info["is_internal"] is False
 
-    def test_internal_request_case_insensitive(self, mock_request):
-        """Test X-Internal-Request header is case insensitive."""
-        mock_request.headers = {"X-Internal-Request": "TRUE"}
-        user_info = get_user_info_from_request(mock_request)
-        assert user_info["is_internal"] is True
-
-    def test_rate_limit_bypass_header(self, mock_request):
-        """Test rate limit bypass via X-RateLimit-Bypass header."""
-        mock_request.headers = {"X-RateLimit-Bypass": "secret"}
-        user_info = get_user_info_from_request(mock_request)
-        assert user_info["is_internal"] is True
+    def test_rate_limit_bypass_header_requires_secret(self, mock_request):
+        """Test rate limit bypass via X-RateLimit-Bypass header with secret."""
+        with patch("src.api.middleware.rate_limiting.config.get") as mock_get:
+            mock_get.return_value = "correct_secret"
+            
+            # Correct secret
+            mock_request.headers = {"X-RateLimit-Bypass": "correct_secret"}
+            user_info = get_user_info_from_request(mock_request)
+            assert user_info["is_internal"] is True
+            
+            # Wrong secret
+            mock_request.headers = {"X-RateLimit-Bypass": "wrong_secret"}
+            user_info = get_user_info_from_request(mock_request)
+            assert user_info["is_internal"] is False
 
     def test_no_user_state(self, mock_request):
         """Test when no user is in request state."""
@@ -367,41 +370,38 @@ class TestBypassFunctionality:
             response = client.get("/api/v1/test", headers=headers)
             assert response.status_code == 200, f"Admin request {i + 1} failed"
 
-    def test_internal_request_bypasses(self, bypass_app):
-        """Test internal requests bypass rate limiting."""
+    def test_internal_request_no_longer_bypasses(self, bypass_app):
+        """Test that X-Internal-Request header no longer bypasses rate limiting."""
         client = TestClient(bypass_app)
         headers = {"X-Internal-Request": "true"}
 
-        for i in range(10):
-            response = client.get("/api/v1/test", headers=headers)
-            assert response.status_code == 200, f"Internal request {i + 1} failed"
-
-    def test_normal_user_rate_limited(self, bypass_app, modules, user_pool):
-        """Test normal users are rate limited."""
-        unique_id = uuid.uuid4().hex[:8]
-        modules.auth.register(
-            username=f"user_{unique_id}",
-            email=f"user_{unique_id}@example.com",
-            password="TestPass123!",
-        )
-        login_result = modules.auth.login(f"user_{unique_id}", "TestPass123!")
-        headers = {"Authorization": f"Bearer {login_result.token}"}
-
-        client = TestClient(bypass_app)
+        # First request - Success
         response = client.get("/api/v1/test", headers=headers)
         assert response.status_code == 200
-
+        
+        # Second request - Should FAIL (429) despite the header
         response = client.get("/api/v1/test", headers=headers)
         assert response.status_code == 429
 
-    def test_bypass_header_works(self, bypass_app):
-        """Test X-RateLimit-Bypass header bypasses limits."""
+    def test_bypass_header_requires_correct_secret(self, bypass_app):
+        """Test X-RateLimit-Bypass header bypasses limits only with correct secret."""
         client = TestClient(bypass_app)
-        headers = {"X-RateLimit-Bypass": "secret"}
-
-        for i in range(10):
-            response = client.get("/api/v1/test", headers=headers)
-            assert response.status_code == 200
+        
+        from unittest.mock import patch
+        with patch("src.api.middleware.rate_limiting.config.get") as mock_get:
+            mock_get.return_value = "correct_secret"
+            
+            headers = {"X-RateLimit-Bypass": "correct_secret"}
+            for i in range(5):
+                response = client.get("/api/v1/test", headers=headers)
+                assert response.status_code == 200, f"Bypass request {i + 1} failed with correct secret"
+                
+            # Wrong secret should be rate limited
+            headers_wrong = {"X-RateLimit-Bypass": "wrong_secret"}
+            client.get("/api/v1/test") # Consume the remaining limit if any
+            
+            response = client.get("/api/v1/test", headers=headers_wrong)
+            assert response.status_code == 429
 
 
 class TestIPBasedRateLimiting:

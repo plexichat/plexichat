@@ -79,18 +79,12 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
                 or permissions.get("admin", False)
             )
 
-    internal_header = request.headers.get("X-Internal-Request")
-    if internal_header and str(internal_header).lower() == "true":
-        user_info["is_internal"] = True
-
-    # Secure bypass check — in production bypass_secret MUST be configured.
+    # Secure bypass check — requires non-empty bypass_secret.
     bypass_secret = config.get("rate_limiting.bypass_secret")
-    bypass_header = request.headers.get("X-RateLimit-Bypass")
-    if bypass_header and (
-        (bypass_secret and hmac.compare_digest(bypass_header, bypass_secret))
-        or bypass_secret in (None, "")
-    ):
-        user_info["is_internal"] = True
+    if bypass_secret:
+        bypass_header = request.headers.get("X-RateLimit-Bypass")
+        if bypass_header and hmac.compare_digest(bypass_header, bypass_secret):
+            user_info["is_internal"] = True
 
     if getattr(request.state, "is_internal", False):
         # Only trust is_internal when set server-side (not from client headers)
