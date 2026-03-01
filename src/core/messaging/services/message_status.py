@@ -169,20 +169,44 @@ class MessageStatusService(BaseService):
 
         return count
 
-    @cached(ttl=10, prefix="unread_counts")
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: Optional[SnowflakeID] = None
     ) -> Dict[SnowflakeID, int]:
         """Get unread message counts (cached)."""
         if conversation_id:
+            # Normalize IDs for SQLite bindings; in some call paths these can be
+            # str-like SnowflakeIDs which may not match integer columns.
+            try:
+                conv_id_norm: SnowflakeID = int(conversation_id)  # type: ignore[arg-type]
+            except Exception:
+                conv_id_norm = conversation_id
+
+            try:
+                user_id_norm: SnowflakeID = int(user_id)  # type: ignore[arg-type]
+            except Exception:
+                user_id_norm = user_id
+
+            def participant_exists() -> bool:
+                if self._participant_repo.exists(conv_id_norm, user_id_norm):
+                    return True
+
+                # SQLite can be sensitive to binding types when IDs are stored as TEXT.
+                # Try string bindings as a fallback.
+                try:
+                    if self._participant_repo.exists(str(conversation_id), str(user_id)):
+                        return True
+                except Exception:
+                    pass
+                return False
+
             # IMPORTANT: Use a direct DB-backed participation check here.
             # ParticipantService.is_participant has an internal cache and also
             # server-membership logic; both can cause false negatives for DMs in
             # isolated test flows.
-            if not self._participant_repo.exists(conversation_id, user_id):
+            if not participant_exists():
                 return {}
-            count = self._repo.get_unread_count(user_id, conversation_id)
-            return {conversation_id: count}
+            count = self._repo.get_unread_count(user_id_norm, conv_id_norm)
+            return {conv_id_norm: count}
 
         return self._repo.get_all_unread_counts(user_id)
 
