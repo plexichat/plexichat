@@ -6,6 +6,7 @@ Makes real HTTP calls to OpenAI's moderation endpoint.
 
 import json
 from typing import Dict, Any, Optional
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
@@ -58,13 +59,20 @@ class OpenAIAdapter(BaseAIAdapter):
             )
 
         try:
+            parsed = urlparse(self._api_url)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise AIBackendError(
+                    "OpenAI API URL must be an absolute https URL",
+                    backend="openai",
+                )
+
             request_data = json.dumps({"input": content, "model": self._model}).encode(
                 "utf-8"
             )
 
             request = Request(
                 self._api_url,
-                data=request_data,
+                data=request_data,  # nosec B310
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
@@ -130,3 +138,4 @@ class OpenAIAdapter(BaseAIAdapter):
     def get_categories(self) -> Dict[str, str]:
         """Get OpenAI moderation categories."""
         return self.CATEGORIES.copy()
+

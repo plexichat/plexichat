@@ -37,6 +37,11 @@ async def get_hash_reports(
     limit: int = 50,
     offset: int = 0,
 ):
+    """
+    Retrieve a list of content hash reports for review.
+
+    Allows filtering by status and supports pagination.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -73,6 +78,9 @@ async def get_hash_reports(
 
 @router.get("/hash-reports/counts", response_model=HashReportCountsResponse)
 async def get_hash_report_counts(request: Request):
+    """
+    Get the total number of content hash reports, grouped by status.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -86,6 +94,11 @@ async def get_hash_report_counts(request: Request):
 async def review_hash_report(
     report_id: int, review: HashReportReviewRequest, request: Request
 ):
+    """
+    Submit a review for a specific content hash report.
+
+    Updates the report status and optionally takes action against the reported content.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
@@ -100,6 +113,9 @@ async def review_hash_report(
 
 @router.get("/blocked-hashes", response_model=List[BlockedHashResponse])
 async def get_blocked_hashes(request: Request, limit: int = 100, offset: int = 0):
+    """
+    List all currently blocked content hashes.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -120,6 +136,9 @@ async def get_blocked_hashes(request: Request, limit: int = 100, offset: int = 0
 
 @router.post("/blocked-hashes", response_model=BlockHashResponse)
 async def block_hash_manually(block_request: ManualBlockHashRequest, request: Request):
+    """
+    Manually add a content hash to the blocklist.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
@@ -144,6 +163,9 @@ async def block_hash_manually(block_request: ManualBlockHashRequest, request: Re
 
 @router.delete("/blocked-hashes/{hash_value}", response_model=SuccessResponse)
 async def unblock_hash(hash_value: str, request: Request):
+    """
+    Remove a content hash from the blocklist.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -158,6 +180,9 @@ async def unblock_hash(hash_value: str, request: Request):
 
 @router.get("/blocked-users", response_model=List[BlockedUserResponse])
 async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0):
+    """
+    Retrieve a list of all currently blocked or banned users.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -177,6 +202,9 @@ async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0)
 
 @router.post("/blocked-users", response_model=BlockUserResponse)
 async def block_user(block_request: BlockUserRequest, request: Request):
+    """
+    Block or ban a specific user from the platform.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
@@ -196,6 +224,9 @@ async def block_user(block_request: BlockUserRequest, request: Request):
 
 @router.delete("/blocked-users/{user_id}", response_model=SuccessResponse)
 async def unblock_user(user_id: int, request: Request):
+    """
+    Lift a block or ban from a specific user.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
@@ -242,6 +273,9 @@ def _rule_to_response(rule) -> AutomodRuleResponse:
 
 @router.get("/automod/rules", response_model=List[AutomodRuleResponse])
 async def get_automod_rules(request: Request, server_id: int):
+    """
+    Retrieve the list of AutoMod rules configured for a specific server.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import automod
@@ -258,6 +292,9 @@ async def get_automod_rules(request: Request, server_id: int):
 
 @router.post("/automod/rules", response_model=AutomodRuleResponse)
 async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
+    """
+    Create a new AutoMod rule for a server.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import automod
@@ -298,6 +335,9 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
 async def update_automod_rule(
     rule_id: int, body: AutomodRuleUpdateRequest, request: Request
 ):
+    """
+    Update an existing AutoMod rule.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import automod
@@ -340,6 +380,9 @@ async def update_automod_rule(
 
 @router.delete("/automod/rules/{rule_id}", response_model=SuccessResponse)
 async def delete_automod_rule(rule_id: int, request: Request):
+    """
+    Permanently delete an AutoMod rule.
+    """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import automod
@@ -362,6 +405,9 @@ async def delete_automod_rule(rule_id: int, request: Request):
 
 @router.get("/automod/config", response_model=AutomodConfigResponse)
 async def get_automod_config(request: Request):
+    """
+    Retrieve the global configuration settings for the AutoMod system.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     automod_config = config.get("automod", {}) or {}
@@ -373,6 +419,9 @@ async def get_automod_config(request: Request):
 
 @router.put("/automod/config", response_model=AutomodConfigResponse)
 async def update_automod_config(body: AutomodConfigUpdateRequest, request: Request):
+    """
+    Update the global AutoMod configuration settings.
+    """
     check_host_restriction(request)
     get_admin_from_token(request)
     current = config.get("automod", {}) or {}

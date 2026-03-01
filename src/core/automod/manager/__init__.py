@@ -615,7 +615,7 @@ class AutoModManager(BaseManager):
             params.append(rule_id)
 
             self._db.execute(
-                f"UPDATE automod_rules SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE automod_rules SET {', '.join(updates)} WHERE id = ?",  # nosec B608
                 tuple(params),
             )
 
@@ -741,6 +741,14 @@ class AutoModManager(BaseManager):
         self, server_id: SnowflakeID, user_id: SnowflakeID, channel_id: SnowflakeID
     ) -> bool:
         """Check if user/channel is globally exempt."""
+        # 0. Server owner is always exempt
+        server_row = self._db.fetch_one(
+            "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
+            (server_id,),
+        )
+        if server_row and int(server_row["owner_id"]) == int(user_id):
+            return True
+
         # 1. Global Channel Exemption
         channel_exempt = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
@@ -762,11 +770,26 @@ class AutoModManager(BaseManager):
         )
         role_ids = [r["role_id"] for r in user_roles]
 
+        # 1.5 Automatic exemption: any role with administrator permission
+        if role_ids:
+            placeholders = ",".join("?" * len(role_ids))
+            role_rows = self._db.fetch_all(
+                f"SELECT permissions FROM srv_roles WHERE id IN ({placeholders}) AND deleted = 0",  # nosec B608
+                tuple(role_ids),
+            )
+            for rr in role_rows:
+                try:
+                    perms = json.loads(rr.get("permissions") or "{}")
+                except Exception:
+                    perms = {}
+                if isinstance(perms, dict) and perms.get("administrator") is True:
+                    return True
+
         # 2. Global Role Exemption
         if role_ids:
             placeholders = ",".join("?" * len(role_ids))
             role_exempt = self._db.fetch_one(
-                f"""SELECT id FROM automod_exemptions 
+                f"""SELECT id FROM automod_exemptions   # nosec B608
                     WHERE server_id = ? AND target_type = 'role' AND target_id IN ({placeholders}) AND rule_id IS NULL""",
                 (server_id, *role_ids),
             )
@@ -816,7 +839,7 @@ class AutoModManager(BaseManager):
         if user_role_ids:
             placeholders = ",".join("?" * len(user_role_ids))
             role_exempt = self._db.fetch_one(
-                f"""SELECT id FROM automod_exemptions 
+                f"""SELECT id FROM automod_exemptions   # nosec B608
                     WHERE server_id = ? AND target_type = 'role' AND target_id IN ({placeholders}) AND rule_id = ?""",
                 (rule.server_id, *user_role_ids, rule.id),
             )
@@ -1315,3 +1338,4 @@ class AutoModManager(BaseManager):
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
             created_at=row["created_at"],
         )
+

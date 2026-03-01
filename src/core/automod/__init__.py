@@ -153,6 +153,7 @@ def _get_manager():
 
 
 def reload_config() -> None:
+    """Reload the automod configuration from the source."""
     _get_manager().reload_config()
 
 

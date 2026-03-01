@@ -6,6 +6,7 @@ Makes real HTTP calls to Perspective API for toxicity analysis.
 
 import json
 from typing import Dict, Any, Optional
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
@@ -76,8 +77,14 @@ class PerspectiveAdapter(BaseAIAdapter):
             ).encode("utf-8")
 
             url = f"{self.API_URL}?key={self._api_key}"
+            parsed = urlparse(url)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise AIBackendError(
+                    "Perspective API URL must be an absolute https URL",
+                    backend="perspective",
+                )
 
-            request = Request(
+            request = Request(  # nosec B310
                 url,
                 data=request_data,
                 headers={"Content-Type": "application/json"},
@@ -144,3 +151,4 @@ class PerspectiveAdapter(BaseAIAdapter):
             for cat, desc in self.CATEGORIES.items()
             if cat in self._requested_attributes
         }
+

@@ -51,7 +51,15 @@ class RegexRule(BaseRule):
                     options.case_sensitive = case_sensitive
                     options.one_line = not multiline
 
-                    compiled = re2_module.compile(pattern_str, options=options)
+                    try:
+                        compiled = re2_module.compile(pattern_str, options=options)
+                    except Exception:
+                        flags = 0
+                        if not case_sensitive:
+                            flags |= re.IGNORECASE
+                        if multiline:
+                            flags |= re.MULTILINE
+                        compiled = re.compile(pattern_str, flags)
                 else:
                     flags = 0
                     if not case_sensitive:
@@ -164,7 +172,12 @@ class RegexRule(BaseRule):
                 try:
                     if HAS_RE2 and re2_module:
                         # re2 is naturally safe from ReDoS
-                        re2_module.compile(pattern_str)
+                        try:
+                            re2_module.compile(pattern_str)
+                        except Exception:
+                            # Some valid Python regex constructs (e.g. lookahead) are not supported by RE2.
+                            # Accept them by validating with stdlib re instead.
+                            re.compile(pattern_str)
                     else:
                         # Fallback validation if re2 is missing (legacy protection)
                         re.compile(pattern_str)

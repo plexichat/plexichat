@@ -6,6 +6,7 @@ Makes real HTTP calls to user-configured moderation endpoints.
 
 import json
 from typing import Dict, Any, Optional
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
@@ -45,9 +46,16 @@ class CustomAdapter(BaseAIAdapter):
             )
 
         try:
+            parsed = urlparse(self._endpoint_url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise AIBackendError(
+                    "Custom endpoint URL must be an absolute http(s) URL",
+                    backend="custom",
+                )
+
             request_data = self._build_request(content, context)
             headers = self._build_headers()
-
+  # nosec B310
             request = Request(
                 self._endpoint_url,
                 data=json.dumps(request_data).encode("utf-8"),
@@ -143,3 +151,4 @@ class CustomAdapter(BaseAIAdapter):
     def get_categories(self) -> Dict[str, str]:
         """Custom endpoints define their own categories."""
         return {}
+
