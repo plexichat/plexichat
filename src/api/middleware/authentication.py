@@ -91,6 +91,7 @@ class AuthenticationMiddleware:
                 "/api/v1/capabilities",
                 "/api/v1/version",
                 "/api/v1/auth/password-requirements",
+                "/api/v1/telemetry/csp-report",
                 "/health",
                 "/status",
                 "/docs",
