@@ -68,8 +68,6 @@ class ReactionManager(BaseManager):
         self._media = media_module
         self._config = self._load_config()
 
-        self._migrate_emoji_table()
-
         logger.info("Reaction module initialized")
 
     def get_conversation_id_from_message(
