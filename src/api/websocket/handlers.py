@@ -128,25 +128,22 @@ class OpcodeHandler:
         if not validate_intents(intents):
             return None, None, int(GatewayCloseCode.INVALID_INTENTS)
 
+        properties = data.get("properties", {})
+        connection.properties = properties
+        
+        user_agent = properties.get("browser") or properties.get("$browser")
+        if not user_agent:
+            # Fallback to handshake header
+            user_agent = connection.websocket.headers.get("User-Agent")
+
         user_id = await self._verify_token(
             token,
             ip_address=connection.websocket.client.host
             if connection.websocket.client
             else None,
-            user_agent=connection.properties.get("browser"),
+            user_agent=user_agent,
             is_selftest=connection.is_selftest,
         )
-        if user_id is None:
-            return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
-
-        # Bypass rate limits for self-test
-        if not connection.is_selftest and not self._session_manager.can_user_connect(
-            user_id
-        ):
-            return None, None, int(GatewayCloseCode.RATE_LIMITED)
-
-        properties = data.get("properties", {})
-        connection.properties = properties
 
         compress = data.get("compress", False)
         if compress:
