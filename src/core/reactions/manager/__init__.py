@@ -432,6 +432,13 @@ class ReactionManager(BaseManager):
             raise ReactionExistsError("You have already reacted with this emoji")
 
         max_reactions = self._config.get("max_reactions_per_message", 20)
+        if channel:
+            srv_row = self._db.fetch_one(
+                "SELECT max_reactions_per_message FROM srv_servers WHERE id = ?", (channel["server_id"],)
+            )
+            if srv_row and srv_row["max_reactions_per_message"]:
+                max_reactions = srv_row["max_reactions_per_message"]
+                
         max_user_reactions = self._config.get("max_unique_reactions_per_user", 50)
 
         # Use transaction to prevent race conditions on limit checks

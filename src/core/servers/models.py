@@ -124,6 +124,7 @@ class Server:
     role_count: int = 0
     default_role_id: Optional[SnowflakeID] = None
     default_channel_id: Optional[SnowflakeID] = None
+    max_reactions_per_message: int = 20
     deleted: bool = False
     deleted_at: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
