@@ -635,18 +635,21 @@ class AuthManager(BaseManager):
         if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
 
-        if self._config.get("security", {}).get("token_binding", False) and ip_address and row.get("ip_index"):
+        if self._config.get("security", {}).get("token_binding", False):
+            # Strict Binding: IP must be provided and must match
+            if not ip_address:
+                raise TokenInvalidError("IP Binding Required")
+            
             current_ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
-            if row["ip_index"] != current_ip_index:
+            if row.get("ip_index") and row["ip_index"] != current_ip_index:
                 raise TokenInvalidError("IP Binding Mismatch")
 
-        if (
-            self._config.get("security", {}).get("token_binding", False)
-            and user_agent
-            and row.get("user_agent")
-            and row.get("user_agent") != user_agent
-        ):
-            raise TokenInvalidError("User-Agent Binding Mismatch")
+            # Strict Binding: User-Agent must be provided and must match
+            if not user_agent:
+                raise TokenInvalidError("User-Agent Binding Required")
+                
+            if row.get("user_agent") and row["user_agent"] != user_agent:
+                raise TokenInvalidError("User-Agent Binding Mismatch")
 
         now = self._get_timestamp()
 
@@ -1206,8 +1209,8 @@ class AuthManager(BaseManager):
             "UPDATE auth_email_tokens SET used = 1 WHERE id = ?", (rec["id"],)
         )
         # Invalidate cache for this user
-        invalidate_pattern(f"user_data:{user_id}*")
-        invalidate_pattern(f"user_api:{user_id}*")
+        invalidate_pattern(f"user_data:{rec['user_id']}*")
+        invalidate_pattern(f"user_api:{rec['user_id']}*")
         return True
 
     def validate_password(self, password: str) -> PasswordValidation:
@@ -1870,7 +1873,11 @@ class AuthManager(BaseManager):
         placeholders = ",".join("?" for _ in user_ids)
         # JOIN with user_features to get badges
         query = f"""
-            SELECT u.*, f.tier, f.badges, f.is_bot
+            SELECT
+                u.*,
+                f.rate_limit_tier AS tier,
+                f.badges,
+                CASE WHEN u.account_type = 'bot' THEN 1 ELSE 0 END AS is_bot
             FROM auth_users u
             LEFT JOIN user_features f ON u.id = f.user_id
             WHERE u.id IN ({placeholders})

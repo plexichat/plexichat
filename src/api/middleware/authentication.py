@@ -126,6 +126,11 @@ class AuthenticationMiddleware:
                 or is_webhook_execute
             )
 
+            if is_internal:
+                # Early exit for internal services - they don't need user tokens
+                await self.app(scope, receive, send)
+                return
+
             if (
                 not is_admin_path
                 and not is_public_endpoint
