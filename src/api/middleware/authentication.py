@@ -237,7 +237,9 @@ class AuthenticationMiddleware:
                                 db = api.get_db()
                                 try:
                                     return auth.verify_token(
-                                        token_str, client_ip, user_agent
+                                        token_str, 
+                                        ip_address=client_ip, 
+                                        user_agent=user_agent
                                     )
                                 finally:
                                     if db:

@@ -66,8 +66,7 @@ class MessageStatusService(BaseService):
         if not valid_ids:
             return 0
 
-        status_id = self._generate_id()
-        return self._repo.batch_mark_delivered(user_id, valid_ids, now, status_id)
+        return self._repo.batch_mark_delivered(user_id, valid_ids, now)
 
     def mark_read(
         self,
@@ -124,14 +123,12 @@ class MessageStatusService(BaseService):
 
         count = 0
         if user_settings.read_receipts_enabled and channel_receipts_enabled:
-            status_id = self._generate_id()
             # Pass last_read_id to avoid redundant updates
             count = self._repo.batch_mark_read(
                 user_id,
                 conversation_id,
                 target_msg_id,
                 now,
-                status_id,
                 start_from_id=last_read_id,
             )
 

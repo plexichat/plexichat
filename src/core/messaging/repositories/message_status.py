@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from ..models import MessageStatus, MessageStatusType
 from .base import BaseRepository
 from src.core.base import SnowflakeID
+from src.utils.encryption import generate_snowflake_id
 
 
 class MessageStatusRepository(BaseRepository[MessageStatus]):
@@ -23,9 +24,9 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
     ) -> None:
         """Create a new message status entry."""
         self._execute(
-            """INSERT INTO msg_message_status (message_id, user_id, status, timestamp)
-               VALUES (?, ?, ?, ?)""",
-            (message_id, user_id, status.value, timestamp),
+            """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+               VALUES (?, ?, ?, ?, ?)""",
+            (status_id, message_id, user_id, status.value, timestamp),
             auto_commit=auto_commit,
         )
 
@@ -104,7 +105,6 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         user_id: SnowflakeID,
         message_ids: List[SnowflakeID],
         timestamp: int,
-        status_id: SnowflakeID,
         auto_commit: bool = True,
     ) -> int:
         """Mark multiple messages as delivered in batch."""
@@ -115,6 +115,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         data = []
         for mid in message_ids:
             data.append((
+                generate_snowflake_id(), # Generate unique ID for each status record
                 mid,
                 user_id,
                 MessageStatusType.DELIVERED.value,
@@ -122,8 +123,8 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
             ))
 
         self._db.execute_many(
-            """INSERT INTO msg_message_status (message_id, user_id, status, timestamp)
-               VALUES (?, ?, ?, ?)
+            """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+               VALUES (?, ?, ?, ?, ?)
                ON CONFLICT (message_id, user_id) 
                DO UPDATE SET 
                    status = CASE 
@@ -146,7 +147,6 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         conversation_id: SnowflakeID,
         up_to_message_id: Optional[SnowflakeID],
         timestamp: int,
-        status_id: SnowflakeID,
         auto_commit: bool = True,
         start_from_id: Optional[SnowflakeID] = None,
     ) -> int:
@@ -172,11 +172,17 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         # 2. SECURITY: Use execute_many for true batch performance
         data = []
         for mid in message_ids:
-            data.append((mid, user_id, MessageStatusType.READ.value, timestamp))
+            data.append((
+                generate_snowflake_id(), # Generate unique ID for each status record
+                mid, 
+                user_id, 
+                MessageStatusType.READ.value, 
+                timestamp
+            ))
 
         self._db.execute_many(
-            """INSERT INTO msg_message_status (message_id, user_id, status, timestamp)
-               VALUES (?, ?, ?, ?)
+            """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+               VALUES (?, ?, ?, ?, ?)
                ON CONFLICT (message_id, user_id) 
                DO UPDATE SET status = EXCLUDED.status, timestamp = EXCLUDED.timestamp
                WHERE msg_message_status.status != 'read'""",
