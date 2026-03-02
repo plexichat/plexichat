@@ -182,29 +182,30 @@ class Query(ABC):
                     return row_count
             else:  # postgres
                 cursor = self.connection.cursor()
-                # Convert Parameter objects and ? to %s for PostgreSQL
-                param_values = [
-                    p.value if isinstance(p, Parameter) else p for p in params
-                ]
-                # Replace ? with %s for PostgreSQL using the dialect utility
-                from . import dialect
+                try:
+                    # Convert Parameter objects and ? to %s for PostgreSQL
+                    param_values = [
+                        p.value if isinstance(p, Parameter) else p for p in params
+                    ]
+                    # Replace ? with %s for PostgreSQL using the dialect utility
+                    from . import dialect
 
-                pg_sql = dialect.convert_placeholders(sql, self.db_type)
-                cursor.execute(pg_sql, param_values)
+                    pg_sql = dialect.convert_placeholders(sql, self.db_type)
+                    cursor.execute(pg_sql, param_values)
 
-                # Get results based on query type
-                if isinstance(self, SelectQuery):
-                    results = cursor.fetchall()
-                    logger.debug(f"Query returned {len(results)} rows")
+                    # Get results based on query type
+                    if isinstance(self, SelectQuery):
+                        results = cursor.fetchall()
+                        logger.debug(f"Query returned {len(results)} rows")
+                        return results
+                    else:
+                        # For INSERT, UPDATE, DELETE
+                        row_count = cursor.rowcount
+                        self.connection.commit()
+                        logger.debug(f"Query affected {row_count} rows")
+                        return row_count
+                finally:
                     cursor.close()
-                    return results
-                else:
-                    # For INSERT, UPDATE, DELETE
-                    row_count = cursor.rowcount
-                    self.connection.commit()
-                    logger.debug(f"Query affected {row_count} rows")
-                    cursor.close()
-                    return row_count
         except Exception as e:
             logger.error(f"Query execution failed: {str(e)}")
             try:

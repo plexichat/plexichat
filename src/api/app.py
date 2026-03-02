@@ -89,6 +89,9 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         openapi_url=config.openapi_url,
     )
 
+    # Database cleanup MUST be innermost to catch connections from other middlewares
+    app.add_middleware(DatabaseMiddleware)
+
     if enable_rate_limiting:
         from src.core import ratelimit
 
@@ -100,7 +103,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     app.add_middleware(IPBlockingMiddleware)
     app.add_middleware(ErrorHandlingMiddleware)
     app.add_middleware(LoggingMiddleware)
-    app.add_middleware(DatabaseMiddleware)
 
     # CORS handles OPTIONS preflight - MUST be outermost
     # (In ASGI, last added is outermost)
