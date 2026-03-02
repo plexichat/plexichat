@@ -635,7 +635,7 @@ class AuthManager(BaseManager):
         if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
 
-        if self._config.get("security", {}).get("token_binding", False) and ip_address:
+        if self._config.get("security", {}).get("token_binding", False) and ip_address and row.get("ip_index"):
             current_ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
             if row["ip_index"] != current_ip_index:
                 raise TokenInvalidError("IP Binding Mismatch")
