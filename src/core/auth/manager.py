@@ -802,24 +802,29 @@ class AuthManager(BaseManager):
         rows = self._db.fetch_all(
             "SELECT * FROM auth_sessions WHERE user_id = ? AND revoked = 0", (user_id,)
         )
-        return [
-            Session(
+        sessions = []
+        for r in rows:
+            ip_address = None
+            if r.get("ip_encrypted"):
+                try:
+                    ip_address = self.crypto.decrypt_data(
+                        r["ip_encrypted"], context=str(r["id"])
+                    )
+                except Exception:
+                    ip_address = "[decryption failed]"
+            
+            sessions.append(Session(
                 id=r["id"],
                 user_id=r["user_id"],
                 device_id=r["device_id"],
-                ip_address=self.crypto.decrypt_data(
-                    r["ip_encrypted"], context=str(r["id"])
-                )
-                if r.get("ip_encrypted")
-                else None,
+                ip_address=ip_address,
                 user_agent=r["user_agent"],
                 created_at=r["created_at"],
                 expires_at=r["expires_at"],
                 last_activity=r["last_activity"],
                 revoked=bool(r["revoked"]),
-            )
-            for r in rows
-        ]
+            ))
+        return sessions
 
     def revoke_session(self, user_id: int, session_id: int) -> bool:
         invalidate_pattern("token_verify:*")
