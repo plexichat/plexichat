@@ -72,10 +72,10 @@ class DatabaseMaintenanceMixin:
 
         try:
             if self.type == "postgres":
-                if getattr(conn, "closed", 0) > 0:
+                if conn and getattr(conn, "closed", 0) > 0:
                     self.transaction_depth = 0
                     self.in_transaction = False
-                elif self.transaction_depth > 0:
+                elif conn and self.transaction_depth > 0:
                     try:
                         if cursor is not None:
                             cursor.execute(
@@ -85,10 +85,10 @@ class DatabaseMaintenanceMixin:
                         conn.rollback()
                         self.transaction_depth = 0
                         self.in_transaction = False
-                else:
+                elif conn:
                     conn.rollback()
                     self.in_transaction = False
-            elif not self.in_transaction:
+            elif conn and not self.in_transaction:
                 conn.rollback()
         except Exception as cleanup_e:
             logger.error(f"Error during error cleanup: {cleanup_e}")
