@@ -418,7 +418,7 @@ class EncryptionManager:
             plaintext = aesgcm.decrypt(nonce, ciphertext, aad)
             return plaintext.decode("utf-8")
         except Exception as e:
-            logger.error(f"Decryption failed: {e}")
+            logger.error(f"Decryption failed: {repr(e)}")
             raise ValueError(
                 "Integrity check failed: Data may have been tampered with."
             )
