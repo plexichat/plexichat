@@ -461,11 +461,13 @@ class AuthManager(BaseManager):
             (self._get_timestamp(), user_id),
         )
 
-        email = (
-            self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
-            if row["email_encrypted"]
-            else None
-        )
+        email = None
+        if row["email_encrypted"]:
+            try:
+                email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
+            except Exception:
+                email = "[decryption failed]"
+
         user = User(
             id=user_id,
             account_type=AccountType(row["account_type"]),
