@@ -1003,7 +1003,7 @@ class ReactionManager(BaseManager):
 
         # Check name uniqueness - use transaction to prevent race condition
         try:
-            self._db.execute("BEGIN IMMEDIATE")
+            self._db.execute("BEGIN")
 
             existing = self._db.fetch_one(
                 "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
