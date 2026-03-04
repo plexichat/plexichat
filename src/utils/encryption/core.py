@@ -160,6 +160,16 @@ class Keyring:
                 }
             except Exception as e:
                 logger.error(f"CRITICAL: Failed to decrypt keyring at {self.path}: {e}")
+                
+                # If keyring decryption fails, it usually means the KEK has changed.
+                # In this case, all cached data encrypted with the old keys is now invalid.
+                try:
+                    from src.core.database import invalidate_pattern
+                    count = invalidate_pattern("*")
+                    logger.warning(f"KEK change detected or keyring corrupted. Invalidated {count} cache keys.")
+                except Exception as ce:
+                    logger.error(f"Failed to invalidate cache after keyring decryption failure: {ce}")
+
                 self.current_version = 0
                 self.keys = {}
                 self.rotated_at = 0
