@@ -1,113 +1,30 @@
-# WebSocket Close Codes
+# Gateway Close Codes
 
-How to handle different close codes when disconnected.
+The backend defines these application close codes in `src/api/websocket/opcodes.py`.
 
-## Reconnectable Codes
+## Defined Close Codes
 
-These codes allow reconnection and session resume:
+| Code | Name | Meaning |
+|------|------|---------|
+| `4000` | `UNKNOWN_ERROR` | generic internal error |
+| `4001` | `UNKNOWN_OPCODE` | unrecognized opcode received |
+| `4002` | `DECODE_ERROR` | invalid payload encoding or shape |
+| `4003` | `NOT_AUTHENTICATED` | client tried to act before identifying |
+| `4004` | `AUTHENTICATION_FAILED` | token invalid or rejected |
+| `4005` | `ALREADY_AUTHENTICATED` | duplicate identify on an active session |
+| `4006` | `SESSION_NO_LONGER_VALID` | resume session can no longer be used |
+| `4007` | `INVALID_SEQUENCE` | resume sequence invalid |
+| `4008` | `RATE_LIMITED` | gateway-level rate limit exceeded |
+| `4009` | `SESSION_TIMED_OUT` | session expired while disconnected |
+| `4010` | `INVALID_SHARD` | invalid shard requested |
+| `4011` | `SHARDING_REQUIRED` | sharding required for this workload |
+| `4012` | `INVALID_API_VERSION` | unsupported API or gateway version |
+| `4013` | `INVALID_INTENTS` | malformed or unsupported intents |
+| `4014` | `DISALLOWED_INTENTS` | requested intents are not permitted |
 
-| Code | Name | Action |
-|------|------|--------|
-| 4000 | UNKNOWN_ERROR | Reconnect with backoff |
-| 4001 | UNKNOWN_OPCODE | Reconnect immediately |
-| 4002 | DECODE_ERROR | Reconnect immediately |
-| 4003 | NOT_AUTHENTICATED | Reconnect and re-identify |
-| 4005 | ALREADY_AUTHENTICATED | Reconnect immediately |
-| 4007 | INVALID_SEQ | Reconnect and re-identify |
-| 4008 | RATE_LIMITED | Wait, then reconnect |
-| 4009 | SESSION_TIMED_OUT | Reconnect and re-identify |
+## Client Guidance
 
-## Non-Reconnectable Codes
-
-These codes require user action or indicate permanent failure:
-
-| Code | Name | Action |
-|------|------|--------|
-| 4004 | AUTHENTICATION_FAILED | Invalid token, re-authenticate |
-| 4010 | INVALID_SHARD | Fix shard configuration |
-| 4011 | SHARDING_REQUIRED | Implement sharding |
-| 4012 | INVALID_API_VERSION | Update client |
-| 4013 | INVALID_INTENTS | Fix intents configuration |
-| 4014 | DISALLOWED_INTENTS | Request privileged intents |
-| 4015 | VERSION_OUTDATED | Update client |
-
-## Special Codes
-
-### 4016 - SERVER_MAINTENANCE
-
-Server is entering maintenance mode.
-
-**Action:**
-1. Display maintenance message to user
-2. Poll `/api/v1/status` endpoint every 5 seconds
-3. Reconnect when state returns to `running`
-
-### 4017 - SERVER_SHUTDOWN
-
-Server is shutting down.
-
-**Action:**
-1. Display shutdown message to user
-2. Poll `/api/v1/status` endpoint every 5 seconds
-3. Reconnect when server is back online
-
-## SERVER_STATUS Opcode (12)
-
-Before closing with 4016 or 4017, the server sends a SERVER_STATUS message:
-
-```json
-{
-  "op": 12,
-  "d": {
-    "state": "shutting_down",
-    "message": "Server shutting down for maintenance",
-    "closing_in_seconds": 2.0,
-    "estimated_downtime_seconds": 300
-  }
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| state | string | `shutting_down`, `restarting`, or `maintenance` |
-| message | string | Human-readable status message |
-| closing_in_seconds | float | Seconds until connection closes |
-| estimated_downtime_seconds | int | Optional estimated downtime |
-| restart_at | string | Optional ISO timestamp for restart |
-
-**Client handling:**
-1. Listen for opcode 12 messages
-2. Save any pending state (unsent messages, etc.)
-3. Display status message to user
-4. Prepare reconnection logic
-5. After close, use exponential backoff to reconnect
-
-## Reconnection Strategy
-
-```
-attempt = 0
-max_attempts = 10
-base_delay = 1000  // 1 second
-
-while attempt < max_attempts:
-    delay = min(base_delay * (2 ^ attempt), 60000)  // Max 60 seconds
-    wait(delay + random(0, 1000))  // Add jitter
-    
-    try:
-        connect()
-        if can_resume:
-            send_resume()
-        else:
-            send_identify()
-        break
-    except:
-        attempt += 1
-```
-
-## Rate Limit Handling
-
-If closed with 4008 (RATE_LIMITED):
-
-1. Wait for the retry_after duration
-2. Reconnect
-3. Reduce message frequency
+- treat `4004`, `4006`, `4007`, and `4009` as signals to stop trying to resume blindly
+- re-identify only when the close reason indicates that a fresh session is appropriate
+- back off when rate-limited instead of reconnecting in a tight loop
+- log both the close code and the most recent opcode/event context for debugging

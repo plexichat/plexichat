@@ -1,87 +1,26 @@
 # PlexiChat Documentation
 
-API and WebSocket documentation for the PlexiChat messaging platform.
+This directory contains the narrative backend documentation served by the custom docs portal.
 
-## Structure
+## Primary Entry Points
 
-```
-docs/
-+-- index.md              # Documentation home
-+-- getting-started.md    # Quick start guide
-+-- configuration.md      # Server configuration
-+-- deployment.md         # Production deployment guide
-+-- data-types.md         # Data type definitions
-+-- errors.md             # Error codes and handling
-+-- rate-limits.md        # Rate limiting documentation
-+-- performance.md        # Performance optimization guide
-+-- features.md           # Complete feature list
-+-- api/                  # REST API documentation
-|   +-- index.md          # Endpoint reference
-|   +-- authentication.md # Auth endpoints
-|   +-- users.md          # User management
-|   +-- servers.md        # Server/guild management
-|   +-- channels.md       # Channel management
-|   +-- messages.md       # Messaging
-|   +-- reactions.md      # Message reactions
-|   +-- relationships.md  # Friends and blocks
-|   +-- presence.md       # User status
-|   +-- webhooks.md       # Webhook integration
-|   +-- avatars.md        # Avatar management
-|   +-- emojis.md         # Custom emoji
-+-- websocket/            # WebSocket documentation
-    +-- index.md          # Gateway overview
-    +-- connection.md     # Connection lifecycle
-    +-- events.md         # Event types
-    +-- close-codes.md    # Close code reference
-+-- database-deployment.md # Database migration guide
-+-- database-monitoring.md # Connection pool monitoring
-+-- security-logout.md    # Security logout page
-```
+- `index.md` — portal home page
+- `getting-started.md` — first-call and capability guidance
+- `configuration.md` — high-level configuration areas
+- `deployment.md` — non-sensitive deployment guidance
+- `rate-limits.md` — request-throttling overview
+- `features.md` — backend feature map
+- `security.md` — public security guidance
+- `api/index.md` — REST route-group overview
+- `websocket/index.md` — gateway overview
 
-## Serving Documentation
+## Additional Reference Pages
 
-Documentation is served through the API at `/docs/api/` when enabled in configuration.
+The `api/` and `websocket/` subdirectories contain route-group and gateway-specific documentation, including the pages added for search, notifications, polls, voice, media, reports, feedback, telemetry, system routes, and gateway opcodes.
 
-### Configuration
+## Documentation Rules For This Directory
 
-```yaml
-docs:
-  enabled: true
-  path: /docs/api
-  title: PlexiChat API Documentation
-  theme:
-    style: dark
-    primary_color: "#e94560"
-```
-
-## API Base URL
-
-The API base URL is dynamically determined based on your deployment:
-
-| Environment | Base URL |
-|-------------|----------|
-| Production | `https://api.plexichat.com/api/v1` |
-| Development | `http://localhost:8000/api/v1` |
-
-All API endpoints are relative to this base URL.
-
-## WebSocket Gateway URL
-
-The WebSocket gateway URL is dynamically determined based on your deployment:
-
-| Environment | Base URL |
-|-------------|----------|
-| Production | `wss://api.plexichat.com/gateway` |
-| Development | `ws://localhost:8000/gateway` |
-
-All WebSocket connections use this base URL.
-
-## Contributing
-
-When updating documentation:
-
-1. Verify all claims against the actual codebase in `src/`
-2. Keep examples accurate and tested
-3. Update inter-document links when adding new pages
-4. Follow the existing markdown formatting style
-5. Update API base URLs when adding new examples
+- keep examples aligned with the codebase
+- prefer runtime placeholders such as `{{BASE_URL}}` and `{{WEBSOCKET_URL}}`
+- avoid private infrastructure details, secrets, and environment-specific runbooks
+- use the generated OpenAPI docs at `/docs` for exact schemas when narrative docs would duplicate them

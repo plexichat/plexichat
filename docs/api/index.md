@@ -1,229 +1,56 @@
 # REST API Reference
 
-The PlexiChat REST API provides endpoints for managing users, servers, channels, messages, and more.
-
-**API Version**: `a.1.0-44`
+This section organizes the backend REST API by route group. For exact request and response schemas, use the generated OpenAPI docs at `/docs`.
 
 ## Base URL
 
-**Current API Base URL**: `{{BASE_URL}}`
+All routes in this section are relative to `{{BASE_URL}}`.
 
-All API endpoints are relative to this base URL.
+## Public Utility Endpoints
 
-## Authentication
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | readiness and health signal |
+| `GET /version` | current backend version |
+| `POST /version/negotiate` | client compatibility negotiation |
+| `GET /status` | operational or maintenance status |
+| `GET /capabilities` | public runtime constants and feature hints |
+| `GET /qr` | local QR code generation |
 
-Most endpoints require authentication via the `Authorization` header:
+## Authenticated Product Areas
 
-```bash
-# User session token
-curl {{BASE_URL}}/users/@me \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+| Route group | Purpose |
+|-------------|---------|
+| [Authentication](authentication.md) | registration, login, sessions, 2FA, recovery |
+| [Users](users.md) | profiles, notes, presence, self-service user actions |
+| [Settings](settings.md) | synced user preference storage |
+| [Relationships](relationships.md) | friends, blocks, and relationship state |
+| [Servers](servers.md) | servers, members, roles, invites, structure |
+| [Channels](channels.md) | channel management and channel-scoped actions |
+| [Messages](messages.md) | message CRUD, pins, acks, and attachments |
+| [Reactions](reactions.md) | message reactions and reaction user lists |
+| [Presence](presence.md) | presence retrieval and updates |
+| [Webhooks](webhooks.md) | webhook management and execution |
+| [Avatars](avatars.md) | user and server avatar endpoints |
+| [Emojis](emojis.md) | custom emoji management |
+| [Features](features.md) | public feature visibility plus admin-controlled tiers/badges |
 
-# Bot token
-curl {{BASE_URL}}/users/@me \
-  -H "Authorization: Bot YOUR_BOT_TOKEN"
-```
+## Additional Route Groups
 
-### API Access Token (Optional)
+| Route group | Routes covered |
+|-------------|----------------|
+| [Search](search.md) | `/search/messages`, `/search/users`, `/search/servers` |
+| [Notifications](notifications.md) | current-user notification reads and read markers |
+| [Polls](polls.md) | poll creation, voting, results, close, delete |
+| [Voice](voice.md) | ICE server discovery and voice channel info |
+| [Media](media.md) | hash reporting, resumable upload sessions, compression status |
+| [Reports](reports.md) | user and message reporting |
+| [Feedback](feedback.md) | feedback submission and status checks |
+| [Telemetry](telemetry.md) | response-time and CSP telemetry ingestion |
+| [System](system.md) | capabilities, help pages, QR, health, status, version |
 
-Some servers may be configured to require an additional API access token header for all authenticated API requests.
+## Notes
 
-When required, include:
-
-```bash
-curl {{BASE_URL}}/users/@me \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-  -H "X-API-Access-Token: YOUR_API_ACCESS_TOKEN"
-```
-
-You can detect whether the server requires this by calling `GET /capabilities` and checking `access_token_required`.
-
-## Endpoint Categories
-
-### Health & Version
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/health` | Health check | No |
-| GET | `/version` | Server version info | No |
-| POST | `/version/negotiate` | Version compatibility check | No |
-| GET | `/status` | Server operational status | No |
-| GET | `/qr` | Generate QR code locally | No |
-
-### Authentication
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| POST | `/auth/register` | Register new account | No |
-| POST | `/auth/login` | Login | No |
-| POST | `/auth/2fa` | Complete 2FA challenge | No |
-| POST | `/auth/logout` | Logout current session | Yes |
-| GET | `/auth/sessions` | List active sessions | Yes |
-| DELETE | `/auth/sessions/{id}` | Revoke specific session | Yes |
-| POST | `/auth/sessions/revoke-all` | Revoke all sessions | Yes |
-| GET | `/auth/2fa/status` | Get 2FA status | Yes |
-| POST | `/auth/2fa/enable` | Start 2FA setup | Yes |
-| POST | `/auth/2fa/confirm` | Confirm 2FA setup | Yes |
-| POST | `/auth/2fa/disable` | Disable 2FA | Yes |
-| GET | `/auth/password-requirements` | Get password policy | No |
-
-### Users
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/users/@me` | Get current user | Yes |
-| PATCH | `/users/@me` | Update current user | Yes |
-| POST | `/users/@me/avatar` | Upload avatar | Yes |
-| GET | `/users/@me/channels` | List DM channels | Yes |
-| POST | `/users/@me/channels` | Create/get DM channel | Yes |
-| GET | `/users/@me/notes` | Get personal notes channel | Yes |
-| GET | `/users/@me/features` | Get user features/badges | Yes |
-| GET | `/users/search` | Search user by username | Yes |
-| GET | `/users/{id}` | Get user by ID | Yes |
-| GET | `/users/{id}/presence` | Get user presence | Yes |
-| PUT | `/users/@me/presence` | Update presence | Yes |
-
-### User Settings
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/users/@me/settings` | Get all settings | Yes |
-| GET | `/users/@me/settings/{key}` | Get specific setting | Yes |
-| PUT | `/users/@me/settings/{key}` | Set setting value | Yes |
-| DELETE | `/users/@me/settings/{key}` | Delete setting | Yes |
-
-### Servers
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/servers` | List user's servers | Yes |
-| POST | `/servers` | Create server | Yes |
-| GET | `/servers/{id}` | Get server | Yes |
-| PATCH | `/servers/{id}` | Update server | Yes |
-| DELETE | `/servers/{id}` | Delete server | Yes |
-| GET | `/servers/{id}/channels` | List server channels | Yes |
-| POST | `/servers/{id}/channels` | Create channel | Yes |
-| GET | `/servers/{id}/members` | List server members | Yes |
-| DELETE | `/servers/{id}/members/{id}` | Kick member | Yes |
-| GET | `/servers/{id}/roles` | List roles | Yes |
-| POST | `/servers/{id}/roles` | Create role | Yes |
-| PATCH | `/servers/{id}/roles/{id}` | Update role | Yes |
-| DELETE | `/servers/{id}/roles/{id}` | Delete role | Yes |
-| PUT | `/servers/{id}/members/{id}/roles/{id}` | Assign role | Yes |
-| DELETE | `/servers/{id}/members/{id}/roles/{id}` | Remove role | Yes |
-| GET | `/servers/{id}/invites` | List server invites | Yes |
-| GET | `/servers/{id}/webhooks` | List server webhooks | Yes |
-
-### Channels
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/channels/{id}` | Get channel | Yes |
-| PATCH | `/channels/{id}` | Update channel | Yes |
-| DELETE | `/channels/{id}` | Delete channel | Yes |
-| POST | `/channels/{id}/invites` | Create invite | Yes |
-| POST | `/channels/{id}/attachments` | Upload attachment | Yes |
-| GET | `/channels/{id}/webhooks` | List channel webhooks | Yes |
-
-### Invites
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/channels/invites/{code}` | Get invite info | Yes |
-| POST | `/channels/invites/{code}` | Join via invite | Yes |
-| DELETE | `/channels/invites/{code}` | Delete invite | Yes |
-
-### Messages
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/channels/{id}/messages` | List messages | Yes |
-| POST | `/channels/{id}/messages` | Send message | Yes |
-| GET | `/channels/{id}/messages/search` | Search messages | Yes |
-| GET | `/channels/{id}/messages/{id}` | Get message | Yes |
-| PATCH | `/channels/{id}/messages/{id}` | Edit message | Yes |
-| DELETE | `/channels/{id}/messages/{id}` | Delete message | Yes |
-| POST | `/channels/{id}/messages/ack` | Mark as read | Yes |
-| GET | `/channels/{id}/pins` | Get pinned messages | Yes |
-| PUT | `/channels/{id}/pins/{id}` | Pin message | Yes |
-| DELETE | `/channels/{id}/pins/{id}` | Unpin message | Yes |
-
-### Reactions
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/channels/{id}/messages/{id}/reactions` | List reactions | Yes |
-| GET | `/channels/{id}/messages/{id}/reactions/{emoji}` | List reaction users | Yes |
-| PUT | `/channels/{id}/messages/{id}/reactions/{emoji}` | Add reaction | Yes |
-| DELETE | `/channels/{id}/messages/{id}/reactions/{emoji}` | Remove reaction | Yes |
-
-### Relationships
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/relationships/@me` | List relationships | Yes |
-| POST | `/relationships` | Send friend request | Yes |
-| PUT | `/relationships/{id}/accept` | Accept friend request | Yes |
-| DELETE | `/relationships/{id}` | Remove relationship | Yes |
-| POST | `/relationships/block` | Block user | Yes |
-
-### Webhooks
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| POST | `/webhooks` | Create webhook | Yes |
-| GET | `/webhooks/{id}` | Get webhook | Yes |
-| DELETE | `/webhooks/{id}` | Delete webhook | Yes |
-| POST | `/webhooks/{id}/{token}` | Execute webhook | No* |
-
-*Webhook execution requires valid webhook token instead of user auth.
-
-### Avatars
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/avatars/users/{id}` | Get user avatar | No |
-| POST | `/avatars/users/@me` | Upload user avatar | Yes |
-| DELETE | `/avatars/users/@me` | Delete user avatar | Yes |
-| GET | `/avatars/servers/{id}` | Get server icon | No |
-| POST | `/avatars/servers/{id}` | Upload server icon | Yes |
-| DELETE | `/avatars/servers/{id}` | Delete server icon | Yes |
-
-### Emojis
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/servers/{id}/emojis` | List server emojis | Yes |
-| GET | `/servers/{id}/emojis/counts` | Get emoji counts | Yes |
-| GET | `/servers/{id}/emojis/{id}` | Get emoji | Yes |
-| POST | `/servers/{id}/emojis` | Create emoji | Yes |
-| PATCH | `/servers/{id}/emojis/{id}` | Update emoji | Yes |
-| DELETE | `/servers/{id}/emojis/{id}` | Delete emoji | Yes |
-
-### Admin (Requires Admin Permission)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/admin/users/{id}/features` | Get user features |
-| PUT | `/admin/users/{id}/features` | Update user features |
-| PUT | `/admin/users/{id}/tier` | Set user tier |
-| POST | `/admin/users/{id}/badges/{badge}` | Add badge |
-| DELETE | `/admin/users/{id}/badges/{badge}` | Remove badge |
-| GET | `/admin/tiers` | List available tiers |
-| GET | `/admin/badges` | List available badges |
-
-## Detailed Documentation
-
-- [Authentication](authentication.md) - Auth endpoints and flows
-- [Users](users.md) - User management
-- [Settings](settings.md) - Cloud-synced user preferences
-- [Features](features.md) - Badges, tiers, and admin endpoints
-- [Servers](servers.md) - Server/guild management
-- [Channels](channels.md) - Channel management
-- [Messages](messages.md) - Messaging endpoints
-- [Reactions](reactions.md) - Message reactions
-- [Relationships](relationships.md) - Friends and blocks
-- [Presence](presence.md) - User status
-- [Webhooks](webhooks.md) - Webhook integration
-- [Avatars](avatars.md) - Avatar management
-- [Emojis](emojis.md) - Custom emoji
+- Some endpoints require normal authentication plus an API access token depending on server policy.
+- The public narrative docs intentionally avoid private infrastructure and operator-only procedures.
+- Administrative subsystems exist in the backend but are not expanded here as public integration docs.

@@ -1,18 +1,15 @@
 # WebSocket Documentation
 
-WebSocket gateway documentation for PlexiChat real-time events.
+This directory contains the narrative gateway documentation for the PlexiChat backend.
 
-## Contents
+## Pages
 
-| File | Description |
-|------|-------------|
-| `index.md` | Gateway overview and opcodes |
-| `connection.md` | Connection lifecycle and authentication |
-| `events.md` | Event types and payloads |
-| `close-codes.md` | Close code reference and reconnection |
+- `index.md` — overview and payload shape
+- `connection.md` — connect, identify, heartbeat, and resume flow
+- `events.md` — dispatch event families exposed by the backend
+- `opcodes.md` — opcode values defined in code
+- `close-codes.md` — application close codes and client guidance
 
-## Quick Links
+## Notes
 
-- [Getting Started](../getting-started.md) - Setup and authentication
-- [REST API](../api/index.md) - REST endpoint reference
-- [Rate Limits](../rate-limits.md) - Rate limiting policies
+Use these pages for gateway behavior and use `/docs` for the generated REST API schema. Keep private infrastructure and operator-only procedures out of the served markdown set.

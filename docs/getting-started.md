@@ -1,248 +1,85 @@
 # Getting Started
 
-Server setup, authentication, and first API calls.
+Use this guide when bringing up a client, bot, or integration against a PlexiChat server.
 
-## Prerequisites
+## 1. Learn the Runtime Surface
 
-- Python 3.11+
-- pip package manager
-- HTTP client (curl, Postman, or your preferred library)
+- REST API base: `{{BASE_URL}}`
+- WebSocket gateway: `{{WEBSOCKET_URL}}`
+- generated API docs: `/docs`
+- health endpoint: `/health`
 
-## Server Setup
+## 2. Check Version Compatibility
 
-### Quick Start
-
-```bash
-cd plexichat
-pip install -r requirements.txt
-python main.py
-```
-
-The server starts on `http://localhost:8000` with:
-- REST API at `/api/v1`
-- WebSocket gateway at `/gateway`
-- Interactive docs at `/docs` (Swagger UI)
-- Alternative docs at `/redoc` (ReDoc)
-
-### Optional: Video Processing
-
-For video metadata extraction, install ffmpeg:
-
-| Platform | Command |
-|----------|---------|
-| Linux (Debian/Ubuntu) | `apt install ffmpeg` |
-| Linux (RHEL/CentOS) | `yum install ffmpeg` |
-| macOS | `brew install ffmpeg` |
-| Windows | Download from [ffmpeg.org](https://ffmpeg.org/download.html) |
-
-Without ffmpeg, video uploads work but metadata won't be extracted.
-
-### Configuration
-
-See [Configuration Guide](configuration.md) for detailed setup options.
-
-## API Base URL
-
-**Current API Base URL**: `{{BASE_URL}}`
-
-All API endpoints are relative to this base URL.
-
-## Authentication
-
-### Register a New Account
+Call the public version endpoints before relying on feature-specific behavior.
 
 ```bash
-curl -X POST {{BASE_URL}}/auth/register \
+curl {{BASE_URL}}/version
+curl -X POST {{BASE_URL}}/version/negotiate \
   -H "Content-Type: application/json" \
-  -d '{
-    "username": "myusername",
-    "email": "user@example.com",
-    "password": "SecurePassword123!"
-  }'
+  -d '{"client_version":"{{VERSION}}"}'
 ```
 
-**Response:**
+## 3. Discover Server Capabilities
 
-```json
-{
-  "status": "success",
-  "token": "your_session_token_here",
-  "user": {
-    "id": "123456789012345678",
-    "username": "myusername",
-    "email": "user@example.com",
-    "avatar_url": null,
-    "created_at": 1704067200,
-    "email_verified": false,
-    "totp_enabled": false
-  }
-}
+`GET /capabilities` exposes public constants such as avatar limits and whether the server requires an additional access-token gate.
+
+```bash
+curl {{BASE_URL}}/capabilities
 ```
 
-### Login
+## 4. Authenticate
+
+Most REST endpoints require `Authorization: Bearer <token>` for user sessions or `Authorization: Bot <token>` for bot tokens.
+
+Typical first steps:
 
 ```bash
 curl -X POST {{BASE_URL}}/auth/login \
   -H "Content-Type: application/json" \
-  -d '{
-    "username": "myusername",
-    "password": "SecurePassword123!"
-  }'
+  -d '{"username":"example","password":"example"}'
+
+curl {{BASE_URL}}/users/@me \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
-### Using Your Token
+If the server enforces an additional API access token, include `X-API-Access-Token` on authenticated requests. See [Access Tokens](admin-access-tokens.md).
 
-Include the token in all authenticated requests:
+## 5. Make a First Authenticated Request
 
 ```bash
 curl {{BASE_URL}}/users/@me \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
-### Bot Authentication
+Good follow-up requests are:
 
-Bot tokens use the `Bot` prefix:
+- `GET /users/@me/settings`
+- `GET /users/@me/features`
+- `GET /servers`
+- `GET /users/@me/notifications`
 
-```bash
-curl {{BASE_URL}}/users/@me \
-  -H "Authorization: Bot YOUR_BOT_TOKEN"
-```
+## 6. Connect to the Gateway
 
-## Two-Factor Authentication
+The gateway is used for real-time events, presence, typing, and voice signaling.
 
-### When 2FA is Required
+High-level flow:
 
-If 2FA is enabled, login returns a challenge:
+1. connect to `{{WEBSOCKET_URL}}`
+2. receive `HELLO`
+3. send `IDENTIFY`
+4. start heartbeating
+5. consume `DISPATCH` events such as `READY` and `MESSAGE_CREATE`
 
-```json
-{
-  "status": "two_factor_required",
-  "token": null,
-  "user": null,
-  "challenge_token": "challenge_token_here",
-  "methods": ["totp", "backup_code"],
-  "expires_in": 300
-}
-```
+See [Gateway Connection](websocket/connection.md) for payload examples.
 
-### Complete 2FA
+## 7. Use the Right Documentation Surface
 
-```bash
-curl -X POST {{BASE_URL}}/auth/2fa \
-  -H "Content-Type: application/json" \
-  -d '{
-    "challenge_token": "challenge_token_here",
-    "code": "123456"
-  }'
-```
+- Use this portal for narrative guidance and route-group overviews.
+- Use `/docs` or `/openapi.json` when you need the generated request and response schemas for a specific endpoint.
 
-### Enable 2FA on Your Account
+## 8. Next Reading
 
-**Step 1:** Request 2FA setup
-
-```bash
-curl -X POST {{BASE_URL}}/auth/2fa/enable \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"password": "your_password"}'
-```
-
-Response includes:
-- `secret` - TOTP secret for manual entry
-- `qr_uri` - URI for QR code generation
-- `backup_codes` - One-time recovery codes
-
-**Step 2:** Confirm with authenticator code
-
-```bash
-curl -X POST {{BASE_URL}}/auth/2fa/confirm \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"code": "123456"}'
-```
-
-## Version Negotiation
-
-Check client/server compatibility before making API calls:
-
-```bash
-curl -X POST {{BASE_URL}}/version/negotiate \
-  -H "Content-Type: application/json" \
-  -d '{"client_version": "{{VERSION}}"}'
-```
-
-## First API Calls
-
-### Get Your Profile
-
-```bash
-curl {{BASE_URL}}/users/@me \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
-```
-
-### Create a Server
-
-```bash
-curl -X POST {{BASE_URL}}/servers \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "My Server",
-    "description": "A cool server"
-  }'
-```
-
-### Send a Message
-
-```bash
-curl -X POST {{BASE_URL}}/channels/CHANNEL_ID/messages \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Hello, world!"}'
-```
-
-### Add a Reaction
-
-```bash
-curl -X PUT "{{BASE_URL}}/channels/CHANNEL_ID/messages/MESSAGE_ID/reactions/%F0%9F%91%8D" \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
-```
-
-Note: Emoji must be URL-encoded (thumbs up emoji = `%F0%9F%91%8D`)
-
-### Update Your Presence
-
-```bash
-curl -X PUT {{BASE_URL}}/users/@me/presence \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "status": "online",
-    "custom_status": "Working on PlexiChat"
-  }'
-```
-
-## Password Requirements
-
-Default password policy:
-
-| Requirement | Value |
-|-------------|-------|
-| Minimum length | 12 characters |
-| Uppercase letter | Required |
-| Lowercase letter | Required |
-| Digit | Required |
-| Special character | Required |
-
-Check current requirements:
-
-```bash
-curl {{BASE_URL}}/auth/password-requirements
-```
-
-## Next Steps
-
-- [Configuration](configuration.md) - Server configuration options
-- [REST API Reference](api/index.md) - All available endpoints
-- [WebSocket Gateway](websocket/index.md) - Real-time events
-- [Rate Limits](rate-limits.md) - Rate limiting policies
+- [API Reference](api/index.md)
+- [WebSocket Events](websocket/events.md)
+- [Rate Limits](rate-limits.md)

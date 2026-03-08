@@ -1,238 +1,72 @@
-# WebSocket Connection
+# Gateway Connection Flow
 
-Detailed guide for establishing and maintaining a WebSocket connection.
+This page follows the connection contract implemented in the backend gateway.
 
-## Connecting
+## Connect
 
-Connect to the gateway endpoint:
+Open a WebSocket connection to `{{WEBSOCKET_URL}}`.
 
-```
-wss://api.plexichat.com/gateway
-```
+## HELLO
 
-## HELLO (Opcode 10)
-
-After connecting, the server sends a HELLO payload:
+The server begins with `HELLO` (`op: 10`) and provides a heartbeat interval.
 
 ```json
-{
-  "op": 10,
-  "d": {
-    "heartbeat_interval": 45000
-  }
-}
+{"op":10,"d":{"heartbeat_interval":45000}}
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| heartbeat_interval | int | Heartbeat interval in milliseconds |
+## IDENTIFY
 
-## IDENTIFY (Opcode 2)
-
-Send IDENTIFY to authenticate:
+Clients authenticate with `IDENTIFY` (`op: 2`).
 
 ```json
 {
   "op": 2,
   "d": {
-    "token": "your_session_token",
-    "properties": {
-      "os": "windows",
-      "browser": "plexichat",
-      "device": "plexichat"
-    },
+    "token": "SESSION_OR_BOT_TOKEN",
+    "properties": {"os": "unknown", "browser": "custom", "device": "custom"},
     "compress": false,
-    "intents": 513
+    "intents": 0
   }
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| token | string | Yes | Session or bot token |
-| properties | object | No | Client properties |
-| compress | bool | No | Enable compression |
-| intents | int | No | Gateway intents bitmask |
+### Identify Notes
 
-## READY Event
+- `token` is required
+- `properties`, `compress`, and `intents` are optional client hints
+- bots and user sessions use the same gateway entry point
 
-After successful IDENTIFY, receive READY:
+## READY
 
-```json
-{
-  "op": 0,
-  "t": "READY",
-  "s": 1,
-  "d": {
-    "user": {
-      "id": "123456789012345678",
-      "username": "johndoe"
-    },
-    "session_id": "session_id_here",
-    "resume_gateway_url": "wss://api.plexichat.com/gateway"
-  }
-}
-```
+A successful identify results in a `DISPATCH` payload with `t: "READY"`.
 
-## Heartbeating
+Typical fields include the authenticated user, a `session_id`, and a `resume_gateway_url`.
 
-Send HEARTBEAT at the interval specified in HELLO:
+## Heartbeats
 
-```json
-{
-  "op": 1,
-  "d": 251
-}
-```
+Send `HEARTBEAT` (`op: 1`) using the most recent sequence number you have seen, or `null` if you have not yet received one.
 
-The `d` field contains the last sequence number received, or `null` if none.
+The server responds with `HEARTBEAT_ACK` (`op: 11`). If heartbeats stop being acknowledged, reconnect.
 
-Server responds with HEARTBEAT_ACK:
+## Resume Flow
 
-```json
-{
-  "op": 11
-}
-```
+If the connection drops but the session is still resumable, send `RESUME` (`op: 6`) with:
 
-**Important:** If no HEARTBEAT_ACK is received before the next heartbeat is due, consider the connection dead and reconnect.
+- the same token
+- the prior `session_id`
+- the last sequence number seen
 
-## Resuming
+A successful resume produces a `RESUMED` dispatch.
 
-If disconnected with a resumable close code, resume the session:
+## Invalid Session
 
-```json
-{
-  "op": 6,
-  "d": {
-    "token": "your_session_token",
-    "session_id": "session_id_from_ready",
-    "seq": 251
-  }
-}
-```
+`INVALID_SESSION` (`op: 9`) tells the client that resume is not currently valid. Clients should fall back to a fresh `IDENTIFY` when resume is rejected.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| token | string | Session token |
-| session_id | string | Session ID from READY |
-| seq | int | Last sequence number received |
+## Related Signaling
 
-On successful resume, receive RESUMED event and missed events are replayed.
+The same gateway also carries:
 
-## INVALID_SESSION (Opcode 9)
-
-If session cannot be resumed:
-
-```json
-{
-  "op": 9,
-  "d": false
-}
-```
-
-| Value | Action |
-|-------|--------|
-| true | Wait 1-5 seconds, then RESUME |
-| false | Start new session with IDENTIFY |
-
-## Reconnection Strategy
-
-1. Check if close code is reconnectable
-2. If resumable, attempt RESUME
-3. If INVALID_SESSION with `d: false`, send new IDENTIFY
-4. Use exponential backoff for retries
-5. Maximum retry delay: 60 seconds
-
-## Compression
-
-PlexiChat supports zlib compression. Enable with `compress: true` in IDENTIFY.
-
-Compressed payloads are sent as binary frames and must be decompressed before parsing.
-
-## Server Status (Opcode 12)
-
-Server may send status updates:
-
-```json
-{
-  "op": 12,
-  "d": {
-    "state": "maintenance",
-    "message": "Scheduled maintenance in 5 minutes",
-    "estimated_downtime_seconds": 1800,
-    "restart_at": "2024-01-01T12:00:00Z"
-  }
-}
-```
-
-## Version Check (Opcode 13)
-
-Server may request version verification:
-
-```json
-{
-  "op": 13,
-  "d": {
-    "server_version": "a.1.0-1",
-    "min_supported_version": "a.1.0-1",
-    "update_recommended": true,
-    "message": "A newer version is available"
-  }
-}
-```
-
-## Typing Indicators (Opcodes 40-41)
-
-Typing indicators use lightweight WebSocket opcodes for real-time signaling.
-
-### Timeout Hierarchy
-
-To prevent flickering and ensure smooth UX, typing uses a coordinated timeout hierarchy:
-
-| Component | Timeout | Purpose |
-|-----------|---------|---------|
-| Client Throttle | 3000ms | Minimum time between TYPING_START sends |
-| Server Expiry | 6000ms | Server-side indicator auto-expiration |
-| UI Timeout | 7000ms | Client-side indicator removal |
-
-### TYPING_START (Opcode 40)
-
-Send when user starts typing in a channel:
-
-```json
-{
-  "op": 40,
-  "d": {
-    "channel_id": "123456789012345678"
-  }
-}
-```
-
-The server will:
-1. Record the typing indicator with 6-second expiration
-2. Broadcast TYPING_START event to channel members
-
-### TYPING_STOP (Opcode 41)
-
-Send when user stops typing (clears input, sends message, or switches channels):
-
-```json
-{
-  "op": 41,
-  "d": {
-    "channel_id": "123456789012345678"
-  }
-}
-```
-
-The server will:
-1. Remove the typing indicator from the database
-2. Broadcast TYPING_STOP event to channel members
-
-### Automatic Cleanup
-
-When a user disconnects from the gateway, the server automatically:
-1. Clears all typing indicators for that user
-2. Broadcasts TYPING_STOP events to affected channels
-3. Dispatches PRESENCE_UPDATE with offline status
+- `PRESENCE_UPDATE` client messages
+- voice signaling opcodes under the `20`-series
+- typing opcodes `40` and `41`
+- server status and version-check notifications

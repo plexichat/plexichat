@@ -436,7 +436,7 @@ Authorization: Bearer <token>
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | name | string | No | Role name (default: "New Role") |
-| color | string | No | Hex color code |
+| color | string | No | Hex color code in `#RRGGBB` format. |
 | permissions | object | No | Permission flags |
 | hoist | bool | No | Display separately in member list |
 | mentionable | bool | No | Allow @mentions |
@@ -468,7 +468,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-Same fields as POST, all optional.
+Same fields as `POST`; all fields are optional. `color` must match `#RRGGBB`.
 
 ### Response (200 OK)
 

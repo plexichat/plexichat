@@ -116,19 +116,19 @@ GET /channels/123/messages?limit=50&before=234567890123456789
 def fetch_all_messages(channel_id):
     messages = []
     before = None
-    
+
     while True:
         params = {"limit": 100}
         if before:
             params["before"] = before
-        
+
         batch = api.get_messages(channel_id, **params)
         if not batch:
             break
-        
+
         messages.extend(batch)
         before = batch[-1]["id"]
-    
+
     return messages
 ```
 
@@ -136,18 +136,18 @@ def fetch_all_messages(channel_id):
 async function fetchAllMessages(channelId) {
     const messages = [];
     let before = null;
-    
+
     while (true) {
         const params = { limit: 100 };
         if (before) params.before = before;
-        
+
         const batch = await api.getMessages(channelId, params);
         if (!batch.length) break;
-        
+
         messages.push(...batch);
         before = batch[batch.length - 1].id;
     }
-    
+
     return messages;
 }
 ```

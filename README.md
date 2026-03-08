@@ -1,4 +1,4 @@
-# Plexichat Server
+# PlexiChat Server
 
 A real-time messaging platform server with REST API and WebSocket gateway.
 
@@ -100,10 +100,10 @@ rate_limiting:
 docs:
   enabled: true  # Enable/disable API documentation serving
   path: /docs/api
-  title: Plexichat API Documentation
+  title: PlexiChat API Documentation
 ```
 
-See `gemini.md` for full configuration and deployment options.
+See `docs/` and `config/` for repository-backed configuration details.
 
 ## Project Structure
 
@@ -170,12 +170,13 @@ See `docs/` for full API documentation.
 
 ## Admin Panel
 
-Built-in admin panel for managing feedback and viewing telemetry.
+Built-in admin panel for managing feedback, telemetry, admin account security, AutoMod, and closed-alpha access tokens.
 
-- Access at `http://localhost:8000/api/v1/admin`
-- Credentials auto-generated on first run (saved to `~/.plexichat/admin_credentials.txt`)
-- 2FA required by default (configurable via `admin_ui.require_otp`)
-- Host-restricted to localhost by default
+- Open the UI at `http://localhost:8000/api/v1/admin/ui`
+- The admin routes live under `/api/v1/admin/`
+- Credentials are generated on first run
+- 2FA is required by default (configurable via `admin_ui.require_otp`)
+- Access is host-restricted to localhost by default
 
 See root README.md for full configuration options.
 
@@ -187,21 +188,25 @@ See root README.md for full configuration options.
 # Install dependencies (includes test dependencies)
 pip install -r requirements.txt
 
-# Run all tests (recommended)
-pytest -n auto -m "not slow"
+# Run the server test suite
+pytest src/tests
+
+# Optional: parallelize with pytest-xdist if you have it installed
+# pip install pytest-xdist
+# pytest -n auto src/tests
 ```
 
 ### Test Suite Overview
 
-- **3000+ tests** across all repositories
-- **85%+ coverage** target (enforced)
-- **<30 minute** execution time
-- **Zero security violations** enforced
+- Comprehensive pytest-based coverage under `src/tests/`
+- Security, integration, performance, and property-based tests
+- Coverage examples in `src/tests/README.md` use `--cov-fail-under=80`
+- Optional parallel execution with `pytest-xdist`
 
 ### Documentation
 
-- **Comprehensive Guide**: [docs/TESTING.md](docs/TESTING.md)
 - **Test Suite Details**: [src/tests/README.md](src/tests/README.md)
+- **System Documentation**: [docs/index.md](docs/index.md)
 
 ## Version
 

@@ -1,27 +1,36 @@
 # API Documentation
 
-REST API endpoint documentation for PlexiChat.
+This directory contains narrative REST API documentation for the PlexiChat backend.
 
-## Contents
+## Core Reference Pages
 
-| File | Description |
-|------|-------------|
-| `index.md` | Complete endpoint reference |
-| `authentication.md` | Auth endpoints and flows |
-| `users.md` | User profile management |
-| `servers.md` | Server/guild management |
-| `channels.md` | Channel management |
-| `messages.md` | Messaging endpoints |
-| `reactions.md` | Message reactions |
-| `relationships.md` | Friends and blocks |
-| `presence.md` | User status and presence |
-| `webhooks.md` | Webhook integration |
-| `avatars.md` | Avatar and icon management |
-| `emojis.md` | Custom emoji management |
+- `index.md`
+- `authentication.md`
+- `users.md`
+- `settings.md`
+- `servers.md`
+- `channels.md`
+- `messages.md`
+- `reactions.md`
+- `relationships.md`
+- `presence.md`
+- `webhooks.md`
+- `avatars.md`
+- `emojis.md`
+- `features.md`
 
-## Quick Links
+## Additional Route Groups
 
-- [Getting Started](../getting-started.md) - Setup and first API call
-- [Error Handling](../errors.md) - Error codes and responses
-- [Rate Limits](../rate-limits.md) - Rate limiting policies
-- [Data Types](../data-types.md) - Common data formats
+- `search.md`
+- `notifications.md`
+- `polls.md`
+- `voice.md`
+- `media.md`
+- `reports.md`
+- `feedback.md`
+- `telemetry.md`
+- `system.md`
+
+## Notes
+
+Use the generated OpenAPI docs at `/docs` when you need exact endpoint schemas. Keep environment-specific operational details out of these markdown files.

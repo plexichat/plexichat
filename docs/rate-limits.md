@@ -1,148 +1,54 @@
 # Rate Limits
 
-PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse.
+PlexiChat applies multiple layers of request protection to keep the API stable under normal traffic and abuse conditions.
 
-## Rate Limit Algorithms
+## Default Buckets In Code
 
-| Algorithm | Description |
-|-----------|-------------|
-| Token Bucket | Allows bursts, tokens refill over time |
-| Sliding Window | Smooth rate limiting over rolling window |
-| Fixed Window | Simple count per fixed time window |
+The backend defines these default baseline limits in `src/core/ratelimit/config.py`:
 
-## Global Limits
+| Scope | Default |
+|------|---------|
+| global | 50 requests per 1 second, burst 10 |
+| per-user | 70 requests per 60 seconds, burst 20 |
+| per-IP | 70 requests per 60 seconds, burst 10 |
 
-| Scope | Requests | Window | Burst | Algorithm |
-|-------|----------|--------|-------|-----------|
-| Per User | 120 | 60s | 20 | Sliding Window |
-| Per Second | 50 | 1s | 10 | Token Bucket |
+Servers can override these values through configuration.
 
-## Endpoint Limits
+## Route-Level Examples
 
-### Authentication
+The code also defines stricter limits for sensitive or high-volume routes, including:
 
-| Endpoint | Requests | Window | Hourly | Daily |
-|----------|----------|--------|--------|-------|
-| POST /auth/login | 5 | 60s | 20 | - |
-| POST /auth/register | 3 | 60s | 10 | 20 |
-| POST /auth/2fa | 5 | 60s | - | - |
+| Route pattern | Default |
+|--------------|---------|
+| `POST /auth/login` | 5 per 60 seconds |
+| `POST /auth/register` | 3 per 60 seconds |
+| `POST /auth/2fa` | 5 per 60 seconds |
+| `POST /channels/{id}/messages` | 5 per 5 seconds |
+| `PATCH /channels/{id}/messages/{msg_id}` | 5 per 5 seconds |
+| `DELETE /channels/{id}/messages/{msg_id}` | 5 per 5 seconds |
+| reaction add/remove routes | 1 per 0.25 seconds |
 
-### Messages
+## What Clients Should Expect
 
-| Endpoint | Requests | Window | Burst |
-|----------|----------|--------|-------|
-| POST /channels/{id}/messages | 5 | 5s | 3 |
-| PATCH /channels/{id}/messages/{id} | 5 | 5s | 2 |
-| DELETE /channels/{id}/messages/{id} | 5 | 5s | 2 |
-| GET /channels/{id}/messages | 10 | 10s | 5 |
+- limits may be applied globally, per user, per IP, or per route/resource
+- a server can tune limits away from the code defaults
+- bots and feature tiers may receive different multipliers depending on server policy
+- admin and internal bypass behavior is configurable and should not be assumed by public clients
 
-### Reactions
+## Typical Response Signals
 
-| Endpoint | Requests | Window | Burst |
-|----------|----------|--------|-------|
-| PUT reactions | 1 | 0.25s | 1 |
-| DELETE reactions | 1 | 0.25s | 1 |
+Rate-limited requests return `429 Too Many Requests` and may include standard rate-limit headers plus retry metadata in the error response.
 
-### Users
+## Client Recommendations
 
-| Endpoint | Requests | Window | Hourly |
-|----------|----------|--------|--------|
-| PATCH /users/@me | 2 | 60s | 10 |
-| GET /users/@me | 30 | 60s | - |
+- back off on `429` instead of retrying immediately
+- use pagination and caching to reduce repeated reads
+- batch operations where supported
+- keep message send loops and reaction spam under control
+- prefer gateway events over high-frequency polling
 
-### Servers
+## Related Pages
 
-| Endpoint | Requests | Window | Daily |
-|----------|----------|--------|-------|
-| POST /servers | 10 | 60s | 100 |
-| DELETE /servers/{id} | 1 | 60s | - |
-| GET /servers/{id} | 20 | 10s | - |
-
-### Relationships
-
-| Endpoint | Requests | Window | Hourly |
-|----------|----------|--------|--------|
-| POST /relationships | 5 | 60s | 50 |
-| POST /relationships/block | 10 | 60s | - |
-
-### Webhooks
-
-| Endpoint | Requests | Window | Burst |
-|----------|----------|--------|-------|
-| POST /webhooks | 5 | 60s | 2 |
-| POST /webhooks/{id}/{token} | 5 | 2s | 5 |
-
-## Rate Limit Headers
-
-All responses include rate limit information:
-
-```
-X-RateLimit-Limit: 50
-X-RateLimit-Remaining: 49
-X-RateLimit-Reset: 1704067200
-X-RateLimit-Bucket: route:POST:/channels/{id}/messages
-```
-
-| Header | Description |
-|--------|-------------|
-| X-RateLimit-Limit | Maximum requests in window |
-| X-RateLimit-Remaining | Remaining requests |
-| X-RateLimit-Reset | Unix timestamp when limit resets |
-| X-RateLimit-Bucket | Bucket identifier |
-
-## Rate Limited Response
-
-When rate limited, you receive HTTP 429:
-
-```json
-{
-  "error": {
-    "code": 429,
-    "message": "Rate limited",
-    "retry_after": 1.5
-  }
-}
-```
-
-| Field | Description |
-|-------|-------------|
-| retry_after | Seconds to wait before retrying |
-
-## Bot Rate Limits
-
-Bots receive a 1.5x multiplier on high-traffic routes:
-
-- POST /channels/{id}/messages
-- GET /channels/{id}/messages
-- PUT/DELETE reactions
-
-## Bypassing Rate Limits
-
-### Internal Requests
-
-Internal services can bypass rate limits by providing a secure internal secret via `X-Plexichat-Internal-Secret` or the configured `X-RateLimit-Bypass` header.
-
-> [!IMPORTANT]
-> The legacy `X-Internal-Request` header is no longer supported.
-
-### Admin Users
-
-Users with admin permissions (`admin.*` or `*`) are exempt from rate limits.
-
-## Best Practices
-
-1. **Respect rate limits** - Don't retry immediately after 429
-2. **Use exponential backoff** - Increase delay between retries
-3. **Cache responses** - Reduce unnecessary requests
-4. **Batch operations** - Combine multiple operations when possible
-5. **Monitor headers** - Track remaining requests proactively
-
-## WebSocket Rate Limits
-
-WebSocket connections have separate limits:
-
-| Scope | Events | Window |
-|-------|--------|--------|
-| Per Connection | 120 | 60s |
-
-Exceeding WebSocket rate limits results in close code 4008 (RATE_LIMITED).
+- [Messages](api/messages.md)
+- [Reactions](api/reactions.md)
+- [WebSocket Close Codes](websocket/close-codes.md)

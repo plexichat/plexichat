@@ -59,7 +59,7 @@ curl -X POST {{BASE_URL}}/auth/register \
         "badges": []
       }
   }
-  
+
 ```
 
 ### Error Responses
@@ -110,7 +110,7 @@ curl -X POST {{BASE_URL}}/auth/login \
         "badges": []
       }
   }
-  
+
 ```
 
 ### Response (200 OK) - 2FA Required
@@ -501,7 +501,7 @@ Initiate an OAuth login flow.
 **Path Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| provider | string | `google`, `github`, or `microsoft` |
+| provider | string | `google`, `github`, `microsoft`, or `gitlab` |
 
 **Query Parameters:**
 | Parameter | Type | Required | Description |
@@ -524,7 +524,7 @@ Handle the callback from the OAuth provider.
 **Path Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| provider | string | `google`, `github`, or `microsoft` |
+| provider | string | `google`, `github`, `microsoft`, or `gitlab` |
 
 **Query Parameters:**
 | Parameter | Type | Required | Description |
