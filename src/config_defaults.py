@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-44"
+DEFAULT_VERSION = "a.1.0-45"
 
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
@@ -124,7 +124,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "api": {
             "title": "PlexiChat API",
-            "description": "REST API for Plexichat messaging platform",
+            "description": "REST API for the PlexiChat messaging platform",
             "version": version,
             "api_prefix": "/api/v1",
             "debug": True,
@@ -572,16 +572,24 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "enabled": True,
             "path": "/docs/api",
             "title": "PlexiChat API Documentation",
-            "description": "Complete API documentation for PlexiChat messaging platform",
-            "base_url": "https://api.plexichat.com/api/v1",
-            "websocket_url": "wss://api.plexichat.com/gateway",
+            "description": "Runtime documentation for the PlexiChat backend",
+            "base_url": "https://your-plexichat-host.example/api/v1",
+            "websocket_url": "wss://your-plexichat-host.example/gateway",
             "theme": {
                 "style": "dark",
-                "primary_color": "#e94560",
-                "background_color": "#1a1a2e",
-                "text_color": "#eaeaea",
-                "code_background": "#16213e",
-                "border_color": "#0f3460",
+                "primary_color": "#6366f1",
+                "primary_dark_color": "#4f46e5",
+                "background_color": "#0b0f19",
+                "surface_color": "#111827",
+                "code_background": "#0f172a",
+                "text_color": "#f9fafb",
+                "muted_color": "#9ca3af",
+                "accent_color": "#10b981",
+                "warning_color": "#f59e0b",
+                "error_color": "#ef4444",
+                "border_color": "#1f2937",
+                "font_family": "'JetBrains Mono', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+                "code_font": "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
             },
             "rate_limit": {"enabled": True, "requests": 60, "window_seconds": 60},
             "cache": {"enabled": True, "ttl_seconds": 300},

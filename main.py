@@ -38,7 +38,7 @@ import utils.version as version  # noqa: E402
 VERSION = "a.1.0-45"
 
 
-class PlexichatServer:
+class PlexiChatServer:
     """Main server class with lifecycle management."""
 
     def __init__(self):
@@ -1086,6 +1086,14 @@ class PlexichatServer:
     async def notify_clients_shutdown(self, message: str = "Server shutting down"):
         """Notify connected WebSocket clients about shutdown."""
         try:
+            from src.api.routes.version import set_server_state
+            from src.api.schemas.version import ServerState
+
+            set_server_state(ServerState.SHUTTING_DOWN, message=message)
+        except Exception as e:
+            logger.debug(f"Could not update server shutdown state: {e}")
+
+        try:
             from src.api import websocket
 
             if websocket.is_setup():
@@ -1098,6 +1106,18 @@ class PlexichatServer:
 
     async def notify_clients_restart(self, estimated_seconds: int = 10):
         """Notify connected WebSocket clients about restart."""
+        try:
+            from src.api.routes.version import set_server_state
+            from src.api.schemas.version import ServerState
+
+            set_server_state(
+                ServerState.RESTARTING,
+                message="Server is restarting",
+                estimated_downtime=estimated_seconds,
+            )
+        except Exception as e:
+            logger.debug(f"Could not update server restart state: {e}")
+
         try:
             from src.api import websocket
 
@@ -1120,6 +1140,17 @@ class PlexichatServer:
         # Notify clients if not already done (this is a backup)
         if not self.shutdown_event.is_set():
             self.shutdown_event.set()
+
+        try:
+            from src.api.routes.version import get_server_state, set_server_state
+            from src.api.schemas.version import ServerState
+
+            if get_server_state() == ServerState.RUNNING:
+                set_server_state(
+                    ServerState.SHUTTING_DOWN, message="Server shutting down"
+                )
+        except Exception as e:
+            logger.debug(f"Could not update cleanup shutdown state: {e}")
 
         # Clean up WebSocket global state in Redis
         try:
@@ -1314,10 +1345,10 @@ Examples:
     args, _ = parser.parse_known_args()
 
     if args.version:
-        print(f"Plexichat Server v{VERSION}")
+        print(f"PlexiChat Server v{VERSION}")
         return
 
-    server = PlexichatServer()
+    server = PlexiChatServer()
 
     # Handle --create-config
     if args.create_config:

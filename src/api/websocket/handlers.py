@@ -130,7 +130,7 @@ class OpcodeHandler:
 
         properties = data.get("properties", {})
         connection.properties = properties
-        
+
         user_agent = properties.get("browser") or properties.get("$browser")
         if not user_agent:
             # Fallback to handshake header
@@ -144,6 +144,8 @@ class OpcodeHandler:
             user_agent=user_agent,
             is_selftest=connection.is_selftest,
         )
+        if user_id is None:
+            return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
 
         compress = data.get("compress", False)
         if compress:

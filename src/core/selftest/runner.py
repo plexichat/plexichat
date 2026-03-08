@@ -334,7 +334,7 @@ class SelfTestRunner:
         internal_secret = api.get_internal_secret()
         if internal_secret:
             self.session.headers.update(
-                {"X-Plexichat-Internal-Secret": internal_secret}
+                {"X-PlexiChat-Internal-Secret": internal_secret}
             )
             logger.debug("Internal security secret added to test session")
 
@@ -556,7 +556,7 @@ class SelfTestRunner:
             headers = {}
             internal_secret = api.get_internal_secret()
             if internal_secret:
-                headers["X-Plexichat-Internal-Secret"] = internal_secret
+                headers["X-PlexiChat-Internal-Secret"] = internal_secret
 
             ws_conn = websocket.create_connection(ws_url, timeout=5, header=headers)
 
@@ -1105,7 +1105,7 @@ class SelfTestRunner:
                     method,
                     f"{self.base_url}{url_path}",
                     json=json_body,
-                    headers={"X-Plexichat-SelfTest-Debug": "true"},
+                    headers={"X-PlexiChat-SelfTest-Debug": "true"},
                     timeout=10,
                 )
                 if retry_resp.status_code >= 400:

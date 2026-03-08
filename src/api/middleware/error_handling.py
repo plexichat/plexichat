@@ -233,7 +233,7 @@ class ErrorHandlingMiddleware:
             )
 
             internal_secret = api.get_internal_secret()
-            provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
+            provided_secret = request.headers.get("X-PlexiChat-Internal-Secret")
             is_selftest = (
                 internal_secret is not None
                 and provided_secret is not None
@@ -242,7 +242,7 @@ class ErrorHandlingMiddleware:
             )
 
             if selftest_config.get("capture_stack_traces", True) and is_selftest:
-                if request.headers.get("X-Plexichat-SelfTest-Debug") == "true":
+                if request.headers.get("X-PlexiChat-SelfTest-Debug") == "true":
                     include_traceback = True
 
             # Get CORS headers
@@ -340,7 +340,7 @@ def setup_exception_handlers(app: FastAPI):
             f"Validation error on {request.method} {request.url.path}: {errors}"
         )
         # SECURITY: Do not read/log full request body to avoid memory DOS
-        
+
         if errors:
             first_error = errors[0]
             loc = first_error.get("loc", [])
