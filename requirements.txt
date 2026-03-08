@@ -8,9 +8,9 @@
 #   Without ffprobe, video uploads work but metadata won't be extracted.
 
 # Web Framework
-fastapi>=0.109.0
+fastapi>=0.135.1
 uvicorn[standard]>=0.27.0
-starlette>=0.35.0
+starlette>=0.52.1
 
 # Database
 sqlalchemy>=2.0.0          # SQL toolkit and ORM
@@ -20,7 +20,7 @@ hiredis>=2.3.0             # Redis parser (optional, for performance)
 
 # Authentication & Security
 argon2-cffi>=23.1.0        # Password hashing
-cryptography>=42.0.0       # Encryption
+cryptography>=46.0.5       # Encryption
 pyotp>=2.9.0               # TOTP 2FA
 xxhash>=3.4.1              # Fast non-cryptographic hashing
 
@@ -32,10 +32,10 @@ email-validator>=2.1.0
 PyYAML>=6.0.1
 
 # HTTP Client (for webhooks, etc.)
-requests>=2.31.0
+requests>=2.32.5
 urllib3>=2.6.3             # Fixed for GHSA-2xpw-w6gg-jr37, GHSA-38jv-5279-wg99, GHSA-gm62-xv2j-4w53, GHSA-pq67-6m6q-mj2v
 httpx>=0.26.0
-aiohttp>=3.9.0
+aiohttp>=3.13.3
 
 # WebSocket
 websockets>=12.0
@@ -47,7 +47,7 @@ python-dotenv>=1.0.0       # Environment variables
 python-dateutil>=2.8.0     # Date/time utilities for scheduled events
 
 # Image Processing (optional, for media)
-pillow>=10.2.0
+pillow>=12.1.1
 imagehash>=4.3.1           # Perceptual hashing for image similarity detection
 
 # Safe Regex (ReDoS protection)
