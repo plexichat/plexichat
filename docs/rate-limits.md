@@ -4,29 +4,28 @@ PlexiChat applies multiple layers of request protection to keep the API stable u
 
 ## Default Buckets In Code
 
-The backend defines these default baseline limits in `src/core/ratelimit/config.py`:
+The backend defines these default baseline limits in `src/core/ratelimit/config.py`.
+This page now reflects the current runtime configuration:
 
 | Scope | Default |
 |------|---------|
-| global | 50 requests per 1 second, burst 10 |
-| per-user | 70 requests per 60 seconds, burst 20 |
-| per-IP | 70 requests per 60 seconds, burst 10 |
+{{RATE_LIMIT_DEFAULT_ROWS}}
 
 Servers can override these values through configuration.
 
 ## Route-Level Examples
 
-The code also defines stricter limits for sensitive or high-volume routes, including:
+The code also defines stricter limits for sensitive or high-volume routes:
 
 | Route pattern | Default |
 |--------------|---------|
-| `POST /auth/login` | 5 per 60 seconds |
-| `POST /auth/register` | 3 per 60 seconds |
-| `POST /auth/2fa` | 5 per 60 seconds |
-| `POST /channels/{id}/messages` | 5 per 5 seconds |
-| `PATCH /channels/{id}/messages/{msg_id}` | 5 per 5 seconds |
-| `DELETE /channels/{id}/messages/{msg_id}` | 5 per 5 seconds |
-| reaction add/remove routes | 1 per 0.25 seconds |
+{{RATE_LIMIT_ROUTE_ROWS}}
+
+## Runtime Policy Snapshot
+
+| Setting | Current value |
+|---------|---------------|
+{{RATE_LIMIT_POLICY_ROWS}}
 
 ## What Clients Should Expect
 

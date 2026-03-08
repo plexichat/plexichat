@@ -9,6 +9,11 @@ from src.api.schemas.admin import (
     HashReportCountsResponse,
     HashReportReviewRequest,
     HashReportReviewResponse,
+    MessageReportResponse,
+    UserReportResponse,
+    ModerationReportCountsResponse,
+    ModerationReportReviewRequest,
+    ModerationReportReviewResponse,
     BlockedHashResponse,
     ManualBlockHashRequest,
     BlockHashResponse,
@@ -24,10 +29,60 @@ from src.api.schemas.admin import (
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
+import src.api as api
 import utils.logger as logger
 import utils.config as config
 
 router = APIRouter()
+
+
+def _get_reports_module():
+    reports = api.get_reports()
+    if not reports:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Reports module unavailable"}},
+        )
+    return reports
+
+
+def _message_report_to_response(report) -> MessageReportResponse:
+    return MessageReportResponse(
+        id=str(report.id),
+        message_id=str(report.message_id),
+        channel_id=str(report.channel_id),
+        server_id=str(report.server_id) if report.server_id is not None else None,
+        reporter_id=str(report.reporter_id),
+        reported_user_id=str(report.reported_user_id),
+        reason=report.reason,
+        category=report.category,
+        details=report.details,
+        message_content=report.message_content,
+        status=report.status.value if hasattr(report.status, "value") else str(report.status),
+        reported_at=report.reported_at,
+        reviewed_at=report.reviewed_at,
+        reviewed_by=str(report.reviewed_by) if report.reviewed_by is not None else None,
+        admin_notes=report.admin_notes,
+        action_taken=report.action_taken,
+    )
+
+
+def _user_report_to_response(report) -> UserReportResponse:
+    return UserReportResponse(
+        id=str(report.id),
+        reported_user_id=str(report.reported_user_id),
+        reporter_id=str(report.reporter_id),
+        reason=report.reason,
+        category=report.category,
+        details=report.details,
+        evidence_message_ids=[str(i) for i in (report.evidence_message_ids or [])],
+        status=report.status.value if hasattr(report.status, "value") else str(report.status),
+        reported_at=report.reported_at,
+        reviewed_at=report.reviewed_at,
+        reviewed_by=str(report.reviewed_by) if report.reviewed_by is not None else None,
+        admin_notes=report.admin_notes,
+        action_taken=report.action_taken,
+    )
 
 
 @router.get("/hash-reports", response_model=List[HashReportResponse])
@@ -109,6 +164,110 @@ async def review_hash_report(
             detail={"error": {"code": 404, "message": "Report not found"}},
         )
     return HashReportReviewResponse(success=True, action=review.action)
+
+
+@router.get("/message-reports", response_model=List[MessageReportResponse])
+async def get_message_reports(
+    request: Request,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Retrieve message reports for admin review."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    reports = _get_reports_module()
+
+    try:
+        return [
+            _message_report_to_response(r)
+            for r in reports.get_message_reports(status_filter, limit, offset)
+        ]
+    except Exception as e:
+        logger.error(f"Message reports error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.get("/message-reports/counts", response_model=ModerationReportCountsResponse)
+async def get_message_report_counts(request: Request):
+    """Get message report counts grouped by status."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    return ModerationReportCountsResponse(**_get_reports_module().get_message_report_counts())
+
+
+@router.post(
+    "/message-reports/{report_id}/review",
+    response_model=ModerationReportReviewResponse,
+)
+async def review_message_report(
+    report_id: int, review: ModerationReportReviewRequest, request: Request
+):
+    """Review a specific message report."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    reports = _get_reports_module()
+
+    if not reports.review_message_report(report_id, admin_id, review.action, review.notes):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Report not found"}},
+        )
+    return ModerationReportReviewResponse(success=True, action=review.action)
+
+
+@router.get("/user-reports", response_model=List[UserReportResponse])
+async def get_user_reports(
+    request: Request,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Retrieve user behavior reports for admin review."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    reports = _get_reports_module()
+
+    try:
+        return [
+            _user_report_to_response(r)
+            for r in reports.get_user_reports(status_filter, limit, offset)
+        ]
+    except Exception as e:
+        logger.error(f"User reports error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.get("/user-reports/counts", response_model=ModerationReportCountsResponse)
+async def get_user_report_counts(request: Request):
+    """Get user report counts grouped by status."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    return ModerationReportCountsResponse(**_get_reports_module().get_user_report_counts())
+
+
+@router.post(
+    "/user-reports/{report_id}/review",
+    response_model=ModerationReportReviewResponse,
+)
+async def review_user_report(
+    report_id: int, review: ModerationReportReviewRequest, request: Request
+):
+    """Review a specific user report."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    reports = _get_reports_module()
+
+    if not reports.review_user_report(report_id, admin_id, review.action, review.notes):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Report not found"}},
+        )
+    return ModerationReportReviewResponse(success=True, action=review.action)
 
 
 @router.get("/blocked-hashes", response_model=List[BlockedHashResponse])

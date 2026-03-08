@@ -2,6 +2,8 @@
 
 import pytest
 
+import src.api.routes.docs as docs_routes
+
 
 class TestDocsRoutes:
     """Verify documentation routes render and use runtime-derived URLs."""
@@ -20,9 +22,11 @@ class TestDocsRoutes:
         "path",
         [
             "/docs/api/features",
+            "/docs/api/permissions",
             "/docs/api/security",
             "/docs/api/performance",
             "/docs/api/admin-access-tokens",
+            "/docs/api/oauth-scopes",
             "/docs/api/reference/search",
             "/docs/api/reference/notifications",
             "/docs/api/reference/polls",
@@ -32,6 +36,7 @@ class TestDocsRoutes:
             "/docs/api/reference/feedback",
             "/docs/api/reference/telemetry",
             "/docs/api/reference/system",
+            "/docs/api/websocket/intents",
             "/docs/api/websocket/opcodes",
             "/docs/api/websocket/close-codes",
         ],
@@ -42,14 +47,162 @@ class TestDocsRoutes:
         assert response.status_code == 200, path
         assert "PlexiChat Documentation" in response.text
 
-    def test_rate_limits_page_uses_markdown_content(self, test_client):
+    def test_rate_limits_page_uses_live_rate_limit_helper(self, test_client, monkeypatch):
+        monkeypatch.setattr(
+            docs_routes,
+            "get_api_rate_limits",
+            lambda: {
+                "global": {"requests": 99, "window_seconds": 3, "burst": 7},
+                "user": {"requests": 123, "window_seconds": 90, "burst": 11},
+                "ip": {"requests": 33, "window_seconds": 15, "burst": 4},
+                "bot_multiplier": 2.5,
+                "webhook_multiplier": 1.25,
+                "admin_bypass": False,
+                "internal_bypass": True,
+                "routes": {
+                    "POST /feedback": {
+                        "requests": 8,
+                        "window_seconds": 1800,
+                        "burst": 1,
+                    },
+                    "GET /example": {
+                        "requests": 13,
+                        "window_seconds": 2.5,
+                        "burst": 6,
+                    },
+                },
+            },
+        )
+
         response = test_client.get("/docs/api/rate-limits")
 
         assert response.status_code == 200
         body = response.text
-        assert "50 requests per 1 second" in body
-        assert "70 requests per 60 seconds" in body
-        assert "Rate limits are enforced to ensure stability." not in body
+        assert "99 requests per 3 seconds, burst 7" in body
+        assert "123 requests per 90 seconds, burst 11" in body
+        assert "33 requests per 15 seconds, burst 4" in body
+        assert "POST /feedback" in body
+        assert "8 requests per 1800 seconds, burst 1" in body
+        assert "GET /example" in body
+        assert "13 requests per 2.5 seconds, burst 6" in body
+        assert "2.5x" in body
+        assert "1.25x" in body
+        assert "disabled" in body
+        assert "enabled" in body
+
+    def test_websocket_intents_page_uses_live_intent_helper(self, test_client, monkeypatch):
+        monkeypatch.setattr(
+            docs_routes,
+            "get_gateway_intents_docs_data",
+            lambda: {
+                "default_value": 777,
+                "all_value": 1023,
+                "privileged_value": 96,
+                "rows": [
+                    {
+                        "value": 512,
+                        "name": "CUSTOM_INTENT",
+                        "default": False,
+                        "privileged": True,
+                        "description": "Custom dynamic description",
+                    }
+                ],
+            },
+        )
+
+        response = test_client.get("/docs/api/websocket/intents")
+
+        assert response.status_code == 200
+        body = response.text
+        assert "Gateway Intents" in body
+        assert "777" in body
+        assert "1023" in body
+        assert "96" in body
+        assert "CUSTOM_INTENT" in body
+        assert "Custom dynamic description" in body
+        assert "/docs/api/websocket/intents" in body
+
+    def test_permissions_page_uses_live_permissions_helper(self, test_client, monkeypatch):
+        monkeypatch.setattr(
+            docs_routes,
+            "get_permissions_docs_data",
+            lambda: {
+                "category_count": 2,
+                "permission_count": 3,
+                "categories": [
+                    {
+                        "name": "custom",
+                        "count": 2,
+                        "permissions": ["custom.read", "custom.write"],
+                    }
+                ],
+                "permissions": [
+                    {
+                        "name": "custom.read",
+                        "category": "custom",
+                        "default_user": True,
+                        "default_bot": False,
+                        "bot_restricted": False,
+                        "description": "Read custom data",
+                    },
+                    {
+                        "name": "custom.write",
+                        "category": "custom",
+                        "default_user": False,
+                        "default_bot": False,
+                        "bot_restricted": True,
+                        "description": "Write custom data",
+                    },
+                ],
+            },
+        )
+
+        response = test_client.get("/docs/api/permissions")
+
+        assert response.status_code == 200
+        body = response.text
+        assert "Permissions" in body
+        assert "custom.read" in body
+        assert "custom.write" in body
+        assert "Read custom data" in body
+        assert "Write custom data" in body
+        assert "/docs/api/permissions" in body
+
+    def test_oauth_scopes_page_uses_live_scope_helper(self, test_client, monkeypatch):
+        monkeypatch.setattr(
+            docs_routes,
+            "get_oauth_scopes_docs_data",
+            lambda: {
+                "scope_count": 4,
+                "privileged_count": 1,
+                "bot_required_count": 1,
+                "rows": [
+                    {
+                        "name": "custom.scope",
+                        "privileged": True,
+                        "bot_required": False,
+                        "description": "Custom scope description",
+                    },
+                    {
+                        "name": "bot.install",
+                        "privileged": False,
+                        "bot_required": True,
+                        "description": "Install a bot",
+                    },
+                ],
+            },
+        )
+
+        response = test_client.get("/docs/api/oauth-scopes")
+
+        assert response.status_code == 200
+        body = response.text
+        assert "OAuth Scopes" in body
+        assert "custom.scope" in body
+        assert "bot.install" in body
+        assert "Custom scope description" in body
+        assert "Install a bot" in body
+        assert "/docs/api/oauth-scopes" in body
 
     def test_docs_portal_uses_plexichat_landing_branding(self, test_client):
         response = test_client.get("/docs/api")

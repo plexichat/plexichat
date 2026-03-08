@@ -91,6 +91,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     )
 
     if config.docs_url and config.openapi_url:
+        openapi_url = config.openapi_url
         oauth2_redirect_url = f"{config.docs_url.rstrip('/')}/oauth2-redirect"
 
         @app.get(config.docs_url, include_in_schema=False)
@@ -98,7 +99,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             return render_swagger_ui_page(
                 request,
                 config.title,
-                config.openapi_url,
+                openapi_url,
                 oauth2_redirect_url=oauth2_redirect_url,
             )
 
@@ -107,10 +108,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             return HTMLResponse(get_swagger_ui_oauth2_redirect_html())
 
     if config.redoc_url and config.openapi_url:
+        openapi_url = config.openapi_url
 
         @app.get(config.redoc_url, include_in_schema=False)
         async def redoc_html(request: Request) -> HTMLResponse:
-            return render_redoc_page(request, config.title, config.openapi_url)
+            return render_redoc_page(request, config.title, openapi_url)
 
     if enable_rate_limiting:
         from src.core import ratelimit

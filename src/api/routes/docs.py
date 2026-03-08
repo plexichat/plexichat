@@ -29,6 +29,15 @@ _docs_cache: Dict[str, tuple] = {}  # path -> (content, timestamp)
 _html_cache: Dict[str, tuple] = {}  # path -> (html, timestamp)
 
 
+def _decode_html_body(body: bytes | memoryview | str) -> str:
+    """Decode a FastAPI/Starlette HTML body into text."""
+    if isinstance(body, str):
+        return body
+    if isinstance(body, memoryview):
+        return body.tobytes().decode("utf-8")
+    return body.decode("utf-8")
+
+
 @dataclass
 class ThemeConfig:
     """Theme configuration for documentation."""
@@ -298,27 +307,39 @@ def get_api_rate_limits() -> Dict[str, Any]:
     try:
         from src.core.ratelimit.config import (
             DEFAULT_ROUTE_LIMITS,
-            DEFAULT_GLOBAL_LIMIT,
-            DEFAULT_USER_LIMIT,
+            get_bot_multiplier,
+            get_global_limit,
+            get_ip_limit,
+            get_user_limit,
+            get_webhook_multiplier,
+            should_bypass_admin,
+            should_bypass_internal,
         )
+
+        global_limit = get_global_limit()
+        user_limit = get_user_limit()
+        ip_limit = get_ip_limit()
 
         limits = {
             "global": {
-                "requests": DEFAULT_GLOBAL_LIMIT.requests
-                if DEFAULT_GLOBAL_LIMIT
-                else 50,
-                "window_seconds": DEFAULT_GLOBAL_LIMIT.window_seconds
-                if DEFAULT_GLOBAL_LIMIT
-                else 1,
-                "burst": DEFAULT_GLOBAL_LIMIT.burst if DEFAULT_GLOBAL_LIMIT else 10,
+                "requests": global_limit.requests,
+                "window_seconds": global_limit.window_seconds,
+                "burst": global_limit.burst,
             },
             "user": {
-                "requests": DEFAULT_USER_LIMIT.requests if DEFAULT_USER_LIMIT else 120,
-                "window_seconds": DEFAULT_USER_LIMIT.window_seconds
-                if DEFAULT_USER_LIMIT
-                else 60,
-                "burst": DEFAULT_USER_LIMIT.burst if DEFAULT_USER_LIMIT else 20,
+                "requests": user_limit.requests,
+                "window_seconds": user_limit.window_seconds,
+                "burst": user_limit.burst,
             },
+            "ip": {
+                "requests": ip_limit.requests,
+                "window_seconds": ip_limit.window_seconds,
+                "burst": ip_limit.burst,
+            },
+            "bot_multiplier": get_bot_multiplier(),
+            "webhook_multiplier": get_webhook_multiplier(),
+            "admin_bypass": should_bypass_admin(),
+            "internal_bypass": should_bypass_internal(),
             "routes": {},
         }
 
@@ -332,6 +353,243 @@ def get_api_rate_limits() -> Dict[str, Any]:
         return limits
     except Exception:
         return {}
+
+
+def _format_window_seconds(value: Any) -> str:
+    """Format rate-limit window seconds for docs display."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if numeric.is_integer():
+        return str(int(numeric))
+    return f"{numeric:g}"
+
+
+def _format_limit_summary(limit: Dict[str, Any]) -> str:
+    """Format a human-readable rate limit summary."""
+    window = _format_window_seconds(limit.get("window_seconds", 0))
+    seconds_label = "second" if window == "1" else "seconds"
+    return (
+        f'{limit.get("requests", 0)} requests per {window} {seconds_label}, '
+        f'burst {limit.get("burst", 0)}'
+    )
+
+
+def _build_rate_limit_defaults_rows(limits: Dict[str, Any]) -> str:
+    """Build markdown table rows for global default rate limits."""
+    rows = []
+    labels = (("global", "global"), ("per-user", "user"), ("per-IP", "ip"))
+    for label, key in labels:
+        limit = limits.get(key)
+        if not limit:
+            continue
+        rows.append(f"| {label} | {_format_limit_summary(limit)} |")
+    return "\n".join(rows)
+
+
+def _build_rate_limit_route_rows(limits: Dict[str, Any]) -> str:
+    """Build markdown table rows for route-specific rate limits."""
+    route_rows = []
+    for route, cfg in sorted(limits.get("routes", {}).items()):
+        route_rows.append(f"| `{route}` | {_format_limit_summary(cfg)} |")
+    return "\n".join(route_rows)
+
+
+def _build_rate_limit_policy_rows(limits: Dict[str, Any]) -> str:
+    """Build markdown rows for rate-limit policy flags and multipliers."""
+    def enabled(value: Any) -> str:
+        return "enabled" if value else "disabled"
+
+    return "\n".join(
+        [
+            f'| Bot multiplier | {limits.get("bot_multiplier", 1.0):g}x |',
+            f'| Webhook multiplier | {limits.get("webhook_multiplier", 1.0):g}x |',
+            f'| Admin bypass | {enabled(limits.get("admin_bypass", False))} |',
+            f'| Internal bypass | {enabled(limits.get("internal_bypass", False))} |',
+        ]
+    )
+
+
+def get_gateway_intents_docs_data() -> Dict[str, Any]:
+    """Build dynamic docs data for gateway intents."""
+    try:
+        from src.api.websocket.intents import (
+            ALL_INTENTS,
+            DEFAULT_INTENTS,
+            PRIVILEGED_INTENTS,
+            get_intent_description,
+        )
+        from src.core.events.types import GatewayIntent
+
+        rows = []
+        for intent in GatewayIntent:
+            value = int(intent)
+            rows.append(
+                {
+                    "value": value,
+                    "name": intent.name,
+                    "default": bool(DEFAULT_INTENTS & value),
+                    "privileged": bool(PRIVILEGED_INTENTS & value),
+                    "description": get_intent_description(intent),
+                }
+            )
+
+        return {
+            "default_value": int(DEFAULT_INTENTS),
+            "all_value": int(ALL_INTENTS),
+            "privileged_value": int(PRIVILEGED_INTENTS),
+            "rows": rows,
+        }
+    except Exception:
+        return {
+            "default_value": 0,
+            "all_value": 0,
+            "privileged_value": 0,
+            "rows": [],
+        }
+
+
+def _build_gateway_intent_rows(data: Dict[str, Any]) -> str:
+    """Build markdown rows for the gateway intents docs page."""
+    rows = []
+    for row in data.get("rows", []):
+        rows.append(
+            "| `{value}` | `{name}` | {default} | {privileged} | {description} |".format(
+                value=row["value"],
+                name=row["name"],
+                default="Yes" if row.get("default") else "No",
+                privileged="Yes" if row.get("privileged") else "No",
+                description=row.get("description", "Unknown intent"),
+            )
+        )
+    return "\n".join(rows)
+
+
+def get_permissions_docs_data() -> Dict[str, Any]:
+    """Build dynamic docs data for the permissions page."""
+    try:
+        from src.core.auth.permissions import (
+            BOT_RESTRICTED_PERMISSIONS,
+            DEFAULT_BOT_PERMISSIONS,
+            DEFAULT_USER_PERMISSIONS,
+            PERMISSIONS,
+            get_permission_categories,
+        )
+
+        categories = get_permission_categories()
+        category_rows = [
+            {
+                "name": category,
+                "count": len(sorted(perms)),
+                "permissions": sorted(perms),
+            }
+            for category, perms in sorted(categories.items())
+        ]
+        permission_rows = [
+            {
+                "name": name,
+                "category": name.split(".", 1)[0],
+                "description": description,
+                "default_user": bool(DEFAULT_USER_PERMISSIONS.get(name, False)),
+                "default_bot": bool(DEFAULT_BOT_PERMISSIONS.get(name, False)),
+                "bot_restricted": name in BOT_RESTRICTED_PERMISSIONS,
+            }
+            for name, description in sorted(PERMISSIONS.items())
+        ]
+
+        return {
+            "category_count": len(category_rows),
+            "permission_count": len(permission_rows),
+            "categories": category_rows,
+            "permissions": permission_rows,
+        }
+    except Exception:
+        return {
+            "category_count": 0,
+            "permission_count": 0,
+            "categories": [],
+            "permissions": [],
+        }
+
+
+def _build_permission_category_rows(data: Dict[str, Any]) -> str:
+    """Build markdown rows for permission categories."""
+    rows = []
+    for category in data.get("categories", []):
+        permission_list = ", ".join(f'`{perm}`' for perm in category.get("permissions", []))
+        rows.append(
+            f'| `{category["name"]}` | {category["count"]} | {permission_list} |'
+        )
+    return "\n".join(rows)
+
+
+def _build_permission_detail_rows(data: Dict[str, Any]) -> str:
+    """Build markdown rows for individual permissions."""
+    rows = []
+    for permission in data.get("permissions", []):
+        rows.append(
+            "| `{name}` | `{category}` | {default_user} | {default_bot} | {bot_restricted} | {description} |".format(
+                name=permission["name"],
+                category=permission["category"],
+                default_user="Yes" if permission.get("default_user") else "No",
+                default_bot="Yes" if permission.get("default_bot") else "No",
+                bot_restricted="Yes" if permission.get("bot_restricted") else "No",
+                description=permission.get("description", ""),
+            )
+        )
+    return "\n".join(rows)
+
+
+def get_oauth_scopes_docs_data() -> Dict[str, Any]:
+    """Build dynamic docs data for OAuth scopes."""
+    try:
+        from src.core.applications.oauth.scopes import (
+            BOT_REQUIRED_SCOPES,
+            PRIVILEGED_SCOPES,
+            VALID_SCOPES,
+            get_scope_description,
+        )
+
+        scopes = sorted(VALID_SCOPES)
+        rows = [
+            {
+                "name": scope,
+                "privileged": scope in PRIVILEGED_SCOPES,
+                "bot_required": scope in BOT_REQUIRED_SCOPES,
+                "description": get_scope_description(scope),
+            }
+            for scope in scopes
+        ]
+
+        return {
+            "scope_count": len(rows),
+            "privileged_count": sum(1 for row in rows if row["privileged"]),
+            "bot_required_count": sum(1 for row in rows if row["bot_required"]),
+            "rows": rows,
+        }
+    except Exception:
+        return {
+            "scope_count": 0,
+            "privileged_count": 0,
+            "bot_required_count": 0,
+            "rows": [],
+        }
+
+
+def _build_oauth_scope_rows(data: Dict[str, Any]) -> str:
+    """Build markdown rows for OAuth scope documentation."""
+    rows = []
+    for scope in data.get("rows", []):
+        rows.append(
+            "| `{name}` | {privileged} | {bot_required} | {description} |".format(
+                name=scope["name"],
+                privileged="Yes" if scope.get("privileged") else "No",
+                bot_required="Yes" if scope.get("bot_required") else "No",
+                description=scope.get("description", scope["name"]),
+            )
+        )
+    return "\n".join(rows)
 
 
 def get_app_config() -> Dict[str, Any]:
@@ -1059,7 +1317,7 @@ def render_swagger_ui_page(
 ) -> HTMLResponse:
     """Render a branded Swagger UI page."""
     conf = _runtime_docs_config(request, get_docs_config())
-    html = get_swagger_ui_html(
+    response = get_swagger_ui_html(
         openapi_url=openapi_url,
         title=f"{title} - PlexiChat API Explorer",
         oauth2_redirect_url=oauth2_redirect_url,
@@ -1072,7 +1330,8 @@ def render_swagger_ui_page(
             "persistAuthorization": True,
             "syntaxHighlight": {"theme": "obsidian"},
         },
-    ).body.decode("utf-8")
+    )
+    html = _decode_html_body(response.body)
     shell_header = _build_shell_header_html(
         conf,
         "swagger",
@@ -1091,11 +1350,12 @@ def render_swagger_ui_page(
 def render_redoc_page(request: Request, title: str, openapi_url: str) -> HTMLResponse:
     """Render a branded ReDoc page."""
     conf = _runtime_docs_config(request, get_docs_config())
-    html = get_redoc_html(
+    response = get_redoc_html(
         openapi_url=openapi_url,
         title=f"{title} - PlexiChat API Reference",
         with_google_fonts=False,
-    ).body.decode("utf-8")
+    )
+    html = _decode_html_body(response.body)
     shell_header = _build_shell_header_html(
         conf,
         "redoc",
@@ -1120,6 +1380,7 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Getting Started", "/getting-started"),
             NavItem("Configuration", "/configuration"),
             NavItem("Features", "/features"),
+            NavItem("Permissions", "/permissions"),
             NavItem("Security", "/security"),
             NavItem("Rate Limits", "/rate-limits"),
             NavItem("Error Handling", "/errors"),
@@ -1129,6 +1390,7 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Deployment", "/deployment"),
             NavItem("Performance", "/performance"),
             NavItem("Access Tokens", "/admin-access-tokens"),
+            NavItem("OAuth Scopes", "/oauth-scopes"),
         ],
         "API Reference": [
             NavItem("Overview", "/reference"),
@@ -1159,6 +1421,7 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Overview", "/websocket"),
             NavItem("Connection", "/websocket/connection"),
             NavItem("Events", "/websocket/events"),
+            NavItem("Intents", "/websocket/intents"),
             NavItem("Opcodes", "/websocket/opcodes"),
             NavItem("Close Codes", "/websocket/close-codes"),
         ],
@@ -1214,6 +1477,60 @@ def _replace_dynamic_placeholders(text: str, conf: DocsConfig) -> str:
     # Replace version placeholders
     app_config = get_app_config()
     text = text.replace("{{VERSION}}", app_config["version"])
+
+    limits = get_api_rate_limits()
+    text = text.replace(
+        "{{RATE_LIMIT_DEFAULT_ROWS}}", _build_rate_limit_defaults_rows(limits)
+    )
+    text = text.replace(
+        "{{RATE_LIMIT_ROUTE_ROWS}}", _build_rate_limit_route_rows(limits)
+    )
+    text = text.replace(
+        "{{RATE_LIMIT_POLICY_ROWS}}", _build_rate_limit_policy_rows(limits)
+    )
+
+    intents = get_gateway_intents_docs_data()
+    text = text.replace(
+        "{{GATEWAY_DEFAULT_INTENTS}}", str(intents.get("default_value", 0))
+    )
+    text = text.replace(
+        "{{GATEWAY_ALL_INTENTS}}", str(intents.get("all_value", 0))
+    )
+    text = text.replace(
+        "{{GATEWAY_PRIVILEGED_INTENTS}}", str(intents.get("privileged_value", 0))
+    )
+    text = text.replace(
+        "{{GATEWAY_INTENT_ROWS}}", _build_gateway_intent_rows(intents)
+    )
+
+    permissions = get_permissions_docs_data()
+    text = text.replace(
+        "{{PERMISSION_CATEGORY_COUNT}}", str(permissions.get("category_count", 0))
+    )
+    text = text.replace(
+        "{{PERMISSION_TOTAL_COUNT}}", str(permissions.get("permission_count", 0))
+    )
+    text = text.replace(
+        "{{PERMISSION_CATEGORY_ROWS}}", _build_permission_category_rows(permissions)
+    )
+    text = text.replace(
+        "{{PERMISSION_DETAIL_ROWS}}", _build_permission_detail_rows(permissions)
+    )
+
+    oauth_scopes = get_oauth_scopes_docs_data()
+    text = text.replace(
+        "{{OAUTH_SCOPE_COUNT}}", str(oauth_scopes.get("scope_count", 0))
+    )
+    text = text.replace(
+        "{{OAUTH_PRIVILEGED_SCOPE_COUNT}}",
+        str(oauth_scopes.get("privileged_count", 0)),
+    )
+    text = text.replace(
+        "{{OAUTH_BOT_SCOPE_COUNT}}", str(oauth_scopes.get("bot_required_count", 0))
+    )
+    text = text.replace(
+        "{{OAUTH_SCOPE_ROWS}}", _build_oauth_scope_rows(oauth_scopes)
+    )
 
     return text
 
@@ -1510,6 +1827,14 @@ async def docs_features(request: Request):
     return await _serve_page(request, _doc_path("features.md"), "Features", "/features")
 
 
+@router.get("/permissions")
+async def docs_permissions(request: Request):
+    """Serve the permissions reference page."""
+    return await _serve_page(
+        request, _doc_path("permissions.md"), "Permissions", "/permissions"
+    )
+
+
 @router.get("/security")
 async def docs_security(request: Request):
     """Serve the security guidance page."""
@@ -1532,6 +1857,14 @@ async def docs_admin_access_tokens(request: Request):
         _doc_path("admin-access-tokens.md"),
         "Admin Access Tokens",
         "/admin-access-tokens",
+    )
+
+
+@router.get("/oauth-scopes")
+async def docs_oauth_scopes(request: Request):
+    """Serve the OAuth scopes reference page."""
+    return await _serve_page(
+        request, _doc_path("oauth-scopes.md"), "OAuth Scopes", "/oauth-scopes"
     )
 
 

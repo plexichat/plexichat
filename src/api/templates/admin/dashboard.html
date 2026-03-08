@@ -740,6 +740,46 @@
                     <div id="hash-reports-grid" class="media-report-grid" style="margin-top:1rem;"></div>
                 </div>
                 <div class="card" style="grid-column: span 2;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+                        <h3>Message Reports</h3>
+                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                            <select id="message-report-status" style="min-width:160px;">
+                                <option value="pending" selected>Pending</option>
+                                <option value="reviewed">Reviewed</option>
+                                <option value="actioned">Actioned</option>
+                                <option value="dismissed">Dismissed</option>
+                                <option value="">All</option>
+                            </select>
+                            <button class="btn btn-outline btn-sm" data-click="refreshMessageReports">Refresh</button>
+                        </div>
+                    </div>
+                    <div id="message-report-counts" class="grid" style="margin:1rem 0 0.75rem 0;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"></div>
+                    <table>
+                        <thead><tr><th>Message</th><th>Reporter</th><th>Reported User</th><th>Reason</th><th>Status</th><th>Reported</th><th>Action</th></tr></thead>
+                        <tbody id="message-reports-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="card" style="grid-column: span 2;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+                        <h3>User Reports</h3>
+                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                            <select id="user-report-status" style="min-width:160px;">
+                                <option value="pending" selected>Pending</option>
+                                <option value="reviewed">Reviewed</option>
+                                <option value="actioned">Actioned</option>
+                                <option value="dismissed">Dismissed</option>
+                                <option value="">All</option>
+                            </select>
+                            <button class="btn btn-outline btn-sm" data-click="refreshUserReports">Refresh</button>
+                        </div>
+                    </div>
+                    <div id="user-report-counts" class="grid" style="margin:1rem 0 0.75rem 0;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"></div>
+                    <table>
+                        <thead><tr><th>Reported User</th><th>Reporter</th><th>Reason</th><th>Evidence</th><th>Status</th><th>Reported</th><th>Action</th></tr></thead>
+                        <tbody id="user-reports-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="card" style="grid-column: span 2;">
                     <h3>Blocked Hashes</h3>
                     <div style="display:flex;gap:0.5rem;margin:1rem 0;flex-wrap:wrap;">
                         <input type="text" id="block-hash-val" placeholder="Hash (SHA-256 or pHash)" style="flex:2;min-width:260px;">
@@ -1442,6 +1482,92 @@
             applyReportThumbContrast();
         }
 
+        function reportStatusBadge(status) {
+            const colors = {
+                pending: 'var(--warn)',
+                reviewed: '#7fb3ff',
+                actioned: 'var(--bad)',
+                dismissed: '#888'
+            };
+            return `<span class="badge" style="background:${colors[status] || '#666'}; color:#000;">${escapeHtml(status || 'unknown')}</span>`;
+        }
+
+        function renderModerationReportCounts(containerId, counts) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            const items = [
+                ['Pending', counts?.pending || 0, 'var(--warn)'],
+                ['Reviewed', counts?.reviewed || 0, '#7fb3ff'],
+                ['Actioned', counts?.actioned || 0, 'var(--bad)'],
+                ['Dismissed', counts?.dismissed || 0, '#888'],
+                ['Total', counts?.total || 0, 'var(--line-primary)']
+            ];
+
+            container.innerHTML = items.map(([label, value, color]) => `
+                <div class="card" style="padding:0.75rem 0.9rem;border-left:4px solid ${color};">
+                    <div class="stat-label">${label}</div>
+                    <div class="stat-value" style="font-size:1.2rem;">${Number(value).toLocaleString()}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderMessageReports(items) {
+            const tbody = document.getElementById('message-reports-tbody');
+            if (!items || items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">No message reports</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = items.map(r => {
+                const summary = [r.message_content, r.details].filter(Boolean).join(' • ');
+                const resolution = [r.action_taken, r.admin_notes].filter(Boolean).join(' • ');
+                return `
+                    <tr>
+                        <td style="max-width:260px;">${escapeHtml(summary || r.message_id)}</td>
+                        <td>${escapeHtml(r.reporter_id)}</td>
+                        <td>${escapeHtml(r.reported_user_id)}</td>
+                        <td><strong>${escapeHtml(r.reason)}</strong><div style="color:#777;">${escapeHtml(r.category || '')}</div></td>
+                        <td>${reportStatusBadge(r.status)}${resolution ? `<div style="color:#777;margin-top:0.35rem;">${escapeHtml(resolution)}</div>` : ''}</td>
+                        <td>${formatTimestamp(r.reported_at)}</td>
+                        <td style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                            <button class="btn btn-danger btn-sm" data-click="reviewMessageReport" data-id="${escapeHtml(r.id)}" data-action="action">Action</button>
+                            <button class="btn btn-outline btn-sm" data-click="reviewMessageReport" data-id="${escapeHtml(r.id)}" data-action="review">Review</button>
+                            <button class="btn btn-outline btn-sm" data-click="reviewMessageReport" data-id="${escapeHtml(r.id)}" data-action="dismiss">Dismiss</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderUserReports(items) {
+            const tbody = document.getElementById('user-reports-tbody');
+            if (!items || items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">No user reports</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = items.map(r => {
+                const resolution = [r.action_taken, r.admin_notes].filter(Boolean).join(' • ');
+                const evidenceCount = Array.isArray(r.evidence_message_ids) ? r.evidence_message_ids.length : 0;
+                return `
+                    <tr>
+                        <td>${escapeHtml(r.reported_user_id)}</td>
+                        <td>${escapeHtml(r.reporter_id)}</td>
+                        <td><strong>${escapeHtml(r.reason)}</strong><div style="color:#777;">${escapeHtml(r.category || '')}${r.details ? ` • ${escapeHtml(r.details)}` : ''}</div></td>
+                        <td>${evidenceCount ? `${evidenceCount} linked message${evidenceCount !== 1 ? 's' : ''}` : 'None'}</td>
+                        <td>${reportStatusBadge(r.status)}${resolution ? `<div style="color:#777;margin-top:0.35rem;">${escapeHtml(resolution)}</div>` : ''}</td>
+                        <td>${formatTimestamp(r.reported_at)}</td>
+                        <td style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                            <button class="btn btn-danger btn-sm" data-click="reviewUserReport" data-id="${escapeHtml(r.id)}" data-action="action">Action</button>
+                            <button class="btn btn-outline btn-sm" data-click="reviewUserReport" data-id="${escapeHtml(r.id)}" data-action="review">Review</button>
+                            <button class="btn btn-outline btn-sm" data-click="reviewUserReport" data-id="${escapeHtml(r.id)}" data-action="dismiss">Dismiss</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
         function renderBlockedHashes(items) {
             const tbody = document.getElementById('blocked-hashes-tbody');
             if (!items || items.length === 0) {
@@ -1584,9 +1710,13 @@
 
         async function loadSecurity() {
             try {
-                const statusFilter = document.getElementById('hash-report-status').value;
-                const hashUrl = statusFilter ? `/api/v1/admin/hash-reports?status_filter=${encodeURIComponent(statusFilter)}` : '/api/v1/admin/hash-reports';
-                const [adminSecurity, ips, bans, reports, hashes, blockedUsers, accessTokens] = await Promise.all([
+                const hashStatusFilter = document.getElementById('hash-report-status').value;
+                const messageStatusFilter = document.getElementById('message-report-status').value;
+                const userStatusFilter = document.getElementById('user-report-status').value;
+                const hashUrl = hashStatusFilter ? `/api/v1/admin/hash-reports?status_filter=${encodeURIComponent(hashStatusFilter)}` : '/api/v1/admin/hash-reports';
+                const messageUrl = messageStatusFilter ? `/api/v1/admin/message-reports?status_filter=${encodeURIComponent(messageStatusFilter)}` : '/api/v1/admin/message-reports';
+                const userUrl = userStatusFilter ? `/api/v1/admin/user-reports?status_filter=${encodeURIComponent(userStatusFilter)}` : '/api/v1/admin/user-reports';
+                const [adminSecurity, ips, bans, hashReports, hashes, blockedUsers, accessTokens, messageCounts, messageReports, userCounts, userReports] = await Promise.all([
                     api('/api/v1/admin/auth/security-status'),
                     api('/api/v1/admin/security/blocked-ips'),
                     api('/api/v1/admin/security/banned-usernames'),
@@ -1594,11 +1724,19 @@
                     api('/api/v1/admin/blocked-hashes'),
                     api('/api/v1/admin/blocked-users'),
                     api('/api/v1/admin/security/access-tokens'),
+                    api('/api/v1/admin/message-reports/counts'),
+                    api(messageUrl),
+                    api('/api/v1/admin/user-reports/counts'),
+                    api(userUrl),
                 ]);
                 renderAdminSecurityStatus(adminSecurity);
                 document.getElementById('blocked-ips-tbody').innerHTML = ips.map(i => `<tr><td>${escapeHtml(i.ip_address)}</td><td>${escapeHtml(i.reason || '')}</td><td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-val="${escapeHtml(i.ip_address)}">Unblock</button></td></tr>`).join('');
                 document.getElementById('banned-usernames-tbody').innerHTML = bans.map(b => `<tr><td>${escapeHtml(b.pattern)}</td><td>${escapeHtml(b.reason || '')}</td><td><button class="btn btn-outline btn-sm" data-click="removeBan" data-id="${escapeHtml(b.id)}">Remove</button></td></tr>`).join('');
-                renderHashReports(reports);
+                renderHashReports(hashReports);
+                renderModerationReportCounts('message-report-counts', messageCounts);
+                renderMessageReports(messageReports);
+                renderModerationReportCounts('user-report-counts', userCounts);
+                renderUserReports(userReports);
                 renderBlockedHashes(hashes);
                 renderBlockedUsers(blockedUsers);
                 renderAccessTokens(accessTokens);
@@ -2293,6 +2431,22 @@
                 const action = el.dataset.action;
                 const notes = prompt(`Add admin notes for ${action} (optional):`) || '';
                 api(`/api/v1/admin/hash-reports/${id}/review`, { method: 'POST', body: JSON.stringify({action, notes}) }).then(() => loadSecurity());
+            }
+            else if (a === 'refreshMessageReports') {
+                loadSecurity();
+            }
+            else if (a === 'reviewMessageReport') {
+                const action = el.dataset.action;
+                const notes = prompt(`Add admin notes for ${action} (optional):`) || '';
+                api(`/api/v1/admin/message-reports/${id}/review`, { method: 'POST', body: JSON.stringify({action, notes}) }).then(() => loadSecurity());
+            }
+            else if (a === 'refreshUserReports') {
+                loadSecurity();
+            }
+            else if (a === 'reviewUserReport') {
+                const action = el.dataset.action;
+                const notes = prompt(`Add admin notes for ${action} (optional):`) || '';
+                api(`/api/v1/admin/user-reports/${id}/review`, { method: 'POST', body: JSON.stringify({action, notes}) }).then(() => loadSecurity());
             }
             else if (a === 'blockHash') {
                 const hashValue = document.getElementById('block-hash-val').value.trim();

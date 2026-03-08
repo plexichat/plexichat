@@ -86,7 +86,7 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
         if bypass_header and hmac.compare_digest(bypass_header, bypass_secret):
             user_info["is_internal"] = True
 
-    if getattr(request.state, "is_internal", False):
+    if getattr(request.state, "is_internal", False) is True:
         # Only trust is_internal when set server-side (not from client headers)
         user_info["is_internal"] = True
 

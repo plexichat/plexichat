@@ -13,7 +13,7 @@ Tests cover:
 
 import pytest
 import uuid
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 

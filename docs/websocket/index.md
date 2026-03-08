@@ -37,4 +37,4 @@ Gateway payloads use the familiar structure:
 - voice signaling opcodes such as `VOICE_CONNECT` and `VOICE_ICE_CANDIDATE`
 - typing opcodes `TYPING_START` and `TYPING_STOP`
 
-See [Connection](connection.md), [Events](events.md), [Opcodes](opcodes.md), and [Close Codes](close-codes.md) for details.
+See [Connection](connection.md), [Events](events.md), [Intents](intents.md), [Opcodes](opcodes.md), and [Close Codes](close-codes.md) for details.
