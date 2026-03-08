@@ -3,6 +3,8 @@ Base indexer - Abstract interface for search indexers.
 """
 
 from abc import ABC, abstractmethod
+import base64
+import json
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
@@ -13,9 +15,6 @@ from ..models import (
     MessageSearchResult,
     UserSearchResult,
     ServerSearchResult,
-    MessageSearchResultPage,
-    UserSearchResultPage,
-    ServerSearchResultPage,
 )
 
 
@@ -132,7 +131,6 @@ class BaseIndexer(ABC):
         """
         pass
 
-    @abstractmethod
     def search_messages_page(
         self,
         query: str,
@@ -158,7 +156,22 @@ class BaseIndexer(ABC):
         Returns:
             Tuple of (results, next_cursor)
         """
-        pass
+        decoded = self._decode_offset_cursor(cursor, "msg")
+        offset = decoded.get("offset", 0) if decoded else 0
+        page_limit = max(1, int(limit))
+        results = self.search_messages(
+            query=query,
+            conversation_ids=conversation_ids,
+            server_ids=server_ids,
+            channel_ids=channel_ids,
+            author_ids=author_ids,
+            limit=page_limit,
+            offset=offset,
+        )
+        next_cursor = None
+        if len(results) == page_limit:
+            next_cursor = self._encode_offset_cursor("msg", offset + len(results))
+        return results, next_cursor
 
     @abstractmethod
     def index_user(self, user: IndexedUser) -> bool:
@@ -206,7 +219,6 @@ class BaseIndexer(ABC):
         """
         pass
 
-    @abstractmethod
     def search_users_page(
         self,
         query: str,
@@ -224,7 +236,14 @@ class BaseIndexer(ABC):
         Returns:
             Tuple of (results, next_cursor)
         """
-        pass
+        decoded = self._decode_offset_cursor(cursor, "usr")
+        offset = decoded.get("offset", 0) if decoded else 0
+        page_limit = max(1, int(limit))
+        results = self.search_users(query=query, limit=page_limit, offset=offset)
+        next_cursor = None
+        if len(results) == page_limit:
+            next_cursor = self._encode_offset_cursor("usr", offset + len(results))
+        return results, next_cursor
 
     @abstractmethod
     def index_server(self, server: IndexedServer) -> bool:
@@ -276,7 +295,6 @@ class BaseIndexer(ABC):
         """
         pass
 
-    @abstractmethod
     def search_servers_page(
         self,
         query: str,
@@ -298,7 +316,20 @@ class BaseIndexer(ABC):
         Returns:
             Tuple of (results, next_cursor)
         """
-        pass
+        decoded = self._decode_offset_cursor(cursor, "srv")
+        offset = decoded.get("offset", 0) if decoded else 0
+        page_limit = max(1, int(limit))
+        results = self.search_servers(
+            query=query,
+            category=category,
+            public_only=public_only,
+            limit=page_limit,
+            offset=offset,
+        )
+        next_cursor = None
+        if len(results) == page_limit:
+            next_cursor = self._encode_offset_cursor("srv", offset + len(results))
+        return results, next_cursor
 
     @abstractmethod
     def get_stats(self) -> Dict[str, Any]:
@@ -322,3 +353,30 @@ class BaseIndexer(ABC):
             return True
         except Exception:
             return False
+
+    def _encode_offset_cursor(self, kind: str, offset: int) -> str:
+        payload = {"kind": kind, "offset": max(0, int(offset))}
+        raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii")
+
+    def _decode_offset_cursor(
+        self,
+        cursor: Optional[str],
+        expected_kind: str,
+    ) -> Optional[Dict[str, int]]:
+        if not cursor:
+            return None
+        try:
+            raw = base64.urlsafe_b64decode(cursor.encode("ascii"))
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("kind") != expected_kind:
+            return None
+        try:
+            offset = max(0, int(payload.get("offset", 0)))
+        except (TypeError, ValueError):
+            return None
+        return {"offset": offset}

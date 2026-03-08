@@ -100,8 +100,8 @@ class DiscoveryManager:
 
         if existing:
             self._db.execute(
-                """UPDATE search_server_listings 
-                   SET category = ?, description = ?, tags = ?, 
+                """UPDATE search_server_listings
+                   SET category = ?, description = ?, tags = ?,
                        member_count = ?, listed_by = ?
                    WHERE server_id = ?""",
                 (category, description, tags_json, member_count, user_id, server_id),
@@ -110,7 +110,7 @@ class DiscoveryManager:
         else:
             listing_id = self._generate_id()
             self._db.execute(
-                """INSERT INTO search_server_listings 
+                """INSERT INTO search_server_listings
                    (id, server_id, category, description, tags, member_count,
                     online_count, verification_level, is_verified, is_partnered,
                     listed_at, bumped_at, bump_count, listed_by)
@@ -213,7 +213,7 @@ class DiscoveryManager:
         now = self._get_timestamp()
 
         self._db.execute(
-            """UPDATE search_server_listings 
+            """UPDATE search_server_listings
                SET bumped_at = ?, bump_count = bump_count + 1
                WHERE server_id = ?""",
             (now, server_id),
@@ -384,7 +384,7 @@ class DiscoveryManager:
         now = self._get_timestamp()
 
         last_bump = self._db.fetch_one(
-            """SELECT bumped_at FROM search_server_listings 
+            """SELECT bumped_at FROM search_server_listings
                WHERE server_id = ?""",
             (server_id,),
         )
@@ -403,6 +403,44 @@ class DiscoveryManager:
         return self._db.fetch_one(
             "SELECT * FROM search_server_listings WHERE server_id = ?", (server_id,)
         )
+
+    def get_listings_bulk(self, server_ids: List[int]) -> Dict[int, ServerListing]:
+        """Get discovery listings for multiple servers."""
+        if not server_ids:
+            return {}
+
+        placeholders = ",".join("?" for _ in server_ids)
+        rows = self._db.fetch_all(
+            f"""
+            SELECT l.*, s.name as server_name, s.icon_url as server_icon
+            FROM search_server_listings l
+            LEFT JOIN srv_servers s ON s.id = l.server_id
+            WHERE l.server_id IN ({placeholders})
+            """,
+            tuple(server_ids),
+        )
+
+        listings: Dict[int, ServerListing] = {}
+        for row in rows:
+            listings[int(row["server_id"])] = self._build_listing(
+                int(row["id"]),
+                int(row["server_id"]),
+                row.get("server_name") or "",
+                row.get("description"),
+                row.get("server_icon"),
+                row.get("banner_url"),
+                row.get("category") or "",
+                json.loads(row["tags"]) if row.get("tags") else [],
+                int(row["member_count"] or 0),
+                int(row["online_count"] or 0),
+                VerificationLevel(row["verification_level"]),
+                bool(row["is_verified"]),
+                bool(row["is_partnered"]),
+                int(row["listed_at"] or 0),
+                int(row["bumped_at"] or 0),
+                int(row["bump_count"] or 0),
+            )
+        return listings
 
     def _get_member_count(self, server_id: int) -> int:
         """Get member count for a server."""
