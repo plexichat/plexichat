@@ -1380,7 +1380,8 @@ def _markdown_to_html(
             if not in_ordered_list:
                 html_lines.append("<ol>")
                 in_ordered_list = True
-            html_lines.append(f"<li>{format_inline(re.sub(r'^[0-9]+\\. ', '', line))}</li>")
+            ordered_item = re.sub(r"^[0-9]+\. ", "", line)
+            html_lines.append(f"<li>{format_inline(ordered_item)}</li>")
         elif line.startswith("**Note:**") or line.startswith("**Important:**"):
             close_lists()
             if in_table:
