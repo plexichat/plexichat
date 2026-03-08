@@ -808,30 +808,16 @@ def delete_server_icon(server_id: int) -> bool:
     return deleted > 0
 
 
-def generate_default_svg(seed_id: int, initials: str) -> str:
-    """Generate a colorful SVG placeholder avatar based on a seed ID (user or server)."""
+def generate_default_svg(seed: Any, initials: str) -> str:
+    """Generate a colorful SVG placeholder avatar based on a stable string seed."""
     # Match frontend colors in ui.js:getAvatarColor
     colors = _get_config(
         "default_colors",
-        ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"],
+        ["#6d86d9", "#5ea381", "#c99563", "#5f9ccf", "#8c79c8", "#c27ba2"],
     )
 
-    # Match frontend logic: index = parseInt(String(id).slice(-2), 16) % colors.length
-    id_str = str(seed_id)
-    try:
-        # Frontend does String(id).slice(-2) which is the last 2 characters
-        # then parseInt(..., 16) which is hex.
-        last_two = id_str[-2:] if len(id_str) >= 2 else id_str
-
-        # We need to handle cases where last characters aren't valid hex digits
-        # (though Snowflake IDs usually are digits, so hex is safe)
-        hex_val = int(last_two, 16)
-        index = hex_val % len(colors)
-    except (ValueError, IndexError):
-        # Fallback to simple modulo if hex parsing fails
-        index = seed_id % len(colors)
-
-    color = colors[index]
+    seed_bytes = str(seed or initials or "user").strip().lower().encode("utf-8")
+    color = colors[hashlib.sha256(seed_bytes).digest()[0] % len(colors)]
 
     return f"""<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
         <rect width="128" height="128" fill="{color}"/>

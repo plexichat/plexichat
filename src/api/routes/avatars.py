@@ -101,6 +101,7 @@ async def get_user_avatar(user_id: str, request: Request):
                 from src.core.avatars import generate_default_svg
 
                 # Try to get username for initials (match frontend logic)
+                username = None
                 initials = "UC"
                 try:
                     auth_mod = api.get_auth()
@@ -119,7 +120,7 @@ async def get_user_avatar(user_id: str, request: Request):
                 except Exception:
                     pass
 
-                svg_content = generate_default_svg(uid, initials)
+                svg_content = generate_default_svg(username or str(uid), initials)
                 # Ensure content is encoded before hashing
                 svg_bytes = (
                     svg_content.encode()

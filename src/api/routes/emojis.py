@@ -2,13 +2,13 @@
 Emoji routes - Custom emoji management endpoints.
 """
 
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.core.database.cache import cached
+from src.core.database.cache import cached, invalidate_pattern
 from src.api.schemas.emojis import (
     EmojiResponse,
     EmojiCountsResponse,
@@ -32,6 +32,13 @@ def _emoji_to_response(emoji) -> EmojiResponse:
         uploader_username=emoji.uploader_username,
         created_at=emoji.created_at,
     )
+
+
+def _invalidate_emoji_cache(server_id: int, emoji_id: Optional[int] = None) -> None:
+    """Invalidate cached emoji list/detail entries for all viewers of a server."""
+    invalidate_pattern(f"{get_server_emojis.cache_key_prefix}:str:{server_id}:*")
+    if emoji_id is not None:
+        invalidate_pattern(f"{get_emoji.cache_key_prefix}:str:{server_id}:str:{emoji_id}:*")
 
 
 async def _dispatch_emoji_update(server_id: int):
@@ -447,6 +454,8 @@ async def create_emoji(
                 content_type=content_type,
             )
 
+            _invalidate_emoji_cache(sid, emoji.id)
+
             # Dispatch WebSocket event
             await _dispatch_emoji_update(sid)
 
@@ -575,6 +584,8 @@ async def update_emoji(
                 name=body.name,
             )
 
+            _invalidate_emoji_cache(sid, eid)
+
             # Dispatch WebSocket event
             await _dispatch_emoji_update(sid)
 
@@ -684,6 +695,8 @@ async def delete_emoji(
 
         try:
             reactions.delete_custom_emoji(current_user.user_id, eid)
+
+            _invalidate_emoji_cache(sid, eid)
 
             # Dispatch WebSocket event
             await _dispatch_emoji_update(sid)
