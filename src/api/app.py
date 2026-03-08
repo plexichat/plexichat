@@ -3,8 +3,9 @@ FastAPI application factory - Creates and configures the API application.
 """
 
 from fastapi import FastAPI, Request, HTTPException, status, Response
+from fastapi.openapi.docs import get_swagger_ui_oauth2_redirect_html
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 import sys
 import re
 import unicodedata
@@ -15,7 +16,7 @@ import utils.config as global_config
 import utils.logger as logger
 from .config import get_api_config
 from .routes import create_api_router, create_docs_router, is_docs_enabled
-from .routes.docs import get_docs_config
+from .routes.docs import get_docs_config, render_redoc_page, render_swagger_ui_page
 
 # Local in-memory cache for media file metadata to avoid redundant DB lookups
 from collections import OrderedDict
@@ -84,10 +85,32 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         title=config.title,
         description=config.description,
         version=config.version or "",
-        docs_url=config.docs_url,
-        redoc_url=config.redoc_url,
+        docs_url=None,
+        redoc_url=None,
         openapi_url=config.openapi_url,
     )
+
+    if config.docs_url and config.openapi_url:
+        oauth2_redirect_url = f"{config.docs_url.rstrip('/')}/oauth2-redirect"
+
+        @app.get(config.docs_url, include_in_schema=False)
+        async def swagger_ui_html(request: Request) -> HTMLResponse:
+            return render_swagger_ui_page(
+                request,
+                config.title,
+                config.openapi_url,
+                oauth2_redirect_url=oauth2_redirect_url,
+            )
+
+        @app.get(oauth2_redirect_url, include_in_schema=False)
+        async def swagger_ui_redirect() -> HTMLResponse:
+            return HTMLResponse(get_swagger_ui_oauth2_redirect_html())
+
+    if config.redoc_url and config.openapi_url:
+
+        @app.get(config.redoc_url, include_in_schema=False)
+        async def redoc_html(request: Request) -> HTMLResponse:
+            return render_redoc_page(request, config.title, config.openapi_url)
 
     if enable_rate_limiting:
         from src.core import ratelimit

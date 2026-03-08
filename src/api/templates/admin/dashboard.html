@@ -547,6 +547,64 @@
         <div id="tab-security" class="tab-content hidden">
             <div class="grid grid-2">
                 <div class="card">
+                    <h3>Admin Account</h3>
+                    <div class="grid grid-2" style="margin-top:1rem;gap:0.75rem;">
+                        <div>
+                            <div class="stat-label">Username</div>
+                            <div id="admin-security-username" style="font-family:monospace;">-</div>
+                        </div>
+                        <div>
+                            <div class="stat-label">Last Login</div>
+                            <div id="admin-security-last-login" style="font-family:monospace;">-</div>
+                        </div>
+                        <div>
+                            <div class="stat-label">2FA Status</div>
+                            <div id="admin-security-otp-status" style="font-family:monospace;">-</div>
+                        </div>
+                        <div>
+                            <div class="stat-label">Backup Codes Remaining</div>
+                            <div id="admin-security-backup-count" style="font-family:monospace;">0</div>
+                        </div>
+                    </div>
+                    <div style="margin-top:1rem;">
+                        <h4 style="font-size:0.85rem;margin-bottom:0.5rem;">Change Password</h4>
+                        <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                            <input type="password" id="admin-current-password" placeholder="Current password" autocomplete="current-password">
+                            <input type="password" id="admin-new-password" placeholder="New password" autocomplete="new-password">
+                            <button class="btn btn-primary btn-sm" data-click="changeAdminPassword">Change Password</button>
+                        </div>
+                    </div>
+                    <div style="margin-top:1rem;">
+                        <h4 style="font-size:0.85rem;margin-bottom:0.5rem;">2FA Management</h4>
+                        <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                            <input type="password" id="admin-2fa-password" placeholder="Current password" autocomplete="current-password">
+                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                                <button class="btn btn-secondary btn-sm" data-click="beginAdminOtpSetup">Set Up / Reset 2FA</button>
+                                <button class="btn btn-outline btn-sm" data-click="regenerateAdminBackupCodes">Regenerate Backup Codes</button>
+                            </div>
+                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                                <input type="text" id="admin-disable-otp-code" placeholder="Current OTP or backup code" style="flex:1;min-width:220px;">
+                                <button class="btn btn-danger btn-sm" data-click="disableAdminOtp">Disable 2FA</button>
+                            </div>
+                        </div>
+                        <div id="admin-security-otp-setup" class="hidden" style="margin-top:1rem;padding:0.75rem;border:1px solid var(--border);border-radius:4px;background:#101012;">
+                            <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-start;">
+                                <img id="admin-otp-qr" alt="Admin OTP QR Code" style="width:160px;height:160px;background:#fff;padding:0.5rem;border-radius:4px;">
+                                <div style="display:flex;flex-direction:column;gap:0.5rem;flex:1;min-width:220px;">
+                                    <div style="font-size:0.8rem;color:#bbb;">Scan this QR code with your authenticator, then verify with a fresh code.</div>
+                                    <div id="admin-otp-secret" style="font-family:monospace;word-break:break-all;"></div>
+                                    <input type="text" id="admin-otp-verify-code" placeholder="Authenticator code">
+                                    <button class="btn btn-primary btn-sm" data-click="verifyAdminOtpSetup">Verify 2FA Setup</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="admin-backup-codes" class="hidden" style="margin-top:1rem;padding:0.75rem;border:1px solid var(--border);border-radius:4px;background:#101012;">
+                            <div style="font-size:0.8rem;color:#bbb;margin-bottom:0.5rem;">Store these backup codes securely. They are shown once.</div>
+                            <pre id="admin-backup-codes-list" style="margin:0;font-family:monospace;white-space:pre-wrap;"></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
                     <h3>IP Access Control</h3>
                     <div style="display:flex;gap:0.5rem;margin:1rem 0;"><input type="text" id="block-ip-val" placeholder="IP Address" style="flex:1;"><button class="btn btn-danger" data-click="blockIP">Block IP</button></div>
                     <table><thead><tr><th>IP Address</th><th>Reason</th><th>Action</th></tr></thead><tbody id="blocked-ips-tbody"></tbody></table>
@@ -560,15 +618,111 @@
                     <h3>API Access Tokens</h3>
                     <div style="display:flex;gap:0.5rem;margin:1rem 0;flex-wrap:wrap;">
                         <input type="text" id="access-token-name" placeholder="Token name (optional)" style="flex:2;min-width:200px;">
+                        <input type="text" id="access-token-description" placeholder="Description / owner notes" style="flex:3;min-width:240px;">
+                        <input type="datetime-local" id="access-token-expires" style="min-width:220px;">
+                        <select id="access-token-scope-mode" style="min-width:180px;">
+                            <option value="none">No IP Scope</option>
+                            <option value="monitor">Monitor IP Scope</option>
+                            <option value="enforce">Enforce IP Scope</option>
+                        </select>
                         <input type="text" id="access-token-custom" placeholder="Custom token (optional)" minlength="32" maxlength="128" style="flex:3;min-width:260px;">
                         <button class="btn btn-primary" data-click="createAccessToken">Create Token</button>
                     </div>
                     <div style="font-size:0.75rem;color:#888;margin-top:-0.5rem;margin-bottom:0.5rem;">Custom tokens must be 32-128 characters.</div>
                     <div id="access-token-generated" style="font-size:0.8rem;color:#bbb;margin-bottom:0.5rem;"></div>
                     <table>
-                        <thead><tr><th>Name</th><th>Created</th><th>Last Used</th><th>Status</th><th>Action</th></tr></thead>
+                        <thead><tr><th>Name</th><th>Expires</th><th>Last Used</th><th>Requests</th><th>IPs</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody id="access-tokens-tbody"></tbody>
                     </table>
+                    <div id="access-token-detail" class="card hidden" style="margin-top:1rem;background:#101012;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+                            <h4 id="access-token-detail-title" style="font-size:1rem;">Token Detail</h4>
+                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                                <button class="btn btn-secondary btn-sm" data-click="refreshAccessTokenDetail">Refresh</button>
+                                <button class="btn btn-outline btn-sm" data-click="closeAccessTokenDetail">Close</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-4" style="margin-top:1rem;">
+                            <div><div class="stat-label">Total Requests</div><div class="stat-value" id="access-token-stat-requests">0</div></div>
+                            <div><div class="stat-label">Distinct IPs</div><div class="stat-value" id="access-token-stat-ips">0</div></div>
+                            <div><div class="stat-label">Denied Uses</div><div class="stat-value" id="access-token-stat-denied">0</div></div>
+                            <div><div class="stat-label">Last Used</div><div style="font-family:monospace;" id="access-token-stat-last-used">Never</div></div>
+                        </div>
+                        <div class="grid grid-2" style="margin-top:1rem;">
+                            <div>
+                                <h5 style="margin-bottom:0.5rem;">Settings</h5>
+                                <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                                    <input type="text" id="access-token-detail-name" placeholder="Token name">
+                                    <input type="text" id="access-token-detail-description" placeholder="Description">
+                                    <input type="datetime-local" id="access-token-detail-expires">
+                                    <select id="access-token-detail-scope-mode">
+                                        <option value="none">No IP Scope</option>
+                                        <option value="monitor">Monitor IP Scope</option>
+                                        <option value="enforce">Enforce IP Scope</option>
+                                    </select>
+                                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                                        <button class="btn btn-primary btn-sm" data-click="saveAccessTokenSettings">Save Settings</button>
+                                        <button class="btn btn-secondary btn-sm" data-click="clearAccessTokenExpiry">Clear Expiry</button>
+                                        <button class="btn btn-danger btn-sm" data-click="rotateAccessToken">Rotate Token</button>
+                                        <button class="btn btn-outline btn-sm" data-click="revokeSelectedAccessToken">Revoke Token</button>
+                                    </div>
+                                    <div id="access-token-rotated" style="font-size:0.8rem;color:#bbb;"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <h5 style="margin-bottom:0.5rem;">Current Metadata</h5>
+                                <div style="display:flex;flex-direction:column;gap:0.35rem;font-size:0.85rem;color:#bbb;">
+                                    <div><strong>Created:</strong> <span id="access-token-detail-created"></span></div>
+                                    <div><strong>First Used:</strong> <span id="access-token-detail-first-used"></span></div>
+                                    <div><strong>Last IP:</strong> <span id="access-token-detail-last-ip"></span></div>
+                                    <div><strong>Last Path:</strong> <span id="access-token-detail-last-path"></span></div>
+                                    <div><strong>Last User-Agent:</strong> <span id="access-token-detail-last-ua"></span></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="grid grid-2" style="margin-top:1rem;">
+                            <div>
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                                    <h5>IP Scopes</h5>
+                                </div>
+                                <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap;">
+                                    <select id="access-token-scope-type" style="min-width:120px;">
+                                        <option value="ip">IP</option>
+                                        <option value="cidr">CIDR</option>
+                                    </select>
+                                    <input type="text" id="access-token-scope-value" placeholder="203.0.113.5 or 203.0.113.0/24" style="flex:1;min-width:220px;">
+                                    <button class="btn btn-primary btn-sm" data-click="addAccessTokenScope">Add Scope</button>
+                                </div>
+                                <table>
+                                    <thead><tr><th>Type</th><th>Value</th><th>Action</th></tr></thead>
+                                    <tbody id="access-token-scopes-tbody"></tbody>
+                                </table>
+                            </div>
+                            <div>
+                                <h5 style="margin-bottom:0.5rem;">Top IPs</h5>
+                                <table>
+                                    <thead><tr><th>IP</th><th>Requests</th><th>Denied</th><th>Last Seen</th></tr></thead>
+                                    <tbody id="access-token-top-ips-tbody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="grid grid-2" style="margin-top:1rem;">
+                            <div>
+                                <h5 style="margin-bottom:0.5rem;">Top Paths</h5>
+                                <table>
+                                    <thead><tr><th>Path</th><th>Method</th><th>Requests</th><th>Last Seen</th></tr></thead>
+                                    <tbody id="access-token-top-paths-tbody"></tbody>
+                                </table>
+                            </div>
+                            <div>
+                                <h5 style="margin-bottom:0.5rem;">Recent Activity</h5>
+                                <table>
+                                    <thead><tr><th>When</th><th>IP</th><th>Request</th><th>Status</th></tr></thead>
+                                    <tbody id="access-token-events-tbody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="card" style="grid-column: span 2;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -705,8 +859,14 @@
                     </div>
                     <div class="grid grid-2" style="gap:0.75rem;margin-top:1rem;">
                         <div>
+                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Mode</h4>
+                            <div id="automod-rule-mode-help" style="font-size:0.8rem;color:#888;">
+                                Keyword and regex rules can be edited with the helpers below. Other rule types use the JSON config field.
+                            </div>
+                        </div>
+                        <div>
                             <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Keyword Helper</h4>
-                            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                            <div id="automod-keyword-helper" style="display:flex;flex-direction:column;gap:0.5rem;">
                                 <input type="text" id="automod-keywords" placeholder="Keywords (comma separated)">
                                 <div style="display:flex;gap:0.75rem;align-items:center;">
                                     <label style="font-size:0.7rem; font-weight:800; color:#555;">CASE</label>
@@ -718,7 +878,7 @@
                         </div>
                         <div>
                             <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Regex Helper</h4>
-                            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                            <div id="automod-regex-helper" style="display:flex;flex-direction:column;gap:0.5rem;">
                                 <textarea id="automod-regex-patterns" rows="4" placeholder="One pattern per line"></textarea>
                                 <div style="display:flex;gap:0.75rem;align-items:center;">
                                     <label style="font-size:0.7rem; font-weight:800; color:#555;">CASE</label>
@@ -728,12 +888,17 @@
                                 </div>
                             </div>
                         </div>
-                        <div style="grid-column: span 2;">
+                        <div id="automod-config-section" style="grid-column: span 2;">
                             <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Config JSON</h4>
                             <textarea id="automod-config-json" rows="4" placeholder='{"keywords":["spam"],"case_sensitive":false,"whole_word":true}'></textarea>
                         </div>
                         <div style="grid-column: span 2;">
                             <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Actions JSON</h4>
+                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+                                <button class="btn btn-secondary btn-sm" data-click="automodPresetDelete">Delete Only</button>
+                                <button class="btn btn-secondary btn-sm" data-click="automodPresetAlert">Delete + Alert</button>
+                                <button class="btn btn-secondary btn-sm" data-click="automodPresetTimeout">Timeout + Alert</button>
+                            </div>
                             <textarea id="automod-actions-json" rows="4" placeholder='[{"action_type":"delete_message"},{"action_type":"alert_moderators"}]'></textarea>
                         </div>
                     </div>
@@ -818,7 +983,7 @@
             yellow: '#ffcd56'
         };
 
-        let currentTab = 'metrics', charts = {}, metricData = [], historicalData = {}, selectedUserId = null, selectedTicketId = null, selectedTicketStatus = null;
+        let currentTab = 'metrics', charts = {}, metricData = [], historicalData = {}, selectedUserId = null, selectedTicketId = null, selectedTicketStatus = null, selectedAccessTokenId = null, adminOtpSetupChallenge = null;
 
         const escapeHtml = (value) => String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -1188,6 +1353,23 @@
             }
         };
 
+        const formatDateTimeLocal = (ts) => {
+            if (!ts) return '';
+            try {
+                const d = new Date(ts);
+                const pad = (v) => String(v).padStart(2, '0');
+                return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            } catch {
+                return '';
+            }
+        };
+
+        const parseDateTimeLocal = (value) => {
+            if (!value) return null;
+            const ts = new Date(value).getTime();
+            return Number.isNaN(ts) ? null : ts;
+        };
+
         const shortHash = (hash) => hash ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : '';
 
         function applyReportThumbContrast() {
@@ -1298,25 +1480,114 @@
         function renderAccessTokens(items) {
             const tbody = document.getElementById('access-tokens-tbody');
             if (!items || items.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">No access tokens</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">No access tokens</td></tr>';
                 return;
             }
             tbody.innerHTML = items.map(t => `
                 <tr>
                     <td>${escapeHtml(t.name || '')}</td>
-                    <td>${formatTimestamp(t.created_at)}</td>
+                    <td>${formatTimestamp(t.expires_at) || 'Never'}</td>
                     <td>${formatTimestamp(t.last_used_at)}</td>
-                    <td>${t.revoked ? 'Revoked' : 'Active'}</td>
-                    <td>${t.revoked ? '' : `<button class="btn btn-outline btn-sm" data-click="revokeAccessToken" data-id="${escapeHtml(t.id)}">Revoke</button>`}</td>
+                    <td>${Number(t.use_count_total || 0).toLocaleString()}</td>
+                    <td>${Number(t.distinct_ip_count || 0).toLocaleString()}</td>
+                    <td>${t.revoked ? 'Revoked' : (t.expires_at && t.expires_at <= Date.now() ? 'Expired' : 'Active')}</td>
+                    <td style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                        <button class="btn btn-secondary btn-sm" data-click="viewAccessToken" data-id="${escapeHtml(t.id)}">View</button>
+                        ${t.revoked ? '' : `<button class="btn btn-outline btn-sm" data-click="revokeAccessToken" data-id="${escapeHtml(t.id)}">Revoke</button>`}
+                    </td>
                 </tr>
             `).join('');
+        }
+
+        function renderAccessTokenDetail(detail) {
+            const panel = document.getElementById('access-token-detail');
+            if (!detail || !detail.access_token) {
+                panel.classList.add('hidden');
+                return;
+            }
+            const token = detail.access_token;
+            panel.classList.remove('hidden');
+            document.getElementById('access-token-detail-title').textContent = `Token Detail: ${token.name || token.id}`;
+            document.getElementById('access-token-stat-requests').textContent = Number(detail.total_events || token.use_count_total || 0).toLocaleString();
+            document.getElementById('access-token-stat-ips').textContent = Number(detail.distinct_ip_count || token.distinct_ip_count || 0).toLocaleString();
+            document.getElementById('access-token-stat-denied').textContent = Number(detail.denied_count_total || token.denied_count_total || 0).toLocaleString();
+            document.getElementById('access-token-stat-last-used').textContent = formatTimestamp(token.last_used_at) || 'Never';
+            document.getElementById('access-token-detail-name').value = token.name || '';
+            document.getElementById('access-token-detail-description').value = token.description || '';
+            document.getElementById('access-token-detail-expires').value = formatDateTimeLocal(token.expires_at);
+            document.getElementById('access-token-detail-scope-mode').value = token.scope_mode || 'none';
+            document.getElementById('access-token-detail-created').textContent = formatTimestamp(token.created_at) || 'Unknown';
+            document.getElementById('access-token-detail-first-used').textContent = formatTimestamp(token.first_used_at) || 'Never';
+            document.getElementById('access-token-detail-last-ip').textContent = token.last_used_ip_address || 'Unknown';
+            document.getElementById('access-token-detail-last-path').textContent = token.last_used_path || 'Unknown';
+            document.getElementById('access-token-detail-last-ua').textContent = token.last_used_user_agent || 'Unknown';
+            document.getElementById('access-token-rotated').textContent = '';
+
+            const scopesTbody = document.getElementById('access-token-scopes-tbody');
+            scopesTbody.innerHTML = (detail.scopes || []).length === 0
+                ? '<tr><td colspan="3" style="color:#666;">No scopes configured</td></tr>'
+                : detail.scopes.map(scope => `
+                    <tr>
+                        <td>${escapeHtml(scope.scope_type)}</td>
+                        <td>${escapeHtml(scope.value)}</td>
+                        <td><button class="btn btn-outline btn-sm" data-click="removeAccessTokenScope" data-id="${escapeHtml(scope.id)}">Remove</button></td>
+                    </tr>
+                `).join('');
+
+            const ipsTbody = document.getElementById('access-token-top-ips-tbody');
+            ipsTbody.innerHTML = (detail.top_ips || []).length === 0
+                ? '<tr><td colspan="4" style="color:#666;">No IP activity yet</td></tr>'
+                : detail.top_ips.map(item => `
+                    <tr>
+                        <td>${escapeHtml(item.ip_address || 'UNKNOWN')}</td>
+                        <td>${Number(item.request_count || 0).toLocaleString()}</td>
+                        <td>${Number(item.denied_count || 0).toLocaleString()}</td>
+                        <td>${formatTimestamp(item.last_seen_at)}</td>
+                    </tr>
+                `).join('');
+
+            const pathsTbody = document.getElementById('access-token-top-paths-tbody');
+            pathsTbody.innerHTML = (detail.top_paths || []).length === 0
+                ? '<tr><td colspan="4" style="color:#666;">No route usage yet</td></tr>'
+                : detail.top_paths.map(item => `
+                    <tr>
+                        <td>${escapeHtml(item.path || '')}</td>
+                        <td>${escapeHtml(item.method || '')}</td>
+                        <td>${Number(item.request_count || 0).toLocaleString()}</td>
+                        <td>${formatTimestamp(item.last_seen_at)}</td>
+                    </tr>
+                `).join('');
+
+            const eventsTbody = document.getElementById('access-token-events-tbody');
+            eventsTbody.innerHTML = (detail.recent_events || []).length === 0
+                ? '<tr><td colspan="4" style="color:#666;">No recent events</td></tr>'
+                : detail.recent_events.map(item => `
+                    <tr>
+                        <td>${formatTimestamp(item.used_at)}</td>
+                        <td>${escapeHtml(item.ip_address || 'UNKNOWN')}</td>
+                        <td>${escapeHtml(item.method || '')} ${escapeHtml(item.path || '')}</td>
+                        <td>${item.allowed ? 'Allowed' : `Denied${item.reject_reason ? ` (${escapeHtml(item.reject_reason)})` : ''}`}</td>
+                    </tr>
+                `).join('');
+        }
+
+        async function loadAccessTokenDetail(tokenId) {
+            selectedAccessTokenId = tokenId;
+            const detail = await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(tokenId)}`);
+            renderAccessTokenDetail(detail);
+        }
+
+        function closeAccessTokenDetail() {
+            selectedAccessTokenId = null;
+            document.getElementById('access-token-detail').classList.add('hidden');
         }
 
         async function loadSecurity() {
             try {
                 const statusFilter = document.getElementById('hash-report-status').value;
                 const hashUrl = statusFilter ? `/api/v1/admin/hash-reports?status_filter=${encodeURIComponent(statusFilter)}` : '/api/v1/admin/hash-reports';
-                const [ips, bans, reports, hashes, blockedUsers, accessTokens] = await Promise.all([
+                const [adminSecurity, ips, bans, reports, hashes, blockedUsers, accessTokens] = await Promise.all([
+                    api('/api/v1/admin/auth/security-status'),
                     api('/api/v1/admin/security/blocked-ips'),
                     api('/api/v1/admin/security/banned-usernames'),
                     api(hashUrl),
@@ -1324,12 +1595,16 @@
                     api('/api/v1/admin/blocked-users'),
                     api('/api/v1/admin/security/access-tokens'),
                 ]);
+                renderAdminSecurityStatus(adminSecurity);
                 document.getElementById('blocked-ips-tbody').innerHTML = ips.map(i => `<tr><td>${escapeHtml(i.ip_address)}</td><td>${escapeHtml(i.reason || '')}</td><td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-val="${escapeHtml(i.ip_address)}">Unblock</button></td></tr>`).join('');
                 document.getElementById('banned-usernames-tbody').innerHTML = bans.map(b => `<tr><td>${escapeHtml(b.pattern)}</td><td>${escapeHtml(b.reason || '')}</td><td><button class="btn btn-outline btn-sm" data-click="removeBan" data-id="${escapeHtml(b.id)}">Remove</button></td></tr>`).join('');
                 renderHashReports(reports);
                 renderBlockedHashes(hashes);
                 renderBlockedUsers(blockedUsers);
                 renderAccessTokens(accessTokens);
+                if (selectedAccessTokenId) {
+                    await loadAccessTokenDetail(selectedAccessTokenId);
+                }
             } catch (e) {}
         }
 
@@ -1362,6 +1637,71 @@
             return JSON.parse(value);
         };
 
+        function clearAdminSecuritySecrets() {
+            document.getElementById('admin-current-password').value = '';
+            document.getElementById('admin-new-password').value = '';
+            document.getElementById('admin-2fa-password').value = '';
+            document.getElementById('admin-disable-otp-code').value = '';
+            document.getElementById('admin-otp-verify-code').value = '';
+        }
+
+        function renderAdminSecurityStatus(status) {
+            document.getElementById('admin-security-username').textContent = status?.username || '-';
+            document.getElementById('admin-security-last-login').textContent = formatTimestamp(status?.last_login) || 'Never';
+            document.getElementById('admin-security-otp-status').textContent = status?.otp_enabled
+                ? 'Enabled'
+                : (status?.must_setup_otp ? 'Setup Required' : 'Disabled');
+            document.getElementById('admin-security-backup-count').textContent = String(status?.backup_codes_remaining || 0);
+        }
+
+        async function loadAdminSecurityStatus() {
+            const status = await api('/api/v1/admin/auth/security-status');
+            renderAdminSecurityStatus(status);
+            return status;
+        }
+
+        function setAutomodEditorMode(ruleType) {
+            const keyword = document.getElementById('automod-keyword-helper');
+            const regex = document.getElementById('automod-regex-helper');
+            const config = document.getElementById('automod-config-section');
+            const help = document.getElementById('automod-rule-mode-help');
+            keyword.classList.toggle('hidden', ruleType !== 'keyword');
+            regex.classList.toggle('hidden', ruleType !== 'regex');
+            config.classList.toggle('hidden', ruleType === 'keyword' || ruleType === 'regex');
+            if (ruleType === 'keyword') help.textContent = 'Keyword mode uses the helper fields below and generates the rule config automatically.';
+            else if (ruleType === 'regex') help.textContent = 'Regex mode uses the helper fields below and generates the rule config automatically.';
+            else help.textContent = 'This rule type uses the raw JSON config field below.';
+        }
+
+        function loadAutomodActionPreset(preset) {
+            let actions = defaultAutomodActions;
+            if (preset === 'delete') {
+                actions = [{ action_type: 'delete_message' }];
+            } else if (preset === 'alert') {
+                actions = [{ action_type: 'delete_message' }, { action_type: 'alert_moderators' }];
+            } else if (preset === 'timeout') {
+                actions = [
+                    { action_type: 'delete_message' },
+                    { action_type: 'timeout_user', duration_seconds: 600, notify_user: true, reason: 'AutoMod timeout' },
+                    { action_type: 'alert_moderators' }
+                ];
+            }
+            document.getElementById('automod-actions-json').value = JSON.stringify(actions, null, 2);
+        }
+
+        function syncAutomodHelpersFromConfig(ruleType, config) {
+            if (ruleType === 'keyword') {
+                document.getElementById('automod-keywords').value = (config?.keywords || []).join(', ');
+                document.getElementById('automod-keyword-case').checked = !!config?.case_sensitive;
+                document.getElementById('automod-keyword-whole').checked = config?.whole_word !== false;
+            } else if (ruleType === 'regex') {
+                const patterns = Array.isArray(config?.patterns) ? config.patterns : [];
+                document.getElementById('automod-regex-patterns').value = patterns.map(item => item.pattern || '').filter(Boolean).join('\n');
+                document.getElementById('automod-regex-case').checked = patterns.some(item => !!item.case_sensitive);
+                document.getElementById('automod-regex-multiline').checked = patterns.some(item => !!item.multiline);
+            }
+        }
+
         async function loadAutomodConfig() {
             try {
                 const cfg = await api('/api/v1/admin/automod/config');
@@ -1383,6 +1723,7 @@
                 document.getElementById('automod-custom-timeout').value = custom.timeout_seconds ?? '';
                 document.getElementById('automod-custom-threshold').value = custom.threshold ?? '';
                 document.getElementById('automod-custom-headers').value = custom.headers ? JSON.stringify(custom.headers) : '';
+                setAutomodEditorMode(document.getElementById('automod-rule-type').value);
             } catch (e) {}
         }
 
@@ -1473,7 +1814,8 @@
             document.getElementById('automod-regex-case').checked = false;
             document.getElementById('automod-regex-multiline').checked = false;
             document.getElementById('automod-config-json').value = '';
-            document.getElementById('automod-actions-json').value = '';
+            document.getElementById('automod-actions-json').value = JSON.stringify(defaultAutomodActions, null, 2);
+            setAutomodEditorMode('keyword');
         }
 
         function loadAutomodRuleIntoEditor(ruleId) {
@@ -1491,6 +1833,8 @@
             document.getElementById('automod-exempt-channels').value = (rule.exempt_channels || []).join(', ');
             document.getElementById('automod-config-json').value = JSON.stringify(rule.config || {}, null, 2);
             document.getElementById('automod-actions-json').value = JSON.stringify(rule.actions || [], null, 2);
+            syncAutomodHelpersFromConfig(rule.rule_type, rule.config || {});
+            setAutomodEditorMode(rule.rule_type);
         }
 
         async function saveAutomodRule() {
@@ -1529,10 +1873,21 @@
                 }
             }
             if (!config) {
-                config = parseJsonInput(document.getElementById('automod-config-json').value, null);
+                try {
+                    config = parseJsonInput(document.getElementById('automod-config-json').value, null);
+                } catch (e) {
+                    alert('Invalid AutoMod config JSON: ' + e.message);
+                    return;
+                }
             }
             if (!config) return;
-            let actions = parseJsonInput(document.getElementById('automod-actions-json').value, defaultAutomodActions);
+            let actions = defaultAutomodActions;
+            try {
+                actions = parseJsonInput(document.getElementById('automod-actions-json').value, defaultAutomodActions);
+            } catch (e) {
+                alert('Invalid AutoMod actions JSON: ' + e.message);
+                return;
+            }
             if (!Array.isArray(actions) || actions.length === 0) actions = defaultAutomodActions;
             const body = {
                 server_id: Number(serverId),
@@ -1675,7 +2030,13 @@
                 return;
             }
             const a = el.dataset.click, id = el.dataset.id, val = el.dataset.val;
-            if (a === 'logout') { sessionStorage.removeItem('plexichat-admin-token'); localStorage.removeItem('plexichat-admin-token'); window.location.replace('/api/v1/admin/login'); }
+            if (a === 'logout') {
+                api('/api/v1/admin/logout', { method: 'POST' }).catch(() => null).finally(() => {
+                    sessionStorage.removeItem('plexichat-admin-token');
+                    localStorage.removeItem('plexichat-admin-token');
+                    window.location.replace('/api/v1/admin/login');
+                });
+            }
             else if (a === 'viewTicket') viewTicket(id);
             else if (a === 'closeTicketDetail') document.getElementById('ticket-detail').classList.add('hidden');
             else if (a === 'refreshTickets') loadTickets();
@@ -1727,6 +2088,84 @@
                 if (!confirm('REALLY logout EVERY single user? This will clear all active sessions across the entire platform.')) return;
                 api(`/api/v1/admin/security/logout-all`, { method: 'POST' }).then(() => alert('Global session purge complete'));
             }
+            else if (a === 'changeAdminPassword') {
+                const currentPassword = document.getElementById('admin-current-password').value;
+                const newPassword = document.getElementById('admin-new-password').value;
+                if (!currentPassword || !newPassword) return;
+                api('/api/v1/admin/auth/change-password', {
+                    method: 'POST',
+                    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+                }).then(() => {
+                    clearAdminSecuritySecrets();
+                    alert('Admin password updated');
+                });
+            }
+            else if (a === 'beginAdminOtpSetup') {
+                const currentPassword = document.getElementById('admin-2fa-password').value;
+                if (!currentPassword) return;
+                api('/api/v1/admin/auth/2fa/begin-setup', {
+                    method: 'POST',
+                    body: JSON.stringify({ current_password: currentPassword })
+                }).then((r) => {
+                    adminOtpSetupChallenge = { adminId: r.admin_id, challengeToken: r.challenge_token };
+                    document.getElementById('admin-otp-qr').src = '/api/v1/qr?size=200x200&data=' + encodeURIComponent(r.otp_qr_uri);
+                    document.getElementById('admin-otp-secret').textContent = r.otp_secret || '';
+                    document.getElementById('admin-security-otp-setup').classList.remove('hidden');
+                    document.getElementById('admin-backup-codes').classList.add('hidden');
+                });
+            }
+            else if (a === 'verifyAdminOtpSetup') {
+                if (!adminOtpSetupChallenge) return;
+                const code = document.getElementById('admin-otp-verify-code').value.trim();
+                if (!code) return;
+                api('/api/v1/admin/verify-otp', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        admin_id: adminOtpSetupChallenge.adminId,
+                        code,
+                        is_setup: true,
+                        challenge_token: adminOtpSetupChallenge.challengeToken
+                    })
+                }).then((r) => {
+                    if (r.token) {
+                        token = r.token;
+                        sessionStorage.setItem('plexichat-admin-token', token);
+                    }
+                    adminOtpSetupChallenge = null;
+                    document.getElementById('admin-security-otp-setup').classList.add('hidden');
+                    clearAdminSecuritySecrets();
+                    loadSecurity();
+                    alert('Admin 2FA configured');
+                });
+            }
+            else if (a === 'disableAdminOtp') {
+                const currentPassword = document.getElementById('admin-2fa-password').value;
+                const code = document.getElementById('admin-disable-otp-code').value.trim();
+                if (!currentPassword || !code) return;
+                if (!confirm('Disable admin 2FA? The next login will require setup again.')) return;
+                api('/api/v1/admin/auth/2fa/disable', {
+                    method: 'POST',
+                    body: JSON.stringify({ current_password: currentPassword, code })
+                }).then(() => {
+                    adminOtpSetupChallenge = null;
+                    document.getElementById('admin-security-otp-setup').classList.add('hidden');
+                    clearAdminSecuritySecrets();
+                    loadSecurity();
+                });
+            }
+            else if (a === 'regenerateAdminBackupCodes') {
+                const currentPassword = document.getElementById('admin-2fa-password').value;
+                if (!currentPassword) return;
+                api('/api/v1/admin/auth/2fa/regenerate-backup-codes', {
+                    method: 'POST',
+                    body: JSON.stringify({ current_password: currentPassword })
+                }).then((r) => {
+                    document.getElementById('admin-backup-codes-list').textContent = (r.backup_codes || []).join('\n');
+                    document.getElementById('admin-backup-codes').classList.remove('hidden');
+                    clearAdminSecuritySecrets();
+                    loadSecurity();
+                });
+            }
             else if (a === 'blockIP') {
                 const ip = document.getElementById('block-ip-val').value;
                 if (!ip) return;
@@ -1737,20 +2176,107 @@
             }
             else if (a === 'createAccessToken') {
                 const name = document.getElementById('access-token-name').value.trim();
+                const description = document.getElementById('access-token-description').value.trim();
+                const expiresAt = parseDateTimeLocal(document.getElementById('access-token-expires').value);
+                const scopeMode = document.getElementById('access-token-scope-mode').value;
                 const customToken = document.getElementById('access-token-custom').value.trim();
                 if (customToken && (customToken.length < 32 || customToken.length > 128)) {
                     alert('Custom token must be 32-128 characters.');
                     return;
                 }
-                api('/api/v1/admin/security/access-tokens', { method: 'POST', body: JSON.stringify({ name: name || null, token: customToken || null }) }).then(r => {
+                api('/api/v1/admin/security/access-tokens', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        name: name || null,
+                        description: description || null,
+                        token: customToken || null,
+                        expires_at: expiresAt,
+                        scope_mode: scopeMode
+                    })
+                }).then(r => {
                     document.getElementById('access-token-name').value = '';
+                    document.getElementById('access-token-description').value = '';
+                    document.getElementById('access-token-expires').value = '';
+                    document.getElementById('access-token-scope-mode').value = 'none';
                     document.getElementById('access-token-custom').value = '';
                     document.getElementById('access-token-generated').textContent = `New token: ${r.token}`;
                     loadSecurity();
                 });
             }
+            else if (a === 'viewAccessToken') {
+                loadAccessTokenDetail(id);
+            }
+            else if (a === 'refreshAccessTokenDetail') {
+                if (selectedAccessTokenId) loadAccessTokenDetail(selectedAccessTokenId);
+            }
+            else if (a === 'closeAccessTokenDetail') {
+                closeAccessTokenDetail();
+            }
             else if (a === 'revokeAccessToken') {
-                api(`/api/v1/admin/security/access-tokens/${id}/revoke`, { method: 'POST' }).then(() => loadSecurity());
+                api(`/api/v1/admin/security/access-tokens/${id}/revoke`, { method: 'POST' }).then(() => {
+                    if (String(selectedAccessTokenId) === String(id)) closeAccessTokenDetail();
+                    loadSecurity();
+                });
+            }
+            else if (a === 'saveAccessTokenSettings') {
+                if (!selectedAccessTokenId) return;
+                api(`/api/v1/admin/security/access-tokens/${selectedAccessTokenId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({
+                        name: document.getElementById('access-token-detail-name').value.trim() || null,
+                        description: document.getElementById('access-token-detail-description').value.trim() || null,
+                        expires_at: parseDateTimeLocal(document.getElementById('access-token-detail-expires').value),
+                        scope_mode: document.getElementById('access-token-detail-scope-mode').value
+                    })
+                }).then(() => loadSecurity());
+            }
+            else if (a === 'clearAccessTokenExpiry') {
+                if (!selectedAccessTokenId) return;
+                api(`/api/v1/admin/security/access-tokens/${selectedAccessTokenId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ clear_expiry: true })
+                }).then(() => loadSecurity());
+            }
+            else if (a === 'rotateAccessToken') {
+                if (!selectedAccessTokenId) return;
+                api(`/api/v1/admin/security/access-tokens/${selectedAccessTokenId}/rotate`, {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                }).then((r) => {
+                    document.getElementById('access-token-rotated').textContent = `Replacement token: ${r.token}`;
+                    selectedAccessTokenId = r.access_token.id;
+                    loadSecurity();
+                });
+            }
+            else if (a === 'revokeSelectedAccessToken') {
+                if (!selectedAccessTokenId) return;
+                api(`/api/v1/admin/security/access-tokens/${selectedAccessTokenId}/revoke`, { method: 'POST' }).then(() => {
+                    closeAccessTokenDetail();
+                    loadSecurity();
+                });
+            }
+            else if (a === 'addAccessTokenScope') {
+                if (!selectedAccessTokenId) return;
+                const scopeType = document.getElementById('access-token-scope-type').value;
+                const scopeValue = document.getElementById('access-token-scope-value').value.trim();
+                if (!scopeValue) return;
+                api(`/api/v1/admin/security/access-tokens/${selectedAccessTokenId}/scopes`, {
+                    method: 'POST',
+                    body: JSON.stringify({ scope_type: scopeType, value: scopeValue })
+                }).then(() => {
+                    document.getElementById('access-token-scope-value').value = '';
+                    loadAccessTokenDetail(selectedAccessTokenId);
+                    loadSecurity();
+                });
+            }
+            else if (a === 'removeAccessTokenScope') {
+                if (!selectedAccessTokenId) return;
+                api(`/api/v1/admin/security/access-tokens/${selectedAccessTokenId}/scopes/${id}`, {
+                    method: 'DELETE'
+                }).then(() => {
+                    loadAccessTokenDetail(selectedAccessTokenId);
+                    loadSecurity();
+                });
             }
             else if (a === 'addBannedUsername') {
                 const pattern = document.getElementById('ban-username-val').value;
@@ -1813,6 +2339,9 @@
                 if (!confirm('Delete this automod rule?')) return;
                 api(`/api/v1/admin/automod/rules/${id}`, { method: 'DELETE' }).then(() => loadAutomodRules());
             }
+            else if (a === 'automodPresetDelete') loadAutomodActionPreset('delete');
+            else if (a === 'automodPresetAlert') loadAutomodActionPreset('alert');
+            else if (a === 'automodPresetTimeout') loadAutomodActionPreset('timeout');
             else if (a === 'openExport') document.getElementById('export-modal').classList.remove('hidden');
             else if (a === 'closeExport') document.getElementById('export-modal').classList.add('hidden');
             else if (a === 'resetTelemetry') {
@@ -1900,6 +2429,7 @@
         document.getElementById('telemetry-history-bucket').addEventListener('change', loadTelemetryHistory);
         document.getElementById('hash-report-status').addEventListener('change', loadSecurity);
         document.getElementById('ticket-status-filter').addEventListener('change', loadTickets);
+        document.getElementById('automod-rule-type').addEventListener('change', (e) => setAutomodEditorMode(e.target.value));
 
         setInterval(() => {
             if (currentTab === 'logs' && document.getElementById('log-auto-refresh').checked) {
@@ -1910,6 +2440,7 @@
         // Init
         api('/api/v1/version').then(v => {
             document.getElementById('server-version').textContent = v.version.string;
+            resetAutomodRule();
             showTab('metrics');
             fetchAvailableBadges();
             fetchAvailableTiers();
