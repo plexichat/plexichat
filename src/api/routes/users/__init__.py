@@ -721,7 +721,8 @@ async def get_user(
             )
 
         try:
-            user = auth.get_user(uid)
+            profiles = auth.get_user_profiles_bulk([uid])
+            user = profiles.get(str(uid)) if profiles else None
             if not user:
                 raise HTTPException(
                     status_code=404,

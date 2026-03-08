@@ -2304,7 +2304,10 @@ class AuthManager(BaseManager):
                         cached_profile = json.loads(cached_profile)
                     except Exception:
                         pass
-                result[str(uid)] = cached_profile
+                if isinstance(cached_profile, dict) and "created_at" in cached_profile:
+                    result[str(uid)] = cached_profile
+                else:
+                    missing_ids.append(uid)
             else:
                 missing_ids.append(uid)
 
@@ -2313,7 +2316,7 @@ class AuthManager(BaseManager):
             placeholders = ",".join("?" for _ in missing_ids)
             # JOIN with user_features to get badges
             query = f"""
-                SELECT u.id, u.username, u.permissions, u.account_type, f.badges
+                SELECT u.id, u.username, u.created_at, u.permissions, u.account_type, f.badges
                 FROM auth_users u
                 LEFT JOIN user_features f ON u.id = f.user_id
                 WHERE u.id IN ({placeholders})
@@ -2336,6 +2339,7 @@ class AuthManager(BaseManager):
                 profile = {
                     "id": user_id,
                     "username": row["username"],
+                    "created_at": row["created_at"],
                     "permissions": self._json_loads(row["permissions"])
                     if isinstance(row["permissions"], str)
                     else row["permissions"],

@@ -22,6 +22,57 @@ class TestGetRelationships:
 
         assert response.status_code == 401
 
+    def test_get_relationships_uses_public_profiles(
+        self, test_client, db_and_modules, monkeypatch
+    ):
+        """Test relationships endpoint uses public profile lookup instead of full users."""
+        auth = db_and_modules["auth"]
+        relationships = db_and_modules["relationships"]
+        unique_id = uuid.uuid4().hex[:8]
+
+        requester = auth.register(
+            username=f"relrequester_{unique_id}",
+            email=f"relrequester_{unique_id}@example.com",
+            password="SecurePass123!",
+        )
+        friend = auth.register(
+            username=f"relfriend_{unique_id}",
+            email=f"relfriend_{unique_id}@example.com",
+            password="SecurePass123!",
+        )
+        request = relationships.send_friend_request(requester.id, friend.id)
+        relationships.accept_friend_request(friend.id, request.id)
+        login = auth.login(username=f"relrequester_{unique_id}", password="SecurePass123!")
+
+        def fail_get_users_bulk(*args, **kwargs):
+            raise AssertionError("get_users_bulk should not be used for relationship listings")
+
+        def fake_profiles(user_ids):
+            assert friend.id in user_ids
+            return {
+                str(friend.id): {
+                    "id": friend.id,
+                    "username": f"publicfriend_{unique_id}",
+                    "created_at": friend.created_at,
+                    "avatar_url": f"/api/v1/avatars/users/{friend.id}",
+                    "badges": [],
+                }
+            }
+
+        monkeypatch.setattr(auth, "get_users_bulk", fail_get_users_bulk)
+        monkeypatch.setattr(auth, "get_user_profiles_bulk", fake_profiles)
+
+        response = test_client.get(
+            "/api/v1/relationships/@me",
+            headers={"Authorization": f"Bearer {login.token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        friend_entry = next(item for item in data if item["user_id"] == str(friend.id))
+        assert friend_entry["username"] == f"publicfriend_{unique_id}"
+        assert friend_entry["avatar_url"] == f"/api/v1/avatars/users/{friend.id}"
+
 
 class TestSendFriendRequest:
     """Tests for POST /relationships endpoint."""

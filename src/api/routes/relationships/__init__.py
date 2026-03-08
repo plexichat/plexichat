@@ -115,11 +115,11 @@ def get_relationships(
         if all_user_ids:
             if auth:
                 try:
-                    users = auth.get_users_bulk(list(all_user_ids))
+                    users = auth.get_user_profiles_bulk(list(all_user_ids))
                     for uid_str, u in users.items():
                         user_info_map[uid_str] = {
-                            "username": u.username,
-                            "avatar_url": getattr(u, "avatar_url", None),
+                            "username": u.get("username"),
+                            "avatar_url": u.get("avatar_url"),
                         }
                 except Exception as e:
                     logger.debug(f"Failed bulk user fetch: {e}")
@@ -338,12 +338,13 @@ async def create_relationship(
         target_username = None
         if auth:
             try:
-                sender = auth.get_user(current_user.user_id)
-                target = auth.get_user(target_id)
+                profiles = auth.get_user_profiles_bulk([current_user.user_id, target_id])
+                sender = profiles.get(str(current_user.user_id)) if profiles else None
+                target = profiles.get(str(target_id)) if profiles else None
                 if sender:
-                    sender_username = sender.username
+                    sender_username = sender.get("username")
                 if target:
-                    target_username = target.username
+                    target_username = target.get("username")
             except Exception as e:
                 logger.debug(f"Failed to get usernames for relationship event: {e}")
 
@@ -512,12 +513,13 @@ async def accept_friend_request(
         accepter_presence = None
         if auth:
             try:
-                sender = auth.get_user(sender_id)
-                accepter = auth.get_user(current_user.user_id)
+                profiles = auth.get_user_profiles_bulk([sender_id, current_user.user_id])
+                sender = profiles.get(str(sender_id)) if profiles else None
+                accepter = profiles.get(str(current_user.user_id)) if profiles else None
                 if sender:
-                    sender_username = sender.username
+                    sender_username = sender.get("username")
                 if accepter:
-                    accepter_username = accepter.username
+                    accepter_username = accepter.get("username")
             except Exception as e:
                 logger.debug(f"Failed to get user info for accept event: {e}")
 

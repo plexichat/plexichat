@@ -105,9 +105,15 @@ async def get_user_avatar(user_id: str, request: Request):
                 try:
                     auth_mod = api.get_auth()
                     if auth_mod:
-                        user = auth_mod.get_user(uid)
+                        profiles = auth_mod.get_user_profiles_bulk([uid])
+                        user = profiles.get(str(uid)) if profiles else None
                         if user:
-                            username = getattr(user, "username", "User").strip()
+                            username = getattr(user, "get", None)
+                            username = (
+                                user.get("username", "User")
+                                if callable(username)
+                                else getattr(user, "username", "User")
+                            ).strip()
                             if username:
                                 initials = username[: min(2, len(username))].upper()
                 except Exception:

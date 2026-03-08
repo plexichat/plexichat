@@ -93,6 +93,47 @@ class TestGetUser:
         data = response.json()
         assert "email" not in data or data["email"] is None
 
+    def test_get_user_by_id_uses_public_profile_lookup(
+        self, test_client, auth_headers, db_and_modules, monkeypatch
+    ):
+        """Test public user route uses the public profile helper."""
+        auth = db_and_modules["auth"]
+        unique_id = uuid.uuid4().hex[:8]
+        target = auth.register(
+            username=f"publictarget_{unique_id}",
+            email=f"publictarget_{unique_id}@example.com",
+            password="SecurePass123!",
+        )
+
+        def fail_get_user(*args, **kwargs):
+            raise AssertionError("get_user should not be used for public user route")
+
+        def fake_profiles(user_ids):
+            assert user_ids == [target.id]
+            return {
+                str(target.id): {
+                    "id": target.id,
+                    "username": f"public_{unique_id}",
+                    "created_at": target.created_at,
+                    "avatar_url": f"/api/v1/avatars/users/{target.id}",
+                    "badges": [],
+                }
+            }
+
+        monkeypatch.setattr(auth, "get_user", fail_get_user)
+        monkeypatch.setattr(auth, "get_user_profiles_bulk", fake_profiles)
+
+        response = test_client.get(
+            f"/api/v1/users/{target.id}",
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == str(target.id)
+        assert data["username"] == f"public_{unique_id}"
+        assert data["created_at"] == target.created_at
+
     def test_get_nonexistent_user(self, test_client, auth_headers):
         """Test getting nonexistent user."""
         response = test_client.get(
