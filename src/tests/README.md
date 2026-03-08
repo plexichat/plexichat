@@ -29,7 +29,7 @@ The PlexiChat test suite is designed for **speed**, **reliability**, and **compr
 
 ### Test Statistics
 
-- **900+ test files** covering all modules
+- **Hundreds of test files** covering all modules across the current workspace
 - **Security tests**: XSS, SQL injection, CSRF, auth bypass, rate limiting
 - **Integration tests**: Full module interaction testing
 - **Unit tests**: Validators, utilities, property-based testing
@@ -118,38 +118,38 @@ class ModuleRegistry:
 ```
 src/tests/
 +-- api/                    # API route tests
-¦   +-- security/          # API security tests
-¦   ¦   +-- test_authentication_failures.py
-¦   ¦   +-- test_injection_attacks.py
-¦   ¦   +-- test_rate_limit_enforcement.py
-¦   +-- test_auth_routes.py
-¦   +-- test_message_routes.py
-¦   +-- conftest.py        # API-specific fixtures
+|   +-- security/           # API security tests
+|   |   +-- test_authentication_failures.py
+|   |   +-- test_injection_attacks.py
+|   |   +-- test_rate_limit_enforcement.py
+|   +-- test_auth_routes.py
+|   +-- test_message_routes.py
+|   +-- conftest.py         # API-specific fixtures
 +-- auth/                   # Authentication module tests
-¦   +-- test_login.py
-¦   +-- test_registration.py
-¦   +-- test_2fa.py
-¦   +-- test_sessions.py
+|   +-- test_login.py
+|   +-- test_registration.py
+|   +-- test_2fa.py
+|   +-- test_sessions.py
 +-- messaging/              # Messaging module tests
 +-- servers/                # Server management tests
 +-- security/               # Core security tests
-¦   +-- test_xss_prevention.py
-¦   +-- test_sql_injection.py
-¦   +-- test_csrf_protection.py
-¦   +-- test_comprehensive_security.py
+|   +-- test_xss_prevention.py
+|   +-- test_sql_injection.py
+|   +-- test_csrf_protection.py
+|   +-- test_comprehensive_security.py
 +-- unit/                   # Fast unit tests
-¦   +-- test_validators.py
-¦   +-- test_property_based_validation.py
-¦   +-- test_real_hashing.py
+|   +-- test_validators.py
+|   +-- test_property_based_validation.py
+|   +-- test_real_hashing.py
 +-- fixtures/               # Shared test fixtures
-¦   +-- database.py        # Database management
-¦   +-- modules.py         # Module registry
-¦   +-- security.py        # Security test utilities
-¦   +-- factories.py       # Entity factories
-¦   +-- config.py          # Test configuration
-+-- conftest.py            # Root fixtures (session-scoped)
-+-- pytest.ini             # Pytest configuration
-+-- README.md              # This file
+|   +-- database.py         # Database management
+|   +-- modules.py          # Module registry
+|   +-- security.py         # Security test utilities
+|   +-- factories.py        # Entity factories
+|   +-- config.py           # Test configuration
++-- conftest.py             # Root fixtures (session-scoped)
++-- pytest.ini              # Pytest configuration
++-- README.md               # This file
 ```
 
 ### Test Categories (Markers)
@@ -325,7 +325,7 @@ def test_registration(modules, user_factory):
 def test_server_creation(server_factory, user_factory):
     owner = user_factory.create()
     server = server_factory.create(owner=owner, name="Test Server")
-    
+
     # Server with members
     server, owner, members = server_factory.create_with_members(
         member_count=3
@@ -335,7 +335,7 @@ def test_server_creation(server_factory, user_factory):
 def test_messaging(conversation_factory):
     # Create DM
     dm, user1, user2 = conversation_factory.create_dm()
-    
+
     # Create group
     group, owner, participants = conversation_factory.create_group(
         participant_count=5,
@@ -416,7 +416,7 @@ def test_message_xss_prevention(modules, user_pool, xss_payloads, security_asser
     user1 = user_pool.get_user()
     user2 = user_pool.get_user()
     dm = modules.messaging.create_dm(user1.id, user2.id)
-    
+
     # Test all XSS payloads
     for payload in xss_payloads.all():
         try:
@@ -466,12 +466,12 @@ def test_unauthorized_access(modules, user_pool):
     """Test that users cannot access resources they don't own"""
     owner = user_pool.get_user()
     unauthorized = user_pool.get_user()
-    
+
     server = modules.servers.create_server(
         owner_id=owner.id,
         name="Private Server"
     )
-    
+
     # Unauthorized user should not be able to delete
     with pytest.raises(Exception):
         modules.servers.delete_server(
@@ -486,7 +486,7 @@ def test_unauthorized_access(modules, user_pool):
 def test_field_security(modules, user_pool, security_helper, xss_payloads):
     """Use security helper for common patterns"""
     owner = user_pool.get_user()
-    
+
     # Test XSS in server name field
     security_helper.test_field_xss(
         create_fn=lambda name: modules.servers.create_server(
@@ -540,7 +540,7 @@ def test_user_registration(modules):
         email=f"newuser_{uuid.uuid4().hex[:8]}@test.com",
         password="SecurePass123!"
     )
-    
+
     assert user.username.startswith("newuser_")
     assert user.email.endswith("@test.com")
 ```
@@ -552,14 +552,14 @@ def test_message_sending(modules, user_pool):
     """Test message sending with pool users"""
     user1 = user_pool.get_user()
     user2 = user_pool.get_user()
-    
+
     dm = modules.messaging.create_dm(user1.id, user2.id)
     msg = modules.messaging.send_message(
         user_id=user1.id,
         conversation_id=dm.id,
         content="Hello!"
     )
-    
+
     assert msg.content == "Hello!"
     assert msg.author_id == user1.id
 ```
@@ -573,7 +573,7 @@ def test_server_creation(modules, user_factory, server_factory):
         member_count=3,
         name="Test Server"
     )
-    
+
     assert server.owner_id == owner.id
     assert len(members) == 3
 ```
@@ -584,18 +584,18 @@ def test_server_creation(modules, user_factory, server_factory):
 def test_login_logout_flow(modules, user_pool):
     """Test complete auth flow"""
     user, username, password = user_pool.get_user_with_credentials()
-    
+
     # Login
     result = modules.auth.login(username, password)
     assert result.token is not None
-    
+
     # Verify token
     token_info = modules.auth.verify_token(result.token)
     assert token_info.user_id == user.id
-    
+
     # Logout
     modules.auth.logout(result.token)
-    
+
     # Verify token is invalid
     with pytest.raises(Exception):
         modules.auth.verify_token(result.token)
@@ -609,10 +609,10 @@ def test_channel_permissions(modules, server_factory, user_factory):
     server, owner, [member] = server_factory.create_with_members(
         member_count=1
     )
-    
+
     channels = modules.servers.get_channels(owner.id, server.id)
     channel = channels[0]
-    
+
     # Owner can send messages
     msg = modules.messaging.send_message(
         user_id=owner.id,
@@ -620,7 +620,7 @@ def test_channel_permissions(modules, server_factory, user_factory):
         content="Owner message"
     )
     assert msg is not None
-    
+
     # Member can send messages (default permission)
     msg = modules.messaging.send_message(
         user_id=member.id,
@@ -636,7 +636,7 @@ def test_channel_permissions(modules, server_factory, user_factory):
 def test_invalid_operations(modules, user_pool):
     """Test that invalid operations are properly rejected"""
     user = user_pool.get_user()
-    
+
     # Test invalid conversation ID
     with pytest.raises(Exception):
         modules.messaging.send_message(
@@ -644,7 +644,7 @@ def test_invalid_operations(modules, user_pool):
             conversation_id=999999,
             content="Should fail"
         )
-    
+
     # Test invalid user ID
     with pytest.raises(Exception):
         modules.auth.get_user(999999)
@@ -706,7 +706,7 @@ Add to `pytest.ini`:
 
 ```ini
 [pytest]
-addopts = 
+addopts =
     --cov=src
     --cov-report=term-missing
     --cov-report=html
@@ -735,27 +735,27 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v3
       with:
         submodules: recursive
-    
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install -r requirements-test.txt
-    
+
     - name: Run tests with coverage
       run: |
         pytest --cov=src --cov-report=xml --cov-report=term
-    
+
     - name: Upload coverage
       uses: codecov/codecov-action@v3
       with:
@@ -840,21 +840,21 @@ import pytest
 
 class TestBasicFunctionality:
     """Test basic [feature] operations."""
-    
+
     def test_create_item(self, modules, user_pool):
         """Test creating an item."""
         user = user_pool.get_user()
         # Test implementation
         pass
-    
+
     def test_read_item(self, modules, user_pool):
         """Test reading an item."""
         pass
-    
+
     def test_update_item(self, modules, user_pool):
         """Test updating an item."""
         pass
-    
+
     def test_delete_item(self, modules, user_pool):
         """Test deleting an item."""
         pass
@@ -862,13 +862,13 @@ class TestBasicFunctionality:
 
 class TestErrorHandling:
     """Test error cases and validation."""
-    
+
     def test_invalid_input(self, modules):
         """Test handling of invalid input."""
         with pytest.raises(Exception):
             # Test that should fail
             pass
-    
+
     def test_not_found(self, modules, user_pool):
         """Test handling of not found errors."""
         pass
@@ -876,11 +876,11 @@ class TestErrorHandling:
 
 class TestSecurity:
     """Test security aspects."""
-    
+
     def test_xss_prevention(self, modules, user_pool, xss_payloads):
         """Test XSS prevention."""
         pass
-    
+
     def test_authorization(self, modules, user_pool):
         """Test authorization checks."""
         pass
@@ -888,7 +888,7 @@ class TestSecurity:
 
 class TestIntegration:
     """Test integration with other modules."""
-    
+
     def test_cross_module_interaction(self, modules, user_pool):
         """Test interaction with other modules."""
         pass
@@ -918,9 +918,9 @@ def my_module_fixture(modules, user_pool):
     # Setup
     user = user_pool.get_user()
     resource = modules.mymodule.create_resource(user.id)
-    
+
     yield resource
-    
+
     # Cleanup (if needed)
     # modules.mymodule.delete_resource(resource.id)
 ```
