@@ -14,11 +14,52 @@ from src.api.schemas.admin import (
     AccessTokenCreateRequest,
     AccessTokenCreateResponse,
     AccessTokenResponse,
+    AccessTokenUpdateRequest,
+    AccessTokenRotateRequest,
+    AccessTokenScopeCreateRequest,
+    AccessTokenScopeResponse,
+    AccessTokenDetailResponse,
+    AccessTokenUsageEventResponse,
+    AccessTokenUsageIPResponse,
+    AccessTokenUsagePathResponse,
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
 
 router = APIRouter()
+
+
+def _serialize_access_token(token) -> AccessTokenResponse:
+    return AccessTokenResponse(
+        id=str(token.id),
+        name=token.name,
+        description=token.description,
+        created_by=str(token.created_by) if token.created_by is not None else None,
+        created_at=token.created_at,
+        first_used_at=token.first_used_at,
+        last_used_at=token.last_used_at,
+        last_used_ip_address=token.last_used_ip_address,
+        last_used_user_agent=token.last_used_user_agent,
+        last_used_path=token.last_used_path,
+        expires_at=token.expires_at,
+        scope_mode=token.scope_mode,
+        use_count_total=token.use_count_total,
+        distinct_ip_count=token.distinct_ip_count,
+        denied_count_total=token.denied_count_total,
+        revoked=token.revoked,
+        revoked_at=token.revoked_at,
+        revoked_by=str(token.revoked_by) if token.revoked_by is not None else None,
+    )
+
+
+def _serialize_access_token_scope(scope) -> AccessTokenScopeResponse:
+    return AccessTokenScopeResponse(
+        id=str(scope["id"]),
+        scope_type=scope["scope_type"],
+        value=scope["value"],
+        created_by=str(scope["created_by"]) if scope.get("created_by") is not None else None,
+        created_at=scope["created_at"],
+    )
 
 
 @router.get("/security/blocked-ips", response_model=List[BlockedIPResponse])
@@ -56,19 +97,7 @@ async def list_access_tokens(request: Request, include_revoked: bool = True):
     from src.core import auth
 
     tokens = auth.list_api_access_tokens(include_revoked=include_revoked)
-    return [
-        AccessTokenResponse(
-            id=str(t.id),
-            name=t.name,
-            created_by=str(t.created_by) if t.created_by is not None else None,
-            created_at=t.created_at,
-            last_used_at=t.last_used_at,
-            revoked=t.revoked,
-            revoked_at=t.revoked_at,
-            revoked_by=str(t.revoked_by) if t.revoked_by is not None else None,
-        )
-        for t in tokens
-    ]
+    return [_serialize_access_token(t) for t in tokens]
 
 
 @router.post("/security/access-tokens", response_model=AccessTokenCreateResponse)
@@ -81,25 +110,181 @@ async def create_access_token(request: Request, body: AccessTokenCreateRequest):
     from src.core import auth
 
     try:
-        token = auth.create_api_access_token(body.name, admin_id, body.token)
+        token = auth.create_api_access_token(
+            body.name,
+            admin_id,
+            body.token,
+            description=body.description,
+            expires_at=body.expires_at,
+            scope_mode=body.scope_mode,
+        )
     except ValueError as exc:
+        status_code = 409 if "already exists" in str(exc).lower() else 400
         raise HTTPException(
-            status_code=409,
-            detail={"error": {"code": 409, "message": str(exc)}},
+            status_code=status_code,
+            detail={"error": {"code": status_code, "message": str(exc)}},
         )
     return AccessTokenCreateResponse(
         token=token.token or "",
-        access_token=AccessTokenResponse(
-            id=str(token.id),
-            name=token.name,
-            created_by=str(token.created_by) if token.created_by is not None else None,
-            created_at=token.created_at,
-            last_used_at=token.last_used_at,
-            revoked=token.revoked,
-            revoked_at=token.revoked_at,
-            revoked_by=str(token.revoked_by) if token.revoked_by is not None else None,
-        ),
+        access_token=_serialize_access_token(token),
     )
+
+
+@router.get(
+    "/security/access-tokens/{token_id}",
+    response_model=AccessTokenDetailResponse,
+)
+async def get_access_token_detail(request: Request, token_id: int, recent_limit: int = 100):
+    """Get detailed usage and policy information for a specific API access token."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    from src.core import auth
+
+    try:
+        detail = auth.get_api_access_token_usage(token_id, recent_limit=recent_limit)
+    except Exception:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Access token not found"}},
+        )
+
+    return AccessTokenDetailResponse(
+        access_token=_serialize_access_token(detail["token"]),
+        scopes=[_serialize_access_token_scope(scope) for scope in detail["scopes"]],
+        recent_events=[
+            AccessTokenUsageEventResponse(
+                id=str(event["id"]),
+                used_at=event["used_at"],
+                ip_address=event["ip_address"],
+                method=event["method"],
+                path=event["path"],
+                user_agent=event["user_agent"],
+                allowed=event["allowed"],
+                scope_match=event["scope_match"],
+                reject_reason=event["reject_reason"],
+            )
+            for event in detail["recent_events"]
+        ],
+        top_ips=[AccessTokenUsageIPResponse(**item) for item in detail["top_ips"]],
+        top_paths=[AccessTokenUsagePathResponse(**item) for item in detail["top_paths"]],
+        total_events=detail["total_events"],
+        distinct_ip_count=detail["distinct_ip_count"],
+        denied_count_total=detail["denied_count_total"],
+    )
+
+
+@router.patch(
+    "/security/access-tokens/{token_id}",
+    response_model=AccessTokenResponse,
+)
+async def update_access_token(
+    request: Request,
+    token_id: int,
+    body: AccessTokenUpdateRequest,
+):
+    """Update metadata, expiry, or scope mode for a specific API access token."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import auth
+
+    try:
+        token = auth.update_api_access_token(
+            token_id,
+            admin_id,
+            name=body.name,
+            description=body.description,
+            expires_at=body.expires_at,
+            clear_expiry=body.clear_expiry,
+            scope_mode=body.scope_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(exc)}},
+        )
+    if not token:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Access token not found"}},
+        )
+    return _serialize_access_token(token)
+
+
+@router.post(
+    "/security/access-tokens/{token_id}/rotate",
+    response_model=AccessTokenCreateResponse,
+)
+async def rotate_access_token(
+    request: Request,
+    token_id: int,
+    body: AccessTokenRotateRequest,
+):
+    """Rotate an API access token, cloning policy and scopes into a replacement."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import auth
+
+    try:
+        token = auth.rotate_api_access_token(token_id, admin_id, body.token)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(exc)}},
+        )
+    if not token:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Access token not found"}},
+        )
+    return AccessTokenCreateResponse(token=token.token or "", access_token=_serialize_access_token(token))
+
+
+@router.post(
+    "/security/access-tokens/{token_id}/scopes",
+    response_model=AccessTokenScopeResponse,
+)
+async def add_access_token_scope(
+    request: Request,
+    token_id: int,
+    body: AccessTokenScopeCreateRequest,
+):
+    """Add an IP or CIDR scope rule to an API access token."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import auth
+
+    try:
+        scope = auth.add_api_access_token_scope(
+            token_id,
+            body.scope_type,
+            body.value,
+            admin_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(exc)}},
+        )
+    return _serialize_access_token_scope(scope)
+
+
+@router.delete(
+    "/security/access-tokens/{token_id}/scopes/{scope_id}",
+    response_model=SuccessResponse,
+)
+async def remove_access_token_scope(request: Request, token_id: int, scope_id: int):
+    """Remove an IP or CIDR scope rule from an API access token."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    from src.core import auth
+
+    success = auth.remove_api_access_token_scope(token_id, scope_id)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Access token scope not found"}},
+        )
+    return SuccessResponse(success=True)
 
 
 @router.post(

@@ -8,6 +8,10 @@ from src.api.schemas.admin import (
     AdminLoginResponse,
     OTPVerifyRequest,
     AdminChangePasswordRequest,
+    AdminSecurityStatusResponse,
+    AdminOTPSetupBeginRequest,
+    AdminOTPDisableRequest,
+    AdminBackupCodesResponse,
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
@@ -130,3 +134,88 @@ async def admin_change_password(request: Request, body: AdminChangePasswordReque
             status_code=400, detail={"error": {"code": 400, "message": message}}
         )
     return SuccessResponse(success=True)
+
+
+@router.get("/auth/security-status", response_model=AdminSecurityStatusResponse)
+async def admin_security_status(request: Request):
+    """Return the current admin account security settings and posture."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import admin
+
+    status = admin.get_security_status(admin_id)
+    if not status:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Admin user not found"}},
+        )
+    return AdminSecurityStatusResponse(
+        admin_id=str(status.admin_id),
+        username=status.username,
+        email=status.email,
+        created_at=status.created_at,
+        last_login=status.last_login,
+        otp_required=status.otp_required,
+        otp_enabled=status.otp_enabled,
+        must_setup_otp=status.must_setup_otp,
+        backup_codes_remaining=status.backup_codes_remaining,
+    )
+
+
+@router.post("/auth/2fa/begin-setup", response_model=AdminLoginResponse)
+async def admin_begin_otp_setup(request: Request, body: AdminOTPSetupBeginRequest):
+    """Start a new OTP setup flow for the current admin account."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import admin
+
+    result = admin.begin_otp_setup(admin_id, body.current_password)
+    if not result.success:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": result.error or "Failed to begin OTP setup"}},
+        )
+    return AdminLoginResponse(
+        status="otp_setup_required",
+        admin_id=str(result.user_id),
+        otp_secret=result.otp_secret,
+        otp_qr_uri=result.otp_qr_uri,
+        challenge_token=result.challenge_token,
+        message="OTP setup started",
+    )
+
+
+@router.post("/auth/2fa/disable", response_model=SuccessResponse)
+async def admin_disable_otp(request: Request, body: AdminOTPDisableRequest):
+    """Disable OTP for the current admin after password and OTP verification."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import admin
+
+    success, message = admin.disable_otp(admin_id, body.current_password, body.code)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": message}},
+        )
+    return SuccessResponse(success=True)
+
+
+@router.post("/auth/2fa/regenerate-backup-codes", response_model=AdminBackupCodesResponse)
+async def admin_regenerate_backup_codes(
+    request: Request, body: AdminOTPSetupBeginRequest
+):
+    """Regenerate backup codes for the current admin."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import admin
+
+    success, backup_codes, message = admin.regenerate_backup_codes(
+        admin_id, body.current_password
+    )
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": message}},
+        )
+    return AdminBackupCodesResponse(success=True, backup_codes=backup_codes)
