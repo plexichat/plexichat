@@ -184,7 +184,9 @@ class RoleCreateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
     name: str = Field(..., min_length=1, max_length=100, description="Role name")
-    color: Optional[str] = Field(None, description="Role color hex")
+    color: Optional[str] = Field(
+        None, pattern=r"^#[0-9A-Fa-f]{6}$", description="Role color hex"
+    )
     permissions: Dict[str, Any] = Field(
         default_factory=dict, description="Role permissions"
     )
@@ -199,7 +201,9 @@ class RoleUpdateRequest(BaseModel):
     name: Optional[str] = Field(
         None, min_length=1, max_length=100, description="Role name"
     )
-    color: Optional[str] = Field(None, description="Role color hex")
+    color: Optional[str] = Field(
+        None, pattern=r"^#[0-9A-Fa-f]{6}$", description="Role color hex"
+    )
     permissions: Optional[Dict[str, Any]] = Field(None, description="Role permissions")
     hoist: Optional[bool] = Field(None, description="Display separately in member list")
     mentionable: Optional[bool] = Field(None, description="Can be mentioned")

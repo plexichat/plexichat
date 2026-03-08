@@ -9,7 +9,7 @@ from typing import Optional
 import utils.version as version_util
 from utils.version import InvalidVersionError
 import utils.logger as logger
-from src.core.database.cache import cached
+from src.core.database.cache import cached, invalidate_pattern
 
 from ..schemas.version import (
     ServerVersionResponse,
@@ -283,6 +283,7 @@ def set_server_state(
     _maintenance_message = message
     _estimated_downtime = estimated_downtime
     _restart_at = restart_at
+    invalidate_pattern("api_status*")
 
 
 def set_update_url(url: Optional[str]):

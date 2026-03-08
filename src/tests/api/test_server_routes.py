@@ -3,6 +3,10 @@ Tests for server routes.
 """
 
 import uuid
+import pytest
+from pydantic import ValidationError
+
+from src.api.schemas.servers import RoleCreateRequest, RoleUpdateRequest
 
 
 class TestGetServers:
@@ -228,3 +232,23 @@ class TestServerMembership:
         data = response.json()
         assert "created_at" in data
         assert data["created_at"] > 0
+
+
+class TestRoleSchemaValidation:
+    """Tests for role request validation."""
+
+    def test_role_create_accepts_hex_color(self):
+        """Test role creation schema accepts #RRGGBB colors."""
+        payload = RoleCreateRequest(name="Moderator", color="#A1B2C3")
+
+        assert payload.color == "#A1B2C3"
+
+    def test_role_create_rejects_non_hex_color(self):
+        """Test role creation schema rejects non-hex color strings."""
+        with pytest.raises(ValidationError):
+            RoleCreateRequest(name="Moderator", color="red")
+
+    def test_role_update_rejects_injected_color_payload(self):
+        """Test role update schema rejects style-breaking payloads."""
+        with pytest.raises(ValidationError):
+            RoleUpdateRequest(color='" onclick="alert(1)')
