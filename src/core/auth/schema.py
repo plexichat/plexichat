@@ -149,14 +149,49 @@ CREATE TABLE IF NOT EXISTS auth_internal_secrets (
 CREATE TABLE IF NOT EXISTS auth_api_access_tokens (
     id INTEGER PRIMARY KEY,
     name TEXT,
+    description TEXT,
     token_index TEXT UNIQUE NOT NULL,
     token_encrypted TEXT NOT NULL,
     created_by INTEGER,
     created_at INTEGER NOT NULL,
+    first_used_at INTEGER,
     last_used_at INTEGER,
+    last_used_ip_index TEXT,
+    last_used_ip_encrypted TEXT,
+    last_used_user_agent TEXT,
+    last_used_path TEXT,
+    expires_at INTEGER,
+    scope_mode TEXT NOT NULL DEFAULT 'none',
+    use_count_total INTEGER NOT NULL DEFAULT 0,
     revoked INTEGER DEFAULT 0,
     revoked_at INTEGER,
     revoked_by INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS auth_api_access_token_scopes (
+    id INTEGER PRIMARY KEY,
+    token_id INTEGER NOT NULL,
+    scope_type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    created_by INTEGER,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (token_id) REFERENCES auth_api_access_tokens(id) ON DELETE CASCADE,
+    UNIQUE(token_id, scope_type, value)
+);
+
+CREATE TABLE IF NOT EXISTS auth_api_access_token_events (
+    id INTEGER PRIMARY KEY,
+    token_id INTEGER NOT NULL,
+    used_at INTEGER NOT NULL,
+    ip_index TEXT,
+    ip_encrypted TEXT,
+    method TEXT,
+    path TEXT,
+    user_agent TEXT,
+    allowed INTEGER NOT NULL DEFAULT 1,
+    scope_match INTEGER,
+    reject_reason TEXT,
+    FOREIGN KEY (token_id) REFERENCES auth_api_access_tokens(id) ON DELETE CASCADE
 );
 
 -- Audit log with integrity
@@ -181,6 +216,10 @@ CREATE INDEX IF NOT EXISTS idx_auth_devices_user ON auth_devices(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_audit_user ON auth_audit_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_api_access_tokens_index ON auth_api_access_tokens(token_index);
 CREATE INDEX IF NOT EXISTS idx_auth_api_access_tokens_revoked ON auth_api_access_tokens(revoked);
+CREATE INDEX IF NOT EXISTS idx_auth_api_access_tokens_expires ON auth_api_access_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_scopes_token ON auth_api_access_token_scopes(token_id);
+CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_events_token_time ON auth_api_access_token_events(token_id, used_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_events_ip ON auth_api_access_token_events(ip_index);
 
 -- Username blacklist table (used by auth blacklist checks)
 CREATE TABLE IF NOT EXISTS username_blacklist (

@@ -51,6 +51,7 @@ class AuditEventType(Enum):
     ACCOUNT_LOCKED = "account_locked"
     ACCOUNT_UNLOCKED = "account_unlocked"
     PERMISSIONS_CHANGED = "permissions_changed"
+    SECURITY_SETTINGS_UPDATED = "security_settings_updated"
     OAUTH_LOGIN = "oauth_login"
     OAUTH_LINK = "oauth_link"
 
@@ -128,13 +129,23 @@ class Bot:
 @dataclass
 class AccessToken:
     id: SnowflakeID
-    name: Optional[str]
-    created_by: Optional[SnowflakeID]
     created_at: int
-    last_used_at: Optional[int]
-    revoked: bool
-    revoked_at: Optional[int]
-    revoked_by: Optional[SnowflakeID]
+    name: Optional[str] = None
+    description: Optional[str] = None
+    created_by: Optional[SnowflakeID] = None
+    first_used_at: Optional[int] = None
+    last_used_at: Optional[int] = None
+    last_used_ip_address: Optional[str] = None
+    last_used_user_agent: Optional[str] = None
+    last_used_path: Optional[str] = None
+    expires_at: Optional[int] = None
+    scope_mode: str = "none"
+    use_count_total: int = 0
+    distinct_ip_count: int = 0
+    denied_count_total: int = 0
+    revoked: bool = False
+    revoked_at: Optional[int] = None
+    revoked_by: Optional[SnowflakeID] = None
     token: Optional[str] = field(default=None, repr=False)
 
 

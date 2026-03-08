@@ -39,7 +39,7 @@ class AuthenticationMiddleware:
 
             import hmac
             internal_secret = api.get_internal_secret()
-            provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
+            provided_secret = request.headers.get("X-PlexiChat-Internal-Secret")
             is_internal = bool(
                 internal_secret
                 and provided_secret
@@ -166,12 +166,25 @@ class AuthenticationMiddleware:
                             await response(scope, receive, send)
                             return
 
+                        from src.utils.net import get_client_ip
+
+                        client_ip = get_client_ip(request)
+                        client_user_agent = request.headers.get("User-Agent")
+                        request_path = request.url.path
+                        request_method = request.method
+
                         def _verify_access_with_cleanup(
                             token_str, auth_ref=auth_manager
                         ):
                             db = api.get_db()
                             try:
-                                return auth_ref.verify_api_access_token(token_str)
+                                return auth_ref.verify_api_access_token(
+                                    token_str,
+                                    ip_address=client_ip,
+                                    user_agent=client_user_agent,
+                                    path=request_path,
+                                    method=request_method,
+                                )
                             finally:
                                 if db:
                                     db.close()

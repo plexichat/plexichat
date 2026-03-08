@@ -408,21 +408,103 @@ def delete_bot(owner_id: int, bot_id: int) -> bool:
 
 
 def create_api_access_token(
-    name: Optional[str], created_by: Optional[int], token_value: Optional[str] = None
+    name: Optional[str],
+    created_by: Optional[int],
+    token_value: Optional[str] = None,
+    description: Optional[str] = None,
+    expires_at: Optional[int] = None,
+    scope_mode: str = "none",
 ) -> AccessToken:
-    return _get_manager().create_api_access_token(name, created_by, token_value)
+    return _get_manager().create_api_access_token(
+        name,
+        created_by,
+        token_value,
+        description=description,
+        expires_at=expires_at,
+        scope_mode=scope_mode,
+    )
 
 
 def list_api_access_tokens(include_revoked: bool = True) -> List[AccessToken]:
     return _get_manager().list_api_access_tokens(include_revoked)
 
 
+def get_api_access_token(token_id: int) -> Optional[AccessToken]:
+    return _get_manager().get_api_access_token(token_id)
+
+
+def update_api_access_token(
+    token_id: int,
+    updated_by: Optional[int],
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    expires_at: Optional[int] = None,
+    clear_expiry: bool = False,
+    scope_mode: Optional[str] = None,
+) -> Optional[AccessToken]:
+    return _get_manager().update_api_access_token(
+        token_id,
+        updated_by,
+        name=name,
+        description=description,
+        expires_at=expires_at,
+        clear_expiry=clear_expiry,
+        scope_mode=scope_mode,
+    )
+
+
 def revoke_api_access_token(token_id: int, revoked_by: Optional[int]) -> bool:
     return _get_manager().revoke_api_access_token(token_id, revoked_by)
 
 
-def verify_api_access_token(token: str) -> bool:
-    return _get_manager().verify_api_access_token(token)
+def rotate_api_access_token(
+    token_id: int,
+    rotated_by: Optional[int],
+    token_value: Optional[str] = None,
+) -> Optional[AccessToken]:
+    return _get_manager().rotate_api_access_token(token_id, rotated_by, token_value)
+
+
+def add_api_access_token_scope(
+    token_id: int,
+    scope_type: str,
+    value: str,
+    created_by: Optional[int],
+) -> Dict[str, Any]:
+    return _get_manager().add_api_access_token_scope(
+        token_id, scope_type, value, created_by
+    )
+
+
+def remove_api_access_token_scope(token_id: int, scope_id: int) -> bool:
+    return _get_manager().remove_api_access_token_scope(token_id, scope_id)
+
+
+def list_api_access_token_scopes(token_id: int) -> List[Dict[str, Any]]:
+    return _get_manager().list_api_access_token_scopes(token_id)
+
+
+def get_api_access_token_usage(
+    token_id: int,
+    recent_limit: int = 100,
+) -> Dict[str, Any]:
+    return _get_manager().get_api_access_token_usage(token_id, recent_limit)
+
+
+def verify_api_access_token(
+    token: str,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    path: Optional[str] = None,
+    method: Optional[str] = None,
+) -> bool:
+    return _get_manager().verify_api_access_token(
+        token,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        path=path,
+        method=method,
+    )
 
 
 def is_api_access_token_required() -> bool:
@@ -636,6 +718,19 @@ __all__ = [
     "disable_bot",
     "enable_bot",
     "delete_bot",
+    # API access tokens
+    "create_api_access_token",
+    "list_api_access_tokens",
+    "get_api_access_token",
+    "update_api_access_token",
+    "revoke_api_access_token",
+    "rotate_api_access_token",
+    "add_api_access_token_scope",
+    "remove_api_access_token_scope",
+    "list_api_access_token_scopes",
+    "get_api_access_token_usage",
+    "verify_api_access_token",
+    "is_api_access_token_required",
     # Devices
     "get_devices",
     "rename_device",

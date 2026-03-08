@@ -272,6 +272,28 @@ def change_password(
     return auth.change_password(_get_db(), admin_id, current_password, new_password)
 
 
+def get_security_status(admin_id: int):
+    """Get admin account security posture and metadata."""
+    return auth.get_security_status(_get_db(), admin_id)
+
+
+def begin_otp_setup(admin_id: int, current_password: str) -> AdminLoginResult:
+    """Start a new OTP setup flow for the current admin."""
+    return auth.begin_otp_setup(_get_db(), admin_id, current_password)
+
+
+def disable_otp(admin_id: int, current_password: str, code: str) -> Tuple[bool, str]:
+    """Disable OTP for the current admin."""
+    return auth.disable_otp(_get_db(), admin_id, current_password, code)
+
+
+def regenerate_backup_codes(
+    admin_id: int, current_password: str
+) -> Tuple[bool, List[str], str]:
+    """Regenerate admin backup codes."""
+    return auth.regenerate_backup_codes(_get_db(), admin_id, current_password)
+
+
 def get_user_notes(user_id: int) -> str:
     """Retrieve internal notes for a user."""
     return users.get_user_notes(_get_db(), user_id)
@@ -329,6 +351,10 @@ __all__ = [
     "lock_user",
     "unlock_user",
     "change_password",
+    "get_security_status",
+    "begin_otp_setup",
+    "disable_otp",
+    "regenerate_backup_codes",
     "get_user_notes",
     "save_user_notes",
     "get_system_metrics",

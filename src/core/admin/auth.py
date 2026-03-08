@@ -30,6 +30,21 @@ class AdminLoginResult:
     error: Optional[str] = None
 
 
+@dataclass
+class AdminSecurityStatus:
+    """Current admin account security posture."""
+
+    admin_id: int
+    username: str
+    email: Optional[str]
+    created_at: int
+    last_login: Optional[int]
+    otp_required: bool
+    otp_enabled: bool
+    must_setup_otp: bool
+    backup_codes_remaining: int
+
+
 # Rate limiting for admin login
 _login_attempts: Dict[str, List[float]] = {}  # IP -> list of attempt timestamps
 _lockouts: Dict[str, float] = {}  # IP -> lockout until timestamp
@@ -81,6 +96,41 @@ def _generate_password(length: int = 24) -> str:
     """Generate a secure random password."""
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _verify_admin_password(
+    db: Any, admin_id: int, current_password: str
+) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+    """Verify the current admin password and return the account row."""
+    row = db.fetch_one(
+        """
+        SELECT username, email, password_hash, created_at, last_login,
+               totp_enabled, must_setup_otp, backup_codes
+        FROM admin_users
+        WHERE id = ?
+        """,
+        (admin_id,),
+    )
+    if not row:
+        return False, None, "Admin user not found"
+
+    if not isinstance(row, dict):
+        row = {
+            "username": row[0],
+            "email": row[1],
+            "password_hash": row[2],
+            "created_at": row[3],
+            "last_login": row[4],
+            "totp_enabled": row[5],
+            "must_setup_otp": row[6],
+            "backup_codes": row[7],
+        }
+
+    import src.utils.encryption as encryption
+
+    if not encryption.verify_password(current_password, row["password_hash"]):
+        return False, None, "Incorrect current password"
+    return True, row, ""
 
 
 def _save_admin_credentials(password: str) -> None:
@@ -406,18 +456,160 @@ def change_password(
     db: Any, admin_id: int, current_password: str, new_password: str
 ) -> Tuple[bool, str]:
     """Change admin password."""
-    row = db.fetch_one(
-        "SELECT password_hash FROM admin_users WHERE id = ?", (admin_id,)
-    )
-    if not row:
-        return False, "Admin user not found"
-    password_hash = row["password_hash"] if isinstance(row, dict) else row[0]
+    valid, _row, message = _verify_admin_password(db, admin_id, current_password)
+    if not valid:
+        return False, message
     import src.utils.encryption as encryption
 
-    if not encryption.verify_password(current_password, password_hash):
-        return False, "Incorrect current password"
     db.execute(
         "UPDATE admin_users SET password_hash = ? WHERE id = ?",
         (encryption.hash_password(new_password), admin_id),
     )
     return True, "Password updated successfully"
+
+
+def get_security_status(db: Any, admin_id: int) -> Optional[AdminSecurityStatus]:
+    """Return security settings and posture for an admin account."""
+    row = db.fetch_one(
+        """
+        SELECT username, email, created_at, last_login, totp_enabled, must_setup_otp, backup_codes
+        FROM admin_users
+        WHERE id = ?
+        """,
+        (admin_id,),
+    )
+    if not row:
+        return None
+    if isinstance(row, dict):
+        username = row["username"]
+        email = row["email"]
+        created_at = row["created_at"]
+        last_login = row["last_login"]
+        totp_enabled = bool(row["totp_enabled"])
+        must_setup_otp = bool(row["must_setup_otp"])
+        backup_codes = row["backup_codes"] or ""
+    else:
+        username, email, created_at, last_login, totp_enabled, must_setup_otp, backup_codes = row
+
+    remaining = len([code for code in str(backup_codes or "").split(",") if code.strip()])
+    admin_config = config.get("admin_ui", {})
+    return AdminSecurityStatus(
+        admin_id=admin_id,
+        username=username,
+        email=email,
+        created_at=created_at,
+        last_login=last_login,
+        otp_required=bool(admin_config.get("require_otp", True)),
+        otp_enabled=bool(totp_enabled),
+        must_setup_otp=bool(must_setup_otp),
+        backup_codes_remaining=remaining,
+    )
+
+
+def begin_otp_setup(
+    db: Any, admin_id: int, current_password: str
+) -> AdminLoginResult:
+    """Start a new admin OTP setup flow after password verification."""
+    valid, row, message = _verify_admin_password(db, admin_id, current_password)
+    if not valid or row is None:
+        return AdminLoginResult(success=False, error=message)
+
+    import pyotp
+
+    secret = pyotp.random_base32()
+    totp = pyotp.TOTP(secret)
+    qr_uri = totp.provisioning_uri(
+        name=row["username"], issuer_name="PlexiChat Admin"
+    )
+    db.execute(
+        """
+        UPDATE admin_users
+        SET totp_secret = ?, totp_enabled = 0, must_setup_otp = 1, backup_codes = NULL
+        WHERE id = ?
+        """,
+        (secret, admin_id),
+    )
+    return AdminLoginResult(
+        success=True,
+        user_id=admin_id,
+        requires_otp_setup=True,
+        otp_secret=secret,
+        otp_qr_uri=qr_uri,
+        challenge_token=_create_otp_challenge(admin_id, is_setup=True),
+    )
+
+
+def disable_otp(
+    db: Any, admin_id: int, current_password: str, code: str
+) -> Tuple[bool, str]:
+    """Disable OTP for the current admin after password and OTP verification."""
+    valid, row, message = _verify_admin_password(db, admin_id, current_password)
+    if not valid or row is None:
+        return False, message
+
+    secret_row = db.fetch_one(
+        "SELECT totp_secret, totp_enabled, backup_codes FROM admin_users WHERE id = ?",
+        (admin_id,),
+    )
+    if not secret_row:
+        return False, "Admin user not found"
+    if isinstance(secret_row, dict):
+        secret = secret_row["totp_secret"]
+        totp_enabled = bool(secret_row["totp_enabled"])
+        backup_codes = secret_row["backup_codes"] or ""
+    else:
+        secret, totp_enabled, backup_codes = secret_row
+        totp_enabled = bool(totp_enabled)
+        backup_codes = backup_codes or ""
+
+    if not totp_enabled or not secret:
+        return False, "OTP is not enabled"
+
+    import pyotp
+
+    normalized = code.upper().replace("-", "")
+    verified = pyotp.TOTP(secret).verify(code, valid_window=1)
+    if not verified:
+        codes = [item for item in str(backup_codes).split(",") if item]
+        verified = normalized in codes
+    if not verified:
+        return False, "Invalid OTP or backup code"
+
+    db.execute(
+        """
+        UPDATE admin_users
+        SET totp_enabled = 0, totp_secret = NULL, backup_codes = NULL, must_setup_otp = 1
+        WHERE id = ?
+        """,
+        (admin_id,),
+    )
+    return True, "OTP disabled"
+
+
+def regenerate_backup_codes(
+    db: Any, admin_id: int, current_password: str
+) -> Tuple[bool, List[str], str]:
+    """Regenerate admin backup codes after password verification."""
+    valid, _row, message = _verify_admin_password(db, admin_id, current_password)
+    if not valid:
+        return False, [], message
+
+    state_row = db.fetch_one(
+        "SELECT totp_enabled FROM admin_users WHERE id = ?", (admin_id,)
+    )
+    if not state_row:
+        return False, [], "Admin user not found"
+    totp_enabled = (
+        bool(state_row["totp_enabled"])
+        if isinstance(state_row, dict)
+        else bool(state_row[0])
+    )
+    if not totp_enabled:
+        return False, [], "Enable OTP before generating backup codes"
+
+    backup_codes = [secrets.token_hex(4).upper() for _ in range(10)]
+    db.execute(
+        "UPDATE admin_users SET backup_codes = ? WHERE id = ?",
+        (",".join(backup_codes), admin_id),
+    )
+    return True, backup_codes, "Backup codes regenerated"
