@@ -1,4 +1,4 @@
-# PlexiChat Server
+# Plexichat Server
 
 A real-time messaging platform server with REST API and WebSocket gateway.
 
@@ -100,7 +100,7 @@ rate_limiting:
 docs:
   enabled: true  # Enable/disable API documentation serving
   path: /docs/api
-  title: PlexiChat API Documentation
+  title: Plexichat API Documentation
 ```
 
 See `docs/` and `config/` for repository-backed configuration details.

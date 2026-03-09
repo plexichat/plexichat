@@ -45,7 +45,7 @@ class TestDocsRoutes:
         response = test_client.get(path)
 
         assert response.status_code == 200, path
-        assert "PlexiChat Documentation" in response.text
+        assert "Plexichat Documentation" in response.text
 
     def test_rate_limits_page_uses_live_rate_limit_helper(self, test_client, monkeypatch):
         monkeypatch.setattr(
@@ -220,7 +220,7 @@ class TestDocsRoutes:
 
         assert response.status_code == 200
         body = response.text
-        assert "PlexiChat API Explorer" in body
+        assert "Plexichat API Explorer" in body
         assert "Narrative Docs" in body
         assert "ReDoc" in body
         assert "PLEXI<span>CHAT</span>" in body
@@ -230,7 +230,7 @@ class TestDocsRoutes:
 
         assert response.status_code == 200
         body = response.text
-        assert "PlexiChat API Reference" in body
+        assert "Plexichat API Reference" in body
         assert "OpenAPI Explorer" in body
         assert "Narrative Docs" in body
         assert "PLEXI<span>CHAT</span>" in body

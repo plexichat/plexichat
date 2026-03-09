@@ -2,7 +2,7 @@
 
 ## Overview
 
-This implementation adds comprehensive property-based testing using Hypothesis to validate input handling across all PlexiChat managers (AuthManager, MessagingManager, ServersManager, WebhooksManager, and others).
+This implementation adds comprehensive property-based testing using Hypothesis to validate input handling across all Plexichat managers (AuthManager, MessagingManager, ServersManager, WebhooksManager, and others).
 
 ## Files Created
 

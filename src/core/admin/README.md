@@ -1,6 +1,6 @@
 # Admin Module
 
-Administrative functions for PlexiChat server management.
+Administrative functions for Plexichat server management.
 
 ## Overview
 

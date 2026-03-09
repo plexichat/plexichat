@@ -9,15 +9,15 @@ def test_default_config_uses_expected_branding_and_paths():
 
     config = get_default_config()
 
-    assert config["application"]["name"] == "PlexiChat"
+    assert config["application"]["name"] == "Plexichat"
     assert config["database"]["path"] == str(
         Path.home() / ".plexichat" / "data" / "plexichat.db"
     )
     assert config["database"]["postgres"]["dbname"] == "plexichat"
     assert config["redis"]["key_prefix"] == "plexichat:"
-    assert config["authentication"]["totp"]["issuer"] == "PlexiChat"
-    assert config["api"]["title"] == "PlexiChat API"
-    assert config["docs"]["title"] == "PlexiChat API Documentation"
+    assert config["authentication"]["totp"]["issuer"] == "Plexichat"
+    assert config["api"]["title"] == "Plexichat API"
+    assert config["docs"]["title"] == "Plexichat API Documentation"
     assert config["email"]["from_email"] == "noreply@plexichat.internal"
     assert config["api"]["cors_origins"] == [
         "http://localhost:5000",

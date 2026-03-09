@@ -102,8 +102,8 @@ def get_test_config():
             "timeout_ms": 300000,
         },
         "api": {
-            "title": "PlexiChat API Test",
-            "description": "REST API for PlexiChat messaging platform",
+            "title": "Plexichat API Test",
+            "description": "REST API for Plexichat messaging platform",
             "version": TEST_VERSION,
             "api_prefix": "/api/v1",
             "debug": True,
@@ -124,7 +124,7 @@ def get_test_config():
             "openapi_url": "/openapi.json",
         },
         "application": {
-            "name": "PlexiChat",
+            "name": "Plexichat",
             "version": TEST_VERSION,
             "environment": "test",
         },

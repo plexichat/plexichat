@@ -1,6 +1,6 @@
 # Media Module
 
-File upload, storage, and processing system for PlexiChat API supporting local filesystem and S3-compatible storage backends.
+File upload, storage, and processing system for Plexichat API supporting local filesystem and S3-compatible storage backends.
 
 ## Features
 
@@ -505,7 +505,7 @@ mc mb local/plexichat-media
 mc anonymous set download local/plexichat-media
 ```
 
-#### PlexiChat Configuration
+#### Plexichat Configuration
 
 Add to `config/config.yaml`:
 

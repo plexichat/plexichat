@@ -253,7 +253,7 @@ Authorization: Bearer <token>
     {
       "name": "staff",
       "display_name": "Staff",
-      "description": "PlexiChat staff member",
+      "description": "Plexichat staff member",
       "icon": ":gear:",
       "color": "#e74c3c"
     },
@@ -289,7 +289,7 @@ The multiplier affects rate limit windows - higher multipliers allow more reques
 |-------|--------------|-------------|
 | alpha_tester | Alpha Tester | Early alpha tester |
 | early_supporter | Early Supporter | Supported the project early |
-| staff | Staff | PlexiChat staff member |
+| staff | Staff | Plexichat staff member |
 | verified | Verified | Verified account |
 
 ---

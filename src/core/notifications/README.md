@@ -1,6 +1,6 @@
 # Notifications Module
 
-Mentions and notifications system for PlexiChat API supporting user mentions, role mentions, @everyone/@here, channel references, and notification preferences.
+Mentions and notifications system for Plexichat API supporting user mentions, role mentions, @everyone/@here, channel references, and notification preferences.
 
 ## Features
 

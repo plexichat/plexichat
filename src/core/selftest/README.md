@@ -1,6 +1,6 @@
 # Self-Test Module
 
-Automated API validation suite for the PlexiChat server.
+Automated API validation suite for the Plexichat server.
 
 ## Overview
 

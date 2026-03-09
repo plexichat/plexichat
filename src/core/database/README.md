@@ -720,7 +720,7 @@ If the cache expires and has a stored query, it will automatically reload from t
 
 # Caching Strategy
 
-PlexiChat uses a multi-tier caching strategy:
+Plexichat uses a multi-tier caching strategy:
 
 ## Tier 1: RAM Cache (In-Process)
 - **TTL**: 1 hour

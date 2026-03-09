@@ -243,7 +243,7 @@ async def export_telemetry_stats(
 
         elif format == "txt":
             lines = [
-                f"PlexiChat Telemetry Export - {ts}",
+                f"Plexichat Telemetry Export - {ts}",
                 f"Time Window: {hours} hours",
                 "",
             ]

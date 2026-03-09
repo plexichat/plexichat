@@ -21,8 +21,8 @@ from .core import Keyring
 
 
 # File format constants
-FILE_MAGIC = b"PXENC"  # PlexiChat Encrypted (Common)
-STREAM_MAGIC = b"PXSTR"  # PlexiChat Stream (Robust)
+FILE_MAGIC = b"PXENC"  # Plexichat Encrypted (Common)
+STREAM_MAGIC = b"PXSTR"  # Plexichat Stream (Robust)
 FILE_VERSION = 1
 CHUNK_SIZE = 256 * 1024  # 256KB chunks for streaming
 NONCE_SIZE = 12

@@ -1,6 +1,6 @@
 # TLS Module
 
-Automatic self-signed TLS certificate generation for PlexiChat server.
+Automatic self-signed TLS certificate generation for Plexichat server.
 
 ## Overview
 

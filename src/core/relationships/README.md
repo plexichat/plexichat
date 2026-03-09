@@ -1,6 +1,6 @@
 # Relationships Module
 
-Friend and block management system for PlexiChat API supporting friend requests, blocking, and mutual information queries.
+Friend and block management system for Plexichat API supporting friend requests, blocking, and mutual information queries.
 
 ## Features
 

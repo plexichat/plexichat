@@ -1,6 +1,6 @@
-# PlexiChat Test Documentation
+# Plexichat Test Documentation
 
-Comprehensive testing guide for the PlexiChat messaging platform. This document covers test architecture, patterns, fixtures, execution strategies, and contribution guidelines.
+Comprehensive testing guide for the Plexichat messaging platform. This document covers test architecture, patterns, fixtures, execution strategies, and contribution guidelines.
 
 ## Table of Contents
 
@@ -19,7 +19,7 @@ Comprehensive testing guide for the PlexiChat messaging platform. This document 
 
 ## Overview
 
-The PlexiChat test suite is designed for **speed**, **reliability**, and **comprehensive coverage**. Key characteristics:
+The Plexichat test suite is designed for **speed**, **reliability**, and **comprehensive coverage**. Key characteristics:
 
 - **Session-scoped database**: One database per test session (not per test)
 - **User pooling**: Pre-created users with real Argon2 hashing (~5 seconds startup, reused across all tests)

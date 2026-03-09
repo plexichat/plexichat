@@ -1,6 +1,6 @@
 # Deployment Guidance
 
-This page intentionally stays high level. It covers the public-facing operational considerations for running PlexiChat without embedding environment-specific commands, credentials, or infrastructure details.
+This page intentionally stays high level. It covers the public-facing operational considerations for running Plexichat without embedding environment-specific commands, credentials, or infrastructure details.
 
 ## Production Checklist
 

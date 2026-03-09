@@ -1,5 +1,5 @@
 """
-Email utilities for PlexiChat.
+Email utilities for Plexichat.
 """
 
 import smtplib

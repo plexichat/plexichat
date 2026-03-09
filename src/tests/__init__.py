@@ -1,1 +1,1 @@
-"""Test suites for PlexiChat modules."""
+"""Test suites for Plexichat modules."""

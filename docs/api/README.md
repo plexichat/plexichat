@@ -1,6 +1,6 @@
 # API Documentation
 
-This directory contains narrative REST API documentation for the PlexiChat backend.
+This directory contains narrative REST API documentation for the Plexichat backend.
 
 ## Core Reference Pages
 

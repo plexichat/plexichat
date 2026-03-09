@@ -1,5 +1,5 @@
 """
-User management for PlexiChat Admin.
+User management for Plexichat Admin.
 """
 
 from typing import List, Optional, Any

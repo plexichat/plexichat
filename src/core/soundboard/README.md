@@ -1,6 +1,6 @@
 # Soundboard Module
 
-Server soundboard system for PlexiChat API supporting sound upload, role-based permissions, cooldowns, and playback triggering for voice channels.
+Server soundboard system for Plexichat API supporting sound upload, role-based permissions, cooldowns, and playback triggering for voice channels.
 
 ## Features
 

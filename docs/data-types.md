@@ -1,10 +1,10 @@
 # Data Types
 
-Common data types used throughout the PlexiChat API.
+Common data types used throughout the Plexichat API.
 
 ## Snowflake ID
 
-All IDs in PlexiChat are snowflake IDs - 64-bit integers represented as strings in JSON.
+All IDs in Plexichat are snowflake IDs - 64-bit integers represented as strings in JSON.
 
 ```json
 {
@@ -23,7 +23,7 @@ All IDs in PlexiChat are snowflake IDs - 64-bit integers represented as strings 
 
 ### Epoch
 
-PlexiChat uses January 1, 2024 00:00:00 UTC as the epoch.
+Plexichat uses January 1, 2024 00:00:00 UTC as the epoch.
 
 ### Extracting Timestamp
 
@@ -154,7 +154,7 @@ async function fetchAllMessages(channelId) {
 
 ## Version String
 
-PlexiChat uses a stage-based versioning scheme:
+Plexichat uses a stage-based versioning scheme:
 
 ```
 [stage].[major].[minor]-[build]

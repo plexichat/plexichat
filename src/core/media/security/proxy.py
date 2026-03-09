@@ -101,7 +101,7 @@ class ExternalProxy:
         cache_ttl: int = 86400,
         max_size: Optional[int] = None,
         allowed_types: Optional[set] = None,
-        user_agent: str = "PlexiChat/1.0",
+        user_agent: str = "Plexichat/1.0",
         timeout: int = 30,
         buffer_size: int = 65536,
     ):

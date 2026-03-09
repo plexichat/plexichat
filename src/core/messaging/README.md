@@ -1,6 +1,6 @@
 # Messaging Module
 
-Secure messaging system for PlexiChat API supporting direct messages, group conversations, rich text formatting, attachments, and delivery/read receipts.
+Secure messaging system for Plexichat API supporting direct messages, group conversations, rich text formatting, attachments, and delivery/read receipts.
 
 ## Architecture
 

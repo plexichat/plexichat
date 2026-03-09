@@ -1,5 +1,5 @@
 """
-Default configuration for the PlexiChat Server.
+Default configuration for the Plexichat Server.
 This file provides the baseline settings used when no configuration file is found.
 """
 
@@ -13,7 +13,7 @@ DEFAULT_VERSION = "a.1.0-45"
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
     """
-    Returns the default configuration dictionary for PlexiChat.
+    Returns the default configuration dictionary for Plexichat.
 
     Args:
         version: The current application version string.
@@ -25,7 +25,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
 
     return {
         "application": {
-            "name": "PlexiChat",
+            "name": "Plexichat",
             "version": version,
             "environment": "development",
         },
@@ -107,7 +107,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "token_binding": False,
             },
             "totp": {
-                "issuer": "PlexiChat",
+                "issuer": "Plexichat",
                 "digits": 6,
                 "interval": 30,
                 "backup_code_count": 10,
@@ -123,8 +123,8 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "bots": {"token_bytes": 48, "require_owner_2fa": False},
         },
         "api": {
-            "title": "PlexiChat API",
-            "description": "REST API for the PlexiChat messaging platform",
+            "title": "Plexichat API",
+            "description": "REST API for the Plexichat messaging platform",
             "version": version,
             "api_prefix": "/api/v1",
             "debug": True,
@@ -571,8 +571,8 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         "docs": {
             "enabled": True,
             "path": "/docs/api",
-            "title": "PlexiChat API Documentation",
-            "description": "Runtime documentation for the PlexiChat backend",
+            "title": "Plexichat API Documentation",
+            "description": "Runtime documentation for the Plexichat backend",
             "base_url": "https://your-plexichat-host.example/api/v1",
             "websocket_url": "wss://your-plexichat-host.example/gateway",
             "theme": {

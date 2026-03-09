@@ -1,5 +1,5 @@
 """
-WebSocket Gateway Module - WebSocket gateway for PlexiChat.
+WebSocket Gateway Module - WebSocket gateway for Plexichat.
 
 Provides real-time event delivery to connected clients.
 

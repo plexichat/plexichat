@@ -1,6 +1,6 @@
 # Stickers Module
 
-Sticker pack and custom sticker system for PlexiChat API supporting default packs, server custom packs, user purchased packs, sticker upload with validation, and intelligent sticker suggestions.
+Sticker pack and custom sticker system for Plexichat API supporting default packs, server custom packs, user purchased packs, sticker upload with validation, and intelligent sticker suggestions.
 
 ## Features
 

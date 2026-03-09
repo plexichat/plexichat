@@ -2,7 +2,7 @@
 
 import asyncio
 
-from main import PlexiChatServer
+from main import PlexichatServer
 from src.api.routes.version import get_server_state, set_server_state
 from src.api.schemas.version import ServerState
 
@@ -66,7 +66,7 @@ class TestServerLifecycleStatusUpdates:
         """Restart notifications should also update the status endpoint state."""
         import src.api.websocket as websocket
 
-        server = PlexiChatServer()
+        server = PlexichatServer()
         broadcasts = []
 
         async def fake_broadcast(status_data):

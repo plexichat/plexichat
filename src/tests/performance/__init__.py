@@ -1,5 +1,5 @@
 """
-Performance and load tests for PlexiChat critical paths.
+Performance and load tests for Plexichat critical paths.
 
 Tests cover:
 - Authentication (login, registration, token validation)

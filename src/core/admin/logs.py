@@ -1,5 +1,5 @@
 """
-Log management for PlexiChat Admin.
+Log management for Plexichat Admin.
 """
 
 import os

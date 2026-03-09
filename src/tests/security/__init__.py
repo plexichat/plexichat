@@ -1,5 +1,5 @@
 """
-Security test suite for PlexiChat.
+Security test suite for Plexichat.
 
 Comprehensive security testing covering:
 - XSS prevention

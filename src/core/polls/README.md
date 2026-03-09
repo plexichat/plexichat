@@ -1,6 +1,6 @@
 # Polls Module
 
-Message poll system for PlexiChat API supporting poll creation, voting, results visibility control, and automatic expiry handling.
+Message poll system for Plexichat API supporting poll creation, voting, results visibility control, and automatic expiry handling.
 
 ## Features
 

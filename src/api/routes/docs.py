@@ -138,8 +138,8 @@ class DocsConfig:
 
     enabled: bool = True
     path: str = "/docs/api"
-    title: str = "PlexiChat Documentation"
-    description: str = "Runtime documentation for the PlexiChat backend"
+    title: str = "Plexichat Documentation"
+    description: str = "Runtime documentation for the Plexichat backend"
     base_url: str = "https://your-plexichat-host.example/api/v1"
     websocket_url: str = "wss://your-plexichat-host.example/gateway"
     theme: ThemeConfig = field(default_factory=ThemeConfig)
@@ -226,9 +226,9 @@ def _load_docs_config() -> DocsConfig:
     return DocsConfig(
         enabled=docs_conf.get("enabled", True),
         path=docs_conf.get("path", "/docs/api"),
-        title=docs_conf.get("title", "PlexiChat Documentation"),
+        title=docs_conf.get("title", "Plexichat Documentation"),
         description=docs_conf.get(
-            "description", "Runtime documentation for the PlexiChat backend"
+            "description", "Runtime documentation for the Plexichat backend"
         ),
         base_url=docs_conf.get(
             "base_url", "https://your-plexichat-host.example/api/v1"
@@ -598,11 +598,11 @@ def get_app_config() -> Dict[str, Any]:
         import utils.version as version
 
         return {
-            "name": "PlexiChat",
+            "name": "Plexichat",
             "version": version.current_string(),
         }
     except Exception:
-        return {"name": "PlexiChat", "version": "unknown"}
+        return {"name": "Plexichat", "version": "unknown"}
 
 
 def _doc_path(relative_path: str) -> Path:
@@ -1319,7 +1319,7 @@ def render_swagger_ui_page(
     conf = _runtime_docs_config(request, get_docs_config())
     response = get_swagger_ui_html(
         openapi_url=openapi_url,
-        title=f"{title} - PlexiChat API Explorer",
+        title=f"{title} - Plexichat API Explorer",
         oauth2_redirect_url=oauth2_redirect_url,
         swagger_ui_parameters={
             "deepLinking": True,
@@ -1335,7 +1335,7 @@ def render_swagger_ui_page(
     shell_header = _build_shell_header_html(
         conf,
         "swagger",
-        "PlexiChat API Explorer",
+        "Plexichat API Explorer",
         "Interactive request explorer powered by the live OpenAPI schema.",
     )
     html = html.replace("<body>", '<body class="plexi-openapi-page plexi-swagger-page">')
@@ -1352,14 +1352,14 @@ def render_redoc_page(request: Request, title: str, openapi_url: str) -> HTMLRes
     conf = _runtime_docs_config(request, get_docs_config())
     response = get_redoc_html(
         openapi_url=openapi_url,
-        title=f"{title} - PlexiChat API Reference",
+        title=f"{title} - Plexichat API Reference",
         with_google_fonts=False,
     )
     html = _decode_html_body(response.body)
     shell_header = _build_shell_header_html(
         conf,
         "redoc",
-        "PlexiChat API Reference",
+        "Plexichat API Reference",
         "Readable reference docs optimized for browsing routes, schemas, and models.",
     )
     html = html.replace("<body>", '<body class="plexi-openapi-page plexi-redoc-page">')
@@ -1733,7 +1733,7 @@ def _markdown_to_html(
         conf,
         "portal",
         page_title,
-        "Guides, route-group overviews, and live schema entry points for the PlexiChat backend.",
+        "Guides, route-group overviews, and live schema entry points for the Plexichat backend.",
     )
 
     return f"""<!DOCTYPE html>

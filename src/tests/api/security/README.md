@@ -4,7 +4,7 @@ Comprehensive security testing suite for all API routes in `src/api/routes/`.
 
 ## Overview
 
-This test suite provides extensive security testing coverage for the PlexiChat API, ensuring that all endpoints are properly protected against common web vulnerabilities and attack vectors.
+This test suite provides extensive security testing coverage for the Plexichat API, ensuring that all endpoints are properly protected against common web vulnerabilities and attack vectors.
 
 ## Test Categories
 

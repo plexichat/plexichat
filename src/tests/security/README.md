@@ -1,6 +1,6 @@
 # Security Test Suite
 
-Comprehensive security testing for PlexiChat covering all major security concerns.
+Comprehensive security testing for Plexichat covering all major security concerns.
 
 ## Test Coverage
 

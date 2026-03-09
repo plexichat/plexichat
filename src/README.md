@@ -1,6 +1,6 @@
-# PlexiChat Source Code
+# Plexichat Source Code
 
-This directory contains the core implementation of the PlexiChat server.
+This directory contains the core implementation of the Plexichat server.
 
 ## Structure
 

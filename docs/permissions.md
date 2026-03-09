@@ -1,6 +1,6 @@
 # Permissions
 
-PlexiChat permissions are string-based capabilities such as `messages.send` or `admin.system`.
+Plexichat permissions are string-based capabilities such as `messages.send` or `admin.system`.
 
 ## Runtime Summary
 

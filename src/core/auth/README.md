@@ -1,6 +1,6 @@
 # Authentication Module
 
-Secure authentication system for PlexiChat API supporting user accounts, bot accounts, two-factor authentication, and granular permissions.
+Secure authentication system for Plexichat API supporting user accounts, bot accounts, two-factor authentication, and granular permissions.
 
 ## Features
 
@@ -215,7 +215,7 @@ authentication:
     token_binding: false          # Bind tokens to IP (rejects if IP changes)
     
   totp:
-    issuer: PlexiChat
+    issuer: Plexichat
     digits: 6
     interval: 30
     backup_code_count: 10

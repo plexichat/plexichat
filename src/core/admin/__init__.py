@@ -1,5 +1,5 @@
 """
-Admin module - Administrative functions for PlexiChat server.
+Admin module - Administrative functions for Plexichat server.
 Modularized implementation delegating to sub-modules.
 """
 

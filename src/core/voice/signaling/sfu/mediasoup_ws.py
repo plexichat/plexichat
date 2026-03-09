@@ -386,7 +386,7 @@ class MediasoupWSAdapter(SFUAdapter):
             "join",
             {
                 "displayName": display_name or "User",
-                "device": {"name": "PlexiChat", "version": "1.0"},
+                "device": {"name": "Plexichat", "version": "1.0"},
                 "rtpCapabilities": rtp_capabilities,
                 "sctpCapabilities": None,
             },

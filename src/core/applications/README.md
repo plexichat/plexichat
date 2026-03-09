@@ -1,6 +1,6 @@
 # Applications Module
 
-Application platform for PlexiChat supporting OAuth2 authorization, slash commands, interactions, and component builders.
+Application platform for Plexichat supporting OAuth2 authorization, slash commands, interactions, and component builders.
 
 ## Features
 

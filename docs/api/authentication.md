@@ -369,7 +369,7 @@ Authorization: Bearer <token>
 ```json
 {
   "secret": "JBSWY3DPEHPK3PXP",
-  "qr_uri": "otpauth://totp/PlexiChat:johndoe?secret=...",
+  "qr_uri": "otpauth://totp/Plexichat:johndoe?secret=...",
   "backup_codes": ["12345678", "23456789", "..."]
 }
 ```

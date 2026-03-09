@@ -2,7 +2,7 @@
 
 ## Overview
 
-Comprehensive performance and load testing suite for PlexiChat covering all critical paths with memory leak detection, concurrency testing, and performance degradation monitoring.
+Comprehensive performance and load testing suite for Plexichat covering all critical paths with memory leak detection, concurrency testing, and performance degradation monitoring.
 
 ## Files Created
 

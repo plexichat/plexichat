@@ -1,5 +1,5 @@
 """
-Core modules for PlexiChat application.
+Core modules for Plexichat application.
 
 Contains:
 - database: Database connectivity for SQLite and PostgreSQL

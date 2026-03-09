@@ -46,7 +46,7 @@ DEFAULT_CONFIG = {
     "rate_limit_window_seconds": 60,
     "proxy_images": True,
     "allowed_schemes": ["http", "https"],
-    "user_agent": "PlexiChat/1.0 LinkPreview (+https://plexichat)",
+    "user_agent": "Plexichat/1.0 LinkPreview (+https://plexichat)",
 }
 
 

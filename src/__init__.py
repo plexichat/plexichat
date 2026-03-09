@@ -1,5 +1,5 @@
 """
-PlexiChat source package.
+Plexichat source package.
 
 Contains:
 - core: Core application modules (database, etc.)

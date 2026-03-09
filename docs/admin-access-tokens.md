@@ -1,6 +1,6 @@
 # API Access Tokens
 
-Some PlexiChat servers can require an additional access token for authenticated REST API requests.
+Some Plexichat servers can require an additional access token for authenticated REST API requests.
 
 ## When This Applies
 

@@ -1,6 +1,6 @@
 # Core Modules
 
-Business logic modules for the PlexiChat server.
+Business logic modules for the Plexichat server.
 
 ## Structure
 

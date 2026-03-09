@@ -1,6 +1,6 @@
 # WebSocket Gateway
 
-The PlexiChat gateway delivers real-time events and accepts client-side signaling such as heartbeats, identify, presence updates, typing, and voice messages.
+The Plexichat gateway delivers real-time events and accepts client-side signaling such as heartbeats, identify, presence updates, typing, and voice messages.
 
 ## Gateway URL
 
@@ -33,7 +33,7 @@ Gateway payloads use the familiar structure:
 ## Code-Defined Opcode Families
 
 - core opcodes such as `HELLO`, `IDENTIFY`, `HEARTBEAT`, `RESUME`, `INVALID_SESSION`
-- PlexiChat status opcodes such as `SERVER_STATUS` and `VERSION_CHECK`
+- Plexichat status opcodes such as `SERVER_STATUS` and `VERSION_CHECK`
 - voice signaling opcodes such as `VOICE_CONNECT` and `VOICE_ICE_CANDIDATE`
 - typing opcodes `TYPING_START` and `TYPING_STOP`
 

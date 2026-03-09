@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PlexiChat Server - Main Entry Point
+Plexichat Server - Main Entry Point
 
 This script initializes all core modules and starts the API server.
 Supports clean shutdown (Ctrl+C) with client notification and restart capability.
@@ -38,7 +38,7 @@ import utils.version as version  # noqa: E402
 VERSION = "a.1.0-45"
 
 
-class PlexiChatServer:
+class PlexichatServer:
     """Main server class with lifecycle management."""
 
     def __init__(self):
@@ -1266,7 +1266,7 @@ class PlexiChatServer:
 
         print(f"""
 +==============================================================+
-|                    PlexiChat API Server                      |
+|                    Plexichat API Server                      |
 |                      Version {ver:<32}|
 +==============================================================+
 |  {server_line:<60}|
@@ -1289,9 +1289,9 @@ class PlexiChatServer:
 
 
 def main() -> None:
-    """Main entry point for the PlexiChat server."""
+    """Main entry point for the Plexichat server."""
     parser = argparse.ArgumentParser(
-        description="PlexiChat API Server",
+        description="Plexichat API Server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -1319,10 +1319,10 @@ Examples:
     args, _ = parser.parse_known_args()
 
     if args.version:
-        print(f"PlexiChat Server v{VERSION}")
+        print(f"Plexichat Server v{VERSION}")
         return
 
-    server = PlexiChatServer()
+    server = PlexichatServer()
 
     # Handle --create-config
     if args.create_config:
@@ -1395,12 +1395,12 @@ Examples:
 
     # Now we can log normally
     logger.info("=" * 60)
-    logger.info("PlexiChat Server Starting")
+    logger.info("Plexichat Server Starting")
     logger.info("=" * 60)
 
     # Log startup info
     app_config = config.get("application", {})
-    logger.info(f"Application: {app_config.get('name', 'PlexiChat')}")
+    logger.info(f"Application: {app_config.get('name', 'Plexichat')}")
     logger.info(f"Version: {VERSION}")
     logger.info(f"Environment: {app_config.get('environment', 'development')}")
     logger.info(f"Config file: {config_path}")

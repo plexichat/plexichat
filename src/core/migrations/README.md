@@ -455,7 +455,7 @@ The migration system integrates automatically with the plexichat application:
 
 ```python
 # In plexichat/main.py
-class PlexiChat:
+class Plexichat:
     def __init__(self):
         self.db = Database()
         # Migrations run automatically before connecting

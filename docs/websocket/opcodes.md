@@ -18,7 +18,7 @@ The backend defines gateway opcodes in `src/api/websocket/opcodes.py`.
 | `10` | `HELLO` | heartbeat interval negotiation |
 | `11` | `HEARTBEAT_ACK` | heartbeat acknowledged |
 
-## PlexiChat-Specific Status Opcodes
+## Plexichat-Specific Status Opcodes
 
 | Value | Name |
 |------|------|

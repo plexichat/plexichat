@@ -1,5 +1,5 @@
 """
-Messaging module - Secure messaging for PlexiChat API.
+Messaging module - Secure messaging for Plexichat API.
 
 This module provides:
 - Direct messages (DMs) and group conversations

@@ -1,6 +1,6 @@
 # API Middleware
 
-Request processing middleware for the PlexiChat API.
+Request processing middleware for the Plexichat API.
 
 ## Components
 

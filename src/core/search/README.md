@@ -1,6 +1,6 @@
 # Search & Discovery Module
 
-Full-text search and server discovery system for PlexiChat supporting advanced query syntax, multiple search backends, and public server directory.
+Full-text search and server discovery system for Plexichat supporting advanced query syntax, multiple search backends, and public server directory.
 
 ## Features
 

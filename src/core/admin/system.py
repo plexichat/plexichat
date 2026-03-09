@@ -1,5 +1,5 @@
 """
-System metrics for PlexiChat Admin.
+System metrics for Plexichat Admin.
 """
 
 import time

@@ -1,6 +1,6 @@
 # Embeds Module
 
-Rich embed system for PlexiChat API supporting rich embeds with fields, images, authors, footers, and URL previews.
+Rich embed system for Plexichat API supporting rich embeds with fields, images, authors, footers, and URL previews.
 
 ## Features
 

@@ -18,7 +18,7 @@ def check_host_restriction(request: Request) -> None:
 
     if not is_selftest:
         internal_secret = api.get_internal_secret()
-        provided_secret = request.headers.get("X-PlexiChat-Internal-Secret")
+        provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
         is_selftest = internal_secret and provided_secret == internal_secret
 
     if is_selftest:
@@ -81,7 +81,7 @@ def get_admin_from_token(request: Request) -> int:
         internal_secret = api.get_internal_secret()
         is_selftest = (
             internal_secret
-            and request.headers.get("X-PlexiChat-Internal-Secret") == internal_secret
+            and request.headers.get("X-Plexichat-Internal-Secret") == internal_secret
         )
 
     user = request.scope.get("state", {}).get("user") or getattr(

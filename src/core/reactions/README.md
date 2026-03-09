@@ -1,6 +1,6 @@
 # Reactions Module
 
-Message reaction system for PlexiChat API supporting Unicode emoji and custom server emoji with permission checks and block filtering.
+Message reaction system for Plexichat API supporting Unicode emoji and custom server emoji with permission checks and block filtering.
 
 ## Features
 

@@ -1,6 +1,6 @@
 # Performance and Load Tests
 
-Comprehensive performance and load tests for PlexiChat critical paths.
+Comprehensive performance and load tests for Plexichat critical paths.
 
 ## Overview
 

@@ -1,6 +1,6 @@
 # Utilities
 
-Shared utility modules for PlexiChat.
+Shared utility modules for Plexichat.
 
 ## Modules
 

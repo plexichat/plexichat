@@ -1,6 +1,6 @@
 # Presence Module
 
-User presence and status management system for PlexiChat API supporting online status, custom status messages, activities, and typing indicators.
+User presence and status management system for Plexichat API supporting online status, custom status messages, activities, and typing indicators.
 
 ## Features
 

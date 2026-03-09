@@ -1,5 +1,5 @@
 """
-Moderation and content review for PlexiChat Admin.
+Moderation and content review for Plexichat Admin.
 """
 
 from typing import List, Optional, Dict, Any

@@ -1,5 +1,5 @@
 """
-Security utilities for the PlexiChat API.
+Security utilities for the Plexichat API.
 
 Provides:
 - SSRF protection (URL validation, IP blacklisting)

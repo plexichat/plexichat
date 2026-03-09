@@ -23,8 +23,8 @@ except ImportError:
 class APIConfig:
     """API configuration settings."""
 
-    title: str = "PlexiChat API"
-    description: str = "REST API for PlexiChat messaging platform"
+    title: str = "Plexichat API"
+    description: str = "REST API for Plexichat messaging platform"
     version: Optional[str] = None
     api_prefix: str = "/api/v1"
     debug: bool = False
@@ -128,9 +128,9 @@ def get_api_config() -> APIConfig:
     )
 
     return APIConfig(
-        title=api_conf.get("title", "PlexiChat API"),
+        title=api_conf.get("title", "Plexichat API"),
         description=api_conf.get(
-            "description", "REST API for PlexiChat messaging platform"
+            "description", "REST API for Plexichat messaging platform"
         ),
         version=current_ver,
         api_prefix=api_conf.get("api_prefix", "/api/v1"),

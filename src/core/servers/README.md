@@ -1,6 +1,6 @@
 # Servers Module
 
-Server-specific permissions system for PlexiChat API supporting community servers with channels, roles, and permission overrides.
+Server-specific permissions system for Plexichat API supporting community servers with channels, roles, and permission overrides.
 
 ## Features
 

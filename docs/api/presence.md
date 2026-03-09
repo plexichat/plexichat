@@ -35,7 +35,7 @@ Authorization: Bearer <token>
 ```json
 {
   "status": "online",
-  "custom_status": "Working on PlexiChat",
+  "custom_status": "Working on Plexichat",
   "custom_emoji": ":computer:"
 }
 ```
@@ -46,7 +46,7 @@ Authorization: Bearer <token>
 {
   "user_id": "123456789012345678",
   "status": "online",
-  "custom_status": "Working on PlexiChat",
+  "custom_status": "Working on Plexichat",
   "custom_emoji": ":computer:",
   "last_seen": 1704067200
 }
@@ -80,7 +80,7 @@ Authorization: Bearer <token>
 {
   "user_id": "123456789012345678",
   "status": "online",
-  "custom_status": "Working on PlexiChat",
+  "custom_status": "Working on Plexichat",
   "custom_emoji": ":computer:",
   "last_seen": 1704067200
 }
@@ -98,7 +98,7 @@ Authorization: Bearer <token>
 {
   "user_id": "123456789012345678",
   "status": "online",
-  "custom_status": "Working on PlexiChat",
+  "custom_status": "Working on Plexichat",
   "custom_emoji": ":computer:",
   "last_seen": 1704067200
 }

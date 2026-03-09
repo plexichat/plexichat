@@ -1,5 +1,5 @@
 """
-REST API module - FastAPI application factory for PlexiChat API.
+REST API module - FastAPI application factory for Plexichat API.
 
 Setup once in main.py, use anywhere via import.
 

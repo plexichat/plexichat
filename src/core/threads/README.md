@@ -1,6 +1,6 @@
 # Threads Module
 
-Thread management system for PlexiChat API supporting reply threads, forum-style threads, and thread membership.
+Thread management system for Plexichat API supporting reply threads, forum-style threads, and thread membership.
 
 ## Features
 

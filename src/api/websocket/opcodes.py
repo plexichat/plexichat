@@ -19,10 +19,10 @@ class GatewayOpcode(IntEnum):
     INVALID_SESSION = 9
     HELLO = 10
     HEARTBEAT_ACK = 11
-    # PlexiChat extensions for server status
+    # Plexichat extensions for server status
     SERVER_STATUS = 12
     VERSION_CHECK = 13
-    # PlexiChat voice signaling opcodes
+    # Plexichat voice signaling opcodes
     VOICE_CONNECT = 20
     VOICE_DISCONNECT = 21
     VOICE_SDP_OFFER = 22
@@ -30,10 +30,10 @@ class GatewayOpcode(IntEnum):
     VOICE_ICE_CANDIDATE = 24
     VOICE_SPEAKING = 25
     VOICE_QUALITY = 26
-    # PlexiChat application interaction opcodes
+    # Plexichat application interaction opcodes
     INTERACTION_CREATE = 30
     INTERACTION_RESPONSE = 31
-    # PlexiChat typing indicator opcodes
+    # Plexichat typing indicator opcodes
     TYPING_START = 40
     TYPING_STOP = 41
 
@@ -55,7 +55,7 @@ class GatewayCloseCode(IntEnum):
     INVALID_API_VERSION = 4012
     INVALID_INTENTS = 4013
     DISALLOWED_INTENTS = 4014
-    # PlexiChat extensions
+    # Plexichat extensions
     VERSION_OUTDATED = 4015
     SERVER_MAINTENANCE = 4016
     SERVER_SHUTDOWN = 4017

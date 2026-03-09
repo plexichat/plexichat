@@ -1,4 +1,4 @@
-# PlexiChat Documentation
+# Plexichat Documentation
 
 This directory contains the narrative backend documentation served by the custom docs portal.
 

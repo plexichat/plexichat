@@ -1,5 +1,5 @@
 """
-Authentication module - Secure authentication for PlexiChat API.
+Authentication module - Secure authentication for Plexichat API.
 
 This module provides:
 - User registration and login

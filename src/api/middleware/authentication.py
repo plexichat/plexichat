@@ -39,7 +39,7 @@ class AuthenticationMiddleware:
 
             import hmac
             internal_secret = api.get_internal_secret()
-            provided_secret = request.headers.get("X-PlexiChat-Internal-Secret")
+            provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
             is_internal = bool(
                 internal_secret
                 and provided_secret
@@ -386,7 +386,7 @@ async def get_current_user(request: Request) -> TokenInfo:
                     "error": {
                         "code": 403,
                         "message": "Username change required",
-                        "reason": "You must change your username before you can continue using PlexiChat.",
+                        "reason": "You must change your username before you can continue using Plexichat.",
                     }
                 },
             )

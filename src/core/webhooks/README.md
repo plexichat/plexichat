@@ -1,6 +1,6 @@
 # Webhooks Module
 
-Webhook system for PlexiChat API supporting automated message posting to channels.
+Webhook system for Plexichat API supporting automated message posting to channels.
 
 ## Features
 

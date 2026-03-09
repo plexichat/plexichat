@@ -1,6 +1,6 @@
 # Rate Limiting Module
 
-Advanced rate limiting for PlexiChat API with multiple bucket types, algorithms, and storage backends.
+Advanced rate limiting for Plexichat API with multiple bucket types, algorithms, and storage backends.
 
 ## Features
 

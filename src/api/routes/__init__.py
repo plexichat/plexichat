@@ -69,7 +69,7 @@ def create_api_router() -> APIRouter:
         """API v1 root endpoint."""
         try:
             return RootResponse(
-                version="v1", status="online", message="PlexiChat API v1 is operational"
+                version="v1", status="online", message="Plexichat API v1 is operational"
             )
         except Exception as e:
             logger.error(f"API root endpoint failed: {e}", exc_info=True)

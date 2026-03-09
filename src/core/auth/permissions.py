@@ -1,5 +1,5 @@
 """
-Permission system for PlexiChat authentication.
+Permission system for Plexichat authentication.
 
 Permissions are hierarchical with wildcard support:
 - "messages.send" - specific permission

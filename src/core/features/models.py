@@ -11,7 +11,7 @@ from src.core.base import SnowflakeID
 AVAILABLE_BADGES = [
     "alpha_tester",  # Alpha testing participant
     "early_supporter",  # Early adopter
-    "staff",  # PlexiChat staff member
+    "staff",  # Plexichat staff member
     "verified",  # Verified account
     "bug_hunter",  # Found and reported bugs
     "contributor",  # Code/docs contributor
@@ -37,21 +37,21 @@ class Badge:
             "alpha_tester": Badge(
                 name="alpha_tester",
                 display_name="Alpha Tester",
-                description="Participated in PlexiChat alpha testing",
+                description="Participated in Plexichat alpha testing",
                 icon="🧪",
                 color="#9333ea",
             ),
             "early_supporter": Badge(
                 name="early_supporter",
                 display_name="Early Supporter",
-                description="Supported PlexiChat early on",
+                description="Supported Plexichat early on",
                 icon="💎",
                 color="#06b6d4",
             ),
             "staff": Badge(
                 name="staff",
                 display_name="Staff",
-                description="PlexiChat team member",
+                description="Plexichat team member",
                 icon="⚡",
                 color="#ef4444",
             ),
@@ -72,7 +72,7 @@ class Badge:
             "contributor": Badge(
                 name="contributor",
                 display_name="Contributor",
-                description="Contributed to PlexiChat",
+                description="Contributed to Plexichat",
                 icon="🔧",
                 color="#3b82f6",
             ),
@@ -86,7 +86,7 @@ class Badge:
             "partner": Badge(
                 name="partner",
                 display_name="Partner",
-                description="PlexiChat partner",
+                description="Plexichat partner",
                 icon="🤝",
                 color="#ec4899",
             ),

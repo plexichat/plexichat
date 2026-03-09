@@ -1,6 +1,6 @@
 # Rate Limits
 
-PlexiChat applies multiple layers of request protection to keep the API stable under normal traffic and abuse conditions.
+Plexichat applies multiple layers of request protection to keep the API stable under normal traffic and abuse conditions.
 
 ## Default Buckets In Code
 

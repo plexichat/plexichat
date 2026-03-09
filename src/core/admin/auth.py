@@ -1,5 +1,5 @@
 """
-Admin authentication and session management for PlexiChat Admin.
+Admin authentication and session management for Plexichat Admin.
 """
 
 from typing import Optional, List, Dict, Any, Tuple
@@ -138,7 +138,7 @@ def _save_admin_credentials(password: str) -> None:
     home_dir = Path.home() / ".plexichat"
     creds_file = home_dir / "admin_credentials.txt"
     home_dir.mkdir(parents=True, exist_ok=True)
-    content = f"""PlexiChat Admin Credentials
+    content = f"""Plexichat Admin Credentials
 ============================
 Generated: {time.strftime("%Y-%m-%d %H:%M:%S")}
 
@@ -296,7 +296,7 @@ def login(
 
         secret = pyotp.random_base32()
         totp = pyotp.TOTP(secret)
-        qr_uri = totp.provisioning_uri(name=username, issuer_name="PlexiChat Admin")
+        qr_uri = totp.provisioning_uri(name=username, issuer_name="Plexichat Admin")
         db.execute(
             "UPDATE admin_users SET totp_secret = ? WHERE id = ?", (secret, admin_id)
         )
@@ -519,7 +519,7 @@ def begin_otp_setup(
     secret = pyotp.random_base32()
     totp = pyotp.TOTP(secret)
     qr_uri = totp.provisioning_uri(
-        name=row["username"], issuer_name="PlexiChat Admin"
+        name=row["username"], issuer_name="Plexichat Admin"
     )
     db.execute(
         """

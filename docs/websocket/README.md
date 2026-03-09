@@ -1,6 +1,6 @@
 # WebSocket Documentation
 
-This directory contains the narrative gateway documentation for the PlexiChat backend.
+This directory contains the narrative gateway documentation for the Plexichat backend.
 
 ## Pages
 

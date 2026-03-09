@@ -1,6 +1,6 @@
 # AutoMod Module
 
-Auto-moderation system for PlexiChat supporting configurable rules, multiple action types, AI moderation backends, and user reputation scoring.
+Auto-moderation system for Plexichat supporting configurable rules, multiple action types, AI moderation backends, and user reputation scoring.
 
 ## Features
 

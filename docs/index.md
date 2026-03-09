@@ -1,6 +1,6 @@
-# PlexiChat Backend Documentation
+# Plexichat Backend Documentation
 
-This portal documents the PlexiChat backend runtime surface: the REST API, the WebSocket gateway, common response shapes, and integration guidance.
+This portal documents the Plexichat backend runtime surface: the REST API, the WebSocket gateway, common response shapes, and integration guidance.
 
 ## Documentation Surfaces
 

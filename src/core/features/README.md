@@ -166,7 +166,7 @@ CREATE TABLE user_features_audit (
 |-------|-------------|
 | `alpha_tester` | Alpha testing participant |
 | `early_supporter` | Early adopter |
-| `staff` | PlexiChat team member |
+| `staff` | Plexichat team member |
 | `verified` | Verified account |
 | `bug_hunter` | Found and reported bugs |
 | `contributor` | Code/docs contributor |

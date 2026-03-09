@@ -1,6 +1,6 @@
 # API Module
 
-FastAPI application layer for the PlexiChat server.
+FastAPI application layer for the Plexichat server.
 
 ## Structure
 

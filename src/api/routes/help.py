@@ -65,14 +65,14 @@ async def security_logout_help():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Security Notice - PlexiChat Help</title>
+        <title>Security Notice - Plexichat Help</title>
         <style>{_get_help_style()}</style>
     </head>
     <body>
         <div class="container">
             <h1>Security Notice: Forced Logout</h1>
             <div class="card">
-                <p>You have been logged out of your PlexiChat account as a security precaution.</p>
+                <p>You have been logged out of your Plexichat account as a security precaution.</p>
                 <p>This typically happens for one of the following reasons:</p>
                 <ul>
                     <li>An administrator has invalidated all active sessions due to a system-wide security update.</li>
@@ -80,9 +80,9 @@ async def security_logout_help():
                     <li>A security policy change required a session reset.</li>
                 </ul>
                 <p><strong>What should I do?</strong></p>
-                <p>In most cases, you can simply log back in to resume using PlexiChat. If you continue to experience issues, please contact the server administrator.</p>
+                <p>In most cases, you can simply log back in to resume using Plexichat. If you continue to experience issues, please contact the server administrator.</p>
             </div>
-            <a href="/" class="back-link">&larr; Return to PlexiChat</a>
+            <a href="/" class="back-link">&larr; Return to Plexichat</a>
         </div>
     </body>
     </html>
@@ -97,14 +97,14 @@ async def access_blocked_help():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Access Blocked - PlexiChat Help</title>
+        <title>Access Blocked - Plexichat Help</title>
         <style>{_get_help_style()}</style>
     </head>
     <body>
         <div class="container">
             <h1>Access Blocked</h1>
             <div class="card">
-                <p>Your access to this PlexiChat server has been restricted.</p>
+                <p>Your access to this Plexichat server has been restricted.</p>
                 <p>This may be due to:</p>
                 <ul>
                     <li>Frequent violations of the server's terms of service.</li>
@@ -113,7 +113,7 @@ async def access_blocked_help():
                 </ul>
                 <p>If you believe this is an error, please wait for the block to expire or contact the server administration through other channels if available.</p>
             </div>
-            <a href="/" class="back-link">&larr; Return to PlexiChat</a>
+            <a href="/" class="back-link">&larr; Return to Plexichat</a>
         </div>
     </body>
     </html>

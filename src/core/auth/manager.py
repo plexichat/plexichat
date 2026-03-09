@@ -1059,9 +1059,9 @@ class AuthManager(BaseManager):
         )
         return TwoFactorSetup(
             secret=secret,
-            qr_uri=totp_module.generate_totp_uri(secret, user["username"], "PlexiChat"),
+            qr_uri=totp_module.generate_totp_uri(secret, user["username"], "Plexichat"),
             backup_codes=backup_codes,
-            issuer="PlexiChat",
+            issuer="Plexichat",
             username=user["username"],
         )
 

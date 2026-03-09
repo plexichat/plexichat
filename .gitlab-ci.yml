@@ -1,4 +1,4 @@
-# PlexiChat GitLab CI/CD Configuration
+# Plexichat GitLab CI/CD Configuration
 # Comprehensive test pipeline with security scanning, parallel execution, and coverage reporting
 # Target: ~3000 tests across all modules
 

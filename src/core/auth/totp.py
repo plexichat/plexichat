@@ -92,7 +92,7 @@ def get_totp_config() -> Dict[str, Any]:
     """Get TOTP configuration from config system."""
     defaults = {
         "enabled": True,
-        "issuer": "PlexiChat",
+        "issuer": "Plexichat",
         "digits": 6,
         "interval": 30,
         "backup_code_count": 10,
@@ -157,7 +157,7 @@ def generate_totp_uri(secret: str, username: str, issuer: Optional[str] = None) 
     """
     totp_config = get_totp_config()
     if issuer is None:
-        issuer = totp_config.get("issuer", "PlexiChat")
+        issuer = totp_config.get("issuer", "Plexichat")
 
     totp = pyotp.TOTP(
         secret,

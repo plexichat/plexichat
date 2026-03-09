@@ -1,6 +1,6 @@
 # Voice Module
 
-Voice channel state management system for PlexiChat API supporting voice channels, stage channels, and voice state tracking.
+Voice channel state management system for Plexichat API supporting voice channels, stage channels, and voice state tracking.
 
 ## Features
 

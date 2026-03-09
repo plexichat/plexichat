@@ -1,6 +1,6 @@
 # Events Module
 
-Event types, payloads, and routing for the PlexiChat gateway system.
+Event types, payloads, and routing for the Plexichat gateway system.
 
 ## Features
 

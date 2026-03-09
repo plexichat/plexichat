@@ -1,5 +1,5 @@
 """
-Feedback and ticket management for PlexiChat Admin.
+Feedback and ticket management for Plexichat Admin.
 """
 
 from typing import List, Optional, Dict, Any

@@ -1,6 +1,6 @@
 # Getting Started
 
-Use this guide when bringing up a client, bot, or integration against a PlexiChat server.
+Use this guide when bringing up a client, bot, or integration against a Plexichat server.
 
 ## 1. Learn the Runtime Surface
 
