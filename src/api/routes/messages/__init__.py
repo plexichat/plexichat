@@ -69,6 +69,17 @@ async def get_channel_messages(
     auth = api.get_auth()
 
     try:
+        def _get_attr(obj, name, default=None):
+            if isinstance(obj, dict):
+                return obj.get(name, default)
+            return getattr(obj, name, default)
+
+        def _set_attr(obj, name, value):
+            if isinstance(obj, dict):
+                obj[name] = value
+            else:
+                setattr(obj, name, value)
+
         try:
             cid = int(channel_id)
         except ValueError:
@@ -126,7 +137,13 @@ async def get_channel_messages(
             )
 
         # Bulk fetch all author usernames and avatars in single query (avoids N+1)
-        author_ids = list(set(m.author_id for m in messages))
+        author_ids = list(
+            {
+                int(author_id)
+                for author_id in (_get_attr(m, "author_id") for m in messages)
+                if author_id is not None
+            }
+        )
         author_cache = {}  # {str(user_id): {"username": str, "avatar_url": str, "badges": list}}
         if auth and author_ids:
             try:
@@ -148,24 +165,28 @@ async def get_channel_messages(
         if media and messages:
             filenames_to_fetch = set()
             for msg in messages:
-                if msg.attachments:
-                    for att in msg.attachments:
+                attachments = _get_attr(msg, "attachments") or []
+                if attachments:
+                    for att in attachments:
                         # Check if file_id is missing in metadata
                         has_file_id = False
-                        if att.metadata:
-                            if isinstance(att.metadata, dict):
-                                has_file_id = "file_id" in att.metadata
-                            elif isinstance(att.metadata, str):
+                        metadata = _get_attr(att, "metadata")
+                        if metadata:
+                            if isinstance(metadata, dict):
+                                has_file_id = "file_id" in metadata
+                            elif isinstance(metadata, str):
                                 import json
+
                                 try:
-                                    m = json.loads(att.metadata)
+                                    m = json.loads(metadata)
                                     has_file_id = "file_id" in m
-                                except:
+                                except json.JSONDecodeError:
                                     pass
                         
-                        if not has_file_id and att.url:
+                        att_url = _get_attr(att, "url")
+                        if not has_file_id and att_url:
                             # Extract filename from URL
-                            parts = att.url.split("/")
+                            parts = att_url.split("/")
                             if parts:
                                 filenames_to_fetch.add(parts[-1])
 
@@ -176,15 +197,19 @@ async def get_channel_messages(
                     )
                     # Update attachment metadata in-memory
                     for msg in messages:
-                        if msg.attachments:
-                            for att in msg.attachments:
-                                if att.url:
-                                    fname = att.url.split("/")[-1]
+                        attachments = _get_attr(msg, "attachments") or []
+                        if attachments:
+                            for att in attachments:
+                                att_url = _get_attr(att, "url")
+                                if att_url:
+                                    fname = att_url.split("/")[-1]
                                     if fname in file_map:
-                                        if not att.metadata:
-                                            att.metadata = {}
-                                        if isinstance(att.metadata, dict):
-                                            att.metadata["file_id"] = file_map[fname].id
+                                        metadata = _get_attr(att, "metadata")
+                                        if not metadata:
+                                            metadata = {}
+                                            _set_attr(att, "metadata", metadata)
+                                        if isinstance(metadata, dict):
+                                            metadata["file_id"] = file_map[fname].id
                 except Exception as e:
                     logger.debug(f"Failed to bulk fetch media files: {e}")
 
@@ -196,13 +221,19 @@ async def get_channel_messages(
         reactions_cache = {}
         if reactions_module and messages:
             try:
-                message_ids = [m.id for m in messages]
+                message_ids = [
+                    mid for mid in (_get_attr(m, "id") for m in messages) if mid is not None
+                ]
                 reactions_cache = reactions_module.get_reactions_batch(
                     current_user.user_id, message_ids
                 )
             except Exception:
                 # Fallback to empty reactions if batch fails
-                reactions_cache = {m.id: [] for m in messages}
+                reactions_cache = {
+                    mid: []
+                    for mid in (_get_attr(m, "id") for m in messages)
+                    if mid is not None
+                }
 
         # Bulk fetch reader information for messages authored by current user (sender only)
         # This eliminates the N+1 problem in _message_to_response
@@ -212,8 +243,10 @@ async def get_channel_messages(
                 # Only check messages authored by current user
                 own_message_ids = []
                 for m in messages:
-                    mid = getattr(m, "id", None) or m.get("id")
-                    author_id = getattr(m, "author_id", None) or m.get("author_id")
+                    mid = _get_attr(m, "id")
+                    author_id = _get_attr(m, "author_id")
+                    if mid is None or author_id is None:
+                        continue
                     if int(author_id) == int(current_user.user_id):
                         own_message_ids.append(mid)
 
@@ -256,23 +289,28 @@ async def get_channel_messages(
 
         result = []
         for m in messages:
-            # Robust lookup using string keys
-            author_id = getattr(m, "author_id", None) or m.get("author_id")
-            mid = getattr(m, "id", None) or m.get("id")
-            author_info = author_cache.get(str(author_id)) or {}
+            try:
+                # Robust lookup using string keys
+                author_id = _get_attr(m, "author_id")
+                mid = _get_attr(m, "id")
+                author_info = author_cache.get(str(author_id)) or {}
 
-            result.append(
-                _message_to_response(
-                    m,
-                    author_username=author_info.get("username"),
-                    author_avatar_url=author_info.get("avatar_url"),
-                    author_badges=author_info.get("badges"),
-                    reactions_data=reactions_cache.get(mid, []),
-                    read_by_data=readers_cache.get(str(mid)),
-                    media_mod=media_mod,
-                    viewer_user_id=current_user.user_id,
+                result.append(
+                    _message_to_response(
+                        m,
+                        author_username=author_info.get("username"),
+                        author_avatar_url=author_info.get("avatar_url"),
+                        author_badges=author_info.get("badges"),
+                        reactions_data=reactions_cache.get(mid, []),
+                        read_by_data=readers_cache.get(str(mid)),
+                        media_mod=media_mod,
+                        viewer_user_id=current_user.user_id,
+                    )
                 )
-            )
+            except Exception as message_error:
+                logger.warning(
+                    f"Skipping malformed message in channel {channel_id}: {message_error}"
+                )
 
         return result
     except HTTPException:

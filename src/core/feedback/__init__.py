@@ -77,12 +77,6 @@ def create_tables(db: Any) -> None:
         logger.error(f"Failed to create feedback table: {e}")
 
 
-def _create_tables() -> None:
-    """Create feedback tables."""
-    db = _get_db()
-    create_tables(db)
-
-
 def submit_feedback(
     user_id: int,
     content: str,

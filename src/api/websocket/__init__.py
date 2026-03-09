@@ -130,12 +130,6 @@ def get_auth_module():
     return _auth_module
 
 
-def get_events_module():
-    """Get the events module."""
-    _ensure_setup()
-    return _events_module
-
-
 def get_presence_module():
     """Get the presence module."""
     _ensure_setup()

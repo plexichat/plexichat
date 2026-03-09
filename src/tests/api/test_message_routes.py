@@ -46,6 +46,62 @@ class TestGetMessages:
 
         assert response.status_code == 401
 
+    def test_get_messages_skips_malformed_cached_records(
+        self, test_client, auth_headers, test_server, test_user, db_and_modules, monkeypatch
+    ):
+        """Test malformed cached-style message records do not 500 the whole endpoint."""
+        channel_id = str(test_server["channel"].id)
+
+        def fake_get_channel_messages(*args, **kwargs):
+            return [
+                {
+                    "id": 111111111111111111,
+                    "channel_id": int(channel_id),
+                    "author_id": test_user["user"].id,
+                    "content": "cached dict message",
+                    "created_at": 1730000000000,
+                    "attachments": [
+                        {
+                            "id": 222222222222222222,
+                            "filename": "ok.txt",
+                            "content_type": "text/plain",
+                            "size": 12,
+                            "url": "/api/v1/media/attachments/ok.txt",
+                        }
+                    ],
+                },
+                {
+                    "id": 333333333333333333,
+                    "channel_id": int(channel_id),
+                    "author_id": test_user["user"].id,
+                    "content": "broken attachment record",
+                    "created_at": 1730000000001,
+                    "attachments": [
+                        {
+                            "filename": "broken.txt",
+                            "content_type": "text/plain",
+                            "size": 7,
+                            "url": "/api/v1/media/attachments/broken.txt",
+                        }
+                    ],
+                },
+            ]
+
+        monkeypatch.setattr(
+            db_and_modules["servers"], "get_channel_messages", fake_get_channel_messages
+        )
+
+        response = test_client.get(
+            f"/api/v1/channels/{channel_id}/messages?after=1", headers=auth_headers
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["id"] == "111111111111111111"
+        assert data[0]["content"] == "cached dict message"
+        assert data[0]["attachments"][0]["filename"] == "ok.txt"
+
 
 class TestSendMessage:
     """Tests for POST /channels/{channel_id}/messages endpoint."""

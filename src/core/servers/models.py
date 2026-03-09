@@ -322,6 +322,11 @@ class AuditLogEntry:
     reason: Optional[str] = None
     changes: Optional[Dict[str, Any]] = None
 
+    @property
+    def action(self) -> AuditLogAction:
+        """Backward-compatible alias for action_type."""
+        return self.action_type
+
 
 @dataclass
 class ScheduledEvent:

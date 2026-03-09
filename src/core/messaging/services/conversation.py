@@ -20,7 +20,6 @@ from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
 from src.core.base import SnowflakeID
 from src.core.database import (
-    cached,
     invalidate_pattern,
     cache_get,
     cache_set,

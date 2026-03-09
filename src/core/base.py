@@ -40,10 +40,6 @@ class BaseManager:
         """Get current timestamp in milliseconds."""
         return int(time.time() * 1000)
 
-    def _current_time(self) -> int:
-        """Get current timestamp in milliseconds (alias for _get_timestamp)."""
-        return self._get_timestamp()
-
     def _generate_id(self) -> SnowflakeID:
         """Generate a new Snowflake ID."""
         return generate_snowflake_id()

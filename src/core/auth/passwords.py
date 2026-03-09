@@ -6,7 +6,7 @@ Provides configurable password strength validation.
 """
 
 import re
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple
 
 import utils.config as config
 
@@ -43,22 +43,6 @@ def verify_password(password: str, password_hash: str) -> bool:
     return _verify(password, password_hash)
 
 
-def get_password_config() -> Dict[str, Any]:
-    """Get password configuration from config system."""
-    auth_config = config.get("authentication", {})
-    return auth_config.get(
-        "password",
-        {
-            "min_length": 12,
-            "max_length": 128,
-            "require_uppercase": True,
-            "require_lowercase": True,
-            "require_digit": True,
-            "require_special": True,
-        },
-    )
-
-
 def validate_password(password: str) -> PasswordValidation:
     """
     Validate password strength against configured requirements.
@@ -69,7 +53,18 @@ def validate_password(password: str) -> PasswordValidation:
     Returns:
         PasswordValidation with valid flag, score, and issues
     """
-    pwd_config = get_password_config()
+    auth_config = config.get("authentication", {})
+    pwd_config = auth_config.get(
+        "password",
+        {
+            "min_length": 12,
+            "max_length": 128,
+            "require_uppercase": True,
+            "require_lowercase": True,
+            "require_digit": True,
+            "require_special": True,
+        },
+    )
     issues = []
     score = 0
 

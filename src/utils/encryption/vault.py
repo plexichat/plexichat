@@ -112,7 +112,7 @@ class HardwareVault:
                     import subprocess
                     # Remove inheritance and all permissions, then grant full to current user
                     subprocess.run(
-                        ["icacls", str(key_file), "/inheritance:r", "/grant:r", f"*S-1-5-32-544:F", "/grant:r", f"%USERNAME%:F"],
+                        ["icacls", str(key_file), "/inheritance:r", "/grant:r", "*S-1-5-32-544:F", "/grant:r", "%USERNAME%:F"],
                         capture_output=True,
                         check=False
                     )

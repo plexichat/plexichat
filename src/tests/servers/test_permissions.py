@@ -261,6 +261,40 @@ class TestChannelOverrides:
             servers.get_channel_override(general.id, "member", member_user.id) is None
         )
 
+    def test_set_channel_override_without_permission_fails(self, server_with_channels):
+        """Test that non-admins cannot create channel overrides."""
+        server, _, _, member_user, _, general, _, _, _, servers = server_with_channels
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.set_channel_override(
+                user_id=member_user.id,
+                channel_id=general.id,
+                target_type="member",
+                target_id=member_user.id,
+                deny={"messages.send": True},
+            )
+
+    def test_delete_channel_override_without_permission_fails(
+        self, server_with_channels
+    ):
+        """Test that non-admins cannot delete channel overrides."""
+        server, owner, _, member_user, _, general, _, _, _, servers = (
+            server_with_channels
+        )
+
+        servers.set_channel_override(
+            user_id=owner.id,
+            channel_id=general.id,
+            target_type="member",
+            target_id=member_user.id,
+            deny={"messages.send": True},
+        )
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.delete_channel_override(
+                member_user.id, general.id, "member", member_user.id
+            )
+
     def test_update_existing_override(self, server_with_channels):
         """Test updating an existing override."""
         server, owner, _, member_user, _, general, _, _, _, servers = (

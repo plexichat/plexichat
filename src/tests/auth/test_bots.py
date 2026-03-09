@@ -7,6 +7,7 @@ Each test creates its own user to avoid hitting the 5 bot limit.
 
 import pytest
 import uuid
+from src.core.auth.permissions import permissions_to_json
 
 
 def unique_name(prefix):
@@ -55,12 +56,39 @@ class TestBots:
         """Test creating bot with restricted permission fails."""
         user, auth = fresh_user
 
-        with pytest.raises(auth.PermissionDeniedError):
+        with pytest.raises(auth.AuthError, match="Bots cannot have permission"):
             auth.create_bot(
                 owner_id=user.id,
                 username=unique_name("badbot"),
                 display_name="Bad Bot",
                 permissions={"bots.create": True},
+            )
+
+    def test_create_bot_cannot_escalate_owner_permissions(self, db_and_auth):
+        """Test bot creation cannot grant permissions the owner does not hold."""
+        db, auth = db_and_auth
+        name = unique_name("limiteduser")
+        user = auth.register(name, f"{name}@example.com", "TestPass123!")
+
+        db.execute(
+            "UPDATE auth_users SET permissions = ? WHERE id = ?",
+            (
+                permissions_to_json(
+                    {
+                        "bots.create": True,
+                        "messages.read": True,
+                    }
+                ),
+                user.id,
+            ),
+        )
+
+        with pytest.raises(auth.PermissionDeniedError, match="Cannot grant bot permission"):
+            auth.create_bot(
+                owner_id=user.id,
+                username=unique_name("escalatebot"),
+                display_name="Escalate Bot",
+                permissions={"messages.read": True, "messages.delete_others": True},
             )
 
     def test_create_bot_duplicate_username_fails(self, fresh_user):

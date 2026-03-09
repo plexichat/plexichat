@@ -15,7 +15,11 @@ from ..exceptions import (
     CannotModifyOwnerError,
     RoleHierarchyError,
     BanExistsError,
+    BanNotFoundError,
     ChannelNotFoundError,
+    InviteNotFoundError,
+    InviteExpiredError,
+    InviteMaxUsesError,
 )
 from ..permissions import can_manage_member
 from src.core.database import cache_delete
@@ -303,10 +307,6 @@ class MemberHandler:
         reason: Optional[str] = None,
     ) -> bool:
         """Kick a member from a server."""
-        # Allow self-kick (leaving) without requiring kick permission
-        if user_id == member_user_id:
-            return self.manager.remove_member(user_id, server_id)
-
         server = self.manager.get_server(server_id, user_id)
         if server.owner_id == member_user_id:
             raise CannotModifyOwnerError("Cannot kick the server owner")
@@ -387,6 +387,15 @@ class MemberHandler:
         self, user_id: SnowflakeID, server_id: SnowflakeID, banned_user_id: SnowflakeID
     ) -> bool:
         """Unban a user from a server."""
+        self.manager.require_permission(user_id, server_id, "members.ban")
+
+        existing = self.db.fetch_one(
+            "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
+            (server_id, banned_user_id),
+        )
+        if not existing:
+            raise BanNotFoundError("User is not banned from this server")
+
         self.db.execute(
             "DELETE FROM srv_bans WHERE server_id = ? AND user_id = ?",
             (server_id, banned_user_id),
@@ -398,6 +407,7 @@ class MemberHandler:
 
     def get_bans(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Ban]:
         """Get all bans for a server."""
+        self.manager.require_permission(user_id, server_id, "bans.view")
         rows = self.db.fetch_all(
             "SELECT * FROM srv_bans WHERE server_id = ?", (server_id,)
         )
@@ -405,17 +415,28 @@ class MemberHandler:
 
     def use_invite(self, user_id: SnowflakeID, code: str) -> Member:
         """Get and use an invite."""
-        row = self.db.fetch_one("SELECT * FROM srv_invites WHERE code = ?", (code,))
+        row = self.db.fetch_one(
+            "SELECT * FROM srv_invites WHERE code = ? AND revoked = 0", (code,)
+        )
         if not row:
-            raise ValueError("Invite not found")
+            raise InviteNotFoundError("Invite not found")
 
         invite = self.manager._row_to_invite(row)
 
-        # Add member, or return existing if already joined
-        try:
-            member = self.add_member(invite.server_id, user_id, invite.inviter_id)
-        except MemberExistsError:
-            member = self.get_member(invite.server_id, user_id)
+        now = self.manager._get_timestamp()
+        if invite.expires_at is not None and invite.expires_at <= now:
+            raise InviteExpiredError(
+                "Invite has expired", expired_at=invite.expires_at
+            )
+
+        if invite.max_uses > 0 and invite.uses >= invite.max_uses:
+            raise InviteMaxUsesError(
+                "Invite has reached maximum uses",
+                max_uses=invite.max_uses,
+                current_uses=invite.uses,
+            )
+
+        member = self.add_member(invite.server_id, user_id, invite.inviter_id)
 
         self.db.execute(
             "UPDATE srv_invites SET uses = uses + 1 WHERE code = ?", (code,)
@@ -432,10 +453,19 @@ class MemberHandler:
         """Delete an invite."""
         row = self.db.fetch_one("SELECT * FROM srv_invites WHERE code = ?", (code,))
         if not row:
-            return False
+            raise InviteNotFoundError("Invite not found")
 
         server_id = row["server_id"]
         invite_id = row["id"]
+
+        if row.get("inviter_id") != user_id:
+            server = self.manager.get_server(server_id, user_id)
+            if not server:
+                raise ServerNotFoundError("Server not found")
+
+            if server.owner_id != user_id:
+                self.manager.require_permission(user_id, server_id, "invites.manage")
+
         self.db.execute("DELETE FROM srv_invites WHERE code = ?", (code,))
 
         self.manager._log_audit(
@@ -526,6 +556,9 @@ class MemberHandler:
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
+        self.manager.require_permission(
+            user_id, channel.server_id, "invites.create", channel_id
+        )
 
         now = self.manager._get_timestamp()
         expires_at = now + (max_age * 1000) if max_age > 0 else None

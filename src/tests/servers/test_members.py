@@ -2,6 +2,8 @@
 Tests for member operations.
 """
 
+import uuid
+
 import pytest
 
 
@@ -139,18 +141,22 @@ class TestUpdateMember:
     def test_update_others_nickname_without_permission_fails(self, server_with_members):
         """Test that updating others' nickname without permission fails."""
         server, _, _, member_user, _, _, servers = server_with_members
-
-        # Create another member
-        _, _, _, _outsider, _auth, _, _ = (
-            server_with_members[6]._get_manager()._auth,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+        auth = servers._auth
+        unique_id = uuid.uuid4().hex[:8]
+        other_user = auth.register(
+            f"nickname_target_{unique_id}",
+            f"nickname_target_{unique_id}@example.com",
+            "TestPass123!",
         )
-        # This test needs a fresh user - skip for now as fixture doesn't provide one easily
+        servers.add_member(server.id, other_user.id)
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.update_member(
+                user_id=member_user.id,
+                server_id=server.id,
+                member_user_id=other_user.id,
+                nickname="Not Allowed",
+            )
 
 
 class TestRemoveMember:
@@ -205,9 +211,17 @@ class TestKickMember:
     def test_kick_without_permission_fails(self, server_with_members):
         """Test that kicking without permission fails."""
         server, _, _, member_user, _, _, servers = server_with_members
+        auth = servers._auth
+        unique_id = uuid.uuid4().hex[:8]
+        other_user = auth.register(
+            f"kick_target_{unique_id}",
+            f"kick_target_{unique_id}@example.com",
+            "TestPass123!",
+        )
+        servers.add_member(server.id, other_user.id)
 
         with pytest.raises(servers.PermissionDeniedError):
-            servers.kick_member(member_user.id, server.id, member_user.id)
+            servers.kick_member(member_user.id, server.id, other_user.id)
 
     def test_kick_higher_role_fails(self, server_with_members):
         """Test that kicking higher role fails."""
@@ -304,11 +318,12 @@ class TestGetBans:
 
     def test_get_bans_without_permission_fails(self, server_with_members):
         """Test that getting bans without permission fails."""
-        server, _, admin_user, _, _, _, servers = server_with_members
+        server, owner, admin_user, member_user, _, _, servers = server_with_members
 
-        # Admin doesn't have ban permission by default in this fixture
-        # Actually they do, so this test needs adjustment
-        pass
+        servers.ban_member(owner.id, server.id, admin_user.id, reason="Test")
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.get_bans(member_user.id, server.id)
 
 
 class TestRoleAssignment:

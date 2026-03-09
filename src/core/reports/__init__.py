@@ -185,12 +185,6 @@ def create_tables(db) -> None:
                 logger.error(f"Failed to create reports table: {e}")
 
 
-def _create_tables() -> None:
-    """Create report tables."""
-    db = _get_db()
-    create_tables(db)
-
-
 def _get_config(key: str, default: Any = None) -> Any:
     """Get reports configuration value."""
     reports_config = config.get("reports", {})

@@ -2,7 +2,7 @@
 Search schemas - Request/response models for search endpoints.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 from .common import SnowflakeID
 from .messages import MessageResponse

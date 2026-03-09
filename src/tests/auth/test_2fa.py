@@ -5,7 +5,13 @@ Two-factor authentication tests for auth module.
 import pytest
 import pyotp
 import uuid
-from src.core.auth import AuthStatus, TwoFactorInvalidError, InvalidCredentialsError
+from src.core.auth import (
+    AuthStatus,
+    TwoFactorInvalidError,
+    InvalidCredentialsError,
+    TokenInvalidError,
+)
+from src.core.auth.tokens import parse_token
 from src.core.auth.totp import get_totp_config
 
 
@@ -111,6 +117,27 @@ class TestTwoFactorAuth:
 
         assert final.status == AuthStatus.SUCCESS
         assert final.token is not None
+
+    def test_complete_2fa_rejects_tampered_challenge_hash(self, db_and_auth):
+        """Test 2FA completion rejects a challenge whose stored hash was tampered."""
+        db, auth = db_and_auth
+        unique_id = uuid.uuid4().hex[:8]
+        username = f"tampered2fa_{unique_id}"
+
+        user = auth.register(username, f"{username}@example.com", "TestPass123!")
+        setup = auth.setup_2fa(user.id)
+        totp = pyotp.TOTP(setup.secret)
+        auth.confirm_2fa(user.id, totp.now())
+
+        result = auth.login(username, "TestPass123!")
+        parsed = parse_token(result.challenge_token)
+        db.execute(
+            "UPDATE auth_2fa_challenges SET token_hash = ? WHERE id = ?",
+            ("tampered", parsed["id"]),
+        )
+
+        with pytest.raises(TokenInvalidError):
+            auth.complete_2fa(result.challenge_token, totp.now())
 
     def test_complete_2fa_with_backup_code(self, db_and_auth):
         """Test completing 2FA with backup code."""

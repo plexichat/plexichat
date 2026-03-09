@@ -2,7 +2,7 @@
 Search routes - Unified search and discovery endpoints.
 """
 
-from typing import List, Optional
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api

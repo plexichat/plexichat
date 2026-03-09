@@ -57,17 +57,6 @@ class PlexiChatServer:
 
         return fetch_default_config(version=VERSION)
 
-    def setup_directories(self) -> None:
-        """Create necessary directories in home folder."""
-        home_dir = Path.home() / ".plexichat"
-        dirs = ["data", "logs", "media", "temp", "config"]
-
-        for d in dirs:
-            dir_path = home_dir / d
-            dir_path.mkdir(parents=True, exist_ok=True)
-
-        logger.debug(f"Created directories in {home_dir}")
-
     def setup_config(self) -> str:
         """Setup configuration from file or defaults, with environment variable overrides.
 
@@ -498,7 +487,7 @@ class PlexiChatServer:
 
     def initialize_modules(
         self,
-    ) -> Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
+    ) -> Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
         """Initialize all core modules in dependency order."""
         from src.core.database import Database, setup_redis
         from src.core import (
@@ -1297,21 +1286,6 @@ class PlexiChatServer:
         self.cleanup()
 
         return self.restart_requested
-
-    def request_restart(self) -> None:
-        """Request a server restart."""
-        self.restart_requested = True
-        self.shutdown_event.set()
-
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(self.notify_clients_restart())
-        except Exception as e:
-            logger.warning(f"Failed to notify clients of restart: {e}")
-
-        if self.server:
-            self.server.should_exit = True
 
 
 def main() -> None:

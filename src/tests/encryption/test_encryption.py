@@ -12,6 +12,9 @@ import sys
 import time
 import threading
 import base64
+import json
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 src_path = os.path.join(project_root, "src")
@@ -685,6 +688,66 @@ class TestKeyRotation:
 
 class TestMessageEncryption:
     """Test message encryption/decryption functionality."""
+
+    def test_message_key_from_env_is_not_flagged_auto_generated(
+        self, temp_keyring_path, monkeypatch
+    ):
+        """Env-provided message keys should not trigger the startup warning."""
+        env_name = "PLEXICHAT_MESSAGE_KEY_TEST"
+        env_key = base64.b64encode(b"a" * 32).decode("utf-8")
+        monkeypatch.setenv(env_name, env_key)
+
+        keyring = Keyring(temp_keyring_path, env_var=env_name)
+        encryptor = MessageEncryptor(keyring=keyring)
+
+        encryptor.encrypt_message("hello")
+
+        reloaded = MessageEncryptor(Keyring(temp_keyring_path, env_var=env_name))
+        assert reloaded.is_key_auto_generated() is False
+
+    def test_legacy_env_backed_keyring_is_not_flagged_auto_generated(
+        self, temp_keyring_path, monkeypatch
+    ):
+        """Older keyrings without source metadata should infer env-backed keys."""
+        env_name = "PLEXICHAT_MESSAGE_KEY_TEST"
+        env_key = base64.b64encode(b"b" * 32).decode("utf-8")
+        monkeypatch.setenv(env_name, env_key)
+
+        keyring = Keyring(temp_keyring_path, env_var=env_name)
+        MessageEncryptor(keyring=keyring).encrypt_message("hello")
+
+        encrypted_data = json.loads(temp_keyring_path.read_text())
+        aesgcm = AESGCM(keyring._get_kek())
+        payload = base64.b64decode(encrypted_data["payload"])
+        nonce = base64.b64decode(encrypted_data["nonce"])
+        decrypted = json.loads(aesgcm.decrypt(nonce, payload, None))
+        decrypted.pop("current_key_source", None)
+
+        new_nonce = os.urandom(12)
+        new_payload = aesgcm.encrypt(
+            new_nonce, json.dumps(decrypted).encode("utf-8"), None
+        )
+        temp_keyring_path.write_text(
+            json.dumps(
+                {
+                    "nonce": base64.b64encode(new_nonce).decode("utf-8"),
+                    "payload": base64.b64encode(new_payload).decode("utf-8"),
+                }
+            )
+        )
+
+        reloaded = MessageEncryptor(Keyring(temp_keyring_path, env_var=env_name))
+        assert reloaded.is_key_auto_generated() is False
+
+    def test_generated_message_key_is_flagged_auto_generated(
+        self, temp_keyring_path
+    ):
+        """Generated message keys should still trigger the startup warning."""
+        encryptor = MessageEncryptor(keyring=Keyring(temp_keyring_path))
+        encryptor.encrypt_message("hello")
+
+        reloaded = MessageEncryptor(Keyring(temp_keyring_path))
+        assert reloaded.is_key_auto_generated() is True
 
     def test_encrypt_message_basic(self):
         """Test basic message encryption."""

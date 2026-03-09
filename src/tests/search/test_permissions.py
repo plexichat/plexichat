@@ -218,6 +218,40 @@ class TestSearchAccessControl:
 
         assert len(outsider_results) == 0
 
+    def test_channel_access_checks_messages_read_permission(
+        self, db_and_modules, monkeypatch
+    ):
+        """Test channel search access delegates to messages.read permission checks."""
+        db, auth, messaging, servers, search = db_and_modules
+        unique_id = uuid.uuid4().hex[:8]
+
+        owner = auth.register(
+            username=f"search_owner_{unique_id}",
+            email=f"search_owner_{unique_id}@example.com",
+            password="TestPass123!",
+        )
+        viewer = auth.register(
+            username=f"search_viewer_{unique_id}",
+            email=f"search_viewer_{unique_id}@example.com",
+            password="TestPass123!",
+        )
+
+        server = servers.create_server(owner.id, f"Search Access {unique_id}")
+        channel = servers.get_channels(owner.id, server.id)[0]
+        manager = search._get_manager()
+        permission_calls = []
+
+        def fake_has_permission(user_id, server_id, permission, channel_id=None):
+            permission_calls.append((user_id, server_id, permission, channel_id))
+            return False
+
+        monkeypatch.setattr(servers, "has_permission", fake_has_permission)
+
+        assert manager._can_access_channel(viewer.id, channel.id) is False
+        assert permission_calls == [
+            (viewer.id, server.id, "messages.read", channel.id)
+        ]
+
     def test_search_specific_conversation_access(self, db_and_modules):
         """Test searching specific conversation checks access."""
         db, auth, messaging, servers, search = db_and_modules

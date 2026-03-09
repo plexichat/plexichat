@@ -964,6 +964,9 @@ class AuthManager(BaseManager):
             raise TokenInvalidError("Expired/Used")
         if row["used"]:
             raise TokenInvalidError("Expired/Used")
+        stored_hash = row.get("challenge_hash") or row.get("token_hash")
+        if not stored_hash or not verify_token_hash(parsed["secret"], stored_hash):
+            raise TokenInvalidError("Expired/Used")
         if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
 
@@ -1265,9 +1268,18 @@ class AuthManager(BaseManager):
         requested_perms = (
             permissions if permissions is not None else DEFAULT_BOT_PERMISSIONS.copy()
         )
+        valid, issues = validate_permissions(requested_perms, is_bot=True)
+        if not valid:
+            raise AuthError(f"Invalid permissions: {issues}")
 
         # DEBUG
         logger.debug(f"DEBUG_AUTH: create_bot requested_perms={requested_perms}")
+
+        for permission, allowed in requested_perms.items():
+            if allowed and not has_permission(owner_perms, permission):
+                raise PermissionDeniedError(
+                    f"Cannot grant bot permission not held by owner: {permission}"
+                )
 
         # Bot should not have 'bots.create' permission
         if requested_perms.get("bots.create"):

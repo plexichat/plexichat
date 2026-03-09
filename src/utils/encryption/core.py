@@ -92,10 +92,29 @@ class Keyring:
         self.env_var = env_var
         self.lock_path = keyring_path.with_suffix(".lock")
         self.current_version: int = 0
+        self.current_key_source: str = "unknown"
         self.keys: Dict[int, bytes] = {}
         self.rotated_at: int = 0
         self._thread_lock = threading.Lock()
         self.load()
+
+    def _detect_current_key_source(self, stored_source: Optional[str] = None) -> str:
+        """Infer where the current message key came from."""
+        if stored_source in {"env", "generated"}:
+            return stored_source
+
+        current_key = self.keys.get(self.current_version)
+        if not current_key:
+            return "unknown"
+
+        if self.current_version > 1:
+            return "generated"
+
+        env_key = self._get_env_key()
+        if env_key and current_key == env_key:
+            return "env"
+
+        return "generated"
 
     def _get_kek(self) -> bytes:
         return vault.get_kek()
@@ -158,6 +177,9 @@ class Keyring:
                 self.keys = {
                     int(v): base64.b64decode(k) for v, k in data.get("keys", {}).items()
                 }
+                self.current_key_source = self._detect_current_key_source(
+                    data.get("current_key_source")
+                )
             except Exception as e:
                 logger.error(f"CRITICAL: Failed to decrypt keyring at {self.path}: {e}")
                 
@@ -171,6 +193,7 @@ class Keyring:
                     logger.error(f"Failed to invalidate cache after keyring decryption failure: {ce}")
 
                 self.current_version = 0
+                self.current_key_source = "unknown"
                 self.keys = {}
                 self.rotated_at = 0
                 return
@@ -185,6 +208,7 @@ class Keyring:
 
             raw_data = {
                 "current_version": self.current_version,
+                "current_key_source": self.current_key_source,
                 "rotated_at": self.rotated_at,
                 "keys": {
                     str(v): base64.b64encode(k).decode("utf-8")
@@ -227,6 +251,7 @@ class Keyring:
                 env_key = self._get_env_key()
                 if env_key:
                     self.current_version = 1
+                    self.current_key_source = "env"
                     self.keys[1] = env_key
                     self.rotated_at = int(time.time())
                     logger.info(
@@ -237,6 +262,7 @@ class Keyring:
                     # 2. Generate new random key
                     new_key = AESGCM.generate_key(bit_length=256)
                     self.current_version = 1
+                    self.current_key_source = "generated"
                     self.keys[1] = new_key
                     self.rotated_at = int(time.time())
                     self._save_without_lock()
@@ -259,6 +285,7 @@ class Keyring:
 
         raw_data = {
             "current_version": self.current_version,
+            "current_key_source": self.current_key_source,
             "rotated_at": self.rotated_at,
             "keys": {
                 str(v): base64.b64encode(k).decode("utf-8")
@@ -296,6 +323,7 @@ class Keyring:
             new_key = AESGCM.generate_key(bit_length=256)
             self.keys[new_version] = new_key
             self.current_version = new_version
+            self.current_key_source = "generated"
             self.rotated_at = int(time.time())
             logger.info(f"Rotated encryption key to version {new_version}")
             self._save_without_lock()
@@ -637,7 +665,7 @@ class MessageEncryptor:
         return content.startswith("ENC:")
 
     def is_key_auto_generated(self) -> bool:
-        return self.keyring.current_version == 1
+        return self.keyring.current_key_source == "generated"
 
 
 def generate_key_pair() -> Tuple[bytes, bytes]:

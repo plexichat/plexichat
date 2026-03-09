@@ -8,7 +8,6 @@ Includes replay attack prevention and DoS mitigation for backup codes.
 import os
 import time
 import threading
-import hmac
 import importlib
 from typing import List, Tuple, Optional, Dict, Any, Union
 
@@ -255,24 +254,18 @@ def verify_backup_code(
     code: str, hashed_codes: List[Any], max_checks: Optional[int] = None
 ) -> Tuple[bool, int]:
     """
-    Verify a backup code against stored hashes with DoS mitigation.
+    Verify a backup code against stored hashes.
 
     Args:
         code: Backup code to verify (with or without dash)
         hashed_codes: List of hashed backup codes
-        max_checks: Maximum number of Argon2 verifications (DoS protection)
+        max_checks: Deprecated and ignored; all stored backup codes are checked
 
     Returns:
         Tuple of (valid, index) where index is the matched code index or -1
     """
-    totp_config = get_totp_config()
-    if max_checks is None:
-        max_checks = int(totp_config.get("backup_code_max_checks", 3))
-
     # Normalize code (remove dash, lowercase)
     normalized = code.replace("-", "").lower()
-
-    checks_performed = 0
 
     for i, entry in enumerate(hashed_codes):
         # Support both old format (prefix, hash) and new format (just hash string)
@@ -280,12 +273,6 @@ def verify_backup_code(
             _, hashed = entry
         else:
             hashed = entry
-
-        # Rate limit expensive Argon2 operations
-        if checks_performed >= max_checks:
-            break
-
-        checks_performed += 1
 
         # Ensure hashed is a string for verify_password
         hashed_str = str(hashed) if not isinstance(hashed, str) else hashed

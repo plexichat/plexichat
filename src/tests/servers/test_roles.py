@@ -122,6 +122,13 @@ class TestGetRoles:
         positions = [r.position for r in roles]
         assert positions == sorted(positions, reverse=True)
 
+    def test_get_roles_without_permission_fails(self, server_with_members):
+        """Test that non-admins cannot enumerate server roles."""
+        server, _, _, member_user, _, _, servers = server_with_members
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.get_roles(member_user.id, server.id)
+
 
 class TestUpdateRole:
     """Tests for updating roles."""

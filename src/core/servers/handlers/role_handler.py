@@ -102,6 +102,7 @@ class RoleHandler:
 
     def get_roles(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Role]:
         """Get all roles in a server."""
+        self.manager.require_permission(user_id, server_id, "roles.manage")
         rows = self.db.fetch_all(
             "SELECT * FROM srv_roles WHERE server_id = ? AND deleted = 0 ORDER BY position DESC",
             (server_id,),
@@ -279,6 +280,9 @@ class RoleHandler:
             from ..exceptions import ChannelNotFoundError
 
             raise ChannelNotFoundError("Channel not found")
+        self.manager.require_permission(
+            user_id, channel.server_id, "roles.manage", channel_id
+        )
 
         now = self.manager._get_timestamp()
         existing = self.db.fetch_one(
@@ -327,12 +331,14 @@ class RoleHandler:
         # Invalidate permissions cache
         from src.core.database import invalidate_pattern
 
+        self.manager._permission_cache.clear()
         if target_type == "member":
             invalidate_pattern(f"perms:{target_id}:{channel.server_id}:*")
         else:
             # Role override affects all members with that role
             # For simplicity, we invalidate all permissions for this server/channel
             invalidate_pattern(f"perms:*:{channel.server_id}:{channel_id}")
+        invalidate_pattern("has_perm:*")
 
         result = self.get_channel_override(channel_id, target_type, target_id)
         assert result is not None
@@ -351,6 +357,9 @@ class RoleHandler:
             from ..exceptions import ChannelNotFoundError
 
             raise ChannelNotFoundError("Channel not found")
+        self.manager.require_permission(
+            user_id, channel.server_id, "roles.manage", channel_id
+        )
 
         self.db.execute(
             """DELETE FROM srv_channel_overrides 
@@ -374,10 +383,12 @@ class RoleHandler:
         # Invalidate permissions cache
         from src.core.database import invalidate_pattern
 
+        self.manager._permission_cache.clear()
         if target_type == "member":
             invalidate_pattern(f"perms:{target_id}:{channel.server_id}:*")
         else:
             invalidate_pattern(f"perms:*:{channel.server_id}:{channel_id}")
+        invalidate_pattern("has_perm:*")
 
         return True
 

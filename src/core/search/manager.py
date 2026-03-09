@@ -836,11 +836,12 @@ class SearchManager(BaseManager):
         if not channel:
             return False
 
-        member = self._db.fetch_one(
-            "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
-            (channel["server_id"], user_id),
+        return self._servers.has_permission(
+            user_id,
+            channel["server_id"],
+            "messages.read",
+            channel_id,
         )
-        return member is not None
 
     def _get_server_member_ids(self, server_id: int) -> set:
         """Get set of user IDs who are members of a server."""

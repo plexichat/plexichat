@@ -1832,9 +1832,28 @@ class MediaManager(BaseManager):
                 SELECT m.conversation_id 
                 FROM msg_messages m
                 JOIN msg_attachments a ON m.id = a.message_id
-                WHERE (a.checksum = ? OR a.metadata LIKE '%' || ?) AND a.deleted = 0
+                WHERE (
+                    a.checksum = ?
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                ) AND a.deleted = 0
             """
-            rows = self._db.fetch_all(query, (checksum, file_id_token))
+            rows = self._db.fetch_all(
+                query,
+                (
+                    checksum,
+                    f'"media_file_id": {file_id_token}',
+                    f'"media_file_id": "{file_id_token}"',
+                    f'"media_file_id":"{file_id_token}"',
+                    f'"file_id": {file_id_token}',
+                    f'"file_id": "{file_id_token}"',
+                    f'"file_id":"{file_id_token}"',
+                ),
+            )
 
         if not rows:
             # Fallback to filename or full metadata matching if checksum is missing or no matches found
@@ -1842,10 +1861,29 @@ class MediaManager(BaseManager):
                 SELECT m.conversation_id 
                 FROM msg_messages m
                 JOIN msg_attachments a ON m.id = a.message_id
-                WHERE (a.filename = ? OR a.url LIKE '%' || ? OR a.metadata LIKE '%' || ?) AND a.deleted = 0
+                WHERE (
+                    a.filename = ?
+                    OR a.url LIKE '%' || ?
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                    OR a.metadata LIKE '%' || ? || '%'
+                ) AND a.deleted = 0
             """
             rows = self._db.fetch_all(
-                query, (search_filename, search_filename, file_id_token)
+                query,
+                (
+                    search_filename,
+                    search_filename,
+                    f'"media_file_id": {file_id_token}',
+                    f'"media_file_id": "{file_id_token}"',
+                    f'"media_file_id":"{file_id_token}"',
+                    f'"file_id": {file_id_token}',
+                    f'"file_id": "{file_id_token}"',
+                    f'"file_id":"{file_id_token}"',
+                ),
             )
 
         if rows and self._messaging:

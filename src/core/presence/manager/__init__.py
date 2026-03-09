@@ -21,6 +21,7 @@ from ..models import (
 )
 from ..exceptions import (
     UserNotFoundError,
+    InvalidStatusError,
     InvalidActivityError,
 )
 from src.core.database import (
@@ -34,10 +35,6 @@ from src.core.database import (
 
 class PresenceManager(BaseManager):
     """Core presence manager handling all operations."""
-
-    def _get_manager(self):
-        """Compatibility method for some test patterns."""
-        return self
 
     # Re-expose models/enums for easy access in tests
     UserStatus = UserStatus
@@ -134,11 +131,15 @@ class PresenceManager(BaseManager):
         Returns:
             Updated Presence
         """
+        self._validate_user(user_id)
+
         if isinstance(status, str):
             try:
                 status = UserStatus(status.lower())
             except ValueError:
-                status = UserStatus.OFFLINE
+                raise InvalidStatusError(f"Invalid status value: {status}") from None
+        elif not isinstance(status, UserStatus):
+            raise InvalidStatusError(f"Invalid status type: {type(status).__name__}")
 
         # Fast path if we already have a record
         now = self._get_timestamp()
@@ -965,17 +966,16 @@ class PresenceManager(BaseManager):
         """
         Get presence as visible to a specific viewer.
 
-        Respects invisible mode, block relationships, and mutual context.
+        Respects invisible mode and block relationships.
         Blocked users see target as offline.
         Invisible users appear offline to others.
-        Strangers (no mutual servers/friends) see target as offline.
 
         Args:
             viewer_id: ID of the user viewing
             target_id: ID of the user being viewed
 
         Returns:
-            Presence (may show offline if invisible, blocked, or no mutual context)
+            Presence (may show offline if invisible or blocked)
         """
         presence = self.get_presence(target_id)
 
@@ -994,34 +994,6 @@ class PresenceManager(BaseManager):
                     last_seen=0,
                     updated_at=0,
                 )
-
-        # PRIVACY: Check mutual context (Zero Trust)
-        # Strangers should not be able to track presence
-        has_mutual_context = False
-        if self._relationships and self._servers:
-            # Check friends first (usually smaller set)
-            friend_ids = self._relationships.get_friend_ids(viewer_id)
-            if int(target_id) in [int(fid) for fid in friend_ids]:
-                has_mutual_context = True
-            else:
-                # Check mutual servers
-                # Note: get_mutual_server_count is more efficient than fetching all IDs
-                if (
-                    self._relationships.get_mutual_server_count(viewer_id, target_id)
-                    > 0
-                ):
-                    has_mutual_context = True
-
-        if not has_mutual_context:
-            # Fallback to showing as offline if no shared context exists
-            return Presence(
-                user_id=target_id,
-                status=UserStatus.OFFLINE,
-                custom_status=None,
-                activity=None,
-                last_seen=0,
-                updated_at=0,
-            )
 
         # Invisible users appear offline to others
         if presence.status == UserStatus.INVISIBLE:
@@ -1055,9 +1027,6 @@ class PresenceManager(BaseManager):
         # Pre-fetch context data for efficient bulk check
         blocked_ids = set()
         blocked_by_ids = set()
-        friend_ids = set()
-        mutual_member_ids = set()
-
         if self._relationships:
             try:
                 # Use IDs directly for fast set lookups
@@ -1071,19 +1040,6 @@ class PresenceManager(BaseManager):
                         for uid in self._relationships.get_all_blocked_ids(viewer_id)
                     )
                     - blocked_ids
-                )
-                friend_ids = set(
-                    int(uid) for uid in self._relationships.get_friend_ids(viewer_id)
-                )
-            except Exception:
-                pass
-
-        if self._servers:
-            try:
-                # Optimized: fetch all users sharing servers with viewer in one pass
-                mutual_member_ids = set(
-                    int(uid)
-                    for uid in self._servers.get_all_shared_member_ids(viewer_id)
                 )
             except Exception:
                 pass
@@ -1100,19 +1056,6 @@ class PresenceManager(BaseManager):
             # Check if blocked (either way)
             is_blocked = (target_id in blocked_ids) or (target_id in blocked_by_ids)
             if is_blocked:
-                result[target_id_raw] = Presence(
-                    user_id=target_id_raw,
-                    status=UserStatus.OFFLINE,
-                    custom_status=None,
-                    activity=None,
-                    last_seen=0,
-                    updated_at=0,
-                )
-                continue
-
-            # PRIVACY: Check mutual context
-            has_mutual = (target_id in friend_ids) or (target_id in mutual_member_ids)
-            if not has_mutual:
                 result[target_id_raw] = Presence(
                     user_id=target_id_raw,
                     status=UserStatus.OFFLINE,

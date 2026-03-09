@@ -120,6 +120,24 @@ class TestCreateCategory:
         with pytest.raises(servers.InvalidChannelNameError):
             servers.create_category(user_id=owner.id, server_id=server.id, name="")
 
+    def test_create_category_by_non_admin_fails(self, server_with_members):
+        """Test that non-admin cannot create categories."""
+        server, _, _, member_user, _, _, servers = server_with_members
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.create_category(user_id=member_user.id, server_id=server.id, name="ops")
+
+
+class TestDeleteCategory:
+    """Tests for category deletion."""
+
+    def test_delete_category_by_non_admin_fails(self, server_with_channels):
+        """Test that non-admin cannot delete categories."""
+        server, _, _, member_user, _, _, _, _, category, servers = server_with_channels
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.delete_category(member_user.id, category.id)
+
 
 class TestGetChannel:
     """Tests for getting channel info."""
@@ -260,3 +278,10 @@ class TestMoveChannel:
         updated = servers.move_channel(owner.id, general.id, position=10)
 
         assert updated.position == 10
+
+    def test_move_channel_by_non_admin_fails(self, server_with_channels):
+        """Test that non-admin cannot move channels."""
+        server, _, _, member_user, _, general, _, _, _, servers = server_with_channels
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.move_channel(member_user.id, general.id, position=10)

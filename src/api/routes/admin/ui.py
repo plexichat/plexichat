@@ -10,6 +10,15 @@ from src.utils.security import generate_csp_nonce, build_admin_csp_header
 router = APIRouter()
 
 
+def _security_headers(nonce: str) -> dict[str, str]:
+    return {
+        "Content-Security-Policy": build_admin_csp_header(nonce),
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0, private",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+
 @router.get("/", include_in_schema=False)
 async def admin_root(request: Request):
     """
@@ -26,10 +35,7 @@ async def admin_login_page(request: Request):
     check_host_restriction(request)
     nonce = generate_csp_nonce()
     content = load_admin_template("login.html", csp_nonce=nonce)
-    return HTMLResponse(
-        content=content,
-        headers={"Content-Security-Policy": build_admin_csp_header(nonce)},
-    )
+    return HTMLResponse(content=content, headers=_security_headers(nonce))
 
 
 @router.get("/ui", include_in_schema=False)
@@ -48,7 +54,4 @@ async def admin_dashboard_page(request: Request):
     check_host_restriction(request)
     nonce = generate_csp_nonce()
     content = load_admin_template("dashboard.html", csp_nonce=nonce)
-    return HTMLResponse(
-        content=content,
-        headers={"Content-Security-Policy": build_admin_csp_header(nonce)},
-    )
+    return HTMLResponse(content=content, headers=_security_headers(nonce))

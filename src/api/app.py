@@ -70,6 +70,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         setup_exception_handlers,
         ErrorHandlingMiddleware,
         LoggingMiddleware,
+        SecurityHeadersMiddleware,
         create_rate_limit_middleware,
         IPBlockingMiddleware,
         DatabaseMiddleware,
@@ -125,6 +126,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     app.add_middleware(IPBlockingMiddleware)
     app.add_middleware(ErrorHandlingMiddleware)
     app.add_middleware(LoggingMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(DatabaseMiddleware)
 
     # CORS handles OPTIONS preflight - MUST be outermost

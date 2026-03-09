@@ -815,14 +815,6 @@ class OpcodeHandler:
             "application": {"id": str(user_id), "flags": 0},
         }
 
-    def get_replay_events(
-        self,
-        session_id: str,
-        after_sequence: int,
-    ) -> list:
-        """Get events to replay after resume."""
-        return self._session_manager.get_replay_events(session_id, after_sequence)
-
     async def _dispatch_online_presence(self, user_id: int) -> None:
         """Dispatch online presence to friends when user connects."""
         # Set presence to online FIRST before dispatching

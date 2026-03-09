@@ -11,6 +11,7 @@ from ..exceptions import (
     CategoryNotFoundError,
     InvalidChannelNameError,
     ServerAccessDeniedError,
+    ServerNotFoundError,
 )
 from ..permissions import has_permission as check_permission
 from src.core.database import cache_delete, redis_available
@@ -67,6 +68,12 @@ class ChannelHandler:
         read_receipts_enabled: bool = True,
     ) -> Channel:
         """Create a new channel in a server."""
+        server = self.manager.get_server(server_id, user_id)
+        if not server:
+            raise ServerNotFoundError("Server not found")
+
+        self.manager.require_permission(user_id, server_id, "channels.manage")
+
         if isinstance(channel_type, str):
             try:
                 channel_type = ChannelType(channel_type.lower())
@@ -151,6 +158,7 @@ class ChannelHandler:
         name: str,
     ) -> ChannelCategory:
         """Create a new channel category."""
+        self.manager.require_permission(user_id, server_id, "channels.manage")
         name = name.strip()
         if not name:
             raise InvalidChannelNameError("Category name cannot be empty")
@@ -182,6 +190,7 @@ class ChannelHandler:
             raise CategoryNotFoundError("Category not found")
 
         server_id = category_row["server_id"]
+        self.manager.require_permission(user_id, server_id, "channels.manage")
         self.db.execute(
             "UPDATE srv_channels SET category_id = NULL WHERE category_id = ?",
             (category_id,),
@@ -248,6 +257,9 @@ class ChannelHandler:
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
+        self.manager.require_permission(
+            user_id, channel.server_id, "channels.manage", channel_id
+        )
 
         updates = []
         params = []
@@ -327,6 +339,9 @@ class ChannelHandler:
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
+        self.manager.require_permission(
+            user_id, channel.server_id, "channels.manage", channel_id
+        )
 
         now = self.manager._get_timestamp()
         self.db.execute(
@@ -356,6 +371,9 @@ class ChannelHandler:
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
+        self.manager.require_permission(
+            user_id, channel.server_id, "channels.manage", channel_id
+        )
 
         self.db.execute(
             "UPDATE srv_channels SET position = ?, updated_at = ? WHERE id = ?",

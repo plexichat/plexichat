@@ -533,13 +533,18 @@ class LinkPreviewService:
                     "User-Agent": self._config["user_agent"],
                     "Host": hostname,
                 },
-                follow_redirects=True,  # Allow redirects for images
+                follow_redirects=False,
             )
 
             if response.status_code != 200:
                 return None
 
             content_type = response.headers.get("content-type", "")
+            content_type_lower = content_type.lower()
+            if not content_type_lower.startswith("image/"):
+                return None
+            if content_type_lower.startswith("image/svg") or "svg+xml" in content_type_lower:
+                return None
             data = response.content
 
             # Check size

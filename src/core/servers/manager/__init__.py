@@ -39,7 +39,10 @@ from ..exceptions import (
     PermissionDeniedError,
     OwnerCannotLeaveError,
     MemberExistsError,
+    InviteNotFoundError,
+    InviteMaxUsesError,
     UserBannedError,
+    BanNotFoundError,
     BanExistsError,
     RoleHierarchyError,
     DefaultRoleError,
@@ -63,18 +66,28 @@ class ServerManager(BaseManager):
     """Core server manager handling all operations."""
 
     ChannelType = ChannelType
+    AuditLogAction = AuditLogAction
 
     # Expose exception types for test compatibility (tests access these via the manager instance)
     ServerAccessDeniedError = ServerAccessDeniedError
     PermissionDeniedError = PermissionDeniedError
+    InvalidChannelNameError = InvalidChannelNameError
     OwnerCannotLeaveError = OwnerCannotLeaveError
     CannotModifyOwnerError = CannotModifyOwnerError
     MemberExistsError = MemberExistsError
+    InviteNotFoundError = InviteNotFoundError
+    InviteMaxUsesError = InviteMaxUsesError
     UserBannedError = UserBannedError
+    BanNotFoundError = BanNotFoundError
     BanExistsError = BanExistsError
     RoleHierarchyError = RoleHierarchyError
     DefaultRoleError = DefaultRoleError
     InvalidRoleNameError = InvalidRoleNameError
+    InvalidChannelNameError = InvalidChannelNameError
+
+    def _get_manager(self):
+        """Compatibility helper for older tests and call sites."""
+        return self
 
     def __init__(self, db, auth_module=None, messaging_module=None):
         """
@@ -113,12 +126,6 @@ class ServerManager(BaseManager):
         self.channel_handler = ChannelHandler(self)
         self.role_handler = RoleHandler(self)
         self.member_handler = MemberHandler(self)
-
-    def _get_manager(self):
-        """Return self for test compatibility."""
-        return self
-
-        logger.info("Server module initialized")
 
     def _cache_get(self, cache: dict, key, default=None) -> Any:
         """Get value from cache if not expired."""

@@ -994,10 +994,8 @@
     </div>
 
     <script nonce="{{ csp_nonce }}">
-        const token = sessionStorage.getItem('plexichat-admin-token') || localStorage.getItem('plexichat-admin-token');
+        let token = sessionStorage.getItem('plexichat-admin-token');
         if (token) {
-            sessionStorage.setItem('plexichat-admin-token', token);
-            localStorage.removeItem('plexichat-admin-token');
         } else {
             window.location.replace('/api/v1/admin/login');
         }
@@ -1034,7 +1032,7 @@
 
         const api = async (p, o = {}) => {
             const r = await fetch(p, { ...o, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...o.headers } });
-            if (r.status === 401) { sessionStorage.removeItem('plexichat-admin-token'); localStorage.removeItem('plexichat-admin-token'); window.location.replace('/api/v1/admin/login'); return; }
+            if (r.status === 401) { sessionStorage.removeItem('plexichat-admin-token'); window.location.replace('/api/v1/admin/login'); return; }
             const d = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(d.detail?.error?.message || d.detail || 'API Error');
             return d;
@@ -2171,7 +2169,6 @@
             if (a === 'logout') {
                 api('/api/v1/admin/logout', { method: 'POST' }).catch(() => null).finally(() => {
                     sessionStorage.removeItem('plexichat-admin-token');
-                    localStorage.removeItem('plexichat-admin-token');
                     window.location.replace('/api/v1/admin/login');
                 });
             }

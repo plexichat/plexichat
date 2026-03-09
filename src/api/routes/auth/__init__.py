@@ -635,11 +635,21 @@ async def oauth_callback(
 
         if provider == "google":
             external_id = user_info.get("sub")
+            if not user_info.get("email_verified"):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Google account email must be verified",
+                        }
+                    },
+                )
             email = user_info.get("email")
             username_hint = user_info.get("name")
         elif provider == "github":
             external_id = str(user_info.get("id"))
-            email = user_info.get("email")
+            email = user_info.get("email") if user_info.get("verified") else None
             username_hint = user_info.get("login")
             # GitHub might not return email in main user info if private
             if not email:
@@ -650,12 +660,29 @@ async def oauth_callback(
                     if emails_resp.status_code == 200:
                         emails = emails_resp.json()
                         primary_email = next(
-                            (e["email"] for e in emails if e["primary"]),
-                            emails[0]["email"] if emails else None,
+                            (
+                                e["email"]
+                                for e in emails
+                                if e.get("primary") and e.get("verified")
+                            ),
+                            None,
                         )
-                        email = primary_email
+                        email = primary_email or next(
+                            (e["email"] for e in emails if e.get("verified")),
+                            None,
+                        )
                 except Exception:
                     pass
+            if not email:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "GitHub account must expose a verified email",
+                        }
+                    },
+                )
         elif provider == "microsoft":
             external_id = user_info.get("id")
             email = user_info.get("mail") or user_info.get("userPrincipalName")
