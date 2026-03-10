@@ -148,6 +148,14 @@ plexichat/
 - `GET /api/v1/users/@me` - Get current user
 - `PATCH /api/v1/users/@me` - Update profile
 
+### Relationships
+
+- `GET /api/v1/relationships/@me` - List friends, pending requests, and blocks for the current user
+- `POST /api/v1/relationships` - Send a friend request
+- `PUT /api/v1/relationships/{user_id}/accept` - Accept a pending incoming friend request
+- `DELETE /api/v1/relationships/{user_id}` - Remove a friendship, cancel/decline a request, or unblock a user depending on current state
+- `POST /api/v1/relationships/block` - Block a user and invalidate both users' relationship caches
+
 ### Servers & Channels
 
 - `GET /api/v1/servers` - List servers
@@ -202,6 +210,7 @@ pytest src/tests
 - Security, integration, performance, and property-based tests
 - Coverage examples in `src/tests/README.md` use `--cov-fail-under=80`
 - Optional parallel execution with `pytest-xdist`
+- Relationship regression coverage lives in `src/tests/relationships/` and `src/tests/api/test_relationship_routes.py`, including cache invalidation and transaction-safety checks for send/accept/decline/cancel/block flows
 
 ### Documentation
 
@@ -210,4 +219,4 @@ pytest src/tests
 
 ## Version
 
-Current version: `a.1.0-45` (Alpha)
+Current version: `a.1.0-49` (Alpha)

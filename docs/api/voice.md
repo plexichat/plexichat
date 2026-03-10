@@ -5,12 +5,12 @@ The REST voice routes provide signaling metadata rather than media transport.
 ## Routes
 
 - `GET /voice/ice-servers`
-- `GET /channels/{channel_id}/voice`
+- `GET /voice/channels/{channel_id}/info`
 
 ## Purpose
 
 - discover ICE server configuration that the client may use for WebRTC negotiation
-- fetch voice-channel state or connection metadata for a specific channel
+- fetch voice-channel connection metadata for a specific channel
 
 ## Notes
 

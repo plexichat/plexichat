@@ -25,8 +25,40 @@ router = APIRouter(tags=["Documentation"])
 DOCS_ROOT = Path(__file__).resolve().parents[3] / "docs"
 
 # Module state
-_docs_cache: Dict[str, tuple] = {}  # path -> (content, timestamp)
-_html_cache: Dict[str, tuple] = {}  # path -> (html, timestamp)
+_docs_cache: Dict[str, tuple[str, float]] = {}
+_html_cache: Dict[str, tuple[str, float]] = {}
+
+
+def _get_cached_value(
+    cache: Dict[str, tuple[str, float]], key: str, ttl_seconds: int
+) -> Optional[str]:
+    """Return a cached value when present and still fresh."""
+    entry = cache.get(key)
+    if entry is None:
+        return None
+
+    value, cached_at = entry
+    if (time.time() - cached_at) > ttl_seconds:
+        cache.pop(key, None)
+        return None
+
+    return value
+
+
+def _set_cached_value(
+    cache: Dict[str, tuple[str, float]], key: str, value: str, max_entries: int
+) -> None:
+    """Store a cache value and keep the cache bounded."""
+    cache[key] = (value, time.time())
+    while len(cache) > max_entries:
+        cache.pop(next(iter(cache)))
+
+
+def _build_html_cache_key(
+    source_key: str, title: str, current_path: str, conf: "DocsConfig"
+) -> str:
+    """Build a stable cache key for rendered HTML output."""
+    return "|".join((source_key, title, current_path, repr(conf)))
 
 
 def _decode_html_body(body: bytes | memoryview | str) -> str:
@@ -280,10 +312,11 @@ def is_docs_enabled() -> bool:
 
 def clear_docs_cache() -> bool:
     """Clear documentation caches."""
-    global _docs_cache, _html_cache, _config_cache
+    global _docs_cache, _html_cache, _config_cache, _config_cache_time
     _docs_cache.clear()
     _html_cache.clear()
     _config_cache = None
+    _config_cache_time = 0
     return True
 
 
@@ -1416,6 +1449,7 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Feedback", "/reference/feedback"),
             NavItem("Telemetry", "/reference/telemetry"),
             NavItem("System", "/reference/system"),
+            NavItem("Admin", "/reference/admin"),
         ],
         "WebSocket Gateway": [
             NavItem("Overview", "/websocket"),
@@ -1427,6 +1461,7 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         ],
         "Help": [
             NavItem("Security Logout", "/security-logout"),
+            NavItem("Access Blocked", "/access-blocked"),
         ],
     }
 
@@ -1474,63 +1509,95 @@ def _replace_dynamic_placeholders(text: str, conf: DocsConfig) -> str:
     text = text.replace("{{WEBSOCKET_URL}}", conf.websocket_url)
     text = text.replace("{{WS_URL}}", conf.websocket_url)
 
-    # Replace version placeholders
-    app_config = get_app_config()
-    text = text.replace("{{VERSION}}", app_config["version"])
+    if "{{VERSION}}" in text:
+        app_config = get_app_config()
+        text = text.replace("{{VERSION}}", app_config["version"])
 
-    limits = get_api_rate_limits()
-    text = text.replace(
-        "{{RATE_LIMIT_DEFAULT_ROWS}}", _build_rate_limit_defaults_rows(limits)
+    rate_limit_tokens = (
+        "{{RATE_LIMIT_DEFAULT_ROWS}}",
+        "{{RATE_LIMIT_ROUTE_ROWS}}",
+        "{{RATE_LIMIT_POLICY_ROWS}}",
     )
-    text = text.replace(
-        "{{RATE_LIMIT_ROUTE_ROWS}}", _build_rate_limit_route_rows(limits)
-    )
-    text = text.replace(
-        "{{RATE_LIMIT_POLICY_ROWS}}", _build_rate_limit_policy_rows(limits)
-    )
+    if any(token in text for token in rate_limit_tokens):
+        limits = get_api_rate_limits()
+        text = text.replace(
+            "{{RATE_LIMIT_DEFAULT_ROWS}}", _build_rate_limit_defaults_rows(limits)
+        )
+        text = text.replace(
+            "{{RATE_LIMIT_ROUTE_ROWS}}", _build_rate_limit_route_rows(limits)
+        )
+        text = text.replace(
+            "{{RATE_LIMIT_POLICY_ROWS}}", _build_rate_limit_policy_rows(limits)
+        )
 
-    intents = get_gateway_intents_docs_data()
-    text = text.replace(
-        "{{GATEWAY_DEFAULT_INTENTS}}", str(intents.get("default_value", 0))
+    gateway_intent_tokens = (
+        "{{GATEWAY_DEFAULT_INTENTS}}",
+        "{{GATEWAY_ALL_INTENTS}}",
+        "{{GATEWAY_PRIVILEGED_INTENTS}}",
+        "{{GATEWAY_INTENT_ROWS}}",
     )
-    text = text.replace(
-        "{{GATEWAY_ALL_INTENTS}}", str(intents.get("all_value", 0))
-    )
-    text = text.replace(
-        "{{GATEWAY_PRIVILEGED_INTENTS}}", str(intents.get("privileged_value", 0))
-    )
-    text = text.replace(
-        "{{GATEWAY_INTENT_ROWS}}", _build_gateway_intent_rows(intents)
-    )
+    if any(token in text for token in gateway_intent_tokens):
+        intents = get_gateway_intents_docs_data()
+        text = text.replace(
+            "{{GATEWAY_DEFAULT_INTENTS}}", str(intents.get("default_value", 0))
+        )
+        text = text.replace(
+            "{{GATEWAY_ALL_INTENTS}}", str(intents.get("all_value", 0))
+        )
+        text = text.replace(
+            "{{GATEWAY_PRIVILEGED_INTENTS}}",
+            str(intents.get("privileged_value", 0)),
+        )
+        text = text.replace(
+            "{{GATEWAY_INTENT_ROWS}}", _build_gateway_intent_rows(intents)
+        )
 
-    permissions = get_permissions_docs_data()
-    text = text.replace(
-        "{{PERMISSION_CATEGORY_COUNT}}", str(permissions.get("category_count", 0))
+    permission_tokens = (
+        "{{PERMISSION_CATEGORY_COUNT}}",
+        "{{PERMISSION_TOTAL_COUNT}}",
+        "{{PERMISSION_CATEGORY_ROWS}}",
+        "{{PERMISSION_DETAIL_ROWS}}",
     )
-    text = text.replace(
-        "{{PERMISSION_TOTAL_COUNT}}", str(permissions.get("permission_count", 0))
-    )
-    text = text.replace(
-        "{{PERMISSION_CATEGORY_ROWS}}", _build_permission_category_rows(permissions)
-    )
-    text = text.replace(
-        "{{PERMISSION_DETAIL_ROWS}}", _build_permission_detail_rows(permissions)
-    )
+    if any(token in text for token in permission_tokens):
+        permissions = get_permissions_docs_data()
+        text = text.replace(
+            "{{PERMISSION_CATEGORY_COUNT}}",
+            str(permissions.get("category_count", 0)),
+        )
+        text = text.replace(
+            "{{PERMISSION_TOTAL_COUNT}}",
+            str(permissions.get("permission_count", 0)),
+        )
+        text = text.replace(
+            "{{PERMISSION_CATEGORY_ROWS}}",
+            _build_permission_category_rows(permissions),
+        )
+        text = text.replace(
+            "{{PERMISSION_DETAIL_ROWS}}", _build_permission_detail_rows(permissions)
+        )
 
-    oauth_scopes = get_oauth_scopes_docs_data()
-    text = text.replace(
-        "{{OAUTH_SCOPE_COUNT}}", str(oauth_scopes.get("scope_count", 0))
-    )
-    text = text.replace(
+    oauth_scope_tokens = (
+        "{{OAUTH_SCOPE_COUNT}}",
         "{{OAUTH_PRIVILEGED_SCOPE_COUNT}}",
-        str(oauth_scopes.get("privileged_count", 0)),
+        "{{OAUTH_BOT_SCOPE_COUNT}}",
+        "{{OAUTH_SCOPE_ROWS}}",
     )
-    text = text.replace(
-        "{{OAUTH_BOT_SCOPE_COUNT}}", str(oauth_scopes.get("bot_required_count", 0))
-    )
-    text = text.replace(
-        "{{OAUTH_SCOPE_ROWS}}", _build_oauth_scope_rows(oauth_scopes)
-    )
+    if any(token in text for token in oauth_scope_tokens):
+        oauth_scopes = get_oauth_scopes_docs_data()
+        text = text.replace(
+            "{{OAUTH_SCOPE_COUNT}}", str(oauth_scopes.get("scope_count", 0))
+        )
+        text = text.replace(
+            "{{OAUTH_PRIVILEGED_SCOPE_COUNT}}",
+            str(oauth_scopes.get("privileged_count", 0)),
+        )
+        text = text.replace(
+            "{{OAUTH_BOT_SCOPE_COUNT}}",
+            str(oauth_scopes.get("bot_required_count", 0)),
+        )
+        text = text.replace(
+            "{{OAUTH_SCOPE_ROWS}}", _build_oauth_scope_rows(oauth_scopes)
+        )
 
     return text
 
@@ -1546,8 +1613,13 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
         if link_url.startswith(("http://", "https://", "#", "mailto:")):
             return f'<a href="{link_url}">{link_text}</a>'
 
-        if link_url.endswith(".md"):
-            link_url = link_url[:-3]
+        normalized_link = link_url
+        while normalized_link.startswith("../"):
+            normalized_link = normalized_link[3:]
+        if normalized_link.startswith("./"):
+            normalized_link = normalized_link[2:]
+        if normalized_link.endswith(".md"):
+            normalized_link = normalized_link[:-3]
 
         if link_url.startswith("/"):
             return f'<a href="{conf.path}{link_url}">{link_text}</a>'
@@ -1563,18 +1635,24 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
             "rate-limits": "/rate-limits",
             "errors": "/errors",
             "data-types": "/data-types",
+            "security-logout": "/security-logout",
+            "access-blocked": "/access-blocked",
             "api/index": "/reference",
             "websocket/index": "/websocket",
         }
 
-        if link_url in path_mappings:
-            link_url = path_mappings[link_url]
-        elif link_url.startswith("api/"):
-            link_url = f"/reference/{link_url[4:]}"
-        elif link_url.startswith("websocket/"):
-            link_url = f"/websocket/{link_url[10:]}"
+        if normalized_link in path_mappings:
+            link_url = path_mappings[normalized_link]
+        elif normalized_link.startswith("api/"):
+            link_url = f"/reference/{normalized_link[4:]}"
+        elif normalized_link.startswith("websocket/"):
+            link_url = f"/websocket/{normalized_link[10:]}"
+        elif current_path == "/reference" or current_path.startswith("/reference/"):
+            link_url = f"/reference/{normalized_link.lstrip('/')}"
+        elif current_path == "/websocket" or current_path.startswith("/websocket/"):
+            link_url = f"/websocket/{normalized_link.lstrip('/')}"
         else:
-            link_url = f"/{link_url}"
+            link_url = f"/{normalized_link.lstrip('/')}"
 
         return f'<a href="{conf.path}{link_url}">{link_text}</a>'
 
@@ -1774,12 +1852,37 @@ async def _serve_page(
     request: Request, file_path: Path, title: str, current_path: str = ""
 ) -> HTMLResponse:
     conf = _runtime_docs_config(request, get_docs_config())
-    content = file_path.read_text(encoding="utf-8") if file_path.exists() else None
+
+    try:
+        mtime_ns = file_path.stat().st_mtime_ns
+    except FileNotFoundError:
+        raise HTTPException(404, detail="Page not found")
+
+    source_key = f"{file_path.resolve()}|{mtime_ns}"
+    html_key = _build_html_cache_key(source_key, title, current_path, conf)
+
+    if conf.cache.enabled and conf.cache.cache_html:
+        cached_html = _get_cached_value(_html_cache, html_key, conf.cache.ttl_seconds)
+        if cached_html is not None:
+            return HTMLResponse(cached_html)
+
+    content: Optional[str] = None
+    if conf.cache.enabled and conf.cache.cache_markdown:
+        content = _get_cached_value(_docs_cache, source_key, conf.cache.ttl_seconds)
+
+    if content is None:
+        content = file_path.read_text(encoding="utf-8")
+        if conf.cache.enabled and conf.cache.cache_markdown and content:
+            _set_cached_value(_docs_cache, source_key, content, conf.cache.max_entries)
+
     if not content:
         raise HTTPException(404, detail="Page not found")
-    return HTMLResponse(
-        _markdown_to_html(content, f"{title} - {conf.title}", conf, current_path)
-    )
+
+    html = _markdown_to_html(content, f"{title} - {conf.title}", conf, current_path)
+    if conf.cache.enabled and conf.cache.cache_html:
+        _set_cached_value(_html_cache, html_key, html, conf.cache.max_entries)
+
+    return HTMLResponse(html)
 
 
 @router.get("")
@@ -1936,6 +2039,19 @@ async def docs_security_logout(request: Request):
         _doc_path("security-logout.md"),
         "Security Logout",
         "/security-logout",
+    )
+
+
+@router.get("/access-blocked")
+async def docs_access_blocked(request: Request):
+    """
+    Serve the 'Access Blocked' documentation page.
+    """
+    return await _serve_page(
+        request,
+        _doc_path("access-blocked.md"),
+        "Access Blocked",
+        "/access-blocked",
     )
 
 

@@ -22,13 +22,17 @@ The backend defines gateway opcodes in `src/api/websocket/opcodes.py`.
 
 | Value | Name |
 |------|------|
+| `12` | `SERVER_STATUS` |
+| `13` | `VERSION_CHECK` |
 | `20` | `VOICE_CONNECT` |
 | `21` | `VOICE_DISCONNECT` |
 | `22` | `VOICE_SDP_OFFER` |
 | `23` | `VOICE_SDP_ANSWER` |
 | `24` | `VOICE_ICE_CANDIDATE` |
-| `30` | `SERVER_STATUS` |
-| `31` | `VERSION_CHECK` |
+| `25` | `VOICE_SPEAKING` |
+| `26` | `VOICE_QUALITY` |
+| `30` | `INTERACTION_CREATE` |
+| `31` | `INTERACTION_RESPONSE` |
 | `40` | `TYPING_START` |
 | `41` | `TYPING_STOP` |
 
@@ -36,5 +40,5 @@ The backend defines gateway opcodes in `src/api/websocket/opcodes.py`.
 
 - clients primarily send `IDENTIFY`, `HEARTBEAT`, `RESUME`, and optional state-change opcodes
 - servers primarily send `HELLO`, `HEARTBEAT_ACK`, `RECONNECT`, `INVALID_SESSION`, and `DISPATCH`
-- voice and typing opcodes are feature-specific extensions beyond the basic lifecycle
+- server-status, interaction, voice, and typing opcodes are Plexichat-specific extensions beyond the basic lifecycle
 

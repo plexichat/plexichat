@@ -48,9 +48,10 @@ All routes in this section are relative to `{{BASE_URL}}`.
 | [Feedback](feedback.md) | feedback submission and status checks |
 | [Telemetry](telemetry.md) | response-time and CSP telemetry ingestion |
 | [System](system.md) | capabilities, help pages, QR, health, status, version |
+| [Admin](admin.md) | operator-only admin authentication, review, security, telemetry, and UI routes |
 
 ## Notes
 
 - Some endpoints require normal authentication plus an API access token depending on server policy.
 - The public narrative docs intentionally avoid private infrastructure and operator-only procedures.
-- Administrative subsystems exist in the backend but are not expanded here as public integration docs.
+- Administrative routes are mounted at a configurable root path and are documented separately in [Admin](admin.md).

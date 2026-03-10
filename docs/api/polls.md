@@ -4,21 +4,20 @@ Polls are message-attached interactive objects that support voting and result in
 
 ## Routes
 
-- `POST /channels/{channel_id}/messages/{message_id}/polls`
+- `POST /polls`
 - `GET /polls/{poll_id}`
 - `GET /polls/{poll_id}/results`
 - `POST /polls/{poll_id}/vote`
-- `POST /polls/{poll_id}/unvote`
 - `POST /polls/{poll_id}/close`
 - `DELETE /polls/{poll_id}`
 
 ## Purpose
 
-Use these routes to create polls attached to a message, cast or remove votes, fetch aggregate results, and close or delete a poll.
+Use these routes to create polls attached to a message, cast votes, fetch aggregate results, and close or delete a poll.
 
 ## Expected Rules
 
-- poll creation is scoped to a channel message
+- poll creation is submitted to `/polls` and includes the target `message_id` in the request body
 - voting permissions follow normal channel/message visibility rules
 - closed polls stop accepting new votes
 - result visibility may depend on poll settings and server policy

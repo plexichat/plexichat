@@ -5,7 +5,7 @@ Handles friend requests, blocking, and relationship queries with proper
 validation and database interactions.
 """
 
-from typing import Optional, List, Dict
+from typing import Callable, Dict, List, Optional, TypeVar
 
 import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
@@ -38,6 +38,9 @@ from src.core.database import (
     cached,
     invalidate_pattern,
 )
+
+
+_TransactionResult = TypeVar("_TransactionResult")
 
 
 class RelationshipManager(BaseManager):
@@ -98,6 +101,28 @@ class RelationshipManager(BaseManager):
             (sender_id, recipient_id),
         )
 
+    def _run_in_transaction(self, operation: Callable[[], _TransactionResult]):
+        """Execute a relationship mutation inside an explicit DB transaction."""
+        self._db.begin_transaction()
+        try:
+            result = operation()
+        except Exception:
+            self._db.rollback()
+            raise
+
+        self._db.commit()
+        return result
+
+    def _invalidate_all_relationships_cache(self, *user_ids: SnowflakeID) -> None:
+        """Invalidate cached aggregate relationship state for the given users."""
+        seen_ids = set()
+        for user_id in user_ids:
+            normalized_id = int(user_id)
+            if normalized_id in seen_ids:
+                continue
+            seen_ids.add(normalized_id)
+            invalidate_pattern(f"all_relationships:*{normalized_id}*")
+
     # === Friend Request Operations ===
 
     def send_friend_request(
@@ -151,25 +176,26 @@ class RelationshipManager(BaseManager):
         if reverse:
             return self.accept_friend_request(sender_id, reverse["id"])
 
-        # Delete any old non-pending requests to allow resending
-        self._db.execute(
-            """DELETE FROM rel_friend_requests 
-               WHERE sender_id = ? AND recipient_id = ? AND status != 'pending'""",
-            (sender_id, recipient_id),
-        )
+        def create_request() -> SnowflakeID:
+            self._db.execute(
+                """DELETE FROM rel_friend_requests 
+                   WHERE sender_id = ? AND recipient_id = ? AND status != 'pending'""",
+                (sender_id, recipient_id),
+            )
 
-        now = self._get_timestamp()
-        request_id = self._generate_id()
+            now = self._get_timestamp()
+            request_id = self._generate_id()
+            self._db.execute(
+                """INSERT INTO rel_friend_requests 
+                   (id, sender_id, recipient_id, status, message, created_at, updated_at)
+                   VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
+                (request_id, sender_id, recipient_id, message, now, now),
+            )
+            return request_id
 
-        self._db.execute(
-            """INSERT INTO rel_friend_requests 
-               (id, sender_id, recipient_id, status, message, created_at, updated_at)
-               VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
-            (request_id, sender_id, recipient_id, message, now, now),
-        )
+        request_id = self._run_in_transaction(create_request)
 
-        invalidate_pattern(f"all_relationships:*{sender_id}*")
-        invalidate_pattern(f"all_relationships:*{recipient_id}*")
+        self._invalidate_all_relationships_cache(sender_id, recipient_id)
 
         logger.debug(
             f"Friend request {request_id} sent from {sender_id} to {recipient_id}"
@@ -210,33 +236,35 @@ class RelationshipManager(BaseManager):
                 "Cannot accept a friend request not sent to you"
             )
 
-        now = self._get_timestamp()
+        def accept_request() -> None:
+            now = self._get_timestamp()
 
-        self._db.execute(
-            "UPDATE rel_friend_requests SET status = 'accepted', updated_at = ? WHERE id = ?",
-            (now, request_id),
-        )
+            self._db.execute(
+                "UPDATE rel_friend_requests SET status = 'accepted', updated_at = ? WHERE id = ?",
+                (now, request_id),
+            )
 
-        friend_id_1 = self._generate_id()
-        friend_id_2 = self._generate_id()
+            friend_id_1 = self._generate_id()
+            friend_id_2 = self._generate_id()
 
-        self._db.insert_or_ignore(
-            "rel_friends",
-            ["id", "user_id", "friend_id", "created_at"],
-            (friend_id_1, row["sender_id"], row["recipient_id"], now),
-        )
-        self._db.insert_or_ignore(
-            "rel_friends",
-            ["id", "user_id", "friend_id", "created_at"],
-            (friend_id_2, row["recipient_id"], row["sender_id"], now),
-        )
+            self._db.insert_or_ignore(
+                "rel_friends",
+                ["id", "user_id", "friend_id", "created_at"],
+                (friend_id_1, row["sender_id"], row["recipient_id"], now),
+            )
+            self._db.insert_or_ignore(
+                "rel_friends",
+                ["id", "user_id", "friend_id", "created_at"],
+                (friend_id_2, row["recipient_id"], row["sender_id"], now),
+            )
+
+        self._run_in_transaction(accept_request)
 
         # Invalidate friends cache for both users
         # from src.core.database import invalidate_cached
         self.get_friend_ids.invalidate(self, row["sender_id"])  # type: ignore
         self.get_friend_ids.invalidate(self, row["recipient_id"])  # type: ignore
-        invalidate_pattern(f"all_relationships:*{row['sender_id']}*")
-        invalidate_pattern(f"all_relationships:*{row['recipient_id']}*")
+        self._invalidate_all_relationships_cache(row["sender_id"], row["recipient_id"])
 
         logger.debug(f"Friend request {request_id} accepted")
 
@@ -279,6 +307,8 @@ class RelationshipManager(BaseManager):
             (now, request_id),
         )
 
+        self._invalidate_all_relationships_cache(row["sender_id"], row["recipient_id"])
+
         logger.debug(f"Friend request {request_id} declined")
 
         result = self.get_friend_request(request_id)
@@ -319,6 +349,8 @@ class RelationshipManager(BaseManager):
             "UPDATE rel_friend_requests SET status = 'cancelled', updated_at = ? WHERE id = ?",
             (now, request_id),
         )
+
+        self._invalidate_all_relationships_cache(row["sender_id"], row["recipient_id"])
 
         logger.debug(f"Friend request {request_id} cancelled")
 
@@ -409,21 +441,23 @@ class RelationshipManager(BaseManager):
         if not self._are_friends(user_id, friend_id):
             raise NotFriendsError("You are not friends with this user")
 
-        self._db.execute(
-            "DELETE FROM rel_friends WHERE user_id = ? AND friend_id = ?",
-            (user_id, friend_id),
-        )
-        self._db.execute(
-            "DELETE FROM rel_friends WHERE user_id = ? AND friend_id = ?",
-            (friend_id, user_id),
-        )
+        def delete_friendship() -> None:
+            self._db.execute(
+                "DELETE FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+                (user_id, friend_id),
+            )
+            self._db.execute(
+                "DELETE FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+                (friend_id, user_id),
+            )
+
+        self._run_in_transaction(delete_friendship)
 
         # Invalidate friends cache for both users
         # from src.core.database import invalidate_cached
         self.get_friend_ids.invalidate(self, user_id)  # type: ignore
         self.get_friend_ids.invalidate(self, friend_id)  # type: ignore
-        invalidate_pattern(f"all_relationships:*{user_id}*")
-        invalidate_pattern(f"all_relationships:*{friend_id}*")
+        self._invalidate_all_relationships_cache(user_id, friend_id)
 
         logger.debug(f"Friendship removed between {user_id} and {friend_id}")
 
@@ -461,31 +495,35 @@ class RelationshipManager(BaseManager):
         if self._is_blocked(blocker_id, blocked_id):
             raise AlreadyBlockedError("User is already blocked")
 
-        now = self._get_timestamp()
         block_id = self._generate_id()
 
-        self._db.execute(
-            """INSERT INTO rel_blocked (id, blocker_id, blocked_id, reason, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (block_id, blocker_id, blocked_id, reason, now),
-        )
+        def create_block() -> None:
+            now = self._get_timestamp()
 
-        if self._are_friends(blocker_id, blocked_id):
             self._db.execute(
-                "DELETE FROM rel_friends WHERE user_id = ? AND friend_id = ?",
-                (blocker_id, blocked_id),
-            )
-            self._db.execute(
-                "DELETE FROM rel_friends WHERE user_id = ? AND friend_id = ?",
-                (blocked_id, blocker_id),
+                """INSERT INTO rel_blocked (id, blocker_id, blocked_id, reason, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (block_id, blocker_id, blocked_id, reason, now),
             )
 
-        self._db.execute(
-            """UPDATE rel_friend_requests SET status = 'declined', updated_at = ?
-               WHERE ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))
-               AND status = 'pending'""",
-            (now, blocker_id, blocked_id, blocked_id, blocker_id),
-        )
+            if self._are_friends(blocker_id, blocked_id):
+                self._db.execute(
+                    "DELETE FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+                    (blocker_id, blocked_id),
+                )
+                self._db.execute(
+                    "DELETE FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+                    (blocked_id, blocker_id),
+                )
+
+            self._db.execute(
+                """UPDATE rel_friend_requests SET status = 'declined', updated_at = ?
+                   WHERE ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))
+                   AND status = 'pending'""",
+                (now, blocker_id, blocked_id, blocked_id, blocker_id),
+            )
+
+        self._run_in_transaction(create_block)
 
         # Invalidate caches
         # from src.core.database import invalidate_cached
@@ -493,8 +531,7 @@ class RelationshipManager(BaseManager):
         # Also invalidate friends in case they were friends
         self.get_friend_ids.invalidate(self, blocker_id)  # type: ignore
         self.get_friend_ids.invalidate(self, blocked_id)  # type: ignore
-        invalidate_pattern(f"all_relationships:*{blocker_id}*")
-        invalidate_pattern(f"all_relationships:*{blocked_id}*")
+        self._invalidate_all_relationships_cache(blocker_id, blocked_id)
 
         logger.debug(f"User {blocker_id} blocked user {blocked_id}")
 
@@ -526,8 +563,7 @@ class RelationshipManager(BaseManager):
 
         # Invalidate cache
         self.get_blocked_user_ids.invalidate(self, blocker_id)  # type: ignore
-        invalidate_pattern(f"all_relationships:*{blocker_id}*")
-        invalidate_pattern(f"all_relationships:*{blocked_id}*")
+        self._invalidate_all_relationships_cache(blocker_id, blocked_id)
 
         logger.debug(f"User {blocker_id} unblocked user {blocked_id}")
 

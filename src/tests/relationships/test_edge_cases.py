@@ -11,6 +11,7 @@ from src.core.relationships import (
     NotFriendsError,
     AlreadyBlockedError,
     NotBlockedError,
+    PermissionDeniedError,
     CannotBlockSelfError,
 )
 
@@ -153,7 +154,7 @@ class TestWrongUserActions:
 
         request = relationships.send_friend_request(user1.id, user2.id)
 
-        with pytest.raises(FriendRequestNotFoundError):
+        with pytest.raises(PermissionDeniedError):
             relationships.accept_friend_request(user1.id, request.id)
 
     def test_decline_as_sender_fails(self, fresh_users):
@@ -162,7 +163,7 @@ class TestWrongUserActions:
 
         request = relationships.send_friend_request(user1.id, user2.id)
 
-        with pytest.raises(FriendRequestNotFoundError):
+        with pytest.raises(PermissionDeniedError):
             relationships.decline_friend_request(user1.id, request.id)
 
     def test_cancel_as_recipient_fails(self, fresh_users):
@@ -171,7 +172,7 @@ class TestWrongUserActions:
 
         request = relationships.send_friend_request(user1.id, user2.id)
 
-        with pytest.raises(FriendRequestNotFoundError):
+        with pytest.raises(PermissionDeniedError):
             relationships.cancel_friend_request(user2.id, request.id)
 
 

@@ -4,13 +4,13 @@ Reports let users flag content or behavior for review.
 
 ## Routes
 
-- `POST /reports/user`
-- `POST /reports/message`
+- `POST /reports/messages`
+- `POST /reports/users`
 
 ## Purpose
 
-- report an account or user profile
 - report a specific message or content item
+- report an account or user profile
 
 ## Expected Behavior
 

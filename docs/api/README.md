@@ -30,6 +30,7 @@ This directory contains narrative REST API documentation for the Plexichat backe
 - `feedback.md`
 - `telemetry.md`
 - `system.md`
+- `admin.md`
 
 ## Notes
 

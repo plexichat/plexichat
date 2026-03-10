@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.core.auth.models import User, AccountType
 from src.api.schemas.relationships import (
     FriendRequestCreate,
     BlockCreate,
@@ -17,7 +16,20 @@ from src.api.schemas.relationships import (
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 import utils.logger as logger
-from src.core.database import cached
+from src.core.database import cached, invalidate_pattern
+from src.core.relationships.exceptions import (
+    AlreadyBlockedError,
+    AlreadyFriendsError,
+    CannotBlockSelfError,
+    FriendRequestExistsError,
+    FriendRequestNotFoundError,
+    NotBlockedError,
+    NotFriendsError,
+    PermissionDeniedError,
+    SelfRelationshipError,
+    UserBlockedError,
+    UserNotFoundError,
+)
 
 router = APIRouter(tags=["Relationships"])
 
@@ -218,6 +230,19 @@ def get_relationships(
         )
 
 
+def _invalidate_relationship_list_cache(*user_ids: int) -> None:
+    """Invalidate cached relationship listings for each supplied user ID."""
+    prefix = getattr(get_relationships, "cache_key_prefix", "relationships_api")
+    seen_ids = set()
+
+    for user_id in user_ids:
+        normalized_id = int(user_id)
+        if normalized_id in seen_ids:
+            continue
+        seen_ids.add(normalized_id)
+        invalidate_pattern(f"{prefix}:current_user:*:{normalized_id}")
+
+
 async def _dispatch_relationship_event(
     event_type: str, user_id: int, target_id: int, data: dict
 ):
@@ -293,32 +318,32 @@ async def create_relationship(
                 recipient_id=target_id,
                 message=body.message,
             )
+        except SelfRelationshipError:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Cannot send friend request to yourself",
+                    }
+                },
+            )
+        except UserBlockedError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": str(exc)}},
+            )
+        except (FriendRequestExistsError, AlreadyFriendsError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": {"code": 409, "message": str(exc)}},
+            )
+        except UserNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "User not found"}},
+            )
         except Exception as e:
-            exc_name = type(e).__name__
-            if "Self" in exc_name:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": {
-                            "code": 400,
-                            "message": "Cannot send friend request to yourself",
-                        }
-                    },
-                )
-            elif "Blocked" in exc_name:
-                raise HTTPException(
-                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
-                )
-            elif "Exists" in exc_name or "Already" in exc_name:
-                raise HTTPException(
-                    status_code=409, detail={"error": {"code": 409, "message": str(e)}}
-                )
-            elif "NotFound" in exc_name:
-                raise HTTPException(
-                    status_code=404,
-                    detail={"error": {"code": 404, "message": "User not found"}},
-                )
-
             logger.error(
                 f"Failed to send friend request from {current_user.user_id} to {target_id}: {e}",
                 exc_info=True,
@@ -377,17 +402,7 @@ async def create_relationship(
 
         # Invalidate cache for both users
         try:
-            get_relationships.invalidate(current_user=current_user)  # type: ignore
-            other_user = User(
-                id=target_id,
-                username="",
-                email=None,
-                account_type=AccountType.USER,
-                permissions={},
-                created_at=0,
-                updated_at=0,
-            )
-            get_relationships.invalidate(current_user=other_user)  # type: ignore
+            _invalidate_relationship_list_cache(current_user.user_id, target_id)
         except Exception as e:
             logger.debug(f"Failed to invalidate relationship cache in create: {e}")
 
@@ -482,16 +497,19 @@ async def accept_friend_request(
             )
         except HTTPException:
             raise
+        except FriendRequestNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": {"code": 404, "message": "Friend request not found"}
+                },
+            )
+        except PermissionDeniedError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": str(exc)}},
+            )
         except Exception as e:
-            exc_name = type(e).__name__
-            if "NotFound" in exc_name:
-                raise HTTPException(
-                    status_code=404,
-                    detail={
-                        "error": {"code": 404, "message": "Friend request not found"}
-                    },
-                )
-
             logger.error(
                 f"Failed to accept friend request from {sender_id} for user {current_user.user_id}: {e}",
                 exc_info=True,
@@ -574,18 +592,7 @@ async def accept_friend_request(
 
         # Invalidate cache for both users
         try:
-            get_relationships.invalidate(current_user=current_user)  # type: ignore
-            # Create a dummy user object for cache key generation
-            other_user = User(
-                id=sender_id,
-                username="",
-                email=None,
-                account_type=AccountType.USER,
-                permissions={},
-                created_at=0,
-                updated_at=0,
-            )
-            get_relationships.invalidate(current_user=other_user)  # type: ignore
+            _invalidate_relationship_list_cache(current_user.user_id, sender_id)
         except Exception as e:
             logger.debug(f"Failed to invalidate relationship cache: {e}")
 
@@ -787,18 +794,7 @@ async def delete_relationship(
 
             # Invalidate cache for both users
             try:
-                get_relationships.invalidate(current_user=current_user)  # type: ignore
-                # Create a dummy user object for cache key generation
-                other_user = User(
-                    id=target_id,
-                    username="",
-                    email=None,
-                    account_type=AccountType.USER,
-                    permissions={},
-                    created_at=0,
-                    updated_at=0,
-                )
-                get_relationships.invalidate(current_user=other_user)  # type: ignore
+                _invalidate_relationship_list_cache(current_user.user_id, target_id)
             except Exception as e:
                 logger.debug(
                     f"Failed to invalidate relationship cache during delete: {e}"
@@ -806,16 +802,17 @@ async def delete_relationship(
 
         except HTTPException:
             raise
+        except (FriendRequestNotFoundError, NotBlockedError, NotFriendsError):
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Relationship not found"}},
+            )
+        except PermissionDeniedError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": str(exc)}},
+            )
         except Exception as e:
-            exc_name = type(e).__name__
-            if "NotFound" in exc_name:
-                raise HTTPException(
-                    status_code=404,
-                    detail={
-                        "error": {"code": 404, "message": "Relationship not found"}
-                    },
-                )
-
             logger.error(
                 f"Failed to delete relationship between {current_user.user_id} and {target_id}: {e}",
                 exc_info=True,
@@ -894,23 +891,22 @@ async def block_user(
             was_friend = was_friend == "friend"
 
             block = relationships.block_user(current_user.user_id, target_id)
+        except CannotBlockSelfError:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Cannot block yourself"}},
+            )
+        except AlreadyBlockedError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": {"code": 409, "message": str(exc)}},
+            )
+        except UserNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "User not found"}},
+            )
         except Exception as e:
-            exc_name = type(e).__name__
-            if "Self" in exc_name:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Cannot block yourself"}},
-                )
-            elif "Already" in exc_name:
-                raise HTTPException(
-                    status_code=409, detail={"error": {"code": 409, "message": str(e)}}
-                )
-            elif "NotFound" in exc_name:
-                raise HTTPException(
-                    status_code=404,
-                    detail={"error": {"code": 404, "message": "User not found"}},
-                )
-
             logger.error(
                 f"Failed to block user {target_id} for user {current_user.user_id}: {e}",
                 exc_info=True,
@@ -944,6 +940,11 @@ async def block_user(
                     "user_id": str(current_user.user_id),
                 },
             )
+
+        try:
+            _invalidate_relationship_list_cache(current_user.user_id, target_id)
+        except Exception as e:
+            logger.debug(f"Failed to invalidate relationship cache in block: {e}")
 
         return RelationshipResponse(
             user_id=SnowflakeID(target_id),

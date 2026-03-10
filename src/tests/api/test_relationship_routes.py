@@ -121,6 +121,57 @@ class TestSendFriendRequest:
 
         assert response.status_code == 404
 
+    def test_send_friend_request_invalidates_recipient_relationship_cache(
+        self, test_client, db_and_modules
+    ):
+        """Recipient list cache should refresh after a new request is sent."""
+        auth = db_and_modules["auth"]
+        unique_id = uuid.uuid4().hex[:8]
+
+        sender = auth.register(
+            username=f"sendcache_sender_{unique_id}",
+            email=f"sendcache_sender_{unique_id}@example.com",
+            password="SecurePass123!",
+        )
+        recipient = auth.register(
+            username=f"sendcache_recipient_{unique_id}",
+            email=f"sendcache_recipient_{unique_id}@example.com",
+            password="SecurePass123!",
+        )
+
+        sender_login = auth.login(
+            username=f"sendcache_sender_{unique_id}", password="SecurePass123!"
+        )
+        recipient_login = auth.login(
+            username=f"sendcache_recipient_{unique_id}", password="SecurePass123!"
+        )
+
+        pre_response = test_client.get(
+            "/api/v1/relationships/@me",
+            headers={"Authorization": f"Bearer {recipient_login.token}"},
+        )
+        assert pre_response.status_code == 200
+
+        response = test_client.post(
+            "/api/v1/relationships",
+            headers={"Authorization": f"Bearer {sender_login.token}"},
+            json={"user_id": str(recipient.id)},
+        )
+
+        assert response.status_code == 200
+
+        post_response = test_client.get(
+            "/api/v1/relationships/@me",
+            headers={"Authorization": f"Bearer {recipient_login.token}"},
+        )
+        assert post_response.status_code == 200
+        data = post_response.json()
+        assert any(
+            item["user_id"] == str(sender.id)
+            and item["status"] == "pending_incoming"
+            for item in data
+        )
+
 
 class TestAcceptFriendRequest:
     """Tests for PUT /relationships/{user_id}/accept endpoint."""
@@ -157,6 +208,68 @@ class TestAcceptFriendRequest:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
+
+    def test_accept_friend_request_invalidates_sender_relationship_cache(
+        self, test_client, db_and_modules
+    ):
+        """Sender list cache should refresh after an incoming request is accepted."""
+        auth = db_and_modules["auth"]
+        relationships = db_and_modules["relationships"]
+        unique_id = uuid.uuid4().hex[:8]
+
+        sender = auth.register(
+            username=f"acceptcache_sender_{unique_id}",
+            email=f"acceptcache_sender_{unique_id}@example.com",
+            password="SecurePass123!",
+        )
+        recipient = auth.register(
+            username=f"acceptcache_recipient_{unique_id}",
+            email=f"acceptcache_recipient_{unique_id}@example.com",
+            password="SecurePass123!",
+        )
+
+        relationships.send_friend_request(sender.id, recipient.id)
+
+        sender_login = auth.login(
+            username=f"acceptcache_sender_{unique_id}", password="SecurePass123!"
+        )
+        recipient_login = auth.login(
+            username=f"acceptcache_recipient_{unique_id}", password="SecurePass123!"
+        )
+
+        pre_response = test_client.get(
+            "/api/v1/relationships/@me",
+            headers={"Authorization": f"Bearer {sender_login.token}"},
+        )
+        assert pre_response.status_code == 200
+        assert any(
+            item["user_id"] == str(recipient.id)
+            and item["status"] == "pending_outgoing"
+            for item in pre_response.json()
+        )
+
+        response = test_client.put(
+            f"/api/v1/relationships/{sender.id}/accept",
+            headers={"Authorization": f"Bearer {recipient_login.token}"},
+        )
+
+        assert response.status_code == 200
+
+        post_response = test_client.get(
+            "/api/v1/relationships/@me",
+            headers={"Authorization": f"Bearer {sender_login.token}"},
+        )
+        assert post_response.status_code == 200
+        data = post_response.json()
+        assert any(
+            item["user_id"] == str(recipient.id) and item["status"] == "friend"
+            for item in data
+        )
+        assert not any(
+            item["user_id"] == str(recipient.id)
+            and item["status"] == "pending_outgoing"
+            for item in data
+        )
 
 
 class TestDeleteRelationship:
@@ -229,3 +342,48 @@ class TestBlockUser:
         )
 
         assert response.status_code == 400
+
+    def test_block_user_invalidates_relationship_cache(self, test_client, db_and_modules):
+        """Blocking should refresh the caller's cached relationship listing."""
+        auth = db_and_modules["auth"]
+        unique_id = uuid.uuid4().hex[:8]
+
+        blocker = auth.register(
+            username=f"blockcache_blocker_{unique_id}",
+            email=f"blockcache_blocker_{unique_id}@example.com",
+            password="SecurePass123!",
+        )
+        target = auth.register(
+            username=f"blockcache_target_{unique_id}",
+            email=f"blockcache_target_{unique_id}@example.com",
+            password="SecurePass123!",
+        )
+
+        blocker_login = auth.login(
+            username=f"blockcache_blocker_{unique_id}", password="SecurePass123!"
+        )
+
+        pre_response = test_client.get(
+            "/api/v1/relationships/@me",
+            headers={"Authorization": f"Bearer {blocker_login.token}"},
+        )
+        assert pre_response.status_code == 200
+
+        response = test_client.post(
+            "/api/v1/relationships/block",
+            headers={"Authorization": f"Bearer {blocker_login.token}"},
+            json={"user_id": str(target.id)},
+        )
+
+        assert response.status_code == 200
+
+        post_response = test_client.get(
+            "/api/v1/relationships/@me",
+            headers={"Authorization": f"Bearer {blocker_login.token}"},
+        )
+        assert post_response.status_code == 200
+        data = post_response.json()
+        assert any(
+            item["user_id"] == str(target.id) and item["status"] == "blocked"
+            for item in data
+        )

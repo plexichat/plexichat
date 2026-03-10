@@ -10,6 +10,7 @@ from src.core.relationships import (
     FriendRequestNotFoundError,
     FriendRequestExistsError,
     AlreadyFriendsError,
+    PermissionDeniedError,
     UserBlockedError,
 )
 
@@ -122,7 +123,7 @@ class TestAcceptFriendRequest:
         request = relationships.send_friend_request(user1.id, user2.id)
 
         # User1 (sender) tries to accept
-        with pytest.raises(FriendRequestNotFoundError):
+        with pytest.raises(PermissionDeniedError):
             relationships.accept_friend_request(user1.id, request.id)
 
     def test_accept_nonexistent_request_fails(self, users):
@@ -165,7 +166,7 @@ class TestDeclineFriendRequest:
 
         request = relationships.send_friend_request(user1.id, user2.id)
 
-        with pytest.raises(FriendRequestNotFoundError):
+        with pytest.raises(PermissionDeniedError):
             relationships.decline_friend_request(user1.id, request.id)
 
     def test_decline_nonexistent_request_fails(self, users):
@@ -195,7 +196,7 @@ class TestCancelFriendRequest:
         request = relationships.send_friend_request(user1.id, user2.id)
 
         # User2 (recipient) tries to cancel
-        with pytest.raises(FriendRequestNotFoundError):
+        with pytest.raises(PermissionDeniedError):
             relationships.cancel_friend_request(user2.id, request.id)
 
     def test_cancel_nonexistent_request_fails(self, users):

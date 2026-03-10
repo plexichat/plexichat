@@ -517,7 +517,7 @@ Initiate an OAuth login flow.
 }
 ```
 
-### GET /auth/oauth/{provider}/callback
+### POST /auth/oauth/{provider}/callback
 
 Handle the callback from the OAuth provider.
 
@@ -526,12 +526,13 @@ Handle the callback from the OAuth provider.
 |-----------|------|-------------|
 | provider | string | `google`, `github`, `microsoft`, or `gitlab` |
 
-**Query Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
+**Request Body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
 | code | string | Yes | Authorization code from the provider |
 | state | string | Yes | State parameter from the provider |
 | redirect_uri | string | Yes | Same redirect URI used in initiation |
+| code_verifier | string | No | PKCE verifier returned from the login step when PKCE is enabled |
 
 **Response (200 OK):**
 Standard `LoginResponse` (same as `/auth/login`).

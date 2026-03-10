@@ -5,8 +5,8 @@ Notification APIs are scoped to the authenticated user.
 ## Routes
 
 - `GET /users/@me/notifications`
-- `POST /users/@me/notifications/{notification_id}/read`
-- `POST /users/@me/notifications/read-all`
+- `PUT /users/@me/notifications/read-all`
+- `PUT /users/@me/notifications/{notification_id}/read`
 
 ## Purpose
 

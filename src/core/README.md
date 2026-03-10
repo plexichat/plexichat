@@ -22,7 +22,7 @@ module/
 User authentication, session management, and authorization.
 - Registration and login
 - Password hashing (Argon2)
-- JWT token generation
+- Token and session management
 - Session management
 - Two-factor authentication (TOTP)
 - Permission system

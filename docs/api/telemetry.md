@@ -4,12 +4,12 @@ Telemetry endpoints ingest client-side operational signals.
 
 ## Routes
 
-- `POST /telemetry/response-time`
-- `POST /telemetry/csp`
+- `POST /telemetry/response-times`
+- `POST /telemetry/csp-report`
 
 ## Purpose
 
-- record client-observed response-time metrics
+- record batches of client-observed response-time metrics
 - submit Content Security Policy violation reports
 
 ## Notes

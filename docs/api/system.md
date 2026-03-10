@@ -9,8 +9,8 @@ This page collects the small public utility route groups that are useful to clie
 - `POST /version/negotiate`
 - `GET /status`
 - `GET /capabilities`
-- `GET /help`
-- `GET /help/{topic}`
+- `GET /help/security-logout`
+- `GET /help/access-blocked`
 - `GET /qr`
 
 ## Purpose
@@ -27,5 +27,6 @@ This page collects the small public utility route groups that are useful to clie
 - use `version` and `version/negotiate` before relying on new client features
 - use `capabilities` for runtime feature hints instead of hardcoding assumptions
 - use `status` and `health` for lightweight diagnostics
-- treat `help` content as human-facing supplemental guidance, not machine API schema
+- treat help content as human-facing supplemental guidance, not machine API schema
+- call `/qr` with `data`, and optionally `size` and `format`, when you need a locally generated QR image
 

@@ -219,6 +219,64 @@ class TestRelationshipErrors:
         with pytest.raises(PermissionDeniedError):
             rel_manager.accept_friend_request(3, req.id)
 
+    def test_decline_request_invalidates_all_relationships_cache(self, rel_manager):
+        """Declining should evict cached aggregate relationship views."""
+        req = rel_manager.send_friend_request(1, 2)
+
+        cached_before = rel_manager.get_all_relationships(2)
+        assert any(item.id == req.id for item in cached_before["pending_incoming"])
+
+        rel_manager.decline_friend_request(2, req.id)
+
+        refreshed = rel_manager.get_all_relationships(2)
+        assert not any(item.id == req.id for item in refreshed["pending_incoming"])
+
+    def test_cancel_request_invalidates_all_relationships_cache(self, rel_manager):
+        """Cancelling should evict cached aggregate relationship views."""
+        req = rel_manager.send_friend_request(1, 2)
+
+        cached_before = rel_manager.get_all_relationships(1)
+        assert any(item.id == req.id for item in cached_before["pending_outgoing"])
+
+        rel_manager.cancel_friend_request(1, req.id)
+
+        refreshed = rel_manager.get_all_relationships(1)
+        assert not any(item.id == req.id for item in refreshed["pending_outgoing"])
+
+    def test_accept_request_rolls_back_if_friendship_insert_fails(
+        self, rel_manager, monkeypatch
+    ):
+        """Accepting should not leave half-written friendship state behind."""
+        request = rel_manager.send_friend_request(1, 2)
+        original_insert = rel_manager._db.insert_or_ignore
+        insert_calls = {"count": 0}
+
+        def failing_insert_or_ignore(*args, **kwargs):
+            insert_calls["count"] += 1
+            if insert_calls["count"] == 2:
+                raise RuntimeError("forced friendship insert failure")
+            return original_insert(*args, **kwargs)
+
+        monkeypatch.setattr(
+            rel_manager._db, "insert_or_ignore", failing_insert_or_ignore
+        )
+
+        with pytest.raises(RuntimeError, match="forced friendship insert failure"):
+            rel_manager.accept_friend_request(2, request.id)
+
+        request_row = rel_manager._db.fetch_one(
+            "SELECT status FROM rel_friend_requests WHERE id = ?", (request.id,)
+        )
+        assert request_row["status"] == "pending"
+        assert rel_manager._db.fetch_one(
+            "SELECT 1 as ok FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+            (1, 2),
+        ) is None
+        assert rel_manager._db.fetch_one(
+            "SELECT 1 as ok FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+            (2, 1),
+        ) is None
+
 
 class TestRelationshipStatus:
     """Test relationship status checks."""

@@ -1,5 +1,7 @@
 """Tests for the custom documentation portal routes."""
 
+from pathlib import Path
+
 import pytest
 
 import src.api.routes.docs as docs_routes
@@ -7,6 +9,12 @@ import src.api.routes.docs as docs_routes
 
 class TestDocsRoutes:
     """Verify documentation routes render and use runtime-derived URLs."""
+
+    @pytest.fixture(autouse=True)
+    def clear_docs_cache(self):
+        docs_routes.clear_docs_cache()
+        yield
+        docs_routes.clear_docs_cache()
 
     def test_docs_home_uses_runtime_urls(self, test_client):
         response = test_client.get("/docs/api")
@@ -36,6 +44,8 @@ class TestDocsRoutes:
             "/docs/api/reference/feedback",
             "/docs/api/reference/telemetry",
             "/docs/api/reference/system",
+            "/docs/api/reference/admin",
+            "/docs/api/access-blocked",
             "/docs/api/websocket/intents",
             "/docs/api/websocket/opcodes",
             "/docs/api/websocket/close-codes",
@@ -46,6 +56,62 @@ class TestDocsRoutes:
 
         assert response.status_code == 200, path
         assert "Plexichat Documentation" in response.text
+
+    def test_api_reference_relative_links_stay_under_reference_prefix(self, test_client):
+        response = test_client.get("/docs/api/reference")
+
+        assert response.status_code == 200
+        body = response.text
+        assert 'href="/docs/api/reference/authentication"' in body
+        assert 'href="/docs/api/reference/system"' in body
+        assert 'href="/docs/api/reference/admin"' in body
+
+    def test_websocket_relative_links_stay_under_websocket_prefix(self, test_client):
+        response = test_client.get("/docs/api/websocket")
+
+        assert response.status_code == 200
+        body = response.text
+        assert 'href="/docs/api/websocket/connection"' in body
+        assert 'href="/docs/api/websocket/opcodes"' in body
+        assert 'href="/docs/api/websocket/close-codes"' in body
+
+    def test_static_docs_page_skips_dynamic_helpers(self, test_client, monkeypatch):
+        def fail(*_args, **_kwargs):
+            pytest.fail("dynamic placeholder helper should not run for static docs pages")
+
+        monkeypatch.setattr(docs_routes, "get_api_rate_limits", fail)
+        monkeypatch.setattr(docs_routes, "get_gateway_intents_docs_data", fail)
+        monkeypatch.setattr(docs_routes, "get_permissions_docs_data", fail)
+        monkeypatch.setattr(docs_routes, "get_oauth_scopes_docs_data", fail)
+
+        response = test_client.get("/docs/api/reference/notifications")
+
+        assert response.status_code == 200
+        assert "Notification Routes" in response.text
+
+    def test_docs_pages_use_cache_on_repeat_requests(self, test_client, monkeypatch):
+        target_page = docs_routes._doc_path("index.md")
+        original_read_text = Path.read_text
+        read_calls = 0
+
+        def counting_read_text(self, *args, **kwargs):
+            nonlocal read_calls
+            if self.resolve() == target_page.resolve():
+                read_calls += 1
+            return original_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+        first = test_client.get("/docs/api")
+        second = test_client.get("/docs/api")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert read_calls == 1
+
+        stats = docs_routes.get_docs_stats()
+        assert stats["cache"]["docs_entries"] >= 1
+        assert stats["cache"]["html_entries"] >= 1
 
     def test_rate_limits_page_uses_live_rate_limit_helper(self, test_client, monkeypatch):
         monkeypatch.setattr(
