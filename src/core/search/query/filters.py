@@ -128,16 +128,16 @@ class FilterProcessor:
             return lambda r: self._has_link(r.content)
 
         if value_lower == "image":
-            return lambda r: self._has_image(r)
+            return lambda r: False
 
         if value_lower == "video":
-            return lambda r: self._has_video(r)
+            return lambda r: False
 
         if value_lower == "audio":
-            return lambda r: self._has_audio(r)
+            return lambda r: False
 
         if value_lower == "embed":
-            return lambda r: self._has_embed(r)
+            return lambda r: False
 
         return lambda r: r.has_attachments
 
@@ -203,19 +203,19 @@ class FilterProcessor:
 
     def _has_image(self, result: MessageSearchResult) -> bool:
         """Check if message has image attachment."""
-        return result.has_attachments
+        return False
 
     def _has_video(self, result: MessageSearchResult) -> bool:
         """Check if message has video attachment."""
-        return result.has_attachments
+        return False
 
     def _has_audio(self, result: MessageSearchResult) -> bool:
         """Check if message has audio attachment."""
-        return result.has_attachments
+        return False
 
     def _has_embed(self, result: MessageSearchResult) -> bool:
         """Check if message has embed."""
-        return result.has_attachments
+        return False
 
     def _check_mentions(self, result: MessageSearchResult, user_id: int) -> bool:
         """Check if message mentions a user."""

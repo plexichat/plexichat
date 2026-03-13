@@ -20,6 +20,7 @@ import utils.logger as logger
 
 router = APIRouter(prefix="/search", tags=["Search"])
 
+
 @router.get(
     "/messages",
     response_model=MessageSearchPageResponse,
@@ -54,7 +55,7 @@ async def search_messages(
         srv_id = int(server_id) if server_id else None
         chan_id = int(channel_id) if channel_id else None
         auth_id = int(author_id) if author_id else None
-        
+
         page = search_mod.search_messages_page(
             user_id=current_user.user_id,
             query=query,
@@ -65,30 +66,11 @@ async def search_messages(
             limit=limit,
             cursor=cursor,
         )
-        
-        # Convert results to response model
-        media_mod = api.get_media()
-        # Note: SearchManager already enriched the results with basic info, 
-        # but _message_to_response might add more if we pass it correctly.
-        # For search, we might need a simpler conversion if MessageSearchResult 
-        # is slightly different from core Message.
-        
-        response_results = []
-        for r in page.results:
-            # MessageSearchResult is converted from Message in SearchManager
-            # But the route expects MessageResponse.
-            # We can use the enriched data from SearchResult.
-            response_results.append(
-                _message_to_response(
-                    r.message, # SearchResult has a .message property (Message object)
-                    media_mod=media_mod,
-                    viewer_user_id=current_user.user_id
-                )
-            )
-            
+
+        # Return results directly from search manager
+        # MessageSearchPageResponse expects results to be a list of MessageSearchResult objects
         return MessageSearchPageResponse(
-            results=response_results,
-            next_cursor=page.next_cursor
+            results=page.results, next_cursor=page.next_cursor
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -97,6 +79,7 @@ async def search_messages(
     except Exception as e:
         logger.error(f"Search messages failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal search error")
+
 
 @router.get(
     "/users",
@@ -117,7 +100,7 @@ async def search_users(
 
     try:
         srv_id = int(server_id) if server_id else None
-        
+
         page = search_mod.search_users_page(
             user_id=current_user.user_id,
             query=query,
@@ -125,16 +108,16 @@ async def search_users(
             limit=limit,
             cursor=cursor,
         )
-        
+
         return UserSearchPageResponse(
-            results=page.results,
-            next_cursor=page.next_cursor
+            results=page.results, next_cursor=page.next_cursor
         )
     except SearchError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Search users failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal search error")
+
 
 @router.get(
     "/servers",
@@ -161,10 +144,9 @@ async def search_servers(
             limit=limit,
             cursor=cursor,
         )
-        
+
         return ServerSearchPageResponse(
-            results=page.results,
-            next_cursor=page.next_cursor
+            results=page.results, next_cursor=page.next_cursor
         )
     except SearchError as e:
         raise HTTPException(status_code=400, detail=str(e))
