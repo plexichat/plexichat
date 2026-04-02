@@ -32,6 +32,7 @@ from .exceptions import (
     SDPError,
     NotConnectedError,
     ScreenShareError,
+    AlreadyConnectedError,
 )
 from .sdp import parse_sdp, validate_sdp, SDPManipulator
 from .ice import ICECandidateManager, parse_ice_candidate
@@ -209,15 +210,21 @@ class SignalingManager:
 
         Returns:
             VoiceServerInfo with connection details
+
+        Raises:
+            AlreadyConnectedError: If user already has a voice connection
         """
-        # Clean up any existing connection first (handles reconnects gracefully)
+        # Check for existing connection (duplicate connection handling)
         if user_id in self._connections:
             existing = self._connections[user_id]
             logger.debug(
-                f"Cleaning up existing voice connection for user {user_id} (state: {existing.state})"
+                f"User {user_id} already has voice connection (state: {existing.state})"
             )
-            # Clean up local state - SFU cleanup will happen async
-            self._cleanup_local_connection(user_id)
+            raise AlreadyConnectedError(
+                f"User {user_id} already connected to voice",
+                user_id=user_id,
+                channel_id=channel_id,
+            )
 
         # Get server info
         info = self.get_voice_server_info(user_id, channel_id)

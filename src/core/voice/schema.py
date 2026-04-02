@@ -60,11 +60,11 @@ CREATE TABLE IF NOT EXISTS voice_speaker_requests (
 -- Speaker request indexes
 CREATE INDEX IF NOT EXISTS idx_voice_speaker_channel ON voice_speaker_requests(channel_id);
 
--- AFK settings table
-CREATE TABLE IF NOT EXISTS voice_afk_settings (
+-- Voice server settings table (AFK settings)
+CREATE TABLE IF NOT EXISTS voice_server_settings (
     server_id INTEGER PRIMARY KEY,
-    channel_id INTEGER,
-    timeout_seconds INTEGER DEFAULT 300
+    afk_channel_id INTEGER,
+    afk_timeout INTEGER DEFAULT 300
 );
 """
 

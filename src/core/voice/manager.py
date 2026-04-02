@@ -3,6 +3,17 @@ Voice manager - Core business logic for voice channel operations.
 
 Handles voice state management, stage channels, and moderation
 with proper validation, permission checks, and database interactions.
+
+CANONICAL VOICE CONTRACT:
+- A user is considered "in voice" only when they have a valid persisted voice state, not just a signaling connection.
+- The gateway is the authoritative join/leave/update path for the web client.
+- user_id is the canonical participant identity everywhere.
+- One normalized voice-state schema is used across:
+  * client WebSocket payloads
+  * gateway handlers
+  * event payload builders
+  * backend manager methods
+- Duplicate connect behavior is idempotent reconnect (replaces existing connection).
 """
 
 from typing import Optional, List, Dict, Any
@@ -213,7 +224,8 @@ class VoiceManager(BaseManager):
         existing = self.get_voice_state(user_id)
         if existing:
             if existing.channel_id == channel_id:
-                raise UserAlreadyInChannelError("Already in this channel", channel_id)
+                # Already in the channel, return the current state
+                return existing
             self.leave_channel(user_id)
 
         settings = self._get_channel_settings(channel_id)
@@ -1252,24 +1264,24 @@ class VoiceManager(BaseManager):
         settings = self._get_server_settings(server_id)
         return settings.get("afk_timeout", 300)
 
-    def check_afk_timeout(self, user_id: SnowflakeID) -> bool:
+    def check_afk_timeout(self, user_id: SnowflakeID) -> Optional[VoiceState]:
         """
         Check if a user has timed out and move them to AFK if needed.
 
         Returns:
-            True if moved to AFK
+            VoiceState of the user after being moved to AFK, or None if not moved.
         """
         state = self.get_voice_state(user_id)
         if not state:
-            return False
+            return None
 
         server_id = state.server_id
         settings = self._get_server_settings(server_id)
         if not settings or not settings["afk_channel_id"]:
-            return False
+            return None
 
         if state.channel_id == settings["afk_channel_id"]:
-            return False
+            return None
 
         now = self._get_timestamp()
         timeout_ms = settings["afk_timeout"] * 1000
@@ -1279,9 +1291,9 @@ class VoiceManager(BaseManager):
                 f"User {user_id} timed out, moving to AFK channel {settings['afk_channel_id']}"
             )
             self.move_member(user_id, user_id, settings["afk_channel_id"])
-            return True
+            return self.get_voice_state(user_id)
 
-        return False
+        return None
 
     # === User Voice State Queries ===
 
@@ -1303,6 +1315,3 @@ class VoiceManager(BaseManager):
             "SELECT user_id FROM voice_states WHERE channel_id = ?", (channel_id,)
         )
         return [row["user_id"] for row in rows]
-
-
-
