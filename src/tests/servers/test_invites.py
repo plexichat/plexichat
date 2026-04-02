@@ -219,6 +219,29 @@ class TestUseInvite:
         with pytest.raises(servers.MemberExistsError):
             servers.use_invite(member_user.id, invite.code)
 
+    def test_failed_join_does_not_consume_invite_use(
+        self, server_with_channels, monkeypatch
+    ):
+        """Invite uses should roll back if joining the server fails."""
+        server, owner, _, _, outsider, general, _, _, _, servers = server_with_channels
+
+        invite = servers.create_invite(owner.id, general.id, max_uses=1)
+        original_add_member = servers.member_handler.add_member
+
+        def failing_add_member(server_id, user_id, inviter_id=None):
+            if user_id == outsider.id:
+                raise RuntimeError("membership insert failed")
+            return original_add_member(server_id, user_id, inviter_id)
+
+        monkeypatch.setattr(servers.member_handler, "add_member", failing_add_member)
+
+        with pytest.raises(RuntimeError, match="membership insert failed"):
+            servers.use_invite(outsider.id, invite.code)
+
+        refreshed = servers.get_invite(invite.code)
+        assert refreshed is not None
+        assert refreshed.uses == 0
+
 
 class TestDeleteInvite:
     """Tests for deleting invites."""

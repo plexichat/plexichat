@@ -332,7 +332,7 @@ Authorization: Bearer <token>
 }
 ```
 
-Note: Private fields (email, email_verified, totp_enabled) are not included in public profiles.
+
 
 ### Error Responses
 

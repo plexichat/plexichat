@@ -285,3 +285,53 @@ class TestMoveChannel:
 
         with pytest.raises(servers.PermissionDeniedError):
             servers.move_channel(member_user.id, general.id, position=10)
+
+
+class TestTextualChannelBehavior:
+    """Tests for message-capable channel variants."""
+
+    def test_create_channel_rolls_back_if_conversation_creation_fails(
+        self, fresh_server, monkeypatch
+    ):
+        """Failed conversation setup must not leave a channel row behind."""
+        server, owner, servers = fresh_server
+
+        def raise_conversation_error(*_args, **_kwargs):
+            raise RuntimeError("conversation creation failed")
+
+        monkeypatch.setattr(
+            servers._messaging,
+            "create_server_channel_conversation",
+            raise_conversation_error,
+        )
+
+        with pytest.raises(RuntimeError, match="conversation creation failed"):
+            servers.create_channel(
+                user_id=owner.id,
+                server_id=server.id,
+                name="broken-channel",
+                channel_type=servers.ChannelType.TEXT,
+            )
+
+        leftover = servers.db.fetch_all(
+            "SELECT id FROM srv_channels WHERE server_id = ? AND name = ? AND deleted = 0",
+            (server.id, "broken-channel"),
+        )
+        assert leftover == []
+
+    def test_announcement_channels_support_messages(self, server_with_channels):
+        """Announcement channels should work anywhere text channels do."""
+        server, owner, _, member_user, _, _, _, _, _, servers = server_with_channels
+
+        channel = servers.create_channel(
+            user_id=owner.id,
+            server_id=server.id,
+            name="release-news",
+            channel_type=servers.ChannelType.ANNOUNCEMENT,
+        )
+
+        sent = servers.send_channel_message(owner.id, channel.id, "hello members")
+        messages = servers.get_channel_messages(member_user.id, channel.id)
+
+        assert sent.content == "hello members"
+        assert [message.id for message in messages] == [sent.id]

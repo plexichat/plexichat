@@ -3,6 +3,7 @@ Tests for voice state operations (mute, deaf, streaming, video).
 """
 
 import pytest
+from src.core.voice.exceptions import UserNotInChannelError
 
 
 class TestSelfMute:
@@ -58,7 +59,7 @@ class TestSelfMute:
             voice,
         ) = server_with_voice
 
-        with pytest.raises(voice.UserNotInChannelError):
+        with pytest.raises(UserNotInChannelError):
             voice.set_self_mute(member2.id, True)
 
 
@@ -116,7 +117,7 @@ class TestSelfDeaf:
             voice,
         ) = server_with_voice
 
-        with pytest.raises(voice.UserNotInChannelError):
+        with pytest.raises(UserNotInChannelError):
             voice.set_self_deaf(member2.id, True)
 
 
@@ -173,7 +174,7 @@ class TestStreaming:
             voice,
         ) = server_with_voice
 
-        with pytest.raises(voice.UserNotInChannelError):
+        with pytest.raises(UserNotInChannelError):
             voice.set_streaming(member2.id, True)
 
 
@@ -230,7 +231,7 @@ class TestVideo:
             voice,
         ) = server_with_voice
 
-        with pytest.raises(voice.UserNotInChannelError):
+        with pytest.raises(UserNotInChannelError):
             voice.set_video(member2.id, True)
 
 
@@ -310,7 +311,7 @@ class TestUpdateVoiceState:
             voice,
         ) = server_with_voice
 
-        with pytest.raises(voice.UserNotInChannelError):
+        with pytest.raises(UserNotInChannelError):
             voice.update_voice_state(member2.id, self_mute=True)
 
 

@@ -4,6 +4,11 @@ Tests for AFK channel functionality.
 
 import pytest
 import time
+from src.core.voice.exceptions import (
+    PermissionDeniedError,
+    ChannelNotFoundError,
+    ChannelTypeError,
+)
 
 
 class TestSetAFKChannel:
@@ -26,12 +31,11 @@ class TestSetAFKChannel:
             owner.id, server.id, "afk", channel_type=servers.ChannelType.VOICE
         )
 
-        result = voice.set_afk_channel(owner.id, server.id, afk_channel.id, 300)
+        voice.set_afk_channel(owner.id, server.id, afk_channel.id)
+        voice.set_afk_timeout(owner.id, server.id, 300)
 
-        assert result is True
-
-        afk_id = voice.get_afk_channel(server.id)
-        assert afk_id == afk_channel.id
+        assert voice.get_afk_channel(server.id) == afk_channel.id
+        assert voice.get_afk_timeout(server.id) == 300
 
     def test_set_afk_channel_disable(self, server_with_voice):
         """Test disabling AFK channel."""
@@ -50,13 +54,11 @@ class TestSetAFKChannel:
             owner.id, server.id, "afk-disable", channel_type=servers.ChannelType.VOICE
         )
 
-        voice.set_afk_channel(owner.id, server.id, afk_channel.id, 300)
-        result = voice.set_afk_channel(owner.id, server.id, None, 300)
+        voice.set_afk_channel(owner.id, server.id, afk_channel.id)
+        voice.set_afk_timeout(owner.id, server.id, 300)
+        voice.set_afk_channel(owner.id, server.id, None)
 
-        assert result is True
-
-        afk_id = voice.get_afk_channel(server.id)
-        assert afk_id is None
+        assert voice.get_afk_channel(server.id) is None
 
     def test_set_afk_channel_without_permission(self, server_with_voice):
         """Test setting AFK channel without permission fails."""
@@ -71,8 +73,8 @@ class TestSetAFKChannel:
             voice,
         ) = server_with_voice
 
-        with pytest.raises(voice.PermissionDeniedError):
-            voice.set_afk_channel(member1.id, server.id, voice_channel.id, 300)
+        with pytest.raises(PermissionDeniedError):
+            voice.set_afk_channel(member1.id, server.id, voice_channel.id)
 
     def test_set_afk_channel_nonexistent(self, server_with_voice):
         """Test setting nonexistent AFK channel fails."""
@@ -87,8 +89,8 @@ class TestSetAFKChannel:
             voice,
         ) = server_with_voice
 
-        with pytest.raises(voice.ChannelNotFoundError):
-            voice.set_afk_channel(owner.id, server.id, 999999999, 300)
+        with pytest.raises(ChannelNotFoundError):
+            voice.set_afk_channel(owner.id, server.id, 999999999)
 
     def test_set_afk_channel_text_channel_fails(self, server_with_voice):
         """Test setting text channel as AFK channel fails."""
@@ -107,8 +109,8 @@ class TestSetAFKChannel:
             owner.id, server.id, "text-afk", channel_type=servers.ChannelType.TEXT
         )
 
-        with pytest.raises(voice.ChannelTypeError):
-            voice.set_afk_channel(owner.id, server.id, text_channel.id, 300)
+        with pytest.raises(ChannelTypeError):
+            voice.set_afk_channel(owner.id, server.id, text_channel.id)
 
     def test_set_afk_channel_minimum_timeout(self, server_with_voice):
         """Test AFK timeout has minimum of 60 seconds."""
@@ -127,9 +129,8 @@ class TestSetAFKChannel:
             owner.id, server.id, "afk-min", channel_type=servers.ChannelType.VOICE
         )
 
-        result = voice.set_afk_channel(owner.id, server.id, afk_channel.id, 10)
-
-        assert result is True
+        voice.set_afk_channel(owner.id, server.id, afk_channel.id)
+        voice.set_afk_timeout(owner.id, server.id, 10)
 
 
 class TestGetAFKChannel:
@@ -152,7 +153,8 @@ class TestGetAFKChannel:
             owner.id, server.id, "afk-get", channel_type=servers.ChannelType.VOICE
         )
 
-        voice.set_afk_channel(owner.id, server.id, afk_channel.id, 300)
+        voice.set_afk_channel(owner.id, server.id, afk_channel.id)
+        voice.set_afk_timeout(owner.id, server.id, 300)
 
         afk_id = voice.get_afk_channel(server.id)
 
@@ -234,7 +236,8 @@ class TestCheckAFKTimeout:
             owner.id, server.id, "afk-already", channel_type=servers.ChannelType.VOICE
         )
 
-        voice.set_afk_channel(owner.id, server.id, afk_channel.id, 1)
+        voice.set_afk_channel(owner.id, server.id, afk_channel.id)
+        voice.set_afk_timeout(owner.id, server.id, 1)
 
         voice.join_channel(member1.id, afk_channel.id)
 
@@ -259,7 +262,8 @@ class TestCheckAFKTimeout:
             owner.id, server.id, "afk-notexp", channel_type=servers.ChannelType.VOICE
         )
 
-        voice.set_afk_channel(owner.id, server.id, afk_channel.id, 3600)
+        voice.set_afk_channel(owner.id, server.id, afk_channel.id)
+        voice.set_afk_timeout(owner.id, server.id, 3600)
 
         voice.join_channel(member1.id, voice_channel.id)
 
@@ -301,7 +305,8 @@ class TestCheckAFKTimeout:
             owner.id, server.id, "afk-test", channel_type=servers.ChannelType.VOICE
         )
 
-        voice.set_afk_channel(owner.id, server.id, afk_channel.id, 60)
+        voice.set_afk_channel(owner.id, server.id, afk_channel.id)
+        voice.set_afk_timeout(owner.id, server.id, 60)
 
         voice.join_channel(member.id, voice_channel.id)
 

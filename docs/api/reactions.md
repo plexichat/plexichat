@@ -55,7 +55,7 @@ Authorization: Bearer <token>
 }
 ```
 
-Note: Returns success even if reaction didn't exist.
+The endpoint returns a successful response regardless of whether the reaction previously existed, ensuring idempotent behavior for reaction removal operations.
 
 ## GET /channels/{channel_id}/messages/{message_id}/reactions
 

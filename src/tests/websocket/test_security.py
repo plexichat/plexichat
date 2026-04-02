@@ -779,3 +779,18 @@ class TestCompressionSecurity:
         connection.enable_compression()
         assert connection.compress is True
         assert connection._zlib_context is not None
+
+
+def test_typing_recipients_are_limited_to_channel_viewers(opcode_handler):
+    """Typing events should only reach users who can view the channel."""
+    opcode_handler._servers.get_member_user_ids.return_value = [2, 3, 4]
+    opcode_handler._servers.get_channel.side_effect = (
+        lambda channel_id, user_id: object() if user_id in {2, 4} else None
+    )
+
+    recipients = opcode_handler._get_typing_recipient_ids(1, 55, 77)
+
+    assert recipients == [2, 4]
+    opcode_handler._servers.get_member_user_ids.assert_called_once_with(
+        77, exclude_user_id=1
+    )

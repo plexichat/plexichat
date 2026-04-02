@@ -179,7 +179,7 @@ Use the emoji format when adding reactions:
 PUT /api/v1/channels/{channel_id}/messages/{message_id}/reactions/<:pepe:123456789012345678>
 ```
 
-Note: The emoji string must be URL-encoded.
+The emoji identifier in the reaction endpoint URL must be URL-encoded to ensure proper handling of special characters.
 
 ## Limits
 
