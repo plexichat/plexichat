@@ -175,8 +175,15 @@ class MemberHandler:
         if self.manager._messaging:
             try:
                 channels = self.db.fetch_all(
-                    "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND channel_type = ? AND deleted = 0",
-                    (server_id, ChannelType.TEXT.value),
+                    """SELECT conversation_id FROM srv_channels
+                       WHERE server_id = ?
+                         AND channel_type IN (?, ?)
+                         AND deleted = 0""",
+                    (
+                        server_id,
+                        ChannelType.TEXT.value,
+                        ChannelType.ANNOUNCEMENT.value,
+                    ),
                 )
                 conv_ids = [
                     ch["conversation_id"] for ch in channels if ch["conversation_id"]
@@ -436,11 +443,46 @@ class MemberHandler:
                 current_uses=invite.uses,
             )
 
-        member = self.add_member(invite.server_id, user_id, invite.inviter_id)
-
-        self.db.execute(
-            "UPDATE srv_invites SET uses = uses + 1 WHERE code = ?", (code,)
+        update_cursor = self.db.execute(
+            """UPDATE srv_invites
+               SET uses = uses + 1
+               WHERE code = ?
+                 AND revoked = 0
+                 AND (expires_at IS NULL OR expires_at > ?)
+                 AND (max_uses = 0 OR uses < max_uses)""",
+            (code, now),
         )
+        if getattr(update_cursor, "rowcount", 0) == 0:
+            refreshed_row = self.db.fetch_one(
+                "SELECT revoked, expires_at, max_uses, uses FROM srv_invites WHERE code = ?",
+                (code,),
+            )
+            if not refreshed_row or refreshed_row["revoked"]:
+                raise InviteNotFoundError("Invite not found")
+
+            if (
+                refreshed_row["expires_at"] is not None
+                and refreshed_row["expires_at"] <= now
+            ):
+                raise InviteExpiredError(
+                    "Invite has expired",
+                    expired_at=refreshed_row["expires_at"],
+                )
+
+            raise InviteMaxUsesError(
+                "Invite has reached maximum uses",
+                max_uses=refreshed_row["max_uses"],
+                current_uses=refreshed_row["uses"],
+            )
+
+        try:
+            member = self.add_member(invite.server_id, user_id, invite.inviter_id)
+        except Exception:
+            self.db.execute(
+                "UPDATE srv_invites SET uses = CASE WHEN uses > 0 THEN uses - 1 ELSE 0 END WHERE code = ?",
+                (code,),
+            )
+            raise
 
         # Use invite.id (bigint) instead of invite.code (string) for target_id
         self.manager._log_audit(

@@ -1184,8 +1184,13 @@ class ServerManager(BaseManager):
         if not channel:
             raise ChannelNotFoundError("Channel not found")
 
-        if channel.channel_type != ChannelType.TEXT:
-            raise ChannelTypeError("Can only send messages to text channels")
+        if channel.channel_type not in (
+            ChannelType.TEXT,
+            ChannelType.ANNOUNCEMENT,
+        ):
+            raise ChannelTypeError(
+                "Can only send messages to text or announcement channels"
+            )
 
         # Check permissions
         permissions = self.get_permissions(user_id, channel.server_id, channel_id)
@@ -1271,8 +1276,13 @@ class ServerManager(BaseManager):
         if not channel:
             raise ChannelNotFoundError("Channel not found")
 
-        if channel.channel_type != ChannelType.TEXT:
-            raise ChannelTypeError("Can only get messages from text channels")
+        if channel.channel_type not in (
+            ChannelType.TEXT,
+            ChannelType.ANNOUNCEMENT,
+        ):
+            raise ChannelTypeError(
+                "Can only get messages from text or announcement channels"
+            )
 
         self.require_permission(user_id, channel.server_id, "messages.read", channel_id)
 

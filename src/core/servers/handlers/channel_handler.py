@@ -119,21 +119,33 @@ class ChannelHandler:
             ),
         )
 
-        if channel_type == ChannelType.TEXT and self.manager._messaging:
-            conv = (
-                self.manager._messaging.create_server_channel_conversation(
-                    server_id, channel_id
+        if channel_type in (ChannelType.TEXT, ChannelType.ANNOUNCEMENT) and self.manager._messaging:
+            conv = None
+            try:
+                conv = (
+                    self.manager._messaging.create_server_channel_conversation(
+                        server_id, channel_id
+                    )
+                    if hasattr(
+                        self.manager._messaging, "create_server_channel_conversation"
+                    )
+                    else None
                 )
-                if hasattr(
-                    self.manager._messaging, "create_server_channel_conversation"
-                )
-                else None
-            )
-            if conv:
-                self.db.execute(
-                    "UPDATE srv_channels SET conversation_id = ? WHERE id = ?",
-                    (conv.id, channel_id),
-                )
+                if conv:
+                    self.db.execute(
+                        "UPDATE srv_channels SET conversation_id = ? WHERE id = ?",
+                        (conv.id, channel_id),
+                    )
+            except Exception:
+                if conv and hasattr(self.manager._messaging, "delete_conversation"):
+                    try:
+                        self.manager._messaging.delete_conversation(conv.id)
+                    except Exception as cleanup_error:
+                        logger.debug(
+                            f"Failed to roll back conversation {getattr(conv, 'id', None)}: {cleanup_error}"
+                        )
+                self.db.execute("DELETE FROM srv_channels WHERE id = ?", (channel_id,))
+                raise
 
         self.manager._log_audit(
             server_id,
