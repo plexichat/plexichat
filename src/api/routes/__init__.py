@@ -22,6 +22,7 @@ from .settings import router as settings_router
 from .feedback import router as feedback_router
 from .notifications import router as notifications_router
 from .polls import router as polls_router
+from .stickers import router as stickers_router
 from .docs import (
     router as docs_router,
     is_docs_enabled,
@@ -126,6 +127,9 @@ def create_api_router() -> APIRouter:
 
     # Include QR router
     api_router.include_router(qr_router, tags=["Utilities"])
+
+    # Include Stickers router
+    api_router.include_router(stickers_router, tags=["Stickers"])
 
     # Include help router
     api_router.include_router(robots_router)

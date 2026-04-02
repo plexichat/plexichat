@@ -29,6 +29,7 @@ EVENT_INTENT_MAP = {
     EventType.GUILD_BAN_ADD: GatewayIntent.GUILD_BANS,
     EventType.GUILD_BAN_REMOVE: GatewayIntent.GUILD_BANS,
     EventType.GUILD_EMOJIS_UPDATE: GatewayIntent.GUILD_EMOJIS,
+    EventType.GUILD_STICKERS_UPDATE: GatewayIntent.GUILD_EMOJIS,
     EventType.WEBHOOKS_UPDATE: GatewayIntent.GUILD_WEBHOOKS,
     EventType.INVITE_CREATE: GatewayIntent.GUILD_INVITES,
     EventType.INVITE_DELETE: GatewayIntent.GUILD_INVITES,

@@ -74,7 +74,7 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, messaging_module=None, servers_module=None):
+def setup(db, messaging_module=None, servers_module=None, media_module=None):
     """
     Initialize the stickers module.
 
@@ -82,12 +82,13 @@ def setup(db, messaging_module=None, servers_module=None):
         db: Database instance (must be connected)
         messaging_module: Optional messaging module for message access
         servers_module: Optional servers module for permission checks
+        media_module: Optional media module for file uploads
     """
     global _manager, _setup_complete
 
     from .manager import StickerManager
 
-    _manager = StickerManager(db, messaging_module, servers_module)
+    _manager = StickerManager(db, messaging_module, servers_module, media_module)
     _setup_complete = True
 
 

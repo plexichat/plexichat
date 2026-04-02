@@ -498,6 +498,7 @@ class PlexichatServer:
             relationships,
             presence,
             reactions,
+            stickers,
             embeds,
             webhooks,
             settings,
@@ -743,6 +744,21 @@ class PlexichatServer:
             threads.append(
                 threading.Thread(target=init_notifications, name="InitNotifications")
             )
+
+            # 6. Stickers
+            def init_stickers():
+                timed_init(
+                    "stickers",
+                    lambda: stickers.setup(
+                        self.db,
+                        messaging_module=messaging,
+                        servers_module=servers,
+                        media_module=media,
+                    ),
+                )
+                self._modules["stickers"] = stickers
+
+            threads.append(threading.Thread(target=init_stickers, name="InitStickers"))
 
             for t in threads:
                 t.start()
@@ -1043,6 +1059,7 @@ class PlexichatServer:
             relationships_module=relationships,
             presence_module=presence,
             reactions_module=reactions,
+            stickers_module=self._modules.get("stickers"),
             embeds_module=embeds,
             webhooks_module=webhooks,
             settings_module=settings,

@@ -49,6 +49,7 @@ _admin = None
 _search = None
 _events = None
 _polls = None
+_stickers = None
 _telemetry = None
 _internal_secret = None
 _setup_complete = False
@@ -63,6 +64,7 @@ def setup(
     relationships_module: Optional[Any] = None,
     presence_module: Optional[Any] = None,
     reactions_module: Optional[Any] = None,
+    stickers_module: Optional[Any] = None,
     embeds_module: Optional[Any] = None,
     notifications_module: Optional[Any] = None,
     webhooks_module: Optional[Any] = None,
@@ -89,6 +91,7 @@ def setup(
         relationships_module: Relationships module for friends/blocks
         presence_module: Presence module for user status
         reactions_module: Reactions module for message reactions
+        stickers_module: Stickers module for stickers
         embeds_module: Embeds module for rich embeds
         notifications_module: Notifications module for mentions
         webhooks_module: Webhooks module for webhook execution
@@ -106,6 +109,7 @@ def setup(
     global _db, _auth, _messaging, _servers, _relationships, _presence, _polls
     global \
         _reactions, \
+        _stickers, \
         _embeds, \
         _notifications, \
         _webhooks, \
@@ -130,6 +134,7 @@ def setup(
     _relationships = relationships_module
     _presence = presence_module
     _reactions = reactions_module
+    _stickers = stickers_module
     _embeds = embeds_module
     _notifications = notifications_module
     _webhooks = webhooks_module
@@ -270,6 +275,18 @@ def get_reactions() -> Optional[Any]:
         from src.core import reactions
 
         return reactions
+    except ImportError:
+        return None
+
+
+def get_stickers() -> Optional[Any]:
+    """Get stickers module."""
+    if _stickers:
+        return _stickers
+    try:
+        from src.core import stickers
+
+        return stickers
     except ImportError:
         return None
 

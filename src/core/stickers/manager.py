@@ -35,10 +35,11 @@ from .exceptions import (
 
 
 class StickerManager:
-    def __init__(self, db, messaging_module=None, servers_module=None):
+    def __init__(self, db, messaging_module=None, servers_module=None, media_module=None):
         self._db = db
         self._messaging = messaging_module
         self._servers = servers_module
+        self._media = media_module
         self._config = self._load_config()
         logger.info("Sticker module initialized")
 
@@ -75,6 +76,56 @@ class StickerManager:
                 "Sticker name can only contain letters, numbers, underscores, and hyphens"
             )
         return name
+
+    def create_sticker_from_file(
+        self,
+        user_id: int,
+        pack_id: int,
+        name: str,
+        image_data: bytes,
+        content_type: str,
+        tags: Optional[List[str]] = None,
+        related_emoji: Optional[str] = None,
+    ) -> Sticker:
+        """
+        Create a sticker from an uploaded file.
+        """
+        if not self._media:
+            raise RuntimeError("Media module not configured")
+
+        # Basic format detection
+        if content_type == "application/json":
+            sticker_format = StickerFormat.LOTTIE
+        elif content_type == "image/png":
+            sticker_format = StickerFormat.PNG
+        elif content_type == "image/apng":
+             sticker_format = StickerFormat.APNG
+        else:
+            # Default to PNG if image, or raise error
+            if content_type.startswith("image/"):
+                 sticker_format = StickerFormat.PNG
+            else:
+                 raise InvalidStickerFormatError(f"Unsupported content type: {content_type}")
+
+        filename = f"sticker_{name}.{content_type.split('/')[-1]}"
+        
+        # Upload
+        result = self._media.upload_file(
+            user_id, image_data, filename, content_type
+        )
+        
+        return self.add_sticker(
+            user_id=user_id,
+            pack_id=pack_id,
+            name=name,
+            format=sticker_format,
+            url=result.url,
+            size=len(image_data),
+            tags=tags,
+            related_emoji=related_emoji,
+            width=result.metadata.get("width") if result.metadata else None,
+            height=result.metadata.get("height") if result.metadata else None,
+        )
 
     def _check_server_permission(self, user_id: int, server_id: int) -> bool:
         if not self._servers:
