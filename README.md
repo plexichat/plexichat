@@ -6,7 +6,7 @@ A real-time messaging platform server with REST API and WebSocket gateway.
 
 ```bash
 # Clone with submodules (required)
-git clone --recurse-submodules https://gitlab.com/plexichat/plexichat.git
+git clone --recurse-submodules https://gitlab.plexichat.com/plexichat/plexichat.git
 
 # Or if already cloned without submodules:
 git submodule update --init --recursive
