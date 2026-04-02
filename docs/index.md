@@ -24,9 +24,7 @@ This portal documents the Plexichat backend runtime surface: the REST API, the W
 - reactions, presence, notifications, polls, voice, media, and reports
 - shared behaviors such as rate limits, common errors, and WebSocket lifecycle rules
 
-## What This Portal Deliberately Excludes
 
-This documentation avoids environment-specific deployment runbooks, secrets, private infrastructure details, and operator-only procedures that should remain in internal documentation.
 
 ## Suggested Reading Order
 
