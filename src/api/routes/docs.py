@@ -75,22 +75,49 @@ class ThemeConfig:
     """Theme configuration for documentation."""
 
     style: str = "dark"
-    primary_color: str = "#6366f1"
-    primary_dark_color: str = "#4f46e5"
-    background_color: str = "#0b0f19"
-    surface_color: str = "#111827"
+    primary_color: str = "#2563eb"
+    primary_dark_color: str = "#1d4ed8"
+    background_color: str = "#0f172a"
+    surface_color: str = "#1e293b"
+    surface_hover_color: str = "#334155"
     code_background: str = "#0f172a"
-    text_color: str = "#f9fafb"
-    muted_color: str = "#9ca3af"
+    text_color: str = "#f8fafc"
+    muted_color: str = "#94a3b8"
+    muted_hover_color: str = "#cbd5e1"
     accent_color: str = "#10b981"
+    accent_hover_color: str = "#059669"
     warning_color: str = "#f59e0b"
     error_color: str = "#ef4444"
-    border_color: str = "#1f2937"
+    border_color: str = "#334155"
+    border_light_color: str = "#475569"
+    input_background: str = "#334155"
+    input_border: str = "#475569"
+    input_text: str = "#f8fafc"
     font_family: str = (
-        "'JetBrains Mono', 'Inter', -apple-system, BlinkMacSystemFont, "
-        "'Segoe UI', sans-serif"
+        "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', "
+        "Roboto, Helvetica, Arial, sans-serif"
     )
     code_font: str = "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
+    font_size_base: str = "1rem"
+    font_size_lg: str = "1.125rem"
+    font_size_xl: str = "1.25rem"
+    font_size_2xl: str = "1.5rem"
+    font_size_3xl: str = "1.875rem"
+    font_size_4xl: str = "2.25rem"
+    font_weight_normal: int = 400
+    font_weight_medium: int = 500
+    font_weight_semibold: int = 600
+    font_weight_bold: int = 700
+    border_radius: str = "0.5rem"
+    border_radius_lg: str = "0.75rem"
+    transition_speed: str = "0.2s"
+    shadow_sm: str = "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)"
+    shadow_md: str = (
+        "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)"
+    )
+    shadow_lg: str = (
+        "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.1)"
+    )
 
 
 @dataclass
@@ -404,8 +431,8 @@ def _format_limit_summary(limit: Dict[str, Any]) -> str:
     window = _format_window_seconds(limit.get("window_seconds", 0))
     seconds_label = "second" if window == "1" else "seconds"
     return (
-        f'{limit.get("requests", 0)} requests per {window} {seconds_label}, '
-        f'burst {limit.get("burst", 0)}'
+        f"{limit.get('requests', 0)} requests per {window} {seconds_label}, "
+        f"burst {limit.get('burst', 0)}"
     )
 
 
@@ -431,15 +458,16 @@ def _build_rate_limit_route_rows(limits: Dict[str, Any]) -> str:
 
 def _build_rate_limit_policy_rows(limits: Dict[str, Any]) -> str:
     """Build markdown rows for rate-limit policy flags and multipliers."""
+
     def enabled(value: Any) -> str:
         return "enabled" if value else "disabled"
 
     return "\n".join(
         [
-            f'| Bot multiplier | {limits.get("bot_multiplier", 1.0):g}x |',
-            f'| Webhook multiplier | {limits.get("webhook_multiplier", 1.0):g}x |',
-            f'| Admin bypass | {enabled(limits.get("admin_bypass", False))} |',
-            f'| Internal bypass | {enabled(limits.get("internal_bypass", False))} |',
+            f"| Bot multiplier | {limits.get('bot_multiplier', 1.0):g}x |",
+            f"| Webhook multiplier | {limits.get('webhook_multiplier', 1.0):g}x |",
+            f"| Admin bypass | {enabled(limits.get('admin_bypass', False))} |",
+            f"| Internal bypass | {enabled(limits.get('internal_bypass', False))} |",
         ]
     )
 
@@ -550,9 +578,11 @@ def _build_permission_category_rows(data: Dict[str, Any]) -> str:
     """Build markdown rows for permission categories."""
     rows = []
     for category in data.get("categories", []):
-        permission_list = ", ".join(f'`{perm}`' for perm in category.get("permissions", []))
+        permission_list = ", ".join(
+            f"`{perm}`" for perm in category.get("permissions", [])
+        )
         rows.append(
-            f'| `{category["name"]}` | {category["count"]} | {permission_list} |'
+            f"| `{category['name']}` | {category['count']} | {permission_list} |"
         )
     return "\n".join(rows)
 
@@ -697,9 +727,7 @@ def _build_surface_nav_html(conf: DocsConfig, current_surface: str) -> str:
         if not href:
             continue
         active_class = "active" if active else ""
-        html.append(
-            f'<a href="{href}" class="surface-link {active_class}">{label}</a>'
-        )
+        html.append(f'<a href="{href}" class="surface-link {active_class}">{label}</a>')
     html.append("</nav>")
     return "".join(html)
 
@@ -736,11 +764,11 @@ def _build_shell_header_html(
         f'<span class="surface-badge">{surface_label}</span>'
         f'<h1 class="shell-title">{page_title}</h1>'
         f'<p class="shell-summary">{page_summary}</p>'
-        f'{_build_runtime_pills_html(conf)}'
-        '</div>'
-        f'{_build_surface_nav_html(conf, current_surface)}'
-        '</div>'
-        '</header>'
+        f"{_build_runtime_pills_html(conf)}"
+        "</div>"
+        f"{_build_surface_nav_html(conf, current_surface)}"
+        "</div>"
+        "</header>"
     )
 
 
@@ -753,18 +781,38 @@ def _build_brand_styles(conf: DocsConfig) -> str:
             --primary-dark: {theme.primary_dark_color};
             --bg: {theme.background_color};
             --card-bg: {theme.surface_color};
+            --surface-hover: {theme.surface_hover_color};
             --code-bg: {theme.code_background};
             --text: {theme.text_color};
             --text-muted: {theme.muted_color};
+            --text-muted-hover: {theme.muted_hover_color};
             --accent: {theme.accent_color};
+            --accent-hover: {theme.accent_hover_color};
             --warning: {theme.warning_color};
             --error: {theme.error_color};
             --border: {theme.border_color};
+            --border-light: {theme.border_light_color};
+            --input-bg: {theme.input_background};
+            --input-border: {theme.input_border};
+            --input-text: {theme.input_text};
             --font-main: {theme.font_family};
             --font-code: {theme.code_font};
-            --sidebar-width: 320px;
-            --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.35);
-            --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.24);
+            --font-size-base: {theme.font_size_base};
+            --font-size-lg: {theme.font_size_lg};
+            --font-size-xl: {theme.font_size_xl};
+            --font-size-2xl: {theme.font_size_2xl};
+            --font-size-3xl: {theme.font_size_3xl};
+            --font-size-4xl: {theme.font_size_4xl};
+            --font-weight-normal: {theme.font_weight_normal};
+            --font-weight-medium: {theme.font_weight_medium};
+            --font-weight-semibold: {theme.font_weight_semibold};
+            --font-weight-bold: {theme.font_weight_bold};
+            --border-radius: {theme.border_radius};
+            --border-radius-lg: {theme.border_radius_lg};
+            --transition-speed: {theme.transition_speed};
+            --shadow-sm: {theme.shadow_sm};
+            --shadow-md: {theme.shadow_md};
+            --shadow-lg: {theme.shadow_lg};
         }}
 
         * {{ box-sizing: border-box; }}
@@ -1371,7 +1419,9 @@ def render_swagger_ui_page(
         "Plexichat API Explorer",
         "Interactive request explorer powered by the live OpenAPI schema.",
     )
-    html = html.replace("<body>", '<body class="plexi-openapi-page plexi-swagger-page">')
+    html = html.replace(
+        "<body>", '<body class="plexi-openapi-page plexi-swagger-page">'
+    )
     html = html.replace(
         '<div id="swagger-ui">',
         f'<div class="plexi-backdrop" aria-hidden="true"></div>{shell_header}<div id="swagger-ui">',
@@ -1469,9 +1519,9 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
     html.append('<div class="sidebar-header">')
     html.append(f'<a href="{conf.path}" class="brand-mark">PLEXI<span>CHAT</span></a>')
     html.append('<span class="sidebar-caption">Narrative Docs</span>')
-    html.append(f'<h3>{conf.title}</h3>')
+    html.append(f"<h3>{conf.title}</h3>")
     html.append(f'<p class="sidebar-description">{conf.description}</p>')
-    html.append('</div>')
+    html.append("</div>")
 
     for category, items in categories.items():
         html.append(f'<div class="nav-category">{category}</div>')
@@ -1541,9 +1591,7 @@ def _replace_dynamic_placeholders(text: str, conf: DocsConfig) -> str:
         text = text.replace(
             "{{GATEWAY_DEFAULT_INTENTS}}", str(intents.get("default_value", 0))
         )
-        text = text.replace(
-            "{{GATEWAY_ALL_INTENTS}}", str(intents.get("all_value", 0))
-        )
+        text = text.replace("{{GATEWAY_ALL_INTENTS}}", str(intents.get("all_value", 0)))
         text = text.replace(
             "{{GATEWAY_PRIVILEGED_INTENTS}}",
             str(intents.get("privileged_value", 0)),
