@@ -75,49 +75,17 @@ class ThemeConfig:
     """Theme configuration for documentation."""
 
     style: str = "dark"
-    primary_color: str = "#2563eb"
-    primary_dark_color: str = "#1d4ed8"
-    background_color: str = "#0f172a"
-    surface_color: str = "#1e293b"
-    surface_hover_color: str = "#334155"
-    code_background: str = "#0f172a"
-    text_color: str = "#f8fafc"
-    muted_color: str = "#94a3b8"
-    muted_hover_color: str = "#cbd5e1"
-    accent_color: str = "#10b981"
-    accent_hover_color: str = "#059669"
-    warning_color: str = "#f59e0b"
-    error_color: str = "#ef4444"
-    border_color: str = "#334155"
-    border_light_color: str = "#475569"
-    input_background: str = "#334155"
-    input_border: str = "#475569"
-    input_text: str = "#f8fafc"
-    font_family: str = (
-        "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', "
-        "Roboto, Helvetica, Arial, sans-serif"
-    )
-    code_font: str = "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
-    font_size_base: str = "1rem"
-    font_size_lg: str = "1.125rem"
-    font_size_xl: str = "1.25rem"
-    font_size_2xl: str = "1.5rem"
-    font_size_3xl: str = "1.875rem"
-    font_size_4xl: str = "2.25rem"
-    font_weight_normal: int = 400
-    font_weight_medium: int = 500
-    font_weight_semibold: int = 600
-    font_weight_bold: int = 700
-    border_radius: str = "0.5rem"
-    border_radius_lg: str = "0.75rem"
-    transition_speed: str = "0.2s"
-    shadow_sm: str = "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)"
-    shadow_md: str = (
-        "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)"
-    )
-    shadow_lg: str = (
-        "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.1)"
-    )
+    background_color: str = "#0b0f14"
+    surface_color: str = "#11161c"
+    text_color: str = "#e6edf3"
+    accent_color: str = "#06b6d4"
+    border_color: str = "#1f2630"
+    font_family: str = "Inter, system-ui"
+    code_font: str = "JetBrains Mono, Fira Code, monospace"
+    line_height: str = "1.7"
+    border_radius: str = "0.375rem"
+    transition_speed: str = "0.15s"
+    sidebar_width: str = "260px"
 
 
 @dataclass
@@ -221,25 +189,17 @@ def _load_docs_config() -> DocsConfig:
     theme_conf = docs_conf.get("theme", {})
     theme = ThemeConfig(
         style=theme_conf.get("style", "dark"),
-        primary_color=theme_conf.get("primary_color", "#6366f1"),
-        primary_dark_color=theme_conf.get("primary_dark_color", "#4f46e5"),
-        background_color=theme_conf.get("background_color", "#0b0f19"),
-        surface_color=theme_conf.get("surface_color", "#111827"),
-        code_background=theme_conf.get("code_background", "#0f172a"),
-        text_color=theme_conf.get("text_color", "#f9fafb"),
-        muted_color=theme_conf.get("muted_color", "#9ca3af"),
-        accent_color=theme_conf.get("accent_color", "#10b981"),
-        warning_color=theme_conf.get("warning_color", "#f59e0b"),
-        error_color=theme_conf.get("error_color", "#ef4444"),
-        border_color=theme_conf.get("border_color", "#1f2937"),
-        font_family=theme_conf.get(
-            "font_family",
-            "'JetBrains Mono', 'Inter', -apple-system, BlinkMacSystemFont, "
-            "'Segoe UI', sans-serif",
-        ),
-        code_font=theme_conf.get(
-            "code_font", "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
-        ),
+        background_color=theme_conf.get("background_color", "#0b0f14"),
+        surface_color=theme_conf.get("surface_color", "#11161c"),
+        text_color=theme_conf.get("text_color", "#e6edf3"),
+        accent_color=theme_conf.get("accent_color", "#06b6d4"),
+        border_color=theme_conf.get("border_color", "#1f2630"),
+        font_family=theme_conf.get("font_family", "Inter, system-ui"),
+        code_font=theme_conf.get("code_font", "JetBrains Mono, Fira Code, monospace"),
+        line_height=theme_conf.get("line_height", "1.7"),
+        border_radius=theme_conf.get("border_radius", "0.375rem"),
+        transition_speed=theme_conf.get("transition_speed", "0.15s"),
+        sidebar_width=theme_conf.get("sidebar_width", "260px"),
     )
 
     # Rate limit
@@ -777,42 +737,18 @@ def _build_brand_styles(conf: DocsConfig) -> str:
     theme = conf.theme
     return f"""
         :root {{
-            --primary: {theme.primary_color};
-            --primary-dark: {theme.primary_dark_color};
             --bg: {theme.background_color};
             --card-bg: {theme.surface_color};
-            --surface-hover: {theme.surface_hover_color};
-            --code-bg: {theme.code_background};
             --text: {theme.text_color};
-            --text-muted: {theme.muted_color};
-            --text-muted-hover: {theme.muted_hover_color};
             --accent: {theme.accent_color};
-            --accent-hover: {theme.accent_hover_color};
-            --warning: {theme.warning_color};
-            --error: {theme.error_color};
             --border: {theme.border_color};
-            --border-light: {theme.border_light_color};
-            --input-bg: {theme.input_background};
-            --input-border: {theme.input_border};
-            --input-text: {theme.input_text};
             --font-main: {theme.font_family};
             --font-code: {theme.code_font};
-            --font-size-base: {theme.font_size_base};
-            --font-size-lg: {theme.font_size_lg};
-            --font-size-xl: {theme.font_size_xl};
-            --font-size-2xl: {theme.font_size_2xl};
-            --font-size-3xl: {theme.font_size_3xl};
-            --font-size-4xl: {theme.font_size_4xl};
-            --font-weight-normal: {theme.font_weight_normal};
-            --font-weight-medium: {theme.font_weight_medium};
-            --font-weight-semibold: {theme.font_weight_semibold};
-            --font-weight-bold: {theme.font_weight_bold};
+            --font-size-base: 1rem;
+            --line-height: {theme.line_height};
             --border-radius: {theme.border_radius};
-            --border-radius-lg: {theme.border_radius_lg};
             --transition-speed: {theme.transition_speed};
-            --shadow-sm: {theme.shadow_sm};
-            --shadow-md: {theme.shadow_md};
-            --shadow-lg: {theme.shadow_lg};
+            --sidebar-width: {theme.sidebar_width};
         }}
 
         * {{ box-sizing: border-box; }}
@@ -822,12 +758,9 @@ def _build_brand_styles(conf: DocsConfig) -> str:
         body {{
             margin: 0;
             color: var(--text);
-            background:
-                radial-gradient(circle at top left, rgba(99, 102, 241, 0.18), transparent 34%),
-                radial-gradient(circle at top right, rgba(16, 185, 129, 0.12), transparent 22%),
-                linear-gradient(180deg, rgba(15, 23, 42, 0.96), var(--bg));
+            background: var(--bg);
             font-family: var(--font-main);
-            line-height: 1.6;
+            line-height: var(--line-height);
             min-height: 100vh;
         }}
 
@@ -852,7 +785,7 @@ def _build_brand_styles(conf: DocsConfig) -> str:
             text-transform: uppercase;
         }}
 
-        .brand-mark span {{ color: var(--primary); }}
+        .brand-mark span {{ color: var(--accent); }}
 
         .shell-header {{
             margin-bottom: 1.5rem;
@@ -874,10 +807,10 @@ def _build_brand_styles(conf: DocsConfig) -> str:
         .shell-brand-block {{ display: grid; gap: 0.8rem; }}
 
         .surface-badge {{
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid rgba(99, 102, 241, 0.28);
+            background: rgba(6, 182, 212, 0.1);
+            border: 1px solid rgba(6, 182, 212, 0.28);
             border-radius: 999px;
-            color: var(--primary);
+            color: var(--accent);
             display: inline-flex;
             font-size: 0.74rem;
             font-weight: 700;
@@ -1079,7 +1012,7 @@ def _build_brand_styles(conf: DocsConfig) -> str:
 
         strong {{ color: var(--text); }}
 
-        a {{ color: var(--primary); text-decoration: none; }}
+        a {{ color: var(--accent); text-decoration: none; }}
 
         a:hover {{ color: #a5b4fc; }}
 
@@ -1160,7 +1093,7 @@ def _build_brand_styles(conf: DocsConfig) -> str:
         .note {{
             background: rgba(99, 102, 241, 0.08);
             border: 1px solid rgba(99, 102, 241, 0.18);
-            border-left: 4px solid var(--primary);
+            border-left: 4px solid var(--accent);
             border-radius: 16px;
             margin: 1.5rem 0;
             padding: 1rem 1.15rem;
@@ -1269,10 +1202,10 @@ def _build_brand_styles(conf: DocsConfig) -> str:
         .plexi-openapi-page .swagger-ui .download-url-wrapper .select-label select {{
             border-color: rgba(99, 102, 241, 0.36);
         }}
-
+        
         .plexi-openapi-page .swagger-ui .btn.execute,
         .plexi-openapi-page .swagger-ui .btn.authorize {{
-            background: var(--primary);
+            background: var(--accent);
             color: #fff;
         }}
 
