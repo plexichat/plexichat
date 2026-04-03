@@ -7,6 +7,9 @@ This portal documents the Plexichat backend runtime surface: the REST API, the W
 - [Getting Started](getting-started.md)
 - [API Reference](api/index.md)
 - [WebSocket Gateway](websocket/index.md)
+- [Deployment Guide](deployment/index.md)
+- [Client Development](client-development/index.md)
+- [End-User Guide](end-user/index.md)
 - generated OpenAPI docs at `/docs`
 - raw schema at `/openapi.json`
 
@@ -30,7 +33,10 @@ This portal documents the Plexichat backend runtime surface: the REST API, the W
 
 1. [Getting Started](getting-started.md)
 2. [Configuration](configuration.md)
-3. [API Reference](api/index.md)
-4. [WebSocket Gateway](websocket/index.md)
-5. [Rate Limits](rate-limits.md)
-6. [Security](security.md)
+3. [Deployment Guide](deployment/index.md)
+4. [API Reference](api/index.md)
+5. [WebSocket Gateway](websocket/index.md)
+6. [Client Development](client-development/index.md)
+7. [End-User Guide](end-user/index.md)
+8. [Rate Limits](rate-limits.md)
+9. [Security](security.md)
