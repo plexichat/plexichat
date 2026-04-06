@@ -20,14 +20,17 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from .core import Keyring
 
 
-# File format constants
-FILE_MAGIC = b"PXENC"  # Plexichat Encrypted (Common)
-STREAM_MAGIC = b"PXSTR"  # Plexichat Stream (Robust)
-FILE_VERSION = 1
+# File format constants - Unified streaming format (v2)
+FILE_MAGIC = b"PXENC"  # Legacy format (deprecated for writes, still readable)
+STREAM_MAGIC = b"PXSTR"  # Unified streaming format (v2) - now the default
+FILE_VERSION = 2  # Bumped to v2 for unified format
 CHUNK_SIZE = 256 * 1024  # 256KB chunks for streaming
 NONCE_SIZE = 12
 TAG_SIZE = 16
 KEY_SIZE = 32
+
+# Deprecation warning for legacy format
+_LEGACY_FORMAT_WARNING = "Legacy PXENC format detected. Files will be migrated to PXSTR v2 format on rewrite."
 
 
 def read_exactly(stream: BinaryIO, n: int) -> bytes:
@@ -162,25 +165,70 @@ class FileEncryptor:
         return FileDecryptionResult(data=plaintext, verified=verified)
 
     def encrypt_to_blob(self, data: bytes, aad: Optional[bytes] = b"") -> bytes:
+        """
+        Encrypt data to a blob format.
+        
+        Now uses unified streaming format (PXSTR v2) internally for all files,
+        providing consistent encryption regardless of size. Legacy PXENC format
+        is still readable but no longer written.
+        """
+        import io
+        
+        input_stream = io.BytesIO(data)
+        output_stream = io.BytesIO()
+        
+        # Use streaming format for all sizes (unified approach)
+        self._encrypt_stream_to_blob(input_stream, output_stream, len(data), aad)
+        
+        return output_stream.getvalue()
+    
+    def _encrypt_stream_to_blob(
+        self, 
+        input_stream: BinaryIO, 
+        output_stream: BinaryIO, 
+        file_size: int,
+        aad: Optional[bytes] = b""
+    ) -> Dict[str, Any]:
+        """Internal: Encrypt stream to blob format (unified v2 format)."""
         dek = self._generate_dek()
-        wrapped_key, key_version = self._wrap_key(dek)
-        nonce = os.urandom(NONCE_SIZE)
-        checksum = hashlib.sha256(data).hexdigest()
         cipher = AESGCM(dek)
-        ciphertext = cipher.encrypt(nonce, data, aad)
+        version, kek = self.keyring.get_key()
+        kek_cipher = AESGCM(kek)
+        wrap_nonce = os.urandom(NONCE_SIZE)
+        wrapped_key = wrap_nonce + kek_cipher.encrypt(wrap_nonce, dek, b"")
 
-        wrapped_key_len = len(wrapped_key)
-        return (
-            FILE_MAGIC
-            + struct.pack(">B", FILE_VERSION)
-            + struct.pack(">I", key_version)
-            + struct.pack(">H", wrapped_key_len)
-            + wrapped_key
-            + nonce
-            + struct.pack(">Q", len(data))
-            + checksum.encode("ascii")
-            + ciphertext
-        )
+        # Write unified v2 header (PXSTR format)
+        output_stream.write(STREAM_MAGIC)
+        output_stream.write(struct.pack(">B", FILE_VERSION))
+        output_stream.write(struct.pack(">I", version))
+        output_stream.write(struct.pack(">H", len(wrapped_key)))
+        output_stream.write(wrapped_key)
+        output_stream.write(struct.pack(">Q", file_size))
+        output_stream.write(struct.pack(">I", CHUNK_SIZE))
+
+        chunk_index = 0
+        checksum = hashlib.sha256()
+        
+        while True:
+            chunk = input_stream.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            checksum.update(chunk)
+            chunk_nonce = os.urandom(NONCE_SIZE)
+            chunk_aad = struct.pack(">Q", chunk_index)
+            if aad:
+                chunk_aad = aad + chunk_aad
+            encrypted_chunk = cipher.encrypt(chunk_nonce, chunk, chunk_aad)
+            output_stream.write(chunk_nonce)
+            output_stream.write(struct.pack(">I", len(encrypted_chunk)))
+            output_stream.write(encrypted_chunk)
+            chunk_index += 1
+
+        return {
+            "key_version": version,
+            "chunks": chunk_index,
+            "checksum": checksum.hexdigest(),
+        }
 
     def deserialize_header(self, data: bytes) -> Tuple[EncryptedFileHeader, int]:
         """Deserialize header with robust format detection."""
@@ -274,6 +322,15 @@ class FileEncryptor:
 
     def decrypt_from_blob(self, blob: bytes, aad: Optional[bytes] = b"") -> bytes:
         header, header_size = self.deserialize_header(blob)
+        
+        if header.is_stream:
+            # Re-wrap as stream for decryption if it was stored as PXSTR v2
+            import io
+            input_stream = io.BytesIO(blob)
+            output_stream = io.BytesIO()
+            StreamingFileEncryptor(self.keyring).decrypt_stream(input_stream, output_stream, aad)
+            return output_stream.getvalue()
+            
         ciphertext = blob[header_size:]
         dek = self._unwrap_key(header.wrapped_key, header.key_version)
         cipher = AESGCM(dek)

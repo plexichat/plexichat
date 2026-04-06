@@ -434,7 +434,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "worker_id": None,
                 "datacenter_id": None,
             },
-            "key_rotation_days": 90,
+            "key_rotation_days": 180,  # 6 months, configurable via encryption.key_rotation_days
         },
         "monitoring": {
             "enabled": True,

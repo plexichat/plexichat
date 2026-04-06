@@ -472,23 +472,12 @@ class EncryptionManager:
             data.lower().strip().encode(), key=index_key, digest_size=32
         ).hexdigest()
 
-    def fast_blind_index(self, data: str, scope: str) -> str:
-        """
-        Generate a secure keyed hash for high-volume enforcement fields.
-        
-        SECURITY: This previously used xxhash for performance, but xxhash is 
-        non-cryptographic and allows easy brute-force deanonymization of 
-        small spaces like IP addresses. We now use a truncated BLAKE2b
-        which is still very fast but cryptographically secure.
-        """
-        return self.blind_index(data, scope)
-
     def rotate_keys(self, force: bool = False) -> bool:
         """Rotate keys if enough time has passed."""
         import utils.config as config
 
         # Get rotation interval from config (default 90 days)
-        rotation_days = config.get("encryption.key_rotation_days", 90)
+        rotation_days = config.get("encryption.key_rotation_days", 180)
         rotation_seconds = rotation_days * 24 * 60 * 60
 
         current_time = int(time.time())

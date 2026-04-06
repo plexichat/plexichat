@@ -184,20 +184,6 @@ def blind_index(data: str, scope: str) -> str:
     return _get_manager().blind_index(data, scope)
 
 
-def fast_blind_index(data: str, scope: str) -> str:
-    """
-    Generate a fast keyed hash for high-volume fields.
-
-    Args:
-        data (str): The data to index.
-        scope (str): The scope/context for the index.
-
-    Returns:
-        str: Hex-encoded fast blind index.
-    """
-    return _get_manager().fast_blind_index(data, scope)
-
-
 def generate_key_pair() -> Tuple[bytes, bytes]:
     """
     Generate an Ed25519 key pair for digital signatures.

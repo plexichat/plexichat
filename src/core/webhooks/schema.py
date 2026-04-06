@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS webhook_webhooks (
     webhook_type TEXT NOT NULL DEFAULT 'incoming',
     avatar_url TEXT,
     token_hash TEXT NOT NULL,
+    -- Ed25519 signing keys for webhook request verification
+    signing_key_public BLOB,  -- 32-byte Ed25519 public key for signature verification
+    signing_key_private_encrypted TEXT,  -- Encrypted private key (base64 in encrypted envelope)
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );

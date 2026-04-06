@@ -541,7 +541,7 @@ class AuthManager(BaseManager):
         ip_index = None
         ip_encrypted = None
         if ip:
-            ip_index = self.crypto.fast_blind_index(ip, "ip_address")
+            ip_index = self.crypto.blind_index(ip, "ip_address")
             ip_encrypted = self.crypto.encrypt_data(ip, context=str(sid))
 
         # Enforce session limit
@@ -926,7 +926,7 @@ class AuthManager(BaseManager):
         ip_index = None
         ip_encrypted = None
         if ip:
-            ip_index = self.crypto.fast_blind_index(ip, "ip_address")
+            ip_index = self.crypto.blind_index(ip, "ip_address")
             ip_encrypted = self.crypto.encrypt_data(ip, context=str(cid))
         self._db.execute(
             "INSERT INTO auth_2fa_challenges (id, user_id, token_hash, device_id, ip_index, ip_encrypted, user_agent, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

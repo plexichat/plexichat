@@ -19,30 +19,30 @@ redis>=5.0.0               # Redis client for caching/sessions
 hiredis>=2.3.0             # Redis parser (optional, for performance)
 
 # Authentication & Security
-argon2-cffi>=23.1.0        # Password hashing
-cryptography>=46.0.5       # Encryption
+argon2-cffi>=25.1.0        # Password hashing
+cryptography>=46.0.6       # Encryption
 pyotp>=2.9.0               # TOTP 2FA
 xxhash>=3.4.1              # Fast non-cryptographic hashing
 
 # Validation & Serialization
 pydantic>=2.5.0
-email-validator>=2.1.0
+email-validator>=2.3.0
 
 # Configuration
-PyYAML>=6.0.1
+PyYAML>=6.0.3
 
 # HTTP Client (for webhooks, etc.)
-requests>=2.32.5
+requests>=2.33.1
 urllib3>=2.6.3             # Fixed for GHSA-2xpw-w6gg-jr37, GHSA-38jv-5279-wg99, GHSA-gm62-xv2j-4w53, GHSA-pq67-6m6q-mj2v
 httpx>=0.26.0
-aiohttp>=3.13.3
+aiohttp>=3.13.5
 
 # WebSocket
 websockets>=12.0
 websocket-client>=1.7.0
 
 # Utilities
-python-multipart>=0.0.6    # File uploads
+python-multipart>=0.0.22    # File uploads
 python-dotenv>=1.0.0       # Environment variables
 python-dateutil>=2.8.0     # Date/time utilities for scheduled events
 
@@ -57,7 +57,7 @@ google-re2>=1.1            # Fast, safe regular expressions (no backtracking)
 qrcode[pil]>=7.4.2
 
 # S3/MinIO Storage (optional, for cloud media storage)
-boto3>=1.34.0              # AWS S3 SDK (also works with MinIO)
+boto3>=1.42.82              # AWS S3 SDK (also works with MinIO)
 
 # Testing & Development (optional, for running tests)
 pytest>=7.0.0              # Testing framework
@@ -65,7 +65,7 @@ pytest-asyncio>=0.21.0     # Async test support
 pytest-cov>=4.0.0          # Code coverage
 pytest-timeout>=2.2.0      # Enforce per-test timeouts
 psutil>=5.9.0              # System and process utilities (for performance tests)
-fakeredis>=2.10.0          # In-memory Redis for testing
+fakeredis>=2.34.1          # In-memory Redis for testing
 hypothesis>=6.0.0          # Property-based testing
 diskcache>=5.6.3           # Persistent local file-backed cache
 
