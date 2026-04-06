@@ -75,17 +75,30 @@ class ThemeConfig:
     """Theme configuration for documentation."""
 
     style: str = "dark"
-    background_color: str = "#0b0f14"
-    surface_color: str = "#11161c"
-    text_color: str = "#e6edf3"
-    accent_color: str = "#06b6d4"
-    border_color: str = "#1f2630"
-    font_family: str = "Inter, system-ui"
-    code_font: str = "JetBrains Mono, Fira Code, monospace"
-    line_height: str = "1.7"
-    border_radius: str = "0.375rem"
-    transition_speed: str = "0.15s"
-    sidebar_width: str = "260px"
+    background_color: str = "#0a0a0a"
+    surface_color: str = "#141414"
+    text_color: str = "#f5f5f5"
+    text_muted: str = "#a0a0a0"
+    accent_color: str = "#3b82f6"
+    accent_hover: str = "#60a5fa"
+    border_color: str = "#2a2a2a"
+    border_light: str = "#333333"
+    font_family: str = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    code_font: str = "'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace"
+    font_size_base: str = "16px"
+    line_height: str = "1.6"
+    border_radius_small: str = "6px"
+    border_radius_medium: str = "8px"
+    border_radius_large: str = "12px"
+    transition_speed: str = "0.2s"
+    sidebar_width: str = "280px"
+    content_max_width: str = "900px"
+    spacing_xs: str = "4px"
+    spacing_sm: str = "8px"
+    spacing_md: str = "16px"
+    spacing_lg: str = "24px"
+    spacing_xl: str = "32px"
+    spacing_2xl: str = "48px"
 
 
 @dataclass
@@ -189,17 +202,30 @@ def _load_docs_config() -> DocsConfig:
     theme_conf = docs_conf.get("theme", {})
     theme = ThemeConfig(
         style=theme_conf.get("style", "dark"),
-        background_color=theme_conf.get("background_color", "#0b0f14"),
-        surface_color=theme_conf.get("surface_color", "#11161c"),
-        text_color=theme_conf.get("text_color", "#e6edf3"),
-        accent_color=theme_conf.get("accent_color", "#06b6d4"),
-        border_color=theme_conf.get("border_color", "#1f2630"),
-        font_family=theme_conf.get("font_family", "Inter, system-ui"),
-        code_font=theme_conf.get("code_font", "JetBrains Mono, Fira Code, monospace"),
-        line_height=theme_conf.get("line_height", "1.7"),
-        border_radius=theme_conf.get("border_radius", "0.375rem"),
-        transition_speed=theme_conf.get("transition_speed", "0.15s"),
-        sidebar_width=theme_conf.get("sidebar_width", "260px"),
+        background_color=theme_conf.get("background_color", "#0a0a0a"),
+        surface_color=theme_conf.get("surface_color", "#141414"),
+        text_color=theme_conf.get("text_color", "#f5f5f5"),
+        text_muted=theme_conf.get("text_muted", "#a0a0a0"),
+        accent_color=theme_conf.get("accent_color", "#3b82f6"),
+        accent_hover=theme_conf.get("accent_hover", "#60a5fa"),
+        border_color=theme_conf.get("border_color", "#2a2a2a"),
+        border_light=theme_conf.get("border_light", "#333333"),
+        font_family=theme_conf.get("font_family", "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"),
+        code_font=theme_conf.get("code_font", "'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace"),
+        font_size_base=theme_conf.get("font_size_base", "16px"),
+        line_height=theme_conf.get("line_height", "1.6"),
+        border_radius_small=theme_conf.get("border_radius_small", "6px"),
+        border_radius_medium=theme_conf.get("border_radius_medium", "8px"),
+        border_radius_large=theme_conf.get("border_radius_large", "12px"),
+        transition_speed=theme_conf.get("transition_speed", "0.2s"),
+        sidebar_width=theme_conf.get("sidebar_width", "280px"),
+        content_max_width=theme_conf.get("content_max_width", "900px"),
+        spacing_xs=theme_conf.get("spacing_xs", "4px"),
+        spacing_sm=theme_conf.get("spacing_sm", "8px"),
+        spacing_md=theme_conf.get("spacing_md", "16px"),
+        spacing_lg=theme_conf.get("spacing_lg", "24px"),
+        spacing_xl=theme_conf.get("spacing_xl", "32px"),
+        spacing_2xl=theme_conf.get("spacing_2xl", "48px"),
     )
 
     # Rate limit
@@ -738,17 +764,29 @@ def _build_brand_styles(conf: DocsConfig) -> str:
     return f"""
         :root {{
             --bg: {theme.background_color};
-            --card-bg: {theme.surface_color};
+            --surface: {theme.surface_color};
             --text: {theme.text_color};
+            --text-muted: {theme.text_muted};
             --accent: {theme.accent_color};
+            --accent-hover: {theme.accent_hover};
             --border: {theme.border_color};
+            --border-light: {theme.border_light};
             --font-main: {theme.font_family};
             --font-code: {theme.code_font};
-            --font-size-base: 1rem;
+            --font-size-base: {theme.font_size_base};
             --line-height: {theme.line_height};
-            --border-radius: {theme.border_radius};
+            --border-radius-small: {theme.border_radius_small};
+            --border-radius-medium: {theme.border_radius_medium};
+            --border-radius-large: {theme.border_radius_large};
             --transition-speed: {theme.transition_speed};
             --sidebar-width: {theme.sidebar_width};
+            --content-max-width: {theme.content_max_width};
+            --spacing-xs: {theme.spacing_xs};
+            --spacing-sm: {theme.spacing_sm};
+            --spacing-md: {theme.spacing_md};
+            --spacing-lg: {theme.spacing_lg};
+            --spacing-xl: {theme.spacing_xl};
+            --spacing-2xl: {theme.spacing_2xl};
         }}
 
         * {{ box-sizing: border-box; }}
@@ -760,359 +798,414 @@ def _build_brand_styles(conf: DocsConfig) -> str:
             color: var(--text);
             background: var(--bg);
             font-family: var(--font-main);
+            font-size: var(--font-size-base);
             line-height: var(--line-height);
             min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }}
 
-        .plexi-backdrop {{
-            inset: 0;
-            opacity: 0.55;
-            pointer-events: none;
-            position: fixed;
-            background-image:
-                linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-            background-size: 36px 36px;
-        }}
-
-        .brand-mark {{
-            color: var(--text);
-            display: inline-flex;
-            font-size: 1.1rem;
-            font-weight: 800;
-            letter-spacing: 0.08em;
-            text-decoration: none;
-            text-transform: uppercase;
-        }}
-
-        .brand-mark span {{ color: var(--accent); }}
-
-        .shell-header {{
-            margin-bottom: 1.5rem;
-            position: relative;
-            z-index: 1;
-        }}
-
-        .shell-header-inner {{
-            background: rgba(17, 24, 39, 0.8);
-            backdrop-filter: blur(18px);
-            border: 1px solid rgba(99, 102, 241, 0.18);
-            border-radius: 24px;
-            box-shadow: var(--shadow-lg);
-            display: grid;
-            gap: 1.25rem;
-            padding: 1.5rem;
-        }}
-
-        .shell-brand-block {{ display: grid; gap: 0.8rem; }}
-
-        .surface-badge {{
-            background: rgba(6, 182, 212, 0.1);
-            border: 1px solid rgba(6, 182, 212, 0.28);
-            border-radius: 999px;
-            color: var(--accent);
-            display: inline-flex;
-            font-size: 0.74rem;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            padding: 0.35rem 0.8rem;
-            text-transform: uppercase;
-            width: fit-content;
-        }}
-
-        .shell-title {{
-            font-size: clamp(1.9rem, 4vw, 2.8rem);
-            letter-spacing: -0.05em;
-            line-height: 1.05;
-            margin: 0;
-        }}
-
-        .shell-summary {{
-            color: var(--text-muted);
-            font-size: 0.96rem;
-            margin: 0;
-            max-width: 70ch;
-        }}
-
-        .surface-nav {{
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-        }}
-
-        .surface-link {{
-            background: rgba(15, 23, 42, 0.72);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            color: var(--text-muted);
-            display: inline-flex;
-            font-size: 0.86rem;
-            font-weight: 700;
-            padding: 0.75rem 1rem;
-            text-decoration: none;
-            transition: transform 0.18s ease, border-color 0.18s ease,
-                color 0.18s ease, background 0.18s ease;
-        }}
-
-        .surface-link:hover,
-        .surface-link.active {{
-            background: rgba(99, 102, 241, 0.14);
-            border-color: rgba(99, 102, 241, 0.42);
-            color: var(--text);
-            transform: translateY(-1px);
-        }}
-
-        .runtime-pills {{
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-        }}
-
-        .runtime-pill {{
-            background: rgba(11, 15, 25, 0.85);
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            color: var(--text-muted);
-            display: inline-flex;
-            font-size: 0.78rem;
-            padding: 0.45rem 0.8rem;
-        }}
-
-        .runtime-pill.accent {{
-            border-color: rgba(16, 185, 129, 0.35);
-            color: var(--accent);
+        a:focus-visible,
+        button:focus-visible,
+        [role="button"]:focus-visible,
+        input:focus-visible,
+        select:focus-visible,
+        textarea:focus-visible {{
+            outline: 2px solid rgba(59, 130, 246, 0.7);
+            outline-offset: 2px;
         }}
 
         .docs-layout {{
             display: grid;
-            grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+            grid-template-columns: var(--sidebar-width) 1fr;
             min-height: 100vh;
-            position: relative;
-            z-index: 1;
         }}
 
         .sidebar {{
-            background: rgba(17, 24, 39, 0.84);
-            backdrop-filter: blur(22px);
+            background: var(--surface);
             border-right: 1px solid var(--border);
             height: 100vh;
             overflow-y: auto;
-            padding: 1.5rem 1.1rem 2rem;
+            padding: var(--spacing-xl) var(--spacing-lg);
             position: sticky;
             top: 0;
         }}
 
         .sidebar-header {{
-            background: linear-gradient(180deg, rgba(99, 102, 241, 0.16), rgba(17, 24, 39, 0.92));
-            border: 1px solid rgba(99, 102, 241, 0.24);
-            border-radius: 22px;
-            box-shadow: var(--shadow-md);
-            margin-bottom: 1.5rem;
-            padding: 1.2rem;
+            margin-bottom: var(--spacing-xl);
         }}
 
+        .brand-mark {{
+            color: var(--text);
+            display: inline-block;
+            font-size: 1.125rem;
+            font-weight: 600;
+            letter-spacing: 0.025em;
+            text-decoration: none;
+            margin-bottom: var(--spacing-sm);
+        }}
+
+        .brand-mark:hover {{
+            color: var(--accent);
+        }}
+
+        .brand-mark span {{ color: var(--accent); }}
+
         .sidebar-caption {{
-            color: var(--primary);
+            color: var(--text-muted);
             display: block;
-            font-size: 0.72rem;
-            font-weight: 800;
+            font-size: 0.75rem;
+            font-weight: 600;
             letter-spacing: 0.1em;
-            margin: 0.8rem 0 0.45rem;
+            margin-bottom: var(--spacing-md);
             text-transform: uppercase;
         }}
 
         .sidebar-header h3 {{
-            font-size: 1.05rem;
-            margin: 0 0 0.6rem;
+            font-size: 1rem;
+            font-weight: 600;
+            margin: 0 0 var(--spacing-sm);
+            color: var(--text);
         }}
 
         .sidebar-description {{
             color: var(--text-muted);
-            font-size: 0.84rem;
+            font-size: 0.875rem;
             margin: 0;
+            line-height: 1.5;
         }}
 
         .nav-category {{
             color: var(--text-muted);
-            font-size: 0.72rem;
-            font-weight: 800;
+            font-size: 0.75rem;
+            font-weight: 600;
             letter-spacing: 0.1em;
-            margin: 1.5rem 0.9rem 0.5rem;
+            margin: var(--spacing-xl) var(--spacing-md) var(--spacing-sm);
             text-transform: uppercase;
         }}
 
         .nav-list {{ list-style: none; margin: 0; padding: 0; }}
 
-        .nav-list li + li {{ margin-top: 0.2rem; }}
+        .nav-list li + li {{ margin-top: 2px; }}
 
         .nav-list a {{
             border: 1px solid transparent;
-            border-radius: 14px;
+            border-radius: var(--border-radius-medium);
             color: var(--text-muted);
             display: block;
-            font-size: 0.88rem;
-            padding: 0.7rem 0.95rem;
+            font-size: 0.875rem;
+            padding: var(--spacing-sm) var(--spacing-md);
             text-decoration: none;
-            transition: all 0.18s ease;
+            transition: all var(--transition-speed) ease;
         }}
 
         .nav-list a:hover,
         .nav-list a.active {{
-            background: rgba(99, 102, 241, 0.12);
-            border-color: rgba(99, 102, 241, 0.24);
+            background: var(--surface);
+            border-color: var(--border-light);
             color: var(--text);
-            transform: translateX(2px);
+        }}
+
+        .nav-list a.active {{
+            background: rgba(59, 130, 246, 0.12);
+            border-color: rgba(59, 130, 246, 0.28);
+            color: var(--text);
+            position: relative;
+        }}
+
+        .nav-list a.active:before {{
+            content: "";
+            position: absolute;
+            left: -1px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            background: var(--accent);
+            border-radius: 1px;
         }}
 
         .docs-main {{
-            padding: 1.75rem;
-            position: relative;
+            padding: 0;
+            display: flex;
+            justify-content: center;
         }}
 
         .page-card {{
-            background: rgba(17, 24, 39, 0.78);
-            border: 1px solid var(--border);
-            border-radius: 28px;
-            box-shadow: var(--shadow-lg);
+            background: var(--bg);
+            border-radius: 0;
+            box-shadow: none;
             overflow: hidden;
             position: relative;
+            width: 100%;
+            max-width: var(--content-max-width);
+            margin: 0 auto;
+        }}
+
+        .shell-header {{
+            border-bottom: 1px solid var(--border);
+        }}
+
+        .shell-header-inner {{
+            padding: var(--spacing-2xl) var(--spacing-xl) var(--spacing-lg);
+        }}
+
+        .shell-brand-block {{ margin-bottom: var(--spacing-lg); }}
+
+        .surface-badge {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius-large);
+            color: var(--text-muted);
+            display: inline-flex;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            padding: var(--spacing-xs) var(--spacing-md);
+            text-transform: uppercase;
+            margin-bottom: var(--spacing-md);
+        }}
+
+        .shell-title {{
+            font-size: 2.5rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+            line-height: 1.1;
+            margin: 0 0 var(--spacing-md);
+            color: var(--text);
+        }}
+
+        .shell-summary {{
+            color: var(--text-muted);
+            font-size: 1.125rem;
+            margin: 0 0 var(--spacing-lg);
+            line-height: 1.5;
+        }}
+
+        .surface-nav {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--spacing-sm);
+        }}
+
+        .surface-link {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius-medium);
+            color: var(--text-muted);
+            display: inline-flex;
+            font-size: 0.875rem;
+            font-weight: 500;
+            padding: var(--spacing-sm) var(--spacing-md);
+            text-decoration: none;
+            transition: all var(--transition-speed) ease;
+        }}
+
+        .surface-link:hover,
+        .surface-link.active {{
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }}
+
+        .runtime-pills {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--spacing-sm);
+        }}
+
+        .runtime-pill {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius-large);
+            color: var(--text-muted);
+            display: inline-flex;
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: var(--spacing-xs) var(--spacing-sm);
+        }}
+
+        .runtime-pill.accent {{
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
         }}
 
         .content-container {{
-            margin: 0 auto;
-            max-width: 960px;
-            padding: clamp(1.4rem, 3vw, 2.25rem);
+            padding: var(--spacing-2xl) var(--spacing-xl);
         }}
 
         .content-container > :first-child {{ margin-top: 0; }}
 
-        h1, h2, h3, h4 {{
+        h1, h2, h3, h4, h5, h6 {{
             color: var(--text);
-            line-height: 1.15;
-            margin-top: 1.6em;
+            font-weight: 600;
+            line-height: 1.25;
+            margin-top: var(--spacing-2xl);
+            margin-bottom: var(--spacing-lg);
         }}
 
         h1 {{
-            border-bottom: 1px solid rgba(99, 102, 241, 0.18);
-            font-size: clamp(2rem, 4vw, 3rem);
-            letter-spacing: -0.05em;
-            margin-bottom: 1rem;
-            padding-bottom: 0.8rem;
+            font-size: 2rem;
+            letter-spacing: -0.025em;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: var(--spacing-lg);
         }}
 
         h2 {{
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-            font-size: 1.35rem;
-            padding-bottom: 0.5rem;
+            font-size: 1.5rem;
+            letter-spacing: -0.025em;
         }}
 
-        h3 {{ font-size: 1.05rem; }}
-
-        p, li, td, th {{ color: var(--text-muted); font-size: 0.95rem; }}
-
-        strong {{ color: var(--text); }}
-
-        a {{ color: var(--accent); text-decoration: none; }}
-
-        a:hover {{ color: #a5b4fc; }}
-
-        ul, ol {{ margin: 1rem 0 1.2rem; padding-left: 1.35rem; }}
-
-        li + li {{ margin-top: 0.45rem; }}
-
-        pre {{
-            background: linear-gradient(180deg, rgba(2, 6, 23, 0.96), rgba(15, 23, 42, 0.96));
-            border: 1px solid rgba(99, 102, 241, 0.16);
-            border-radius: 18px;
-            overflow-x: auto;
-            padding: 1.3rem;
+        h3 {{
+            font-size: 1.25rem;
         }}
+
+        h4 {{
+            font-size: 1rem;
+        }}
+
+        p, li, td, th {{ 
+            color: var(--text-muted); 
+            font-size: 1rem;
+            line-height: 1.6;
+        }}
+
+        strong {{ 
+            color: var(--text);
+            font-weight: 600;
+        }}
+
+        a {{ 
+            color: var(--accent); 
+            text-decoration: none;
+            transition: color var(--transition-speed) ease;
+        }}
+
+        a:hover {{ 
+            color: var(--accent-hover);
+        }}
+
+        ul, ol {{ 
+            margin: var(--spacing-lg) 0 var(--spacing-lg); 
+            padding-left: var(--spacing-xl);
+        }}
+
+        li + li {{ margin-top: var(--spacing-sm); }}
 
         code {{
-            background: rgba(15, 23, 42, 0.88);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius-small);
             color: var(--text);
             font-family: var(--font-code);
-            padding: 0.18rem 0.38rem;
+            font-size: 0.875em;
+            padding: 2px var(--spacing-xs);
+        }}
+
+        pre {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius-medium);
+            overflow-x: auto;
+            padding: var(--spacing-lg);
+            margin: var(--spacing-lg) 0;
         }}
 
         pre code {{
             background: transparent;
-            border: 0;
+            border: none;
             padding: 0;
+            font-size: 0.875rem;
+            line-height: 1.5;
         }}
 
-        .code-block {{ margin: 1.4rem 0; position: relative; }}
+        .code-block {{ 
+            margin: var(--spacing-lg) 0; 
+            position: relative;
+        }}
 
         .copy-btn {{
-            align-items: center;
-            background: rgba(99, 102, 241, 0.16);
-            border: 1px solid rgba(99, 102, 241, 0.3);
-            border-radius: 10px;
-            color: var(--text);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius-small);
+            color: var(--text-muted);
             cursor: pointer;
             display: inline-flex;
+            align-items: center;
             font-family: var(--font-main);
-            font-size: 0.8rem;
-            font-weight: 700;
-            gap: 0.35rem;
-            padding: 0.5rem 0.75rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            gap: var(--spacing-xs);
+            padding: var(--spacing-xs) var(--spacing-sm);
             position: absolute;
-            right: 0.85rem;
-            top: 0.85rem;
+            right: var(--spacing-md);
+            top: var(--spacing-md);
+            transition: all var(--transition-speed) ease;
         }}
 
-        .copy-btn:hover {{ background: rgba(99, 102, 241, 0.22); }}
+        .copy-btn:hover {{ 
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }}
 
         .table-wrapper {{
-            background: rgba(15, 23, 42, 0.62);
+            background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 18px;
-            margin: 1.5rem 0;
+            border-radius: var(--border-radius-medium);
+            margin: var(--spacing-lg) 0;
             overflow-x: auto;
         }}
 
-        table {{ border-collapse: collapse; width: 100%; }}
+        table {{ 
+            border-collapse: collapse; 
+            width: 100%;
+        }}
 
         th, td {{
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-            padding: 0.9rem 1rem;
+            border-bottom: 1px solid var(--border);
+            padding: var(--spacing-md);
             text-align: left;
         }}
 
-        tr:first-child td,
         th {{
-            background: rgba(99, 102, 241, 0.08);
+            background: var(--bg);
             color: var(--text);
-            font-size: 0.8rem;
-            letter-spacing: 0.04em;
+            font-size: 0.875rem;
+            font-weight: 600;
+            letter-spacing: 0.025em;
             text-transform: uppercase;
         }}
 
+        tr:last-child td {{
+            border-bottom: none;
+        }}
+
         .note {{
-            background: rgba(99, 102, 241, 0.08);
-            border: 1px solid rgba(99, 102, 241, 0.18);
+            background: var(--surface);
+            border: 1px solid var(--border-light);
             border-left: 4px solid var(--accent);
-            border-radius: 16px;
-            margin: 1.5rem 0;
-            padding: 1rem 1.15rem;
+            border-radius: var(--border-radius-medium);
+            margin: var(--spacing-lg) 0;
+            padding: var(--spacing-md);
         }}
 
         .footer {{
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            border-top: 1px solid var(--border);
             color: var(--text-muted);
             display: flex;
             flex-wrap: wrap;
-            gap: 0.75rem;
-            margin-top: 0;
-            padding: 1rem 1.4rem 1.4rem;
+            gap: var(--spacing-md);
+            margin-top: var(--spacing-2xl);
+            padding: var(--spacing-lg) 0;
+            font-size: 0.875rem;
         }}
 
+        /* OpenAPI overrides */
         .plexi-openapi-page #swagger-ui,
         .plexi-openapi-page redoc {{
             display: block;
-            padding: 0 1.75rem 2rem;
+            padding: 0;
             position: relative;
             z-index: 1;
         }}
@@ -1127,15 +1220,15 @@ def _build_brand_styles(conf: DocsConfig) -> str:
         .plexi-openapi-page .swagger-ui .responses-wrapper,
         .plexi-openapi-page .swagger-ui .parameters-container,
         .plexi-openapi-page .swagger-ui .model-box {{
-            background: rgba(17, 24, 39, 0.82);
+            background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 20px;
+            border-radius: var(--border-radius-medium);
             box-shadow: none;
         }}
 
         .plexi-openapi-page .swagger-ui .scheme-container {{
-            margin: 1.25rem 0 1.5rem;
-            padding: 1rem;
+            margin: var(--spacing-lg) 0;
+            padding: var(--spacing-md);
         }}
 
         .plexi-openapi-page .swagger-ui .info .title,
@@ -1160,24 +1253,27 @@ def _build_brand_styles(conf: DocsConfig) -> str:
 
         .plexi-openapi-page .swagger-ui .opblock-summary {{
             align-items: center;
-            border-color: rgba(255, 255, 255, 0.06);
+            border-color: var(--border);
         }}
 
         .plexi-openapi-page .swagger-ui .opblock.opblock-get {{
-            background: linear-gradient(90deg, rgba(16, 185, 129, 0.12), rgba(17, 24, 39, 0.92));
-            border-color: rgba(16, 185, 129, 0.26);
+            background: var(--surface);
+            border-color: var(--border);
+            border-left: 3px solid rgba(34, 197, 94, 0.55);
         }}
 
         .plexi-openapi-page .swagger-ui .opblock.opblock-post,
         .plexi-openapi-page .swagger-ui .opblock.opblock-put,
         .plexi-openapi-page .swagger-ui .opblock.opblock-patch {{
-            background: linear-gradient(90deg, rgba(99, 102, 241, 0.14), rgba(17, 24, 39, 0.92));
-            border-color: rgba(99, 102, 241, 0.28);
+            background: var(--surface);
+            border-color: var(--border);
+            border-left: 3px solid rgba(59, 130, 246, 0.55);
         }}
 
         .plexi-openapi-page .swagger-ui .opblock.opblock-delete {{
-            background: linear-gradient(90deg, rgba(239, 68, 68, 0.12), rgba(17, 24, 39, 0.92));
-            border-color: rgba(239, 68, 68, 0.24);
+            background: var(--surface);
+            border-color: var(--border);
+            border-left: 3px solid rgba(239, 68, 68, 0.55);
         }}
 
         .plexi-openapi-page .swagger-ui .btn,
@@ -1185,14 +1281,14 @@ def _build_brand_styles(conf: DocsConfig) -> str:
         .plexi-openapi-page .swagger-ui select,
         .plexi-openapi-page .swagger-ui input,
         .plexi-openapi-page .swagger-ui textarea {{
-            border-radius: 12px;
+            border-radius: var(--border-radius-small);
             font-family: var(--font-main);
         }}
 
         .plexi-openapi-page .swagger-ui input,
         .plexi-openapi-page .swagger-ui textarea,
         .plexi-openapi-page .swagger-ui select {{
-            background: rgba(15, 23, 42, 0.92);
+            background: var(--surface);
             border: 1px solid var(--border);
             color: var(--text);
         }}
@@ -1200,13 +1296,13 @@ def _build_brand_styles(conf: DocsConfig) -> str:
         .plexi-openapi-page .swagger-ui .btn.authorize,
         .plexi-openapi-page .swagger-ui .btn.execute,
         .plexi-openapi-page .swagger-ui .download-url-wrapper .select-label select {{
-            border-color: rgba(99, 102, 241, 0.36);
+            border-color: var(--accent);
         }}
         
         .plexi-openapi-page .swagger-ui .btn.execute,
         .plexi-openapi-page .swagger-ui .btn.authorize {{
             background: var(--accent);
-            color: #fff;
+            color: white;
         }}
 
         .plexi-openapi-page .swagger-ui table tbody tr td,
@@ -1227,7 +1323,7 @@ def _build_brand_styles(conf: DocsConfig) -> str:
 
         .plexi-openapi-page .swagger-ui section.models {{
             border: 1px solid var(--border);
-            border-radius: 20px;
+            border-radius: var(--border-radius-medium);
             overflow: hidden;
         }}
 
@@ -1237,7 +1333,7 @@ def _build_brand_styles(conf: DocsConfig) -> str:
         }}
 
         .plexi-openapi-page .swagger-ui .model-toggle:after {{
-            background: var(--primary);
+            background: var(--accent);
         }}
 
         .plexi-openapi-page .menu-content,
@@ -1250,7 +1346,7 @@ def _build_brand_styles(conf: DocsConfig) -> str:
         }}
 
         .plexi-openapi-page .menu-content {{
-            background: rgba(17, 24, 39, 0.88) !important;
+            background: var(--surface) !important;
             border-right: 1px solid var(--border) !important;
         }}
 
@@ -1267,19 +1363,35 @@ def _build_brand_styles(conf: DocsConfig) -> str:
             color: var(--text) !important;
         }}
 
-        .plexi-openapi-page p,
-        .plexi-openapi-page li,
-        .plexi-openapi-page label,
-        .plexi-openapi-page span,
-        .plexi-openapi-page td,
-        .plexi-openapi-page th {{
+        .plexi-openapi-page .swagger-ui,
+        .plexi-openapi-page .swagger-ui .markdown,
+        .plexi-openapi-page .swagger-ui .renderedMarkdown,
+        .plexi-openapi-page .swagger-ui .opblock-summary-description,
+        .plexi-openapi-page .swagger-ui .response-col_description__inner,
+        .plexi-openapi-page .swagger-ui .parameter__name,
+        .plexi-openapi-page .swagger-ui .parameter__type,
+        .plexi-openapi-page .swagger-ui .prop-type,
+        .plexi-openapi-page .swagger-ui .model,
+        .plexi-openapi-page .swagger-ui .model-title,
+        .plexi-openapi-page .swagger-ui .tab li {{
             color: var(--text-muted) !important;
         }}
 
+        .plexi-openapi-page .swagger-ui .opblock-summary-method,
+        .plexi-openapi-page .swagger-ui .opblock-tag,
+        .plexi-openapi-page .swagger-ui .info .title,
+        .plexi-openapi-page .swagger-ui h1,
+        .plexi-openapi-page .swagger-ui h2,
+        .plexi-openapi-page .swagger-ui h3,
+        .plexi-openapi-page .swagger-ui h4,
+        .plexi-openapi-page .swagger-ui h5 {{
+            color: var(--text) !important;
+        }}
+
         .plexi-openapi-page [role="search"] input {{
-            background: rgba(15, 23, 42, 0.94) !important;
+            background: var(--surface) !important;
             border: 1px solid var(--border) !important;
-            border-radius: 14px !important;
+            border-radius: var(--border-radius-medium) !important;
             box-shadow: none !important;
             color: var(--text) !important;
         }}
@@ -1292,11 +1404,11 @@ def _build_brand_styles(conf: DocsConfig) -> str:
 
         .plexi-openapi-page pre,
         .plexi-openapi-page code {{
-            background: rgba(2, 6, 23, 0.92) !important;
-            border-radius: 14px !important;
+            background: var(--surface) !important;
+            border-radius: var(--border-radius-small) !important;
         }}
 
-        @media (max-width: 1100px) {{
+        @media (max-width: 1024px) {{
             .docs-layout {{ grid-template-columns: 1fr; }}
             .sidebar {{
                 border-right: 0;
@@ -1305,20 +1417,25 @@ def _build_brand_styles(conf: DocsConfig) -> str:
                 position: relative;
                 top: auto;
             }}
+            .content-container {{
+                padding: var(--spacing-xl) var(--spacing-lg);
+            }}
         }}
 
-        @media (max-width: 720px) {{
-            .docs-main,
-            .plexi-openapi-page #swagger-ui,
-            .plexi-openapi-page redoc {{
-                padding-left: 1rem;
-                padding-right: 1rem;
+        @media (max-width: 768px) {{
+            .shell-header {{
+                padding: var(--spacing-lg) var(--spacing-md);
             }}
-
-            .shell-header-inner,
-            .page-card {{ border-radius: 22px; }}
-
-            .surface-link {{ width: 100%; justify-content: center; }}
+            .content-container {{
+                padding: var(--spacing-lg) var(--spacing-md);
+            }}
+            .shell-title {{
+                font-size: 2rem;
+            }}
+            .surface-link {{ 
+                width: 100%; 
+                justify-content: center; 
+            }}
         }}
     """
 
@@ -1357,7 +1474,7 @@ def render_swagger_ui_page(
     )
     html = html.replace(
         '<div id="swagger-ui">',
-        f'<div class="plexi-backdrop" aria-hidden="true"></div>{shell_header}<div id="swagger-ui">',
+        f'{shell_header}<div id="swagger-ui">',
     )
     html = html.replace("</head>", f"<style>{_build_brand_styles(conf)}</style></head>")
     return HTMLResponse(html)
@@ -1381,8 +1498,7 @@ def render_redoc_page(request: Request, title: str, openapi_url: str) -> HTMLRes
     html = html.replace("<body>", '<body class="plexi-openapi-page plexi-redoc-page">')
     html = html.replace(
         f'<redoc spec-url="{openapi_url}"></redoc>',
-        f'<div class="plexi-backdrop" aria-hidden="true"></div>{shell_header}'
-        f'<redoc spec-url="{openapi_url}"></redoc>',
+        f'{shell_header}<redoc spec-url="{openapi_url}"></redoc>',
     )
     html = html.replace("</head>", f"<style>{_build_brand_styles(conf)}</style></head>")
     return HTMLResponse(html)
@@ -1686,7 +1802,7 @@ def _markdown_to_html(
                 code_lang = line[3:].strip() or "text"
                 code_block_id += 1
                 html_lines.append(
-                    f'<div class="code-block"><button class="copy-btn" data-target="code-{code_block_id}">📋</button><pre><code id="code-{code_block_id}" class="language-{code_lang}">'
+                    f'<div class="code-block"><button class="copy-btn" data-target="code-{code_block_id}">Copy</button><pre><code id="code-{code_block_id}" class="language-{code_lang}">'
                 )
                 in_code_block = True
             else:
@@ -1804,7 +1920,6 @@ def _markdown_to_html(
     <style>{_build_brand_styles(conf)}</style>
 </head>
 <body class="plexi-docs-page">
-    <div class="plexi-backdrop" aria-hidden="true"></div>
     <div class="docs-layout">
         {sidebar_html}
         <main class="docs-main">
@@ -1820,8 +1935,9 @@ def _markdown_to_html(
             btn.addEventListener('click', async () => {{
                 const code = document.getElementById(btn.dataset.target).textContent;
                 await navigator.clipboard.writeText(code);
-                btn.textContent = '✓';
-                setTimeout(() => btn.textContent = '📋', 2000);
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied';
+                setTimeout(() => btn.textContent = originalText, 2000);
             }});
         }});
     </script>
