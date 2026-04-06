@@ -4,7 +4,7 @@ This section organizes the backend REST API by route group. For exact request an
 
 ## Base URL
 
-All routes in this section are relative to `{{BASE_URL}}`.
+All routes in this section are relative to `https://api.plexichat.com`.
 
 ## Public Utility Endpoints
 

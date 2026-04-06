@@ -4,7 +4,7 @@ The backend exposes an operator-only admin surface in addition to the public API
 
 ## Base Path
 
-All paths below are relative to the configured admin base path, shown here as `<admin-base>`. The default value is `/admin`, and these routes are mounted at the application root rather than under `{{BASE_URL}}`.
+All paths below are relative to the configured admin base path, shown here as `<admin-base>`. The default value is `/admin`, and these routes are mounted at the application root rather than under `https://api.plexichat.com`.
 
 ## Access Model
 

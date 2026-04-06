@@ -2,7 +2,7 @@
 
 Endpoints for user profile management.
 
-**Base URL**: `{{BASE_URL}}`
+**Base URL**: `https://api.plexichat.com`
 
 ## GET /users/@me
 
@@ -11,7 +11,7 @@ Get the current authenticated user's profile.
 ### Example Request
 
 ```bash
-curl -X GET {{BASE_URL}}/users/@me \
+curl -X GET https://api.plexichat.com/users/@me \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -22,7 +22,7 @@ curl -X GET {{BASE_URL}}/users/@me \
   "id": "123456789012345678",
   "username": "johndoe",
   "email": "john@example.com",
-  "avatar_url": "{{BASE_URL}}/avatars/users/123456789012345678",
+  "avatar_url": "https://api.plexichat.com/avatars/users/123456789012345678",
   "created_at": 1704067200,
   "email_verified": true,
   "totp_enabled": false,
@@ -109,7 +109,7 @@ Update the current user's profile.
 ### Example Request
 
 ```bash
-curl -X PATCH {{BASE_URL}}/users/@me \
+curl -X PATCH https://api.plexichat.com/users/@me \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -137,7 +137,7 @@ Upload a new avatar for the current user.
 ### Example Request
 
 ```bash
-curl -X POST {{BASE_URL}}/users/@me/avatar \
+curl -X POST https://api.plexichat.com/users/@me/avatar \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -F "file=@/path/to/avatar.png"
 ```
@@ -147,7 +147,7 @@ curl -X POST {{BASE_URL}}/users/@me/avatar \
 ```json
 {
   "success": true,
-  "avatar_url": "{{BASE_URL}}/avatars/users/123456789012345678",
+  "avatar_url": "https://api.plexichat.com/avatars/users/123456789012345678",
   "width": 256,
   "height": 256,
   "size": 12345,
@@ -283,7 +283,7 @@ Search for a user by username.
 ### Example Request
 
 ```bash
-curl -X GET "{{BASE_URL}}/users/search?username=johndoe" \
+curl -X GET "https://api.plexichat.com/users/search?username=johndoe" \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -293,7 +293,7 @@ curl -X GET "{{BASE_URL}}/users/search?username=johndoe" \
 {
   "id": "123456789012345678",
   "username": "johndoe",
-  "avatar_url": "{{BASE_URL}}/avatars/users/123456789012345678",
+  "avatar_url": "https://api.plexichat.com/avatars/users/123456789012345678",
   "created_at": 1704067200
 }
 ```
@@ -371,7 +371,7 @@ Returned for other users (`/users/{user_id}`).
 {
   "id": "123456789012345678",
   "username": "johndoe",
-  "avatar_url": "https://cdn.example.com/avatars/123.png",
+  "avatar_url": "https://api.plexichat.com/avatars/users/123456789012345678",
   "created_at": 1704067200,
   "badges": []
 }

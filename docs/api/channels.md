@@ -2,7 +2,7 @@
 
 Endpoints for channel management.
 
-**Base URL**: `{{BASE_URL}}`
+**Base URL**: `https://api.plexichat.com`
 
 ## GET /channels/{channel_id}
 
@@ -11,7 +11,7 @@ Get channel details. Requires access to the channel.
 ### Example Request
 
 ```bash
-curl -X GET {{BASE_URL}}/channels/123456789012345678 \
+curl -X GET https://api.plexichat.com/channels/123456789012345678 \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -57,7 +57,7 @@ Update channel settings. Requires manage channels permission.
 ### Example Request
 
 ```bash
-curl -X PATCH {{BASE_URL}}/channels/123456789012345678 \
+curl -X PATCH https://api.plexichat.com/channels/123456789012345678 \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -159,7 +159,7 @@ Create an invite for a channel. Requires create invite permission.
 ### Example Request
 
 ```bash
-curl -X POST {{BASE_URL}}/channels/123456789012345678/invites \
+curl -X POST https://api.plexichat.com/channels/123456789012345678/invites \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

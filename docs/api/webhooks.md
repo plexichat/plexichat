@@ -41,7 +41,7 @@ Authorization: Bearer <token>
   "name": "My Webhook",
   "avatar_url": "https://cdn.example.com/avatars/webhook.png",
   "token": "webhook_token_here",
-  "url": "{{BASE_URL}}/webhooks/123456789012345678/webhook_token_here",
+  "url": "https://api.plexichat.com/webhooks/123456789012345678/webhook_token_here",
   "created_at": 1704067200
 }
 ```

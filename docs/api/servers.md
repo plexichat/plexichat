@@ -2,7 +2,7 @@
 
 Endpoints for server (guild) management.
 
-**Base URL**: `{{BASE_URL}}`
+**Base URL**: `https://api.plexichat.com`
 
 ## GET /servers
 
@@ -11,7 +11,7 @@ Get all servers the authenticated user is a member of.
 ### Example Request
 
 ```bash
-curl -X GET {{BASE_URL}}/servers \
+curl -X GET https://api.plexichat.com/servers \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -23,7 +23,7 @@ curl -X GET {{BASE_URL}}/servers \
     "id": "123456789012345678",
     "name": "My Server",
     "description": "A cool server",
-    "icon_url": "{{BASE_URL}}/avatars/servers/123456789012345678",
+    "icon_url": "https://api.plexichat.com/avatars/servers/123456789012345678",
     "owner_id": "123456789012345678",
     "member_count": 150,
     "default_channel_id": "234567890123456789",
@@ -46,7 +46,7 @@ Create a new server. The authenticated user becomes the owner.
 ### Example Request
 
 ```bash
-curl -X POST {{BASE_URL}}/servers \
+curl -X POST https://api.plexichat.com/servers \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
