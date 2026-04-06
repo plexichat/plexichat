@@ -184,6 +184,11 @@ def blind_index(data: str, scope: str) -> str:
     return _get_manager().blind_index(data, scope)
 
 
+def fast_blind_index(data: str, scope: str) -> str:
+    """Backwards-compatible alias for blind_index."""
+    return _get_manager().fast_blind_index(data, scope)
+
+
 def generate_key_pair() -> Tuple[bytes, bytes]:
     """
     Generate an Ed25519 key pair for digital signatures.

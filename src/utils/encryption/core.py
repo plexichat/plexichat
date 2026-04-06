@@ -466,11 +466,19 @@ class EncryptionManager:
         Generate a keyed hash for searching encrypted fields.
         """
         kek = self.keyring._get_kek()
-        # Use KEK + Scope to derive an index key
         index_key = hashlib.blake2b(kek, key=scope.encode(), digest_size=32).digest()
         return hashlib.blake2b(
             data.lower().strip().encode(), key=index_key, digest_size=32
         ).hexdigest()
+
+    def fast_blind_index(self, data: str, scope: str) -> str:
+        """Backwards-compatible alias for blind_index.
+
+        Some parts of the codebase still call fast_blind_index for high-volume
+        fields (for example, IP address enforcement). The implementation is now
+        the same as blind_index.
+        """
+        return self.blind_index(data, scope)
 
     def rotate_keys(self, force: bool = False) -> bool:
         """Rotate keys if enough time has passed."""
