@@ -427,9 +427,16 @@ class AuthManager(BaseManager):
         if deletion_status == "frozen":
             deletion_at = row.get("deletion_at")
             logger.warning(f"Login attempt for frozen account {user_id}")
-            # Format time for the error message
+            # Format time for the error message safely
             import datetime
-            dt = datetime.datetime.fromtimestamp(deletion_at) if deletion_at else "unknown"
+            try:
+                # Max supported year is 9999
+                if deletion_at and deletion_at < 32536799999: # Approx year 9999
+                    dt = datetime.datetime.fromtimestamp(deletion_at).strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    dt = "a future date"
+            except (ValueError, OSError, OverflowError):
+                dt = "a future date"
             raise AccountLockedError(f"Account is scheduled for deletion on {dt}. Contact an administrator to cancel.")
 
         if row["account_locked"]:
