@@ -259,11 +259,22 @@ def get_sessions(user_id: int) -> List[Session]:
     """Get all active sessions for a user."""
     return _get_manager().get_sessions(user_id)
 
-
 def revoke_session(user_id: int, session_id: int) -> bool:
     """Revoke a specific session."""
     return _get_manager().revoke_session(user_id, session_id)
 
+
+def schedule_account_deletion(user_id: int, password: str, totp_code: Optional[str] = None) -> bool:
+    """Schedule an account for deletion."""
+    return _get_manager().schedule_account_deletion(user_id, password, totp_code)
+
+
+def cancel_account_deletion(user_id: int, admin_id: Optional[int] = None) -> bool:
+    """Cancel a scheduled account deletion."""
+    return _get_manager().cancel_account_deletion(user_id, admin_id)
+
+
+def update_user(
 
 # === User Profile ===
 
@@ -698,6 +709,8 @@ __all__ = [
     "logout_all",
     "get_sessions",
     "revoke_session",
+    "schedule_account_deletion",
+    "cancel_account_deletion",
     # 2FA
     "setup_2fa",
     "confirm_2fa",

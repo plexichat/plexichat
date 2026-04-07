@@ -58,6 +58,8 @@ class UserResponse(BaseModel):
     totp_enabled: bool = Field(False, description="2FA enabled status")
     age_verified: bool = Field(False, description="Age verification status")
     badges: List[str] = Field(default_factory=list, description="User badges")
+    deletion_status: str = Field("active", description="Account deletion status")
+    deletion_at: Optional[int] = Field(None, description="Scheduled deletion timestamp")
 
 
 class SessionResponse(BaseModel):

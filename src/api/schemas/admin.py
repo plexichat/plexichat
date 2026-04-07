@@ -385,6 +385,8 @@ class UserSearchResponse(BaseModel):
     tier: str = Field(..., description="User tier")
     badges: List[str] = Field(..., description="User badges")
     created_at: int = Field(..., description="Creation timestamp")
+    deletion_status: str = Field("active", description="Account deletion status")
+    deletion_at: Optional[int] = Field(None, description="Scheduled deletion timestamp")
 
 
 class UserSearchListResponse(BaseModel):
@@ -406,6 +408,8 @@ class UserDetailsResponse(BaseModel):
     tier: str = Field(..., description="User tier")
     badges: List[str] = Field(..., description="User badges")
     created_at: int = Field(..., description="Creation timestamp")
+    deletion_status: str = Field("active", description="Account deletion status")
+    deletion_at: Optional[int] = Field(None, description="Scheduled deletion timestamp")
     last_login: Optional[int] = Field(None, description="Last login timestamp")
     account_locked: bool = Field(False, description="Whether account is locked")
     locked_until: Optional[int] = Field(None, description="Lock expiration timestamp")
@@ -677,6 +681,26 @@ class AccessTokenDetailResponse(BaseModel):
     total_events: int
     distinct_ip_count: int
     denied_count_total: int
+
+
+class ScheduledDeletionResponse(BaseModel):
+    """Information about a scheduled account deletion."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: str = Field(..., description="User ID")
+    username: str = Field(..., description="Username")
+    scheduled_at: int = Field(..., description="Timestamp when deletion was scheduled")
+    deletion_at: int = Field(..., description="Timestamp when permanent purge will occur")
+    days_left: int = Field(..., description="Approximate days remaining until purge")
+
+
+class ScheduledDeletionListResponse(BaseModel):
+    """List of scheduled deletions."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    deletions: List[ScheduledDeletionResponse] = Field(..., description="Scheduled deletions")
 
 
 class ForceLogoutRequest(BaseModel):

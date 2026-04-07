@@ -65,6 +65,7 @@ from .tokens import (
     parse_token,
     verify_token_hash,
 )
+from .deletion_log import DeletionLog
 from .passwords import (
     validate_password as validate_pwd,
     validate_username,
@@ -102,6 +103,7 @@ class AuthManager(BaseManager):
         self._config = config.get("authentication", {})
         logger.info("Initializing authentication module")
         self.blacklist = BlacklistManager(db)
+        self.deletion_log = DeletionLog()
         self._ensure_system_user()
 
     def _json_dumps(self, data: Any) -> str:
@@ -419,6 +421,17 @@ class AuthManager(BaseManager):
             raise InvalidCredentialsError("Invalid credentials")
 
         user_id = row["id"]
+        
+        # Hard Freeze: Check for deletion status
+        deletion_status = row.get("deletion_status", "active")
+        if deletion_status == "frozen":
+            deletion_at = row.get("deletion_at")
+            logger.warning(f"Login attempt for frozen account {user_id}")
+            # Format time for the error message
+            import datetime
+            dt = datetime.datetime.fromtimestamp(deletion_at) if deletion_at else "unknown"
+            raise AccountLockedError(f"Account is scheduled for deletion on {dt}. Contact an administrator to cancel.")
+
         if row["account_locked"]:
             # Check if lock is permanent (no expiry) or active (expiry in future)
             if not row["locked_until"] or row["locked_until"] > self._get_timestamp():
@@ -626,7 +639,7 @@ class AuthManager(BaseManager):
         self, parsed: Dict, ip_address: Optional[str], user_agent: Optional[str] = None
     ) -> TokenInfo:
         row = self._db.fetch_one(
-            "SELECT s.*, u.username, u.permissions, u.account_type, u.account_locked, u.force_username_change FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?",
+            "SELECT s.*, u.username, u.permissions, u.account_type, u.account_locked, u.force_username_change, u.deletion_status FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?",
             (parsed["id"],),
         )
         if (
@@ -635,6 +648,12 @@ class AuthManager(BaseManager):
             or not verify_token_hash(parsed["secret"], row["token_hash"])
         ):
             raise TokenInvalidError("Invalid/Revoked")
+            
+        # Hard Freeze check
+        if row.get("deletion_status") == "frozen":
+            logger.warning(f"Attempted use of token for frozen user {row['user_id']}")
+            raise TokenInvalidError("Account is scheduled for deletion")
+            
         if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
 
@@ -703,6 +722,7 @@ class AuthManager(BaseManager):
             expires_at=row["expires_at"],
             account_locked=bool(row.get("account_locked", 0)),
             force_username_change=bool(row.get("force_username_change", 0)),
+            deletion_status=row.get("deletion_status", "active"),
         )
 
     def _verify_bot_token(self, parsed: Dict, ip_address: Optional[str]) -> TokenInfo:
@@ -2284,6 +2304,8 @@ class AuthManager(BaseManager):
             force_username_change=bool(row.get("force_username_change", 0)),
             badges=row.get("badges_list", []),
             public_key=row.get("public_key"),
+            deletion_status=row.get("deletion_status", "active"),
+            deletion_at=row.get("deletion_at"),
         )
 
     @cached(ttl=300, prefix="user_by_username")
@@ -2604,6 +2626,86 @@ class AuthManager(BaseManager):
             user=user_obj,
             session=session,
         )
+
+    # === Account Deletion ===
+
+    def schedule_account_deletion(self, user_id: int, password: str, totp_code: Optional[str] = None) -> bool:
+        """
+        Schedules an account for deletion with a 30-day grace period.
+        """
+        row = self._db.fetch_one("SELECT username, email_encrypted, password_hash, totp_enabled, totp_secret_encrypted FROM auth_users WHERE id = ?", (user_id,))
+        if not row:
+            raise UserNotFoundError("User not found")
+
+        # 1. Verify password
+        if not self.crypto.verify_password(password, row["password_hash"]):
+            raise InvalidCredentialsError("Incorrect password")
+
+        # 2. Verify TOTP if enabled
+        if row["totp_enabled"]:
+            if not totp_code:
+                raise TwoFactorInvalidError("2FA code required")
+            
+            secret = self.crypto.decrypt_data(row["totp_secret_encrypted"], context=str(user_id))
+            if not totp_module.verify_totp_code(secret, totp_code, user_id=user_id):
+                raise TwoFactorInvalidError("Invalid 2FA code")
+
+        # 3. Perform the freeze
+        grace_days = self._config.get("account_deletion", {}).get("grace_period_days", 30)
+        now = self._get_timestamp()
+        deletion_at = now + (grace_days * 86400)
+
+        self._db.execute(
+            "UPDATE auth_users SET deletion_status = 'frozen', deletion_at = ? WHERE id = ?",
+            (deletion_at, user_id)
+        )
+
+        # 4. Backup to DB record (last resort)
+        # Snowflake ID for record
+        record_id = self._generate_id()
+        # identifier is email or username
+        identifier = row["username"]
+        import hashlib
+        self._db.execute(
+            "INSERT INTO auth_deletion_records (id, user_id, identifier_hash, status, scheduled_at) VALUES (?, ?, ?, ?, ?)",
+            (record_id, user_id, hashlib.sha256(identifier.encode()).hexdigest(), 'frozen', now)
+        )
+
+        # 5. Log to external Hash-Chain Audit Log
+        self.deletion_log.log_event(user_id, "SCHEDULED", identifier, {"scheduled_at": now, "deletion_at": deletion_at})
+
+        # 6. Purge all sessions
+        self.logout_all(user_id)
+        
+        # 7. Invalidate caches
+        invalidate_pattern(f"user_profile:{user_id}")
+        invalidate_pattern(f"user_data:*{user_id}*")
+        
+        logger.info(f"Account scheduled for deletion: user_id={user_id}, scheduled_at={now}, deletion_at={deletion_at}")
+        return True
+
+    def cancel_account_deletion(self, user_id: int, admin_id: Optional[int] = None) -> bool:
+        """
+        Cancels a scheduled account deletion.
+        """
+        row = self._db.fetch_one("SELECT username FROM auth_users WHERE id = ?", (user_id,))
+        if not row:
+            raise UserNotFoundError("User not found")
+
+        self._db.execute(
+            "UPDATE auth_users SET deletion_status = 'active', deletion_at = NULL WHERE id = ?",
+            (user_id,)
+        )
+        
+        # Update/Delete backup record
+        self._db.execute("DELETE FROM auth_deletion_records WHERE user_id = ?", (user_id,))
+
+        # Log to external Hash-Chain
+        self.deletion_log.log_event(user_id, "CANCELLED", row["username"], {"admin_id": admin_id})
+
+        invalidate_pattern(f"user_profile:{user_id}")
+        logger.info(f"Account deletion cancelled: user_id={user_id}, cancelled_by={admin_id or 'user'}")
+        return True
 
 
 

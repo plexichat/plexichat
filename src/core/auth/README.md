@@ -178,6 +178,24 @@ auth.rename_device(user_id, device_id, "Work Laptop")
 auth.revoke_device(user_id, device_id)
 ```
 
+### Account Deletion (GDPR)
+
+Plexichat implements a secure account deletion workflow with a 30-day grace period and a cryptographically chained external audit log.
+
+```python
+# Schedule account for deletion (starts 30-day freeze)
+auth.schedule_account_deletion(user_id, password="...", code="123456")
+
+# Cancel a scheduled deletion
+auth.cancel_account_deletion(user_id, admin_id=...)
+```
+
+**Key Safety Features:**
+1. **Hard Freeze**: Once scheduled, all sessions are revoked and login is disabled.
+2. **Rollback Protection**: An external `deletion_log.jsonl` tracks deletions. If the database is restored from an old backup, the **Account Reaper** detects the discrepancy on boot and re-freezes the "zombie" accounts immediately.
+3. **Hash Chain**: The audit log entries are chained using SHA256 hashes, ensuring tamper-evidence.
+4. **Idempotent Purge**: The background Reaper permanently erases media, anonymizes messages, and deletes the user record once the grace period expires.
+
 ### Audit Log
 
 ```python

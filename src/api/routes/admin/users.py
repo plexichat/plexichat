@@ -12,6 +12,8 @@ from src.api.schemas.admin import (
     UserNotesResponse,
     UserNotesUpdate,
     ForceUsernameChangeRequest,
+    ScheduledDeletionListResponse,
+    ScheduledDeletionResponse,
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
@@ -231,3 +233,61 @@ async def admin_force_username_change(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid user ID"}},
         )
+
+
+@router.get("/users/scheduled-deletions", response_model=ScheduledDeletionListResponse)
+async def admin_list_scheduled_deletions(request: Request):
+    """
+    List all accounts currently in the 30-day grace period for deletion.
+    """
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    import src.api as api
+    import time
+    
+    db = api.get_db()
+    config = api.get_config()
+    grace_days = config.get("authentication", {}).get("account_deletion", {}).get("grace_period_days", 30)
+    
+    rows = db.fetch_all(
+        "SELECT id, username, deletion_at FROM auth_users WHERE deletion_status = 'frozen' ORDER BY deletion_at ASC"
+    )
+    
+    # We also check the backup table and audit log in a real production environment
+    # but for the API we show what's currently active in the DB.
+    
+    now = int(time.time())
+    deletions = []
+    for row in rows:
+        deletion_at = row["deletion_at"]
+        scheduled_at = deletion_at - (grace_days * 86400)
+        days_left = max(0, (deletion_at - now) // 86400)
+        
+        deletions.append(ScheduledDeletionResponse(
+            user_id=str(row["id"]),
+            username=row["username"],
+            scheduled_at=scheduled_at,
+            deletion_at=deletion_at,
+            days_left=days_left
+        ))
+        
+    return ScheduledDeletionListResponse(deletions=deletions)
+
+
+@router.post("/users/{user_id}/cancel-deletion", response_model=SuccessResponse)
+async def admin_cancel_account_deletion(request: Request, user_id: str):
+    """
+    Cancel a scheduled account deletion and restore the account to 'active' status.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    import src.api as api
+    
+    auth = api.get_auth()
+    try:
+        uid = int(user_id)
+        auth.cancel_account_deletion(uid, admin_id=int(admin_id))
+        return SuccessResponse(success=True)
+    except Exception as e:
+        logger.error(f"Admin failed to cancel deletion for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

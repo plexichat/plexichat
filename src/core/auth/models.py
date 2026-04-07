@@ -78,6 +78,8 @@ class User:
     age_verified: bool = False
     date_of_birth: Optional[str] = None  # ISO format YYYY-MM-DD
     badges: List[str] = field(default_factory=list)
+    deletion_status: str = "active"
+    deletion_at: Optional[int] = None
 
     @property
     def avatar_url(self) -> Optional[str]:
@@ -204,6 +206,7 @@ class TokenInfo:
     avatar_url: Optional[str] = None
     account_locked: bool = False
     force_username_change: bool = False
+    deletion_status: str = "active"
 
 
 @dataclass

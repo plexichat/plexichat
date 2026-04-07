@@ -13,6 +13,7 @@ from src.api.schemas.users import (
     UserUpdateRequest,
     UserPublicResponse,
     UserAvatarResponse,
+    UserDeletionRequest,
 )
 from src.api.schemas.channels import (
     DMChannelResponse,
@@ -24,7 +25,7 @@ from src.api.schemas.messages import (
     MessagingSettingsResponse,
     MessagingSettingsUpdateRequest,
 )
-from src.api.schemas.common import SnowflakeID, ErrorResponse
+from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.database import cached, invalidate_pattern
 from .helpers import _user_to_response, _user_to_public_response, _get_user_cached
 
@@ -823,6 +824,63 @@ async def update_messaging_settings(
     except Exception as e:
         logger.error(
             f"Failed to update messaging settings for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.delete(
+    "/@me",
+    response_model=SuccessResponse,
+    summary="Delete account",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid password or 2FA code"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def schedule_account_deletion(
+    body: UserDeletionRequest, current_user: TokenInfo = Depends(get_current_user)
+) -> SuccessResponse:
+    """
+    Schedule the current user's account for deletion.
+
+    Requires password verification and 2FA code (if enabled).
+    The account will be frozen for 30 days before permanent erasure.
+    """
+    auth = api.get_auth()
+    if not auth:
+        logger.error("Auth module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
+        )
+
+    try:
+        from src.core.auth.exceptions import (
+            InvalidCredentialsError,
+            TwoFactorInvalidError,
+        )
+
+        auth.schedule_account_deletion(
+            user_id=current_user.user_id,
+            password=body.password,
+            totp_code=body.code,
+        )
+
+        logger.info(f"User {current_user.user_id} scheduled account deletion")
+        return SuccessResponse(success=True)
+
+    except (InvalidCredentialsError, TwoFactorInvalidError) as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+    except Exception as e:
+        logger.error(
+            f"Failed to schedule deletion for user {current_user.user_id}: {e}",
             exc_info=True,
         )
         raise HTTPException(

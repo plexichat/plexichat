@@ -24,6 +24,15 @@ class UserUpdateRequest(BaseModel):
     )
 
 
+class UserDeletionRequest(BaseModel):
+    """Account deletion request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    password: str = Field(..., description="Current password for verification")
+    code: Optional[str] = Field(None, description="2FA code (required if enabled)")
+
+
 class UserPublicResponse(BaseModel):
     """Public user information response."""
 

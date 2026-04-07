@@ -686,6 +686,15 @@ class PlexichatServer:
         # Dependent initialization group (Parallel)
         def init_dependent():
             threads = []
+            
+            # Start Account Reaper (handles boot-check and background purge)
+            try:
+                from src.core.auth.reaper import AccountReaper
+                reaper = AccountReaper(self.db, auth)
+                reaper.start()
+                self._modules["reaper"] = reaper
+            except Exception as e:
+                logger.error(f"Failed to start Account Reaper: {e}")
 
             # 1. Presence
             def init_presence():

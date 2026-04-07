@@ -77,6 +77,24 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 # SECURITY: Enforce TPM or Environment Variable key source for production
                 "require_secure_source": True,
             },
+            "account_deletion": {
+                "enabled": True,
+                "grace_period_days": 30,
+                "reminder_days_before_purge": [7, 1],
+                "hard_freeze": True,
+                "anonymize_content": True,
+                "audit_log": {
+                    "file_path": str(home_dir / "audit" / "deletion_log.jsonl"),
+                    "hash_chain_enabled": True,
+                    "backup_to_s3": True,
+                    "s3_backup_path": "audit/deletions/log_backup.jsonl",
+                },
+                "reaper": {
+                    "interval_hours": 24,
+                    "boot_check_enabled": True,
+                    "batch_size": 50,
+                },
+            },
             "accounts": {
                 "allow_registration": True,
                 "require_email_verification": False,

@@ -366,6 +366,19 @@ async def get_current_user(request: Request) -> TokenInfo:
             },
         )
 
+    # Account Deletion check (Hard Freeze)
+    if getattr(user, "deletion_status", "active") == "frozen":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Account scheduled for deletion",
+                    "reason": "This account is scheduled for deletion and is currently frozen.",
+                }
+            },
+        )
+
     # Forced Username Change check
     if user.force_username_change:
         # Allow GET @me (to see current status) and PATCH @me (to fix the username)
