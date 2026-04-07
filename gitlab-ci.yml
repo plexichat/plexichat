@@ -1,0 +1,173 @@
+stages:
+  - lint
+  - security
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  GIT_SUBMODULE_STRATEGY: recursive
+
+cache:
+  key:
+    files:
+      - requirements.txt
+    prefix: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .cache/pip
+    - .venv/
+  policy: pull-push
+
+.python_base:
+  image: python:3.11-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
+    - python -m venv .venv
+    - source .venv/bin/activate
+    - pip install --upgrade pip setuptools wheel
+    - pip install -r requirements.txt
+    - git submodule update --init --recursive
+
+# =============================================================================
+# STAGE 1: LINT
+# =============================================================================
+
+lint:ruff:
+  extends: .python_base
+  stage: lint
+  timeout: 10m
+  cache:
+    policy: pull
+  script:
+    - pip install ruff
+    - ruff check src/ --output-format=gitlab > ruff-report.json || true
+    - ruff check src/
+  artifacts:
+    reports:
+      codequality: ruff-report.json
+    paths:
+      - ruff-report.json
+    expire_in: 7 days
+  allow_failure: true
+
+lint:format:
+  extends: .python_base
+  stage: lint
+  timeout: 10m
+  cache:
+    policy: pull
+  script:
+    - pip install ruff
+    - ruff format --check src/
+  allow_failure: true
+
+lint:types:
+  extends: .python_base
+  stage: lint
+  timeout: 15m
+  cache:
+    policy: pull
+  script:
+    - pip install pyright
+    - pyright src/ --outputjson > pyright-report.json || true
+  artifacts:
+    paths:
+      - pyright-report.json
+    expire_in: 7 days
+  allow_failure: true
+
+# =============================================================================
+# STAGE 2: SECURITY
+# =============================================================================
+
+security:secret_detection:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest
+  variables:
+    GIT_DEPTH: 100
+  before_script: []
+  cache: {}
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      secret_detection: gl-secret-detection-report.json
+    paths:
+      - gl-secret-detection-report.json
+    expire_in: 30 days
+  allow_failure: false
+
+security:sast:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
+  variables:
+    SAST_EXCLUDED_PATHS: ".venv/,venv/,tests/,.cache/,build/,dist/"
+    GIT_DEPTH: 0
+  before_script: []
+  cache: {}
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    paths:
+      - gl-sast-report.json
+    expire_in: 30 days
+  allow_failure: true
+
+security:bandit:
+  extends: .python_base
+  stage: security
+  timeout: 15m
+  cache:
+    policy: pull
+  script:
+    - pip install bandit[toml]
+    - bandit -r src/ -f json -o bandit-report.json -ll || true
+    - bandit -r src/ -ll
+  artifacts:
+    paths:
+      - bandit-report.json
+    expire_in: 30 days
+  allow_failure: true
+
+security:dependency_scanning:
+  extends: .python_base
+  stage: security
+  timeout: 15m
+  cache:
+    policy: pull
+  script:
+    - pip install pip-audit safety
+    - pip-audit -r requirements.txt --format json > pip-audit-requirements.json || true
+    - safety check -r requirements.txt --json > safety-requirements.json || true
+  artifacts:
+    paths:
+      - pip-audit-requirements.json
+      - safety-requirements.json
+    expire_in: 30 days
+  allow_failure: true
+
+# Weekly comprehensive audit (scheduled or manual)
+security:weekly_audit:
+  extends: .python_base
+  stage: security
+  timeout: 30m
+  cache:
+    policy: pull
+  script:
+    - pip install bandit[toml] pip-audit safety
+    - bandit -r src/ -f json -o bandit-weekly.json -ll || true
+    - pip-audit -r requirements.txt --format json > pip-audit-weekly.json || true
+    - safety check -r requirements.txt --json > safety-weekly.json || true
+  artifacts:
+    paths:
+      - bandit-weekly.json
+      - pip-audit-weekly.json
+      - safety-weekly.json
+    expire_in: 90 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+  allow_failure: false
