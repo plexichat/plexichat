@@ -274,8 +274,6 @@ def cancel_account_deletion(user_id: int, admin_id: Optional[int] = None) -> boo
     return _get_manager().cancel_account_deletion(user_id, admin_id)
 
 
-def update_user(
-
 # === User Profile ===
 
 
