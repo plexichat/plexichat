@@ -7,6 +7,8 @@ variables:
   PYTHONUNBUFFERED: "1"
   PYTHONDONTWRITEBYTECODE: "1"
   GIT_SUBMODULE_STRATEGY: recursive
+  # Use Dependency Proxy to cache base images from Docker Hub
+  PYTHON_IMAGE: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/python:3.11-bullseye
 
 cache:
   key:
@@ -19,12 +21,11 @@ cache:
   policy: pull-push
 
 .python_base:
-  image: python:3.11-bullseye
+  image: ${PYTHON_IMAGE}
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
-    - python -m venv .venv
+    - test -d .venv || python -m venv .venv
     - source .venv/bin/activate
-    - pip install --upgrade pip setuptools wheel
     - pip install -r requirements.txt
     - git submodule update --init --recursive
 
