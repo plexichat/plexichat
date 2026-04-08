@@ -19,7 +19,7 @@ cache:
   policy: pull-push
 
 .python_base:
-  image: python:3.11-slim
+  image: python:3.11-bullseye
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
     - python -m venv .venv
@@ -35,7 +35,7 @@ cache:
 lint:ruff:
   extends: .python_base
   stage: lint
-  timeout: 10m
+  timeout: 20m
   cache:
     policy: pull
   script:
@@ -53,7 +53,7 @@ lint:ruff:
 lint:format:
   extends: .python_base
   stage: lint
-  timeout: 10m
+  timeout: 20m
   cache:
     policy: pull
   script:
@@ -64,7 +64,7 @@ lint:format:
 lint:types:
   extends: .python_base
   stage: lint
-  timeout: 15m
+  timeout: 30m
   cache:
     policy: pull
   script:
@@ -118,7 +118,7 @@ security:sast:
 security:bandit:
   extends: .python_base
   stage: security
-  timeout: 15m
+  timeout: 30m
   cache:
     policy: pull
   script:
@@ -134,7 +134,7 @@ security:bandit:
 security:dependency_scanning:
   extends: .python_base
   stage: security
-  timeout: 15m
+  timeout: 30m
   cache:
     policy: pull
   script:
@@ -152,7 +152,7 @@ security:dependency_scanning:
 security:weekly_audit:
   extends: .python_base
   stage: security
-  timeout: 30m
+  timeout: 60m
   cache:
     policy: pull
   script:
