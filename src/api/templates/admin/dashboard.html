@@ -1230,7 +1230,7 @@
 
         async function delayDeletion(userId, username, additionalDays, selectedDate) {
             try {
-                await api(`/api/v1/admin/users/${userId}/delay-deletion`, { method: 'POST', body: JSON.stringify({ additional_days: additionalDays }) });
+                await api(`/api/v1/admin/users/${userId}/delay-deletion?additional_days=${additionalDays}`, { method: 'POST' });
                 const dateDisplay = selectedDate ? new Date(selectedDate).toLocaleDateString() : new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000).toLocaleDateString();
                 alert(`Deletion delayed for ${username}. New deletion date: ${dateDisplay}`);
                 refreshDeletions();
