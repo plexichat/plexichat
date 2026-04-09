@@ -320,6 +320,7 @@
             <button class="tab active" data-tab="metrics">Metrics</button>
             <button class="tab" data-tab="tickets">Tickets</button>
             <button class="tab" data-tab="users">Users</button>
+            <button class="tab" data-tab="deletions">Deletions</button>
             <button class="tab" data-tab="security">Security</button>
             <button class="tab" data-tab="automod">AutoMod</button>
             <button class="tab" data-tab="logs">Logs</button>
@@ -545,6 +546,32 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div id="tab-deletions" class="tab-content hidden">
+            <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;flex-wrap:wrap;">
+                    <h3>Scheduled Account Deletions</h3>
+                    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                        <select id="deletion-filter-days" style="min-width:160px;">
+                            <option value="">All Timeframes</option>
+                            <option value="1">Critical (&lt;1 day)</option>
+                            <option value="7">Warning (&lt;7 days)</option>
+                            <option value="30">Normal (&lt;30 days)</option>
+                        </select>
+                        <button class="btn btn-secondary btn-sm" data-click="refreshDeletions">Refresh</button>
+                    </div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Username</th><th>User ID</th><th>Scheduled</th><th>Deletion Date</th><th>Days Left</th><th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="deletions-tbody"></tbody>
+                </table>
+                <div id="deletions-empty" style="padding:2rem;text-align:center;color:#666;font-size:0.9rem;">No scheduled deletions found.</div>
             </div>
         </div>
 
@@ -1048,6 +1075,7 @@
             currentTab = n;
             if (n === 'metrics') refreshMetrics();
             else if (n === 'tickets') loadTickets();
+            else if (n === 'deletions') refreshDeletions();
             else if (n === 'security') loadSecurity();
             else if (n === 'automod') {
                 loadAutomodConfig();
@@ -1095,6 +1123,106 @@
             // Ah, the 4th card is CPU Load in HTML. ID was stat-sys-load.
             const sysLoadEl = document.getElementById('stat-sys-load');
             if (sysLoadEl) sysLoadEl.textContent = d.system?.cpu_percent?.toFixed(1) || '0.0';
+        }
+
+        async function refreshDeletions() {
+            try {
+                const data = await api('/api/v1/admin/users/scheduled-deletions');
+                renderDeletionsTable(data.deletions);
+            } catch (e) {
+                console.error('Failed to load deletions:', e);
+                document.getElementById('deletions-tbody').innerHTML = '<tr><td colspan="6" style="color:#ff4444;">Failed to load data</td></tr>';
+            }
+        }
+
+        function renderDeletionsTable(deletions) {
+            const tbody = document.getElementById('deletions-tbody');
+            const empty = document.getElementById('deletions-empty');
+            const filterDays = parseInt(document.getElementById('deletion-filter-days').value) || 0;
+
+            let filtered = deletions;
+            if (filterDays > 0) {
+                filtered = deletions.filter(d => d.days_left <= filterDays);
+            }
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '';
+                empty.style.display = 'block';
+                return;
+            }
+
+            empty.style.display = 'none';
+            tbody.innerHTML = filtered.map(d => {
+                const scheduledDate = new Date(d.scheduled_at * 1000).toLocaleDateString();
+                const deletionDate = new Date(d.deletion_at * 1000).toLocaleDateString();
+                const daysLeft = d.days_left;
+                const urgencyClass = daysLeft <= 1 ? 'color:#ff4444;font-weight:900;' : daysLeft <= 7 ? 'color:#ffaa00;font-weight:900;' : '';
+
+                return `
+                    <tr>
+                        <td style="font-weight:600;">${d.username}</td>
+                        <td style="font-family:monospace;color:#888;">${d.user_id}</td>
+                        <td>${scheduledDate}</td>
+                        <td>${deletionDate}</td>
+                        <td style="${urgencyClass}">${daysLeft} days</td>
+                        <td>
+                            <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                                <button class="btn btn-secondary btn-sm" onclick="cancelDeletion('${d.user_id}', '${d.username}')" title="Cancel deletion">Cancel</button>
+                                <button class="btn btn-outline btn-sm" onclick="promptDelayDeletion('${d.user_id}', '${d.username}')" title="Extend grace period">Delay</button>
+                                <button class="btn btn-danger btn-sm" onclick="confirmForcePurge('${d.user_id}', '${d.username}')" title="Immediately purge account">Purge</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        async function cancelDeletion(userId, username) {
+            if (!confirm(`Cancel deletion for user "${username}"? This will restore their account to active status.`)) return;
+            try {
+                await api(`/api/v1/admin/users/${userId}/cancel-deletion`, 'POST');
+                alert(`Deletion cancelled for ${username}`);
+                refreshDeletions();
+            } catch (e) {
+                alert(`Failed to cancel deletion: ${e.message || 'Unknown error'}`);
+            }
+        }
+
+        function promptDelayDeletion(userId, username) {
+            const days = prompt(`Extend grace period for "${username}" by how many days? (1-365)`, '7');
+            if (days === null) return;
+            const daysInt = parseInt(days);
+            if (isNaN(daysInt) || daysInt < 1 || daysInt > 365) {
+                alert('Please enter a number between 1 and 365');
+                return;
+            }
+            delayDeletion(userId, username, daysInt);
+        }
+
+        async function delayDeletion(userId, username, additionalDays) {
+            try {
+                await api(`/api/v1/admin/users/${userId}/delay-deletion?additional_days=${additionalDays}`, 'POST');
+                alert(`Deletion delayed for ${username} by ${additionalDays} days`);
+                refreshDeletions();
+            } catch (e) {
+                alert(`Failed to delay deletion: ${e.message || 'Unknown error'}`);
+            }
+        }
+
+        function confirmForcePurge(userId, username) {
+            if (!confirm(`⚠️ FORCE PURGE ⚠️\n\nThis will IMMEDIATELY and IRREVERSIBLY purge user "${username}" and all their data.\n\nThis action cannot be undone!\n\nAre you absolutely sure?`)) return;
+            if (!confirm(`FINAL WARNING: You are about to permanently delete all data for user "${username}".\n\nType "DELETE" to confirm.`)) return;
+            forcePurge(userId, username);
+        }
+
+        async function forcePurge(userId, username) {
+            try {
+                await api(`/api/v1/admin/users/${userId}/force-purge`, 'POST');
+                alert(`Account ${username} has been purged`);
+                refreshDeletions();
+            } catch (e) {
+                alert(`Failed to purge account: ${e.message || 'Unknown error'}`);
+            }
         }
 
         function renderEndpointTable() {
@@ -2585,6 +2713,7 @@
         document.getElementById('telemetry-history-bucket').addEventListener('change', loadTelemetryHistory);
         document.getElementById('hash-report-status').addEventListener('change', loadSecurity);
         document.getElementById('ticket-status-filter').addEventListener('change', loadTickets);
+        document.getElementById('deletion-filter-days').addEventListener('change', refreshDeletions);
         document.getElementById('automod-rule-type').addEventListener('change', (e) => setAutomodEditorMode(e.target.value));
 
         setInterval(() => {
