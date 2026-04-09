@@ -36,13 +36,13 @@ def _user_to_response(user, include_private: bool = False) -> UserResponse:
             email_verified=_get_attr(user, "email_verified", False)
             if include_private
             else False,
-            totp_enabled=_get_attr(user, "totp_enabled", False)
-            if include_private
-            else False,
+            totp_enabled=_get_attr(user, "totp_enabled", False),
             age_verified=_get_attr(user, "age_verified", False)
             if include_private
             else False,
             badges=badges,
+            deletion_status=_get_attr(user, "deletion_status", "active"),
+            deletion_at=_get_attr(user, "deletion_at", None),
         )
     except Exception as e:
         logger.error(f"Error converting user object to response: {e}")

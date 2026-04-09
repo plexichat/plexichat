@@ -79,6 +79,8 @@ def get_current_user_info(
                 totp_enabled=False,
                 age_verified=False,
                 badges=[],
+                deletion_status="active",
+                deletion_at=None,
             )
 
         user = _get_user_cached(current_user.user_id)
@@ -858,12 +860,12 @@ async def schedule_account_deletion(
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    try:
-        from src.core.auth.exceptions import (
-            InvalidCredentialsError,
-            TwoFactorInvalidError,
-        )
+    from src.core.auth.exceptions import (
+        InvalidCredentialsError,
+        TwoFactorInvalidError,
+    )
 
+    try:
         auth.schedule_account_deletion(
             user_id=current_user.user_id,
             password=body.password,

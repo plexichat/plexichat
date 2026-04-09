@@ -44,6 +44,8 @@ async def admin_user_search(request: Request, q: str, limit: int = 20, offset: i
                     tier=u.tier,
                     badges=u.badges,
                     created_at=u.created_at,
+                    deletion_status=u.deletion_status,
+                    deletion_at=u.deletion_at,
                 )
                 for u in users_data
             ]
@@ -83,6 +85,8 @@ async def get_user_details(request: Request, user_id: str):
             account_locked=user.account_locked,
             locked_until=user.locked_until,
             force_username_change=user.force_username_change,
+            deletion_status=user.deletion_status,
+            deletion_at=user.deletion_at,
         )
     except ValueError:
         raise HTTPException(
@@ -243,34 +247,41 @@ async def admin_list_scheduled_deletions(request: Request):
     check_host_restriction(request)
     get_admin_from_token(request)
     import src.api as api
+    import utils.config as config
     import time
-    
+
     db = api.get_db()
-    config = api.get_config()
-    grace_days = config.get("authentication", {}).get("account_deletion", {}).get("grace_period_days", 30)
-    
-    rows = db.fetch_all(
+    assert db is not None
+    grace_days = (
+        config.get("authentication", {})
+        .get("account_deletion", {})
+        .get("grace_period_days", 30)
+    )
+
+    rows = db.fetch_all(  # type: ignore
         "SELECT id, username, deletion_at FROM auth_users WHERE deletion_status = 'frozen' ORDER BY deletion_at ASC"
     )
-    
+
     # We also check the backup table and audit log in a real production environment
     # but for the API we show what's currently active in the DB.
-    
+
     now = int(time.time())
     deletions = []
     for row in rows:
         deletion_at = row["deletion_at"]
         scheduled_at = deletion_at - (grace_days * 86400)
         days_left = max(0, (deletion_at - now) // 86400)
-        
-        deletions.append(ScheduledDeletionResponse(
-            user_id=str(row["id"]),
-            username=row["username"],
-            scheduled_at=scheduled_at,
-            deletion_at=deletion_at,
-            days_left=days_left
-        ))
-        
+
+        deletions.append(
+            ScheduledDeletionResponse(
+                user_id=str(row["id"]),
+                username=row["username"],
+                scheduled_at=scheduled_at,
+                deletion_at=deletion_at,
+                days_left=days_left,
+            )
+        )
+
     return ScheduledDeletionListResponse(deletions=deletions)
 
 
@@ -282,8 +293,9 @@ async def admin_cancel_account_deletion(request: Request, user_id: str):
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     import src.api as api
-    
+
     auth = api.get_auth()
+    assert auth is not None
     try:
         uid = int(user_id)
         auth.cancel_account_deletion(uid, admin_id=int(admin_id))

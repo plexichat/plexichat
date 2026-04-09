@@ -14,6 +14,9 @@ def _user_to_response(user) -> UserResponse:
             email_verified=getattr(user, "email_verified", False),
             totp_enabled=getattr(user, "totp_enabled", False),
             age_verified=getattr(user, "age_verified", False),
+            badges=getattr(user, "badges", []),
+            deletion_status=getattr(user, "deletion_status", "active"),
+            deletion_at=getattr(user, "deletion_at", None),
         )
     except Exception as e:
         logger.error(f"Error converting user object to response: {e}")

@@ -6,8 +6,8 @@ import io
 from typing import Any, cast
 
 try:
-    import qrcode  # type: ignore
-    from qrcode.image.pure import PyPNGImage  # type: ignore
+    import qrcode
+    from qrcode.image.pure import PyPNGImage
 except ImportError:
     qrcode = None  # type: ignore
     PyPNGImage = None  # type: ignore
@@ -57,8 +57,6 @@ async def generate_qr(
 
     from fastapi.concurrency import run_in_threadpool
 
-    qr_lib = qrcode
-
     def _generate():
         try:
             try:
@@ -71,9 +69,9 @@ async def generate_qr(
             height = max(10, min(1000, height))
 
             # Create QR code
-            qr = qr_lib.QRCode(
+            qr = qrcode.QRCode(  # type: ignore
                 version=None,  # Automatically determine version
-                error_correction=qr_lib.ERROR_CORRECT_L,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,  # type: ignore
                 box_size=10,
                 border=4,
             )
