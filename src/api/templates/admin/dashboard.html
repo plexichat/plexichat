@@ -335,6 +335,10 @@
                     <div class="stat-label">Total Registered</div>
                     <div class="stat-value" id="stat-total-users">0</div>
                 </div>
+                <div class="card" style="border-left: 4px solid var(--warn);">
+                    <div class="stat-label">Scheduled Deletions</div>
+                    <div class="stat-value" id="stat-scheduled-deletions">0</div>
+                </div>
                 <div class="card" style="border-left: 4px solid var(--good);">
                     <div class="stat-label">Avg Latency</div>
                     <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-avg-latency">0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">MS</span></div>
@@ -1075,7 +1079,8 @@
         function updateOverview(d, s) {
             document.getElementById('stat-active-users').textContent = d.active_users.toLocaleString();
             document.getElementById('stat-total-users').textContent = d.total_users.toLocaleString();
-            
+            document.getElementById('stat-scheduled-deletions').textContent = d.scheduled_deletions.toLocaleString();
+
             if (d.server_version) {
                 document.getElementById('server-version').textContent = d.server_version;
             }
