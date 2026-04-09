@@ -1135,8 +1135,6 @@
             }
         }
 
-        window.refreshDeletions = refreshDeletions;
-
         function renderDeletionsTable(deletions) {
             const tbody = document.getElementById('deletions-tbody');
             const empty = document.getElementById('deletions-empty');
@@ -1169,9 +1167,9 @@
                         <td style="${urgencyClass}">${daysLeft} days</td>
                         <td>
                             <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
-                                <button class="btn btn-secondary btn-sm" onclick="cancelDeletion('${d.user_id}', '${d.username}')" title="Cancel deletion">Cancel</button>
-                                <button class="btn btn-outline btn-sm" onclick="promptDelayDeletion('${d.user_id}', '${d.username}')" title="Extend grace period">Delay</button>
-                                <button class="btn btn-danger btn-sm" onclick="confirmForcePurge('${d.user_id}', '${d.username}')" title="Immediately purge account">Purge</button>
+                                <button class="btn btn-secondary btn-sm" data-action="cancel" data-user-id="${d.user_id}" data-username="${d.username}" title="Cancel deletion">Cancel</button>
+                                <button class="btn btn-outline btn-sm" data-action="delay" data-user-id="${d.user_id}" data-username="${d.username}" title="Extend grace period">Delay</button>
+                                <button class="btn btn-danger btn-sm" data-action="purge" data-user-id="${d.user_id}" data-username="${d.username}" title="Immediately purge account">Purge</button>
                             </div>
                         </td>
                     </tr>
@@ -1189,8 +1187,6 @@
                 alert(`Failed to cancel deletion: ${e.message || 'Unknown error'}`);
             }
         }
-
-        window.cancelDeletion = cancelDeletion;
 
         function promptDelayDeletion(userId, username) {
             const input = document.createElement('input');
@@ -1232,8 +1228,6 @@
             };
         }
 
-        window.promptDelayDeletion = promptDelayDeletion;
-
         async function delayDeletion(userId, username, additionalDays) {
             try {
                 await api(`/api/v1/admin/users/${userId}/delay-deletion?additional_days=${additionalDays}`, 'POST');
@@ -1244,15 +1238,11 @@
             }
         }
 
-        window.delayDeletion = delayDeletion;
-
         function confirmForcePurge(userId, username) {
             if (!confirm(`⚠️ FORCE PURGE ⚠️\n\nThis will IMMEDIATELY and IRREVERSIBLY purge user "${username}" and all their data.\n\nThis action cannot be undone!\n\nAre you absolutely sure?`)) return;
             if (!confirm(`FINAL WARNING: You are about to permanently delete all data for user "${username}".\n\nType "DELETE" to confirm.`)) return;
             forcePurge(userId, username);
         }
-
-        window.confirmForcePurge = confirmForcePurge;
 
         async function forcePurge(userId, username) {
             try {
@@ -1263,8 +1253,6 @@
                 alert(`Failed to purge account: ${e.message || 'Unknown error'}`);
             }
         }
-
-        window.forcePurge = forcePurge;
 
         function renderEndpointTable() {
             const f = document.getElementById('endpoint-filter').value.toLowerCase();
@@ -2679,6 +2667,9 @@
             else if (a === 'refreshTierCatalog') {
                 fetchAvailableTiers();
             }
+            else if (a === 'refreshDeletions') {
+                refreshDeletions();
+            }
             else if (a === 'triggerDownload') {
                 const fmt = document.querySelector('input[name="export_format"]:checked').value;
                 const hrs = document.getElementById('metric-hours').value;
@@ -2755,6 +2746,24 @@
         document.getElementById('hash-report-status').addEventListener('change', loadSecurity);
         document.getElementById('ticket-status-filter').addEventListener('change', loadTickets);
         document.getElementById('deletion-filter-days').addEventListener('change', refreshDeletions);
+
+        // Event delegation for deletion action buttons
+        document.getElementById('deletions-tbody').addEventListener('click', (e) => {
+            const button = e.target.closest('button[data-action]');
+            if (!button) return;
+
+            const action = button.dataset.action;
+            const userId = button.dataset.userId;
+            const username = button.dataset.username;
+
+            if (action === 'cancel') {
+                cancelDeletion(userId, username);
+            } else if (action === 'delay') {
+                promptDelayDeletion(userId, username);
+            } else if (action === 'purge') {
+                confirmForcePurge(userId, username);
+            }
+        });
         document.getElementById('automod-rule-type').addEventListener('change', (e) => setAutomodEditorMode(e.target.value));
 
         setInterval(() => {
