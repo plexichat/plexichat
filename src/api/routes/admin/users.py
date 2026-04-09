@@ -303,3 +303,51 @@ async def admin_cancel_account_deletion(request: Request, user_id: str):
     except Exception as e:
         logger.error(f"Admin failed to cancel deletion for {user_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/users/{user_id}/delay-deletion", response_model=SuccessResponse)
+async def admin_delay_account_deletion(
+    request: Request, user_id: str, additional_days: int = 7
+):
+    """
+    Extend the deletion grace period for a scheduled account deletion.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    import src.api as api
+
+    auth = api.get_auth()
+    assert auth is not None
+    try:
+        uid = int(user_id)
+        if additional_days < 1 or additional_days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="additional_days must be between 1 and 365",
+            )
+        auth.delay_account_deletion(uid, additional_days, admin_id=int(admin_id))
+        return SuccessResponse(success=True)
+    except Exception as e:
+        logger.error(f"Admin failed to delay deletion for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/users/{user_id}/force-purge", response_model=SuccessResponse)
+async def admin_force_purge_account(request: Request, user_id: str):
+    """
+    Immediately purge a user account, bypassing the grace period.
+    This is irreversible and should only be used in extreme cases.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    import src.api as api
+
+    auth = api.get_auth()
+    assert auth is not None
+    try:
+        uid = int(user_id)
+        auth.force_purge_account(uid, admin_id=int(admin_id))
+        return SuccessResponse(success=True)
+    except Exception as e:
+        logger.error(f"Admin failed to force purge {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

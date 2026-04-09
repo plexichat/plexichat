@@ -277,6 +277,18 @@ def cancel_account_deletion(user_id: int, admin_id: Optional[int] = None) -> boo
     return _get_manager().cancel_account_deletion(user_id, admin_id)
 
 
+def delay_account_deletion(
+    user_id: int, additional_days: int, admin_id: Optional[int] = None
+) -> bool:
+    """Extend the deletion grace period for a scheduled account deletion."""
+    return _get_manager().delay_account_deletion(user_id, additional_days, admin_id)
+
+
+def force_purge_account(user_id: int, admin_id: Optional[int] = None) -> bool:
+    """Immediately purge a user account, bypassing the grace period."""
+    return _get_manager().force_purge_account(user_id, admin_id)
+
+
 # === User Profile ===
 
 
@@ -712,6 +724,8 @@ __all__ = [
     "revoke_session",
     "schedule_account_deletion",
     "cancel_account_deletion",
+    "delay_account_deletion",
+    "force_purge_account",
     # 2FA
     "setup_2fa",
     "confirm_2fa",

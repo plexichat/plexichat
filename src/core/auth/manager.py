@@ -2794,3 +2794,100 @@ class AuthManager(BaseManager):
             f"Account deletion cancelled: user_id={user_id}, cancelled_by={admin_id or 'user'}"
         )
         return True
+
+    def delay_account_deletion(
+        self, user_id: int, additional_days: int, admin_id: Optional[int] = None
+    ) -> bool:
+        """
+        Extends the deletion grace period for a scheduled account deletion.
+        """
+        row = self._db.fetch_one(
+            "SELECT username, deletion_status, deletion_at FROM auth_users WHERE id = ?",
+            (user_id,),
+        )
+        if not row:
+            raise UserNotFoundError("User not found")
+
+        if row["deletion_status"] != "frozen":
+            raise ValueError("Account is not scheduled for deletion")
+
+        current_deletion_at = row["deletion_at"]
+        if not current_deletion_at:
+            raise ValueError("No deletion timestamp found")
+
+        # Extend by additional days
+        new_deletion_at = current_deletion_at + (additional_days * 86400)
+
+        self._db.execute(
+            "UPDATE auth_users SET deletion_at = ? WHERE id = ?",
+            (new_deletion_at, user_id),
+        )
+
+        # Update backup record
+        self._db.execute(
+            "UPDATE auth_deletion_records SET deletion_at = ? WHERE user_id = ?",
+            (new_deletion_at, user_id),
+        )
+
+        # Log to external Hash-Chain
+        self.deletion_log.log_event(
+            user_id,
+            "DELAYED",
+            row["username"],
+            {
+                "admin_id": admin_id,
+                "previous_deletion_at": current_deletion_at,
+                "new_deletion_at": new_deletion_at,
+                "additional_days": additional_days,
+            },
+        )
+
+        invalidate_pattern(f"user_profile:{user_id}")
+        logger.info(
+            f"Account deletion delayed: user_id={user_id}, additional_days={additional_days}, delayed_by={admin_id or 'user'}"
+        )
+        return True
+
+    def force_purge_account(self, user_id: int, admin_id: Optional[int] = None) -> bool:
+        """
+        Immediately purges a user account, bypassing the grace period.
+        This is irreversible and should only be used in extreme cases.
+        """
+        row = self._db.fetch_one(
+            "SELECT username, deletion_status FROM auth_users WHERE id = ?",
+            (user_id,),
+        )
+        if not row:
+            raise UserNotFoundError("User not found")
+
+        # Log the force purge before executing
+        self.deletion_log.log_event(
+            user_id,
+            "FORCE_PURGED",
+            row["username"],
+            {"admin_id": admin_id, "reason": "Admin force purge"},
+        )
+
+        # Use the reaper to perform the actual purge
+        from src.core.auth.reaper import AccountReaper
+
+        reaper = AccountReaper(self._db, self._config.get("account_deletion", {}))
+        reaper.purge_user(user_id, row["username"])
+
+        # Update user status to purged
+        self._db.execute(
+            "UPDATE auth_users SET deletion_status = 'purged', deletion_at = ? WHERE id = ?",
+            (int(time.time()), user_id),
+        )
+
+        # Delete backup record
+        self._db.execute(
+            "DELETE FROM auth_deletion_records WHERE user_id = ?", (user_id,)
+        )
+
+        invalidate_pattern(f"user_profile:{user_id}")
+        invalidate_pattern(f"user_data:*{user_id}*")
+        logger.warning(
+            f"Account force purged: user_id={user_id}, purged_by={admin_id or 'system'}"
+        )
+        return True
