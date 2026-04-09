@@ -250,7 +250,12 @@ async def admin_list_scheduled_deletions(request: Request):
     import time
 
     db = api.get_db()
-    assert db is not None
+    if db is None:
+        logger.error("Database not available in scheduled deletions endpoint")
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
+
     grace_days = 30  # Default grace period
 
     rows = db.fetch_all(  # type: ignore
@@ -264,6 +269,9 @@ async def admin_list_scheduled_deletions(request: Request):
     deletions = []
     for row in rows:
         deletion_at = row["deletion_at"]
+        if deletion_at is None:
+            logger.warning(f"User {row['id']} has frozen status but no deletion_at")
+            continue
         scheduled_at = deletion_at - (grace_days * 86400)
         days_left = max(0, (deletion_at - now) // 86400)
 
