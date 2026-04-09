@@ -2815,8 +2815,9 @@ class AuthManager(BaseManager):
         if not current_deletion_at:
             raise ValueError("No deletion timestamp found")
 
-        # Extend by additional days
-        new_deletion_at = current_deletion_at + (additional_days * 86400)
+        # Set deletion date to now + additional days (not extend existing date)
+        now = self._get_timestamp()
+        new_deletion_at = now + (additional_days * 86400)
 
         self._db.execute(
             "UPDATE auth_users SET deletion_at = ? WHERE id = ?",
