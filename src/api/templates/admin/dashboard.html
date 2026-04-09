@@ -1224,14 +1224,15 @@
                     return;
                 }
                 dialog.remove();
-                delayDeletion(userId, username, daysDiff);
+                delayDeletion(userId, username, daysDiff, newDate);
             };
         }
 
-        async function delayDeletion(userId, username, additionalDays) {
+        async function delayDeletion(userId, username, additionalDays, selectedDate) {
             try {
                 await api(`/api/v1/admin/users/${userId}/delay-deletion`, { method: 'POST', body: JSON.stringify({ additional_days: additionalDays }) });
-                alert(`Deletion delayed for ${username} by ${additionalDays} days`);
+                const dateDisplay = selectedDate ? new Date(selectedDate).toLocaleDateString() : new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000).toLocaleDateString();
+                alert(`Deletion delayed for ${username}. New deletion date: ${dateDisplay}`);
                 refreshDeletions();
             } catch (e) {
                 alert(`Failed to delay deletion: ${e.message || 'Unknown error'}`);
