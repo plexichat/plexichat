@@ -2819,6 +2819,10 @@ class AuthManager(BaseManager):
         now = self._get_timestamp()
         new_deletion_at = now + (additional_days * 86400)
 
+        logger.info(
+            f"Delay deletion: user_id={user_id}, now={now}, additional_days={additional_days}, current_deletion_at={current_deletion_at}, new_deletion_at={new_deletion_at}"
+        )
+
         self._db.execute(
             "UPDATE auth_users SET deletion_at = ? WHERE id = ?",
             (new_deletion_at, user_id),

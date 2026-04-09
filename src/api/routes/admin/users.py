@@ -94,6 +94,10 @@ async def admin_list_scheduled_deletions(request: Request):
         scheduled_at = deletion_at - (grace_days * 86400)
         days_left = max(0, (deletion_at - now) // 86400)
 
+        logger.info(
+            f"Scheduled deletion: user={row['username']}, deletion_at={deletion_at}, scheduled_at={scheduled_at}, days_left={days_left}"
+        )
+
         deletions.append(
             ScheduledDeletionResponse(
                 user_id=str(row["id"]),
