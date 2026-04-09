@@ -2796,13 +2796,13 @@ class AuthManager(BaseManager):
         return True
 
     def delay_account_deletion(
-        self, user_id: int, additional_days: int, admin_id: Optional[int] = None
+        self, user_id: int, deletion_at: int, admin_id: Optional[int] = None
     ) -> bool:
         """
-        Extends the deletion grace period for a scheduled account deletion.
+        Set a new deletion date for a scheduled account deletion.
         """
         row = self._db.fetch_one(
-            "SELECT username, deletion_status, deletion_at FROM auth_users WHERE id = ?",
+            "SELECT username, deletion_status FROM auth_users WHERE id = ?",
             (user_id,),
         )
         if not row:
@@ -2811,21 +2811,11 @@ class AuthManager(BaseManager):
         if row["deletion_status"] != "frozen":
             raise ValueError("Account is not scheduled for deletion")
 
-        current_deletion_at = row["deletion_at"]
-        if not current_deletion_at:
-            raise ValueError("No deletion timestamp found")
-
-        # Set deletion date to now + additional days (not extend existing date)
-        now = self._get_timestamp()
-        new_deletion_at = now + (additional_days * 86400)
-
-        logger.info(
-            f"Delay deletion: user_id={user_id}, now={now}, additional_days={additional_days}, current_deletion_at={current_deletion_at}, new_deletion_at={new_deletion_at}"
-        )
+        logger.info(f"Delay deletion: user_id={user_id}, deletion_at={deletion_at}")
 
         self._db.execute(
             "UPDATE auth_users SET deletion_at = ? WHERE id = ?",
-            (new_deletion_at, user_id),
+            (deletion_at, user_id),
         )
 
         # Note: auth_deletion_records table doesn't have deletion_at column, only scheduled_at
@@ -2838,15 +2828,13 @@ class AuthManager(BaseManager):
             row["username"],
             {
                 "admin_id": admin_id,
-                "previous_deletion_at": current_deletion_at,
-                "new_deletion_at": new_deletion_at,
-                "additional_days": additional_days,
+                "deletion_at": deletion_at,
             },
         )
 
         invalidate_pattern(f"user_profile:{user_id}")
         logger.info(
-            f"Account deletion delayed: user_id={user_id}, additional_days={additional_days}, delayed_by={admin_id or 'user'}"
+            f"Account deletion delayed: user_id={user_id}, deletion_at={deletion_at}, delayed_by={admin_id or 'user'}"
         )
         return True
 

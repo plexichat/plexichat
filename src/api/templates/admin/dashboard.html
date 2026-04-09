@@ -1073,6 +1073,7 @@
             document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === n));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('hidden', c.id !== `tab-${n}`));
             currentTab = n;
+            window.location.hash = n;
             if (n === 'metrics') refreshMetrics();
             else if (n === 'tickets') loadTickets();
             else if (n === 'deletions') refreshDeletions();
@@ -1192,7 +1193,6 @@
             const input = document.createElement('input');
             input.type = 'date';
             input.min = new Date().toISOString().split('T')[0];
-            input.max = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
             input.value = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
             const dialog = document.createElement('div');
@@ -1201,7 +1201,7 @@
                 <div style="background:#1e1e1e;padding:1.5rem;border-radius:8px;max-width:400px;width:90%;">
                     <h3 style="margin:0 0 1rem 0;color:#fff;">Extend grace period for "${username}"</h3>
                     <p style="margin:0 0 1rem 0;color:#aaa;">Select new deletion date:</p>
-                    <input type="date" id="delay-date-picker" min="${input.min}" max="${input.max}" value="${input.value}" style="width:100%;padding:0.5rem;margin-bottom:1rem;background:#2a2a2a;border:1px solid #444;color:#fff;border-radius:4px;">
+                    <input type="date" id="delay-date-picker" min="${input.min}" value="${input.value}" style="width:100%;padding:0.5rem;margin-bottom:1rem;background:#2a2a2a;border:1px solid #444;color:#fff;border-radius:4px;">
                     <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
                         <button onclick="this.closest('div').parentElement.parentElement.remove()" style="padding:0.5rem 1rem;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
                         <button id="delay-confirm-btn" style="padding:0.5rem 1rem;background:#0066cc;color:#fff;border:none;border-radius:4px;cursor:pointer;">Confirm</button>
@@ -1218,20 +1218,21 @@
                 }
                 const newDateObj = new Date(newDate);
                 const now = new Date();
+                const newTimestamp = Math.floor(newDateObj.getTime() / 1000);
                 const daysDiff = Math.ceil((newDateObj - now) / (1000 * 60 * 60 * 24));
-                if (daysDiff < 1 || daysDiff > 365) {
-                    alert('Please select a date between 1 and 365 days from now');
+                if (daysDiff < 1) {
+                    alert('Please select a date in the future');
                     return;
                 }
                 dialog.remove();
-                delayDeletion(userId, username, daysDiff, newDate);
+                delayDeletion(userId, username, newTimestamp, newDate);
             };
         }
 
-        async function delayDeletion(userId, username, additionalDays, selectedDate) {
+        async function delayDeletion(userId, username, deletionTimestamp, selectedDate) {
             try {
-                await api(`/api/v1/admin/users/${userId}/delay-deletion?additional_days=${additionalDays}`, { method: 'POST' });
-                const dateDisplay = selectedDate ? new Date(selectedDate).toLocaleDateString() : new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000).toLocaleDateString();
+                await api(`/api/v1/admin/users/${userId}/delay-deletion?deletion_at=${deletionTimestamp}`, { method: 'POST' });
+                const dateDisplay = selectedDate ? new Date(selectedDate).toLocaleDateString() : new Date(deletionTimestamp * 1000).toLocaleDateString();
                 alert(`Deletion delayed for ${username}. New deletion date: ${dateDisplay}`);
                 refreshDeletions();
             } catch (e) {
@@ -2777,7 +2778,8 @@
         api('/api/v1/version').then(v => {
             document.getElementById('server-version').textContent = v.version.string;
             resetAutomodRule();
-            showTab('metrics');
+            const hashTab = window.location.hash.slice(1) || 'metrics';
+            showTab(hashTab);
             fetchAvailableBadges();
             fetchAvailableTiers();
             setInterval(refreshMetrics, 15000);

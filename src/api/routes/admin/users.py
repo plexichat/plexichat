@@ -2,6 +2,7 @@
 Admin user management routes.
 """
 
+import time
 from fastapi import APIRouter, Request, HTTPException
 from src.api.schemas.admin import (
     UserSearchListResponse,
@@ -315,10 +316,10 @@ async def admin_cancel_account_deletion(request: Request, user_id: str):
 
 @router.post("/users/{user_id}/delay-deletion", response_model=SuccessResponse)
 async def admin_delay_account_deletion(
-    request: Request, user_id: str, additional_days: int = 7
+    request: Request, user_id: str, deletion_at: int
 ):
     """
-    Extend the deletion grace period for a scheduled account deletion.
+    Set a new deletion date for a scheduled account deletion.
     """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
@@ -328,12 +329,13 @@ async def admin_delay_account_deletion(
     assert auth is not None
     try:
         uid = int(user_id)
-        if additional_days < 1 or additional_days > 365:
+        now = int(time.time())
+        if deletion_at < now:
             raise HTTPException(
                 status_code=400,
-                detail="additional_days must be between 1 and 365",
+                detail="deletion_at must be in the future",
             )
-        auth.delay_account_deletion(uid, additional_days, admin_id=int(admin_id))
+        auth.delay_account_deletion(uid, deletion_at, admin_id=int(admin_id))
         return SuccessResponse(success=True)
     except Exception as e:
         logger.error(f"Admin failed to delay deletion for {user_id}: {e}")
