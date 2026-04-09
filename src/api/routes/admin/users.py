@@ -57,6 +57,56 @@ async def admin_user_search(request: Request, q: str, limit: int = 20, offset: i
         )
 
 
+@router.get("/users/scheduled-deletions", response_model=ScheduledDeletionListResponse)
+async def admin_list_scheduled_deletions(request: Request):
+    """
+    List all accounts currently in the 30-day grace period for deletion.
+    """
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    import src.api as api
+    import time
+
+    db = api.get_db()
+    if db is None:
+        logger.error("Database not available in scheduled deletions endpoint")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+    grace_days = 30  # Default grace period
+
+    rows = db.fetch_all(  # type: ignore
+        "SELECT id, username, deletion_at FROM auth_users WHERE deletion_status = 'frozen' ORDER BY deletion_at ASC"
+    )
+
+    # We also check the backup table and audit log in a real production environment
+    # but for the API we show what's currently active in the DB.
+
+    now = int(time.time())
+    deletions = []
+    for row in rows:
+        deletion_at = row["deletion_at"]
+        if deletion_at is None:
+            logger.warning(f"User {row['id']} has frozen status but no deletion_at")
+            continue
+        scheduled_at = deletion_at - (grace_days * 86400)
+        days_left = max(0, (deletion_at - now) // 86400)
+
+        deletions.append(
+            ScheduledDeletionResponse(
+                user_id=str(row["id"]),
+                username=row["username"],
+                scheduled_at=scheduled_at,
+                deletion_at=deletion_at,
+                days_left=days_left,
+            )
+        )
+
+    return ScheduledDeletionListResponse(deletions=deletions)
+
+
 @router.get("/users/{user_id}", response_model=UserDetailsResponse)
 async def get_user_details(request: Request, user_id: str):
     """
@@ -237,55 +287,6 @@ async def admin_force_username_change(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid user ID"}},
         )
-
-
-@router.get("/users/scheduled-deletions", response_model=ScheduledDeletionListResponse)
-async def admin_list_scheduled_deletions(request: Request):
-    """
-    List all accounts currently in the 30-day grace period for deletion.
-    """
-    check_host_restriction(request)
-    get_admin_from_token(request)
-    import src.api as api
-    import time
-
-    db = api.get_db()
-    if db is None:
-        logger.error("Database not available in scheduled deletions endpoint")
-        raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
-        )
-
-    grace_days = 30  # Default grace period
-
-    rows = db.fetch_all(  # type: ignore
-        "SELECT id, username, deletion_at FROM auth_users WHERE deletion_status = 'frozen' ORDER BY deletion_at ASC"
-    )
-
-    # We also check the backup table and audit log in a real production environment
-    # but for the API we show what's currently active in the DB.
-
-    now = int(time.time())
-    deletions = []
-    for row in rows:
-        deletion_at = row["deletion_at"]
-        if deletion_at is None:
-            logger.warning(f"User {row['id']} has frozen status but no deletion_at")
-            continue
-        scheduled_at = deletion_at - (grace_days * 86400)
-        days_left = max(0, (deletion_at - now) // 86400)
-
-        deletions.append(
-            ScheduledDeletionResponse(
-                user_id=str(row["id"]),
-                username=row["username"],
-                scheduled_at=scheduled_at,
-                deletion_at=deletion_at,
-                days_left=days_left,
-            )
-        )
-
-    return ScheduledDeletionListResponse(deletions=deletions)
 
 
 @router.post("/users/{user_id}/cancel-deletion", response_model=SuccessResponse)
