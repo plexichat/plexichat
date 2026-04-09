@@ -432,9 +432,7 @@ class MemberHandler:
 
         now = self.manager._get_timestamp()
         if invite.expires_at is not None and invite.expires_at <= now:
-            raise InviteExpiredError(
-                "Invite has expired", expired_at=invite.expires_at
-            )
+            raise InviteExpiredError("Invite has expired", expired_at=invite.expires_at)
 
         if invite.max_uses > 0 and invite.uses >= invite.max_uses:
             raise InviteMaxUsesError(
@@ -640,6 +638,3 @@ class MemberHandler:
             "SELECT * FROM srv_invites WHERE code = ? AND revoked = 0", (code,)
         )
         return self.manager._row_to_invite(row) if row else None
-
-
-

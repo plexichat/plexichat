@@ -1042,7 +1042,9 @@ class MediaManager(BaseManager):
                 raise FileTypeError(
                     f"File content does not match declared type: {content_type}",
                     content_type,
-                    ["File signature mismatch - content does not match declared MIME type"],
+                    [
+                        "File signature mismatch - content does not match declared MIME type"
+                    ],
                 )
 
             with self._lock:
@@ -1558,7 +1560,9 @@ class MediaManager(BaseManager):
         url = storage.get_url(file.storage_path)
         return self._url_signer.sign_url(url, file_id, expires_in=expires_in)
 
-    def verify_signed_url(self, url: str, current_user_id: Optional[int] = None) -> Tuple[bool, int]:
+    def verify_signed_url(
+        self, url: str, current_user_id: Optional[int] = None
+    ) -> Tuple[bool, int]:
         """
         Verify a signed URL.
 

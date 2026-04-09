@@ -36,9 +36,11 @@ def _emoji_to_response(emoji) -> EmojiResponse:
 
 def _invalidate_emoji_cache(server_id: int, emoji_id: Optional[int] = None) -> None:
     """Invalidate cached emoji list/detail entries for all viewers of a server."""
-    invalidate_pattern(f"{get_server_emojis.cache_key_prefix}:str:{server_id}:*")
+    invalidate_pattern(f"{get_server_emojis.cache_key_prefix}:str:{server_id}:*")  # type: ignore
     if emoji_id is not None:
-        invalidate_pattern(f"{get_emoji.cache_key_prefix}:str:{server_id}:str:{emoji_id}:*")
+        invalidate_pattern(
+            f"{get_emoji.cache_key_prefix}:str:{server_id}:str:{emoji_id}:*"  # type: ignore
+        )
 
 
 async def _dispatch_emoji_update(server_id: int):

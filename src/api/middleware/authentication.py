@@ -38,6 +38,7 @@ class AuthenticationMiddleware:
             path = scope.get("path", "")
 
             import hmac
+
             internal_secret = api.get_internal_secret()
             provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
             is_internal = bool(
@@ -242,6 +243,7 @@ class AuthenticationMiddleware:
                         try:
                             # SECURITY: Use hardened utility to extract real client IP from trusted proxies
                             from src.utils.net import get_client_ip
+
                             ip = get_client_ip(request)
                             ua = request.headers.get("User-Agent")
 
@@ -250,9 +252,9 @@ class AuthenticationMiddleware:
                                 db = api.get_db()
                                 try:
                                     return auth.verify_token(
-                                        token_str, 
-                                        ip_address=client_ip, 
-                                        user_agent=user_agent
+                                        token_str,
+                                        ip_address=client_ip,
+                                        user_agent=user_agent,
                                     )
                                 finally:
                                     if db:

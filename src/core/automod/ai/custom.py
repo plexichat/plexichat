@@ -55,7 +55,7 @@ class CustomAdapter(BaseAIAdapter):
 
             request_data = self._build_request(content, context)
             headers = self._build_headers()
-  # nosec B310
+            # nosec B310
             request = Request(
                 self._endpoint_url,
                 data=json.dumps(request_data).encode("utf-8"),
@@ -151,4 +151,3 @@ class CustomAdapter(BaseAIAdapter):
     def get_categories(self) -> Dict[str, str]:
         """Custom endpoints define their own categories."""
         return {}
-

@@ -173,7 +173,12 @@ async def admin_begin_otp_setup(request: Request, body: AdminOTPSetupBeginReques
     if not result.success:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": result.error or "Failed to begin OTP setup"}},
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": result.error or "Failed to begin OTP setup",
+                }
+            },
         )
     return AdminLoginResponse(
         status="otp_setup_required",
@@ -201,7 +206,9 @@ async def admin_disable_otp(request: Request, body: AdminOTPDisableRequest):
     return SuccessResponse(success=True)
 
 
-@router.post("/auth/2fa/regenerate-backup-codes", response_model=AdminBackupCodesResponse)
+@router.post(
+    "/auth/2fa/regenerate-backup-codes", response_model=AdminBackupCodesResponse
+)
 async def admin_regenerate_backup_codes(
     request: Request, body: AdminOTPSetupBeginRequest
 ):

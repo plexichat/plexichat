@@ -484,6 +484,3 @@ class TemplateManager:
             roles=roles or [],
             created_at=row["created_at"],
         )
-
-
-

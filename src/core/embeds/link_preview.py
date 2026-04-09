@@ -543,7 +543,10 @@ class LinkPreviewService:
             content_type_lower = content_type.lower()
             if not content_type_lower.startswith("image/"):
                 return None
-            if content_type_lower.startswith("image/svg") or "svg+xml" in content_type_lower:
+            if (
+                content_type_lower.startswith("image/svg")
+                or "svg+xml" in content_type_lower
+            ):
                 return None
             data = response.content
 

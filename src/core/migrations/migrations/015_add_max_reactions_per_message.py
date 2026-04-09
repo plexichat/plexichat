@@ -12,6 +12,8 @@ def up(db):
 def down(db):
     try:
         # PostgreSQL doesn't support dropping columns easily if it's not present
-        db.execute("ALTER TABLE srv_servers DROP COLUMN IF EXISTS max_reactions_per_message")
+        db.execute(
+            "ALTER TABLE srv_servers DROP COLUMN IF EXISTS max_reactions_per_message"
+        )
     except Exception:
         pass

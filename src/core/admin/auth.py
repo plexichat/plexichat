@@ -489,9 +489,19 @@ def get_security_status(db: Any, admin_id: int) -> Optional[AdminSecurityStatus]
         must_setup_otp = bool(row["must_setup_otp"])
         backup_codes = row["backup_codes"] or ""
     else:
-        username, email, created_at, last_login, totp_enabled, must_setup_otp, backup_codes = row
+        (
+            username,
+            email,
+            created_at,
+            last_login,
+            totp_enabled,
+            must_setup_otp,
+            backup_codes,
+        ) = row
 
-    remaining = len([code for code in str(backup_codes or "").split(",") if code.strip()])
+    remaining = len(
+        [code for code in str(backup_codes or "").split(",") if code.strip()]
+    )
     admin_config = config.get("admin_ui", {})
     return AdminSecurityStatus(
         admin_id=admin_id,
@@ -506,9 +516,7 @@ def get_security_status(db: Any, admin_id: int) -> Optional[AdminSecurityStatus]
     )
 
 
-def begin_otp_setup(
-    db: Any, admin_id: int, current_password: str
-) -> AdminLoginResult:
+def begin_otp_setup(db: Any, admin_id: int, current_password: str) -> AdminLoginResult:
     """Start a new admin OTP setup flow after password verification."""
     valid, row, message = _verify_admin_password(db, admin_id, current_password)
     if not valid or row is None:
@@ -518,9 +526,7 @@ def begin_otp_setup(
 
     secret = pyotp.random_base32()
     totp = pyotp.TOTP(secret)
-    qr_uri = totp.provisioning_uri(
-        name=row["username"], issuer_name="Plexichat Admin"
-    )
+    qr_uri = totp.provisioning_uri(name=row["username"], issuer_name="Plexichat Admin")
     db.execute(
         """
         UPDATE admin_users

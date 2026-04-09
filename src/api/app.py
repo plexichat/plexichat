@@ -278,17 +278,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
         # SECURITY: Prevent path traversal. Filenames must be a single segment.
         # If a traversal attempt is made, reject immediately before touching media/auth.
-        if (
-            not filename
-            or ".." in filename
-            or "/" in filename
-            or "\\" in filename
-        ):
+        if not filename or ".." in filename or "/" in filename or "\\" in filename:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": {"code": 400, "message": "Invalid filename"}
-                },
+                detail={"error": {"code": 400, "message": "Invalid filename"}},
             )
 
         try:
@@ -315,18 +308,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 # SECURITY: Try to get user_id from session/cookies to verify signed URL ownership
                 current_user_id = None
                 from .middleware.authentication import get_token_info
+
                 token = request.headers.get("Authorization")
                 if token and token.startswith("Bearer "):
                     token = token[7:]
                 else:
                     token = request.cookies.get("plexichat_token")
-                
+
                 if token:
                     token_info = await get_token_info(token)
                     if token_info:
                         current_user_id = token_info.user_id
 
-                sig_valid, _ = await media.verify_signed_url(url_to_verify, current_user_id=current_user_id)
+                sig_valid, _ = await media.verify_signed_url(
+                    url_to_verify, current_user_id=current_user_id
+                )
                 if sig_valid:
                     is_signed = True
                     logger.debug(f"Access granted via signed URL: {filename}")
@@ -372,8 +368,9 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 try:
                     # SECURITY: Use hardened utility to extract client IP from trusted proxies.
                     from src.utils.net import get_client_ip
+
                     client_ip = get_client_ip(request)
-                    
+
                     user_agent = request.headers.get("User-Agent")
                     token_info = auth.verify_token(token, client_ip, user_agent)
                     if not token_info:
@@ -580,7 +577,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     s, skip, limit
                 ) -> AsyncGenerator[bytes, None]:
                     import inspect
-                    from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+                    from starlette.concurrency import (
+                        iterate_in_threadpool,
+                        run_in_threadpool,
+                    )
 
                     count = 0
                     yielded = 0
@@ -623,9 +623,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     except Exception as e:
                         logger.error(f"Media stream interrupted for {filename}: {e}")
 
-                response_iterator = get_response_iterator(
-                    stream, start, content_length
-                )
+                response_iterator = get_response_iterator(stream, start, content_length)
                 return StreamingResponse(
                     response_iterator,
                     status_code=status_code,

@@ -884,7 +884,7 @@ class ThreadManager(BaseManager):
         # SECURITY: Bulk check view permissions to avoid N+1 queries
         threads = []
         possible_threads = [self._row_to_thread(row) for row in rows]
-        
+
         # Filter out auto-archived threads first
         active_threads = []
         for thread in possible_threads:
@@ -895,18 +895,20 @@ class ThreadManager(BaseManager):
                 )
                 continue
             active_threads.append(thread)
-            
+
         if not active_threads:
             return []
 
         # Check membership for private threads in bulk
-        private_thread_ids = {t.id for t in active_threads if t.thread_type == ThreadType.PRIVATE}
+        private_thread_ids = {
+            t.id for t in active_threads if t.thread_type == ThreadType.PRIVATE
+        }
         member_thread_ids = set()
         if private_thread_ids:
             placeholders = ",".join(["?"] * len(private_thread_ids))
             member_rows = self._db.fetch_all(
                 f"SELECT thread_id FROM thread_members WHERE user_id = ? AND thread_id IN ({placeholders})",
-                (user_id, *private_thread_ids)
+                (user_id, *private_thread_ids),
             )
             member_thread_ids = {row["thread_id"] for row in member_rows}
 
@@ -914,9 +916,14 @@ class ThreadManager(BaseManager):
         has_server_view = True
         public_exists = any(t.thread_type != ThreadType.PRIVATE for t in active_threads)
         if public_exists and self._servers:
-            first_public = next(t for t in active_threads if t.thread_type != ThreadType.PRIVATE)
+            first_public = next(
+                t for t in active_threads if t.thread_type != ThreadType.PRIVATE
+            )
             has_server_view = self._check_permission(
-                user_id, first_public.server_id, "channels.view", first_public.channel_id
+                user_id,
+                first_public.server_id,
+                "channels.view",
+                first_public.channel_id,
             )
 
         for thread in active_threads:
@@ -972,22 +979,31 @@ class ThreadManager(BaseManager):
             return []
 
         # Bulk check permissions
-        private_thread_ids = {t.id for t in archived_threads if t.thread_type == ThreadType.PRIVATE}
+        private_thread_ids = {
+            t.id for t in archived_threads if t.thread_type == ThreadType.PRIVATE
+        }
         member_thread_ids = set()
         if private_thread_ids:
             placeholders = ",".join(["?"] * len(private_thread_ids))
             member_rows = self._db.fetch_all(
                 f"SELECT thread_id FROM thread_members WHERE user_id = ? AND thread_id IN ({placeholders})",
-                (user_id, *private_thread_ids)
+                (user_id, *private_thread_ids),
             )
             member_thread_ids = {row["thread_id"] for row in member_rows}
 
         has_server_view = True
-        public_exists = any(t.thread_type != ThreadType.PRIVATE for t in archived_threads)
+        public_exists = any(
+            t.thread_type != ThreadType.PRIVATE for t in archived_threads
+        )
         if public_exists and self._servers:
-            first_public = next(t for t in archived_threads if t.thread_type != ThreadType.PRIVATE)
+            first_public = next(
+                t for t in archived_threads if t.thread_type != ThreadType.PRIVATE
+            )
             has_server_view = self._check_permission(
-                user_id, first_public.server_id, "channels.view", first_public.channel_id
+                user_id,
+                first_public.server_id,
+                "channels.view",
+                first_public.channel_id,
             )
 
         threads = []
@@ -1256,6 +1272,3 @@ class ThreadManager(BaseManager):
             )
 
         return False
-
-
-

@@ -35,7 +35,9 @@ from .exceptions import (
 
 
 class StickerManager:
-    def __init__(self, db, messaging_module=None, servers_module=None, media_module=None):
+    def __init__(
+        self, db, messaging_module=None, servers_module=None, media_module=None
+    ):
         self._db = db
         self._messaging = messaging_module
         self._servers = servers_module
@@ -99,21 +101,22 @@ class StickerManager:
         elif content_type == "image/png":
             sticker_format = StickerFormat.PNG
         elif content_type == "image/apng":
-             sticker_format = StickerFormat.APNG
+            sticker_format = StickerFormat.APNG
         else:
             # Default to PNG if image, or raise error
             if content_type.startswith("image/"):
-                 sticker_format = StickerFormat.PNG
+                sticker_format = StickerFormat.PNG
             else:
-                 raise InvalidStickerFormatError(f"Unsupported content type: {content_type}")
+                allowed = self._config.get("allowed_formats", ["png", "apng", "json"])
+                raise InvalidStickerFormatError(
+                    f"Unsupported content type: {content_type}", content_type, allowed
+                )
 
         filename = f"sticker_{name}.{content_type.split('/')[-1]}"
-        
+
         # Upload
-        result = self._media.upload_file(
-            user_id, image_data, filename, content_type
-        )
-        
+        result = self._media.upload_file(user_id, image_data, filename, content_type)
+
         return self.add_sticker(
             user_id=user_id,
             pack_id=pack_id,

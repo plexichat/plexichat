@@ -230,6 +230,3 @@ class AlertModeratorsAction(BaseAction):
                 now,
             ),
         )
-
-
-

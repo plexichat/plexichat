@@ -66,7 +66,9 @@ class UrlSigner:
         )
         signature = self._generate_signature(signature_data)
 
-        signed_url = self._append_signature_params(url, file_id, expires_at, signature, user_id)
+        signed_url = self._append_signature_params(
+            url, file_id, expires_at, signature, user_id
+        )
 
         return SignedUrl(
             url=signed_url,
@@ -75,7 +77,9 @@ class UrlSigner:
             file_id=file_id,
         )
 
-    def verify_url(self, url: str, current_user_id: Optional[int] = None) -> Tuple[bool, int]:
+    def verify_url(
+        self, url: str, current_user_id: Optional[int] = None
+    ) -> Tuple[bool, int]:
         """
         Verify a signed URL.
 

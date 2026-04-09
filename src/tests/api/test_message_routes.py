@@ -47,7 +47,13 @@ class TestGetMessages:
         assert response.status_code == 401
 
     def test_get_messages_skips_malformed_cached_records(
-        self, test_client, auth_headers, test_server, test_user, db_and_modules, monkeypatch
+        self,
+        test_client,
+        auth_headers,
+        test_server,
+        test_user,
+        db_and_modules,
+        monkeypatch,
     ):
         """Test malformed cached-style message records do not 500 the whole endpoint."""
         channel_id = str(test_server["channel"].id)

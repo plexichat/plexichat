@@ -14,15 +14,48 @@ def _add_column_if_missing(db, table: str, column: str, ddl: str) -> None:
 
 def up(db):
     try:
-        _add_column_if_missing(db, "auth_api_access_tokens", "description", "description TEXT")
-        _add_column_if_missing(db, "auth_api_access_tokens", "first_used_at", "first_used_at BIGINT")
-        _add_column_if_missing(db, "auth_api_access_tokens", "last_used_ip_index", "last_used_ip_index TEXT")
-        _add_column_if_missing(db, "auth_api_access_tokens", "last_used_ip_encrypted", "last_used_ip_encrypted TEXT")
-        _add_column_if_missing(db, "auth_api_access_tokens", "last_used_user_agent", "last_used_user_agent TEXT")
-        _add_column_if_missing(db, "auth_api_access_tokens", "last_used_path", "last_used_path TEXT")
-        _add_column_if_missing(db, "auth_api_access_tokens", "expires_at", "expires_at BIGINT")
-        _add_column_if_missing(db, "auth_api_access_tokens", "scope_mode", "scope_mode TEXT NOT NULL DEFAULT 'none'")
-        _add_column_if_missing(db, "auth_api_access_tokens", "use_count_total", "use_count_total INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(
+            db, "auth_api_access_tokens", "description", "description TEXT"
+        )
+        _add_column_if_missing(
+            db, "auth_api_access_tokens", "first_used_at", "first_used_at BIGINT"
+        )
+        _add_column_if_missing(
+            db,
+            "auth_api_access_tokens",
+            "last_used_ip_index",
+            "last_used_ip_index TEXT",
+        )
+        _add_column_if_missing(
+            db,
+            "auth_api_access_tokens",
+            "last_used_ip_encrypted",
+            "last_used_ip_encrypted TEXT",
+        )
+        _add_column_if_missing(
+            db,
+            "auth_api_access_tokens",
+            "last_used_user_agent",
+            "last_used_user_agent TEXT",
+        )
+        _add_column_if_missing(
+            db, "auth_api_access_tokens", "last_used_path", "last_used_path TEXT"
+        )
+        _add_column_if_missing(
+            db, "auth_api_access_tokens", "expires_at", "expires_at BIGINT"
+        )
+        _add_column_if_missing(
+            db,
+            "auth_api_access_tokens",
+            "scope_mode",
+            "scope_mode TEXT NOT NULL DEFAULT 'none'",
+        )
+        _add_column_if_missing(
+            db,
+            "auth_api_access_tokens",
+            "use_count_total",
+            "use_count_total INTEGER NOT NULL DEFAULT 0",
+        )
 
         db.execute(
             """

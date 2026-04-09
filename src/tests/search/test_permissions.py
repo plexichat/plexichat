@@ -248,9 +248,7 @@ class TestSearchAccessControl:
         monkeypatch.setattr(servers, "has_permission", fake_has_permission)
 
         assert manager._can_access_channel(viewer.id, channel.id) is False
-        assert permission_calls == [
-            (viewer.id, server.id, "messages.read", channel.id)
-        ]
+        assert permission_calls == [(viewer.id, server.id, "messages.read", channel.id)]
 
     def test_search_specific_conversation_access(self, db_and_modules):
         """Test searching specific conversation checks access."""

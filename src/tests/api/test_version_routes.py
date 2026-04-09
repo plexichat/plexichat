@@ -90,4 +90,3 @@ class TestServerLifecycleStatusUpdates:
             ]
         finally:
             set_server_state(ServerState.RUNNING)
-

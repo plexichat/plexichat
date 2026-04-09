@@ -154,7 +154,7 @@ class TestDeleteServer:
         user = auth.register(
             username=f"deleteserver_{unique_id}",
             email=f"deleteserver_{unique_id}@example.com",
-            password="SecurePass123!",
+            password="SecurePass123!",  # pragma: allowlist secret
         )
 
         result = auth.login(

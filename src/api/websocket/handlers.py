@@ -7,7 +7,6 @@ from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 import utils.logger as logger
 import src.core.events as events_mod
 from starlette.concurrency import run_in_threadpool
-from starlette.concurrency import run_in_threadpool
 
 from .opcodes import GatewayOpcode, GatewayCloseCode
 from .connection import Connection, ConnectionState
@@ -317,23 +316,9 @@ class OpcodeHandler:
 
             # Broadcast voice state update to channel members via events
             try:
-                # Import events module for broadcasting
-                from src.core.events import payloads
-
-                # Create voice state update payload
-                voice_state_payload = payloads.create_voice_state_update(
-                    user_id=connection.user_id,
-                    channel_id=channel_id,
-                    self_mute=voice_state.self_mute,
-                    self_deaf=voice_state.self_deaf,
-                    mute=False,  # Server mute
-                    deaf=False,  # Server deaf
+                await self._dispatch_voice_state_update(
+                    connection.user_id, channel_id, voice_state
                 )
-
-                # Note: The suppress field for stage channels is handled internally by the VoiceStateEvent
-                # and is set based on the voice state in the update_voice_state method
-                # For now, we'll rely on the existing event dispatch mechanism
-                pass
             except Exception as broadcast_error:
                 logger.warning(
                     f"Failed to broadcast voice state update: {broadcast_error}"
@@ -406,23 +391,10 @@ class OpcodeHandler:
 
             # Step 3: Broadcast voice state update to channel members via events
             try:
-                # Import events module for broadcasting
-                from src.core.events import payloads
-
-                # Create voice state update payload
-                voice_state_payload = payloads.create_voice_state_update(
-                    user_id=connection.user_id,
-                    channel_id=channel_id,
-                    self_mute=voice_state.self_mute,
-                    self_deaf=voice_state.self_deaf,
-                    mute=False,  # Server mute
-                    deaf=False,  # Server deaf
+                # Broadcast voice state update to channel members via events
+                await self._dispatch_voice_state_update(
+                    connection.user_id, channel_id, voice_state
                 )
-
-                # Note: The suppress field for stage channels is handled internally by the VoiceStateEvent
-                # and is set based on the voice state in the join_channel method
-                # For now, we'll rely on the existing event dispatch mechanism
-                pass
             except Exception as broadcast_error:
                 logger.warning(
                     f"Failed to broadcast voice state update: {broadcast_error}"
@@ -884,11 +856,14 @@ class OpcodeHandler:
             logger.debug(f"Failed to dispatch typing event: {e}")
 
     def _get_typing_recipient_ids(
-        self, user_id: int, channel_id: int, server_id: int
+        self, user_id: int, channel_id: int, server_id: int, include_self: bool = False
     ) -> List[int]:
         """Return only members who can still view a channel."""
+        if not self._servers:
+            return []
+
         member_user_ids = self._servers.get_member_user_ids(
-            server_id, exclude_user_id=user_id
+            server_id, exclude_user_id=None if include_self else user_id
         )
 
         visible_user_ids: List[int] = []
@@ -1026,3 +1001,66 @@ class OpcodeHandler:
                 )
         except Exception as e:
             logger.debug(f"Failed to dispatch presence: {e}")
+
+    async def _dispatch_voice_state_update(
+        self,
+        user_id: int,
+        channel_id: int,
+        voice_state: Any,
+    ) -> None:
+        """Dispatch voice state update to channel members."""
+        try:
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+            from src.core.events import payloads
+
+            if not ws_is_setup():
+                return
+
+            dispatcher = get_dispatcher()
+
+            # Get server_id if it's a server channel
+            server_id = None
+            if self._servers:
+                try:
+                    channel = await run_in_threadpool(
+                        self._servers.get_channel, channel_id, user_id
+                    )
+                    if channel:
+                        server_id = getattr(channel, "server_id", None)
+                except Exception:
+                    pass
+
+            # Create the event
+            event = payloads.create_voice_state_update(
+                user_id=user_id,
+                channel_id=channel_id,
+                server_id=server_id,
+                self_mute=voice_state.self_mute,
+                self_deaf=voice_state.self_deaf,
+                mute=getattr(voice_state, "server_mute", False),
+                deaf=getattr(voice_state, "server_deaf", False),
+                session_id=None,  # Not tracked here yet
+            )
+
+            # Find recipients (everyone in the server who can see the channel)
+            target_user_ids: List[int] = []
+            if server_id:
+                target_user_ids = await run_in_threadpool(
+                    self._get_typing_recipient_ids,
+                    user_id,
+                    channel_id,
+                    server_id,
+                    True,  # include_self for voice states
+                )
+            else:
+                # Handle group DM or DM later if needed
+                pass
+
+            if target_user_ids:
+                await dispatcher.dispatch_event(event, target_user_ids)
+                logger.debug(
+                    f"Dispatched voice state update for user {user_id} to {len(target_user_ids)} users"
+                )
+
+        except Exception as e:
+            logger.debug(f"Failed to dispatch voice state update: {e}")

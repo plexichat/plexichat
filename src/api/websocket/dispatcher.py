@@ -327,7 +327,7 @@ class GatewayDispatcher:
         Returns:
             Number of connections event was sent to
         """
-        exclude_set:set[int] = set(exclude_user_ids or [])
+        exclude_set: set[int] = set(exclude_user_ids or [])
         sent_count = 0
         tasks = []
 

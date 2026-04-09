@@ -837,6 +837,3 @@ class QueryBuilder:
                 "Schema registry not enabled. Initialize QueryBuilder with enable_schema_validation=True"
             )
         self.schema_registry.register_tables(schemas)
-
-
-

@@ -162,6 +162,3 @@ class AttachmentRepository(BaseRepository[Attachment]):
             checksum=row.get("checksum"),
             deleted=bool(row["deleted"]),
         )
-
-
-

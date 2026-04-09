@@ -28,9 +28,9 @@ class TestSQLInjection:
                 json={"username": payload, "password": "TestPass123!"},
             )
 
-            assert response.status_code == 401, (
-                f"SQL injection payload should be rejected: {payload}"
-            )
+            assert (
+                response.status_code == 401
+            ), f"SQL injection payload should be rejected: {payload}"
 
     def test_sql_injection_in_search(self, test_client, create_user_with_token):
         """Test SQL injection in user search."""
@@ -48,9 +48,11 @@ class TestSQLInjection:
                 headers={"Authorization": f"Bearer {user['token']}"},
             )
 
-            assert response.status_code in [400, 404, 422], (
-                f"SQL injection in search should be handled: {payload}"
-            )
+            assert response.status_code in [
+                400,
+                404,
+                422,
+            ], f"SQL injection in search should be handled: {payload}"
 
     def test_sql_injection_in_message_content(
         self, test_client, modules, create_user_with_token
@@ -126,9 +128,10 @@ class TestCommandInjection:
                 },
             )
 
-            assert response.status_code in [400, 422], (
-                f"Command injection should be rejected: {payload}"
-            )
+            assert response.status_code in [
+                400,
+                422,
+            ], f"Command injection should be rejected: {payload}"
 
     def test_command_injection_in_server_name(
         self, test_client, create_user_with_token
@@ -231,9 +234,10 @@ class TestPathTraversal:
                 },
             )
 
-            assert response.status_code in [400, 422], (
-                f"Path traversal should be rejected: {payload}"
-            )
+            assert response.status_code in [
+                400,
+                422,
+            ], f"Path traversal should be rejected: {payload}"
 
     def test_path_traversal_in_file_access(self, test_client, create_user_with_token):
         """Test path traversal in file access."""
@@ -251,9 +255,11 @@ class TestPathTraversal:
                 headers={"Authorization": f"Bearer {user['token']}"},
             )
 
-            assert response.status_code in [400, 403, 404], (
-                f"Path traversal should be prevented: {payload}"
-            )
+            assert response.status_code in [
+                400,
+                403,
+                404,
+            ], f"Path traversal should be prevented: {payload}"
 
 
 class TestLDAPInjection:
@@ -273,9 +279,9 @@ class TestLDAPInjection:
                 json={"username": payload, "password": "TestPass123!"},
             )
 
-            assert response.status_code == 401, (
-                f"LDAP injection should be rejected: {payload}"
-            )
+            assert (
+                response.status_code == 401
+            ), f"LDAP injection should be rejected: {payload}"
 
 
 class TestXPathInjection:

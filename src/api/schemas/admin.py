@@ -567,9 +567,13 @@ class AccessTokenCreateRequest(BaseModel):
     name: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     token: Optional[str] = Field(None, min_length=32, max_length=128)
-    expires_at: Optional[int] = Field(None, description="Unix timestamp when token expires")
+    expires_at: Optional[int] = Field(
+        None, description="Unix timestamp when token expires"
+    )
     scope_mode: str = Field(
-        "none", pattern="^(none|monitor|enforce)$", description="IP scope enforcement mode"
+        "none",
+        pattern="^(none|monitor|enforce)$",
+        description="IP scope enforcement mode",
     )
 
 
@@ -611,7 +615,9 @@ class AccessTokenUpdateRequest(BaseModel):
     expires_at: Optional[int] = Field(None)
     clear_expiry: bool = Field(False)
     scope_mode: Optional[str] = Field(
-        None, pattern="^(none|monitor|enforce)$", description="IP scope enforcement mode"
+        None,
+        pattern="^(none|monitor|enforce)$",
+        description="IP scope enforcement mode",
     )
 
 
@@ -691,7 +697,9 @@ class ScheduledDeletionResponse(BaseModel):
     user_id: str = Field(..., description="User ID")
     username: str = Field(..., description="Username")
     scheduled_at: int = Field(..., description="Timestamp when deletion was scheduled")
-    deletion_at: int = Field(..., description="Timestamp when permanent purge will occur")
+    deletion_at: int = Field(
+        ..., description="Timestamp when permanent purge will occur"
+    )
     days_left: int = Field(..., description="Approximate days remaining until purge")
 
 
@@ -700,7 +708,9 @@ class ScheduledDeletionListResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    deletions: List[ScheduledDeletionResponse] = Field(..., description="Scheduled deletions")
+    deletions: List[ScheduledDeletionResponse] = Field(
+        ..., description="Scheduled deletions"
+    )
 
 
 class ForceLogoutRequest(BaseModel):

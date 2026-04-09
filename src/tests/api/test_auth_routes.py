@@ -27,7 +27,9 @@ class _FakeAsyncResponse:
         if self.status_code >= 400:
             request = httpx.Request("GET", "https://example.com")
             response = httpx.Response(self.status_code, request=request)
-            raise httpx.HTTPStatusError("request failed", request=request, response=response)
+            raise httpx.HTTPStatusError(
+                "request failed", request=request, response=response
+            )
 
 
 class _FakeAsyncClient:
@@ -78,7 +80,7 @@ class TestRegister:
             json={
                 "username": f"newuser_{unique_id}",
                 "email": f"newuser_{unique_id}@example.com",
-                "password": "SecurePass123!",
+                "password": "SecurePass123!",  # pragma: allowlist secret
             },
         )
 
@@ -95,7 +97,7 @@ class TestRegister:
             json={
                 "username": test_user["username"],
                 "email": "different@example.com",
-                "password": "SecurePass123!",
+                "password": "SecurePass123!",  # pragma: allowlist secret
             },
         )
 
@@ -127,7 +129,7 @@ class TestRegister:
             json={
                 "username": f"invalidemail_{unique_id}",
                 "email": "not-an-email",
-                "password": "SecurePass123!",
+                "password": "SecurePass123!",  # pragma: allowlist secret
             },
         )
 
@@ -154,7 +156,10 @@ class TestLogin:
         """Test login with wrong password."""
         response = test_client.post(
             "/api/v1/auth/login",
-            json={"username": test_user["username"], "password": "WrongPassword123!"},
+            json={
+                "username": test_user["username"],
+                "password": "WrongPassword123!",
+            },  # pragma: allowlist secret
         )
 
         assert response.status_code == 401
@@ -163,7 +168,10 @@ class TestLogin:
         """Test login with nonexistent user."""
         response = test_client.post(
             "/api/v1/auth/login",
-            json={"username": "nonexistent_user_12345", "password": "SomePassword123!"},
+            json={
+                "username": "nonexistent_user_12345",
+                "password": "SomePassword123!",
+            },  # pragma: allowlist secret
         )
 
         assert response.status_code == 401
@@ -176,14 +184,14 @@ class TestLogin:
         auth.register(
             username=f"emaillogin_{unique_id}",
             email=f"emaillogin_{unique_id}@example.com",
-            password="SecurePass123!",
+            password="SecurePass123!",  # pragma: allowlist secret
         )
 
         response = test_client.post(
             "/api/v1/auth/login",
             json={
                 "username": f"emaillogin_{unique_id}@example.com",
-                "password": "SecurePass123!",
+                "password": "SecurePass123!",  # pragma: allowlist secret
             },
         )
 
@@ -206,7 +214,9 @@ class TestLogout:
             password="SecurePass123!",
         )
 
-        result = auth.login(username=f"logout_{unique_id}", password="SecurePass123!")
+        result = auth.login(
+            username=f"logout_{unique_id}", password="SecurePass123!"
+        )  # pragma: allowlist secret
 
         response = test_client.post(
             "/api/v1/auth/logout", headers={"Authorization": f"Bearer {result.token}"}
@@ -311,9 +321,7 @@ class TestOAuthCallbackSecurity:
         )
         fake_auth.oauth_login.assert_not_called()
 
-    def test_github_callback_rejects_accounts_without_verified_email(
-        self, monkeypatch
-    ):
+    def test_github_callback_rejects_accounts_without_verified_email(self, monkeypatch):
         """Test GitHub OAuth callback requires a verified email address."""
         fake_auth = MagicMock()
 

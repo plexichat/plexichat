@@ -182,15 +182,20 @@ class Keyring:
                 )
             except Exception as e:
                 logger.error(f"CRITICAL: Failed to decrypt keyring at {self.path}: {e}")
-                
+
                 # If keyring decryption fails, it usually means the KEK has changed.
                 # In this case, all cached data encrypted with the old keys is now invalid.
                 try:
                     from src.core.database import invalidate_pattern
+
                     count = invalidate_pattern("*")
-                    logger.warning(f"KEK change detected or keyring corrupted. Invalidated {count} cache keys.")
+                    logger.warning(
+                        f"KEK change detected or keyring corrupted. Invalidated {count} cache keys."
+                    )
                 except Exception as ce:
-                    logger.error(f"Failed to invalidate cache after keyring decryption failure: {ce}")
+                    logger.error(
+                        f"Failed to invalidate cache after keyring decryption failure: {ce}"
+                    )
 
                 self.current_version = 0
                 self.current_key_source = "unknown"
@@ -456,7 +461,9 @@ class EncryptionManager:
             plaintext = aesgcm.decrypt(nonce, ciphertext, aad)
             return plaintext.decode("utf-8")
         except Exception as e:
-            logger.error(f"Decryption failed for version {version} with context {context}: {repr(e)}")
+            logger.error(
+                f"Decryption failed for version {version} with context {context}: {repr(e)}"
+            )
             raise ValueError(
                 "Integrity check failed: Data may have been tampered with."
             )

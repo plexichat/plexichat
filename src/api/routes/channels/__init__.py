@@ -71,8 +71,10 @@ async def get_channel(
             )
 
         try:
+
             def _get_channel_sync():
                 import src.api as api_module
+
                 db = api_module.get_db()
                 try:
                     ch = servers_mod.get_channel(cid, current_user.user_id)
@@ -80,7 +82,9 @@ async def get_channel(
                         # Fallback to messaging module for DMs
                         messaging_mod = api_module.get_messaging()
                         if messaging_mod:
-                            ch = messaging_mod.get_conversation(cid, current_user.user_id)
+                            ch = messaging_mod.get_conversation(
+                                cid, current_user.user_id
+                            )
                     return ch
                 finally:
                     if db:
@@ -757,7 +761,9 @@ async def join_server_via_invite(
                     # 2. Dispatch GUILD_MEMBER_ADD to other members
                     user_data = None
                     if auth:
-                        user = await run_in_threadpool(auth.get_user, current_user.user_id)
+                        user = await run_in_threadpool(
+                            auth.get_user, current_user.user_id
+                        )
                         if user:
                             user_data = {
                                 "id": str(user.id),
@@ -977,6 +983,7 @@ async def upload_attachment(
 
         # Use the media module for upload (handles size limits, security, and storage)
         try:
+
             def _upload_with_cleanup():
                 import src.api as api_module
 

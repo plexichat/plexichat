@@ -703,6 +703,3 @@ class RoleHandler:
             {"role_id": role_id},
         )
         return True
-
-
-

@@ -1703,6 +1703,3 @@ class ServerManager(BaseManager):
             reason=row.get("reason"),
             created_at=row["created_at"],
         )
-
-
-

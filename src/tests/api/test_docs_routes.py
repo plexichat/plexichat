@@ -57,7 +57,9 @@ class TestDocsRoutes:
         assert response.status_code == 200, path
         assert "Plexichat Documentation" in response.text
 
-    def test_api_reference_relative_links_stay_under_reference_prefix(self, test_client):
+    def test_api_reference_relative_links_stay_under_reference_prefix(
+        self, test_client
+    ):
         response = test_client.get("/docs/api/reference")
 
         assert response.status_code == 200
@@ -77,7 +79,9 @@ class TestDocsRoutes:
 
     def test_static_docs_page_skips_dynamic_helpers(self, test_client, monkeypatch):
         def fail(*_args, **_kwargs):
-            pytest.fail("dynamic placeholder helper should not run for static docs pages")
+            pytest.fail(
+                "dynamic placeholder helper should not run for static docs pages"
+            )
 
         monkeypatch.setattr(docs_routes, "get_api_rate_limits", fail)
         monkeypatch.setattr(docs_routes, "get_gateway_intents_docs_data", fail)
@@ -113,7 +117,9 @@ class TestDocsRoutes:
         assert stats["cache"]["docs_entries"] >= 1
         assert stats["cache"]["html_entries"] >= 1
 
-    def test_rate_limits_page_uses_live_rate_limit_helper(self, test_client, monkeypatch):
+    def test_rate_limits_page_uses_live_rate_limit_helper(
+        self, test_client, monkeypatch
+    ):
         monkeypatch.setattr(
             docs_routes,
             "get_api_rate_limits",
@@ -156,7 +162,9 @@ class TestDocsRoutes:
         assert "disabled" in body
         assert "enabled" in body
 
-    def test_websocket_intents_page_uses_live_intent_helper(self, test_client, monkeypatch):
+    def test_websocket_intents_page_uses_live_intent_helper(
+        self, test_client, monkeypatch
+    ):
         monkeypatch.setattr(
             docs_routes,
             "get_gateway_intents_docs_data",
@@ -188,7 +196,9 @@ class TestDocsRoutes:
         assert "Custom dynamic description" in body
         assert "/docs/api/websocket/intents" in body
 
-    def test_permissions_page_uses_live_permissions_helper(self, test_client, monkeypatch):
+    def test_permissions_page_uses_live_permissions_helper(
+        self, test_client, monkeypatch
+    ):
         monkeypatch.setattr(
             docs_routes,
             "get_permissions_docs_data",
@@ -300,4 +310,3 @@ class TestDocsRoutes:
         assert "OpenAPI Explorer" in body
         assert "Narrative Docs" in body
         assert "PLEXI<span>CHAT</span>" in body
-

@@ -432,11 +432,12 @@ class ReactionManager(BaseManager):
         max_reactions = self._config.get("max_reactions_per_message", 20)
         if channel:
             srv_row = self._db.fetch_one(
-                "SELECT max_reactions_per_message FROM srv_servers WHERE id = ?", (channel["server_id"],)
+                "SELECT max_reactions_per_message FROM srv_servers WHERE id = ?",
+                (channel["server_id"],),
             )
             if srv_row and srv_row["max_reactions_per_message"]:
                 max_reactions = srv_row["max_reactions_per_message"]
-                
+
         max_user_reactions = self._config.get("max_unique_reactions_per_user", 50)
 
         # Use transaction to prevent race conditions on limit checks
@@ -1031,21 +1032,23 @@ class ReactionManager(BaseManager):
                     if result.metadata:
                         width = result.metadata.get("width")
                         height = result.metadata.get("height")
-                    
+
                     # SECURITY: Strictly validate the returned URL to prevent injection/XSS
                     # Allow only relative paths or specific safe schemes
                     if url:
                         # Normalize to absolute path if relative
-                        if url.startswith('/'):
-                            pass 
-                        elif url.startswith('http://') or url.startswith('https://'):
+                        if url.startswith("/"):
+                            pass
+                        elif url.startswith("http://") or url.startswith("https://"):
                             # Basic sanity check on external URLs if allowed
                             pass
                         else:
                             # If it's something else (like javascript:), reject it
                             logger.error(f"Media module returned unsafe URL: {url}")
                             self._db.execute("ROLLBACK")
-                            raise InvalidEmojiFileError("Media module returned an unsafe URL")
+                            raise InvalidEmojiFileError(
+                                "Media module returned an unsafe URL"
+                            )
                 except InvalidEmojiFileError:
                     raise
                 except Exception as e:
@@ -1394,6 +1397,3 @@ class ReactionManager(BaseManager):
     ) -> Dict[int, List[Dict[str, Any]]]:
         """Legacy helper for tests."""
         return self.get_reactions_batch(user_id=1, message_ids=message_ids)
-
-
-

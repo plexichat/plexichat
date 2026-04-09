@@ -191,6 +191,7 @@ class DatabaseStorage(StorageBackendBase):
         except Exception as e:
             logger.error(f"Failed to delete blob at {path}: {e}")
             raise StorageDeleteError(f"Failed to delete from database: {e}", "database")
+
     def exists(self, path: str) -> bool:
         """Check if file exists in database."""
         row = self._db.fetch_one("SELECT 1 FROM media_blobs WHERE path = ?", (path,))
@@ -279,6 +280,3 @@ class DatabaseStorage(StorageBackendBase):
         """Get total number of stored blobs."""
         row = self._db.fetch_one("SELECT COUNT(*) as count FROM media_blobs")
         return row["count"] if row else 0
-
-
-

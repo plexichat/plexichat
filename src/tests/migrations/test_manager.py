@@ -337,9 +337,9 @@ def up(db):
             tracker.ensure_table_exists()
 
             all_records = tracker.get_all_migration_records()
-            assert len(all_records) == 0, (
-                "Dry-run should not write to migrations_history"
-            )
+            assert (
+                len(all_records) == 0
+            ), "Dry-run should not write to migrations_history"
 
             # Check that the table was not created (migration was rolled back)
             table_result = test_db.fetch_all(

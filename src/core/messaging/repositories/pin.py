@@ -94,6 +94,3 @@ class PinRepository(BaseRepository[PinnedMessage]):
             pinned_by=row["pinned_by"],
             pinned_at=row["pinned_at"],
         )
-
-
-

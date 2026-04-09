@@ -268,14 +268,20 @@ class TestRelationshipErrors:
             "SELECT status FROM rel_friend_requests WHERE id = ?", (request.id,)
         )
         assert request_row["status"] == "pending"
-        assert rel_manager._db.fetch_one(
-            "SELECT 1 as ok FROM rel_friends WHERE user_id = ? AND friend_id = ?",
-            (1, 2),
-        ) is None
-        assert rel_manager._db.fetch_one(
-            "SELECT 1 as ok FROM rel_friends WHERE user_id = ? AND friend_id = ?",
-            (2, 1),
-        ) is None
+        assert (
+            rel_manager._db.fetch_one(
+                "SELECT 1 as ok FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+                (1, 2),
+            )
+            is None
+        )
+        assert (
+            rel_manager._db.fetch_one(
+                "SELECT 1 as ok FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+                (2, 1),
+            )
+            is None
+        )
 
 
 class TestRelationshipStatus:

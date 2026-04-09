@@ -24,6 +24,8 @@ class AdminUserDetail:
     account_locked: bool = False
     locked_until: Optional[int] = None
     force_username_change: bool = False
+    deletion_status: str = "active"
+    deletion_at: Optional[int] = None
 
 
 @dataclass
@@ -45,7 +47,7 @@ def search_users(
     try:
         user_id = int(q)
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.id = ? LIMIT ? OFFSET ?""",
@@ -53,7 +55,7 @@ def search_users(
         )
     except ValueError:
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.username LIKE ? OR u.email_index LIKE ? LIMIT ? OFFSET ?""",
@@ -85,6 +87,8 @@ def search_users(
                     account_locked=bool(row.get("account_locked", 0)),
                     locked_until=row.get("locked_until"),
                     force_username_change=bool(row.get("force_username_change", 0)),
+                    deletion_status=row.get("deletion_status") or "active",
+                    deletion_at=row.get("deletion_at"),
                 )
             )
         else:
@@ -110,6 +114,8 @@ def search_users(
                     account_locked=bool(row[6]),
                     locked_until=row[7],
                     force_username_change=bool(row[8]),
+                    deletion_status=row[9] if len(row) > 9 else "active",
+                    deletion_at=row[10] if len(row) > 10 else None,
                 )
             )
     return users
@@ -118,7 +124,7 @@ def search_users(
 def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
     """Get full user details by ID."""
     row = db.fetch_one(
-        """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at, u.account_locked, u.locked_until, u.force_username_change
+        """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
            FROM auth_users u
            LEFT JOIN user_features f ON u.id = f.user_id
            WHERE u.id = ?""",
@@ -149,6 +155,8 @@ def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
             account_locked=bool(row.get("account_locked", 0)),
             locked_until=row.get("locked_until"),
             force_username_change=bool(row.get("force_username_change", 0)),
+            deletion_status=row.get("deletion_status") or "active",
+            deletion_at=row.get("deletion_at"),
         )
     else:
         badges_json = row[4] or "[]"
@@ -172,6 +180,8 @@ def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
             account_locked=bool(row[7]),
             locked_until=row[8],
             force_username_change=bool(row[9]),
+            deletion_status=row[10] if len(row) > 10 else "active",
+            deletion_at=row[11] if len(row) > 11 else None,
         )
 
 

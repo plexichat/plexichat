@@ -210,6 +210,3 @@ class ConversationRepository(BaseRepository[Conversation]):
             participant_count=participant_count,
             metadata=self._json_loads(row["metadata"]) if row["metadata"] else None,
         )
-
-
-

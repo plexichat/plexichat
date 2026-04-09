@@ -337,7 +337,9 @@ def sign_url(
     return _get_manager().sign_url(file_id, expires_in, params)
 
 
-def verify_signed_url(url: str, current_user_id: Optional[int] = None) -> Tuple[bool, int]:
+def verify_signed_url(
+    url: str, current_user_id: Optional[int] = None
+) -> Tuple[bool, int]:
     """
     Verify a signed URL.
 

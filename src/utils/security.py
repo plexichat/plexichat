@@ -170,4 +170,3 @@ class URLValidator:
         except ValueError:
             # If not a valid IP, it might be a hostname that escaped previous checks
             return True
-

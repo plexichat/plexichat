@@ -57,7 +57,9 @@ def _serialize_access_token_scope(scope) -> AccessTokenScopeResponse:
         id=str(scope["id"]),
         scope_type=scope["scope_type"],
         value=scope["value"],
-        created_by=str(scope["created_by"]) if scope.get("created_by") is not None else None,
+        created_by=str(scope["created_by"])
+        if scope.get("created_by") is not None
+        else None,
         created_at=scope["created_at"],
     )
 
@@ -134,7 +136,9 @@ async def create_access_token(request: Request, body: AccessTokenCreateRequest):
     "/security/access-tokens/{token_id}",
     response_model=AccessTokenDetailResponse,
 )
-async def get_access_token_detail(request: Request, token_id: int, recent_limit: int = 100):
+async def get_access_token_detail(
+    request: Request, token_id: int, recent_limit: int = 100
+):
     """Get detailed usage and policy information for a specific API access token."""
     check_host_restriction(request)
     get_admin_from_token(request)
@@ -166,7 +170,9 @@ async def get_access_token_detail(request: Request, token_id: int, recent_limit:
             for event in detail["recent_events"]
         ],
         top_ips=[AccessTokenUsageIPResponse(**item) for item in detail["top_ips"]],
-        top_paths=[AccessTokenUsagePathResponse(**item) for item in detail["top_paths"]],
+        top_paths=[
+            AccessTokenUsagePathResponse(**item) for item in detail["top_paths"]
+        ],
         total_events=detail["total_events"],
         distinct_ip_count=detail["distinct_ip_count"],
         denied_count_total=detail["denied_count_total"],
@@ -236,7 +242,9 @@ async def rotate_access_token(
             status_code=404,
             detail={"error": {"code": 404, "message": "Access token not found"}},
         )
-    return AccessTokenCreateResponse(token=token.token or "", access_token=_serialize_access_token(token))
+    return AccessTokenCreateResponse(
+        token=token.token or "", access_token=_serialize_access_token(token)
+    )
 
 
 @router.post(

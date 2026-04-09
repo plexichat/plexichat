@@ -42,10 +42,14 @@ class TestGetRelationships:
         )
         request = relationships.send_friend_request(requester.id, friend.id)
         relationships.accept_friend_request(friend.id, request.id)
-        login = auth.login(username=f"relrequester_{unique_id}", password="SecurePass123!")
+        login = auth.login(
+            username=f"relrequester_{unique_id}", password="SecurePass123!"
+        )
 
         def fail_get_users_bulk(*args, **kwargs):
-            raise AssertionError("get_users_bulk should not be used for relationship listings")
+            raise AssertionError(
+                "get_users_bulk should not be used for relationship listings"
+            )
 
         def fake_profiles(user_ids):
             assert friend.id in user_ids
@@ -167,8 +171,7 @@ class TestSendFriendRequest:
         assert post_response.status_code == 200
         data = post_response.json()
         assert any(
-            item["user_id"] == str(sender.id)
-            and item["status"] == "pending_incoming"
+            item["user_id"] == str(sender.id) and item["status"] == "pending_incoming"
             for item in data
         )
 
@@ -343,12 +346,14 @@ class TestBlockUser:
 
         assert response.status_code == 400
 
-    def test_block_user_invalidates_relationship_cache(self, test_client, db_and_modules):
+    def test_block_user_invalidates_relationship_cache(
+        self, test_client, db_and_modules
+    ):
         """Blocking should refresh the caller's cached relationship listing."""
         auth = db_and_modules["auth"]
         unique_id = uuid.uuid4().hex[:8]
 
-        blocker = auth.register(
+        auth.register(
             username=f"blockcache_blocker_{unique_id}",
             email=f"blockcache_blocker_{unique_id}@example.com",
             password="SecurePass123!",

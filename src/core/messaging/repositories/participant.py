@@ -225,6 +225,3 @@ class ParticipantRepository(BaseRepository[Participant]):
             else None,
             nickname=row["nickname"],
         )
-
-
-

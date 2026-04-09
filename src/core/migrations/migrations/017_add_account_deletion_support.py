@@ -1,8 +1,9 @@
-
 def _add_column_if_missing(db, table: str, column: str, ddl: str) -> None:
     try:
         if db.type == "postgres":
-            rows = db.fetch_all(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}'")
+            rows = db.fetch_all(
+                f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}'"
+            )
             existing = {row["column_name"] for row in rows}
         else:
             rows = db.fetch_all(f"PRAGMA table_info({table})")
@@ -21,9 +22,14 @@ def up(db):
     try:
         # Add deletion columns to auth_users
         # deletion_status: active, frozen, purged
-        _add_column_if_missing(db, "auth_users", "deletion_status", "deletion_status TEXT NOT NULL DEFAULT 'active'")
+        _add_column_if_missing(
+            db,
+            "auth_users",
+            "deletion_status",
+            "deletion_status TEXT NOT NULL DEFAULT 'active'",
+        )
         _add_column_if_missing(db, "auth_users", "deletion_at", "deletion_at BIGINT")
-        
+
         # Create a database backup of deletion records for last-resort lookup
         # This mirrors the external audit log for redundancy
         db.execute(
@@ -40,7 +46,7 @@ def up(db):
             )
             """
         )
-        
+
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_auth_users_deletion_status ON auth_users(deletion_status)"
         )

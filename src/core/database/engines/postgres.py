@@ -165,6 +165,7 @@ class PostgresEngine(BaseEngine):
         safe_cols = ", ".join(columns)
         placeholders = ", ".join(["?"] * len(columns))
         return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+
     def get_upsert_query(
         self,
         table: str,

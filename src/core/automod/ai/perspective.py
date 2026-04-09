@@ -151,4 +151,3 @@ class PerspectiveAdapter(BaseAIAdapter):
             for cat, desc in self.CATEGORIES.items()
             if cat in self._requested_attributes
         }
-

@@ -114,13 +114,15 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         # SECURITY: Use execute_many for true batch performance
         data = []
         for mid in message_ids:
-            data.append((
-                generate_snowflake_id(), # Generate unique ID for each status record
-                mid,
-                user_id,
-                MessageStatusType.DELIVERED.value,
-                timestamp,
-            ))
+            data.append(
+                (
+                    generate_snowflake_id(),  # Generate unique ID for each status record
+                    mid,
+                    user_id,
+                    MessageStatusType.DELIVERED.value,
+                    timestamp,
+                )
+            )
 
         self._db.execute_many(
             """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
@@ -136,7 +138,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
                        ELSE msg_message_status.timestamp 
                    END""",
             data,
-            auto_commit=auto_commit
+            auto_commit=auto_commit,
         )
 
         return len(message_ids)
@@ -172,13 +174,15 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         # 2. SECURITY: Use execute_many for true batch performance
         data = []
         for mid in message_ids:
-            data.append((
-                generate_snowflake_id(), # Generate unique ID for each status record
-                mid, 
-                user_id, 
-                MessageStatusType.READ.value, 
-                timestamp
-            ))
+            data.append(
+                (
+                    generate_snowflake_id(),  # Generate unique ID for each status record
+                    mid,
+                    user_id,
+                    MessageStatusType.READ.value,
+                    timestamp,
+                )
+            )
 
         self._db.execute_many(
             """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
@@ -187,7 +191,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
                DO UPDATE SET status = EXCLUDED.status, timestamp = EXCLUDED.timestamp
                WHERE msg_message_status.status != 'read'""",
             data,
-            auto_commit=auto_commit
+            auto_commit=auto_commit,
         )
 
         return len(message_ids)
@@ -256,6 +260,3 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
             status=MessageStatusType(row["status"]),
             timestamp=row["timestamp"],
         )
-
-
-

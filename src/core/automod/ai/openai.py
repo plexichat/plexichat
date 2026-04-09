@@ -138,4 +138,3 @@ class OpenAIAdapter(BaseAIAdapter):
     def get_categories(self) -> Dict[str, str]:
         """Get OpenAI moderation categories."""
         return self.CATEGORIES.copy()
-

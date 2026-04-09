@@ -124,12 +124,12 @@ class TestGetUserInfoFromRequest:
         """Test rate limit bypass via X-RateLimit-Bypass header with secret."""
         with patch("src.api.middleware.rate_limiting.config.get") as mock_get:
             mock_get.return_value = "correct_secret"
-            
+
             # Correct secret
             mock_request.headers = {"X-RateLimit-Bypass": "correct_secret"}
             user_info = get_user_info_from_request(mock_request)
             assert user_info["is_internal"] is True
-            
+
             # Wrong secret
             mock_request.headers = {"X-RateLimit-Bypass": "wrong_secret"}
             user_info = get_user_info_from_request(mock_request)
@@ -378,7 +378,7 @@ class TestBypassFunctionality:
         # First request - Success
         response = client.get("/api/v1/test", headers=headers)
         assert response.status_code == 200
-        
+
         # Second request - Should FAIL (429) despite the header
         response = client.get("/api/v1/test", headers=headers)
         assert response.status_code == 429
@@ -386,20 +386,23 @@ class TestBypassFunctionality:
     def test_bypass_header_requires_correct_secret(self, bypass_app):
         """Test X-RateLimit-Bypass header bypasses limits only with correct secret."""
         client = TestClient(bypass_app)
-        
+
         from unittest.mock import patch
+
         with patch("src.api.middleware.rate_limiting.config.get") as mock_get:
             mock_get.return_value = "correct_secret"
-            
+
             headers = {"X-RateLimit-Bypass": "correct_secret"}
             for i in range(5):
                 response = client.get("/api/v1/test", headers=headers)
-                assert response.status_code == 200, f"Bypass request {i + 1} failed with correct secret"
-                
+                assert (
+                    response.status_code == 200
+                ), f"Bypass request {i + 1} failed with correct secret"
+
             # Wrong secret should be rate limited
             headers_wrong = {"X-RateLimit-Bypass": "wrong_secret"}
-            client.get("/api/v1/test") # Consume the remaining limit if any
-            
+            client.get("/api/v1/test")  # Consume the remaining limit if any
+
             response = client.get("/api/v1/test", headers=headers_wrong)
             assert response.status_code == 429
 

@@ -123,7 +123,7 @@ def _message_to_response(
                         signed = media_mod.sign_url(
                             url=f"/api/v1/media/attachments/{stored_tail}",
                             file_id=int(file_id),
-                            user_id=viewer_user_id
+                            user_id=viewer_user_id,
                         )
                         url = signed.url
                 except Exception as e:

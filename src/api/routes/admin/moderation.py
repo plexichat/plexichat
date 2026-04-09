@@ -58,7 +58,9 @@ def _message_report_to_response(report) -> MessageReportResponse:
         category=report.category,
         details=report.details,
         message_content=report.message_content,
-        status=report.status.value if hasattr(report.status, "value") else str(report.status),
+        status=report.status.value
+        if hasattr(report.status, "value")
+        else str(report.status),
         reported_at=report.reported_at,
         reviewed_at=report.reviewed_at,
         reviewed_by=str(report.reviewed_by) if report.reviewed_by is not None else None,
@@ -76,7 +78,9 @@ def _user_report_to_response(report) -> UserReportResponse:
         category=report.category,
         details=report.details,
         evidence_message_ids=[str(i) for i in (report.evidence_message_ids or [])],
-        status=report.status.value if hasattr(report.status, "value") else str(report.status),
+        status=report.status.value
+        if hasattr(report.status, "value")
+        else str(report.status),
         reported_at=report.reported_at,
         reviewed_at=report.reviewed_at,
         reviewed_by=str(report.reviewed_by) if report.reviewed_by is not None else None,
@@ -195,7 +199,9 @@ async def get_message_report_counts(request: Request):
     """Get message report counts grouped by status."""
     check_host_restriction(request)
     get_admin_from_token(request)
-    return ModerationReportCountsResponse(**_get_reports_module().get_message_report_counts())
+    return ModerationReportCountsResponse(
+        **_get_reports_module().get_message_report_counts()
+    )
 
 
 @router.post(
@@ -210,7 +216,9 @@ async def review_message_report(
     admin_id = get_admin_from_token(request)
     reports = _get_reports_module()
 
-    if not reports.review_message_report(report_id, admin_id, review.action, review.notes):
+    if not reports.review_message_report(
+        report_id, admin_id, review.action, review.notes
+    ):
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Report not found"}},
@@ -247,7 +255,9 @@ async def get_user_report_counts(request: Request):
     """Get user report counts grouped by status."""
     check_host_restriction(request)
     get_admin_from_token(request)
-    return ModerationReportCountsResponse(**_get_reports_module().get_user_report_counts())
+    return ModerationReportCountsResponse(
+        **_get_reports_module().get_user_report_counts()
+    )
 
 
 @router.post(

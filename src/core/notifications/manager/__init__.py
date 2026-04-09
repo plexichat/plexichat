@@ -479,13 +479,19 @@ class NotificationManager(BaseManager):
             mention_type = mention_types.get(user_id)
             if not mention_type:
                 continue
-                
+
             # Optimized check using pre-fetched data
             settings = all_settings.get(user_id)
             override = all_overrides.get(user_id)
-            
+
             if self._should_notify_user_optimized(
-                user_id, author_id, server_id, channel_id, mention_type, settings, override
+                user_id,
+                author_id,
+                server_id,
+                channel_id,
+                mention_type,
+                settings,
+                override,
             ):
                 final_users_to_notify.append(user_id)
 
@@ -670,11 +676,22 @@ class NotificationManager(BaseManager):
         for uid in user_ids:
             notif_id = self._generate_id()
             mention_type = mention_types.get(uid, MentionType.USER)
-            notifications_to_insert.append((
-                notif_id, uid, author_id, message_id, conversation_id,
-                server_id, channel_id, thread_id, mention_type.value,
-                content_preview, 0, created_at
-            ))
+            notifications_to_insert.append(
+                (
+                    notif_id,
+                    uid,
+                    author_id,
+                    message_id,
+                    conversation_id,
+                    server_id,
+                    channel_id,
+                    thread_id,
+                    mention_type.value,
+                    content_preview,
+                    0,
+                    created_at,
+                )
+            )
 
         # 1. Batch insert notifications
         self._db.execute_many(
@@ -682,11 +699,11 @@ class NotificationManager(BaseManager):
                (id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id,
                 mention_type, content_preview, read, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            notifications_to_insert
+            notifications_to_insert,
         )
 
         # 2. Batch update unread counts
-        # This is more complex since it's an UPSERT pattern. 
+        # This is more complex since it's an UPSERT pattern.
         # For simplicity and correctness, we'll iterate but we've already saved many roundtrips.
         # Future optimization: Use a temporary table or specialized bulk UPSERT query.
         for uid in user_ids:
@@ -698,16 +715,24 @@ class NotificationManager(BaseManager):
         # For performance, we don't re-fetch every single one, but we'll return basic objects
         results = []
         from src.api.routes.notifications import _notif_to_response
-        
+
         for data in notifications_to_insert:
             notif = Notification(
-                id=data[0], user_id=data[1], author_id=data[2], message_id=data[3],
-                conversation_id=data[4], server_id=data[5], channel_id=data[6],
-                thread_id=data[7], mention_type=MentionType(data[8]),
-                content_preview=data[9], read=False, created_at=data[11]
+                id=data[0],
+                user_id=data[1],
+                author_id=data[2],
+                message_id=data[3],
+                conversation_id=data[4],
+                server_id=data[5],
+                channel_id=data[6],
+                thread_id=data[7],
+                mention_type=MentionType(data[8]),
+                content_preview=data[9],
+                read=False,
+                created_at=data[11],
             )
             results.append(notif)
-            
+
             # Dispatch event
             self._dispatch_notification_event(
                 notif.user_id,
@@ -1052,7 +1077,7 @@ class NotificationManager(BaseManager):
             )
 
         results = {row["user_id"]: self._row_to_settings(row) for row in rows}
-        
+
         # Fill in defaults for missing users
         for uid in user_ids:
             if uid not in results:

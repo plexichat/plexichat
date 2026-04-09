@@ -226,6 +226,7 @@ async def upload_chunk(
     from src.core import media
 
     try:
+
         def _upload_chunk_stream():
             stream = file.file
             stream.seek(0)
@@ -317,6 +318,7 @@ async def complete_upload_session(
             )
 
         try:
+
             def _upload_complete_file():
                 assert session.temp_path is not None
                 with open(session.temp_path, "rb") as f:

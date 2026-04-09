@@ -167,27 +167,27 @@ class FileEncryptor:
     def encrypt_to_blob(self, data: bytes, aad: Optional[bytes] = b"") -> bytes:
         """
         Encrypt data to a blob format.
-        
+
         Now uses unified streaming format (PXSTR v2) internally for all files,
         providing consistent encryption regardless of size. Legacy PXENC format
         is still readable but no longer written.
         """
         import io
-        
+
         input_stream = io.BytesIO(data)
         output_stream = io.BytesIO()
-        
+
         # Use streaming format for all sizes (unified approach)
         self._encrypt_stream_to_blob(input_stream, output_stream, len(data), aad)
-        
+
         return output_stream.getvalue()
-    
+
     def _encrypt_stream_to_blob(
-        self, 
-        input_stream: BinaryIO, 
-        output_stream: BinaryIO, 
+        self,
+        input_stream: BinaryIO,
+        output_stream: BinaryIO,
         file_size: int,
-        aad: Optional[bytes] = b""
+        aad: Optional[bytes] = b"",
     ) -> Dict[str, Any]:
         """Internal: Encrypt stream to blob format (unified v2 format)."""
         dek = self._generate_dek()
@@ -208,7 +208,7 @@ class FileEncryptor:
 
         chunk_index = 0
         checksum = hashlib.sha256()
-        
+
         while True:
             chunk = input_stream.read(CHUNK_SIZE)
             if not chunk:
@@ -322,15 +322,18 @@ class FileEncryptor:
 
     def decrypt_from_blob(self, blob: bytes, aad: Optional[bytes] = b"") -> bytes:
         header, header_size = self.deserialize_header(blob)
-        
+
         if header.is_stream:
             # Re-wrap as stream for decryption if it was stored as PXSTR v2
             import io
+
             input_stream = io.BytesIO(blob)
             output_stream = io.BytesIO()
-            StreamingFileEncryptor(self.keyring).decrypt_stream(input_stream, output_stream, aad)
+            StreamingFileEncryptor(self.keyring).decrypt_stream(
+                input_stream, output_stream, aad
+            )
             return output_stream.getvalue()
-            
+
         ciphertext = blob[header_size:]
         dek = self._unwrap_key(header.wrapped_key, header.key_version)
         cipher = AESGCM(dek)

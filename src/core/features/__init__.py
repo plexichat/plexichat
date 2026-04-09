@@ -610,6 +610,3 @@ __all__ = [
     "InvalidTierError",
     "InvalidBadgeError",
 ]
-
-
-

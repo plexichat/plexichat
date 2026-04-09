@@ -292,6 +292,3 @@ class MessageRepository(BaseRepository[Message]):
             metadata=metadata,
             embeds=embeds,
         )
-
-
-

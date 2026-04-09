@@ -89,6 +89,7 @@ def mocker():
     finally:
         m.stopall()
 
+
 DEFAULT_TEST_CONFIG = {
     "authentication": {
         "accounts": {

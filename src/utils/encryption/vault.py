@@ -110,11 +110,20 @@ class HardwareVault:
                 # On Windows, use icacls to restrict access to current user only
                 try:
                     import subprocess
+
                     # Remove inheritance and all permissions, then grant full to current user
                     subprocess.run(
-                        ["icacls", str(key_file), "/inheritance:r", "/grant:r", "*S-1-5-32-544:F", "/grant:r", "%USERNAME%:F"],
+                        [
+                            "icacls",
+                            str(key_file),
+                            "/inheritance:r",
+                            "/grant:r",
+                            "*S-1-5-32-544:F",
+                            "/grant:r",
+                            "%USERNAME%:F",
+                        ],
                         capture_output=True,
-                        check=False
+                        check=False,
                     )
                 except Exception:
                     pass

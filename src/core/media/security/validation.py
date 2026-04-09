@@ -343,13 +343,15 @@ class FileValidator:
                 b"onresize",
                 b"onscroll",
                 b"onunload",
-                b"href=\"javascript:",
-                b"xlink:href=\"javascript:",
+                b'href="javascript:',
+                b'xlink:href="javascript:',
             ]
             file_data_lower = file_data.lower()
             for pattern in danger_patterns:
                 if pattern in file_data_lower:
-                    logger.warning(f"Unsafe content detected in SVG file: {pattern.decode()}")
+                    logger.warning(
+                        f"Unsafe content detected in SVG file: {pattern.decode()}"
+                    )
                     return False, "Unsafe content detected in SVG file", safe_filename
 
         return True, None, safe_filename

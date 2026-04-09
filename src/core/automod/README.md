@@ -198,11 +198,11 @@ automod:
   
   ai:
     openai:
-      api_key: "sk-..."
+      api_key: "sk-PLACEHOLDER"  # pragma: allowlist secret
       model: "text-moderation-latest"
       threshold: 0.5
     perspective:
-      api_key: "..."
+      api_key: "PLACEHOLDER"  # pragma: allowlist secret
       threshold: 0.7
       attributes:
         - TOXICITY
@@ -210,7 +210,7 @@ automod:
         - PROFANITY
     custom:
       endpoint_url: "https://your-api.com/moderate"
-      api_key: "..."
+      api_key: "PLACEHOLDER"  # pragma: allowlist secret
       timeout_seconds: 10
 ```
 

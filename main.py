@@ -676,9 +676,7 @@ class PlexichatServer:
         timed_init("messaging", lambda: messaging.setup(self.db, auth))
         self._modules["messaging"] = messaging
 
-        timed_init(
-            "search", lambda: search.setup(self.db, auth, messaging, servers)
-        )
+        timed_init("search", lambda: search.setup(self.db, auth, messaging, servers))
         self._modules["search"] = search
 
         init_independent()
@@ -686,10 +684,11 @@ class PlexichatServer:
         # Dependent initialization group (Parallel)
         def init_dependent():
             threads = []
-            
+
             # Start Account Reaper (handles boot-check and background purge)
             try:
                 from src.core.auth.reaper import AccountReaper
+
                 reaper = AccountReaper(self.db, auth)
                 reaper.start()
                 self._modules["reaper"] = reaper

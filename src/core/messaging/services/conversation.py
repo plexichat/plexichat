@@ -461,7 +461,9 @@ class ConversationService(BaseService):
         self._participant_svc.remove_participant(conversation_id, user_id)
 
         # If this was the last participant, delete the conversation.
-        if not self._participant_svc._repo.get_user_ids_by_conversation(conversation_id):
+        if not self._participant_svc._repo.get_user_ids_by_conversation(
+            conversation_id
+        ):
             return self.delete_conversation(user_id, conversation_id)
 
         return True

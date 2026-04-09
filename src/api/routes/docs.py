@@ -210,8 +210,14 @@ def _load_docs_config() -> DocsConfig:
         accent_hover=theme_conf.get("accent_hover", "#60a5fa"),
         border_color=theme_conf.get("border_color", "#2a2a2a"),
         border_light=theme_conf.get("border_light", "#333333"),
-        font_family=theme_conf.get("font_family", "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"),
-        code_font=theme_conf.get("code_font", "'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace"),
+        font_family=theme_conf.get(
+            "font_family",
+            "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+        ),
+        code_font=theme_conf.get(
+            "code_font",
+            "'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
+        ),
         font_size_base=theme_conf.get("font_size_base", "16px"),
         line_height=theme_conf.get("line_height", "1.6"),
         border_radius_small=theme_conf.get("border_radius_small", "6px"),

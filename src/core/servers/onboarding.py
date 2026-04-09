@@ -532,6 +532,3 @@ class OnboardingManager:
             started_at=row["started_at"],
             completed_at=row["completed_at"],
         )
-
-
-

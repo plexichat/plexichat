@@ -36,7 +36,9 @@ def _setup_admin_reports(monkeypatch, modules):
     monkeypatch.setattr(moderation_routes, "get_admin_from_token", lambda request: 1)
 
 
-def test_message_report_admin_routes(monkeypatch, modules, test_user, second_test_user, test_server):
+def test_message_report_admin_routes(
+    monkeypatch, modules, test_user, second_test_user, test_server
+):
     _setup_admin_reports(monkeypatch, modules)
     request = _request("/api/v1/admin/message-reports")
 
@@ -53,7 +55,9 @@ def test_message_report_admin_routes(monkeypatch, modules, test_user, second_tes
     )
 
     rows = asyncio.run(
-        moderation_routes.get_message_reports(request, status_filter=None, limit=50, offset=0)
+        moderation_routes.get_message_reports(
+            request, status_filter=None, limit=50, offset=0
+        )
     )
     assert any(item.id == str(report.id) for item in rows)
 
@@ -93,7 +97,9 @@ def test_user_report_admin_routes(monkeypatch, modules, test_user):
     )
 
     rows = asyncio.run(
-        moderation_routes.get_user_reports(request, status_filter=None, limit=50, offset=0)
+        moderation_routes.get_user_reports(
+            request, status_filter=None, limit=50, offset=0
+        )
     )
     assert any(item.id == str(report.id) for item in rows)
 
@@ -122,7 +128,9 @@ def test_user_report_admin_routes(monkeypatch, modules, test_user):
 def test_admin_dashboard_includes_report_sections(monkeypatch):
     monkeypatch.setattr(ui_routes, "check_host_restriction", lambda request: None)
 
-    response = asyncio.run(ui_routes.admin_dashboard_page(_request("/api/v1/admin/ui-dashboard")))
+    response = asyncio.run(
+        ui_routes.admin_dashboard_page(_request("/api/v1/admin/ui-dashboard"))
+    )
     assert response.status_code == 200
     html = response.body.decode()
     assert "Message Reports" in html

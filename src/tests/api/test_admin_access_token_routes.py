@@ -6,16 +6,22 @@ import uuid
 class TestAdminAccessTokenRoutes:
     """Ensure admin token management routes stay aligned with the dashboard."""
 
-    def test_create_and_get_access_token_detail(self, test_client, monkeypatch, modules):
+    def test_create_and_get_access_token_detail(
+        self, test_client, monkeypatch, modules
+    ):
         import src.api.routes.admin.security as security_routes
 
-        monkeypatch.setattr(security_routes, "check_host_restriction", lambda request: None)
+        monkeypatch.setattr(
+            security_routes, "check_host_restriction", lambda request: None
+        )
         monkeypatch.setattr(security_routes, "get_admin_from_token", lambda request: 1)
 
         unique_id = uuid.uuid4().hex[:8]
         create_response = test_client.post(
             "/api/v1/admin/security/access-tokens",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
             json={
                 "name": f"Alpha {unique_id}",
                 "description": "Cohort token",
@@ -38,7 +44,9 @@ class TestAdminAccessTokenRoutes:
 
         detail_response = test_client.get(
             f"/api/v1/admin/security/access-tokens/{token_id}",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
         )
 
         assert detail_response.status_code == 200
@@ -55,20 +63,26 @@ class TestAdminAccessTokenRoutes:
     ):
         import src.api.routes.admin.security as security_routes
 
-        monkeypatch.setattr(security_routes, "check_host_restriction", lambda request: None)
+        monkeypatch.setattr(
+            security_routes, "check_host_restriction", lambda request: None
+        )
         monkeypatch.setattr(security_routes, "get_admin_from_token", lambda request: 1)
 
         unique_id = uuid.uuid4().hex[:8]
         create_response = test_client.post(
             "/api/v1/admin/security/access-tokens",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
             json={"name": f"Rotate {unique_id}"},
         )
         token_id = create_response.json()["access_token"]["id"]
 
         update_response = test_client.patch(
             f"/api/v1/admin/security/access-tokens/{token_id}",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
             json={
                 "description": "Updated description",
                 "scope_mode": "enforce",
@@ -80,7 +94,9 @@ class TestAdminAccessTokenRoutes:
 
         scope_response = test_client.post(
             f"/api/v1/admin/security/access-tokens/{token_id}/scopes",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
             json={"scope_type": "cidr", "value": "198.51.100.0/24"},
         )
 
@@ -88,7 +104,9 @@ class TestAdminAccessTokenRoutes:
 
         rotate_response = test_client.post(
             f"/api/v1/admin/security/access-tokens/{token_id}/rotate",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
             json={},
         )
 
@@ -101,7 +119,9 @@ class TestAdminAccessTokenRoutes:
 
         rotated_detail = test_client.get(
             f"/api/v1/admin/security/access-tokens/{rotated_id}",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
         )
 
         assert rotated_detail.status_code == 200
@@ -112,21 +132,27 @@ class TestAdminAccessTokenRoutes:
 
         remove_scope_response = test_client.delete(
             f"/api/v1/admin/security/access-tokens/{rotated_id}/scopes/{rotated_scope_id}",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
         )
 
         assert remove_scope_response.status_code == 200
 
         revoke_response = test_client.post(
             f"/api/v1/admin/security/access-tokens/{rotated_id}/revoke",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
         )
 
         assert revoke_response.status_code == 200
 
         list_response = test_client.get(
             "/api/v1/admin/security/access-tokens",
-            headers={"Authorization": "Bearer admin-test-token"},
+            headers={
+                "Authorization": "Bearer admin-test-token"
+            },  # pragma: allowlist secret
         )
 
         assert list_response.status_code == 200

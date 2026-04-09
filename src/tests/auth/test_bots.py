@@ -83,7 +83,9 @@ class TestBots:
             ),
         )
 
-        with pytest.raises(auth.PermissionDeniedError, match="Cannot grant bot permission"):
+        with pytest.raises(
+            auth.PermissionDeniedError, match="Cannot grant bot permission"
+        ):
             auth.create_bot(
                 owner_id=user.id,
                 username=unique_name("escalatebot"),

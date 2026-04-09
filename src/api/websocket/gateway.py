@@ -92,9 +92,9 @@ async def _dispatch_offline_presence(
                         )
                         # Dispatch to all potential viewers
                         if target_user_ids:
-                            tasks.append(dispatcher.dispatch_event(
-                                event, list(target_user_ids)
-                            ))
+                            tasks.append(
+                                dispatcher.dispatch_event(event, list(target_user_ids))
+                            )
 
                     if tasks:
                         await asyncio.gather(*tasks, return_exceptions=True)

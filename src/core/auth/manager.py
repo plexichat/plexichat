@@ -421,7 +421,7 @@ class AuthManager(BaseManager):
             raise InvalidCredentialsError("Invalid credentials")
 
         user_id = row["id"]
-        
+
         # Hard Freeze: Check for deletion status
         deletion_status = row.get("deletion_status", "active")
         if deletion_status == "frozen":
@@ -429,15 +429,20 @@ class AuthManager(BaseManager):
             logger.warning(f"Login attempt for frozen account {user_id}")
             # Format time for the error message safely
             import datetime
+
             try:
                 # Max supported year is 9999
-                if deletion_at and deletion_at < 32536799999: # Approx year 9999
-                    dt = datetime.datetime.fromtimestamp(deletion_at).strftime('%Y-%m-%d %H:%M:%S')
+                if deletion_at and deletion_at < 32536799999:  # Approx year 9999
+                    dt = datetime.datetime.fromtimestamp(deletion_at).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
                 else:
                     dt = "a future date"
             except (ValueError, OSError, OverflowError):
                 dt = "a future date"
-            raise AccountLockedError(f"Account is scheduled for deletion on {dt}. Contact an administrator to cancel.")
+            raise AccountLockedError(
+                f"Account is scheduled for deletion on {dt}. Contact an administrator to cancel."
+            )
 
         if row["account_locked"]:
             # Check if lock is permanent (no expiry) or active (expiry in future)
@@ -485,7 +490,9 @@ class AuthManager(BaseManager):
         email = None
         if row["email_encrypted"]:
             try:
-                email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
+                email = self.crypto.decrypt_data(
+                    row["email_encrypted"], context=str(user_id)
+                )
             except Exception:
                 email = "[decryption failed]"
 
@@ -608,7 +615,11 @@ class AuthManager(BaseManager):
     @cached(
         ttl=30,
         prefix="token_verify",
-        skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: bool(
+        skip_cache_if=lambda self,
+        token,
+        ip_address=None,
+        user_agent=None,
+        is_selftest=False: bool(
             self._config.get("security", {}).get("token_binding", False)
             or self._config.get("security", {}).get("token_verify_rate_limit")
         ),
@@ -655,12 +666,12 @@ class AuthManager(BaseManager):
             or not verify_token_hash(parsed["secret"], row["token_hash"])
         ):
             raise TokenInvalidError("Invalid/Revoked")
-            
+
         # Hard Freeze check
         if row.get("deletion_status") == "frozen":
             logger.warning(f"Attempted use of token for frozen user {row['user_id']}")
             raise TokenInvalidError("Account is scheduled for deletion")
-            
+
         if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
 
@@ -668,7 +679,7 @@ class AuthManager(BaseManager):
             # Strict Binding: IP must be provided and must match
             if not ip_address:
                 raise TokenInvalidError("IP Binding Required")
-            
+
             current_ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
             if row.get("ip_index") and row["ip_index"] != current_ip_index:
                 raise TokenInvalidError("IP Binding Mismatch")
@@ -676,7 +687,7 @@ class AuthManager(BaseManager):
             # Strict Binding: User-Agent must be provided and must match
             if not user_agent:
                 raise TokenInvalidError("User-Agent Binding Required")
-                
+
             if row.get("user_agent") and row["user_agent"] != user_agent:
                 raise TokenInvalidError("User-Agent Binding Mismatch")
 
@@ -690,7 +701,10 @@ class AuthManager(BaseManager):
         if sessions_config.get("extend_on_activity", True):
             extend_threshold_hours = sessions_config.get("extend_threshold_hours", 24)
             extend_threshold = extend_threshold_hours * 3600 * 1000
-            if extend_threshold_hours == 0 or (row["expires_at"] - now) <= extend_threshold:
+            if (
+                extend_threshold_hours == 0
+                or (row["expires_at"] - now) <= extend_threshold
+            ):
                 should_update = True
 
         if should_update:
@@ -699,9 +713,14 @@ class AuthManager(BaseManager):
 
             # Extend session if enabled
             if sessions_config.get("extend_on_activity", True):
-                extend_threshold_hours = sessions_config.get("extend_threshold_hours", 24)
+                extend_threshold_hours = sessions_config.get(
+                    "extend_threshold_hours", 24
+                )
                 extend_threshold = extend_threshold_hours * 3600 * 1000
-                if extend_threshold_hours == 0 or (row["expires_at"] - now) <= extend_threshold:
+                if (
+                    extend_threshold_hours == 0
+                    or (row["expires_at"] - now) <= extend_threshold
+                ):
                     expire_hours = sessions_config.get("expire_hours", 720)
                     new_expires = now + (expire_hours * 3600 * 1000)
                     updates.append("expires_at = ?")
@@ -842,18 +861,20 @@ class AuthManager(BaseManager):
                     )
                 except Exception:
                     ip_address = "[decryption failed]"
-            
-            sessions.append(Session(
-                id=r["id"],
-                user_id=r["user_id"],
-                device_id=r["device_id"],
-                ip_address=ip_address,
-                user_agent=r["user_agent"],
-                created_at=r["created_at"],
-                expires_at=r["expires_at"],
-                last_activity=r["last_activity"],
-                revoked=bool(r["revoked"]),
-            ))
+
+            sessions.append(
+                Session(
+                    id=r["id"],
+                    user_id=r["user_id"],
+                    device_id=r["device_id"],
+                    ip_address=ip_address,
+                    user_agent=r["user_agent"],
+                    created_at=r["created_at"],
+                    expires_at=r["expires_at"],
+                    last_activity=r["last_activity"],
+                    revoked=bool(r["revoked"]),
+                )
+            )
         return sessions
 
     def revoke_session(self, user_id: int, session_id: int) -> bool:
@@ -892,7 +913,9 @@ class AuthManager(BaseManager):
                 if getattr(current_user, "force_username_change", False)
                 else None
             )
-            blocked, reason = self.blacklist.is_blocked(username, old_username=old_username)
+            blocked, reason = self.blacklist.is_blocked(
+                username, old_username=old_username
+            )
             if blocked:
                 raise InvalidUsernameError(
                     f"Username is blocked: {reason}", [reason or "Blocked"]
@@ -1133,7 +1156,9 @@ class AuthManager(BaseManager):
         # doesn't conflict with login flow within the same 30s window.
         secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
         try:
-            ok = totp_module.verify_totp_code(secret, code, user_id=f"disable:{user_id}")
+            ok = totp_module.verify_totp_code(
+                secret, code, user_id=f"disable:{user_id}"
+            )
         except TypeError:
             ok = totp_module.verify_totp_code(secret, code)
         if not ok:
@@ -1147,7 +1172,8 @@ class AuthManager(BaseManager):
 
     def regenerate_backup_codes(self, user_id: int, password: str) -> List[str]:
         user = self._db.fetch_one(
-            "SELECT password_hash, totp_enabled FROM auth_users WHERE id = ?", (user_id,)
+            "SELECT password_hash, totp_enabled FROM auth_users WHERE id = ?",
+            (user_id,),
         )
         if not user:
             raise UserNotFoundError("User not found")
@@ -1370,7 +1396,9 @@ class AuthManager(BaseManager):
         ]
 
     def regenerate_bot_token(self, owner_id: int, bot_id: int) -> str:
-        bot_row = self._db.fetch_one("SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,))
+        bot_row = self._db.fetch_one(
+            "SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,)
+        )
         if not bot_row:
             raise UserNotFoundError("Bot not found")
         if int(bot_row["owner_id"]) != int(owner_id):
@@ -1387,7 +1415,9 @@ class AuthManager(BaseManager):
     def update_bot_permissions(
         self, owner_id: int, bot_id: int, permissions: Dict[str, bool]
     ) -> Bot:
-        bot_row = self._db.fetch_one("SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,))
+        bot_row = self._db.fetch_one(
+            "SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,)
+        )
         if not bot_row:
             raise UserNotFoundError("Bot not found")
         if int(bot_row["owner_id"]) != int(owner_id):
@@ -1425,7 +1455,9 @@ class AuthManager(BaseManager):
         return True
 
     def delete_bot(self, owner_id: int, bot_id: int) -> bool:
-        bot_row = self._db.fetch_one("SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,))
+        bot_row = self._db.fetch_one(
+            "SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,)
+        )
         if not bot_row:
             raise UserNotFoundError("Bot not found")
         if int(bot_row["owner_id"]) != int(owner_id):
@@ -1552,7 +1584,11 @@ class AuthManager(BaseManager):
             AuditEventType.SECURITY_SETTINGS_UPDATED,
             None,
             True,
-            details={"access_token_id": token_id, "fields": updates, "admin_id": updated_by},
+            details={
+                "access_token_id": token_id,
+                "fields": updates,
+                "admin_id": updated_by,
+            },
         )
         return self.get_api_access_token(token_id)
 
@@ -1568,7 +1604,11 @@ class AuthManager(BaseManager):
                 AuditEventType.SECURITY_SETTINGS_UPDATED,
                 None,
                 True,
-                details={"access_token_id": token_id, "action": "revoke", "admin_id": revoked_by},
+                details={
+                    "access_token_id": token_id,
+                    "action": "revoke",
+                    "admin_id": revoked_by,
+                },
             )
         return cursor.rowcount > 0
 
@@ -1733,14 +1773,17 @@ class AuthManager(BaseManager):
             for row in path_rows
         ]
 
-        summary = self._db.fetch_one(
-            """SELECT COUNT(*) AS total_events,
+        summary = (
+            self._db.fetch_one(
+                """SELECT COUNT(*) AS total_events,
                       COUNT(DISTINCT ip_index) AS distinct_ip_count,
                       SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count_total
                FROM auth_api_access_token_events
                WHERE token_id = ?""",
-            (token_id,),
-        ) or {}
+                (token_id,),
+            )
+            or {}
+        )
 
         return {
             "token": token,
@@ -1785,7 +1828,9 @@ class AuthManager(BaseManager):
             )
             return False
 
-        scope_mode = self._normalize_access_token_scope_mode(row.get("scope_mode") or "none")
+        scope_mode = self._normalize_access_token_scope_mode(
+            row.get("scope_mode") or "none"
+        )
         scopes = self.list_api_access_token_scopes(int(row["id"]))
         scope_match = self._match_api_access_token_scope(ip_address, scopes)
         if scopes and scope_mode == "enforce" and not scope_match:
@@ -1974,13 +2019,16 @@ class AuthManager(BaseManager):
 
     def _row_to_access_token(self, row: Dict[str, Any]) -> AccessToken:
         row = dict(row)
-        distinct_summary = self._db.fetch_one(
-            """SELECT COUNT(DISTINCT ip_index) AS distinct_ip_count,
+        distinct_summary = (
+            self._db.fetch_one(
+                """SELECT COUNT(DISTINCT ip_index) AS distinct_ip_count,
                       SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count_total
                FROM auth_api_access_token_events
                WHERE token_id = ?""",
-            (row["id"],),
-        ) or {}
+                (row["id"],),
+            )
+            or {}
+        )
         last_ip = None
         if row.get("last_used_ip_encrypted"):
             try:
@@ -2636,11 +2684,16 @@ class AuthManager(BaseManager):
 
     # === Account Deletion ===
 
-    def schedule_account_deletion(self, user_id: int, password: str, totp_code: Optional[str] = None) -> bool:
+    def schedule_account_deletion(
+        self, user_id: int, password: str, totp_code: Optional[str] = None
+    ) -> bool:
         """
         Schedules an account for deletion with a 30-day grace period.
         """
-        row = self._db.fetch_one("SELECT username, email_encrypted, password_hash, totp_enabled, totp_secret_encrypted FROM auth_users WHERE id = ?", (user_id,))
+        row = self._db.fetch_one(
+            "SELECT username, email_encrypted, password_hash, totp_enabled, totp_secret_encrypted FROM auth_users WHERE id = ?",
+            (user_id,),
+        )
         if not row:
             raise UserNotFoundError("User not found")
 
@@ -2652,19 +2705,23 @@ class AuthManager(BaseManager):
         if row["totp_enabled"]:
             if not totp_code:
                 raise TwoFactorInvalidError("2FA code required")
-            
-            secret = self.crypto.decrypt_data(row["totp_secret_encrypted"], context=str(user_id))
+
+            secret = self.crypto.decrypt_data(
+                row["totp_secret_encrypted"], context=str(user_id)
+            )
             if not totp_module.verify_totp_code(secret, totp_code, user_id=user_id):
                 raise TwoFactorInvalidError("Invalid 2FA code")
 
         # 3. Perform the freeze
-        grace_days = self._config.get("account_deletion", {}).get("grace_period_days", 30)
+        grace_days = self._config.get("account_deletion", {}).get(
+            "grace_period_days", 30
+        )
         now = self._get_timestamp()
         deletion_at = now + (grace_days * 86400)
 
         self._db.execute(
             "UPDATE auth_users SET deletion_status = 'frozen', deletion_at = ? WHERE id = ?",
-            (deletion_at, user_id)
+            (deletion_at, user_id),
         )
 
         # 4. Backup to DB record (last resort)
@@ -2673,46 +2730,67 @@ class AuthManager(BaseManager):
         # identifier is email or username
         identifier = row["username"]
         import hashlib
+
         self._db.execute(
             "INSERT INTO auth_deletion_records (id, user_id, identifier_hash, status, scheduled_at) VALUES (?, ?, ?, ?, ?)",
-            (record_id, user_id, hashlib.sha256(identifier.encode()).hexdigest(), 'frozen', now)
+            (
+                record_id,
+                user_id,
+                hashlib.sha256(identifier.encode()).hexdigest(),
+                "frozen",
+                now,
+            ),
         )
 
         # 5. Log to external Hash-Chain Audit Log
-        self.deletion_log.log_event(user_id, "SCHEDULED", identifier, {"scheduled_at": now, "deletion_at": deletion_at})
+        self.deletion_log.log_event(
+            user_id,
+            "SCHEDULED",
+            identifier,
+            {"scheduled_at": now, "deletion_at": deletion_at},
+        )
 
         # 6. Purge all sessions
         self.logout_all(user_id)
-        
+
         # 7. Invalidate caches
         invalidate_pattern(f"user_profile:{user_id}")
         invalidate_pattern(f"user_data:*{user_id}*")
-        
-        logger.info(f"Account scheduled for deletion: user_id={user_id}, scheduled_at={now}, deletion_at={deletion_at}")
+
+        logger.info(
+            f"Account scheduled for deletion: user_id={user_id}, scheduled_at={now}, deletion_at={deletion_at}"
+        )
         return True
 
-    def cancel_account_deletion(self, user_id: int, admin_id: Optional[int] = None) -> bool:
+    def cancel_account_deletion(
+        self, user_id: int, admin_id: Optional[int] = None
+    ) -> bool:
         """
         Cancels a scheduled account deletion.
         """
-        row = self._db.fetch_one("SELECT username FROM auth_users WHERE id = ?", (user_id,))
+        row = self._db.fetch_one(
+            "SELECT username FROM auth_users WHERE id = ?", (user_id,)
+        )
         if not row:
             raise UserNotFoundError("User not found")
 
         self._db.execute(
             "UPDATE auth_users SET deletion_status = 'active', deletion_at = NULL WHERE id = ?",
-            (user_id,)
+            (user_id,),
         )
-        
+
         # Update/Delete backup record
-        self._db.execute("DELETE FROM auth_deletion_records WHERE user_id = ?", (user_id,))
+        self._db.execute(
+            "DELETE FROM auth_deletion_records WHERE user_id = ?", (user_id,)
+        )
 
         # Log to external Hash-Chain
-        self.deletion_log.log_event(user_id, "CANCELLED", row["username"], {"admin_id": admin_id})
+        self.deletion_log.log_event(
+            user_id, "CANCELLED", row["username"], {"admin_id": admin_id}
+        )
 
         invalidate_pattern(f"user_profile:{user_id}")
-        logger.info(f"Account deletion cancelled: user_id={user_id}, cancelled_by={admin_id or 'user'}")
+        logger.info(
+            f"Account deletion cancelled: user_id={user_id}, cancelled_by={admin_id or 'user'}"
+        )
         return True
-
-
-

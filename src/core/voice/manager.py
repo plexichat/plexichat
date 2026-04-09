@@ -37,7 +37,6 @@ from .exceptions import (
     ChannelFullError,
     ChannelTypeError,
     UserNotInChannelError,
-    UserAlreadyInChannelError,
     StageNotFoundError,
     SpeakerRequestNotFoundError,
     SpeakerRequestExistsError,

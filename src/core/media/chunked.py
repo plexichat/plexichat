@@ -581,7 +581,9 @@ class ChunkedUploadManager:
             logger.error(f"Failed to read completed upload: {e}")
             return None
 
-    def complete_session_stream(self, session_id: str, user_id: int) -> Optional[UploadSession]:
+    def complete_session_stream(
+        self, session_id: str, user_id: int
+    ) -> Optional[UploadSession]:
         session = self.get_session(session_id, user_id)
 
         if not session:

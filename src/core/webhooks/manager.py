@@ -18,7 +18,12 @@ from urllib.parse import urlparse
 import utils.config as config
 import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
-from src.utils.encryption import generate_key_pair, encrypt_data, decrypt_data, sign_data
+from src.utils.encryption import (
+    generate_key_pair,
+    encrypt_data,
+    decrypt_data,
+    sign_data,
+)
 
 from .models import (
     Webhook,
@@ -287,13 +292,13 @@ class WebhookManager(BaseManager):
         token_secret = self._generate_token()
         token_hash = self._hash_token(token_secret)
         full_token = self._format_webhook_token(webhook_id, token_secret)
-        
+
         # Generate Ed25519 signing keypair for webhook request signing
         # generate_key_pair returns (private_bytes, public_bytes)
         private_key, public_key = generate_key_pair()
         private_key_encrypted = encrypt_data(
-            base64.b64encode(private_key).decode('utf-8'), 
-            context=f"webhook:{webhook_id}"
+            base64.b64encode(private_key).decode("utf-8"),
+            context=f"webhook:{webhook_id}",
         )
 
         self._db.execute(
@@ -882,11 +887,12 @@ class WebhookManager(BaseManager):
         )
         return result
 
-    def _row_to_webhook(self, row: Dict[str, Any]) -> Webhook:
+    def _row_to_webhook(
+        self, row: Dict[str, Any], include_token: bool = False
+    ) -> Webhook:
         """Convert a database row to a Webhook object."""
         webhook_id = row["id"]
-        avatar_url = row["avatar_url"]
-        
+
         return Webhook(
             id=webhook_id,
             channel_id=row["channel_id"],
@@ -903,17 +909,15 @@ class WebhookManager(BaseManager):
         )
 
     def sign_payload(
-        self, 
-        webhook_id: SnowflakeID, 
-        payload: Dict[str, Any]
+        self, webhook_id: SnowflakeID, payload: Dict[str, Any]
     ) -> Dict[str, str]:
         """
         Sign a webhook payload using Ed25519.
-        
+
         Args:
             webhook_id: ID of the webhook
             payload: The payload to sign (will be serialized to JSON)
-            
+
         Returns:
             Dictionary with signature headers:
             - X-Plexichat-Signature: Ed25519 signature (base64)
@@ -921,38 +925,39 @@ class WebhookManager(BaseManager):
         """
         row = self._db.fetch_one(
             "SELECT signing_key_private_encrypted, signing_key_public FROM webhook_webhooks WHERE id = ?",
-            (webhook_id,)
+            (webhook_id,),
         )
-        
+
         if not row or not dict(row).get("signing_key_private_encrypted"):
             # No signing key available (legacy webhook)
             return {}
-        
+
         row_dict = dict(row)
         # Decrypt private key
         try:
             private_key_b64 = decrypt_data(
-                row_dict["signing_key_private_encrypted"], 
-                context=f"webhook:{webhook_id}"
+                row_dict["signing_key_private_encrypted"],
+                context=f"webhook:{webhook_id}",
             )
             private_key = base64.b64decode(private_key_b64)
         except Exception as e:
             logger.error(f"Failed to decrypt webhook signing key for {webhook_id}: {e}")
             return {}
-        
+
         # Create signed payload
         timestamp = int(time.time() * 1000)
         # Use raw payload for signing to avoid JSON serialization discrepancies
-        payload_bytes = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
-        
+        payload_bytes = json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+
         # Sign: v1.<timestamp>.<payload_bytes>
-        signed_data = f"{SIGNATURE_VERSION}.{timestamp}.".encode('utf-8') + payload_bytes
+        signed_data = (
+            f"{SIGNATURE_VERSION}.{timestamp}.".encode("utf-8") + payload_bytes
+        )
         signature = sign_data(signed_data, private_key)
-        
+
         return {
-            SIGNATURE_HEADER: base64.b64encode(signature).decode('utf-8'),
+            SIGNATURE_HEADER: base64.b64encode(signature).decode("utf-8"),
             SIGNATURE_TIMESTAMP_HEADER: str(timestamp),
         }
-
-
-

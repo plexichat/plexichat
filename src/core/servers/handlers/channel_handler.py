@@ -4,6 +4,7 @@ Channel and category handler for server operations.
 
 import re
 from typing import Optional, List, Union, Any
+import utils.logger as logger
 from src.core.base import SnowflakeID
 from ..models import Channel, ChannelCategory, ChannelType, AuditLogAction
 from ..exceptions import (
@@ -119,7 +120,10 @@ class ChannelHandler:
             ),
         )
 
-        if channel_type in (ChannelType.TEXT, ChannelType.ANNOUNCEMENT) and self.manager._messaging:
+        if (
+            channel_type in (ChannelType.TEXT, ChannelType.ANNOUNCEMENT)
+            and self.manager._messaging
+        ):
             conv = None
             try:
                 conv = (
@@ -404,6 +408,3 @@ class ChannelHandler:
         result = self.manager.get_channel(channel_id, user_id)
         assert result is not None
         return result
-
-
-

@@ -1338,6 +1338,3 @@ class AutoModManager(BaseManager):
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
             created_at=row["created_at"],
         )
-
-
-

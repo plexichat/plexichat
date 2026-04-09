@@ -91,7 +91,7 @@ class MeilisearchIndexer(BaseIndexer):
         """Make HTTP request to Meilisearch."""
         if self._http_client is not None:
             return self._http_client.request(method, path, body)
-  # nosec B310
+        # nosec B310
         try:
             url = self._validate_http_url(f"{self._host}{path}")
             data = json.dumps(body).encode() if body else None
@@ -517,4 +517,3 @@ class MeilisearchIndexer(BaseIndexer):
                 "healthy": False,
                 "error": str(e),
             }
-

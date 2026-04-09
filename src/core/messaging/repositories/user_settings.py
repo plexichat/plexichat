@@ -227,5 +227,3 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
 
         existing = {row["id"] for row in rows}
         return {uid: uid in existing for uid in user_ids}
-
-

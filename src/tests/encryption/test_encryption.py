@@ -739,9 +739,7 @@ class TestMessageEncryption:
         reloaded = MessageEncryptor(Keyring(temp_keyring_path, env_var=env_name))
         assert reloaded.is_key_auto_generated() is False
 
-    def test_generated_message_key_is_flagged_auto_generated(
-        self, temp_keyring_path
-    ):
+    def test_generated_message_key_is_flagged_auto_generated(self, temp_keyring_path):
         """Generated message keys should still trigger the startup warning."""
         encryptor = MessageEncryptor(keyring=Keyring(temp_keyring_path))
         encryptor.encrypt_message("hello")

@@ -8,10 +8,9 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Q
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.core.database.cache import cached, invalidate_pattern
 from src.api.schemas.stickers import StickerResponse, StickerPackResponse
 from src.api.schemas.common import ErrorResponse
-from src.core.stickers import PackType, StickerFormat
+from src.core.stickers import PackType
 
 router = APIRouter(tags=["Stickers"])
 

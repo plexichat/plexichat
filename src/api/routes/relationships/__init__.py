@@ -363,7 +363,9 @@ async def create_relationship(
         target_username = None
         if auth:
             try:
-                profiles = auth.get_user_profiles_bulk([current_user.user_id, target_id])
+                profiles = auth.get_user_profiles_bulk(
+                    [current_user.user_id, target_id]
+                )
                 sender = profiles.get(str(current_user.user_id)) if profiles else None
                 target = profiles.get(str(target_id)) if profiles else None
                 if sender:
@@ -500,9 +502,7 @@ async def accept_friend_request(
         except FriendRequestNotFoundError:
             raise HTTPException(
                 status_code=404,
-                detail={
-                    "error": {"code": 404, "message": "Friend request not found"}
-                },
+                detail={"error": {"code": 404, "message": "Friend request not found"}},
             )
         except PermissionDeniedError as exc:
             raise HTTPException(
@@ -531,7 +531,9 @@ async def accept_friend_request(
         accepter_presence = None
         if auth:
             try:
-                profiles = auth.get_user_profiles_bulk([sender_id, current_user.user_id])
+                profiles = auth.get_user_profiles_bulk(
+                    [sender_id, current_user.user_id]
+                )
                 sender = profiles.get(str(sender_id)) if profiles else None
                 accepter = profiles.get(str(current_user.user_id)) if profiles else None
                 if sender:
@@ -777,7 +779,10 @@ async def delete_relationship(
             else:
                 try:
                     friends = relationships.get_friends(current_user.user_id)
-                    if any(int(getattr(f, "friend_id", 0)) == int(target_id) for f in friends):
+                    if any(
+                        int(getattr(f, "friend_id", 0)) == int(target_id)
+                        for f in friends
+                    ):
                         relationships.remove_friend(current_user.user_id, target_id)
                     else:
                         raise HTTPException(

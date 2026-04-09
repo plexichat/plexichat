@@ -134,7 +134,9 @@ class MessagingManager(BaseManager):
 
         logger.info("Messaging module initialized (refactored)")
 
-    def _is_participant(self, conversation_id: SnowflakeID, user_id: SnowflakeID) -> bool:
+    def _is_participant(
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
+    ) -> bool:
         return self.is_participant(conversation_id, user_id)
 
     # === Event Bus Access ===

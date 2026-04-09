@@ -381,7 +381,7 @@ def get_afk_timeout(server_id: int) -> int:
 
 def check_afk_timeout(user_id: int) -> bool:
     """Check and apply AFK timeout if needed. Returns True if moved."""
-    return _get_manager().check_afk_timeout(user_id)
+    return _get_manager().check_afk_timeout(user_id) is not None
 
 
 # === User Voice State Queries ===

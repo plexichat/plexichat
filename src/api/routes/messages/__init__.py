@@ -69,6 +69,7 @@ async def get_channel_messages(
     auth = api.get_auth()
 
     try:
+
         def _get_attr(obj, name, default=None):
             if isinstance(obj, dict):
                 return obj.get(name, default)
@@ -182,7 +183,7 @@ async def get_channel_messages(
                                     has_file_id = "file_id" in m
                                 except json.JSONDecodeError:
                                     pass
-                        
+
                         att_url = _get_attr(att, "url")
                         if not has_file_id and att_url:
                             # Extract filename from URL
@@ -222,7 +223,9 @@ async def get_channel_messages(
         if reactions_module and messages:
             try:
                 message_ids = [
-                    mid for mid in (_get_attr(m, "id") for m in messages) if mid is not None
+                    mid
+                    for mid in (_get_attr(m, "id") for m in messages)
+                    if mid is not None
                 ]
                 reactions_cache = reactions_module.get_reactions_batch(
                     current_user.user_id, message_ids
@@ -387,6 +390,7 @@ async def search_messages(
         author_cache = {}
         if auth and author_ids:
             try:
+
                 def _get_users_bulk_sync():
                     import src.api as api_module
 
@@ -907,7 +911,9 @@ async def get_unread_count(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
-        counts = await run_in_threadpool(messaging.get_unread_count, current_user.user_id, cid)
+        counts = await run_in_threadpool(
+            messaging.get_unread_count, current_user.user_id, cid
+        )
         return UnreadCountResponse(
             channel_id=SnowflakeID(channel_id), unread_count=counts.get(cid, 0)
         )
@@ -1244,7 +1250,9 @@ async def get_message(
                 detail={"error": {"code": 400, "message": "Invalid ID format"}},
             )
 
-        message = await run_in_threadpool(messaging.get_message, current_user.user_id, mid)
+        message = await run_in_threadpool(
+            messaging.get_message, current_user.user_id, mid
+        )
         if not message:
             raise HTTPException(
                 status_code=404,
@@ -1367,7 +1375,10 @@ async def edit_message(
             except Exception as e:
                 # If we can't check server/channel permissions, let the messaging module handle it
                 # unless it was an explicit timeout check failure
-                if isinstance(e, HTTPException) and getattr(e, "status_code", None) == 403:
+                if (
+                    isinstance(e, HTTPException)
+                    and getattr(e, "status_code", None) == 403
+                ):
                     raise
 
         msg = messaging.edit_message(current_user.user_id, mid, body.content)
@@ -1717,6 +1728,7 @@ async def get_pinned_messages(
 
         if servers_mod:
             try:
+
                 def _get_channel_sync():
                     import src.api as api_module
 
@@ -1728,8 +1740,11 @@ async def get_pinned_messages(
                             db.close()
 
                 channel = await run_in_threadpool(_get_channel_sync)
-                conversation_id = getattr(channel, "conversation_id", None) if channel else None
+                conversation_id = (
+                    getattr(channel, "conversation_id", None) if channel else None
+                )
                 if conversation_id and messaging:
+
                     def _get_pins_sync():
                         import src.api as api_module
 
@@ -1748,14 +1763,13 @@ async def get_pinned_messages(
 
         if not messages and messaging:
             try:
+
                 def _get_pins_sync():
                     import src.api as api_module
 
                     db = api_module.get_db()
                     try:
-                        return messaging.get_pinned_messages(
-                            current_user.user_id, cid
-                        )
+                        return messaging.get_pinned_messages(current_user.user_id, cid)
                     finally:
                         if db:
                             db.close()
@@ -1768,6 +1782,7 @@ async def get_pinned_messages(
         author_ids = {m.author_id for m in messages}
         if auth and author_ids:
             try:
+
                 def _get_users_bulk_sync():
                     import src.api as api_module
 

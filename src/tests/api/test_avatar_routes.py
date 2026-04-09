@@ -25,7 +25,9 @@ class TestGetUserAvatar:
                 return False
 
             def get_user(self, uid):
-                raise AssertionError("get_user should not be used for default avatar initials")
+                raise AssertionError(
+                    "get_user should not be used for default avatar initials"
+                )
 
             def get_user_profiles_bulk(self, user_ids):
                 assert user_ids == [user_id]
@@ -73,12 +75,14 @@ class TestGetUserAvatar:
         def fake_generate_default_svg(seed, initials):
             captured["seed"] = seed
             captured["initials"] = initials
-            return "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
+            return '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
 
         monkeypatch.setattr(avatar_routes, "_avatar_checksum_cache", {})
         monkeypatch.setattr(avatar_routes.api, "get_avatars", lambda: StubAvatars())
         monkeypatch.setattr(avatar_routes.api, "get_auth", lambda: StubAuth())
-        monkeypatch.setattr(avatar_core, "generate_default_svg", fake_generate_default_svg)
+        monkeypatch.setattr(
+            avatar_core, "generate_default_svg", fake_generate_default_svg
+        )
 
         response = test_client.get(f"/api/v1/avatars/users/{user_id}")
 
@@ -110,12 +114,14 @@ class TestGetUserAvatar:
         def fake_generate_default_svg(seed, initials):
             captured["seed"] = seed
             captured["initials"] = initials
-            return "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
+            return '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
 
         monkeypatch.setattr(avatar_routes, "_avatar_checksum_cache", {})
         monkeypatch.setattr(avatar_routes.api, "get_avatars", lambda: StubAvatars())
         monkeypatch.setattr(avatar_routes.api, "get_auth", lambda: StubAuth())
-        monkeypatch.setattr(avatar_core, "generate_default_svg", fake_generate_default_svg)
+        monkeypatch.setattr(
+            avatar_core, "generate_default_svg", fake_generate_default_svg
+        )
 
         response = test_client.get(f"/api/v1/avatars/users/{user_id}")
 

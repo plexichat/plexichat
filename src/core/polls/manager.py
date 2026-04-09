@@ -521,6 +521,3 @@ class PollManager(BaseManager):
             total_votes=total_votes,
             is_ended=is_ended,
         )
-
-
-

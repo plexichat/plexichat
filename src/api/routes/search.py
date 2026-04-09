@@ -13,7 +13,6 @@ from src.api.schemas.search import (
     ServerSearchPageResponse,
 )
 from src.api.schemas.common import ErrorResponse
-from src.api.routes.messages import _message_to_response
 from src.core.search.exceptions import SearchError
 
 import utils.logger as logger

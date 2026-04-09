@@ -75,9 +75,13 @@ class PostgresIndexer(BaseIndexer):
             """)
 
             # Add GIN indexes for tsvector full-text search
-            self._db.execute("ALTER TABLE search_messages ADD COLUMN IF NOT EXISTS search_vector tsvector")
-            self._db.execute("CREATE INDEX IF NOT EXISTS idx_messages_search ON search_messages USING GIN(search_vector)")
-            
+            self._db.execute(
+                "ALTER TABLE search_messages ADD COLUMN IF NOT EXISTS search_vector tsvector"
+            )
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_search ON search_messages USING GIN(search_vector)"
+            )
+
             # Create a trigger to update search_vector on insert/update
             self._db.execute("""
                 CREATE OR REPLACE FUNCTION messages_search_trigger() RETURNS trigger AS $$
@@ -98,8 +102,12 @@ class PostgresIndexer(BaseIndexer):
             """)
 
             # Same for users
-            self._db.execute("ALTER TABLE search_users ADD COLUMN IF NOT EXISTS search_vector tsvector")
-            self._db.execute("CREATE INDEX IF NOT EXISTS idx_users_search ON search_users USING GIN(search_vector)")
+            self._db.execute(
+                "ALTER TABLE search_users ADD COLUMN IF NOT EXISTS search_vector tsvector"
+            )
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_users_search ON search_users USING GIN(search_vector)"
+            )
             self._db.execute("""
                 CREATE OR REPLACE FUNCTION users_search_trigger() RETURNS trigger AS $$
                 begin
@@ -120,8 +128,12 @@ class PostgresIndexer(BaseIndexer):
             """)
 
             # Same for servers
-            self._db.execute("ALTER TABLE search_servers ADD COLUMN IF NOT EXISTS search_vector tsvector")
-            self._db.execute("CREATE INDEX IF NOT EXISTS idx_servers_search ON search_servers USING GIN(search_vector)")
+            self._db.execute(
+                "ALTER TABLE search_servers ADD COLUMN IF NOT EXISTS search_vector tsvector"
+            )
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_servers_search ON search_servers USING GIN(search_vector)"
+            )
             self._db.execute("""
                 CREATE OR REPLACE FUNCTION servers_search_trigger() RETURNS trigger AS $$
                 begin
@@ -435,7 +447,9 @@ class PostgresIndexer(BaseIndexer):
                 WHERE (search_vector @@ query OR username ILIKE ? OR display_name ILIKE ?)
                 ORDER BY rank DESC LIMIT ?
             """
-            rows = self._db.fetch_all(sql, (query, f"%{query}%", f"%{query}%", fetch_count))
+            rows = self._db.fetch_all(
+                sql, (query, f"%{query}%", f"%{query}%", fetch_count)
+            )
             return [
                 UserSearchResult(
                     id=r["user_id"],
@@ -642,7 +656,11 @@ class PostgresIndexer(BaseIndexer):
                 return results, None
             tail = rows[-1]
             next_cursor = self._encode_cursor(
-                {"kind": "srv", "rank": float(tail["rank"]), "id": int(tail["server_id"])}
+                {
+                    "kind": "srv",
+                    "rank": float(tail["rank"]),
+                    "id": int(tail["server_id"]),
+                }
             )
             return results, next_cursor
         except Exception as e:

@@ -43,7 +43,9 @@ class TestAPIAccessTokens:
         assert detail["distinct_ip_count"] == 1
         assert detail["recent_events"][0]["allowed"] is True
 
-    def test_access_token_scope_monitor_mode_allows_with_denied_visibility(self, auth_manager):
+    def test_access_token_scope_monitor_mode_allows_with_denied_visibility(
+        self, auth_manager
+    ):
         token = auth_manager.create_api_access_token(
             "Monitor",
             created_by=1,

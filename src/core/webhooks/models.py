@@ -28,8 +28,12 @@ class Webhook:
     avatar_url: Optional[str] = None
     token: Optional[str] = None
     # Ed25519 signing keys for webhook request verification
-    signing_key_public: Optional[bytes] = None  # 32-byte public key for signature verification
-    signing_key_private_encrypted: Optional[str] = None  # Encrypted private key (base64)
+    signing_key_public: Optional[bytes] = (
+        None  # 32-byte public key for signature verification
+    )
+    signing_key_private_encrypted: Optional[str] = (
+        None  # Encrypted private key (base64)
+    )
     created_at: int = 0
     updated_at: int = 0
 

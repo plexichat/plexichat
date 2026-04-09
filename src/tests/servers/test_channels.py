@@ -125,7 +125,9 @@ class TestCreateCategory:
         server, _, _, member_user, _, _, servers = server_with_members
 
         with pytest.raises(servers.PermissionDeniedError):
-            servers.create_category(user_id=member_user.id, server_id=server.id, name="ops")
+            servers.create_category(
+                user_id=member_user.id, server_id=server.id, name="ops"
+            )
 
 
 class TestDeleteCategory:

@@ -18,4 +18,4 @@ import os
 # This allows `import utils.config` to find common-utils/utils/config
 _common_utils_subdir = os.path.join(os.path.dirname(__file__), "common-utils", "utils")
 if _common_utils_subdir not in __path__:
-    __path__.insert(0, _common_utils_subdir)
+    __path__.insert(0, _common_utils_subdir)  # type: ignore

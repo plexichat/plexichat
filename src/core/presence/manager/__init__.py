@@ -1178,6 +1178,3 @@ class PresenceManager(BaseManager):
             current_channel_id=data.get("current_channel_id"),
             current_server_id=data.get("current_server_id"),
         )
-
-
-

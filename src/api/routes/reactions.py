@@ -157,7 +157,10 @@ async def add_reaction(
                                 },
                             )
             except Exception as e:
-                if isinstance(e, HTTPException) and getattr(e, "status_code", None) == 403:
+                if (
+                    isinstance(e, HTTPException)
+                    and getattr(e, "status_code", None) == 403
+                ):
                     raise
 
         try:
