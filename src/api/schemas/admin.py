@@ -170,6 +170,7 @@ class AdminDashboardResponse(BaseModel):
     )
     active_users: int = Field(0, description="Active users in last 24h")
     total_users: int = Field(0, description="Total registered users")
+    scheduled_deletions: int = Field(0, description="Users with scheduled account deletion")
     db_status: str = Field("healthy", description="Database connection health")
     system: Optional[SystemMetrics] = Field(None, description="System health metrics")
     server_version: str = Field(..., description="Current server version string")

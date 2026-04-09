@@ -64,7 +64,7 @@ async def get_dashboard(request: Request):
         except Exception as te:
             logger.debug(f"Telemetry dashboard stats error: {te}")
 
-        total_users, active_users, db_status = 0, 0, "healthy"
+        total_users, active_users, scheduled_deletions, db_status = 0, 0, 0, "healthy"
         try:
             db = api.get_db()
             if db:
@@ -73,6 +73,9 @@ async def get_dashboard(request: Request):
                 active_users = db.fetch_one(
                     "SELECT COUNT(*) as c FROM auth_users WHERE last_login_at > ?",
                     (cutoff,),
+                )["c"]
+                scheduled_deletions = db.fetch_one(
+                    "SELECT COUNT(*) as c FROM auth_users WHERE deletion_status = 'frozen'"
                 )["c"]
         except Exception as ue:
             logger.warning(f"User stats dashboard error: {ue}")
@@ -97,6 +100,7 @@ async def get_dashboard(request: Request):
             telemetry=telemetry_stats,
             total_users=total_users,
             active_users=active_users,
+            scheduled_deletions=scheduled_deletions,
             db_status=db_status,
             system=system_data,
             server_version=current_version,
