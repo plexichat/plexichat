@@ -1135,6 +1135,8 @@
             }
         }
 
+        window.refreshDeletions = refreshDeletions;
+
         function renderDeletionsTable(deletions) {
             const tbody = document.getElementById('deletions-tbody');
             const empty = document.getElementById('deletions-empty');
@@ -1188,16 +1190,49 @@
             }
         }
 
+        window.cancelDeletion = cancelDeletion;
+
         function promptDelayDeletion(userId, username) {
-            const days = prompt(`Extend grace period for "${username}" by how many days? (1-365)`, '7');
-            if (days === null) return;
-            const daysInt = parseInt(days);
-            if (isNaN(daysInt) || daysInt < 1 || daysInt > 365) {
-                alert('Please enter a number between 1 and 365');
-                return;
-            }
-            delayDeletion(userId, username, daysInt);
+            const input = document.createElement('input');
+            input.type = 'date';
+            input.min = new Date().toISOString().split('T')[0];
+            input.max = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            input.value = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+            const dialog = document.createElement('div');
+            dialog.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+            dialog.innerHTML = `
+                <div style="background:#1e1e1e;padding:1.5rem;border-radius:8px;max-width:400px;width:90%;">
+                    <h3 style="margin:0 0 1rem 0;color:#fff;">Extend grace period for "${username}"</h3>
+                    <p style="margin:0 0 1rem 0;color:#aaa;">Select new deletion date:</p>
+                    <input type="date" id="delay-date-picker" min="${input.min}" max="${input.max}" value="${input.value}" style="width:100%;padding:0.5rem;margin-bottom:1rem;background:#2a2a2a;border:1px solid #444;color:#fff;border-radius:4px;">
+                    <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
+                        <button onclick="this.closest('div').parentElement.parentElement.remove()" style="padding:0.5rem 1rem;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
+                        <button id="delay-confirm-btn" style="padding:0.5rem 1rem;background:#0066cc;color:#fff;border:none;border-radius:4px;cursor:pointer;">Confirm</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(dialog);
+
+            document.getElementById('delay-confirm-btn').onclick = () => {
+                const newDate = document.getElementById('delay-date-picker').value;
+                if (!newDate) {
+                    alert('Please select a date');
+                    return;
+                }
+                const newDateObj = new Date(newDate);
+                const now = new Date();
+                const daysDiff = Math.ceil((newDateObj - now) / (1000 * 60 * 60 * 24));
+                if (daysDiff < 1 || daysDiff > 365) {
+                    alert('Please select a date between 1 and 365 days from now');
+                    return;
+                }
+                dialog.remove();
+                delayDeletion(userId, username, daysDiff);
+            };
         }
+
+        window.promptDelayDeletion = promptDelayDeletion;
 
         async function delayDeletion(userId, username, additionalDays) {
             try {
@@ -1209,11 +1244,15 @@
             }
         }
 
+        window.delayDeletion = delayDeletion;
+
         function confirmForcePurge(userId, username) {
             if (!confirm(`⚠️ FORCE PURGE ⚠️\n\nThis will IMMEDIATELY and IRREVERSIBLY purge user "${username}" and all their data.\n\nThis action cannot be undone!\n\nAre you absolutely sure?`)) return;
             if (!confirm(`FINAL WARNING: You are about to permanently delete all data for user "${username}".\n\nType "DELETE" to confirm.`)) return;
             forcePurge(userId, username);
         }
+
+        window.confirmForcePurge = confirmForcePurge;
 
         async function forcePurge(userId, username) {
             try {
@@ -1224,6 +1263,8 @@
                 alert(`Failed to purge account: ${e.message || 'Unknown error'}`);
             }
         }
+
+        window.forcePurge = forcePurge;
 
         function renderEndpointTable() {
             const f = document.getElementById('endpoint-filter').value.toLowerCase();
