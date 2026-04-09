@@ -34,7 +34,7 @@ class DatabaseMonitor:
         )
         self._max_connection_age_seconds = max_connection_age_hours * 3600
         self._periodic_log_interval = monitoring_config.get(
-            "log_interval", monitoring_config.get("log_interval_seconds", 60)
+            "log_interval", monitoring_config.get("log_interval_seconds", 30)
         )
         self._slow_query_threshold_ms = alert_thresholds.get("query_time_ms", 5000)
         self._error_rate_window_seconds = 60

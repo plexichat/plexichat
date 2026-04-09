@@ -163,7 +163,7 @@ class DatabaseConnectionMixin:
                     pool_config = self.config.get("connection_pool", {})
                     min_conn = pool_config.get("min_connections", 20)
                     self._pool = self.engine.create_pool(
-                        min_conn, pool_config.get("max_connections", 100)
+                        min_conn, pool_config.get("max_connections", 300)
                     )
                 conn = self.engine.connect(self._pool)
             else:
