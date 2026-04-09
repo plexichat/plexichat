@@ -1,0 +1,77 @@
+repos:
+  #  Ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.4
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  #  Type checking
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.356
+    hooks:
+      - id: pyright
+        additional_dependencies:
+          - fastapi
+          - pydantic>=2.0.0
+          - uvicorn[standard]
+          - starlette
+          - httpx
+          - aiohttp
+          - websockets
+          - cryptography
+          - pyotp
+          - pillow
+          - redis
+          - diskcache
+          - pytest
+          - qrcode[pil]
+          - xxhash
+          - websocket-client
+          - PyYAML
+          - imagehash
+          - boto3
+          - google-re2
+          - email-validator
+          - python-multipart
+          - python-dotenv
+          - python-dateutil
+          - sqlalchemy
+          - hiredis
+          - requests
+          - types-PyYAML
+          - types-requests
+          - types-python-dateutil
+          - types-redis
+
+  #  Basic security
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.8
+    hooks:
+      - id: bandit
+        args: ["-q", "-ll"]
+
+  #  Semgrep
+  # Disabled on Windows due to Unicode encoding issues in console
+  # - repo: local
+  #   hooks:
+  #     - id: semgrep
+  #       name: semgrep
+  #       entry: semgrep
+  #       language: system
+  #       types: [python]
+  #       args: ["--config=auto", "--quiet"]
+
+  #  Secret scanning
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        exclude: |
+          (?x)^(
+              src/tests/.*|
+              docs/.*|
+              .*/README\.md|
+              .gitlab-ci\.yml
+          )$
