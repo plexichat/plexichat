@@ -109,7 +109,7 @@ class ApplicationManager(BaseManager):
                 "requests_per_minute": 50,
                 "burst_limit": 10,
             },
-            "webhook_signature_secret": "plexichat-webhook-secret",
+            "webhook_signature_secret": "plexichat-webhook-secret",  # pragma: allowlist secret
         }
 
         app_config = config.get("applications", {})
@@ -971,6 +971,3 @@ class ApplicationManager(BaseManager):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
-
-
-

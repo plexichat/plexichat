@@ -35,9 +35,9 @@ class AuditEventType(Enum):
     LOGOUT = "logout"
     LOGOUT_ALL = "logout_all"
     REGISTER = "register"
-    PASSWORD_CHANGE = "password_change"
-    PASSWORD_RESET_REQUEST = "password_reset_request"
-    PASSWORD_RESET = "password_reset"
+    PASSWORD_CHANGE = "password_change"  # pragma: allowlist secret
+    PASSWORD_RESET_REQUEST = "password_reset_request"  # pragma: allowlist secret
+    PASSWORD_RESET = "password_reset"  # pragma: allowlist secret
     EMAIL_VERIFIED = "email_verified"
     TWO_FACTOR_ENABLED = "2fa_enabled"
     TWO_FACTOR_DISABLED = "2fa_disabled"
