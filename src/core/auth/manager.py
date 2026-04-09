@@ -2823,11 +2823,8 @@ class AuthManager(BaseManager):
             (new_deletion_at, user_id),
         )
 
-        # Update backup record
-        self._db.execute(
-            "UPDATE auth_deletion_records SET deletion_at = ? WHERE user_id = ?",
-            (new_deletion_at, user_id),
-        )
+        # Note: auth_deletion_records table doesn't have deletion_at column, only scheduled_at
+        # The deletion_at is tracked in auth_users table which is already updated above
 
         # Log to external Hash-Chain
         self.deletion_log.log_event(
