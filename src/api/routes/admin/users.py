@@ -247,16 +247,11 @@ async def admin_list_scheduled_deletions(request: Request):
     check_host_restriction(request)
     get_admin_from_token(request)
     import src.api as api
-    import utils.config as config
     import time
 
     db = api.get_db()
     assert db is not None
-    grace_days = (
-        config.get("authentication", {})
-        .get("account_deletion", {})
-        .get("grace_period_days", 30)
-    )
+    grace_days = 30  # Default grace period
 
     rows = db.fetch_all(  # type: ignore
         "SELECT id, username, deletion_at FROM auth_users WHERE deletion_status = 'frozen' ORDER BY deletion_at ASC"
