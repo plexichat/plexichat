@@ -619,9 +619,11 @@ class AuthManager(BaseManager):
         token,
         ip_address=None,
         user_agent=None,
-        is_selftest=False: bool(
-            self._config.get("security", {}).get("token_binding", False)
-            or self._config.get("security", {}).get("token_verify_rate_limit")
+        is_selftest=False: (
+            bool(
+                self._config.get("security", {}).get("token_binding", False)
+                or self._config.get("security", {}).get("token_verify_rate_limit")
+            )
         ),
     )
     def verify_token(

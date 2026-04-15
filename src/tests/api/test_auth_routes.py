@@ -280,11 +280,11 @@ class TestOAuthCallbackSecurity:
             auth_routes,
             "config_util",
             SimpleNamespace(
-                get=lambda key, default=None: {
-                    "google": {"client_id": "client", "client_secret": "secret"}
-                }
-                if key == "oauth"
-                else default
+                get=lambda key, default=None: (
+                    {"google": {"client_id": "client", "client_secret": "secret"}}
+                    if key == "oauth"
+                    else default
+                )
             ),
         )
         monkeypatch.setattr(
@@ -335,11 +335,11 @@ class TestOAuthCallbackSecurity:
             auth_routes,
             "config_util",
             SimpleNamespace(
-                get=lambda key, default=None: {
-                    "github": {"client_id": "client", "client_secret": "secret"}
-                }
-                if key == "oauth"
-                else default
+                get=lambda key, default=None: (
+                    {"github": {"client_id": "client", "client_secret": "secret"}}
+                    if key == "oauth"
+                    else default
+                )
             ),
         )
         monkeypatch.setattr(
