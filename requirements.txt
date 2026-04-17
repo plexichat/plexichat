@@ -6,66 +6,75 @@
 #   Install via: apt install ffmpeg (Linux), brew install ffmpeg (macOS),
 #   or download from https://ffmpeg.org/download.html (Windows)
 #   Without ffprobe, video uploads work but metadata won't be extracted.
+#
+# - aiortc dependencies: opus, srtp, libvpx for WebRTC media codecs
+#   Linux: apt install libopus-dev libsrtp2-dev libvpx-dev
+#   macOS: brew install opus srtp libvpx
+#   Windows: Download pre-built binaries or use vcpkg
 
 # Web Framework
-fastapi>=0.135.1
-uvicorn[standard]>=0.27.0
-starlette>=0.52.1
+fastapi==0.136.0
+uvicorn[standard]==0.27.0
+starlette==0.52.1
 
 # Database
-sqlalchemy>=2.0.0          # SQL toolkit and ORM
-psycopg2-binary>=2.9.9     # PostgreSQL sync driver (optional)
-redis>=5.0.0               # Redis client for caching/sessions
-hiredis>=2.3.0             # Redis parser (optional, for performance)
+sqlalchemy==2.0.49          # SQL toolkit and ORM
+psycopg2-binary==2.9.9     # PostgreSQL sync driver (optional)
+redis==5.0.0               # Redis client for caching/sessions
+hiredis==2.3.0             # Redis parser (optional, for performance)
 
 # Authentication & Security
-argon2-cffi>=25.1.0        # Password hashing
-cryptography>=46.0.6       # Encryption
-pyotp>=2.9.0               # TOTP 2FA
-xxhash>=3.4.1              # Fast non-cryptographic hashing
+argon2-cffi==25.1.0        # Password hashing
+cryptography==46.0.7       # Encryption (CVE-2026-39892 fix)
+pyotp==2.9.0               # TOTP 2FA
+xxhash==3.4.1              # Fast non-cryptographic hashing
 
 # Validation & Serialization
-pydantic>=2.5.0
-email-validator>=2.3.0
+pydantic==2.13.2
+email-validator==2.3.0
 
 # Configuration
-PyYAML>=6.0.3
+PyYAML==6.0.3
 
 # HTTP Client (for webhooks, etc.)
-requests>=2.33.1
-urllib3>=2.6.3             # Fixed for GHSA-2xpw-w6gg-jr37, GHSA-38jv-5279-wg99, GHSA-gm62-xv2j-4w53, GHSA-pq67-6m6q-mj2v
-httpx>=0.26.0
-aiohttp>=3.13.5
+requests==2.33.1
+urllib3==2.6.3             # Fixed for GHSA-2xpw-w6gg-jr37, GHSA-38jv-5279-wg99, GHSA-gm62-xv2j-4w53, GHSA-pq67-6m6q-mj2v
+httpx==0.27.2
+aiohttp==3.13.5
 
 # WebSocket
-websockets>=12.0
-websocket-client>=1.7.0
+websockets==12.0
+websocket-client==1.7.0
+
+# WebRTC / SFU
+aiortc==1.14.0              # Pure Python WebRTC implementation for SFU (default backend)
+# cryptography==46.0.7       # Required for SRTP (already listed above)
 
 # Utilities
-python-multipart>=0.0.22    # File uploads
-python-dotenv>=1.0.0       # Environment variables
-python-dateutil>=2.8.0     # Date/time utilities for scheduled events
+python-multipart==0.0.22    # File uploads
+python-dotenv==1.0.0       # Environment variables
+python-dateutil==2.8.0     # Date/time utilities for scheduled events
 
 # Image Processing (optional, for media)
-pillow>=12.1.1
-imagehash>=4.3.1           # Perceptual hashing for image similarity detection
+pillow==12.1.1
+imagehash==4.3.1           # Perceptual hashing for image similarity detection
 
 # Safe Regex (ReDoS protection)
-google-re2>=1.1            # Fast, safe regular expressions (no backtracking)
+google-re2==1.1            # Fast, safe regular expressions (no backtracking)
 
 # QR Code Generation
-qrcode[pil]>=7.4.2
+qrcode[pil]==7.4.2
 
 # S3/MinIO Storage (optional, for cloud media storage)
-boto3>=1.42.82              # AWS S3 SDK (also works with MinIO)
+boto3==1.42.82              # AWS S3 SDK (also works with MinIO)
 
 # Testing & Development (optional, for running tests)
-pytest>=7.0.0              # Testing framework
-pytest-asyncio>=0.21.0     # Async test support
-pytest-cov>=4.0.0          # Code coverage
-pytest-timeout>=2.2.0      # Enforce per-test timeouts
-psutil>=5.9.0              # System and process utilities (for performance tests)
-fakeredis>=2.34.1          # In-memory Redis for testing
-hypothesis>=6.0.0          # Property-based testing
-diskcache>=5.6.3           # Persistent local file-backed cache
+pytest==7.0.0              # Testing framework
+pytest-asyncio==0.21.0     # Async test support
+pytest-cov==4.0.0          # Code coverage
+pytest-timeout==2.2.0      # Enforce per-test timeouts
+psutil==5.9.0              # System and process utilities (for performance tests)
+fakeredis==2.34.1          # In-memory Redis for testing
+hypothesis==6.0.0          # Property-based testing
+diskcache==5.6.3           # Persistent local file-backed cache
 
