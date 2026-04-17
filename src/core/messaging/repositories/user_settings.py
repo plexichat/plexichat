@@ -221,7 +221,7 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
 
         in_clause, params = self._build_in_clause(user_ids)
         rows = self._fetch_all(
-            f"SELECT id FROM auth_users WHERE id IN {in_clause}",
+            f"SELECT id FROM auth_users WHERE id IN {in_clause}",  # nosec: B608
             params,
         )
 

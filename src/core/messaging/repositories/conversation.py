@@ -117,7 +117,7 @@ class ConversationRepository(BaseRepository[Conversation]):
 
         params.append(conv_id)
         self._execute(
-            f"UPDATE msg_conversations SET {', '.join(updates)} WHERE id = ?",
+            f"UPDATE msg_conversations SET {', '.join(updates)} WHERE id = ?",  # nosec: B608
             tuple(params),
             auto_commit=auto_commit,
         )

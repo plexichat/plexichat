@@ -70,7 +70,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
 
         in_clause, params = self._build_in_clause(message_ids)
         rows = self._fetch_all(
-            f"SELECT message_id, status FROM msg_message_status WHERE user_id = ? AND message_id IN {in_clause}",
+            f"SELECT message_id, status FROM msg_message_status WHERE user_id = ? AND message_id IN {in_clause}",  # nosec: B608
             (user_id,) + params,
         )
         return {row["message_id"]: MessageStatusType(row["status"]) for row in rows}
@@ -89,7 +89,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
                        COUNT(CASE WHEN status = 'read' THEN 1 END) as read_count
                 FROM msg_message_status 
                 WHERE message_id IN {in_clause}
-                GROUP BY message_id""",
+                GROUP BY message_id""",  # nosec: B608
             params,
         )
         return {
@@ -242,7 +242,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
 
         in_clause, params = self._build_in_clause(message_ids)
         rows = self._fetch_all(
-            f"SELECT message_id, user_id FROM msg_message_status WHERE message_id IN {in_clause} AND status = 'read' ORDER BY timestamp ASC",
+            f"SELECT message_id, user_id FROM msg_message_status WHERE message_id IN {in_clause} AND status = 'read' ORDER BY timestamp ASC",  # nosec: B608
             params,
         )
 
