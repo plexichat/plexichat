@@ -35,7 +35,7 @@ validator.setup(auto_sanitize_html=True)
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
-VERSION = "a.1.0-50"
+VERSION = "a.1.0-51"
 
 
 class PlexichatServer:
@@ -861,7 +861,7 @@ class PlexichatServer:
         voice_config = config.get("voice") or {}
         if voice_config.get("enabled", False):
             try:
-                sfu_backend = voice_config.get("sfu_backend", "mediasoup")
+                sfu_backend = voice_config.get("sfu_backend", "aiortc")
 
                 def init_signaling():
                     signaling.setup(

@@ -125,7 +125,7 @@ After deployment, verify the server is operating correctly by checking these end
 
 Plexichat uses a custom version format: `[stage].[major].[minor]-[build]`
 - Stage: `a` (alpha), `b` (beta), `c` (candidate), `r` (release)
-- Example: `a.1.0-50` (Alpha stage, major version 1, minor version 0, build 50)
+- Example: `a.1.0-51` (Alpha stage, major version 1, minor version 0, build 51)
 - Version accessible via `/api/v1/version` endpoint
 - Client compatibility checked via `/api/v1/version/negotiate`
 
