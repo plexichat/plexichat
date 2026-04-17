@@ -4,7 +4,8 @@ Signaling manager - Core business logic for WebRTC signaling.
 Handles voice connections, SDP exchange, ICE relay, and SFU integration.
 
 Supports multiple SFU backends:
-- mediasoup-ws: WebSocket-based adapter for mediasoup-demo server (recommended)
+- aiortc: Pure Python WebRTC SFU (recommended, runs in-process)
+- mediasoup-ws: WebSocket-based adapter for mediasoup-demo server
 - mediasoup: REST API adapter for custom mediasoup servers
 - janus: REST API adapter for Janus Gateway
 """
@@ -48,7 +49,7 @@ class SignalingManager:
         self,
         voice_module=None,
         events_module=None,
-        sfu_backend: str = "mediasoup-ws",
+        sfu_backend: str = "aiortc",
         mediasoup_url: str = "wss://localhost:4443",
         mediasoup_origin: str = "https://localhost",
         janus_url: str = "http://localhost:8088/janus",
@@ -65,7 +66,7 @@ class SignalingManager:
         Args:
             voice_module: Voice module for state management
             events_module: Events module for dispatching events
-            sfu_backend: SFU backend to use (mediasoup-ws, mediasoup, janus)
+            sfu_backend: SFU backend to use (aiortc, mediasoup-ws, mediasoup, janus)
             mediasoup_url: Mediasoup server URL (WebSocket or REST)
             mediasoup_origin: Origin header for mediasoup-ws CORS
             janus_url: Janus API URL
@@ -82,7 +83,32 @@ class SignalingManager:
         self._mediasoup_origin = mediasoup_origin
 
         # Build SFU config based on backend
-        if sfu_backend == "mediasoup-ws":
+        if sfu_backend == "aiortc":
+            # Build ICE servers list for aiortc
+            ice_servers = []
+            if stun_urls:
+                ice_servers.extend([{"urls": url} for url in stun_urls])
+            if turn_urls:
+                if turn_username and turn_credential:
+                    ice_servers.extend(
+                        [
+                            {
+                                "urls": url,
+                                "username": turn_username,
+                                "credential": turn_credential,
+                            }
+                            for url in turn_urls
+                        ]
+                    )
+                elif turn_secret:
+                    # For time-limited credentials, generate per-user
+                    ice_servers.extend([{"urls": url} for url in turn_urls])
+
+            self._sfu_config = {
+                "backend": "aiortc",
+                "ice_servers": ice_servers,
+            }
+        elif sfu_backend == "mediasoup-ws":
             # Convert https:// to wss:// if needed
             ws_url = mediasoup_url
             if ws_url.startswith("https://"):

@@ -99,7 +99,7 @@ _setup_complete = False
 def setup(
     voice_module: Optional[Any] = None,
     events_module: Optional[Any] = None,
-    sfu_backend: str = "mediasoup",
+    sfu_backend: str = "aiortc",
     mediasoup_url: str = "http://localhost:3000",
     mediasoup_origin: str = "https://localhost",
     janus_url: str = "http://localhost:8088/janus",
@@ -116,7 +116,11 @@ def setup(
     Args:
         voice_module: Voice module for state management
         events_module: Events module for dispatching events
-        sfu_backend: SFU backend to use ("mediasoup-ws", "mediasoup", or "janus")
+        sfu_backend: SFU backend to use ("aiortc", "mediasoup-ws", "mediasoup", or "janus")
+            - aiortc: Pure Python WebRTC SFU (recommended, runs in-process)
+            - mediasoup-ws: WebSocket adapter for mediasoup-demo
+            - mediasoup: REST API adapter for custom mediasoup servers
+            - janus: REST API adapter for Janus Gateway
         mediasoup_url: Mediasoup server URL (WebSocket or REST)
         mediasoup_origin: Origin header for mediasoup-ws CORS
         janus_url: Janus API URL

@@ -1,15 +1,17 @@
 """
 SFU adapters - Selective Forwarding Unit integrations.
 
-Provides adapters for mediasoup and Janus SFU servers.
+Provides adapters for aiortc, mediasoup, and Janus SFU servers.
 
 Supported backends:
-- mediasoup-ws: WebSocket-based adapter for mediasoup-demo server (recommended)
+- aiortc: Pure Python WebRTC SFU (recommended, runs in-process)
+- mediasoup-ws: WebSocket-based adapter for mediasoup-demo server
 - mediasoup: REST API adapter for custom mediasoup servers
 - janus: REST API adapter for Janus Gateway
 """
 
 from .base import SFUAdapter, SFUTransport, SFUProducer, SFUConsumer, RoomInfo
+from .aiortc_adapter import AiortcAdapter
 from .mediasoup import MediasoupAdapter
 from .mediasoup_ws import MediasoupWSAdapter
 from .janus import JanusAdapter
@@ -20,6 +22,7 @@ __all__ = [
     "SFUProducer",
     "SFUConsumer",
     "RoomInfo",
+    "AiortcAdapter",
     "MediasoupAdapter",
     "MediasoupWSAdapter",
     "JanusAdapter",
@@ -33,7 +36,8 @@ def create_adapter(backend: str, **kwargs) -> SFUAdapter:
 
     Args:
         backend: SFU backend name
-            - "mediasoup-ws": WebSocket adapter for mediasoup-demo (recommended)
+            - "aiortc": Pure Python WebRTC SFU (recommended, runs in-process)
+            - "mediasoup-ws": WebSocket adapter for mediasoup-demo
             - "mediasoup": REST API adapter for custom mediasoup servers
             - "janus": REST API adapter for Janus Gateway
         **kwargs: Backend-specific configuration
@@ -41,11 +45,16 @@ def create_adapter(backend: str, **kwargs) -> SFUAdapter:
             - ws_url: WebSocket URL (mediasoup-ws)
             - origin: Origin header for CORS (mediasoup-ws)
             - timeout: Request timeout in seconds
+            - ice_servers: List of STUN/TURN server URLs (aiortc)
 
     Returns:
         SFUAdapter instance
     """
-    if backend == "mediasoup-ws":
+    if backend == "aiortc":
+        return AiortcAdapter(
+            ice_servers=kwargs.get("ice_servers"),
+        )
+    elif backend == "mediasoup-ws":
         return MediasoupWSAdapter(
             ws_url=kwargs.get("ws_url", kwargs.get("api_url", "wss://localhost:4443")),
             timeout=kwargs.get("timeout", 10),
@@ -63,5 +72,5 @@ def create_adapter(backend: str, **kwargs) -> SFUAdapter:
         )
     else:
         raise ValueError(
-            f"Unknown SFU backend: {backend}. Supported: mediasoup-ws, mediasoup, janus"
+            f"Unknown SFU backend: {backend}. Supported: aiortc, mediasoup-ws, mediasoup, janus"
         )
