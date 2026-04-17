@@ -21,7 +21,7 @@ starlette==0.52.1
 sqlalchemy==2.0.49          # SQL toolkit and ORM
 psycopg2-binary==2.9.9     # PostgreSQL sync driver (optional)
 redis==5.0.0               # Redis client for caching/sessions
-hiredis==2.3.0             # Redis parser (optional, for performance)
+hiredis==2.3.2             # Redis parser (optional, for performance)
 
 # Authentication & Security
 argon2-cffi==25.1.0        # Password hashing
