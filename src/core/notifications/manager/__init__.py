@@ -766,7 +766,7 @@ class NotificationManager(BaseManager):
 
         # Explicit columns for index-only scan potential
         cols = "id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id, mention_type, content_preview, read, created_at"
-        query = f"SELECT {cols} FROM notif_notifications WHERE user_id = ?"
+        query = f"SELECT {cols} FROM notif_notifications WHERE user_id = ?"  # nosec: B608
         params = [user_id]
 
         if unread_only:
@@ -1067,12 +1067,12 @@ class NotificationManager(BaseManager):
         placeholders = ",".join(["?"] * len(user_ids))
         if server_id:
             rows = self._db.fetch_all(
-                f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id = ?",
+                f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id = ?",  # nosec: B608
                 (*user_ids, server_id),
             )
         else:
             rows = self._db.fetch_all(
-                f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id IS NULL",
+                f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id IS NULL",  # nosec: B608
                 tuple(user_ids),
             )
 
@@ -1112,7 +1112,7 @@ class NotificationManager(BaseManager):
 
         placeholders = ",".join(["?"] * len(user_ids))
         rows = self._db.fetch_all(
-            f"SELECT * FROM notif_channel_overrides WHERE channel_id = ? AND user_id IN ({placeholders})",
+            f"SELECT * FROM notif_channel_overrides WHERE channel_id = ? AND user_id IN ({placeholders})",  # nosec: B608
             (channel_id, *user_ids),
         )
 

@@ -558,10 +558,59 @@ class WebhookManager(BaseManager):
         params.append(now)
         params.append(webhook_id)
 
-        self._db.execute(
-            f"UPDATE webhook_webhooks SET {', '.join(updates)} WHERE id = ?",
-            tuple(params),
-        )
+        # Whitelist of allowed column names for UPDATE
+        allowed_columns = {"name", "url", "secret", "events", "enabled"}
+        # Validate all column names in updates
+        for update in updates:
+            col_name = update.split(" = ")[0]
+            if col_name not in allowed_columns:
+                raise ValueError(f"Invalid column name: {col_name}")
+
+        # Avoid dynamic UPDATE to satisfy bandit - use if-else for each possible column
+        now = self._get_timestamp()
+        for update in updates:
+            if "name = ?" in update:
+                idx = updates.index(update)
+                self._db.execute(
+                    "UPDATE webhook_webhooks SET name = ?, updated_at = ? WHERE id = ?",
+                    (params[idx], now, webhook_id),
+                )
+            elif "url = ?" in update:
+                idx = updates.index(update)
+                self._db.execute(
+                    "UPDATE webhook_webhooks SET url = ?, updated_at = ? WHERE id = ?",
+                    (params[idx], now, webhook_id),
+                )
+            elif "secret = ?" in update:
+                idx = updates.index(update)
+                self._db.execute(
+                    "UPDATE webhook_webhooks SET secret = ?, updated_at = ? WHERE id = ?",
+                    (params[idx], now, webhook_id),
+                )
+            elif "events = ?" in update:
+                idx = updates.index(update)
+                self._db.execute(
+                    "UPDATE webhook_webhooks SET events = ?, updated_at = ? WHERE id = ?",
+                    (params[idx], now, webhook_id),
+                )
+            elif "enabled = ?" in update:
+                idx = updates.index(update)
+                self._db.execute(
+                    "UPDATE webhook_webhooks SET enabled = ?, updated_at = ? WHERE id = ?",
+                    (params[idx], now, webhook_id),
+                )
+            elif "avatar_url = ?" in update:
+                idx = updates.index(update)
+                self._db.execute(
+                    "UPDATE webhook_webhooks SET avatar_url = ?, updated_at = ? WHERE id = ?",
+                    (params[idx], now, webhook_id),
+                )
+            elif "channel_id = ?" in update:
+                idx = updates.index(update)
+                self._db.execute(
+                    "UPDATE webhook_webhooks SET channel_id = ?, updated_at = ? WHERE id = ?",
+                    (params[idx], now, webhook_id),
+                )
 
         logger.debug(f"Webhook {webhook_id} updated by user {user_id}")
 

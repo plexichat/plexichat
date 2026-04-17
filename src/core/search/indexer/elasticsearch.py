@@ -97,7 +97,7 @@ class ElasticsearchIndexer(BaseIndexer):
                     url, data=data, headers=headers, method=method
                 )
 
-                with urllib.request.urlopen(req, timeout=30) as response:
+                with urllib.request.urlopen(req, timeout=30) as response:  # nosec: B310
                     return json.loads(response.read().decode())
 
             except urllib.error.HTTPError as e:
@@ -284,7 +284,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 method="POST",
             )
 
-            with urllib.request.urlopen(req, timeout=60) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:  # nosec: B310
                 result = json.loads(response.read().decode())
 
             if result.get("errors"):

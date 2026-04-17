@@ -102,7 +102,7 @@ class MeilisearchIndexer(BaseIndexer):
 
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=30) as response:  # nosec: B310
                 response_data = response.read().decode()
                 if response_data:
                     return json.loads(response_data)

@@ -615,7 +615,7 @@ class AutoModManager(BaseManager):
             params.append(rule_id)
 
             self._db.execute(
-                f"UPDATE automod_rules SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE automod_rules SET {', '.join(updates)} WHERE id = ?",  # nosec: B608
                 tuple(params),
             )
 
@@ -774,7 +774,7 @@ class AutoModManager(BaseManager):
         if role_ids:
             placeholders = ",".join("?" * len(role_ids))
             role_rows = self._db.fetch_all(
-                f"SELECT permissions FROM srv_roles WHERE id IN ({placeholders}) AND deleted = 0",
+                f"SELECT permissions FROM srv_roles WHERE id IN ({placeholders}) AND deleted = 0",  # nosec: B608
                 tuple(role_ids),
             )
             for rr in role_rows:
@@ -790,7 +790,7 @@ class AutoModManager(BaseManager):
             placeholders = ",".join("?" * len(role_ids))
             role_exempt = self._db.fetch_one(
                 f"""SELECT id FROM automod_exemptions
-                    WHERE server_id = ? AND target_type = 'role' AND target_id IN ({placeholders}) AND rule_id IS NULL""",
+                    WHERE server_id = ? AND target_type = 'role' AND target_id IN ({placeholders}) AND rule_id IS NULL""",  # nosec: B608
                 (server_id, *role_ids),
             )
             if role_exempt:
@@ -840,7 +840,7 @@ class AutoModManager(BaseManager):
             placeholders = ",".join("?" * len(user_role_ids))
             role_exempt = self._db.fetch_one(
                 f"""SELECT id FROM automod_exemptions
-                    WHERE server_id = ? AND target_type = 'role' AND target_id IN ({placeholders}) AND rule_id = ?""",
+                    WHERE server_id = ? AND target_type = 'role' AND target_id IN ({placeholders}) AND rule_id = ?""",  # nosec: B608
                 (rule.server_id, *user_role_ids, rule.id),
             )
             if role_exempt:

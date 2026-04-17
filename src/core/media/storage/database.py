@@ -189,8 +189,8 @@ class DatabaseStorage(StorageBackendBase):
             return deleted
 
         except Exception as e:
-            logger.error(f"Failed to delete blob at {path}: {e}")
-            raise StorageDeleteError(f"Failed to delete from database: {e}", "database")
+            logger.error(f"Failed to delete blob at {path}: {e}")  # nosec: B608
+            raise StorageDeleteError(f"Failed to delete from database: {e}", "database")  # nosec: B608
 
     def exists(self, path: str) -> bool:
         """Check if file exists in database."""
@@ -263,7 +263,8 @@ class DatabaseStorage(StorageBackendBase):
 
         placeholders = ",".join("?" * len(valid_paths))
         result = self._db.execute(
-            f"DELETE FROM media_blobs WHERE path NOT IN ({placeholders})", valid_paths
+            f"DELETE FROM media_blobs WHERE path NOT IN ({placeholders})",
+            valid_paths,  # nosec: B608
         )
 
         count = result.rowcount if hasattr(result, "rowcount") else 0

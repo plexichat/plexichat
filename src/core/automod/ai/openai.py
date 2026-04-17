@@ -80,7 +80,7 @@ class OpenAIAdapter(BaseAIAdapter):
                 method="POST",
             )
 
-            with urlopen(request, timeout=self._timeout) as response:
+            with urlopen(request, timeout=self._timeout) as response:  # nosec: B310
                 response_data = json.loads(response.read().decode("utf-8"))
 
             return self._parse_response(response_data)
