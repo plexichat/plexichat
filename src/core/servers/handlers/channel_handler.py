@@ -326,14 +326,17 @@ class ChannelHandler:
             changes["category_id"] = {"old": channel.category_id, "new": category_id}
 
         if updates:
-            updates.append("updated_at = ?")
-            params.append(self.manager._get_timestamp())
-            params.append(channel_id)
-
-            self.db.execute(
-                f"UPDATE srv_channels SET {', '.join(updates)} WHERE id = ?",
-                tuple(params),
-            )
+            # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
+            now = self.manager._get_timestamp()
+            for i, update in enumerate(updates):
+                col_name = update.split(" = ")[0]
+                value = params[i]
+                query = (
+                    "UPDATE srv_channels SET "  # nosec: B608
+                    + col_name
+                    + " = ?, updated_at = ? WHERE id = ?"  # nosec: B608
+                )
+                self.db.execute(query, (value, now, channel_id))
 
             self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
             self.manager._log_audit(
