@@ -73,7 +73,7 @@ pytest==7.0.0              # Testing framework
 pytest-asyncio==0.21.0     # Async test support
 pytest-cov==4.0.0          # Code coverage
 pytest-timeout==2.2.0      # Enforce per-test timeouts
-psutil==5.9.0              # System and process utilities (for performance tests)
+psutil==7.2.2              # System and process utilities (for performance tests)
 fakeredis==2.34.1          # In-memory Redis for testing
 hypothesis==6.0.0          # Property-based testing
 diskcache==5.6.3           # Persistent local file-backed cache
