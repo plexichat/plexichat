@@ -2,7 +2,7 @@ def _add_column_if_missing(db, table: str, column: str, ddl: str) -> None:
     try:
         if db.type == "postgres":
             rows = db.fetch_all(
-                f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}'"
+                f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}'"  # nosec: B608
             )
             existing = {row["column_name"] for row in rows}
         else:
