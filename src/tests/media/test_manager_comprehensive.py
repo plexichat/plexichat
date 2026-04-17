@@ -501,12 +501,14 @@ class TestMediaProxy:
         from src.core.media.security.proxy import ProxiedContent
 
         def mock_fetch(url, force_refresh=False, **kwargs):
+            import tempfile
+
             return ProxiedContent(
                 id=123,
                 source_url=url,
                 content_type="image/jpeg",
                 size=100,
-                storage_path="/tmp/fake",
+                storage_path=tempfile.gettempdir() + "/fake",
                 cached_at=0,
                 expires_at=0,
                 last_accessed=0,
@@ -529,12 +531,14 @@ class TestMediaProxy:
         from src.core.media.security.proxy import ProxiedContent
 
         def mock_fetch(url, force_refresh=False, **kwargs):
+            import tempfile
+
             return ProxiedContent(
                 id=123,
                 source_url=url,
                 content_type="image/jpeg",
                 size=100,
-                storage_path="/tmp/fake",
+                storage_path=tempfile.gettempdir() + "/fake",
                 cached_at=0,
                 expires_at=0,
                 last_accessed=0,

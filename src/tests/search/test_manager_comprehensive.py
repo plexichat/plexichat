@@ -122,7 +122,8 @@ class TestSearchErrors:
 
         for i in range(10):
             test_db.execute(
-                f"INSERT INTO msg_messages (id, conversation_id, author_id, content, created_at, updated_at, message_type) VALUES ({i + 1}, 1, 1, 'hello{i}', 1000, 1000, 'text')"
+                "INSERT INTO msg_messages (id, conversation_id, author_id, content, created_at, updated_at, message_type) VALUES (?, 1, 1, ?, 1000, 1000, 'text')",
+                (i + 1, f"hello{i}"),
             )
             search_manager.index_message(
                 i + 1,
@@ -298,7 +299,8 @@ class TestSearchUserFeatures:
         """User search respects limit."""
         for i in range(10):
             test_db.execute(
-                f"INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES ({100 + i + 1}, 'user{i}', 'user{i}@example.com', 'user', 'hash', '{{}}', 1000, 1000, 1)"
+                "INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (?, ?, ?, 'user', 'hash', '{{}}', 1000, 1000, 1)",
+                (100 + i + 1, f"user{i}", f"user{i}@example.com"),
             )
             search_manager.index_user(100 + i + 1, f"user{i}")
 
