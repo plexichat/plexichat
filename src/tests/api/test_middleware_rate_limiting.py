@@ -395,9 +395,9 @@ class TestBypassFunctionality:
             headers = {"X-RateLimit-Bypass": "correct_secret"}
             for i in range(5):
                 response = client.get("/api/v1/test", headers=headers)
-                assert (
-                    response.status_code == 200
-                ), f"Bypass request {i + 1} failed with correct secret"
+                assert response.status_code == 200, (
+                    f"Bypass request {i + 1} failed with correct secret"
+                )
 
             # Wrong secret should be rate limited
             headers_wrong = {"X-RateLimit-Bypass": "wrong_secret"}

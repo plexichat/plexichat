@@ -1172,9 +1172,9 @@ class TestRateLimitSecurity:
                     size_limited = True
                     break
 
-        assert (
-            successful < 5
-        ), f"Expected some uploads to be limited, but all {successful} succeeded"
+        assert successful < 5, (
+            f"Expected some uploads to be limited, but all {successful} succeeded"
+        )
         assert size_limited
 
         config._config_instance.config["media"] = original_media_config

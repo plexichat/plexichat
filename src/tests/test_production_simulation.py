@@ -415,9 +415,9 @@ class TestMultiWorkerPostgresPool:
         total_successful = sum(r.successful_queries for r in results)
         total_queries = sum(r.total_queries for r in results)
 
-        assert (
-            total_successful == 200
-        ), f"Expected 200 successful queries, got {total_successful}"
+        assert total_successful == 200, (
+            f"Expected 200 successful queries, got {total_successful}"
+        )
         assert total_queries == 200, f"Expected 200 total queries, got {total_queries}"
 
         # Verify no failures
@@ -504,9 +504,9 @@ class TestMultiWorkerPostgresPool:
 
         # Verify all queries succeeded
         total_successful = sum(r.successful_queries for r in results)
-        assert (
-            total_successful == 800
-        ), f"Expected 800 successful queries, got {total_successful}"
+        assert total_successful == 800, (
+            f"Expected 800 successful queries, got {total_successful}"
+        )
 
         total_failed = sum(r.failed_queries for r in results)
         assert total_failed == 0, f"Expected 0 failed queries, got {total_failed}"
@@ -571,9 +571,9 @@ class TestMultiWorkerPostgresPool:
 
         # Verify all transactions succeeded
         total_successful = sum(r.get("successful", 0) for r in results)
-        assert (
-            total_successful == 200
-        ), f"Expected 200 successful transactions, got {total_successful}"
+        assert total_successful == 200, (
+            f"Expected 200 successful transactions, got {total_successful}"
+        )
 
 
 class TestRedisWithDatabaseQueries:
@@ -785,9 +785,9 @@ class TestWorkerRestartScenarios:
 
         # Verify at least some workers completed successfully
         completed_workers = len([r for r in results if "worker_id" in r])
-        assert (
-            completed_workers >= 2
-        ), f"Expected at least 2 workers to complete, got {completed_workers}"
+        assert completed_workers >= 2, (
+            f"Expected at least 2 workers to complete, got {completed_workers}"
+        )
 
         logger.info(f"Worker restart test: {completed_workers}/4 workers completed")
 
@@ -862,9 +862,9 @@ class TestWorkerRestartScenarios:
         simulator.join_all_workers(timeout=30)
 
         # Verify all workers executed
-        assert (
-            len(results) >= 2
-        ), f"Expected at least 2 worker results, got {len(results)}"
+        assert len(results) >= 2, (
+            f"Expected at least 2 worker results, got {len(results)}"
+        )
 
         logger.info(
             f"New workers joined successfully. Got {len(results)} worker results"

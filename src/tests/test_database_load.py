@@ -482,9 +482,9 @@ class TestConcurrentQueries:
 
         # Verify results
         total_successful = sum(results)
-        assert (
-            total_successful == total_queries
-        ), f"Expected {total_queries} successful queries, got {total_successful}"
+        assert total_successful == total_queries, (
+            f"Expected {total_queries} successful queries, got {total_successful}"
+        )
 
         # Compile results
         results = LoadTestResults(
@@ -735,9 +735,9 @@ class TestThreadReuse:
         final_active = final_stats.get("active_connections", 0)
 
         # Pool should still be healthy and active connections should be >= 0
-        assert (
-            final_stats.get("active_connections", 0) >= 0
-        ), "Pool active connections count is negative (corrupted state)"
+        assert final_stats.get("active_connections", 0) >= 0, (
+            "Pool active connections count is negative (corrupted state)"
+        )
 
         # Verify pool returns to baseline or close to it
         # (allowing for thread-local connections)
@@ -822,22 +822,22 @@ class TestQueryExecutionTime:
         if db_type == "sqlite":
             # SQLite has write contention; allow higher latency under concurrent load
             # but still enforce reasonable bounds
-            assert (
-                max(execution_times) < 5000
-            ), f"Max execution time {max(execution_times)}ms exceeds SQLite threshold"
+            assert max(execution_times) < 5000, (
+                f"Max execution time {max(execution_times)}ms exceeds SQLite threshold"
+            )
             avg_time = statistics.mean(execution_times)
-            assert (
-                avg_time < 500
-            ), f"Average execution time {avg_time}ms too high for SQLite"
+            assert avg_time < 500, (
+                f"Average execution time {avg_time}ms too high for SQLite"
+            )
         else:
             # PostgreSQL and other production databases: enforce <100ms target
-            assert (
-                max(execution_times) < 100
-            ), f"Max execution time {max(execution_times)}ms exceeds <100ms target"
+            assert max(execution_times) < 100, (
+                f"Max execution time {max(execution_times)}ms exceeds <100ms target"
+            )
             avg_time = statistics.mean(execution_times)
-            assert (
-                avg_time < 100
-            ), f"Average execution time {avg_time}ms exceeds <100ms target"
+            assert avg_time < 100, (
+                f"Average execution time {avg_time}ms exceeds <100ms target"
+            )
 
     def test_p99_latency_under_sustained_load(
         self,
@@ -1011,9 +1011,9 @@ class TestPoolExhaustionPrevention:
         total_successful = sum(results)
         total_expected = num_threads * queries_per_thread
 
-        assert (
-            total_successful == total_expected
-        ), f"Expected {total_expected} successful queries, got {total_successful}"
+        assert total_successful == total_expected, (
+            f"Expected {total_expected} successful queries, got {total_successful}"
+        )
 
         # Verify no pool exhaustion errors in metrics
         metrics = metrics_collector.get_metrics()
@@ -1053,9 +1053,9 @@ class TestRobustnessAndResilience:
                 metrics_collector=metrics_collector,
             )
 
-            assert (
-                metric.success
-            ), f"Recovery query {i} failed after stress: {metric.error_msg}"
+            assert metric.success, (
+                f"Recovery query {i} failed after stress: {metric.error_msg}"
+            )
 
     def test_alternating_high_low_load(
         self,

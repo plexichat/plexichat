@@ -449,9 +449,9 @@ class SecurityAssertions:
 
         content_lower = content.lower()
         for pattern in dangerous_patterns:
-            assert (
-                pattern not in content_lower or content != original
-            ), f"Potentially dangerous pattern '{pattern}' found in content"
+            assert pattern not in content_lower or content != original, (
+                f"Potentially dangerous pattern '{pattern}' found in content"
+            )
 
     @staticmethod
     def assert_no_sql_injection(result: Any, payload: str) -> None:
@@ -460,9 +460,9 @@ class SecurityAssertions:
             sql_keywords = ["SELECT", "DROP", "DELETE", "UPDATE", "INSERT", "UNION"]
             result_upper = result.upper()
             for keyword in sql_keywords:
-                assert (
-                    keyword not in result_upper or payload.upper() == result_upper
-                ), f"SQL keyword '{keyword}' found in result"
+                assert keyword not in result_upper or payload.upper() == result_upper, (
+                    f"SQL keyword '{keyword}' found in result"
+                )
 
     @staticmethod
     def assert_sanitized(content: str, original: str) -> None:
@@ -471,9 +471,9 @@ class SecurityAssertions:
             pattern in original.lower()
             for pattern in ["<script", "javascript:", "onerror"]
         ):
-            assert (
-                content != original
-            ), "Content with dangerous patterns was not sanitized"
+            assert content != original, (
+                "Content with dangerous patterns was not sanitized"
+            )
 
     @staticmethod
     def assert_rejected(fn: Callable, *args, **kwargs) -> None:
@@ -516,25 +516,25 @@ class SecurityAssertions:
         path_lower = path.lower()
 
         for pattern in dangerous_patterns:
-            assert (
-                pattern not in path_lower
-            ), f"Path traversal pattern '{pattern}' found in path"
+            assert pattern not in path_lower, (
+                f"Path traversal pattern '{pattern}' found in path"
+            )
 
     @staticmethod
     def assert_content_length_limit(content: str, max_length: int) -> None:
         """Assert that content respects length limits."""
-        assert (
-            len(content) <= max_length
-        ), f"Content length {len(content)} exceeds limit {max_length}"
+        assert len(content) <= max_length, (
+            f"Content length {len(content)} exceeds limit {max_length}"
+        )
 
     @staticmethod
     def assert_valid_format(value: str, pattern: str, description: str) -> None:
         """Assert that value matches expected format."""
         import re
 
-        assert re.match(
-            pattern, value
-        ), f"Value '{value}' does not match expected {description} format"
+        assert re.match(pattern, value), (
+            f"Value '{value}' does not match expected {description} format"
+        )
 
     @staticmethod
     def assert_rate_limited(fn: Callable, attempts: int = 20) -> None:

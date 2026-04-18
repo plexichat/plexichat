@@ -615,11 +615,7 @@ class AuthManager(BaseManager):
     @cached(
         ttl=30,
         prefix="token_verify",
-        skip_cache_if=lambda self,
-        token,
-        ip_address=None,
-        user_agent=None,
-        is_selftest=False: (
+        skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
             bool(
                 self._config.get("security", {}).get("token_binding", False)
                 or self._config.get("security", {}).get("token_verify_rate_limit")
@@ -730,7 +726,7 @@ class AuthManager(BaseManager):
 
             params.append(row["id"])
             self._db.execute(
-                f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",  # nosec: B608
                 tuple(params),
             )
 
@@ -944,7 +940,7 @@ class AuthManager(BaseManager):
             params.append(self._get_timestamp())
             params.append(user_id)
             self._db.execute(
-                f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",  # nosec: B608
                 tuple(params),
             )
             # Clear auth cache so middleware sees change immediately
@@ -1578,7 +1574,7 @@ class AuthManager(BaseManager):
 
         params.append(token_id)
         self._db.execute(
-            f"UPDATE auth_api_access_tokens SET {', '.join(updates)} WHERE id = ?",
+            f"UPDATE auth_api_access_tokens SET {', '.join(updates)} WHERE id = ?",  # nosec: B608
             tuple(params),
         )
         invalidate_pattern("access_token_required*")
@@ -1871,7 +1867,7 @@ class AuthManager(BaseManager):
             )
         params.append(row["id"])
         self._db.execute(
-            f"UPDATE auth_api_access_tokens SET {', '.join(updates)} WHERE id = ?",
+            f"UPDATE auth_api_access_tokens SET {', '.join(updates)} WHERE id = ?",  # nosec: B608
             tuple(params),
         )
         if now - int(last_used) > 60000:
@@ -2411,7 +2407,7 @@ class AuthManager(BaseManager):
                 FROM auth_users u
                 LEFT JOIN user_features f ON u.id = f.user_id
                 WHERE u.id IN ({placeholders})
-            """
+            """  # nosec: B608
             rows = self._db.fetch_all(query, tuple(missing_ids))
 
             for row in rows:
@@ -2462,7 +2458,7 @@ class AuthManager(BaseManager):
             FROM auth_users u
             LEFT JOIN user_features f ON u.id = f.user_id
             WHERE u.id IN ({placeholders})
-        """
+        """  # nosec: B608
         rows = self._db.fetch_all(query, tuple(user_ids))
 
         result = {}

@@ -1006,6 +1006,13 @@ class SearchManager(BaseManager):
         name_col: str,
         ttl: int = 300,
     ) -> Dict[int, str]:
+        # Sanitize identifiers to prevent SQL injection
+        from src.core.database import dialect
+
+        safe_table = dialect.sanitize_identifier(table, self._db.type)
+        safe_id_col = dialect.sanitize_identifier(id_col, self._db.type)
+        safe_name_col = dialect.sanitize_identifier(name_col, self._db.type)
+
         uniq = sorted({int(i) for i in ids if i})
         if not uniq:
             return {}
@@ -1024,7 +1031,7 @@ class SearchManager(BaseManager):
             # Avoid dynamic IN clause to satisfy bandit - use individual queries
             for i in missing:
                 row = self._db.fetch_one(
-                    f"SELECT {id_col} as id, {name_col} as name FROM {table} WHERE {id_col} = ?",  # nosec: B608
+                    f"SELECT {safe_id_col} as id, {safe_name_col} as name FROM {safe_table} WHERE {safe_id_col} = ?",
                     (i,),
                 )
                 if row:

@@ -1,13 +1,17 @@
 def _add_column_if_missing(db, table: str, column: str, ddl: str) -> None:
     try:
-        rows = db.fetch_all(f"PRAGMA table_info({table})")
+        rows = db.fetch_all("PRAGMA table_info(?)", (table,))
         existing = {row["name"] for row in rows}
         if column in existing:
             return
     except Exception:
         pass
     try:
-        db.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+        # Sanitize table name to prevent SQL injection in ALTER TABLE
+        from src.core.database import dialect
+
+        safe_table = dialect.sanitize_identifier(table, db.type)
+        db.execute(f"ALTER TABLE {safe_table} ADD COLUMN {ddl}")
     except Exception:
         pass
 

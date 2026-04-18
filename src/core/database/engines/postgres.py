@@ -31,21 +31,24 @@ class PostgresEngine(BaseEngine):
         pool_config = self.config.get("connection_pool", {})
         connect_timeout = pool_config.get("connect_timeout", 10)
 
-        # Build DSN with keepalives and user timeout for stability
-        dsn = (
-            f"host={pg_config.get('host', 'localhost')} "
-            f"port={pg_config.get('port', 5432)} "
-            f"user={pg_config.get('user', 'postgres')} "
-            f"password={pg_config.get('password', '')} "
-            f"dbname={pg_config.get('dbname', 'plexichat')} "
-            f"sslmode={pg_config.get('sslmode', 'prefer')} "
-            f"keepalives=1 keepalives_idle=60 keepalives_interval=10 keepalives_count=5 "
-            f"tcp_user_timeout=30000"
-        )
+        # Use connection parameter dict instead of DSN string to prevent password exposure in logs
+        conn_params = {
+            "host": pg_config.get("host", "localhost"),
+            "port": pg_config.get("port", 5432),
+            "user": pg_config.get("user", "postgres"),
+            "password": pg_config.get("password", ""),
+            "dbname": pg_config.get("dbname", "plexichat"),
+            "sslmode": pg_config.get("sslmode", "prefer"),
+            "keepalives": 1,
+            "keepalives_idle": 60,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+            "tcp_user_timeout": 30000,
+            "cursor_factory": RealDictCursor,
+            "connect_timeout": connect_timeout,
+        }
 
-        return psycopg2.connect(
-            dsn, cursor_factory=RealDictCursor, connect_timeout=connect_timeout
-        )
+        return psycopg2.connect(**conn_params)
 
     def create_pool(self, min_conn: int, max_conn: int) -> Any:
         try:
@@ -58,17 +61,22 @@ class PostgresEngine(BaseEngine):
         pool_config = self.config.get("connection_pool", {})
         connect_timeout = pool_config.get("connect_timeout", 10)
 
-        # Build DSN with keepalives and user timeout for stability
-        dsn = (
-            f"host={pg_config.get('host', 'localhost')} "
-            f"port={pg_config.get('port', 5432)} "
-            f"user={pg_config.get('user', 'postgres')} "
-            f"password={pg_config.get('password', '')} "
-            f"dbname={pg_config.get('dbname', 'plexichat')} "
-            f"sslmode={pg_config.get('sslmode', 'prefer')} "
-            f"keepalives=1 keepalives_idle=60 keepalives_interval=10 keepalives_count=5 "
-            f"tcp_user_timeout=30000"
-        )
+        # Use connection parameter dict instead of DSN string to prevent password exposure in logs
+        conn_params = {
+            "host": pg_config.get("host", "localhost"),
+            "port": pg_config.get("port", 5432),
+            "user": pg_config.get("user", "postgres"),
+            "password": pg_config.get("password", ""),
+            "dbname": pg_config.get("dbname", "plexichat"),
+            "sslmode": pg_config.get("sslmode", "prefer"),
+            "keepalives": 1,
+            "keepalives_idle": 60,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+            "tcp_user_timeout": 30000,
+            "cursor_factory": RealDictCursor,
+            "connect_timeout": connect_timeout,
+        }
 
         logger.info(
             f"Creating ThreadedConnectionPool ({min_conn}-{max_conn}) with timeout {connect_timeout}s"
@@ -78,9 +86,7 @@ class PostgresEngine(BaseEngine):
             pool = ThreadedConnectionPool(
                 min_conn,
                 max_conn,
-                dsn,
-                cursor_factory=RealDictCursor,
-                connect_timeout=connect_timeout,
+                **conn_params,
             )
             elapsed = time.time() - start_time
             logger.info(

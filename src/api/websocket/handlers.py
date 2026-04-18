@@ -85,6 +85,8 @@ class OpcodeHandler:
             return await self._handle_voice_disconnect(connection, data)
         elif op == GatewayOpcode.VOICE_SDP_OFFER:
             return await self._handle_voice_sdp_offer(connection, data)
+        elif op == GatewayOpcode.VOICE_SDP_ANSWER:
+            return await self._handle_voice_sdp_answer(connection, data)
         elif op == GatewayOpcode.VOICE_ICE_CANDIDATE:
             return await self._handle_voice_ice_candidate(connection, data)
         elif op == GatewayOpcode.VOICE_SPEAKING:
@@ -297,16 +299,10 @@ class OpcodeHandler:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         try:
-            from src.core.voice import signaling
-
-            # Get voice manager from signaling module
-            voice_manager = getattr(signaling, "_voice", None)
-            if not voice_manager:
-                logger.warning("Voice manager not available in signaling module")
-                return None, None, None
-
             # Update voice state
-            voice_state = voice_manager.update_voice_state(
+            from src.core import voice
+
+            voice_state = voice.update_voice_state(
                 user_id=connection.user_id,
                 self_mute=self_mute,
                 self_deaf=self_deaf,
@@ -317,7 +313,10 @@ class OpcodeHandler:
             # Broadcast voice state update to channel members via events
             try:
                 await self._dispatch_voice_state_update(
-                    connection.user_id, channel_id, voice_state
+                    user_id=connection.user_id,
+                    channel_id_for_recipients=channel_id,
+                    event_channel_id=channel_id,
+                    voice_state=voice_state,
                 )
             except Exception as broadcast_error:
                 logger.warning(
@@ -359,17 +358,12 @@ class OpcodeHandler:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
             # Import required modules
+            from src.core import voice
             from src.core.voice import signaling
-
-            # Get voice manager from signaling module
-            voice_manager = getattr(signaling, "_voice", None)
-            if not voice_manager:
-                logger.warning("Voice manager not available in signaling module")
-                return None, None, None
 
             # Step 1: Join voice channel (create/update persisted voice state)
             try:
-                voice_state = voice_manager.join_channel(connection.user_id, channel_id)
+                voice_state = voice.join_channel(connection.user_id, channel_id)
             except Exception as voice_error:
                 logger.warning(f"Failed to join voice channel: {voice_error}")
                 return None, None, None
@@ -380,7 +374,7 @@ class OpcodeHandler:
             except Exception as signaling_error:
                 # Rollback: leave the voice channel if signaling fails
                 try:
-                    voice_manager.leave_channel(connection.user_id)
+                    voice.leave_channel(connection.user_id)
                 except Exception as rollback_error:
                     logger.warning(
                         f"Failed to rollback voice channel join: {rollback_error}"
@@ -393,7 +387,10 @@ class OpcodeHandler:
             try:
                 # Broadcast voice state update to channel members via events
                 await self._dispatch_voice_state_update(
-                    connection.user_id, channel_id, voice_state
+                    user_id=connection.user_id,
+                    channel_id_for_recipients=channel_id,
+                    event_channel_id=channel_id,
+                    voice_state=voice_state,
                 )
             except Exception as broadcast_error:
                 logger.warning(
@@ -401,12 +398,27 @@ class OpcodeHandler:
                 )
                 # Don't fail the connection for broadcast issues
 
+            # Include current peer list so clients can immediately negotiate mesh.
+            peers: List[str] = []
+            try:
+                states = voice.get_channel_users(channel_id)
+                peers = [
+                    str(s.user_id)
+                    for s in states
+                    if int(s.user_id) != connection.user_id
+                ]
+            except Exception:
+                peers = []
+
+            info_dict = info.to_dict()
+            info_dict["peers"] = peers
+
             return (
                 int(GatewayOpcode.DISPATCH),
                 {
                     "t": "VOICE_SERVER_UPDATE",
                     "s": connection.increment_sequence(),
-                    "d": info.to_dict(),
+                    "d": info_dict,
                 },
                 None,
             )
@@ -427,17 +439,29 @@ class OpcodeHandler:
         channel_id: Optional[Any] = data.get("channel_id") if data else None
 
         try:
+            from src.core import voice
             from src.core.voice import signaling
 
-            # Disconnect signaling
+            prev_state = voice.get_voice_state(connection.user_id)
+            prev_channel_id = (
+                getattr(prev_state, "channel_id", None) if prev_state else None
+            )
+
+            # Disconnect signaling (TURN creds, SFU cleanup if enabled)
             signaling.disconnect_voice(connection.user_id, channel_id)
 
-            # Leave voice channel (remove persisted state) if present
-            voice_manager = getattr(signaling, "_voice", None)
-            if voice_manager:
-                voice_state = voice_manager.get_voice_state(connection.user_id)
-                if voice_state:
-                    voice_manager.leave_channel(connection.user_id)
+            # Leave voice channel (remove persisted state)
+            if prev_state:
+                voice.leave_channel(connection.user_id)
+
+            # Broadcast "left" update to previous channel recipients.
+            if prev_channel_id:
+                await self._dispatch_voice_state_update(
+                    user_id=connection.user_id,
+                    channel_id_for_recipients=int(prev_channel_id),
+                    event_channel_id=None,
+                    voice_state=prev_state,
+                )
         except Exception as e:
             logger.warning(f"Voice disconnect failed: {e}")
 
@@ -459,9 +483,11 @@ class OpcodeHandler:
         sdp = data.get("sdp")
         sdp_type = data.get("type", "offer")
 
-        if not channel_id or not sdp:
+        target_user_id = data.get("target_user_id") or data.get("targetUserId")
+
+        if not channel_id or not sdp or not target_user_id:
             logger.warning(
-                f"SDP offer missing required fields: channel_id={channel_id}, sdp_present={bool(sdp)}, data keys={data.keys() if data else None}"
+                f"SDP offer missing required fields: channel_id={channel_id}, sdp_present={bool(sdp)}, target_user_id={target_user_id}"
             )
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
@@ -472,17 +498,50 @@ class OpcodeHandler:
             logger.warning(f"Invalid channel_id type in SDP offer: {type(channel_id)}")
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
+        try:
+            target_user_id = int(target_user_id)
+        except (ValueError, TypeError):
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
         if not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         try:
-            from src.core.voice import signaling
+            # Mesh signaling: route offer to the target peer (same channel only).
+            from src.api.websocket import get_dispatcher, get_session_manager
+            from src.core import voice
 
-            # Use async version to actually communicate with SFU
-            answer = await signaling.handle_sdp_offer_async(
-                connection.user_id, channel_id, sdp, sdp_type
-            )
-            return int(GatewayOpcode.VOICE_SDP_ANSWER), answer.to_dict(), None
+            sender_id = int(connection.user_id)
+            sender_state = voice.get_voice_state(sender_id)
+            target_state = voice.get_voice_state(target_user_id)
+            if (
+                not sender_state
+                or not target_state
+                or int(getattr(sender_state, "channel_id", 0) or 0) != channel_id
+                or int(getattr(target_state, "channel_id", 0) or 0) != channel_id
+            ):
+                return None, None, None
+
+            session_manager = get_session_manager()
+            dispatcher = get_dispatcher()
+            target_conns = session_manager.get_connections_for_users([target_user_id])
+            if not target_conns:
+                return None, None, None
+
+            payload = {
+                "channel_id": str(channel_id),
+                "from_user_id": str(sender_id),
+                "target_user_id": str(target_user_id),
+                "type": sdp_type,
+                "sdp": sdp,
+            }
+
+            for conn in target_conns:
+                await dispatcher.dispatch_raw(
+                    conn, GatewayOpcode.VOICE_SDP_OFFER, payload
+                )
+
+            return None, None, None
         except Exception as e:
             logger.warning(f"SDP offer handling failed: {e}")
             return None, None, None
@@ -501,11 +560,12 @@ class OpcodeHandler:
 
         channel_id = data.get("channel_id")
         candidate = data.get("candidate")
+        target_user_id = data.get("target_user_id") or data.get("targetUserId")
         # Support both camelCase (from JS) and snake_case field names
         sdp_mid = data.get("sdp_mid") or data.get("sdpMid")
         sdp_mline_index = data.get("sdp_mline_index") or data.get("sdpMLineIndex")
 
-        if not channel_id or not candidate:
+        if not channel_id or not candidate or not target_user_id:
             logger.warning(
                 f"ICE candidate missing required fields: channel_id={channel_id}, candidate={candidate}, data={data}"
             )
@@ -520,17 +580,118 @@ class OpcodeHandler:
             )
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
+        try:
+            target_user_id = int(target_user_id)
+        except (ValueError, TypeError):
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
         if not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         try:
-            from src.core.voice import signaling
+            # Mesh signaling: route ICE candidate to the target peer (same channel only).
+            from src.api.websocket import get_dispatcher, get_session_manager
+            from src.core import voice
 
-            signaling.handle_ice_candidate(
-                connection.user_id, channel_id, candidate, sdp_mid, sdp_mline_index
-            )
+            sender_id = int(connection.user_id)
+            sender_state = voice.get_voice_state(sender_id)
+            target_state = voice.get_voice_state(target_user_id)
+            if (
+                not sender_state
+                or not target_state
+                or int(getattr(sender_state, "channel_id", 0) or 0) != channel_id
+                or int(getattr(target_state, "channel_id", 0) or 0) != channel_id
+            ):
+                return None, None, None
+
+            session_manager = get_session_manager()
+            dispatcher = get_dispatcher()
+            target_conns = session_manager.get_connections_for_users([target_user_id])
+            if not target_conns:
+                return None, None, None
+
+            payload = {
+                "channel_id": str(channel_id),
+                "from_user_id": str(sender_id),
+                "target_user_id": str(target_user_id),
+                "candidate": candidate,
+                "sdp_mid": sdp_mid,
+                "sdp_mline_index": sdp_mline_index,
+            }
+
+            for conn in target_conns:
+                await dispatcher.dispatch_raw(
+                    conn, GatewayOpcode.VOICE_ICE_CANDIDATE, payload
+                )
         except Exception as e:
             logger.warning(f"ICE candidate handling failed: {e}")
+
+        return None, None, None
+
+    async def _handle_voice_sdp_answer(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle voice SDP answer opcode (mesh relay)."""
+        if not connection.is_authenticated:
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        if not data:
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
+        channel_id = data.get("channel_id")
+        sdp = data.get("sdp")
+        sdp_type = data.get("type", "answer")
+        target_user_id = data.get("target_user_id") or data.get("targetUserId")
+
+        if not channel_id or not sdp or not target_user_id:
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
+        try:
+            channel_id = int(channel_id)
+            target_user_id = int(target_user_id)
+        except (ValueError, TypeError):
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
+        if not connection.user_id:
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        try:
+            from src.api.websocket import get_dispatcher, get_session_manager
+            from src.core import voice
+
+            sender_id = int(connection.user_id)
+            sender_state = voice.get_voice_state(sender_id)
+            target_state = voice.get_voice_state(target_user_id)
+            if (
+                not sender_state
+                or not target_state
+                or int(getattr(sender_state, "channel_id", 0) or 0) != channel_id
+                or int(getattr(target_state, "channel_id", 0) or 0) != channel_id
+            ):
+                return None, None, None
+
+            session_manager = get_session_manager()
+            dispatcher = get_dispatcher()
+            target_conns = session_manager.get_connections_for_users([target_user_id])
+            if not target_conns:
+                return None, None, None
+
+            payload = {
+                "channel_id": str(channel_id),
+                "from_user_id": str(sender_id),
+                "target_user_id": str(target_user_id),
+                "type": sdp_type,
+                "sdp": sdp,
+            }
+
+            for conn in target_conns:
+                await dispatcher.dispatch_raw(
+                    conn, GatewayOpcode.VOICE_SDP_ANSWER, payload
+                )
+        except Exception as e:
+            logger.warning(f"SDP answer relay failed: {e}")
 
         return None, None, None
 
@@ -543,7 +704,55 @@ class OpcodeHandler:
         if not connection.is_authenticated:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
-        # Speaking state is informational, broadcast to channel
+        if not data:
+            return None, None, None
+
+        channel_id = data.get("channel_id")
+        speaking = data.get("speaking")
+        if channel_id is None:
+            return None, None, None
+
+        try:
+            channel_id = int(channel_id)
+        except (ValueError, TypeError):
+            return None, None, None
+
+        if not connection.user_id:
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        try:
+            from src.api.websocket import get_dispatcher, get_session_manager
+            from src.core import voice
+
+            sender_id = int(connection.user_id)
+            sender_state = voice.get_voice_state(sender_id)
+            if (
+                not sender_state
+                or int(getattr(sender_state, "channel_id", 0) or 0) != channel_id
+            ):
+                return None, None, None
+
+            states = voice.get_channel_users(channel_id)
+            user_ids = [int(s.user_id) for s in states if int(s.user_id) != sender_id]
+            if not user_ids:
+                return None, None, None
+
+            session_manager = get_session_manager()
+            dispatcher = get_dispatcher()
+            conns = session_manager.get_connections_for_users(user_ids)
+
+            payload = {
+                "channel_id": str(channel_id),
+                "user_id": str(sender_id),
+                "speaking": bool(speaking),
+            }
+            for conn in conns:
+                await dispatcher.dispatch_raw(
+                    conn, GatewayOpcode.VOICE_SPEAKING, payload
+                )
+        except Exception as e:
+            logger.warning(f"Speaking relay failed: {e}")
+
         return None, None, None
 
     async def _handle_voice_quality(
@@ -573,6 +782,41 @@ class OpcodeHandler:
                 )
             except Exception as e:
                 logger.warning(f"Quality update failed: {e}")
+
+        # Broadcast quality state to other channel members (mesh informational).
+        try:
+            if channel_id and connection.user_id is not None:
+                from src.api.websocket import get_dispatcher, get_session_manager
+                from src.core import voice
+
+                channel_id_int = int(channel_id)
+                sender_id = int(connection.user_id)
+                sender_state = voice.get_voice_state(sender_id)
+                if (
+                    sender_state
+                    and int(getattr(sender_state, "channel_id", 0) or 0)
+                    == channel_id_int
+                ):
+                    states = voice.get_channel_users(channel_id_int)
+                    user_ids = [
+                        int(s.user_id) for s in states if int(s.user_id) != sender_id
+                    ]
+                    if user_ids:
+                        session_manager = get_session_manager()
+                        dispatcher = get_dispatcher()
+                        conns = session_manager.get_connections_for_users(user_ids)
+                        payload = {
+                            "channel_id": str(channel_id_int),
+                            "user_id": str(sender_id),
+                            "target_bitrate": target_bitrate,
+                            "quality_level": quality_level,
+                        }
+                        for conn in conns:
+                            await dispatcher.dispatch_raw(
+                                conn, GatewayOpcode.VOICE_QUALITY, payload
+                            )
+        except Exception as e:
+            logger.warning(f"Quality relay failed: {e}")
 
         return None, None, None
 
@@ -1005,7 +1249,8 @@ class OpcodeHandler:
     async def _dispatch_voice_state_update(
         self,
         user_id: int,
-        channel_id: int,
+        channel_id_for_recipients: int,
+        event_channel_id: Optional[int],
         voice_state: Any,
     ) -> None:
         """Dispatch voice state update to channel members."""
@@ -1023,7 +1268,7 @@ class OpcodeHandler:
             if self._servers:
                 try:
                     channel = await run_in_threadpool(
-                        self._servers.get_channel, channel_id, user_id
+                        self._servers.get_channel, channel_id_for_recipients, user_id
                     )
                     if channel:
                         server_id = getattr(channel, "server_id", None)
@@ -1033,7 +1278,7 @@ class OpcodeHandler:
             # Create the event
             event = payloads.create_voice_state_update(
                 user_id=user_id,
-                channel_id=channel_id,
+                channel_id=event_channel_id,
                 server_id=server_id,
                 self_mute=voice_state.self_mute,
                 self_deaf=voice_state.self_deaf,
@@ -1048,7 +1293,7 @@ class OpcodeHandler:
                 target_user_ids = await run_in_threadpool(
                     self._get_typing_recipient_ids,
                     user_id,
-                    channel_id,
+                    channel_id_for_recipients,
                     server_id,
                     True,  # include_self for voice states
                 )

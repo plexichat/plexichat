@@ -34,7 +34,7 @@ These endpoints expose public constants and server state without revealing priva
 | `media` | upload rules, attachment processing, and compression |
 | `search` | search backends and public discovery behavior |
 | `docs` | custom docs portal path, theme, and feature flags |
-| `voice` | ICE server exposure and voice signaling configuration |
+| `voice` | ICE server exposure, SFU backend selection, and voice signaling configuration (default: aiortc) |
 | `features` | user tiers, badges, and gated capabilities |
 
 ## Safe Practices
