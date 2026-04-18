@@ -61,7 +61,7 @@ lint:format:
   extends: .python_base
   stage: lint
   script:
-    - ruff format --check src/
+    - ruff format --check src/ src/utils/common-utils/
 
 lint:types:
   extends: .python_base

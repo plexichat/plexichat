@@ -1,4 +1,3 @@
-[tool.bandit]
 skips = ["B101", "B601"]
 confidence = ["HIGH"]
 severity = ["MEDIUM", "HIGH"]
