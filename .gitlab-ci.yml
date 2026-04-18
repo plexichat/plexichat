@@ -48,7 +48,7 @@ lint:ruff:
   extends: .python_base
   stage: lint
   script:
-    - ruff check src/ --output-format=gitlab > ruff-report.json || true
+    - ruff check src/ --output-format=gitlab > ruff-report.json
     - ruff check src/
   artifacts:
     reports:
@@ -56,14 +56,12 @@ lint:ruff:
     paths:
       - ruff-report.json
     expire_in: 7 days
-  allow_failure: true
 
 lint:format:
   extends: .python_base
   stage: lint
   script:
     - ruff format --check src/
-  allow_failure: true
 
 lint:types:
   extends: .python_base
@@ -85,13 +83,12 @@ security:bandit:
   extends: .python_base
   stage: security
   script:
-    - bandit -r src/ -f json -o bandit-report.json -ll || true
-    - bandit -r src/ -ll
+    - bandit -r src/ -c .bandit -f json -o bandit-report.json
+    - bandit -r src/ -c .bandit
   artifacts:
     paths:
       - bandit-report.json
     expire_in: 30 days
-  allow_failure: true
 
 # --- Detect-secrets (matches pre-commit) ---
 security:detect_secrets:
@@ -148,36 +145,12 @@ security:dependency_scanning:
   extends: .python_base
   stage: security
   script:
-    - pip-audit -r requirements.txt --format json > pip-audit-report.json || true
-    - safety check -r requirements.txt --json > safety-report.json || true
+    - pip-audit -r requirements.txt --format json > pip-audit-report.json
+    - pip-audit -r requirements.txt
+    - safety check -r requirements.txt --json > safety-report.json
+    - safety check -r requirements.txt
   artifacts:
     paths:
       - pip-audit-report.json
       - safety-report.json
     expire_in: 30 days
-  allow_failure: true
-
-# =========================================================
-# OPTIONAL: WEEKLY FULL AUDIT (kept, but cleaner)
-# =========================================================
-
-security:weekly_audit:
-  extends: .python_base
-  stage: security
-  script:
-    - bandit -r src/ -f json -o bandit-weekly.json -ll || true
-    - pip-audit -r requirements.txt --format json > pip-audit-weekly.json || true
-    - safety check -r requirements.txt --json > safety-weekly.json || true
-    - detect-secrets scan > secrets-weekly.baseline
-  artifacts:
-    paths:
-      - bandit-weekly.json
-      - pip-audit-weekly.json
-      - safety-weekly.json
-      - secrets-weekly.baseline
-    expire_in: 90 days
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-    - if: $CI_PIPELINE_SOURCE == "web"
-      when: manual
-  allow_failure: false
