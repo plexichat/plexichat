@@ -69,12 +69,12 @@ qrcode[pil]==7.4.2
 boto3==1.42.82              # AWS S3 SDK (also works with MinIO)
 
 # Testing & Development (optional, for running tests)
-pytest==7.0.0              # Testing framework
+pytest==9.0.3              # Testing framework (CVE-2025-71176 fix)
 pytest-asyncio==0.21.0     # Async test support
 pytest-cov==4.0.0          # Code coverage
 pytest-timeout==2.2.0      # Enforce per-test timeouts
 psutil==7.2.2              # System and process utilities (for performance tests)
 fakeredis==2.34.1          # In-memory Redis for testing
 hypothesis==6.0.0          # Property-based testing
-diskcache==5.6.3           # Persistent local file-backed cache
+diskcache==5.6.4           # Persistent local file-backed cache (CVE-2025-69872 fix)
 
