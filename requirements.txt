@@ -76,5 +76,5 @@ pytest-timeout==2.2.0      # Enforce per-test timeouts
 psutil==7.2.2              # System and process utilities (for performance tests)
 fakeredis==2.34.1          # In-memory Redis for testing
 hypothesis==6.0.0          # Property-based testing
-diskcache==5.6.4           # Persistent local file-backed cache (CVE-2025-69872 fix)
+diskcache==5.6.3           # Persistent local file-backed cache
 
