@@ -176,6 +176,10 @@ class AdminDashboardResponse(BaseModel):
     db_status: str = Field("healthy", description="Database connection health")
     system: Optional[SystemMetrics] = Field(None, description="System health metrics")
     server_version: str = Field(..., description="Current server version string")
+    feature_stats: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Usage statistics for new features (bookmarks, scheduled, voice, etc.)",
+    )
 
 
 class TelemetryStatsResponse(BaseModel):

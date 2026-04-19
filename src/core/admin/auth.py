@@ -8,6 +8,7 @@ import time
 import secrets
 import string
 import hashlib
+import json
 import os
 from pathlib import Path
 import utils.logger as logger
@@ -235,7 +236,7 @@ def authenticate_admin(
         )
 
     row = db.fetch_one(
-        "SELECT id, password_hash, totp_secret, totp_enabled, must_setup_otp FROM admin_users WHERE username = ?",
+        "SELECT id, password_hash, totp_secret, totp_secret_encrypted, totp_enabled, must_setup_otp FROM admin_users WHERE username = ?",
         (username,),
     )
     if not row:
@@ -246,21 +247,21 @@ def authenticate_admin(
         return AdminLoginResult(success=False, error="Invalid credentials")
 
     if isinstance(row, dict):
-        admin_id, password_hash, totp_secret, totp_enabled, must_setup_otp = (
-            row["id"],
-            row["password_hash"],
-            row["totp_secret"],
-            bool(row["totp_enabled"]),
-            bool(row["must_setup_otp"]),
-        )
+        admin_id = row["id"]
+        password_hash = row["password_hash"]
+        totp_secret = row.get("totp_secret_encrypted") or row.get("totp_secret")
+        totp_enabled = bool(row["totp_enabled"])
+        must_setup_otp = bool(row["must_setup_otp"])
     else:
-        admin_id, password_hash, totp_secret, totp_enabled, must_setup_otp = (
-            row[0],
-            row[1],
-            row[2],
-            bool(row[3]),
-            bool(row[4]),
+        # SELECT columns: id(0), password_hash(1), totp_secret(2), totp_secret_encrypted(3), totp_enabled(4), must_setup_otp(5)
+        admin_id = row[0]
+        password_hash = row[1]
+        # Prefer encrypted column (index 3) over plaintext (index 2)
+        totp_secret = (
+            row[3] if len(row) > 3 and row[3] else (row[2] if len(row) > 2 else None)
         )
+        totp_enabled = bool(row[4]) if len(row) > 4 else False
+        must_setup_otp = bool(row[5]) if len(row) > 5 else False
 
     import src.utils.encryption as encryption
 
@@ -305,12 +306,16 @@ def authenticate_admin(
 
     if must_setup_otp or (not totp_enabled and not totp_secret):
         import pyotp
+        from src.utils.encryption import encrypt_data as _encrypt
 
         secret = pyotp.random_base32()
         totp = pyotp.TOTP(secret)
         qr_uri = totp.provisioning_uri(name=username, issuer_name="Plexichat Admin")
+        # Store encrypted TOTP secret instead of plaintext
+        encrypted_secret = _encrypt(secret, context=f"admin_totp:{admin_id}")
         db.execute(
-            "UPDATE admin_users SET totp_secret = ? WHERE id = ?", (secret, admin_id)
+            "UPDATE admin_users SET totp_secret_encrypted = ?, totp_secret = NULL WHERE id = ?",
+            (encrypted_secret, admin_id),
         )
         return AdminLoginResult(
             success=True,
@@ -339,24 +344,68 @@ def verify_otp_setup(
     if not _validate_otp_challenge(challenge_token, admin_id, is_setup=True):
         return AdminLoginResult(success=False, error="Invalid or expired OTP challenge")
 
-    row = db.fetch_one("SELECT totp_secret FROM admin_users WHERE id = ?", (admin_id,))
+    row = db.fetch_one(
+        "SELECT totp_secret, totp_secret_encrypted FROM admin_users WHERE id = ?",
+        (admin_id,),
+    )
     if not row:
         return AdminLoginResult(success=False, error="Admin user not found")
-    secret = row["totp_secret"] if isinstance(row, dict) else row[0]
+    # Prefer encrypted secret, fall back to plaintext for legacy
+    encrypted_secret = (
+        row.get("totp_secret_encrypted")
+        if isinstance(row, dict)
+        else (row[1] if len(row) > 1 else None)
+    )
+    plaintext_secret = row.get("totp_secret") if isinstance(row, dict) else row[0]
+    secret = None
+    if encrypted_secret:
+        try:
+            from src.utils.encryption import decrypt_data as _decrypt
+
+            secret = _decrypt(encrypted_secret, context=f"admin_totp:{admin_id}")
+        except Exception:
+            secret = plaintext_secret  # Fallback to legacy
+    else:
+        secret = plaintext_secret
     if not secret:
         return AdminLoginResult(success=False, error="OTP not configured")
     import pyotp
+    from src.utils.encryption import hash_password as _hash_pwd
+
+    # Replay prevention: check if code was already used
+    last_row = db.fetch_one(
+        "SELECT otp_last_used_code, otp_last_used_at FROM admin_users WHERE id = ?",
+        (admin_id,),
+    )
+    if last_row:
+        last_code = (
+            last_row.get("otp_last_used_code")
+            if isinstance(last_row, dict)
+            else last_row[0]
+        )
+        if last_code == code:
+            return AdminLoginResult(
+                success=False, error="Code already used — wait for next code"
+            )
 
     if not pyotp.TOTP(secret).verify(code, valid_window=1):
         return AdminLoginResult(success=False, error="Invalid OTP code")
+
+    # Record used code for replay prevention
+    db.execute(
+        "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ? WHERE id = ?",
+        (code, int(time.time() * 1000), admin_id),
+    )
     db.execute(
         "UPDATE admin_users SET totp_enabled = 1, must_setup_otp = 0 WHERE id = ?",
         (admin_id,),
     )
+    # Generate and hash backup codes (never store plaintext)
     backup_codes = [secrets.token_hex(4).upper() for _ in range(10)]
+    hashed_codes = [_hash_pwd(c.replace("-", "").lower()) for c in backup_codes]
     db.execute(
-        "UPDATE admin_users SET backup_codes = ? WHERE id = ?",
-        (",".join(backup_codes), admin_id),
+        "UPDATE admin_users SET backup_codes = NULL, backup_codes_hash = ? WHERE id = ?",
+        (json.dumps(hashed_codes), admin_id),
     )
     _consume_otp_challenge(challenge_token)
     return AdminLoginResult(
@@ -372,34 +421,98 @@ def verify_otp(
         return AdminLoginResult(success=False, error="Invalid or expired OTP challenge")
 
     row = db.fetch_one(
-        "SELECT totp_secret, backup_codes FROM admin_users WHERE id = ?", (admin_id,)
+        "SELECT totp_secret, totp_secret_encrypted, backup_codes, backup_codes_hash FROM admin_users WHERE id = ?",
+        (admin_id,),
     )
     if not row:
         return AdminLoginResult(success=False, error="Admin user not found")
     if isinstance(row, dict):
-        secret, backup_codes = row["totp_secret"], row["backup_codes"]
+        encrypted_secret = row.get("totp_secret_encrypted")
+        plaintext_secret = row.get("totp_secret")
+        backup_codes_plaintext = row.get("backup_codes")
+        backup_codes_hashed = row.get("backup_codes_hash")
     else:
-        secret, backup_codes = row[0], row[1]
+        encrypted_secret = row[1] if len(row) > 1 else None
+        plaintext_secret = row[0]
+        backup_codes_plaintext = row[2] if len(row) > 2 else None
+        backup_codes_hashed = row[3] if len(row) > 3 else None
+
+    # Decrypt TOTP secret (prefer encrypted, fallback to plaintext legacy)
+    secret = None
+    if encrypted_secret:
+        try:
+            from src.utils.encryption import decrypt_data as _decrypt
+
+            secret = _decrypt(encrypted_secret, context=f"admin_totp:{admin_id}")
+        except Exception:
+            secret = plaintext_secret
+    else:
+        secret = plaintext_secret
     if not secret:
         return AdminLoginResult(success=False, error="OTP not configured")
+
+    # Replay prevention
+    last_row = db.fetch_one(
+        "SELECT otp_last_used_code, otp_last_used_at FROM admin_users WHERE id = ?",
+        (admin_id,),
+    )
+    if last_row:
+        last_code = (
+            last_row.get("otp_last_used_code")
+            if isinstance(last_row, dict)
+            else last_row[0]
+        )
+        if last_code == code:
+            return AdminLoginResult(
+                success=False, error="Code already used — wait for next code"
+            )
+
     import pyotp
+    from src.utils.encryption import (
+        hash_password as _hash_pwd,
+        verify_password as _verify_pwd,
+    )
 
     if pyotp.TOTP(secret).verify(code, valid_window=1):
+        # Record used code for replay prevention
         db.execute(
-            "UPDATE admin_users SET last_login = ? WHERE id = ?",
-            (int(time.time() * 1000), admin_id),
+            "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ?, last_login = ? WHERE id = ?",
+            (code, int(time.time() * 1000), int(time.time() * 1000), admin_id),
         )
         _consume_otp_challenge(challenge_token)
         return AdminLoginResult(
             success=True, token=create_session(db, admin_id), user_id=admin_id
         )
-    if backup_codes:
-        codes = backup_codes.split(",")
-        if code.upper().replace("-", "") in codes:
-            codes.remove(code.upper().replace("-", ""))
+
+    # Try backup codes — prefer hashed codes, fall back to plaintext for legacy
+    normalized = code.upper().replace("-", "")
+    if backup_codes_hashed:
+        try:
+            hashed_list = json.loads(backup_codes_hashed)
+        except (json.JSONDecodeError, TypeError):
+            hashed_list = []
+        for i, hashed in enumerate(hashed_list):
+            if _verify_pwd(normalized.lower(), str(hashed)):
+                # Remove used backup code
+                hashed_list.pop(i)
+                db.execute(
+                    "UPDATE admin_users SET backup_codes_hash = ?, last_login = ? WHERE id = ?",
+                    (json.dumps(hashed_list), int(time.time() * 1000), admin_id),
+                )
+                _consume_otp_challenge(challenge_token)
+                return AdminLoginResult(
+                    success=True, token=create_session(db, admin_id), user_id=admin_id
+                )
+    elif backup_codes_plaintext:
+        # Legacy plaintext backup codes (being phased out)
+        codes = backup_codes_plaintext.split(",")
+        if normalized in codes:
+            codes.remove(normalized)
+            # Also hash remaining codes during this opportunity
+            hashed_remaining = [_hash_pwd(c.lower()) for c in codes if c.strip()]
             db.execute(
-                "UPDATE admin_users SET backup_codes = ?, last_login = ? WHERE id = ?",
-                (",".join(codes), int(time.time() * 1000), admin_id),
+                "UPDATE admin_users SET backup_codes = NULL, backup_codes_hash = ?, last_login = ? WHERE id = ?",
+                (json.dumps(hashed_remaining), int(time.time() * 1000), admin_id),
             )
             _consume_otp_challenge(challenge_token)
             return AdminLoginResult(
@@ -429,21 +542,23 @@ def validate_session(db: Any, token: str) -> Optional[int]:
     now = int(time.time() * 1000)
     token_hash = _hash_admin_token(token)
     row = db.fetch_one(
-        "SELECT id, admin_id, token FROM admin_sessions WHERE (token = ? OR token = ?) AND expires_at > ?",
-        (token_hash, token, now),
+        "SELECT id, admin_id, token FROM admin_sessions WHERE token = ? AND expires_at > ?",
+        (token_hash, now),
     )
-    if row:
-        if isinstance(row, dict):
-            session_id = row["id"]
-            admin_id = row["admin_id"]
-            stored_token = row["token"]
-        else:
-            session_id = row[0]
-            admin_id = row[1]
-            stored_token = row[2]
-
-        # Backward compatibility: migrate old plaintext tokens on successful validation.
-        if stored_token == token:
+    if not row:
+        # SECURITY: Fallback for legacy plaintext tokens — validate hash then upgrade
+        legacy_row = db.fetch_one(
+            "SELECT id, admin_id, token FROM admin_sessions WHERE token = ? AND expires_at > ?",
+            (token, now),
+        )
+        if legacy_row:
+            if isinstance(legacy_row, dict):
+                session_id = legacy_row["id"]
+                admin_id = legacy_row["admin_id"]
+            else:
+                session_id = legacy_row[0]
+                admin_id = legacy_row[1]
+            # Upgrade plaintext token to hashed token in-place
             try:
                 db.execute(
                     "UPDATE admin_sessions SET token = ? WHERE id = ?",
@@ -451,8 +566,14 @@ def validate_session(db: Any, token: str) -> Optional[int]:
                 )
             except Exception:
                 pass
-        return admin_id
-    return None
+            return admin_id
+        return None
+
+    if isinstance(row, dict):
+        admin_id = row["admin_id"]
+    else:
+        admin_id = row[1]
+    return admin_id
 
 
 def logout(db: Any, token: str) -> bool:
@@ -511,9 +632,29 @@ def get_security_status(db: Any, admin_id: int) -> Optional[AdminSecurityStatus]
             backup_codes,
         ) = row
 
-    remaining = len(
-        [code for code in str(backup_codes or "").split(",") if code.strip()]
+    # Count hashed backup codes (new secure format)
+    hash_row = db.fetch_one(
+        "SELECT backup_codes_hash FROM admin_users WHERE id = ?", (admin_id,)
     )
+    if hash_row:
+        hashed = (
+            hash_row.get("backup_codes_hash")
+            if isinstance(hash_row, dict)
+            else hash_row[0]
+        )
+        if hashed:
+            try:
+                remaining = len(json.loads(hashed))
+            except (json.JSONDecodeError, TypeError):
+                remaining = 0
+        else:
+            remaining = len(
+                [code for code in str(backup_codes or "").split(",") if code.strip()]
+            )
+    else:
+        remaining = len(
+            [code for code in str(backup_codes or "").split(",") if code.strip()]
+        )
     admin_config = config.get("admin_ui", {})
     return AdminSecurityStatus(
         admin_id=admin_id,
@@ -535,17 +676,21 @@ def begin_otp_setup(db: Any, admin_id: int, current_password: str) -> AdminLogin
         return AdminLoginResult(success=False, error=message)
 
     import pyotp
+    from src.utils.encryption import encrypt_data as _encrypt
 
     secret = pyotp.random_base32()
     totp = pyotp.TOTP(secret)
     qr_uri = totp.provisioning_uri(name=row["username"], issuer_name="Plexichat Admin")
+    # Store encrypted TOTP secret, not plaintext
+    encrypted_secret = _encrypt(secret, context=f"admin_totp:{admin_id}")
     db.execute(
         """
         UPDATE admin_users
-        SET totp_secret = ?, totp_enabled = 0, must_setup_otp = 1, backup_codes = NULL
+        SET totp_secret = NULL, totp_secret_encrypted = ?, totp_enabled = 0, must_setup_otp = 1,
+            backup_codes = NULL, backup_codes_hash = NULL
         WHERE id = ?
         """,
-        (secret, admin_id),
+        (encrypted_secret, admin_id),
     )
     return AdminLoginResult(
         success=True,
@@ -566,37 +711,66 @@ def disable_otp(
         return False, message
 
     secret_row = db.fetch_one(
-        "SELECT totp_secret, totp_enabled, backup_codes FROM admin_users WHERE id = ?",
+        "SELECT totp_secret, totp_secret_encrypted, totp_enabled, backup_codes, backup_codes_hash FROM admin_users WHERE id = ?",
         (admin_id,),
     )
     if not secret_row:
         return False, "Admin user not found"
     if isinstance(secret_row, dict):
-        secret = secret_row["totp_secret"]
+        encrypted_secret = secret_row.get("totp_secret_encrypted")
+        plaintext_secret = secret_row.get("totp_secret")
         totp_enabled = bool(secret_row["totp_enabled"])
-        backup_codes = secret_row["backup_codes"] or ""
+        backup_codes_plaintext = secret_row.get("backup_codes") or ""
+        backup_codes_hashed = secret_row.get("backup_codes_hash")
     else:
-        secret, totp_enabled, backup_codes = secret_row
-        totp_enabled = bool(totp_enabled)
-        backup_codes = backup_codes or ""
+        plaintext_secret = secret_row[0]
+        encrypted_secret = secret_row[1] if len(secret_row) > 1 else None
+        totp_enabled = bool(secret_row[2])
+        backup_codes_plaintext = secret_row[3] if len(secret_row) > 3 else ""
+        backup_codes_hashed = secret_row[4] if len(secret_row) > 4 else None
+
+    # Decrypt TOTP secret (prefer encrypted, fallback to plaintext legacy)
+    secret = None
+    if encrypted_secret:
+        try:
+            from src.utils.encryption import decrypt_data as _decrypt
+
+            secret = _decrypt(encrypted_secret, context=f"admin_totp:{admin_id}")
+        except Exception:
+            secret = plaintext_secret
+    else:
+        secret = plaintext_secret
 
     if not totp_enabled or not secret:
         return False, "OTP is not enabled"
 
     import pyotp
+    from src.utils.encryption import verify_password as _verify_pwd
 
     normalized = code.upper().replace("-", "")
     verified = pyotp.TOTP(secret).verify(code, valid_window=1)
     if not verified:
-        codes = [item for item in str(backup_codes).split(",") if item]
-        verified = normalized in codes
+        # Try hashed backup codes first, then legacy plaintext
+        if backup_codes_hashed:
+            try:
+                hashed_list = json.loads(backup_codes_hashed)
+                for h in hashed_list:
+                    if _verify_pwd(normalized.lower(), str(h)):
+                        verified = True
+                        break
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if not verified and backup_codes_plaintext:
+            codes = [item for item in str(backup_codes_plaintext).split(",") if item]
+            verified = normalized in codes
     if not verified:
         return False, "Invalid OTP or backup code"
 
     db.execute(
         """
         UPDATE admin_users
-        SET totp_enabled = 0, totp_secret = NULL, backup_codes = NULL, must_setup_otp = 1
+        SET totp_enabled = 0, totp_secret = NULL, totp_secret_encrypted = NULL,
+            backup_codes = NULL, backup_codes_hash = NULL, must_setup_otp = 1
         WHERE id = ?
         """,
         (admin_id,),
@@ -625,9 +799,13 @@ def regenerate_backup_codes(
     if not totp_enabled:
         return False, [], "Enable OTP before generating backup codes"
 
+    from src.utils.encryption import hash_password as _hash_pwd
+
+    # Generate and hash backup codes (never store plaintext)
     backup_codes = [secrets.token_hex(4).upper() for _ in range(10)]
+    hashed_codes = [_hash_pwd(c.replace("-", "").lower()) for c in backup_codes]
     db.execute(
-        "UPDATE admin_users SET backup_codes = ? WHERE id = ?",
-        (",".join(backup_codes), admin_id),
+        "UPDATE admin_users SET backup_codes = NULL, backup_codes_hash = ? WHERE id = ?",
+        (json.dumps(hashed_codes), admin_id),
     )
     return True, backup_codes, "Backup codes regenerated"

@@ -51,7 +51,19 @@ def _get_db():
 
 def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult:
     """Authenticate an administrator."""
-    return auth.login(_get_db(), username, password, ip)
+    from src.core import auth as core_auth
+
+    result = core_auth.login(username, password, ip_address=ip)
+    # Convert AuthResult to AdminLoginResult
+    return AdminLoginResult(
+        success=result.status.value == "success",
+        token=result.token,
+        user_id=result.user.id if result.user else None,
+        requires_otp_setup=False,
+        requires_otp_verify=result.status.value == "2fa_required",
+        challenge_token=result.challenge_token,
+        error=None if result.status.value == "success" else result.status.value,
+    )
 
 
 def verify_otp_setup(
