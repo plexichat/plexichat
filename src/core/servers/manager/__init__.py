@@ -59,7 +59,6 @@ from src.core.database import (
     redis_available,
     cached,
 )
-from src.core.database.collections import CappedDict
 
 
 class ServerManager(BaseManager):
@@ -103,18 +102,15 @@ class ServerManager(BaseManager):
         self._config = self._load_config()
         self.instance_id = secrets.token_hex(4)
 
-        # Cache size limit from config
-        max_cache = config.get("redis.cache_max_items", 1000)
+        # Cache TTL in seconds
+        self._cache_ttl = 60  # 60 second cache TTL for server data (longer = fewer DB queries)
 
-        # In-memory caches with TTL (reduces DB queries significantly)
-        self._member_cache = CappedDict(max_size=max_cache)
-        self._permission_cache = CappedDict(max_size=max_cache)
-        self._channel_cache = CappedDict(max_size=max_cache)
-        self._server_owner_cache = CappedDict(max_size=max_cache)
-        self._member_roles_cache = CappedDict(max_size=max_cache)
-        self._cache_ttl = (
-            60.0  # 60 second cache TTL for server data (longer = fewer DB queries)
-        )
+        # Cache key prefixes for Redis
+        self._member_cache_prefix = "srv_member:"
+        self._permission_cache_prefix = "srv_permission:"
+        self._channel_cache_prefix = "srv_channel:"
+        self._server_owner_cache_prefix = "srv_owner:"
+        self._member_roles_cache_prefix = "srv_member_roles:"
 
         # Initialize sub-handlers for modularity
         from ..handlers.audit_handler import AuditHandler
@@ -127,25 +123,30 @@ class ServerManager(BaseManager):
         self.role_handler = RoleHandler(self)
         self.member_handler = MemberHandler(self)
 
-    def _cache_get(self, cache: dict, key, default=None) -> Any:
-        """Get value from cache if not expired."""
-        if key in cache:
-            value, expires = cache[key]
-            if (self._get_timestamp() / 1000.0) < expires:
-                return value
-            del cache[key]
-        return default
+    def _cache_get(self, prefix: str, key, default=None) -> Any:
+        """Get value from Redis cache."""
+        from src.core.database import cache_get
 
-    def _cache_set(self, cache: dict, key, value) -> None:
-        """Set value in cache with TTL."""
-        cache[key] = (value, (self._get_timestamp() / 1000.0) + self._cache_ttl)
+        cache_key = f"{prefix}{key}"
+        return cache_get(cache_key) or default
 
-    def _cache_invalidate(self, cache: dict, key=None) -> None:
-        """Invalidate cache entry or entire cache."""
+    def _cache_set(self, prefix: str, key, value) -> None:
+        """Set value in Redis cache with TTL."""
+        from src.core.database import cache_set
+
+        cache_key = f"{prefix}{key}"
+        cache_set(cache_key, value, ttl=self._cache_ttl)
+
+    def _cache_invalidate(self, prefix: str, key=None) -> None:
+        """Invalidate cache entry or entire cache by prefix."""
+        from src.core.database import cache_delete, invalidate_pattern
+
         if key is None:
-            cache.clear()
+            # Invalidate all entries with this prefix
+            invalidate_pattern(f"{prefix}*")
         else:
-            cache.pop(key, None)
+            cache_key = f"{prefix}{key}"
+            cache_delete(cache_key)
 
     def _load_config(self) -> Dict[str, Any]:
         """Load server configuration."""
@@ -337,9 +338,9 @@ class ServerManager(BaseManager):
         )
 
         # Invalidate membership and role caches for the owner
-        self._cache_invalidate(self._member_cache, (server_id, owner_id))
-        self._cache_invalidate(self._member_roles_cache, (server_id, owner_id))
-        self._cache_invalidate(self._permission_cache, (owner_id, server_id, None))
+        self._cache_invalidate(self._member_cache_prefix, (server_id, owner_id))
+        self._cache_invalidate(self._member_roles_cache_prefix, (server_id, owner_id))
+        self._cache_invalidate(self._permission_cache_prefix, (owner_id, server_id, None))
 
         # Also invalidate server list for the user in Redis if available
         if redis_available():
@@ -826,26 +827,19 @@ class ServerManager(BaseManager):
         """Delete a channel category."""
         return self.channel_handler.delete_category(user_id, category_id)
 
-    def get_channel(
-        self, channel_id: SnowflakeID, user_id: SnowflakeID
-    ) -> Optional[Channel]:
-        """Get a channel by ID if user has access (cached)."""
+    def get_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> Optional[Channel]:
+        """Get a channel by ID with caching."""
         cache_key = channel_id
-        cached_row = self._cache_get(self._channel_cache, cache_key)
+        cached_row = self._cache_get(self._channel_cache_prefix, cache_key)
 
         if cached_row is None:
             row = self._db.fetch_one(
-                "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
-                (channel_id,),
+                "SELECT * FROM srv_channels WHERE id = ?", (channel_id,)
             )
-            if not row:
-                logger.debug(
-                    f"get_channel: channel {channel_id} NOT FOUND in database (or deleted)"
-                )
+            if row is None:
                 return None
-            self._cache_set(self._channel_cache, cache_key, dict(row))
+            self._cache_set(self._channel_cache_prefix, cache_key, dict(row))
             cached_row = dict(row)
-
         server_id = cached_row["server_id"]
 
         if not self._is_member(server_id, user_id):
@@ -1145,10 +1139,10 @@ class ServerManager(BaseManager):
                 )
 
         # Invalidate caches for the user leaving
-        self._cache_invalidate(self._member_cache, (server_id, user_id))
-        self._cache_invalidate(self._member_cache, f"is_member:{server_id}:{user_id}")
-        self._cache_invalidate(self._member_roles_cache, (server_id, user_id))
-        self._cache_invalidate(self._permission_cache, (user_id, server_id, None))
+        self._cache_invalidate(self._member_cache_prefix, (server_id, user_id))
+        self._cache_invalidate(self._member_cache_prefix, f"is_member:{server_id}:{user_id}")
+        self._cache_invalidate(self._member_roles_cache_prefix, (server_id, user_id))
+        self._cache_invalidate(self._permission_cache_prefix, (user_id, server_id, None))
 
         # Invalidate Redis
         from src.core.database import cache_delete, invalidate_pattern
@@ -1159,9 +1153,7 @@ class ServerManager(BaseManager):
         self.get_servers.invalidate(user_id)  # type: ignore
 
         # Also invalidate any channel-specific permission caches
-        for key in list(self._permission_cache.keys()):
-            if key[0] == user_id and key[1] == server_id:
-                self._cache_invalidate(self._permission_cache, key)
+        invalidate_pattern(f"srv_permission:{user_id}:{server_id}:*")
 
         self._log_audit(
             server_id, user_id, AuditLogAction.MEMBER_LEAVE, "member", user_id
@@ -1540,8 +1532,8 @@ class ServerManager(BaseManager):
 
         cache_key = f"is_member:{sid}:{uid}"
 
-        # 1. Try internal memory first (fastest)
-        mem_cached = self._cache_get(self._member_cache, cache_key)
+        # 1. Try Redis cache first (fastest)
+        mem_cached = self._cache_get(self._member_cache_prefix, cache_key)
         if mem_cached is not None:
             return mem_cached
 
@@ -1550,12 +1542,12 @@ class ServerManager(BaseManager):
             redis_cached = cache_get(cache_key)
             if redis_cached is not None:
                 is_member = bool(int(redis_cached))
-                self._cache_set(self._member_cache, cache_key, is_member)
+                self._cache_set(self._member_cache_prefix, cache_key, is_member)
                 return is_member
 
         # 3. Check if user is the owner (from server table)
-        # Check owner cache (internal memory)
-        owner_id = self._cache_get(self._server_owner_cache, sid)
+        # Check owner cache (Redis)
+        owner_id = self._cache_get(self._server_owner_cache_prefix, sid)
         if owner_id is None:
             # Check Redis for owner
             owner_cache_key = f"server_owner:{sid}"
@@ -1563,7 +1555,7 @@ class ServerManager(BaseManager):
                 owner_id_cached = cache_get(owner_cache_key)
                 if owner_id_cached:
                     owner_id = int(owner_id_cached)
-                    self._cache_set(self._server_owner_cache, sid, owner_id)
+                    self._cache_set(self._server_owner_cache_prefix, sid, owner_id)
 
             if owner_id is None:
                 row = self._db.fetch_one(
@@ -1572,12 +1564,12 @@ class ServerManager(BaseManager):
                 )
                 if row:
                     owner_id = int(row["owner_id"])
-                    self._cache_set(self._server_owner_cache, sid, owner_id)
+                    self._cache_set(self._server_owner_cache_prefix, sid, owner_id)
                     if redis_available():
                         cache_set(owner_cache_key, str(owner_id), ttl=3600)
 
         if owner_id == uid:
-            self._cache_set(self._member_cache, cache_key, True)
+            self._cache_set(self._member_cache_prefix, cache_key, True)
             if redis_available():
                 cache_set(cache_key, "1", ttl=300)
             return True
@@ -1591,7 +1583,7 @@ class ServerManager(BaseManager):
         is_member = row is not None
 
         # Cache result
-        self._cache_set(self._member_cache, cache_key, is_member)
+        self._cache_set(self._member_cache_prefix, cache_key, is_member)
         if redis_available():
             cache_set(cache_key, "1" if is_member else "0", ttl=300)
 

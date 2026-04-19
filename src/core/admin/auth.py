@@ -8,7 +8,6 @@ import time
 import secrets
 import string
 import hashlib
-import threading
 import os
 from pathlib import Path
 import utils.logger as logger
@@ -45,13 +44,6 @@ class AdminSecurityStatus:
     backup_codes_remaining: int
 
 
-# Rate limiting for admin login
-_login_attempts: Dict[str, List[float]] = {}  # IP -> list of attempt timestamps
-_lockouts: Dict[str, float] = {}  # IP -> lockout until timestamp
-_otp_challenges: Dict[str, Dict[str, Any]] = {}
-_otp_lock = threading.Lock()
-
-
 def _hash_admin_token(token: str) -> str:
     """Hash admin bearer tokens before persistence."""
     return "sha256$" + hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -59,14 +51,16 @@ def _hash_admin_token(token: str) -> str:
 
 def _create_otp_challenge(admin_id: int, is_setup: bool, ttl_seconds: int = 300) -> str:
     """Create a short-lived challenge token for OTP verification binding."""
+    from src.core.database import cache_set
+
     token = secrets.token_urlsafe(32)
     expires_at = int(time.time() * 1000) + (ttl_seconds * 1000)
-    with _otp_lock:
-        _otp_challenges[token] = {
-            "admin_id": admin_id,
-            "is_setup": is_setup,
-            "expires_at": expires_at,
-        }
+    payload = {
+        "admin_id": admin_id,
+        "is_setup": is_setup,
+        "expires_at": expires_at,
+    }
+    cache_set(f"admin_otp_challenge:{token}", payload, ttl=ttl_seconds)
     return token
 
 
@@ -74,22 +68,23 @@ def _validate_otp_challenge(
     challenge_token: str, admin_id: int, is_setup: bool
 ) -> bool:
     """Validate OTP challenge token against admin and flow type."""
+    from src.core.database import cache_get
+
     now = int(time.time() * 1000)
-    with _otp_lock:
-        payload = _otp_challenges.get(challenge_token)
-        if not payload:
-            return False
-        if payload["expires_at"] < now:
-            _otp_challenges.pop(challenge_token, None)
-            return False
-        if payload["admin_id"] != admin_id or payload["is_setup"] != is_setup:
-            return False
-        return True
+    payload = cache_get(f"admin_otp_challenge:{challenge_token}")
+    if not payload:
+        return False
+    if payload["expires_at"] < now:
+        return False
+    if payload["admin_id"] != admin_id or payload["is_setup"] != is_setup:
+        return False
+    return True
 
 
 def _consume_otp_challenge(challenge_token: str) -> None:
-    with _otp_lock:
-        _otp_challenges.pop(challenge_token, None)
+    from src.core.database import cache_delete
+
+    cache_delete(f"admin_otp_challenge:{challenge_token}")
 
 
 def _generate_password(length: int = 24) -> str:
@@ -188,20 +183,34 @@ def _check_rate_limit(
     window_seconds: int = 300,
     lockout_seconds: int = 900,
 ) -> Tuple[bool, Optional[int]]:
+    from src.core.database import cache_get, cache_set
+
     now = time.time() * 1000
-    if ip in _lockouts:
-        if now < _lockouts[ip]:
-            return False, int((_lockouts[ip] - now) / 1000)
+
+    # Check if IP is locked out
+    lockout_key = f"admin_login_lockout:{ip}"
+    lockout = cache_get(lockout_key)
+    if lockout:
+        if now < lockout:
+            return False, int((lockout - now) / 1000)
         else:
-            del _lockouts[ip]
-    if ip in _login_attempts:
-        _login_attempts[ip] = [
-            t for t in _login_attempts[ip] if now - t < window_seconds * 1000
-        ]
-    attempts = _login_attempts.get(ip, [])
+            # Lockout expired, clear it
+            cache_delete(lockout_key)
+
+    # Get existing login attempts
+    attempts_key = f"admin_login_attempts:{ip}"
+    attempts = cache_get(attempts_key) or []
+
+    # Filter attempts within the window
+    cutoff = now - (window_seconds * 1000)
+    attempts = [t for t in attempts if t > cutoff]
+
+    # Check if limit exceeded
     if len(attempts) >= max_attempts:
-        _lockouts[ip] = now + (lockout_seconds * 1000)
+        # Set lockout
+        cache_set(lockout_key, now + (lockout_seconds * 1000), ttl=lockout_seconds)
         return False, lockout_seconds
+
     return True, None
 
 
@@ -228,9 +237,12 @@ def login(
         (username,),
     )
     if not row:
-        if ip not in _login_attempts:
-            _login_attempts[ip] = []
-        _login_attempts[ip].append(time.time() * 1000)
+        from src.core.database import cache_get, cache_set
+
+        attempts_key = f"admin_login_attempts:{ip}"
+        attempts = cache_get(attempts_key) or []
+        attempts.append(time.time() * 1000)
+        cache_set(attempts_key, attempts, ttl=window_seconds)
         return AdminLoginResult(success=False, error="Invalid credentials")
 
     if isinstance(row, dict):
@@ -268,15 +280,19 @@ def login(
             authenticated = True
 
     if not authenticated:
-        if ip not in _login_attempts:
-            _login_attempts[ip] = []
-        _login_attempts[ip].append(time.time() * 1000)
+        from src.core.database import cache_get, cache_set
+
+        attempts_key = f"admin_login_attempts:{ip}"
+        attempts = cache_get(attempts_key) or []
+        attempts.append(time.time() * 1000)
+        cache_set(attempts_key, attempts, ttl=window_seconds)
         return AdminLoginResult(success=False, error="Invalid credentials")
 
-    if ip in _login_attempts:
-        del _login_attempts[ip]
-    if ip in _lockouts:
-        del _lockouts[ip]
+    # Clear login attempts on successful authentication
+    from src.core.database import cache_delete
+
+    cache_delete(f"admin_login_attempts:{ip}")
+    cache_delete(f"admin_login_lockout:{ip}")
 
     otp_required = admin_config.get("require_otp", True)
     if not otp_required:
