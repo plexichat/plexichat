@@ -39,6 +39,7 @@ from .reports import router as reports_router
 from .qr import router as qr_router
 from .help import router as help_router, robots_router
 from .config import router as config_router
+from .feature_routes import router as feature_expansion_router
 
 import utils.config as config
 import utils.logger as logger
@@ -135,6 +136,11 @@ def create_api_router() -> APIRouter:
     api_router.include_router(robots_router)
     api_router.include_router(help_router, prefix="/help", tags=["Help"])
 
+    # Include feature expansion routes
+    api_router.include_router(
+        feature_expansion_router, prefix="/features", tags=["Features"]
+    )
+
     return api_router
 
 
@@ -149,4 +155,5 @@ __all__ = [
     "is_docs_enabled",
     "clear_docs_cache",
     "get_docs_stats",
+    "feature_expansion_router",
 ]

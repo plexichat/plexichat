@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, HTTPException, status, Response
 from fastapi.openapi.docs import get_swagger_ui_oauth2_redirect_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import sys
 import re
 import unicodedata
@@ -128,6 +129,33 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(DatabaseMiddleware)
+
+    # CORS handles OPTIONS preflight - MUST be outermost
+    # (In ASGI, last added is outermost)
+    # Max request body size middleware (configurable, default 10MB for voice uploads)
+    # Added BEFORE CORS so CORS remains outermost and 413 responses get CORS headers
+    max_body_size = config.max_request_body_size
+
+    class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+        """Reject requests with Content-Length exceeding the configured maximum.
+
+        Note: This only checks the Content-Length header. Requests using
+        chunked transfer encoding (no Content-Length header) will bypass
+        this check. For full protection, also enforce body-size limits
+        during streaming reads in individual endpoints.
+        """
+
+        async def dispatch(self, request: Request, call_next):
+            content_length = request.headers.get("content-length")
+            if content_length and int(content_length) > max_body_size:
+                return Response(
+                    content='{"error":{"code":413,"message":"Request body too large"}}',
+                    status_code=413,
+                    media_type="application/json",
+                )
+            return await call_next(request)
+
+    app.add_middleware(MaxBodySizeMiddleware)
 
     # CORS handles OPTIONS preflight - MUST be outermost
     # (In ASGI, last added is outermost)

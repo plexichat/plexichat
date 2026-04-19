@@ -86,6 +86,10 @@ class GatewayIntent(IntFlag):
     DIRECT_MESSAGE_REACTIONS = 1 << 13
     DIRECT_MESSAGE_TYPING = 1 << 14
     MESSAGE_CONTENT = 1 << 15
+    SCHEDULED_EVENTS = 1 << 16
+    THREADS = 1 << 17
+    AUTOMOD = 1 << 18
+    AUDIT_LOG = 1 << 19
 
     @classmethod
     def all_intents(cls) -> int:
