@@ -12,6 +12,11 @@ from .attachment import AttachmentService
 from .pin import PinService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
+from .scheduled import ScheduledMessageService
+from .bookmarks import BookmarkService
+from .forwarding import ForwardingService
+from .voice import VoiceMessageService
+from .last_chat import LastChatService
 
 __all__ = [
     "ConversationService",
@@ -22,4 +27,9 @@ __all__ = [
     "PinService",
     "UserSettingsService",
     "ContentFilterService",
+    "ScheduledMessageService",
+    "BookmarkService",
+    "ForwardingService",
+    "VoiceMessageService",
+    "LastChatService",
 ]
