@@ -285,9 +285,9 @@ def test_single_query_execution_sqlite(benchmark_db_sqlite, benchmark_data):
     logger.info(
         f"Single query execution benchmark: {result.mean_ms:.3f}ms (target: 10ms)"
     )
-    assert result.exceeded_target_percent == 0, (
-        f"Query execution exceeded 10ms target in {result.exceeded_target_count} cases"
-    )
+    assert (
+        result.exceeded_target_percent == 0
+    ), f"Query execution exceeded 10ms target in {result.exceeded_target_count} cases"
 
 
 @pytest.mark.benchmark
@@ -423,9 +423,9 @@ def test_connection_acquisition_sqlite(benchmark_db_sqlite, benchmark_data):
     logger.info(
         f"Connection acquisition benchmark: {result.mean_ms:.3f}ms (target: 50ms)"
     )
-    assert result.exceeded_target_percent == 0, (
-        f"Connection acquisition exceeded 50ms in {result.exceeded_target_count} cases"
-    )
+    assert (
+        result.exceeded_target_percent == 0
+    ), f"Connection acquisition exceeded 50ms in {result.exceeded_target_count} cases"
 
 
 @pytest.mark.benchmark
@@ -565,9 +565,9 @@ def test_placeholder_conversion_performance(benchmark_db_sqlite):
 
     # All placeholder conversions should be very fast
     for query_name, result in execution_times_by_query.items():
-        assert result.mean_ms < 1.0, (
-            f"Placeholder conversion too slow for {query_name}: {result.mean_ms:.4f}ms"
-        )
+        assert (
+            result.mean_ms < 1.0
+        ), f"Placeholder conversion too slow for {query_name}: {result.mean_ms:.4f}ms"
 
 
 # ============================================================================
@@ -757,9 +757,9 @@ def test_performance_regression_detection(
         )
 
     # For testing, we allow regression but log it
-    assert current_mean < threshold * 1.5, (
-        f"Critical regression: {current_mean:.3f}ms exceeds {threshold * 1.5:.3f}ms"
-    )
+    assert (
+        current_mean < threshold * 1.5
+    ), f"Critical regression: {current_mean:.3f}ms exceeds {threshold * 1.5:.3f}ms"
 
     # Cleanup
     try:
@@ -793,9 +793,9 @@ def test_high_volume_inserts(benchmark_db_sqlite, benchmark_data):
     logger.info(
         f"High-volume insert: {timer.elapsed_ms:.1f}ms total, {time_per_insert:.3f}ms per insert"
     )
-    assert time_per_insert < 5.0, (
-        f"Insert too slow: {time_per_insert:.3f}ms per operation"
-    )
+    assert (
+        time_per_insert < 5.0
+    ), f"Insert too slow: {time_per_insert:.3f}ms per operation"
 
 
 @pytest.mark.benchmark
@@ -837,9 +837,9 @@ def test_concurrent_query_stress(benchmark_db_sqlite, benchmark_data):
         logger.info(
             f"Stress test: {result.mean_ms:.3f}ms avg query time ({len(execution_times)} total queries)"
         )
-        assert result.mean_ms < 20.0, (
-            f"Stress test failed: avg query time {result.mean_ms:.3f}ms exceeds limit"
-        )
+        assert (
+            result.mean_ms < 20.0
+        ), f"Stress test failed: avg query time {result.mean_ms:.3f}ms exceeds limit"
 
 
 if __name__ == "__main__":

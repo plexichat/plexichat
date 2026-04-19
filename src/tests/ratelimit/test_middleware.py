@@ -260,9 +260,9 @@ class TestMiddlewareBypass:
         client = TestClient(app_with_bypass)
         for i in range(10):
             response = client.get("/api/v1/test", headers={"X-Admin": "true"})
-            assert response.status_code == 200, (
-                f"Request {i + 1} failed with {response.status_code}"
-            )
+            assert (
+                response.status_code == 200
+            ), f"Request {i + 1} failed with {response.status_code}"
 
     def test_internal_request_bypasses(self, app_with_bypass):
         """Test internal requests bypass rate limiting."""

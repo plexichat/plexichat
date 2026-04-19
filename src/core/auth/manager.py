@@ -615,7 +615,11 @@ class AuthManager(BaseManager):
     @cached(
         ttl=30,
         prefix="token_verify",
-        skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
+        skip_cache_if=lambda self,
+        token,
+        ip_address=None,
+        user_agent=None,
+        is_selftest=False: (
             bool(
                 self._config.get("security", {}).get("token_binding", False)
                 or self._config.get("security", {}).get("token_verify_rate_limit")

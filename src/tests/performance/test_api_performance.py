@@ -191,9 +191,9 @@ class TestAPIThroughput:
         elapsed = (datetime.now() - start).total_seconds()
         throughput = total_requests / elapsed
 
-        assert throughput > 50, (
-            f"Throughput too low: {throughput:.1f} req/s (expected > 50 req/s)"
-        )
+        assert (
+            throughput > 50
+        ), f"Throughput too low: {throughput:.1f} req/s (expected > 50 req/s)"
 
     def test_read_heavy_throughput(self, api_client, modules, test_dm):
         """Test throughput for read-heavy operations."""
@@ -220,9 +220,9 @@ class TestAPIThroughput:
         elapsed = (datetime.now() - start).total_seconds()
         throughput = total_requests / elapsed
 
-        assert throughput > 100, (
-            f"Read throughput too low: {throughput:.1f} req/s (expected > 100 req/s)"
-        )
+        assert (
+            throughput > 100
+        ), f"Read throughput too low: {throughput:.1f} req/s (expected > 100 req/s)"
 
     def test_mixed_workload_throughput(self, api_client, modules, test_dm):
         """Test throughput with mixed read/write operations."""
@@ -252,9 +252,9 @@ class TestAPIThroughput:
         elapsed = (datetime.now() - start).total_seconds()
         throughput = total_requests / elapsed
 
-        assert throughput > 60, (
-            f"Mixed throughput too low: {throughput:.1f} req/s (expected > 60 req/s)"
-        )
+        assert (
+            throughput > 60
+        ), f"Mixed throughput too low: {throughput:.1f} req/s (expected > 60 req/s)"
 
 
 class TestAPIMemory:
@@ -285,9 +285,9 @@ class TestAPIMemory:
         final_memory = memory_tracker.snapshot()
         memory_increase = final_memory - initial_memory
 
-        assert memory_increase < 50, (
-            f"Memory increased by {memory_increase}MB, potential leak"
-        )
+        assert (
+            memory_increase < 50
+        ), f"Memory increased by {memory_increase}MB, potential leak"
 
     def test_authentication_memory_leak(self, api_client, modules, memory_tracker):
         """Check for memory leaks in authentication."""
@@ -309,9 +309,9 @@ class TestAPIMemory:
         final_memory = memory_tracker.snapshot()
         memory_increase = final_memory - initial_memory
 
-        assert memory_increase < 30, (
-            f"Memory increased by {memory_increase}MB, potential leak"
-        )
+        assert (
+            memory_increase < 30
+        ), f"Memory increased by {memory_increase}MB, potential leak"
 
 
 class TestAPIDegradation:
