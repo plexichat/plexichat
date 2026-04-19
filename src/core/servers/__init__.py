@@ -143,6 +143,7 @@ __all__ = [
     "create_server",
     "get_server",
     "get_servers",
+    "server_exists",
     "update_server",
     "delete_server",
     "transfer_ownership",
@@ -333,6 +334,11 @@ def get_server(server_id: int, user_id: int) -> Optional[Server]:
 def get_servers(user_id: int, limit: int = 100) -> List[Server]:
     """Get all servers a user is a member of."""
     return _get_manager().get_servers(user_id, limit)
+
+
+def server_exists(server_id: int) -> bool:
+    """Check if a server exists by ID (without permission check)."""
+    return _get_manager().server_exists(server_id)
 
 
 def update_server(

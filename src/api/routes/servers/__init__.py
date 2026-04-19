@@ -373,10 +373,7 @@ def get_server_channels(
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
-        exists_row = servers_mod._get_manager()._db.fetch_one(
-            "SELECT 1 FROM srv_servers WHERE id = ? AND deleted = 0", (sid,)
-        )
-        if not exists_row:
+        if not servers_mod.server_exists(sid):
             raise HTTPException(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Server not found"}},

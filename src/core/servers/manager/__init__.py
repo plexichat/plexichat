@@ -103,7 +103,9 @@ class ServerManager(BaseManager):
         self.instance_id = secrets.token_hex(4)
 
         # Cache TTL in seconds
-        self._cache_ttl = 60  # 60 second cache TTL for server data (longer = fewer DB queries)
+        self._cache_ttl = (
+            60  # 60 second cache TTL for server data (longer = fewer DB queries)
+        )
 
         # Cache key prefixes for Redis
         self._member_cache_prefix = "srv_member:"
@@ -340,7 +342,9 @@ class ServerManager(BaseManager):
         # Invalidate membership and role caches for the owner
         self._cache_invalidate(self._member_cache_prefix, (server_id, owner_id))
         self._cache_invalidate(self._member_roles_cache_prefix, (server_id, owner_id))
-        self._cache_invalidate(self._permission_cache_prefix, (owner_id, server_id, None))
+        self._cache_invalidate(
+            self._permission_cache_prefix, (owner_id, server_id, None)
+        )
 
         # Also invalidate server list for the user in Redis if available
         if redis_available():
@@ -466,6 +470,14 @@ class ServerManager(BaseManager):
         rows = self._db.fetch_all(query, (user_id, limit))
 
         return [self._row_to_server(row) for row in rows]
+
+    def server_exists(self, server_id: SnowflakeID) -> bool:
+        """Check if a server exists by ID (without permission check)."""
+        row = self._db.fetch_one(
+            "SELECT 1 FROM srv_servers WHERE id = ? AND deleted = 0",
+            (server_id,),
+        )
+        return row is not None
 
     def update_server(
         self,
@@ -827,7 +839,9 @@ class ServerManager(BaseManager):
         """Delete a channel category."""
         return self.channel_handler.delete_category(user_id, category_id)
 
-    def get_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> Optional[Channel]:
+    def get_channel(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> Optional[Channel]:
         """Get a channel by ID with caching."""
         cache_key = channel_id
         cached_row = self._cache_get(self._channel_cache_prefix, cache_key)
@@ -1140,9 +1154,13 @@ class ServerManager(BaseManager):
 
         # Invalidate caches for the user leaving
         self._cache_invalidate(self._member_cache_prefix, (server_id, user_id))
-        self._cache_invalidate(self._member_cache_prefix, f"is_member:{server_id}:{user_id}")
+        self._cache_invalidate(
+            self._member_cache_prefix, f"is_member:{server_id}:{user_id}"
+        )
         self._cache_invalidate(self._member_roles_cache_prefix, (server_id, user_id))
-        self._cache_invalidate(self._permission_cache_prefix, (user_id, server_id, None))
+        self._cache_invalidate(
+            self._permission_cache_prefix, (user_id, server_id, None)
+        )
 
         # Invalidate Redis
         from src.core.database import cache_delete, invalidate_pattern

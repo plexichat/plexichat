@@ -183,7 +183,7 @@ def _check_rate_limit(
     window_seconds: int = 300,
     lockout_seconds: int = 900,
 ) -> Tuple[bool, Optional[int]]:
-    from src.core.database import cache_get, cache_set
+    from src.core.database import cache_get, cache_set, cache_delete
 
     now = time.time() * 1000
 
@@ -214,10 +214,12 @@ def _check_rate_limit(
     return True, None
 
 
-def login(
+def authenticate_admin(
     db: Any, username: str, password: str, ip: str = "unknown"
 ) -> AdminLoginResult:
     """Authenticate admin user."""
+    from src.core.database import cache_get, cache_set, cache_delete
+
     admin_config = config.get("admin_ui", {})
     rate_config = admin_config.get("rate_limit", {})
     allowed, wait_seconds = _check_rate_limit(
@@ -237,12 +239,10 @@ def login(
         (username,),
     )
     if not row:
-        from src.core.database import cache_get, cache_set
-
         attempts_key = f"admin_login_attempts:{ip}"
         attempts = cache_get(attempts_key) or []
         attempts.append(time.time() * 1000)
-        cache_set(attempts_key, attempts, ttl=window_seconds)
+        cache_set(attempts_key, attempts, ttl=rate_config.get("window_seconds", 300))
         return AdminLoginResult(success=False, error="Invalid credentials")
 
     if isinstance(row, dict):
@@ -280,17 +280,13 @@ def login(
             authenticated = True
 
     if not authenticated:
-        from src.core.database import cache_get, cache_set
-
         attempts_key = f"admin_login_attempts:{ip}"
         attempts = cache_get(attempts_key) or []
         attempts.append(time.time() * 1000)
-        cache_set(attempts_key, attempts, ttl=window_seconds)
+        cache_set(attempts_key, attempts, ttl=rate_config.get("window_seconds", 300))
         return AdminLoginResult(success=False, error="Invalid credentials")
 
     # Clear login attempts on successful authentication
-    from src.core.database import cache_delete
-
     cache_delete(f"admin_login_attempts:{ip}")
     cache_delete(f"admin_login_lockout:{ip}")
 

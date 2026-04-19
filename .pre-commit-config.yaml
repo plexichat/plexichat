@@ -4,7 +4,6 @@ repos:
     rev: v0.4.4
     hooks:
       - id: ruff
-        args: ["--fix"]
         pass_filenames: false
         entry: ruff check --fix src/ src/utils/common-utils/
       - id: ruff-format
