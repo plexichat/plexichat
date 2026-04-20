@@ -254,12 +254,17 @@ class DatabaseExecutionMixin:
 
         cursor = self.execute(query, params)
         result = cursor.fetchone()
-        column_names = (
-            [desc[0] for desc in cursor.description] if cursor.description else []
-        )
         cursor.close()
 
-        final_result = dict(zip(column_names, result)) if result else None
+        if result is None:
+            final_result = None
+        elif isinstance(result, dict):
+            final_result = dict(result)
+        else:
+            column_names = (
+                [desc[0] for desc in cursor.description] if cursor.description else []
+            )
+            final_result = dict(zip(column_names, result))
 
         with self._query_cache_lock:
             self._query_cache[cache_key] = (now + self._query_cache_ttl, final_result)
@@ -285,12 +290,17 @@ class DatabaseExecutionMixin:
 
         cursor = self.execute(query, params)
         results = cursor.fetchall()
-        column_names = (
-            [desc[0] for desc in cursor.description] if cursor.description else []
-        )
         cursor.close()
 
-        final_results = [dict(zip(column_names, row)) for row in results]
+        if results and isinstance(results[0], dict):
+            final_results = [dict(row) for row in results]
+        elif results:
+            column_names = (
+                [desc[0] for desc in cursor.description] if cursor.description else []
+            )
+            final_results = [dict(zip(column_names, row)) for row in results]
+        else:
+            final_results = []
 
         with self._query_cache_lock:
             self._query_cache[cache_key] = (now + self._query_cache_ttl, final_results)
