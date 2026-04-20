@@ -33,7 +33,9 @@ def validate_migration_order(
     if not pending_versions:
         return True
 
-    all_versions = sorted(applied_versions + pending_versions)
+    # Filter out non-numeric versions
+    numeric_versions = [v for v in applied_versions + pending_versions if v.isdigit()]
+    all_versions = sorted(numeric_versions)
 
     # Check for gaps in numbering
     for i in range(1, len(all_versions)):
