@@ -1014,11 +1014,11 @@ class ServerManager(BaseManager):
         # Avoid dynamic IN clause to satisfy bandit - use individual queries
         role_rows = []
         for member_id in member_ids:
-            rows = self._db.fetch_all(
+            role_result = self._db.fetch_all(
                 "SELECT member_id, role_id FROM srv_member_roles WHERE member_id = ?",
                 (member_id,),
             )
-            role_rows.extend(rows)
+            role_rows.extend(role_result)
 
         # Map roles to members
         roles_map = {}

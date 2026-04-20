@@ -136,10 +136,8 @@ def create_api_router() -> APIRouter:
     api_router.include_router(robots_router)
     api_router.include_router(help_router, prefix="/help", tags=["Help"])
 
-    # Include feature expansion routes
-    api_router.include_router(
-        feature_expansion_router, prefix="/features", tags=["Features"]
-    )
+    # Include feature expansion routes (no prefix - routes define full paths)
+    api_router.include_router(feature_expansion_router, tags=["Feature Expansion"])
 
     return api_router
 
