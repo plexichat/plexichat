@@ -59,7 +59,9 @@ class DatabaseStorage(RateLimitStorage):
             return None
 
         try:
-            data = json.loads(row["data"]) if row["data"] and row["data"].strip() else {}
+            data = (
+                json.loads(row["data"]) if row["data"] and row["data"].strip() else {}
+            )
         except (json.JSONDecodeError, TypeError):
             data = {}
         data.update({"tokens": row["tokens"], "last_update": row["last_update"]})
