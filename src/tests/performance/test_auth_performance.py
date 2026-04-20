@@ -143,9 +143,9 @@ class TestAuthMemory:
         final_memory = memory_tracker.snapshot()
         memory_increase = final_memory - initial_memory
 
-        assert memory_increase < 50, (
-            f"Memory increased by {memory_increase}MB, potential leak"
-        )
+        assert (
+            memory_increase < 50
+        ), f"Memory increased by {memory_increase}MB, potential leak"
 
     def test_login_memory_leak(self, modules, memory_tracker):
         """Check for memory leaks during repeated logins."""
@@ -165,9 +165,9 @@ class TestAuthMemory:
         final_memory = memory_tracker.snapshot()
         memory_increase = final_memory - initial_memory
 
-        assert memory_increase < 30, (
-            f"Memory increased by {memory_increase}MB, potential leak"
-        )
+        assert (
+            memory_increase < 30
+        ), f"Memory increased by {memory_increase}MB, potential leak"
 
     def test_token_validation_memory_leak(self, modules, memory_tracker):
         """Check for memory leaks during repeated token validations."""
@@ -189,9 +189,9 @@ class TestAuthMemory:
         final_memory = memory_tracker.snapshot()
         memory_increase = final_memory - initial_memory
 
-        assert memory_increase < 10, (
-            f"Memory increased by {memory_increase}MB, potential leak"
-        )
+        assert (
+            memory_increase < 10
+        ), f"Memory increased by {memory_increase}MB, potential leak"
 
 
 class TestAuthDegradation:
@@ -249,9 +249,9 @@ class TestAuthDegradation:
         assert count_10 == 10
 
         scaling_efficiency = (time_2 / time_10) / 5
-        assert scaling_efficiency > 0.3, (
-            f"Poor scaling efficiency: {scaling_efficiency}"
-        )
+        assert (
+            scaling_efficiency > 0.3
+        ), f"Poor scaling efficiency: {scaling_efficiency}"
 
     def test_session_table_growth_performance(self, modules):
         """Test performance impact of large session tables."""
@@ -272,6 +272,6 @@ class TestAuthDegradation:
 
         avg_time = sum(times) / len(times)
 
-        assert avg_time < 0.1, (
-            f"Session retrieval too slow with many sessions: {avg_time}s"
-        )
+        assert (
+            avg_time < 0.1
+        ), f"Session retrieval too slow with many sessions: {avg_time}s"

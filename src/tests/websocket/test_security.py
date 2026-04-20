@@ -32,9 +32,9 @@ class TestAuthenticationBypass:
                 opcode,
                 {"test": "data"},
             )
-            assert close_code == GatewayCloseCode.NOT_AUTHENTICATED, (
-                f"Opcode {opcode} should require auth"
-            )
+            assert (
+                close_code == GatewayCloseCode.NOT_AUTHENTICATED
+            ), f"Opcode {opcode} should require auth"
 
     @pytest.mark.asyncio
     async def test_cannot_identify_twice(

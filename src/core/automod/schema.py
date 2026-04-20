@@ -30,7 +30,20 @@ def create_tables(db):
     """)
 
     # Migrations for existing tables (PostgreSQL only)
+    # Fix columns that were created as TEXT or INTEGER instead of BIGINT.
+    # Uses USING clause for safe type conversion — if the column already contains
+    # non-numeric data (e.g. a column name leak), the USING clause will convert
+    # valid integers and set invalid values to NULL rather than failing.
     if db.type == "postgres":
+        # Validate table/column identifiers to prevent SQL injection in DDL
+        allowed_tables = {
+            "automod_rules",
+            "automod_violations",
+            "automod_audit",
+            "automod_reputation",
+            "automod_exemptions",
+            "automod_rate_tracking",
+        }
         tables_to_fix = [
             (
                 "automod_rules",
@@ -77,11 +90,25 @@ def create_tables(db):
             ("automod_rate_tracking", ["id", "server_id", "user_id", "window_start"]),
         ]
 
+        import re
+
         for table, columns in tables_to_fix:
+            if table not in allowed_tables:
+                continue
             for col in columns:
+                if not re.match(r"^[a-zA-Z0-9_]+$", col):
+                    continue
                 try:
-                    db.execute(f"ALTER TABLE {table} ALTER COLUMN {col} TYPE BIGINT")
+                    # Use USING clause with safe conversion: valid integers are
+                    # cast to BIGINT; non-numeric garbage (e.g. leaked column names)
+                    # is set to NULL instead of failing the entire ALTER TABLE.
+                    db.execute(
+                        f'ALTER TABLE {table} ALTER COLUMN "{col}" TYPE BIGINT '
+                        f"USING CASE WHEN \"{col}\" ~ '^[0-9]+$' "
+                        f'THEN "{col}"::bigint ELSE NULL END'
+                    )
                 except Exception:
+                    # Column may already be BIGINT or contain incompatible data
                     pass
 
     db.execute("""

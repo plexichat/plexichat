@@ -58,7 +58,11 @@ class DatabaseStorage(RateLimitStorage):
         if not row:
             return None
 
-        data = json.loads(row["data"]) if row["data"] else {}
+        try:
+            data = json.loads(row["data"]) if row["data"] else {}
+        except (json.JSONDecodeError, TypeError):
+            # Corrupted or empty data field — treat as empty state
+            data = {}
         data.update({"tokens": row["tokens"], "last_update": row["last_update"]})
         return data
 

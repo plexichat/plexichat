@@ -254,7 +254,9 @@ class DatabaseExecutionMixin:
 
         cursor = self.execute(query, params)
         result = cursor.fetchone()
-        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+        column_names = (
+            [desc[0] for desc in cursor.description] if cursor.description else []
+        )
         cursor.close()
 
         final_result = dict(zip(column_names, result)) if result else None
@@ -283,7 +285,9 @@ class DatabaseExecutionMixin:
 
         cursor = self.execute(query, params)
         results = cursor.fetchall()
-        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+        column_names = (
+            [desc[0] for desc in cursor.description] if cursor.description else []
+        )
         cursor.close()
 
         final_results = [dict(zip(column_names, row)) for row in results]
