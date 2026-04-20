@@ -41,30 +41,34 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "database": {
             "type": "sqlite",
-            "path": str(home_dir / "data" / "plexichat.db"),
+            "path": str(home_dir / "data" / "database.db"),
             "postgres": {
-                "host": "localhost",
+                "host": "${POSTGRES_HOST:-localhost}",
                 "port": 5432,
-                "user": "postgres",
-                "password": "",
-                "dbname": "plexichat",
-                "sslmode": "prefer",
+                "user": "${POSTGRES_USER:-postgres}",
+                "password": "${POSTGRES_PASSWORD}",
+                "dbname": "${POSTGRES_DBNAME:-plexichat}",
+                "sslmode": "${POSTGRES_SSLMODE:-prefer}",
             },
             "connection_pool": {
-                "min_connections": 20,
-                "max_connections": 100,
+                "min_connections": 2,
+                "max_connections": 20,
                 "connect_timeout": 10,
-                "max_idle_time": 3600,
-                "validation_interval": 60,
-                "enable_validation": True,
-                "validation_query": "SELECT 1",
+            },
+            "monitoring": {
+                "slow_query_threshold_ms": 1000,
+                "alert_on_slow_queries": True,
+            },
+            "migrations": {
+                "auto_migrate": True,
+                "migration_dir": str(home_dir / "migrations"),
             },
         },
         "redis": {
             "enabled": False,
-            "host": "localhost",
+            "host": "${REDIS_HOST:-localhost}",
             "port": 6379,
-            "password": "",
+            "password": "${REDIS_PASSWORD}",
             "db": 0,
             "ssl": False,
             "key_prefix": "plexichat:",
@@ -76,6 +80,9 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "encryption": {
                 # SECURITY: Enforce TPM or Environment Variable key source for production
                 "require_secure_source": True,
+                # Media encryption key (Base64 encoded 32-byte key)
+                # If not set, media encryption will be disabled
+                "media_key": "${PLEXICHAT_MEDIA_KEY}",
             },
             "account_deletion": {
                 "enabled": True,
@@ -200,12 +207,12 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "encrypt_at_rest": True,
             "local_path": str(home_dir / "media"),
             "local_url": "/media",
-            "s3_bucket": "",
-            "s3_access_key": "",
-            "s3_secret_key": "",
-            "s3_region": "us-east-1",
-            "s3_endpoint": "",
-            "s3_public_url": "",
+            "s3_bucket": "${S3_BUCKET}",
+            "s3_access_key": "${S3_ACCESS_KEY}",
+            "s3_secret_key": "${S3_SECRET_KEY}",
+            "s3_region": "${S3_REGION:-us-east-1}",
+            "s3_endpoint": "${S3_ENDPOINT}",
+            "s3_public_url": "${S3_PUBLIC_URL}",
             "database_url": "/api/v1/media/blob",
             "database_max_size": 524288,  # 512KB
             "auto_route_to_database": {
