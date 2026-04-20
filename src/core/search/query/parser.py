@@ -7,6 +7,7 @@ Supports:
 - before:date - Messages before a date
 - after:date - Messages after a date
 - has:link/image/file/embed - Messages with attachments
+- reaction:emoji - Messages with specific reaction
 - mentions:user - Messages mentioning a user
 - pinned:true/false - Pinned messages
 - "exact phrase" - Exact phrase matching
@@ -26,6 +27,7 @@ FILTER_PATTERNS = {
     "before": FilterType.BEFORE_DATE,
     "after": FilterType.AFTER_DATE,
     "has": FilterType.HAS_ATTACHMENT,
+    "reaction": FilterType.HAS_REACTION,
     "mentions": FilterType.MENTIONS_USER,
     "pinned": FilterType.PINNED,
 }

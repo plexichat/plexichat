@@ -208,18 +208,8 @@ class MediaManager(BaseManager):
                 "change-me",
                 "changeme",
             ]:
-                if "PLEXICHAT_MEDIA_KEY" not in os.environ:
-                    # Derive a 32-byte key from the signing key for initial keyring setup
-                    derived_key = hashlib.sha256(signing_key.encode()).digest()
-                    import base64
-
-                    os.environ["PLEXICHAT_MEDIA_KEY"] = base64.b64encode(
-                        derived_key
-                    ).decode()
-                    logger.debug("Derived PLEXICHAT_MEDIA_KEY from signing_key")
-
-            storage = wrap_storage_with_encryption(storage, enabled=True)
-            logger.info(f"File encryption at rest enabled for {backend} storage")
+                storage = wrap_storage_with_encryption(storage, enabled=True)
+                logger.info(f"File encryption at rest enabled for {backend} storage")
 
         return storage
 

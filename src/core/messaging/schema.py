@@ -140,6 +140,19 @@ CREATE TABLE IF NOT EXISTS msg_dm_lookup (
     UNIQUE(user1_id, user2_id)
 );
 
+-- Message edit history
+CREATE TABLE IF NOT EXISTS msg_edit_history (
+    id INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL,
+    editor_id INTEGER NOT NULL,
+    old_content TEXT NOT NULL,
+    old_content_encrypted TEXT,
+    edit_timestamp INTEGER NOT NULL,
+    version_number INTEGER NOT NULL,
+    FOREIGN KEY (message_id) REFERENCES msg_messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (editor_id) REFERENCES auth_users(id) ON DELETE CASCADE
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_msg_conversations_owner ON msg_conversations(owner_id);
 CREATE INDEX IF NOT EXISTS idx_msg_conversations_updated ON msg_conversations(updated_at);
@@ -160,6 +173,9 @@ CREATE INDEX IF NOT EXISTS idx_msg_status_user ON msg_message_status(user_id);
 CREATE INDEX IF NOT EXISTS idx_msg_pinned_conv ON msg_pinned(conversation_id);
 
 CREATE INDEX IF NOT EXISTS idx_msg_attachments_message ON msg_attachments(message_id);
+
+CREATE INDEX IF NOT EXISTS idx_msg_edit_history_message ON msg_edit_history(message_id);
+CREATE INDEX IF NOT EXISTS idx_msg_edit_history_editor ON msg_edit_history(editor_id);
 
 CREATE INDEX IF NOT EXISTS idx_msg_dm_lookup_users ON msg_dm_lookup(user1_id, user2_id);
 
@@ -198,6 +214,7 @@ def drop_tables(db) -> None:
         db: Database instance (must be connected)
     """
     tables = [
+        "msg_edit_history",
         "msg_dm_lookup",
         "msg_user_settings",
         "msg_content_filters",

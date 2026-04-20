@@ -115,6 +115,10 @@ class FilterProcessor:
             is_pinned = value.lower() == "true"
             return lambda r, p=is_pinned: r.is_pinned == p
 
+        if filter_type == FilterType.HAS_REACTION:
+            emoji = value.strip()
+            return lambda r, e=emoji: e in (r.reactions or [])
+
         return None
 
     def _get_has_filter(self, value: str) -> Callable[[MessageSearchResult], bool]:
@@ -128,16 +132,16 @@ class FilterProcessor:
             return lambda r: self._has_link(r.content)
 
         if value_lower == "image":
-            return lambda r: False
+            return lambda r: "image" in (r.attachment_types or [])
 
         if value_lower == "video":
-            return lambda r: False
+            return lambda r: "video" in (r.attachment_types or [])
 
         if value_lower == "audio":
-            return lambda r: False
+            return lambda r: "audio" in (r.attachment_types or [])
 
         if value_lower == "embed":
-            return lambda r: False
+            return lambda r: False  # Would need embed field in result
 
         return lambda r: r.has_attachments
 

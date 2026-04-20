@@ -167,9 +167,9 @@ class TestMessagingMemory:
         final_memory = memory_tracker.snapshot()
         memory_increase = final_memory - initial_memory
 
-        assert (
-            memory_increase < 50
-        ), f"Memory increased by {memory_increase}MB, potential leak"
+        assert memory_increase < 50, (
+            f"Memory increased by {memory_increase}MB, potential leak"
+        )
 
     def test_get_messages_memory_leak(self, modules, test_dm, memory_tracker):
         """Check for memory leaks during repeated message retrievals."""
@@ -193,9 +193,9 @@ class TestMessagingMemory:
         final_memory = memory_tracker.snapshot()
         memory_increase = final_memory - initial_memory
 
-        assert (
-            memory_increase < 20
-        ), f"Memory increased by {memory_increase}MB, potential leak"
+        assert memory_increase < 20, (
+            f"Memory increased by {memory_increase}MB, potential leak"
+        )
 
     def test_large_message_memory(self, modules, test_dm, memory_tracker):
         """Test memory usage with large messages."""
@@ -214,9 +214,9 @@ class TestMessagingMemory:
         memory_increase = final_memory - initial_memory
 
         expected_max = 50
-        assert (
-            memory_increase < expected_max
-        ), f"Memory increased by {memory_increase}MB (expected < {expected_max}MB)"
+        assert memory_increase < expected_max, (
+            f"Memory increased by {memory_increase}MB (expected < {expected_max}MB)"
+        )
 
 
 class TestMessagingDegradation:

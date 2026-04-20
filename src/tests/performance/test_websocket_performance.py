@@ -176,9 +176,9 @@ class TestWebSocketPerformance:
         elapsed = time.time() - start
 
         assert count == 50
-        assert (
-            elapsed < 0.5
-        ), f"Broadcasting to 50 connections took {elapsed}s (expected < 0.5s)"
+        assert elapsed < 0.5, (
+            f"Broadcasting to 50 connections took {elapsed}s (expected < 0.5s)"
+        )
 
         for conn in connections:
             await conn.close(1000, "Test complete")
@@ -206,9 +206,9 @@ class TestWebSocketPerformance:
         avg_time = sum(times) / len(times)
         max_time = max(times)
 
-        assert (
-            avg_time < 0.001
-        ), f"Average heartbeat time {avg_time}s (expected < 0.001s)"
+        assert avg_time < 0.001, (
+            f"Average heartbeat time {avg_time}s (expected < 0.001s)"
+        )
         assert max_time < 0.01, f"Max heartbeat time {max_time}s (expected < 0.01s)"
 
         await conn.close(1000, "Test complete")
@@ -248,9 +248,9 @@ class TestWebSocketMemory:
         final_memory = memory_tracker.snapshot()
         memory_increase = final_memory - initial_memory
 
-        assert (
-            memory_increase < 20
-        ), f"Memory increased by {memory_increase}MB, potential leak"
+        assert memory_increase < 20, (
+            f"Memory increased by {memory_increase}MB, potential leak"
+        )
 
     @pytest.mark.asyncio
     async def test_event_dispatch_memory_leak(
@@ -286,9 +286,9 @@ class TestWebSocketMemory:
         final_memory = memory_tracker.snapshot()
         memory_increase = final_memory - initial_memory
 
-        assert (
-            memory_increase < 30
-        ), f"Memory increased by {memory_increase}MB, potential leak"
+        assert memory_increase < 30, (
+            f"Memory increased by {memory_increase}MB, potential leak"
+        )
 
 
 class TestWebSocketDegradation:

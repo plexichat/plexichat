@@ -165,9 +165,9 @@ class TestAuthorizationHeaderManipulation:
                 "/api/v1/users/@me",
                 headers={"Authorization": f"{case} {user['token']}"},
             )
-            assert (
-                response.status_code == 401
-            ), f"Case variant '{case}' should be rejected"
+            assert response.status_code == 401, (
+                f"Case variant '{case}' should be rejected"
+            )
 
 
 class TestCustomHeaderValidation:

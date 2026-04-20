@@ -103,10 +103,23 @@ CREATE TABLE IF NOT EXISTS auth_email_tokens (
     user_id INTEGER NOT NULL,
     token_hash TEXT NOT NULL,
     token_type TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     used INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+);
+
+-- User notes table (Private notes about other users)
+CREATE TABLE IF NOT EXISTS auth_user_notes (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    target_user_id INTEGER NOT NULL,
+    note_encrypted TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    UNIQUE(user_id, target_user_id)
 );
 
 -- 2FA challenge tokens (Restored)
@@ -209,7 +222,10 @@ CREATE TABLE IF NOT EXISTS auth_audit_log (
 );
 
 -- Indexes
-CREATE INDEX IF NOT EXISTS idx_auth_users_email_index ON auth_users(email_index);        
+CREATE INDEX IF NOT EXISTS idx_auth_users_email_index ON auth_users(email_index);
+CREATE INDEX IF NOT EXISTS idx_auth_user_notes_user ON auth_user_notes(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_user_notes_target ON auth_user_notes(target_user_id);
+
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_auth_bots_owner ON auth_bots(owner_id);
 CREATE INDEX IF NOT EXISTS idx_auth_devices_user ON auth_devices(user_id);

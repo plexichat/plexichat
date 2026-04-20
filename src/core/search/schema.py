@@ -117,6 +117,16 @@ CREATE TABLE IF NOT EXISTS search_history (
     searched_at INTEGER NOT NULL
 );
 
+-- Saved searches table
+CREATE TABLE IF NOT EXISTS saved_searches (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    query TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_search_msg_conv ON search_message_index(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_search_msg_server ON search_message_index(server_id);
@@ -127,6 +137,7 @@ CREATE INDEX IF NOT EXISTS idx_search_listings_members ON search_server_listings
 CREATE INDEX IF NOT EXISTS idx_search_bump_server ON search_bump_history(server_id);
 CREATE INDEX IF NOT EXISTS idx_search_bump_user ON search_bump_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_search_history_user ON search_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches(user_id);
 """
 
 
