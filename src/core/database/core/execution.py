@@ -258,7 +258,7 @@ class DatabaseExecutionMixin:
 
         if result is None:
             final_result = None
-        elif isinstance(result, dict):
+        elif hasattr(result, "keys"):
             final_result = dict(result)
         else:
             column_names = (
@@ -292,7 +292,7 @@ class DatabaseExecutionMixin:
         results = cursor.fetchall()
         cursor.close()
 
-        if results and isinstance(results[0], dict):
+        if results and hasattr(results[0], "keys"):
             final_results = [dict(row) for row in results]
         elif results:
             column_names = (
