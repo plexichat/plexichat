@@ -832,8 +832,8 @@ async def save_last_chat(
     try:
         result = svc.save_last_chat(
             user_id=current_user.user_id,
-            conversation_id=str(conversation_id),
-            last_message_id=str(last_message_id) if last_message_id else "",
+            conversation_id=conversation_id,
+            last_message_id=last_message_id,
             scroll_position=body.scroll_position
             if body.scroll_position is not None
             else 0,

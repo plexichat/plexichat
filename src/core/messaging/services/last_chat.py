@@ -30,8 +30,8 @@ class LastChatService:
     def save_last_chat(
         self,
         user_id: int,
-        conversation_id: str,
-        last_message_id: str,
+        conversation_id: int,
+        last_message_id: Optional[int],
         scroll_position: int = 0,
     ) -> Dict[str, Any]:
         """
@@ -97,6 +97,7 @@ class LastChatService:
         logger.debug(
             f"Saved last chat for user {user_id}: conversation {conversation_id}"
         )
+        self._add_to_history(user_id, conversation_id)
         result = self.get_last_chat(user_id)
         return result if result is not None else {}
 
