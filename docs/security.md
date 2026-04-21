@@ -351,21 +351,21 @@ Use environment variable interpolation (`${VAR_NAME}`) in config files to keep s
 
 ## Security Checklist for Production
 
-| Area | Setting | Production Value |
-|------|---------|------------------|
-| Debug mode | `api.debug` | `false` |
-| Session expiry | `authentication.sessions.expire_hours` | 24-168 |
-| Password policy | `authentication.password.*` | All requirements enabled |
-| Admin OTP | `admin_ui.require_otp` | `true` |
-| Host restriction | `admin_ui.host_restriction.enabled` | `true` |
-| CORS origins | `api.cors_origins` | Explicit list (no `*`) |
-| TLS | Reverse proxy or `tls.enabled` | Enabled |
-| Rate limiting | `rate_limiting.enabled` | `true` |
-| Message encryption | `messaging.encrypt_messages` | `true` |
-| Media signing key | `media.signing_key` | Changed from default |
-| Self-test | `selftest.enabled` | `false` |
-| Trusted proxies | `api.trusted_proxies` | Configured if behind proxy |
-| OAuth PKCE | `oauth.pkce_enabled` | `true` |
+**Security Checklist for Production**
+
+- Debug mode: `api.debug: false`
+- Session expiry: `authentication.sessions.expire_hours: 24-168`
+- Password policy: `authentication.password.*` -- all requirements enabled
+- Admin OTP: `admin_ui.require_otp: true`
+- Host restriction: `admin_ui.host_restriction.enabled: true`
+- CORS origins: `api.cors_origins` -- explicit list, no `*`
+- TLS: Reverse proxy or `tls.enabled: true`
+- Rate limiting: `rate_limiting.enabled: true`
+- Message encryption: `messaging.encrypt_messages: true`
+- Media signing key: `media.signing_key` -- changed from default
+- Self-test: `selftest.enabled: false`
+- Trusted proxies: `api.trusted_proxies` -- configured if behind proxy
+- OAuth PKCE: `oauth.pkce_enabled: true`
 
 ---
 

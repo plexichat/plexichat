@@ -84,22 +84,22 @@ These endpoints expose public constants and server state without revealing priva
 
 ## Major Configuration Areas
 
-| Area | Purpose | Detailed Guide |
-|------|---------|----------------|
-| `authentication` | Account policy, sessions, 2FA, login protections | [Authentication Configuration](config-authentication.md) |
-| `database` | Persistence backend and pooling behavior | [Database Configuration](config-database.md) |
-| `redis` | Caching, session storage, pub/sub | [Redis Configuration](config-redis.md) |
-| `media` | Upload rules, attachment processing, compression | [Media Configuration](config-media.md) |
-| `voice` | ICE servers, SFU backend, voice signaling | [Voice Configuration](config-voice.md) |
-| `websocket` | Gateway settings, compression, rate limits | [WebSocket Configuration](config-websocket.md) |
-| `search` | Search backends, public discovery | [Search Configuration](config-search.md) |
-| `rate_limiting` | Global, user, IP, route-level limits | [Rate Limiting Configuration](config-rate-limiting.md) |
-| `api` | API prefix, docs paths, CORS, proxies, TLS | [API & Server Configuration](config-api.md) |
-| `server` | Bind address, port, workers, reload | [API & Server Configuration](config-api.md) |
-| `encryption` | Argon2, AES-GCM, key rotation, snowflake | [Default Configuration Reference](default-config.md) |
-| `monitoring` | Metrics, alert thresholds, log intervals | [Default Configuration Reference](default-config.md) |
-| `admin_ui` | Admin panel, OTP, host restriction | [Default Configuration Reference](default-config.md) |
-| `oauth` | PKCE, Google/GitHub/Microsoft, state management | [Default Configuration Reference](default-config.md) |
+- `authentication` -- account policy, sessions, 2FA, login protections, age gate: [Authentication Configuration](config-authentication.md)
+- `database` -- persistence backend and pooling behavior: [Database Configuration](config-database.md)
+- `redis` -- caching, session storage, pub/sub: [Redis Configuration](config-redis.md)
+- `media` -- upload rules, attachment processing, compression: [Media Configuration](config-media.md)
+- `voice` -- ICE servers, SFU backend, voice signaling: [Voice Configuration](config-voice.md)
+- `websocket` -- gateway settings, compression, rate limits: [WebSocket Configuration](config-websocket.md)
+- `search` -- search backends, public discovery: [Search Configuration](config-search.md)
+- `rate_limiting` -- global, user, IP, route-level limits: [Rate Limiting Configuration](config-rate-limiting.md)
+- `api` -- API prefix, docs paths, CORS, proxies, TLS: [API & Server Configuration](config-api.md)
+- `server` -- bind address, port, workers, reload: [API & Server Configuration](config-api.md)
+- `email` -- SMTP setup for verification and password reset: [Email Configuration](config-email.md)
+- `embeds` -- embed limits and URL preview: [Embeds & URL Preview Configuration](config-embeds.md)
+- `encryption` -- Argon2, AES-GCM, key rotation, snowflake: [Default Configuration Reference](default-config.md)
+- `monitoring` -- metrics, alert thresholds, log intervals: [Default Configuration Reference](default-config.md)
+- `admin_ui` -- admin panel, OTP, host restriction: [Default Configuration Reference](default-config.md)
+- `oauth` -- PKCE, Google/GitHub/Microsoft, state management: [Default Configuration Reference](default-config.md)
 
 ## Safe Practices
 

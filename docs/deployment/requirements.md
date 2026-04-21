@@ -16,7 +16,7 @@ This document outlines the system requirements for running Plexichat in differen
 - **Network**: 1Gbps+ recommended
 
 ### Software Dependencies
-- **Python**: 3.11+ (both server and client)
+- **Python**: **3.11+** (both server and client; 3.10 will not work due to 3.11+ language features in the server codebase)
 - **Git**: 2.20+ (for cloning repositories)
 - **pip**: 21.0+ (Python package manager)
 
@@ -83,7 +83,7 @@ This document outlines the system requirements for running Plexichat in differen
 ### Ports
 - **HTTP/HTTPS**: 80/443 (or custom via reverse proxy)
 - **Application Server**: 8000 (configurable, typically behind proxy)
-- **Client Server**: 5000 (configurable, typically behind proxy)
+- **Client Server**: 5000 (configurable, typically behind proxy; served by the Flask client app)
 - **PostgreSQL**: 5432 (default)
 - **Redis**: 6379 (default)
 
@@ -147,7 +147,7 @@ All required Python packages are available on PyPI for:
 - **Media Storage**: Shared filesystem or S3-compatible service required
 
 ### Load Balancer Configuration
-- **Sticky Sessions**: Not required (stateless design)
+- **Sticky Sessions**: Required for WebSocket connections; not required for REST API
 - **Health Checks**: Use `/health` endpoint
 - **WebSocket Support**: Ensure proxy supports WebSocket upgrades
 - **Timeouts**: Configure appropriate read/write timeouts

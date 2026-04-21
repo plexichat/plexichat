@@ -162,14 +162,15 @@ Settings for S3-compatible object storage.
 ```yaml
 media:
   storage_backend: "s3"
-  s3:
-    bucket: ""
-    region: "us-east-1"
-    access_key_id: ""
-    secret_access_key: ""
-    endpoint_url: ""
-    public_url: ""
+  s3_bucket: "${S3_BUCKET}"
+  s3_access_key: "${S3_ACCESS_KEY}"
+  s3_secret_key: "${S3_SECRET_KEY}"
+  s3_region: "${S3_REGION:-us-east-1}"
+  s3_endpoint: "${S3_ENDPOINT}"
+  s3_public_url: "${S3_PUBLIC_URL}"
 ```
+
+**Note**: The S3 config keys use the prefix `s3_` directly under `media` (e.g., `s3_bucket`, `s3_access_key`), not nested under a `s3:` mapping. This matches the actual server config structure.
 
 ### Deployment Considerations
 
@@ -236,9 +237,17 @@ Configure maximum file sizes and storage quotas.
 
 ```yaml
 media:
-  max_file_size: 104857600
-  max_total_size_per_user: 10737418240
+  size_limits:
+    image: 10485760        # 10MB
+    video: 104857600       # 100MB
+    audio: 52428800        # 50MB
+    document: 26214400     # 25MB
+    icon: 2097152          # 2MB
+    avatar: 5242880        # 5MB
+    other: 10485760        # 10MB
 ```
+
+**Note**: Per-type size limits are configured under `media.size_limits`, not as a single `max_file_size` key. Each media category has its own limit. The `max_file_size` and `max_total_size_per_user` keys do not exist in the server config.
 
 ### Deployment Considerations
 
@@ -294,11 +303,13 @@ Configure which MIME types are accepted for uploads.
 ```yaml
 media:
   allowed_types:
-    images: ["image/jpeg", "image/png", "image/gif", "image/webp"]
-    videos: ["video/mp4", "video/webm"]
-    audio: ["audio/mpeg", "audio/ogg", "audio/wav"]
-    documents: ["application/pdf", "text/plain"]
+    image: ["image/jpeg", "image/png", "image/gif", "image/webp"]
+    video: ["video/mp4", "video/webm", "video/quicktime"]
+    audio: ["audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"]
+    document: ["application/pdf", "text/plain", "application/zip", "text/markdown", "application/json"]
 ```
+
+**Note**: The category keys are singular (`image`, `video`, `audio`, `document`), not plural. This matches the server's `allowed_types` structure in `config_defaults.py`.
 
 ### Deployment Considerations
 
@@ -359,13 +370,16 @@ Configure automatic image resizing and thumbnail generation.
 
 ```yaml
 media:
-  processing:
-    resize_images: true
-    max_image_width: 4096
-    max_image_height: 4096
-    thumbnail_size: 300
-    compress_videos: false
+  image_processing:
+    max_dimension: 16384
+    max_pixels: 178956970
+    max_thumbnail_requests_per_minute: 60
+  thumbnail_sizes: [64, 128, 256, 512]
+  image_quality: 85
+  image_optimize: true
 ```
+
+**Note**: Image processing config is under `media.image_processing`, not `media.processing`. The keys `resize_images`, `max_image_width`, `max_image_height`, `compress_videos`, and `thumbnail_size` do not exist in the server config. Thumbnail sizes are a list under `thumbnail_sizes`.
 
 ### Deployment Considerations
 
@@ -423,10 +437,12 @@ Configure ClamAV integration for virus scanning.
 
 ```yaml
 media:
-  malware_scanning:
-    enabled: false
-    clamav_socket: "/var/run/clamav/clamd.ctl"
+  scanner_enabled: false
+  scanner_host: "localhost"
+  scanner_port: 3310
 ```
+
+**Note**: The malware scanning config uses `scanner_enabled`, `scanner_host`, and `scanner_port` (not `malware_scanning.enabled` or `clamav_socket`). The scanner defaults to connecting to ClamAV on localhost:3310 (TCP), not a Unix socket.
 
 ### Deployment Considerations
 
@@ -502,9 +518,13 @@ Configure rate limits for media operations.
 ```yaml
 media:
   rate_limit:
+    enabled: true
     uploads_per_minute: 10
-    thumbnails_per_minute: 30
+    uploads_per_hour: 100
+    max_total_size_per_day: 536870912  # 512MB
 ```
+
+**Note**: The media rate limit config includes `uploads_per_hour` and `max_total_size_per_day`, not `thumbnails_per_minute`. Thumbnail rate limiting is handled separately under `image_processing.max_thumbnail_requests_per_minute`.
 
 ### Deployment Considerations
 
@@ -547,10 +567,13 @@ Configure proxying of external URLs through your server.
 
 ```yaml
 media:
-  external_proxy:
-    enabled: false
-    timeout_seconds: 10
+  proxy_enabled: true
+  proxy_cache_ttl: 86400
+  proxy_max_size: 10485760
+  proxy_buffer_size: 65536
 ```
+
+**Note**: The external proxy config uses `proxy_enabled`, `proxy_cache_ttl`, `proxy_max_size`, and `proxy_buffer_size` (not `external_proxy.enabled` or `timeout_seconds`). The proxy is enabled by default and caches responses for 24 hours.
 
 ### Deployment Considerations
 

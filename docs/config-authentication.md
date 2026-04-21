@@ -64,12 +64,20 @@ authentication:
   accounts:
     username_min_length: 3
     username_max_length: 32
-    username_pattern: "^[a-zA-Z0-9_]+$"
-    email_validation:
-      strict: true
-      allow_custom_tlds: false
-      valid_tlds: []
+    # username_pattern is NOT a config key. The pattern is hardcoded in the
+    # server as ^[a-zA-Z0-9_]+$. To change it, modify the source code.
+    age_gate_enabled: false
+    minimum_age: 13
+    age_verification_type: "boolean"  # "boolean" or "dob"
+  email_validation:
+    strict: true
+    allow_custom_tlds: false
+    valid_tlds: []
 ```
+
+**Note**: `username_pattern` is not a config key. The username regex is hardcoded in `src/core/auth/passwords.py` as `^[a-zA-Z0-9_]+$`. To change the allowed characters, modify the source code directly.
+
+**Age Gate**: When `age_gate_enabled: true`, registration requires age verification. In `"boolean"` mode, users simply confirm they meet the minimum age. In `"dob"` mode, users must provide a date of birth, and the server verifies they meet `minimum_age` (default: 13).
 
 ### Deployment Considerations
 
@@ -161,14 +169,13 @@ TOTP (Time-based One-Time Password) provides an additional security layer using 
 ```yaml
 authentication:
   totp:
-    enabled: true
     issuer: "Plexichat"
     digits: 6
     interval: 30
     backup_code_count: 10
-    backup_code_length: 8
-    backup_code_max_checks: 3
 ```
+
+**Note**: There is no `enabled` key for TOTP. Two-factor authentication is always available for users to opt into. The admin UI requires OTP by default via `admin_ui.require_otp: true`. The `backup_code_length` and `backup_code_max_checks` keys exist in the code but are not exposed as config keys -- they use hardcoded defaults (8 characters, 3 max checks).
 
 ### Deployment Considerations
 
@@ -226,16 +233,21 @@ authentication:
   account_deletion:
     enabled: true
     grace_period_days: 30
+    reminder_days_before_purge: [7, 1]
+    hard_freeze: true
     anonymize_content: true
     audit_log:
-      enabled: true
-      file_path: "/var/lib/plexichat/audit/deletion_log.jsonl"
+      file_path: "~/.plexichat/audit/deletion_log.jsonl"
       hash_chain_enabled: true
+      backup_to_s3: true
+      s3_backup_path: "audit/deletions/log_backup.jsonl"
     reaper:
       interval_hours: 24
       batch_size: 50
       boot_check_enabled: true
 ```
+
+**Note**: The audit log config does NOT have an `enabled` key. The audit log is always active when `account_deletion.enabled: true`. The `file_path` defaults to `~/.plexichat/audit/deletion_log.jsonl`. The `backup_to_s3` and `s3_backup_path` keys control optional S3 backup of the deletion audit log. The `reminder_days_before_purge` key controls when reminder notifications are sent before the grace period expires (default: 7 days and 1 day before). The `hard_freeze` key freezes the account immediately upon deletion request (default: true).
 
 ### Deployment Considerations
 

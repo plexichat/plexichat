@@ -20,8 +20,10 @@ Choose the Selective Forwarding Unit backend for handling voice/video streams.
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "aiortc"
+  sfu_backend: "mediasoup"
 ```
+
+**Note**: The default SFU backend is `mediasoup`, not `aiortc`. The `mediasoup` backend requires a separate mediasoup server (see below). For lightweight or development deployments without a separate SFU, use `aiortc`.
 
 ### Deployment Considerations
 
@@ -125,8 +127,10 @@ Settings for the built-in Python-based SFU.
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "aiortc"
+  sfu_backend: "mediasoup"
 ```
+
+**Note**: The default SFU backend is `mediasoup`, not `aiortc`. The `mediasoup` backend requires a separate mediasoup server (see below). For lightweight or development deployments without a separate SFU, use `aiortc`.
 
 ### Deployment Considerations
 
@@ -162,10 +166,11 @@ Settings for mediasoup-based SFU deployment.
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "mediasoup-ws"
-  mediasoup_url: "wss://localhost:4443"
-  mediasoup_origin: "https://localhost"
+  sfu_backend: "mediasoup"
+  mediasoup_url: "https://localhost:4443"
 ```
+
+**Note**: The SFU backend value is `mediasoup`, not `mediasoup-ws`. The `mediasoup_origin` key exists in the signaling manager code but is not exposed as a top-level config key -- it defaults to `https://localhost`. The `mediasoup_url` uses `https://` (REST API) or `wss://` (WebSocket) depending on your mediasoup server setup.
 
 ### Deployment Considerations
 
@@ -402,9 +407,12 @@ Configure maximum bitrate for voice/video streams.
 ### Configuration
 
 ```yaml
-voice:
-  max_bitrate: 128000
+# Bitrate is not a server config key. It is controlled by the SFU backend
+# (mediasoup/janus) and WebRTC negotiation. Configure bitrate limits in your
+# SFU server configuration, not in the Plexichat config file.
 ```
+
+**Note**: There is no `max_bitrate` config key in the Plexichat server. Bitrate is negotiated between clients and the SFU backend. To enforce bitrate limits, configure them in your mediasoup or Janus server settings.
 
 ### Deployment Considerations
 
@@ -448,9 +456,13 @@ Configure maximum participants per voice channel.
 ### Configuration
 
 ```yaml
-voice:
-  max_participants_per_channel: 25
+# There is no max_participants_per_channel config key in the Plexichat server.
+# Participant limits are enforced by the SFU backend and user feature tiers.
+# See the user_features.rate_limit_tiers section in default-config.md for
+# max_voice_minutes_per_day limits per tier.
 ```
+
+**Note**: There is no `max_participants_per_channel` config key. Participant limits per voice channel are handled by the SFU backend's configuration, not by the Plexichat config file. See your mediasoup or Janus documentation for room size limits.
 
 ### Deployment Considerations
 

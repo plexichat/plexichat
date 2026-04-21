@@ -6,11 +6,9 @@ This guide walks you through connecting to a Plexichat server, authenticating, a
 
 Before making any requests, you need three URLs:
 
-| Endpoint | Default | Purpose |
-|----------|---------|---------|
-| REST API | `http://localhost:8000/api/v1` | All REST operations |
-| WebSocket Gateway | `ws://localhost:8000/gateway` | Real-time events |
-| Documentation | `http://localhost:8000/docs/api` | This portal |
+- REST API: `http://localhost:8000/api/v1` -- all REST operations
+- WebSocket Gateway: `ws://localhost:8000/gateway` -- real-time events
+- Documentation: `http://localhost:8000/docs/api` -- this portal
 
 Your server administrator may provide different URLs. The documentation portal is served at the `docs.path` configuration value (default: `/docs/api`).
 
@@ -35,7 +33,7 @@ The `/capabilities` endpoint returns public constants without authentication. Us
 
 ## 3. Authenticate
 
-### User Login
+### User Login (Username/Password)
 
 Most REST endpoints require authentication. Start by creating a session:
 
@@ -51,6 +49,55 @@ On success, the response includes a session token. Use it in subsequent requests
 curl {{BASE_URL}}/users/@me \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
+
+### OAuth Login (Google, GitHub, Microsoft)
+
+If the server has OAuth providers configured (see `oauth.google`, `oauth.github`, `oauth.microsoft` in config), users can authenticate via their external account:
+
+**Step 1: Redirect the user to the OAuth authorize URL**
+
+```bash
+# Google
+GET {{BASE_URL}}/auth/oauth/google
+
+# GitHub
+GET {{BASE_URL}}/auth/oauth/github
+
+# Microsoft
+GET {{BASE_URL}}/auth/oauth/microsoft
+```
+
+This redirects the user to the provider's consent screen. After the user authorizes, the provider redirects back to Plexichat with an authorization code.
+
+**Step 2: Plexichat exchanges the code for user info**
+
+The server handles the code exchange automatically. If the OAuth account matches an existing user, the user is logged in. If not, a new account is created (unless `allow_registration: false` is set).
+
+**Step 3: Receive session token**
+
+The OAuth callback returns a session token just like username/password login. Use it in subsequent requests:
+
+```bash
+curl {{BASE_URL}}/users/@me \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**OAuth configuration requirements** (server-side):
+
+```yaml
+oauth:
+  google:
+    client_id: "your-google-client-id"
+    client_secret: "your-google-client-secret"
+  github:
+    client_id: "your-github-client-id"
+    client_secret: "your-github-client-secret"
+  microsoft:
+    client_id: "your-microsoft-client-id"
+    client_secret: "your-microsoft-client-secret"
+```
+
+OAuth is optional. If no providers are configured, only username/password login is available.
 
 ### Two-Factor Authentication
 
@@ -164,13 +211,11 @@ See [WebSocket Configuration](config-websocket.md) for all gateway settings.
 
 The server enforces rate limits at multiple levels:
 
-| Tier | Default Limit | Scope |
-|------|--------------|-------|
-| Global | 100 req/60s | Entire server |
-| Per-User | 120 req/60s | Per authenticated user |
-| Per-IP | 60 req/60s | Per client IP |
-| Bot | 1.5x user rate | Bot tokens |
-| Admin | Bypass | Admin users |
+- Global: 100 req/60s (entire server)
+- Per-User: 120 req/60s (per authenticated user)
+- Per-IP: 60 req/60s (per client IP)
+- Bot: 1.5x user rate (bot tokens)
+- Admin: bypass (admin users)
 
 When rate-limited, the server returns `429 Too Many Requests` with a `Retry-After` header. Always implement exponential backoff.
 
@@ -180,12 +225,10 @@ See [Rate Limits](rate-limits.md) for dynamic limits and [Rate Limiting Configur
 
 Plexichat provides multiple documentation surfaces:
 
-| Surface | Path | Best For |
-|---------|------|----------|
-| Narrative Docs | `/docs/api` | Guides, overviews, configuration |
-| Swagger UI | `/docs` | Interactive API exploration |
-| ReDoc | `/redoc` | Readable API reference |
-| OpenAPI JSON | `/openapi.json` | Machine-readable schema |
+- Narrative Docs: `/docs/api` -- guides, overviews, configuration
+- Swagger UI: `/docs` -- interactive API exploration
+- ReDoc: `/redoc` -- readable API reference
+- OpenAPI JSON: `/openapi.json` -- machine-readable schema
 
 Use this portal for conceptual guidance. Use Swagger/ReDoc for specific endpoint details.
 
