@@ -183,11 +183,9 @@ rate_limiting:
 
 ## Key Name Accuracy
 
-| Common Assumption | Actual Key | Notes |
-|---|---|---|
-| `user.requests: 50` | `user.requests: 120` | Default is 120, not 50 |
-| `bot_multiplier: 0.5` | `bot_multiplier: 1.5` | Bots get 1.5x, not 0.5x |
-| `webhook_multiplier: 2.0` | `webhook_multiplier: 1.0` | Webhooks get 1.0x, not 2.0x |
+- ``user.requests: 50`` (`user.requests: 120`): Default is 120, not 50
+- ``bot_multiplier: 0.5`` (`bot_multiplier: 1.5`): Bots get 1.5x, not 0.5x
+- ``webhook_multiplier: 2.0`` (`webhook_multiplier: 1.0`): Webhooks get 1.0x, not 2.0x
 
 ---
 

@@ -10,11 +10,9 @@ Get messages in a channel with pagination.
 
 ### Query Parameters
 
-| Parameter | Type | Default | Constraints | Description |
-|-----------|------|---------|-------------|-------------|
-| limit | int | 50 | 1-100 | Max messages to return |
-| before | string | - | Snowflake ID | Get messages before this ID |
-| after | string | - | Snowflake ID | Get messages after this ID |
+- `limit` (int, optional, 1-100): Max messages to return
+- `before` (string, optional, Snowflake ID): Get messages before this ID
+- `after` (string, optional, Snowflake ID): Get messages after this ID
 
 ### Example Request
 
@@ -47,10 +45,8 @@ curl -X GET "https://api.plexichat.com/channels/123456789012345678/messages?limi
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Access denied | No permission to read messages |
-| 404 | Channel not found | Channel doesn't exist |
+- 403 Access denied: No permission to read messages
+- 404 Channel not found: Channel doesn't exist
 
 ## GET /channels/{channel_id}/messages/search
 
@@ -64,10 +60,8 @@ Authorization: Bearer <token>
 
 ### Query Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| content | string | Yes | - | Search query |
-| limit | int | No | 25 | Max results (1-100) |
+- `content` (string, required): Search query
+- `limit` (int, optional, 25): Max results (1-100)
 
 ### Example Request
 
@@ -85,12 +79,10 @@ Send a message to a channel.
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| content | string | Conditional | Max 4000 chars | Message text |
-| reply_to_id | string | No | Snowflake ID | Message to reply to |
-| attachments | array | No | - | File attachments |
-| embeds | array | No | - | Rich embeds |
+- `content` (string, optional, Max 4000 chars): Message text
+- `reply_to_id` (string, optional, Snowflake ID): Message to reply to
+- `attachments` (array, optional): File attachments
+- `embeds` (array, optional): Rich embeds
 
 At least one of `content`, `attachments`, or `embeds` is required.
 
@@ -112,12 +104,10 @@ Returns the created message object.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Empty message | No content, attachments, or embeds |
-| 400 | Invalid content | Content validation failed |
-| 403 | Permission denied | No send message permission |
-| 404 | Channel not found | Channel doesn't exist |
+- 400 Empty message: No content, attachments, or embeds
+- 400 Invalid content: Content validation failed
+- 403 Permission denied: No send message permission
+- 404 Channel not found: Channel doesn't exist
 
 ## GET /channels/{channel_id}/messages/{message_id}
 
@@ -135,11 +125,9 @@ Returns the message object.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid message ID | ID format invalid |
-| 403 | Access denied | No permission to read |
-| 404 | Message not found | Message doesn't exist |
+- 400 Invalid message ID: ID format invalid
+- 403 Access denied: No permission to read
+- 404 Message not found: Message doesn't exist
 
 ## PATCH /channels/{channel_id}/messages/{message_id}
 
@@ -147,9 +135,7 @@ Edit a message. Only the author can edit their messages.
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| content | string | Yes | Max 4000 chars | New message content |
+- `content` (string, required, Max 4000 chars): New message content
 
 ### Example Request
 
@@ -168,11 +154,9 @@ Returns the updated message object with `edited_at` timestamp set.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid content | Content validation failed |
-| 403 | Not author | Only author can edit |
-| 404 | Message not found | Message doesn't exist |
+- 400 Invalid content: Content validation failed
+- 403 Not author: Only author can edit
+- 404 Message not found: Message doesn't exist
 
 ## DELETE /channels/{channel_id}/messages/{message_id}
 
@@ -195,10 +179,8 @@ curl -X DELETE https://api.plexichat.com/channels/123456789012345678/messages/23
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Permission denied | Not author and no manage permission |
-| 404 | Message not found | Message doesn't exist |
+- 403 Permission denied: Not author and no manage permission
+- 404 Message not found: Message doesn't exist
 
 ---
 
@@ -238,10 +220,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Permission denied | Missing manage messages permission |
-| 404 | Message not found | Message doesn't exist |
+- 403 Permission denied: Missing manage messages permission
+- 404 Message not found: Message doesn't exist
 
 ## DELETE /channels/{channel_id}/pins/{message_id}
 
@@ -277,9 +257,7 @@ Authorization: Bearer <token>
 
 ### Query Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| message_id | string | No | Mark as read up to this message ID |
+- `message_id` (string, optional): Mark as read up to this message ID
 
 If `message_id` is provided, marks all messages up to and including that message as read.
 If not provided, marks all messages in the channel as read.
@@ -385,27 +363,25 @@ Authorization: Bearer <token>
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| id | string | Message's snowflake ID |
-| channel_id | string | Channel ID |
-| author_id | string | Author's user ID |
-| author_username | string | Author's username |
-| author_avatar_url | string? | Author's avatar URL |
-| author_badges | array | Author's profile badges |
-| content | string? | Message text content |
-| created_at | int | Unix timestamp of creation |
-| edited_at | int? | Unix timestamp of last edit |
-| reply_to_id | string? | ID of message being replied to |
-| attachments | array | File attachments |
-| embeds | array | Rich embeds |
-| pinned | bool | Whether message is pinned |
-| status | string? | User status: "sent", "delivered", or "read" |
-| delivery_count | int | Number of users who received the message |
-| read_count | int | Number of users who read the message |
-| read | bool | Whether current user has read it |
-| read_by | array | List of usernames who read it (sender only) |
-| reactions | array | Reaction data |
+- `id` (string): Message's snowflake ID
+- `channel_id` (string): Channel ID
+- `author_id` (string): Author's user ID
+- `author_username` (string): Author's username
+- `author_avatar_url` (string?): Author's avatar URL
+- `author_badges` (array): Author's profile badges
+- `content` (string?): Message text content
+- `created_at` (int): Unix timestamp of creation
+- `edited_at` (int?): Unix timestamp of last edit
+- `reply_to_id` (string?): ID of message being replied to
+- `attachments` (array): File attachments
+- `embeds` (array): Rich embeds
+- `pinned` (bool): Whether message is pinned
+- `status` (string?): User status: "sent", "delivered", or "read"
+- `delivery_count` (int): Number of users who received the message
+- `read_count` (int): Number of users who read the message
+- `read` (bool): Whether current user has read it
+- `read_by` (array): List of usernames who read it (sender only)
+- `reactions` (array): Reaction data
 
 ## Attachment Object
 
@@ -420,14 +396,12 @@ Authorization: Bearer <token>
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| id | string | Attachment's snowflake ID |
-| filename | string | Original file name |
-| content_type | string | MIME type |
-| size | int | File size in bytes |
-| url | string | CDN URL to download |
-| hash | string? | File checksum |
+- `id` (string): Attachment's snowflake ID
+- `filename` (string): Original file name
+- `content_type` (string): MIME type
+- `size` (int): File size in bytes
+- `url` (string): CDN URL to download
+- `hash` (string?): File checksum
 
 ---
 

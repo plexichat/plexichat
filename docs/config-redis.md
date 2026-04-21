@@ -202,12 +202,10 @@ Creating new Redis connections is expensive (network round-trip, authentication)
 
 **Pool Sizing Guidelines**
 
-| Deployment Scale | Workers | Max Connections per Worker | Total Connections | Notes |
-|-----------------|---------|---------------------------|------------------|-------|
-| Development | 1 | 10 | 10 | Single user, minimal load |
-| Small (<100 users) | 1-2 | 20 | 20-40 | Low concurrency |
-| Medium (100-1000 users) | 2-4 | 30 | 60-120 | Moderate concurrency |
-| Large (1000+ users) | 4-8 | 50 | 200-400 | High concurrency |
+- Deployment Scale: Development | Workers: 1 | Max Connections per Worker: 10 | Total Connections: 10 | Notes: Single user, minimal load
+- Deployment Scale: Small (<100 users) | Workers: 1-2 | Max Connections per Worker: 20 | Total Connections: 20-40 | Notes: Low concurrency
+- Deployment Scale: Medium (100-1000 users) | Workers: 2-4 | Max Connections per Worker: 30 | Total Connections: 60-120 | Notes: Moderate concurrency
+- Deployment Scale: Large (1000+ users) | Workers: 4-8 | Max Connections per Worker: 50 | Total Connections: 200-400 | Notes: High concurrency
 
 **Operational Notes**
 

@@ -203,11 +203,9 @@ tls:
 
 ## Key Name Accuracy
 
-| Common Assumption | Actual Key | Notes |
-|---|---|---|
-| `allow_origins: ["*"]` | `cors_origins: [...]` | Key is `cors_origins`, default is specific list |
-| `proxy_headers` | `trusted_proxies` + `trust_x_forwarded_for` | Split into two keys |
-| `debug: false` (default) | `debug: true` | Default is true for development; must set false for production |
+- ``allow_origins: ["*"]`` (`cors_origins: [...]`): Key is `cors_origins`, default is specific list
+- ``proxy_headers`` (`trusted_proxies` + `trust_x_forwarded_for`): Split into two keys
+- ``debug: false` (default)` (`debug: true`): Default is true for development; must set false for production
 
 ---
 

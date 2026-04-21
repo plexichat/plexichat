@@ -10,13 +10,11 @@ Register a new user account.
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| username | string | Yes | 3-32 characters | Unique username |
-| email | string | Yes | Valid email format | Email address |
-| password | string | Yes | See requirements | Password |
-| age | integer | No | >0 | Age (required if age gate enabled in boolean mode) |
-| dob | string | No | YYYY-MM-DD | Date of birth (required if age gate enabled in dob mode) |
+- `username` (string, required, 3-32 characters): Unique username
+- `email` (string, required, Valid email format): Email address
+- `password` (string, required, See requirements): Password
+- `age` (integer, optional, >0): Age (required if age gate enabled in boolean mode)
+- `dob` (string, optional, YYYY-MM-DD): Date of birth (required if age gate enabled in dob mode)
 
 ### Password Requirements
 
@@ -64,11 +62,9 @@ curl -X POST {{BASE_URL}}/auth/register \
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Invalid input | Validation failed |
-| 400 | Weak password | Password doesn't meet requirements |
-| 409 | Already exists | Username or email taken |
+- `400` (Invalid input): Validation failed
+- `400` (Weak password): Password doesn't meet requirements
+- `409` (Already exists): Username or email taken
 
 ## POST /auth/login
 
@@ -76,10 +72,8 @@ Authenticate a user and obtain a session token.
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| username | string | Yes | Username or email |
-| password | string | Yes | Password |
+- `username` (string, required): Username or email
+- `password` (string, required): Password
 
 ### Example Request
 
@@ -128,11 +122,9 @@ curl -X POST {{BASE_URL}}/auth/login \
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 401 | Invalid credentials | Wrong username/password |
-| 403 | Account locked | Too many failed attempts |
-| 403 | Email not verified | Email verification required |
+- `401` (Invalid credentials): Wrong username/password
+- `403` (Account locked): Too many failed attempts
+- `403` (Email not verified): Email verification required
 
 ## POST /auth/2fa
 
@@ -140,10 +132,8 @@ Complete two-factor authentication challenge.
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| challenge_token | string | Yes | Token from login response |
-| code | string | Yes | 6-digit TOTP or backup code |
+- `challenge_token` (string, required): Token from login response
+- `code` (string, required): 6-digit TOTP or backup code
 
 ### Example Request
 
@@ -169,10 +159,8 @@ Complete two-factor authentication challenge.
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 401 | Invalid code | Wrong 2FA code |
-| 401 | Expired token | Challenge token expired |
+- `401` (Invalid code): Wrong 2FA code
+- `401` (Expired token): Challenge token expired
 
 ## POST /auth/logout
 
@@ -214,9 +202,7 @@ Request a password reset email. Always returns success to prevent email enumerat
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| email | string | Yes | Account email address |
+- `email` (string, required): Account email address
 
 ### Response (200 OK)
 
@@ -232,10 +218,8 @@ Complete password reset using token from email.
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| token | string | Yes | Reset token from email |
-| new_password | string | Yes | New password |
+- `token` (string, required): Reset token from email
+- `new_password` (string, required): New password
 
 ### Response (200 OK)
 
@@ -285,9 +269,7 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| session_id | string | Session's snowflake ID |
+- `session_id` (string): Session's snowflake ID
 
 ### Response (200 OK)
 
@@ -299,10 +281,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Invalid session ID | ID format invalid |
-| 404 | Session not found | Session doesn't exist |
+- `400` (Invalid session ID): ID format invalid
+- `404` (Session not found): Session doesn't exist
 
 ## POST /auth/sessions/revoke-all
 
@@ -316,9 +296,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| except_current | bool | true | Keep current session active |
+- except_current: bool
 
 ### Response (200 OK)
 
@@ -360,9 +338,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| password | string | Yes | Current password for verification |
+- `password` (string, required): Current password for verification
 
 ### Response (200 OK)
 
@@ -376,11 +352,9 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Password required | Missing password |
-| 401 | Invalid password | Wrong password |
-| 409 | 2FA is already enabled | Already active |
+- `400` (Password required): Missing password
+- `401` (Invalid password): Wrong password
+- `409` (2FA is already enabled): Already active
 
 ## POST /auth/2fa/confirm
 
@@ -394,9 +368,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| code | string | Yes | 6-digit code from authenticator |
+- `code` (string, required): 6-digit code from authenticator
 
 ### Response (200 OK)
 
@@ -408,11 +380,9 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Valid 6-digit code required | Invalid code format |
-| 400 | 2FA setup not started | No pending setup |
-| 401 | Invalid code | Wrong code |
+- `400` (Valid 6-digit code required): Invalid code format
+- `400` (2FA setup not started): No pending setup
+- `401` (Invalid code): Wrong code
 
 ## POST /auth/2fa/disable
 
@@ -426,10 +396,8 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| password | string | Yes | Current password |
-| code | string | Yes | Current 2FA code |
+- `password` (string, required): Current password
+- `code` (string, required): Current 2FA code
 
 ### Response (200 OK)
 
@@ -441,12 +409,10 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Password required | Missing password |
-| 400 | 2FA code required | Missing code |
-| 400 | 2FA is not enabled | Not active |
-| 401 | Invalid password or code | Wrong credentials |
+- `400` (Password required): Missing password
+- `400` (2FA code required): Missing code
+- `400` (2FA is not enabled): Not active
+- `401` (Invalid password or code): Wrong credentials
 
 ## GET /auth/password-requirements
 
@@ -470,25 +436,19 @@ Get server password policy (no authentication required).
 
 ## Token Types
 
-| Type | Header Format | Description |
-|------|---------------|-------------|
-| User Session | `Bearer <token>` | User session token |
-| Bot Token | `Bot <token>` | Bot application token |
+- `User Session` (`Bearer <token>`): User session token
+- `Bot Token` (`Bot <token>`): Bot application token
 
 ## Session Limits
 
-| Setting | Default |
-|---------|---------|
-| Max sessions per user | 10 |
-| Session expiration | 7 days (168 hours) |
-| Extend on activity | Yes |
+- Max sessions per user: 10
+- Session expiration: 7 days (168 hours)
+- Extend on activity: Yes
 
 ## Account Lockout
 
-| Setting | Default |
-|---------|---------|
-| Max failed attempts | 5 |
-| Lockout duration | 15 minutes |
+- Max failed attempts: 5
+- Lockout duration: 15 minutes
 
 ## OAuth Sign-In
 
@@ -499,14 +459,10 @@ OAuth allows users to sign in using external providers like Google, GitHub, and 
 Initiate an OAuth login flow.
 
 **Path Parameters:**
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| provider | string | `google`, `github`, `microsoft`, or `gitlab` |
+- `provider` (string): `google`, `github`, `microsoft`, or `gitlab`
 
 **Query Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| redirect_uri | string | Yes | The URI where the provider should redirect after auth |
+- `redirect_uri` (string, required): The URI where the provider should redirect after auth
 
 **Response (200 OK):**
 ```json
@@ -522,17 +478,13 @@ Initiate an OAuth login flow.
 Handle the callback from the OAuth provider.
 
 **Path Parameters:**
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| provider | string | `google`, `github`, `microsoft`, or `gitlab` |
+- `provider` (string): `google`, `github`, `microsoft`, or `gitlab`
 
 **Request Body:**
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| code | string | Yes | Authorization code from the provider |
-| state | string | Yes | State parameter from the provider |
-| redirect_uri | string | Yes | Same redirect URI used in initiation |
-| code_verifier | string | No | PKCE verifier returned from the login step when PKCE is enabled |
+- `code` (string, required): Authorization code from the provider
+- `state` (string, required): State parameter from the provider
+- `redirect_uri` (string, required): Same redirect URI used in initiation
+- `code_verifier` (string, optional): PKCE verifier returned from the login step when PKCE is enabled
 
 **Response (200 OK):**
 Standard `LoginResponse` (same as `/auth/login`).

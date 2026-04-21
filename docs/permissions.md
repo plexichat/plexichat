@@ -4,22 +4,16 @@ Plexichat permissions are string-based capabilities such as `messages.send` or `
 
 ## Runtime Summary
 
-| Metric | Value |
-|--------|-------|
-| Permission categories | `{{PERMISSION_CATEGORY_COUNT}}` |
-| Total permissions | `{{PERMISSION_TOTAL_COUNT}}` |
+- Permission categories: `{{PERMISSION_CATEGORY_COUNT}}`
+- Total permissions: `{{PERMISSION_TOTAL_COUNT}}`
 
 ## Categories
 
-| Category | Permission count | Included permissions |
-|----------|------------------|----------------------|
-{{PERMISSION_CATEGORY_ROWS}}
+{{PERMISSION_CATEGORY_BULLETS}}
 
 ## Permission Catalog
 
-| Permission | Category | Default user | Default bot | Bot restricted | Description |
-|------------|----------|--------------|-------------|----------------|-------------|
-{{PERMISSION_DETAIL_ROWS}}
+{{PERMISSION_DETAIL_BULLETS}}
 
 ## Usage Notes
 

@@ -843,6 +843,15 @@ async def save_last_chat(
         raise HTTPException(
             status_code=403, detail={"error": {"code": 403, "message": str(e)}}
         )
+    except Exception as e:
+        # Log the full error for debugging
+        logger.error(f"Failed to save last chat for user {current_user.user_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {"code": 500, "message": "Failed to save last chat state"}
+            },
+        )
 
 
 @router.get(

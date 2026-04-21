@@ -197,29 +197,25 @@ When an avatar is uploaded:
 Avatars are stored in two tables:
 
 ### user_avatars
-| Column | Type | Description |
-|--------|------|-------------|
-| id | BIGINT | Primary key (Snowflake ID) |
-| user_id | BIGINT | User ID (unique) |
-| avatar_data | BYTEA | Image binary data |
-| content_type | TEXT | MIME type |
-| width | INTEGER | Image width in pixels |
-| height | INTEGER | Image height in pixels |
-| size | INTEGER | File size in bytes |
-| checksum | TEXT | SHA-256 hash |
-| animated | INTEGER | 1 if animated GIF |
-| uploaded_at | BIGINT | Upload timestamp |
+- `id` (BIGINT): Primary key (Snowflake ID)
+- `user_id` (BIGINT): User ID (unique)
+- `avatar_data` (BYTEA): Image binary data
+- `content_type` (TEXT): MIME type
+- `width` (INTEGER): Image width in pixels
+- `height` (INTEGER): Image height in pixels
+- `size` (INTEGER): File size in bytes
+- `checksum` (TEXT): SHA-256 hash
+- `animated` (INTEGER): 1 if animated GIF
+- `uploaded_at` (BIGINT): Upload timestamp
 
 ### server_icons
-| Column | Type | Description |
-|--------|------|-------------|
-| id | BIGINT | Primary key (Snowflake ID) |
-| server_id | BIGINT | Server ID (unique) |
-| icon_data | BYTEA | Image binary data |
-| content_type | TEXT | MIME type |
-| width | INTEGER | Image width in pixels |
-| height | INTEGER | Image height in pixels |
-| size | INTEGER | File size in bytes |
-| checksum | TEXT | SHA-256 hash |
-| animated | INTEGER | 1 if animated GIF |
-| uploaded_at | BIGINT | Upload timestamp |
+- `id` (BIGINT): Primary key (Snowflake ID)
+- `server_id` (BIGINT): Server ID (unique)
+- `icon_data` (BYTEA): Image binary data
+- `content_type` (TEXT): MIME type
+- `width` (INTEGER): Image width in pixels
+- `height` (INTEGER): Image height in pixels
+- `size` (INTEGER): File size in bytes
+- `checksum` (TEXT): SHA-256 hash
+- `animated` (INTEGER): 1 if animated GIF
+- `uploaded_at` (BIGINT): Upload timestamp

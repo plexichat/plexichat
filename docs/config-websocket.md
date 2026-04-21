@@ -170,12 +170,10 @@ websocket:
 
 ## Key Name Accuracy
 
-| Common Assumption | Actual Key | Notes |
-|---|---|---|
-| `heartbeat_interval_seconds` | `heartbeat_interval_ms` | Uses milliseconds, not seconds |
-| `heartbeat_timeout_seconds` | `session_timeout_ms` | Uses milliseconds, not seconds |
-| `max_message_size: 1048576` | `max_message_size: 65536` | Default is 64KB, not 1MB |
-| `max_decompressed_size: 10485760` | `max_decompressed_size: 262144` | Default is 256KB, not 10MB |
+- ``heartbeat_interval_seconds`` (`heartbeat_interval_ms`): Uses milliseconds, not seconds
+- ``heartbeat_timeout_seconds`` (`session_timeout_ms`): Uses milliseconds, not seconds
+- ``max_message_size: 1048576`` (`max_message_size: 65536`): Default is 64KB, not 1MB
+- ``max_decompressed_size: 10485760`` (`max_decompressed_size: 262144`): Default is 256KB, not 10MB
 
 ---
 

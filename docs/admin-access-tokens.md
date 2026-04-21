@@ -71,13 +71,11 @@ This mechanism is useful for:
 
 **Access token vs session token**
 
-| Property | Session Token | Access Token |
-|----------|--------------|--------------|
-| Scope | Single user session | Entire API (if valid) |
-| Lifetime | Hours to days (configurable) | Until rotated by admin |
-| Source | Generated on login | Admin-configured |
-| Header | `Authorization: Bearer` | `X-API-Access-Token` |
-| Per-user | Yes (one per session) | No (shared across users) |
+- `Scope` (Single user session): Entire API (if valid)
+- `Lifetime` (Hours to days (configurable)): Until rotated by admin
+- `Source` (Generated on login): Admin-configured
+- `Header` (`Authorization: Bearer`): `X-API-Access-Token`
+- `Per-user` (Yes (one per session)): No (shared across users)
 
 Because the access token is shared across all users of the deployment, it has a higher blast radius if compromised. Protect it accordingly.
 

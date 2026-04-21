@@ -44,12 +44,10 @@ websocket:
 
 **Tuning Recommendations**
 
-| Scale | Connections | Heartbeat | Compression | Workers |
-|-------|-------------|-----------|-------------|---------|
-| <500 users | <2,500 | 45s | Enabled | 1 |
-| 500-2,000 | <10,000 | 60s | Enabled | 2 |
-| 2,000-10,000 | <50,000 | 90s | Evaluate | 4 |
-| 10,000+ | 50,000+ | 90s | Disabled | 4+ |
+- Scale: <500 users | Connections: <2,500 | Heartbeat: 45s | Compression: Enabled | Workers: 1
+- Scale: 500-2,000 | Connections: <10,000 | Heartbeat: 60s | Compression: Enabled | Workers: 2
+- Scale: 2,000-10,000 | Connections: <50,000 | Heartbeat: 90s | Compression: Evaluate | Workers: 4
+- Scale: 10,000+ | Connections: 50,000+ | Heartbeat: 90s | Compression: Disabled | Workers: 4+
 
 - **Compression memory**: Each compressed connection uses 64-256KB. At 10,000 connections, that's 0.6-2.5GB. Disable compression if memory-constrained.
 - **Heartbeat frequency**: Lower frequency reduces per-connection overhead but delays detection of dead connections.
@@ -159,13 +157,11 @@ redis:
 
 **When to Enable Redis**
 
-| Scenario | Redis Required |
-|----------|---------------|
-| Single worker, <100 users | No |
-| Multiple workers | Yes (shared state) |
-| >500 concurrent users | Recommended |
-| Session persistence needed | Yes |
-| Rate limit accuracy needed | Yes |
+- Single worker, <100 users: No
+- Multiple workers: Yes (shared state)
+- >500 concurrent users: Recommended
+- Session persistence needed: Yes
+- Rate limit accuracy needed: Yes
 
 Without Redis, session and rate-limit state is stored in-process memory. This works for single-worker deployments but is lost on restart and cannot be shared across workers.
 
@@ -182,12 +178,10 @@ server:
 
 **Tuning Recommendations**
 
-| Scale | Workers | Redis | Notes |
-|-------|---------|-------|-------|
-| <100 users | 1 | No | Simplest setup |
-| 100-500 users | 1-2 | Recommended | Redis for session sharing |
-| 500-2,000 users | 2-4 | Required | Multiple workers must share state |
-| 2,000+ users | 4+ | Required | Add workers for CPU-bound workloads |
+- Scale: <100 users | Workers: 1 | Redis: No | Notes: Simplest setup
+- Scale: 100-500 users | Workers: 1-2 | Redis: Recommended | Notes: Redis for session sharing
+- Scale: 500-2,000 users | Workers: 2-4 | Redis: Required | Notes: Multiple workers must share state
+- Scale: 2,000+ users | Workers: 4+ | Redis: Required | Notes: Add workers for CPU-bound workloads
 
 **Important**: Multiple workers require Redis for shared session state, rate limit counters, and presence tracking. Without Redis, each worker maintains independent state, leading to inconsistent behavior.
 
@@ -197,13 +191,11 @@ server:
 
 Use these endpoints for lightweight health checks without consuming application resources:
 
-| Endpoint | Purpose | Overhead |
-|----------|---------|----------|
-| `GET /health` | Quick readiness signal | Minimal |
-| `GET /api/v1/status` | Availability and maintenance state | Low |
-| `GET /api/v1/version` | Compatibility and version checks | Minimal |
-| `GET /api/v1/media/upload/sessions` | In-progress upload visibility | Low |
-| `GET /api/v1/media/compression/status` | Media-processing status | Low |
+- ``GET /health`` (Quick readiness signal): Minimal
+- ``GET /api/v1/status`` (Availability and maintenance state): Low
+- ``GET /api/v1/version`` (Compatibility and version checks): Minimal
+- ``GET /api/v1/media/upload/sessions`` (In-progress upload visibility): Low
+- ``GET /api/v1/media/compression/status`` (Media-processing status): Low
 
 **Monitoring Configuration**
 

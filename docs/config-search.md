@@ -124,10 +124,8 @@ search:
 
 ## Key Name Accuracy
 
-| Common Assumption | Actual Key | Notes |
-|---|---|---|
-| `backend: "sqlite"` | `backend: "sqlite_fts5"` | Uses the FTS5 variant for full-text search |
-| `discovery.min_members` | `discovery.min_members_for_listing` | Full key name includes "for_listing" |
+- ``backend: "sqlite"`` (`backend: "sqlite_fts5"`): Uses the FTS5 variant for full-text search
+- ``discovery.min_members`` (`discovery.min_members_for_listing`): Full key name includes "for_listing"
 
 ---
 

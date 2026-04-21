@@ -31,12 +31,10 @@ Authorization: Bearer <token>
 
 ### Relationship Statuses
 
-| Status | Description |
-|--------|-------------|
-| friend | Mutual friendship |
-| pending_incoming | Incoming friend request |
-| pending_outgoing | Outgoing friend request |
-| blocked | User is blocked |
+- friend: Mutual friendship
+- pending_incoming: Incoming friend request
+- pending_outgoing: Outgoing friend request
+- blocked: User is blocked
 
 ## POST /relationships
 
@@ -50,10 +48,8 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| user_id | string | Yes | Snowflake ID | Target user ID |
-| message | string | No | Max 256 chars | Optional message |
+- `user_id` (string, required, Snowflake ID): Target user ID
+- `message` (string, optional, Max 256 chars): Optional message
 
 ### Example Request
 
@@ -76,12 +72,10 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Self request | Cannot send request to yourself |
-| 403 | Blocked | User has blocked you |
-| 404 | User not found | User doesn't exist |
-| 409 | Already exists | Request exists or already friends |
+- 400 Self request: Cannot send request to yourself
+- 403 Blocked: User has blocked you
+- 404 User not found: User doesn't exist
+- 409 Already exists: Request exists or already friends
 
 ## PUT /relationships/{user_id}/accept
 
@@ -95,9 +89,7 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| user_id | string | Sender's user ID |
+- `user_id` (string): Sender's user ID
 
 ### Response (200 OK)
 
@@ -109,10 +101,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid user ID | ID format invalid |
-| 404 | Request not found | No pending request from user |
+- 400 Invalid user ID: ID format invalid
+- 404 Request not found: No pending request from user
 
 ## DELETE /relationships/{user_id}
 
@@ -138,10 +128,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid user ID | ID format invalid |
-| 404 | Relationship not found | No relationship exists |
+- 400 Invalid user ID: ID format invalid
+- 404 Relationship not found: No relationship exists
 
 ## POST /relationships/block
 
@@ -155,9 +143,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| user_id | string | Yes | User ID to block |
+- `user_id` (string, required): User ID to block
 
 ### Example Request
 
@@ -179,11 +165,9 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Self block | Cannot block yourself |
-| 404 | User not found | User doesn't exist |
-| 409 | Already blocked | User already blocked |
+- 400 Self block: Cannot block yourself
+- 404 User not found: User doesn't exist
+- 409 Already blocked: User already blocked
 
 ## Relationship Object
 
@@ -195,8 +179,6 @@ Authorization: Bearer <token>
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| user_id | string | Related user's ID |
-| status | string | Relationship status |
-| created_at | int? | Unix timestamp of creation |
+- `user_id` (string): Related user's ID
+- `status` (string): Relationship status
+- `created_at` (int?): Unix timestamp of creation

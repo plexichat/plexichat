@@ -30,11 +30,9 @@ Authorization: Bearer <token>
 
 ### Response Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| settings | object | Key-value pairs of settings |
-| count | int | Number of settings stored |
-| limit | int | Maximum settings allowed |
+- `settings` (object): Key-value pairs of settings
+- `count` (int): Number of settings stored
+- `limit` (int): Maximum settings allowed
 
 ## GET /users/@me/settings/{key}
 
@@ -48,9 +46,7 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| key | string | Setting key |
+- `key` (string): Setting key
 
 ### Response (200 OK)
 
@@ -65,9 +61,7 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 404 | Setting not found | Setting with key doesn't exist |
+- 404 Setting not found: Setting with key doesn't exist
 
 ## PUT /users/@me/settings/{key}
 
@@ -81,15 +75,11 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| key | string | Setting key |
+- `key` (string): Setting key
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| value | string | Yes | Max 10000 chars | Setting value |
+- `value` (string, required, Max 10000 chars): Setting value
 
 ### Example Request
 
@@ -112,12 +102,10 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Limit exceeded | Too many settings stored |
-| 400 | Key too long | Key exceeds max length |
-| 400 | Value too long | Value exceeds 10000 characters |
-| 400 | Key reserved | Key is reserved for system use |
+- 400 Limit exceeded: Too many settings stored
+- 400 Key too long: Key exceeds max length
+- 400 Value too long: Value exceeds 10000 characters
+- 400 Key reserved: Key is reserved for system use
 
 ## DELETE /users/@me/settings/{key}
 
@@ -131,9 +119,7 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| key | string | Setting key |
+- `key` (string): Setting key
 
 ### Response (200 OK)
 
@@ -145,9 +131,7 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 404 | Setting not found | Setting with key doesn't exist |
+- 404 Setting not found: Setting with key doesn't exist
 
 ---
 
@@ -155,16 +139,14 @@ Authorization: Bearer <token>
 
 These are commonly used setting keys (not enforced, just conventions):
 
-| Key | Description | Example Values |
-|-----|-------------|----------------|
-| theme | UI theme | "dark", "light", "system" |
-| compact_mode | Compact message display | "true", "false" |
-| notifications_enabled | Enable notifications | "true", "false" |
-| notification_sound | Notification sound | "default", "none", "custom" |
-| message_display | Message grouping | "standard", "compact" |
-| developer_mode | Show developer options | "true", "false" |
-| locale | Language preference | "en-US", "es-ES" |
-| timezone | User timezone | "America/New_York" |
+- `theme` (UI theme): "dark", "light", "system"
+- `compact_mode` (Compact message display): "true", "false"
+- `notifications_enabled` (Enable notifications): "true", "false"
+- `notification_sound` (Notification sound): "default", "none", "custom"
+- `message_display` (Message grouping): "standard", "compact"
+- `developer_mode` (Show developer options): "true", "false"
+- `locale` (Language preference): "en-US", "es-ES"
+- `timezone` (User timezone): "America/New_York"
 
 ---
 

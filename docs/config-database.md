@@ -245,12 +245,10 @@ Creating new database connections is expensive (requires network round-trip, aut
 
 **Pool Sizing Guidelines**
 
-| Deployment Scale | Min Connections | Max Connections | Notes |
-|-----------------|-----------------|-----------------|-------|
-| Development | 1 | 5 | Single user, minimal load |
-| Small (<100 users) | 2 | 10 | Low concurrency |
-| Medium (100-1000 users) | 5 | 30 | Moderate concurrency |
-| Large (1000+ users) | 10 | 100 | High concurrency, consider read replicas |
+- Deployment Scale: Development | Min Connections: 1 | Max Connections: 5 | Notes: Single user, minimal load
+- Deployment Scale: Small (<100 users) | Min Connections: 2 | Max Connections: 10 | Notes: Low concurrency
+- Deployment Scale: Medium (100-1000 users) | Min Connections: 5 | Max Connections: 30 | Notes: Moderate concurrency
+- Deployment Scale: Large (1000+ users) | Min Connections: 10 | Max Connections: 100 | Notes: High concurrency, consider read replicas
 
 **Operational Notes**
 

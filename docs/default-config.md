@@ -665,23 +665,21 @@ api:
 
 The configuration keys in this document match the actual keys read by the application code. Some keys differ from what you might expect:
 
-| Common Assumption | Actual Key | Notes |
-|---|---|---|
-| `registration.enabled` | `accounts.allow_registration` | Registration is nested under accounts |
-| `max_sessions_per_user` | `sessions.max_per_user` | Sessions use `max_per_user` |
-| `session_lifetime_seconds` | `sessions.expire_hours` | Sessions use hours, not seconds |
-| `max_login_attempts` | `security.max_failed_attempts` | Security uses `max_failed_attempts` |
-| `lockout_duration_seconds` | `security.lockout_duration_minutes` | Lockout uses minutes, not seconds |
-| `require_2fa` (admin) | `admin_ui.require_otp` | Admin UI uses `require_otp` |
-| `heartbeat_interval_seconds` | `websocket.heartbeat_interval_ms` | WebSocket uses milliseconds |
-| `messaging.max_message_length` | `messaging.max_message_length` | Default is 4000, not 2000 |
-| `bot_multiplier: 0.5` | `bot_multiplier: 1.5` | Bots get 1.5x the rate limit |
-| `voice.sfu_backend: "aiortc"` | `voice.sfu_backend: "mediasoup"` | Default SFU is mediasoup |
-| `search.backend: "sqlite"` | `search.backend: "sqlite_fts5"` | Search uses FTS5 variant |
-| `telemetry.enabled: false` | `telemetry.enabled: true` | Telemetry defaults on |
-| `docs.path: "/docs"` | `docs.path: "/docs/api"` | Docs served at `/docs/api` |
-| `argon2.time_cost: 3` | `argon2.time_cost: 2` | Lower time cost for faster hashing |
-| `argon2.parallelism: 4` | `argon2.parallelism: 2` | Matches typical CPU cores |
+- ``registration.enabled`` (`accounts.allow_registration`): Registration is nested under accounts
+- ``max_sessions_per_user`` (`sessions.max_per_user`): Sessions use `max_per_user`
+- ``session_lifetime_seconds`` (`sessions.expire_hours`): Sessions use hours, not seconds
+- ``max_login_attempts`` (`security.max_failed_attempts`): Security uses `max_failed_attempts`
+- ``lockout_duration_seconds`` (`security.lockout_duration_minutes`): Lockout uses minutes, not seconds
+- ``require_2fa` (admin)` (`admin_ui.require_otp`): Admin UI uses `require_otp`
+- ``heartbeat_interval_seconds`` (`websocket.heartbeat_interval_ms`): WebSocket uses milliseconds
+- ``messaging.max_message_length`` (`messaging.max_message_length`): Default is 4000, not 2000
+- ``bot_multiplier: 0.5`` (`bot_multiplier: 1.5`): Bots get 1.5x the rate limit
+- ``voice.sfu_backend: "aiortc"`` (`voice.sfu_backend: "mediasoup"`): Default SFU is mediasoup
+- ``search.backend: "sqlite"`` (`search.backend: "sqlite_fts5"`): Search uses FTS5 variant
+- ``telemetry.enabled: false`` (`telemetry.enabled: true`): Telemetry defaults on
+- ``docs.path: "/docs"`` (`docs.path: "/docs/api"`): Docs served at `/docs/api`
+- ``argon2.time_cost: 3`` (`argon2.time_cost: 2`): Lower time cost for faster hashing
+- ``argon2.parallelism: 4`` (`argon2.parallelism: 2`): Matches typical CPU cores
 
 ---
 

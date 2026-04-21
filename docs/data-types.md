@@ -14,12 +14,10 @@ All IDs in Plexichat are snowflake IDs - 64-bit integers represented as strings 
 
 ### Structure
 
-| Bits | Field | Description |
-|------|-------|-------------|
-| 63-22 | Timestamp | Milliseconds since epoch |
-| 21-17 | Datacenter ID | Datacenter identifier |
-| 16-12 | Worker ID | Worker process identifier |
-| 11-0 | Sequence | Sequence number |
+- `63-22` (Timestamp): Milliseconds since epoch
+- `21-17` (Datacenter ID): Datacenter identifier
+- `16-12` (Worker ID): Worker process identifier
+- `11-0` (Sequence): Sequence number
 
 ### Epoch
 
@@ -88,9 +86,7 @@ Optional fields may be `null` or omitted:
 
 In documentation, nullable fields are marked with `?`:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| avatar_url | string? | Avatar URL (nullable) |
+- `avatar_url` (string?): Avatar URL (nullable)
 
 ## Pagination
 
@@ -98,11 +94,9 @@ List endpoints support cursor-based pagination using snowflake IDs.
 
 ### Query Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| limit | int | Maximum items to return (1-100) |
-| before | string | Get items with ID less than this |
-| after | string | Get items with ID greater than this |
+- `limit` (int): Maximum items to return (1-100)
+- `before` (string): Get items with ID less than this
+- `after` (string): Get items with ID greater than this
 
 ### Example
 
@@ -160,12 +154,10 @@ Plexichat uses a stage-based versioning scheme:
 [stage].[major].[minor]-[build]
 ```
 
-| Component | Values | Description |
-|-----------|--------|-------------|
-| stage | a, b, c, r | Alpha, Beta, Candidate, Release |
-| major | 1+ | Major version (breaking changes) |
-| minor | 0+ | Minor version (new features) |
-| build | 1+ | Build number |
+- `stage` (a, b, c, r): Alpha, Beta, Candidate, Release
+- `major` (1+): Major version (breaking changes)
+- `minor` (0+): Minor version (new features)
+- `build` (1+): Build number
 
 ### Examples
 
@@ -278,29 +270,23 @@ Nested objects are represented as JSON objects:
 
 ## Presence Status Values
 
-| Status | Description |
-|--------|-------------|
-| online | User is online |
-| idle | User is idle/away |
-| dnd | Do not disturb |
-| invisible | Appear offline (only for self) |
-| offline | User is offline |
+- online: User is online
+- idle: User is idle/away
+- dnd: Do not disturb
+- invisible: Appear offline (only for self)
+- offline: User is offline
 
 ## Relationship Status Values
 
-| Status | Description |
-|--------|-------------|
-| friend | Mutual friendship |
-| pending_incoming | Incoming friend request |
-| pending_outgoing | Outgoing friend request |
-| blocked | User is blocked |
+- friend: Mutual friendship
+- pending_incoming: Incoming friend request
+- pending_outgoing: Outgoing friend request
+- blocked: User is blocked
 
 ## Channel Types
 
-| Type | Description |
-|------|-------------|
-| text | Text channel for messages |
-| voice | Voice channel for audio |
-| category | Category for organizing channels |
-| dm | Direct message channel |
-| notes | Personal notes channel |
+- text: Text channel for messages
+- voice: Voice channel for audio
+- category: Category for organizing channels
+- dm: Direct message channel
+- notes: Personal notes channel

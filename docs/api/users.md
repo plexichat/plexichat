@@ -32,17 +32,15 @@ curl -X GET https://api.plexichat.com/users/@me \
 
 ### Response Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| id | string | User's snowflake ID |
-| username | string | Username |
-| email | string | Email address (private) |
-| avatar_url | string? | Avatar URL |
-| created_at | int | Unix timestamp of account creation |
-| email_verified | bool | Email verification status |
-| totp_enabled | bool | 2FA enabled status |
-| age_verified | bool | Age verification status |
-| badges | array | Array of user badge identifiers |
+- `id` (string): User's snowflake ID
+- `username` (string): Username
+- `email` (string): Email address (private)
+- `avatar_url` (string?): Avatar URL
+- `created_at` (int): Unix timestamp of account creation
+- `email_verified` (bool): Email verification status
+- `totp_enabled` (bool): 2FA enabled status
+- `age_verified` (bool): Age verification status
+- `badges` (array): Array of user badge identifiers
 
 ## GET /users/@me/messaging-settings
 
@@ -72,13 +70,11 @@ Update current authenticated user's messaging preferences.
 
 All fields optional.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| read_receipts_enabled | bool | Send read receipts to others |
-| typing_indicators_enabled | bool | Show your typing status |
-| compact_messages_enabled | bool | Enable message grouping |
-| allow_dms_from | string | "everyone", "friends", or "none" |
-| auto_create_dms | bool | Automatically create conversations |
+- `read_receipts_enabled` (bool): Send read receipts to others
+- `typing_indicators_enabled` (bool): Show your typing status
+- `compact_messages_enabled` (bool): Enable message grouping
+- `allow_dms_from` (string): "everyone", "friends", or "none"
+- `auto_create_dms` (bool): Automatically create conversations
 
 ### Example Request
 
@@ -99,12 +95,10 @@ Update the current user's profile.
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| username | string | No | 3-32 characters | New username |
-| email | string | No | Valid email | New email |
-| password | string | No | Min 8 characters | New password |
-| current_password | string | Conditional | - | Required if changing password |
+- `username` (string, optional, 3-32 characters): New username
+- `email` (string, optional, Valid email): New email
+- `password` (string, optional, Min 8 characters): New password
+- `current_password` (string, optional): Required if changing password
 
 ### Example Request
 
@@ -123,12 +117,10 @@ Returns the updated user object.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid input | Validation failed |
-| 400 | Weak password | Password doesn't meet requirements |
-| 400 | Missing current_password | Required for password change |
-| 409 | Already exists | Username or email taken |
+- 400 Invalid input: Validation failed
+- 400 Weak password: Password doesn't meet requirements
+- 400 Missing current_password: Required for password change
+- 409 Already exists: Username or email taken
 
 ## POST /users/@me/avatar
 
@@ -157,10 +149,8 @@ curl -X POST https://api.plexichat.com/users/@me/avatar \
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid file type | File must be an image |
-| 400 | File too large | Exceeds size limit |
+- 400 Invalid file type: File must be an image
+- 400 File too large: Exceeds size limit
 
 ## GET /users/@me/notes
 
@@ -215,13 +205,11 @@ Authorization: Bearer <token>
 
 ### Response Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| id | string | DM channel's snowflake ID |
-| type | string | Always "dm" |
-| recipient_id | string | Other user's ID |
-| recipient | object | Recipient user info |
-| last_message_id | string? | ID of last message |
+- `id` (string): DM channel's snowflake ID
+- `type` (string): Always "dm"
+- `recipient_id` (string): Other user's ID
+- `recipient` (object): Recipient user info
+- `last_message_id` (string?): ID of last message
 
 ## POST /users/@me/channels
 
@@ -235,9 +223,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| recipient_id | string | Yes | Target user's snowflake ID |
+- `recipient_id` (string, required): Target user's snowflake ID
 
 ### Example Request
 
@@ -263,12 +249,10 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | recipient_id required | Missing recipient_id |
-| 400 | Invalid recipient ID | ID format invalid |
-| 403 | Cannot message | User has blocked you |
-| 404 | User not found | Recipient doesn't exist |
+- 400 recipient_id required: Missing recipient_id
+- 400 Invalid recipient ID: ID format invalid
+- 403 Cannot message: User has blocked you
+- 404 User not found: Recipient doesn't exist
 
 ## GET /users/search
 
@@ -276,9 +260,7 @@ Search for a user by username.
 
 ### Query Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| username | string | Yes | Username to search for (exact match, case-insensitive) |
+- `username` (string, required): Username to search for (exact match, case-insensitive)
 
 ### Example Request
 
@@ -300,10 +282,8 @@ curl -X GET "https://api.plexichat.com/users/search?username=johndoe" \
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Username required | Missing username parameter |
-| 404 | User not found | No user with that username |
+- 400 Username required: Missing username parameter
+- 404 User not found: No user with that username
 
 ## GET /users/{user_id}
 
@@ -317,9 +297,7 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| user_id | string | User's snowflake ID |
+- `user_id` (string): User's snowflake ID
 
 ### Response (200 OK)
 
@@ -336,10 +314,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid user ID | ID format invalid |
-| 404 | User not found | User doesn't exist |
+- 400 Invalid user ID: ID format invalid
+- 404 User not found: User doesn't exist
 
 ---
 
