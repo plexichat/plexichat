@@ -136,7 +136,11 @@ class DatabaseExecutionMixin:
         for attempt in range(3):
             try:
                 conn = self._get_conn()
-                cursor = conn.cursor()
+                cursor_factory = getattr(conn, "cursor_factory", None)
+                if cursor_factory is not None:
+                    cursor = conn.cursor(cursor_factory=cursor_factory)  # type: ignore[arg-type]
+                else:
+                    cursor = conn.cursor()
                 start_time = time.time()
 
                 if params:
@@ -200,7 +204,11 @@ class DatabaseExecutionMixin:
         for attempt in range(3):
             try:
                 conn = self._get_conn()
-                cursor = conn.cursor()
+                cursor_factory = getattr(conn, "cursor_factory", None)
+                if cursor_factory is not None:
+                    cursor = conn.cursor(cursor_factory=cursor_factory)  # type: ignore[arg-type]
+                else:
+                    cursor = conn.cursor()
                 start_time = time.time()
 
                 cursor.executemany(query_conv, params_list)

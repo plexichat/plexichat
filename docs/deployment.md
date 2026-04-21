@@ -173,8 +173,9 @@ authentication:
     require_digit: true
     require_special: true
   sessions:
-    session_lifetime_seconds: 2592000  # 30 days
-    device_tracking_enabled: true
+    expire_hours: 168  # 7 days
+    max_per_user: 10
+    extend_on_activity: true
   totp:
     enabled: true
   account_deletion:
@@ -209,7 +210,7 @@ If enabling voice/video features:
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "aiortc"  # or "mediasoup" for production
+  sfu_backend: "mediasoup"  # default; "aiortc" available for lightweight deployments
   stun_urls:
     - "stun:stun.l.google.com:19302"
   max_participants_per_channel: 25
@@ -381,7 +382,7 @@ rate_limiting:
     window_seconds: 60
 ```
 
-See [Default Configuration Reference](default-config.md) for rate limiting options and [Security Best Practices](security.md) for security considerations.
+See [Rate Limiting Configuration](config-rate-limiting.md) for detailed rate limit settings and [Security Best Practices](security.md) for security considerations.
 
 ---
 

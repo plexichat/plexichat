@@ -75,24 +75,24 @@ class ThemeConfig:
     """Theme configuration for documentation."""
 
     style: str = "dark"
-    background_color: str = "#0a0a0a"
-    surface_color: str = "#141414"
-    text_color: str = "#f5f5f5"
-    text_muted: str = "#a0a0a0"
-    accent_color: str = "#3b82f6"
-    accent_hover: str = "#60a5fa"
-    border_color: str = "#2a2a2a"
-    border_light: str = "#333333"
-    font_family: str = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
-    code_font: str = "'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace"
-    font_size_base: str = "16px"
-    line_height: str = "1.6"
-    border_radius_small: str = "6px"
-    border_radius_medium: str = "8px"
-    border_radius_large: str = "12px"
-    transition_speed: str = "0.2s"
-    sidebar_width: str = "280px"
-    content_max_width: str = "900px"
+    background_color: str = "#0d1117"
+    surface_color: str = "#161b22"
+    text_color: str = "#e6edf3"
+    text_muted: str = "#8b949e"
+    accent_color: str = "#58a6ff"
+    accent_hover: str = "#79c0ff"
+    border_color: str = "#21262d"
+    border_light: str = "#30363d"
+    font_family: str = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
+    code_font: str = "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace"
+    font_size_base: str = "15px"
+    line_height: str = "1.7"
+    border_radius_small: str = "4px"
+    border_radius_medium: str = "6px"
+    border_radius_large: str = "8px"
+    transition_speed: str = "0.15s"
+    sidebar_width: str = "260px"
+    content_max_width: str = "860px"
     spacing_xs: str = "4px"
     spacing_sm: str = "8px"
     spacing_md: str = "16px"
@@ -202,30 +202,30 @@ def _load_docs_config() -> DocsConfig:
     theme_conf = docs_conf.get("theme", {})
     theme = ThemeConfig(
         style=theme_conf.get("style", "dark"),
-        background_color=theme_conf.get("background_color", "#0a0a0a"),
-        surface_color=theme_conf.get("surface_color", "#141414"),
-        text_color=theme_conf.get("text_color", "#f5f5f5"),
-        text_muted=theme_conf.get("text_muted", "#a0a0a0"),
-        accent_color=theme_conf.get("accent_color", "#3b82f6"),
-        accent_hover=theme_conf.get("accent_hover", "#60a5fa"),
-        border_color=theme_conf.get("border_color", "#2a2a2a"),
-        border_light=theme_conf.get("border_light", "#333333"),
+        background_color=theme_conf.get("background_color", "#0d1117"),
+        surface_color=theme_conf.get("surface_color", "#161b22"),
+        text_color=theme_conf.get("text_color", "#e6edf3"),
+        text_muted=theme_conf.get("text_muted", "#8b949e"),
+        accent_color=theme_conf.get("accent_color", "#58a6ff"),
+        accent_hover=theme_conf.get("accent_hover", "#79c0ff"),
+        border_color=theme_conf.get("border_color", "#21262d"),
+        border_light=theme_conf.get("border_light", "#30363d"),
         font_family=theme_conf.get(
             "font_family",
-            "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+            "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif",
         ),
         code_font=theme_conf.get(
             "code_font",
-            "'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
+            "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace",
         ),
-        font_size_base=theme_conf.get("font_size_base", "16px"),
-        line_height=theme_conf.get("line_height", "1.6"),
-        border_radius_small=theme_conf.get("border_radius_small", "6px"),
-        border_radius_medium=theme_conf.get("border_radius_medium", "8px"),
-        border_radius_large=theme_conf.get("border_radius_large", "12px"),
-        transition_speed=theme_conf.get("transition_speed", "0.2s"),
-        sidebar_width=theme_conf.get("sidebar_width", "280px"),
-        content_max_width=theme_conf.get("content_max_width", "900px"),
+        font_size_base=theme_conf.get("font_size_base", "15px"),
+        line_height=theme_conf.get("line_height", "1.7"),
+        border_radius_small=theme_conf.get("border_radius_small", "4px"),
+        border_radius_medium=theme_conf.get("border_radius_medium", "6px"),
+        border_radius_large=theme_conf.get("border_radius_large", "8px"),
+        transition_speed=theme_conf.get("transition_speed", "0.15s"),
+        sidebar_width=theme_conf.get("sidebar_width", "260px"),
+        content_max_width=theme_conf.get("content_max_width", "860px"),
         spacing_xs=theme_conf.get("spacing_xs", "4px"),
         spacing_sm=theme_conf.get("spacing_sm", "8px"),
         spacing_md=theme_conf.get("spacing_md", "16px"),
@@ -1516,19 +1516,31 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         "Getting Started": [
             NavItem("Home", "/"),
             NavItem("Getting Started", "/getting-started"),
-            NavItem("Configuration", "/configuration"),
             NavItem("Features", "/features"),
-            NavItem("Permissions", "/permissions"),
-            NavItem("Security", "/security"),
-            NavItem("Rate Limits", "/rate-limits"),
-            NavItem("Error Handling", "/errors"),
             NavItem("Data Types", "/data-types"),
+            NavItem("Permissions", "/permissions"),
         ],
-        "Guides": [
+        "Configuration": [
+            NavItem("Overview", "/configuration"),
+            NavItem("Default Reference", "/default-config"),
+            NavItem("Authentication", "/config-authentication"),
+            NavItem("Database", "/config-database"),
+            NavItem("Redis", "/config-redis"),
+            NavItem("Media", "/config-media"),
+            NavItem("Voice", "/config-voice"),
+            NavItem("WebSocket", "/config-websocket"),
+            NavItem("Search", "/config-search"),
+            NavItem("Rate Limiting", "/config-rate-limiting"),
+            NavItem("API & Server", "/config-api"),
+        ],
+        "Deployment & Operations": [
             NavItem("Deployment", "/deployment"),
+            NavItem("Security", "/security"),
             NavItem("Performance", "/performance"),
             NavItem("Access Tokens", "/admin-access-tokens"),
             NavItem("OAuth Scopes", "/oauth-scopes"),
+            NavItem("Rate Limits", "/rate-limits"),
+            NavItem("Error Handling", "/errors"),
         ],
         "API Reference": [
             NavItem("Overview", "/reference"),
@@ -1563,10 +1575,6 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Intents", "/websocket/intents"),
             NavItem("Opcodes", "/websocket/opcodes"),
             NavItem("Close Codes", "/websocket/close-codes"),
-        ],
-        "Help": [
-            NavItem("Security Logout", "/security-logout"),
-            NavItem("Access Blocked", "/access-blocked"),
         ],
     }
 
@@ -1730,11 +1738,23 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
         path_mappings = {
             "getting-started": "/getting-started",
             "configuration": "/configuration",
+            "default-config": "/default-config",
+            "config-authentication": "/config-authentication",
+            "config-database": "/config-database",
+            "config-redis": "/config-redis",
+            "config-media": "/config-media",
+            "config-voice": "/config-voice",
+            "config-websocket": "/config-websocket",
+            "config-search": "/config-search",
+            "config-rate-limiting": "/config-rate-limiting",
+            "config-api": "/config-api",
             "deployment": "/deployment",
             "features": "/features",
+            "permissions": "/permissions",
             "security": "/security",
             "performance": "/performance",
             "admin-access-tokens": "/admin-access-tokens",
+            "oauth-scopes": "/oauth-scopes",
             "rate-limits": "/rate-limits",
             "errors": "/errors",
             "data-types": "/data-types",
@@ -1742,6 +1762,7 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
             "access-blocked": "/access-blocked",
             "api/index": "/reference",
             "websocket/index": "/websocket",
+            "end-user/getting-started": "/end-user/getting-started",
         }
 
         if normalized_link in path_mappings:
@@ -1754,6 +1775,8 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
             link_url = f"/reference/{normalized_link.lstrip('/')}"
         elif current_path == "/websocket" or current_path.startswith("/websocket/"):
             link_url = f"/websocket/{normalized_link.lstrip('/')}"
+        elif current_path == "/deployment" or current_path.startswith("/deployment/"):
+            link_url = f"/deployment/{normalized_link.lstrip('/')}"
         else:
             link_url = f"/{normalized_link.lstrip('/')}"
 
@@ -2165,4 +2188,147 @@ async def docs_data_types(request: Request):
     """
     return await _serve_page(
         request, _doc_path("data-types.md"), "Data Types", "/data-types"
+    )
+
+
+@router.get("/default-config")
+async def docs_default_config(request: Request):
+    """Serve the default configuration reference page."""
+    return await _serve_page(
+        request,
+        _doc_path("default-config.md"),
+        "Default Configuration",
+        "/default-config",
+    )
+
+
+@router.get("/config-authentication")
+async def docs_config_authentication(request: Request):
+    """Serve the authentication configuration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("config-authentication.md"),
+        "Authentication Configuration",
+        "/config-authentication",
+    )
+
+
+@router.get("/config-database")
+async def docs_config_database(request: Request):
+    """Serve the database configuration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("config-database.md"),
+        "Database Configuration",
+        "/config-database",
+    )
+
+
+@router.get("/config-redis")
+async def docs_config_redis(request: Request):
+    """Serve the Redis configuration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("config-redis.md"),
+        "Redis Configuration",
+        "/config-redis",
+    )
+
+
+@router.get("/config-media")
+async def docs_config_media(request: Request):
+    """Serve the media configuration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("config-media.md"),
+        "Media Configuration",
+        "/config-media",
+    )
+
+
+@router.get("/config-voice")
+async def docs_config_voice(request: Request):
+    """Serve the voice configuration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("config-voice.md"),
+        "Voice Configuration",
+        "/config-voice",
+    )
+
+
+@router.get("/config-websocket")
+async def docs_config_websocket(request: Request):
+    """Serve the WebSocket configuration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("config-websocket.md"),
+        "WebSocket Configuration",
+        "/config-websocket",
+    )
+
+
+@router.get("/config-search")
+async def docs_config_search(request: Request):
+    """Serve the search configuration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("config-search.md"),
+        "Search Configuration",
+        "/config-search",
+    )
+
+
+@router.get("/config-rate-limiting")
+async def docs_config_rate_limiting(request: Request):
+    """Serve the rate limiting configuration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("config-rate-limiting.md"),
+        "Rate Limiting Configuration",
+        "/config-rate-limiting",
+    )
+
+
+@router.get("/config-api")
+async def docs_config_api(request: Request):
+    """Serve the API & server configuration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("config-api.md"),
+        "API & Server Configuration",
+        "/config-api",
+    )
+
+
+@router.get("/end-user/getting-started")
+async def docs_end_user_getting_started(request: Request):
+    """Serve the end-user getting started guide."""
+    return await _serve_page(
+        request,
+        _doc_path("end-user/getting-started.md"),
+        "User Guide: Getting Started",
+        "/end-user/getting-started",
+    )
+
+
+@router.get("/deployment/overview")
+async def docs_deployment_overview(request: Request):
+    """Serve the deployment overview page."""
+    return await _serve_page(
+        request,
+        _doc_path("deployment/overview.md"),
+        "Deployment Overview",
+        "/deployment/overview",
+    )
+
+
+@router.get("/deployment/requirements")
+async def docs_deployment_requirements(request: Request):
+    """Serve the deployment requirements page."""
+    return await _serve_page(
+        request,
+        _doc_path("deployment/requirements.md"),
+        "Deployment Requirements",
+        "/deployment/requirements",
     )

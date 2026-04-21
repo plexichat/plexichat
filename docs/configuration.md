@@ -67,6 +67,10 @@ For detailed configuration guidance for each module, refer to these guides:
 - **[Redis Configuration](config-redis.md)** - Caching, session storage, connection pooling, and scaling strategies
 - **[Media Configuration](config-media.md)** - File uploads, storage backends (local/S3), processing, and security
 - **[Voice Configuration](config-voice.md)** - WebRTC signaling, SFU backends, STUN/TURN servers, and NAT traversal
+- **[WebSocket Configuration](config-websocket.md)** - Gateway settings, compression, rate limits, and origin validation
+- **[Search Configuration](config-search.md)** - Search backends, indexing, server discovery, and result limits
+- **[Rate Limiting Configuration](config-rate-limiting.md)** - Global, user, IP, bot, and webhook rate limits
+- **[API & Server Configuration](config-api.md)** - CORS, trusted proxies, debug mode, TLS, and documentation paths
 
 ## Public Runtime Configuration
 
@@ -87,12 +91,15 @@ These endpoints expose public constants and server state without revealing priva
 | `redis` | Caching, session storage, pub/sub | [Redis Configuration](config-redis.md) |
 | `media` | Upload rules, attachment processing, compression | [Media Configuration](config-media.md) |
 | `voice` | ICE servers, SFU backend, voice signaling | [Voice Configuration](config-voice.md) |
-| `api` | API prefix, docs paths, CORS, OpenAPI | [Default Configuration Reference](default-config.md) |
-| `server` | Bind address, port, process behavior | [Default Configuration Reference](default-config.md) |
-| `rate_limiting` | Global, user, IP, route-level limits | [Default Configuration Reference](default-config.md) |
-| `search` | Search backends, public discovery | [Default Configuration Reference](default-config.md) |
-| `websocket` | Gateway settings, compression, rate limits | [Default Configuration Reference](default-config.md) |
-| `features` | User tiers, badges, gated capabilities | [Default Configuration Reference](default-config.md) |
+| `websocket` | Gateway settings, compression, rate limits | [WebSocket Configuration](config-websocket.md) |
+| `search` | Search backends, public discovery | [Search Configuration](config-search.md) |
+| `rate_limiting` | Global, user, IP, route-level limits | [Rate Limiting Configuration](config-rate-limiting.md) |
+| `api` | API prefix, docs paths, CORS, proxies, TLS | [API & Server Configuration](config-api.md) |
+| `server` | Bind address, port, workers, reload | [API & Server Configuration](config-api.md) |
+| `encryption` | Argon2, AES-GCM, key rotation, snowflake | [Default Configuration Reference](default-config.md) |
+| `monitoring` | Metrics, alert thresholds, log intervals | [Default Configuration Reference](default-config.md) |
+| `admin_ui` | Admin panel, OTP, host restriction | [Default Configuration Reference](default-config.md) |
+| `oauth` | PKCE, Google/GitHub/Microsoft, state management | [Default Configuration Reference](default-config.md) |
 
 ## Safe Practices
 

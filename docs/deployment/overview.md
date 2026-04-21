@@ -38,4 +38,4 @@ Before deploying Plexichat, ensure you have:
 5. Start the services
 6. Verify deployment through health check endpoints
 
-For detailed instructions, see the [Installation Guide](./installation.md).
+For system requirements, see [Requirements](requirements.md). For configuration, see the [Configuration Overview](../configuration.md) and [Default Configuration Reference](../default-config.md).

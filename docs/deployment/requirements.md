@@ -180,4 +180,4 @@ df -h
 free -h
 ```
 
-For more detailed troubleshooting, see the [Troubleshooting Guide](./troubleshooting.md).
+For configuration details, see [Configuration Overview](../configuration.md) and [Default Configuration Reference](../default-config.md). For performance guidance, see [Performance Tuning](../performance.md).

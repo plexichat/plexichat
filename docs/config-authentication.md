@@ -105,10 +105,11 @@ Session settings control token lifetimes, concurrent sessions, and device tracki
 ```yaml
 authentication:
   sessions:
-    max_sessions_per_user: 10
-    session_lifetime_seconds: 2592000  # 30 days
-    refresh_token_lifetime_seconds: 7776000  # 90 days
-    device_tracking_enabled: true
+    token_bytes: 32
+    expire_hours: 168  # 7 days
+    max_per_user: 10
+    extend_on_activity: true
+    extend_threshold_hours: 24
 ```
 
 ### Deployment Considerations
@@ -119,30 +120,29 @@ Session management balances security (shorter lifetimes, fewer sessions) against
 
 **Production Recommendations**
 
-**Session Lifetime (30 days default)**
+**Session Expiry (168 hours / 7 days default)**
 
-- **Standard Deployment**: 30 days is appropriate for most applications. Users rarely want to re-authenticate more frequently.
-- **High-Security Deployment**: Consider reducing to 7-14 days for sensitive environments.
-- **Low-Security Deployment**: Can increase to 60-90 days for convenience-focused applications.
+- **Standard Deployment**: 7 days is the default. Sessions are extended on activity when `extend_on_activity` is enabled.
+- **High-Security Deployment**: Consider reducing to 24-48 hours for sensitive environments.
+- **Low-Security Deployment**: Can increase to 720 hours (30 days) for convenience-focused applications.
 
-**Refresh Token Lifetime (90 days default)**
+**Session Extension on Activity**
 
-- Refresh tokens allow users to stay logged in without re-entering credentials. The 90-day default balances security and convenience.
-- For high-security deployments, reduce to 30 days to limit the window for token theft.
-- Ensure refresh tokens are stored securely (HttpOnly cookies or secure storage on client).
+- When `extend_on_activity: true` (default), sessions are automatically extended when the user is active within the threshold period.
+- `extend_threshold_hours: 24` means the session expiry is pushed forward if the user was active within the last 24 hours.
+- This prevents active users from being logged out while still enforcing expiry for inactive sessions.
+
+**Token Bytes (32 default)**
+
+- Controls the entropy of session tokens. 32 bytes provides 256 bits of entropy, which is cryptographically secure.
+- Do not reduce below 16 bytes for production deployments.
 
 **Maximum Sessions (10 default)**
 
-- Limits concurrent logins per user. Oldest session is invalidated when limit is exceeded.
+- Limits concurrent sessions per user. When exceeded, the oldest session is invalidated.
 - **Standard Deployment**: 10 sessions accommodates users with multiple devices (phone, tablet, desktop, work computer).
 - **Enterprise Deployment**: Consider reducing to 5 to limit account sharing.
 - **Consumer Deployment**: Can increase to 20 for power users with many devices.
-
-**Device Tracking**
-
-- Keep enabled for production. Tracks user agent and IP address for security auditing.
-- Essential for detecting suspicious login patterns (e.g., login from new country).
-- Required for session revocation and security notifications.
 
 **Operational Notes**
 
@@ -294,9 +294,11 @@ Security thresholds for account lockout and password change policies.
 ```yaml
 authentication:
   security:
-    max_login_attempts: 5
-    lockout_duration_seconds: 900  # 15 minutes
-    password_change_cooldown_seconds: 86400  # 24 hours
+    max_failed_attempts: 5
+    lockout_duration_minutes: 15
+    token_cache_ttl: 30
+    token_verify_rate_limit: 100
+    token_binding: false
 ```
 
 ### Deployment Considerations
@@ -307,24 +309,36 @@ Account lockout prevents brute-force and credential stuffing attacks. Password c
 
 **Production Recommendations**
 
-**Login Attempts (5 default)**
+**Failed Attempts Threshold (5 default)**
 
-- **Standard Deployment**: 5 attempts is appropriate. Allows for genuine typos while blocking automated attacks.
+- The key is `max_failed_attempts`, not `max_login_attempts`. After this many consecutive failed login attempts, the account is locked.
+- **Standard Deployment**: 5 attempts allows for genuine typos while blocking automated attacks.
 - **High-Security Deployment**: Reduce to 3 attempts for sensitive environments.
 - **Low-Security Deployment**: Can increase to 10 for convenience-focused applications.
 
 **Lockout Duration (15 minutes default)**
 
-- **Standard Deployment**: 15 minutes is appropriate. Blocks automated attacks while not overly punishing users.
+- The key is `lockout_duration_minutes`, not `lockout_duration_seconds`. The value is in minutes, not seconds.
+- **Standard Deployment**: 15 minutes blocks automated attacks while not overly punishing users.
 - **High-Security Deployment**: Consider 30-60 minutes for sensitive environments.
 - **Low-Security Deployment**: Can reduce to 5 minutes for convenience.
 
-**Password Change Cooldown (24 hours default)**
+**Token Cache TTL (30 seconds default)**
 
-- Prevents users from rapidly cycling through passwords to bypass account lockout.
-- **Standard Deployment**: 24 hours is appropriate.
-- **High-Security Deployment**: Consider 7 days to prevent password reuse patterns.
-- **Low-Security Deployment**: Can reduce to 1 hour for convenience.
+- How long verified tokens are cached before re-verification against the database. Lower values increase security but add database load.
+- **Standard Deployment**: 30 seconds is a good balance.
+- **High-Security Deployment**: Reduce to 5-10 seconds.
+
+**Token Verify Rate Limit (100 per minute default)**
+
+- Maximum number of token verifications per minute. Prevents token brute-forcing.
+- **Standard Deployment**: 100 is appropriate for most deployments.
+
+**Token Binding (false default)**
+
+- When enabled, session tokens are bound to the client's IP address. Provides additional security but breaks for users with rotating IPs (mobile networks, VPNs).
+- **Standard Deployment**: Keep disabled unless all users have stable IPs.
+- **High-Security Deployment**: Enable if users are on a controlled network.
 
 **Security Trade-offs**
 
@@ -347,10 +361,15 @@ Controls user registration behavior and initial account setup.
 
 ```yaml
 authentication:
-  registration:
-    enabled: true
+  accounts:
+    allow_registration: true
     require_email_verification: false
-    default_role: "user"
+    max_bots_per_user: 5
+    username_min_length: 3
+    username_max_length: 32
+  encryption:
+    require_secure_source: true
+    media_key: "${PLEXICHAT_MEDIA_KEY}"
 ```
 
 ### Deployment Considerations
@@ -361,29 +380,34 @@ Registration settings determine who can create accounts and what verification is
 
 **Production Recommendations**
 
-**Enable Registration**
+**Registration**
 
-- **Public Applications**: Keep enabled for open communities.
-- **Private Applications**: Disable and use invite-only registration or admin-created accounts.
-- **Enterprise Applications**: Disable and integrate with SSO or directory services.
+- The key is `accounts.allow_registration`, not `registration.enabled`. Registration is controlled under the `accounts` section.
+- **Public Applications**: Keep `allow_registration: true` for open communities.
+- **Private Applications**: Set to `false` and use invite-only registration or admin-created accounts.
+- **Enterprise Applications**: Set to `false` and integrate with SSO or directory services.
 
 **Email Verification**
 
 - **Recommended**: Enable for production deployments to prevent spam accounts and ensure email deliverability.
-- When enabling email verification, requires email configuration (SMTP settings) to be functional. See [Email Configuration](default-config.md#email-settings) in the default configuration reference.
+- When enabling email verification, requires email configuration (SMTP settings) to be functional. See the `email` section in the [Default Configuration Reference](default-config.md).
 - **Trade-off**: Adds friction to registration but significantly reduces spam and fake accounts.
 
-**Default Role**
+**Bot Accounts**
 
-- **Standard Deployment**: "user" role is appropriate for most deployments.
-- **Custom Roles**: Configure custom roles if your application has different user tiers or permissions.
-- **Admin Accounts**: Never assign admin role as default. Create admin accounts manually after deployment.
+- `max_bots_per_user: 5` limits how many bot accounts each user can create. Bots use separate authentication (see `authentication.bots.token_bytes: 48`).
+- **Standard Deployment**: 5 bots per user is sufficient for most use cases.
+- **Developer-Friendly Deployment**: Increase to 10-25 for communities with many custom bots.
+
+**Encryption**
+
+- `require_secure_source: true` ensures session tokens are only accepted from secure (HTTPS) sources. Keep enabled in production.
+- `media_key` is a separate encryption key for media files at rest. Set via the `PLEXICHAT_MEDIA_KEY` environment variable.
 
 **Operational Notes**
 
 - If disabling registration, implement an alternative account creation mechanism (admin panel, invite system).
 - Monitor new registration rates for anomalies that may indicate automated account creation attacks.
-- Consider implementing CAPTCHA for registration forms (not currently built-in).
 
 ---
 
