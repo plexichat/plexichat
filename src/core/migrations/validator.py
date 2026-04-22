@@ -33,9 +33,16 @@ def validate_migration_order(
     if not pending_versions:
         return True
 
-    # Filter out non-numeric versions
-    numeric_versions = [v for v in applied_versions + pending_versions if v.isdigit()]
-    all_versions = sorted(numeric_versions)
+    numeric_versions = []
+    for v in applied_versions + pending_versions:
+        import re
+
+        match = re.match(r"^(\d+)", v)
+        if match:
+            numeric_versions.append(match.group(1))
+
+    # Remove duplicates that arise from pending vs applied identical prefixes
+    all_versions = sorted(list(set(numeric_versions)))
 
     # Check for gaps in numbering
     for i in range(1, len(all_versions)):

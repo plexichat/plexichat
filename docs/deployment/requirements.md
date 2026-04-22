@@ -43,7 +43,8 @@ This document outlines the system requirements for running Plexichat in differen
 
 ### Monitoring & Logging
 - **Log Storage**: Adequate disk space or remote logging solution
-- **Metrics**: Prometheus-compatible endpoint (when telemetry enabled)
+- **Metrics**: Status endpoints available at `/health`, `/api/v1/status` for external monitoring tools (no built-in Prometheus endpoint)
+- **Telemetry**: Optional telemetry module can be configured for external metrics collection
 - **Health Checks**: Internal endpoints available at `/health`, `/api/v1/status`
 
 ## Development Requirements

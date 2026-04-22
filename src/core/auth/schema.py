@@ -237,6 +237,38 @@ CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_scopes_token ON auth_api_ac
 CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_events_token_time ON auth_api_access_token_events(token_id, used_at DESC);
 CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_events_ip ON auth_api_access_token_events(ip_index);
 
+-- WebAuthn/FIDO2 Passkey credentials
+CREATE TABLE IF NOT EXISTS auth_passkeys (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    credential_id TEXT NOT NULL,
+    credential_public_key BLOB NOT NULL,
+    sign_count INTEGER DEFAULT 0,
+    device_type TEXT,
+    device_name TEXT,
+    aaguid TEXT,
+    transports TEXT,
+    backed_up INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    revoked INTEGER DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    UNIQUE(credential_id)
+);
+
+-- Passkey challenges (temporary)
+CREATE TABLE IF NOT EXISTS auth_passkey_challenges (
+    id INTEGER PRIMARY KEY,
+    challenge_id TEXT UNIQUE NOT NULL,
+    user_id INTEGER,
+    challenge_type TEXT NOT NULL,
+    challenge BLOB NOT NULL,
+    device_name TEXT,
+    expires_at INTEGER NOT NULL,
+    used INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
 -- Username blacklist table (used by auth blacklist checks)
 CREATE TABLE IF NOT EXISTS username_blacklist (
     id INTEGER PRIMARY KEY,
@@ -246,6 +278,12 @@ CREATE TABLE IF NOT EXISTS username_blacklist (
     created_by INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Passkey indexes
+CREATE INDEX IF NOT EXISTS idx_auth_passkeys_user ON auth_passkeys(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_passkeys_credential ON auth_passkeys(credential_id);
+CREATE INDEX IF NOT EXISTS idx_auth_passkey_challenges_expires ON auth_passkey_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_passkey_challenges_id ON auth_passkey_challenges(challenge_id);
 """
 
 

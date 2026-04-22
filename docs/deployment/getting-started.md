@@ -119,17 +119,17 @@ api:
 
 Then consult the dedicated config pages for each subsystem you need:
 
-- [Database Configuration](config-database.md) -- PostgreSQL setup, connection pooling, migrations
-- [Redis Configuration](config-redis.md) -- caching, sessions, connection pooling
-- [Authentication Configuration](config-authentication.md) -- password policies, 2FA, sessions, account deletion
-- [Media Configuration](config-media.md) -- storage backends, file limits, processing, security
-- [Voice Configuration](config-voice.md) -- SFU backends, STUN/TURN, NAT traversal
-- [WebSocket Configuration](config-websocket.md) -- gateway settings, compression, rate limits
-- [Rate Limiting Configuration](config-rate-limiting.md) -- global, user, IP, bot, webhook limits
-- [API and Server Configuration](config-api.md) -- CORS, trusted proxies, debug mode, TLS
-- [Search Configuration](config-search.md) -- search backends, indexing, result limits
-- [Email Configuration](config-email.md) -- SMTP for email verification and notifications
-- [Embeds Configuration](config-embeds.md) -- URL previews, link embeds
+- [Database Configuration](configuration/config-database.md) -- PostgreSQL setup, connection pooling, migrations
+- [Redis Configuration](configuration/config-redis.md) -- caching, sessions, connection pooling
+- [Authentication Configuration](configuration/config-authentication.md) -- password policies, 2FA, sessions, account deletion
+- [Media Configuration](configuration/config-media.md) -- storage backends, file limits, processing, security
+- [Voice Configuration](configuration/config-voice.md) -- SFU backends, STUN/TURN, NAT traversal
+- [WebSocket Configuration](configuration/config-websocket.md) -- gateway settings, compression, rate limits
+- [Rate Limiting Configuration](configuration/config-rate-limiting.md) -- global, user, IP, bot, webhook limits
+- [API and Server Configuration](configuration/config-api.md) -- CORS, trusted proxies, debug mode, TLS
+- [Search Configuration](configuration/config-search.md) -- search backends, indexing, result limits
+- [Email Configuration](configuration/config-email.md) -- SMTP for email verification and notifications
+- [Embeds Configuration](configuration/config-embeds.md) -- URL previews, link embeds
 
 ### Step 6: Set Environment Variables
 
@@ -153,7 +153,139 @@ export S3_SECRET_KEY="your_secret_key"
 
 Create a `.env` file (add to `.gitignore`) and `chmod 600 .env`.
 
----
+----
+
+## Docker Deployment
+
+For containerized deployment, use Docker or Docker Compose. This is the recommended approach for production environments.
+
+### Quick Start with Docker
+
+```bash
+# Build the Docker image
+docker build -t plexichat:latest .
+
+# Run with environment variables
+docker run -d \
+  --name plexichat \
+  -p 8000:8000 \
+  -e PLEXICHAT_SYSTEM_KEY="your_encryption_key" \
+  -e POSTGRES_PASSWORD="your_db_password" \
+  -e REDIS_PASSWORD="your_redis_password" \
+  -v $(pwd)/config:/app/config \
+  -v plexichat_data:/data \
+  plexichat:latest
+```
+
+### Docker Compose (Recommended)
+
+Create a `docker-compose.yml` file:
+
+```yaml
+version: '3.8'
+
+services:
+  plexichat:
+    build: .
+    container_name: plexichat
+    ports:
+      - "8000:8000"
+    environment:
+      - PLEXICHAT_SYSTEM_KEY=${PLEXICHAT_SYSTEM_KEY}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - ./config:/app/config
+      - plexichat_data:/data
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    networks:
+      - plexichat_network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: plexichat_postgres
+    environment:
+      - POSTGRES_USER=plexichat
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=plexichat
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - plexichat_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: plexichat_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - plexichat_network
+
+  nginx:
+    image: nginx:alpine
+    container_name: plexichat_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - plexichat
+    restart: unless-stopped
+    networks:
+      - plexichat_network
+
+volumes:
+  plexichat_data:
+  postgres_data:
+  redis_data:
+
+networks:
+  plexichat_network:
+    driver: bridge
+```
+
+### Environment Variables
+
+Create a `.env` file:
+
+```bash
+PLEXICHAT_SYSTEM_KEY=$(openssl rand -hex 32)
+POSTGRES_PASSWORD=$(openssl rand -base64 32)
+REDIS_PASSWORD=$(openssl rand -base64 32)
+```
+
+### Database Migrations in Docker
+
+```bash
+# Run migrations
+docker-compose exec plexichat python -m alembic upgrade head
+
+# Create a backup
+docker-compose exec postgres pg_dump -U plexichat plexichat > backup.sql
+```
+
+### Health Checks
+
+The Docker setup includes health checks for all services:
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+```
+
+----
 
 ## Security Hardening
 

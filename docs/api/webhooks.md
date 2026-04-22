@@ -2,6 +2,12 @@
 
 Endpoints for webhook management and execution.
 
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
+
 ## POST /webhooks
 
 Create a new webhook for a channel.
@@ -39,7 +45,7 @@ Authorization: Bearer <token>
   "name": "My Webhook",
   "avatar_url": "https://cdn.example.com/avatars/webhook.png",
   "token": "webhook_token_here",
-  "url": "https://api.plexichat.com/webhooks/123456789012345678/webhook_token_here",
+  "url": "http://localhost:8000/api/v1/webhooks/123456789012345678/webhook_token_here",
   "created_at": 1704067200
 }
 ```

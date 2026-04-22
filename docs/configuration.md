@@ -33,9 +33,23 @@ database:
 
 ### Startup Behavior
 
-- **Missing required variable**: Application will fail to start with a clear error message indicating which variable is missing
+- **Missing required variable**: Application will fail to start with a clear error message indicating which variable is missing. To avoid this, always provide a default using the `:-` syntax (e.g., `${POSTGRES_PASSWORD:-}` for optional credentials).
 - **Using default**: Application logs when it uses a default value for an optional variable
 - **Resolved variables**: Application logs which environment variables were successfully resolved (key names only, never values)
+
+### Type Coercion
+
+Environment variable interpolation resolves to strings by default. Type coercion (converting `"5432"` to integer `5432`, or `"true"` to boolean `True`) is **only** applied when:
+
+1. The value contains an interpolation pattern (`${...}`), AND
+2. The corresponding default config value provides a type hint (is not a string)
+
+This means:
+- Non-interpolated string values like `"localhost"` or `"CHANGE_THIS_SIGNING_KEY"` are always kept as strings
+- Interpolated values like `${POSTGRES_PORT:-5432}` will be coerced to match the default's type (int in this case)
+- Passwords and secrets (which have empty-string defaults) remain as strings even if they look like numbers
+
+This prevents silent data corruption where values like `"0"` become `False` or numeric passwords become integers.
 
 ### Bootstrap Environment Variables
 
@@ -62,15 +76,24 @@ If no file is present, the server runs with defaults and logs a warning. Environ
 For detailed configuration guidance for each module, refer to these guides:
 
 - **[Default Configuration Reference](default-config.md)** - Complete reference of all configuration options with default values
-- **[Authentication Configuration](config-authentication.md)** - Password policies, 2FA, sessions, account deletion, and security settings
-- **[Database Configuration](config-database.md)** - PostgreSQL/SQLite setup, connection pooling, migrations, and scaling
-- **[Redis Configuration](config-redis.md)** - Caching, session storage, connection pooling, and scaling strategies
-- **[Media Configuration](config-media.md)** - File uploads, storage backends (local/S3), processing, and security
-- **[Voice Configuration](config-voice.md)** - WebRTC signaling, SFU backends, STUN/TURN servers, and NAT traversal
-- **[WebSocket Configuration](config-websocket.md)** - Gateway settings, compression, rate limits, and origin validation
-- **[Search Configuration](config-search.md)** - Search backends, indexing, server discovery, and result limits
-- **[Rate Limiting Configuration](config-rate-limiting.md)** - Global, user, IP, bot, and webhook rate limits
-- **[API & Server Configuration](config-api.md)** - CORS, trusted proxies, debug mode, TLS, and documentation paths
+- **[Authentication Configuration](deployment/configuration/config-authentication.md)** - Password policies, 2FA, sessions, account deletion, and security settings
+- **[Database Configuration](deployment/configuration/config-database.md)** - PostgreSQL/SQLite setup, connection pooling, migrations, and scaling
+- **[Email Configuration](deployment/configuration/config-email.md)** - SMTP settings for notifications and verification
+- **[Embed Configuration](deployment/configuration/config-embeds.md)** - URL preview and link embed settings
+- **[Redis Configuration](deployment/configuration/config-redis.md)** - Caching, session storage, connection pooling, and scaling strategies
+- **[Media Configuration](deployment/configuration/config-media.md)** - File uploads, storage backends (local/S3), processing, and security
+- **[Voice Configuration](deployment/configuration/config-voice.md)** - WebRTC signaling, SFU backends, STUN/TURN servers, and NAT traversal
+- **[WebSocket Configuration](deployment/configuration/config-websocket.md)** - Gateway settings, compression, rate limits, and origin validation
+- **[Search Configuration](deployment/configuration/config-search.md)** - Search backends, indexing, server discovery, and result limits
+- **[Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md)** - Global, user, IP, bot, and webhook rate limits
+
+## Deployment Guides
+
+For deployment-related documentation:
+
+- **[Getting Started](deployment/getting-started.md)** - Production deployment steps, Docker setup, and initial configuration
+- **[Deployment Overview](deployment/overview.md)** - High-level deployment architecture and strategies
+- **[Requirements](deployment/requirements.md)** - System requirements for production and development
 
 ## Public Runtime Configuration
 

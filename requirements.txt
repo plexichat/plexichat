@@ -27,6 +27,7 @@ hiredis==2.3.2             # Redis parser (optional, for performance)
 argon2-cffi==25.1.0        # Password hashing
 cryptography==46.0.7       # Encryption (CVE-2026-39892 fix)
 pyotp==2.9.0               # TOTP 2FA
+webauthn==2.5.0            # WebAuthn/FIDO2 passkey support
 xxhash==3.4.1              # Fast non-cryptographic hashing
 
 # Validation & Serialization

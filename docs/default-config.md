@@ -34,17 +34,17 @@ logging:
 
 database:
   type: "sqlite"  # "sqlite" or "postgres"
-  path: "~/.plexichat/data/database.db"  # SQLite path (uses home directory)
+  path: "~/.plexichat/data/plexichat.db"  # SQLite path (uses home directory)
   postgres:
     host: "${POSTGRES_HOST:-localhost}"
     port: 5432
     user: "${POSTGRES_USER:-postgres}"
-    password: "${POSTGRES_PASSWORD}"
+    password: "${POSTGRES_PASSWORD:-}"  # Optional, empty default for local dev
     dbname: "${POSTGRES_DBNAME:-plexichat}"
     sslmode: "${POSTGRES_SSLMODE:-prefer}"
   connection_pool:
-    min_connections: 2
-    max_connections: 20
+    min_connections: 5
+    max_connections: 100
     connect_timeout: 10
   monitoring:
     slow_query_threshold_ms: 1000
@@ -57,7 +57,7 @@ redis:
   enabled: false
   host: "${REDIS_HOST:-localhost}"
   port: 6379
-  password: "${REDIS_PASSWORD}"
+  password: "${REDIS_PASSWORD:-}"  # Optional, empty default for local dev
   db: 0
   ssl: false
   key_prefix: "plexichat:"
@@ -73,7 +73,7 @@ redis:
 authentication:
   encryption:
     require_secure_source: true
-    media_key: "${PLEXICHAT_MEDIA_KEY}"
+    media_key: "${PLEXICHAT_MEDIA_KEY:-}"  # Optional, derived from signing key if not set
   accounts:
     allow_registration: true  # not "registration.enabled"
     require_email_verification: false
@@ -182,12 +182,12 @@ media:
   encrypt_at_rest: true
   local_path: "~/.plexichat/media"
   local_url: "/media"
-  s3_bucket: "${S3_BUCKET}"
-  s3_access_key: "${S3_ACCESS_KEY}"
-  s3_secret_key: "${S3_SECRET_KEY}"
+  s3_bucket: "${S3_BUCKET:-}"  # Optional, required only if storage_backend is s3
+  s3_access_key: "${S3_ACCESS_KEY:-}"
+  s3_secret_key: "${S3_SECRET_KEY:-}"
   s3_region: "${S3_REGION:-us-east-1}"
-  s3_endpoint: "${S3_ENDPOINT}"
-  s3_public_url: "${S3_PUBLIC_URL}"
+  s3_endpoint: "${S3_ENDPOINT:-}"
+  s3_public_url: "${S3_PUBLIC_URL:-}"
   database_url: "/api/v1/media/blob"
   database_max_size: 524288  # 512KB
   auto_route_to_database:
@@ -638,13 +638,13 @@ database:
   type: postgres
   postgres:
     host: "${POSTGRES_HOST:-localhost}"
-    password: "${POSTGRES_PASSWORD}"
+    password: "${POSTGRES_PASSWORD:-}"
     sslmode: require
 
 redis:
   enabled: true
   host: "${REDIS_HOST:-localhost}"
-  password: "${REDIS_PASSWORD}"
+  password: "${REDIS_PASSWORD:-}"
 
 authentication:
   accounts:

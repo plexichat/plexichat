@@ -2,6 +2,12 @@
 
 Endpoints for managing user presence and status.
 
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
+
 ## PUT /users/@me/presence
 
 Update the current user's presence status.

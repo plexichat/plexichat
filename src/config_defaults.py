@@ -41,18 +41,18 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "database": {
             "type": "sqlite",
-            "path": str(home_dir / "data" / "database.db"),
+            "path": str(home_dir / "data" / "plexichat.db"),
             "postgres": {
                 "host": "${POSTGRES_HOST:-localhost}",
                 "port": 5432,
                 "user": "${POSTGRES_USER:-postgres}",
-                "password": "${POSTGRES_PASSWORD}",
+                "password": "${POSTGRES_PASSWORD:-}",
                 "dbname": "${POSTGRES_DBNAME:-plexichat}",
                 "sslmode": "${POSTGRES_SSLMODE:-prefer}",
             },
             "connection_pool": {
-                "min_connections": 2,
-                "max_connections": 20,
+                "min_connections": 5,
+                "max_connections": 100,
                 "connect_timeout": 10,
             },
             "monitoring": {
@@ -68,7 +68,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "enabled": False,
             "host": "${REDIS_HOST:-localhost}",
             "port": 6379,
-            "password": "${REDIS_PASSWORD}",
+            "password": "${REDIS_PASSWORD:-}",
             "db": 0,
             "ssl": False,
             "key_prefix": "plexichat:",
@@ -82,7 +82,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "require_secure_source": True,
                 # Media encryption key (Base64 encoded 32-byte key)
                 # If not set, media encryption will be disabled
-                "media_key": "${PLEXICHAT_MEDIA_KEY}",
+                "media_key": "${PLEXICHAT_MEDIA_KEY:-}",
             },
             "account_deletion": {
                 "enabled": True,
@@ -207,12 +207,12 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "encrypt_at_rest": True,
             "local_path": str(home_dir / "media"),
             "local_url": "/media",
-            "s3_bucket": "${S3_BUCKET}",
-            "s3_access_key": "${S3_ACCESS_KEY}",
-            "s3_secret_key": "${S3_SECRET_KEY}",
+            "s3_bucket": "${S3_BUCKET:-}",
+            "s3_access_key": "${S3_ACCESS_KEY:-}",
+            "s3_secret_key": "${S3_SECRET_KEY:-}",
             "s3_region": "${S3_REGION:-us-east-1}",
-            "s3_endpoint": "${S3_ENDPOINT}",
-            "s3_public_url": "${S3_PUBLIC_URL}",
+            "s3_endpoint": "${S3_ENDPOINT:-}",
+            "s3_public_url": "${S3_PUBLIC_URL:-}",
             "database_url": "/api/v1/media/blob",
             "database_max_size": 524288,  # 512KB
             "auto_route_to_database": {

@@ -1,11 +1,17 @@
 # Voice Routes
 
-The REST voice routes provide signaling metadata rather than media transport.
+Endpoints for WebRTC voice/video signaling.
+
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
 
 ## Routes
 
-- `GET /voice/ice-servers`
-- `GET /voice/channels/{channel_id}/info`
+- `GET /api/v1/voice/ice-servers`
+- `GET /api/v1/voice/channels/{channel_id}/info`
 
 ## Purpose
 

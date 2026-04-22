@@ -2,7 +2,13 @@
 
 Endpoints for managing message reactions.
 
-## PUT /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
+
+## PUT /api/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 
 Add a reaction to a message.
 

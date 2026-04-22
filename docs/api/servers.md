@@ -2,7 +2,11 @@
 
 Endpoints for server (guild) management.
 
-**Base URL**: `https://api.plexichat.com`
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
 
 ## GET /servers
 
@@ -11,7 +15,7 @@ Get all servers the authenticated user is a member of.
 ### Example Request
 
 ```bash
-curl -X GET https://api.plexichat.com/servers \
+curl -X GET http://localhost:8000/api/v1/servers \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -23,7 +27,7 @@ curl -X GET https://api.plexichat.com/servers \
     "id": "123456789012345678",
     "name": "My Server",
     "description": "A cool server",
-    "icon_url": "https://api.plexichat.com/avatars/servers/123456789012345678",
+    "icon_url": "http://localhost:8000/api/v1/avatars/servers/123456789012345678",
     "owner_id": "123456789012345678",
     "member_count": 150,
     "default_channel_id": "234567890123456789",
@@ -44,7 +48,7 @@ Create a new server. The authenticated user becomes the owner.
 ### Example Request
 
 ```bash
-curl -X POST https://api.plexichat.com/servers \
+curl -X POST http://localhost:8000/api/v1/servers \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

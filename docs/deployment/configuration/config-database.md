@@ -86,15 +86,15 @@ Settings for SQLite database (used when `database.type` is "sqlite").
 ```yaml
 database:
   type: "sqlite"
-  path: "data/database.db"
+  path: "data/plexichat.db"
 ```
 
 ### Deployment Considerations
 
 **File Path**
 
-- **Default**: `data/database.db` relative to the application directory
-- **Production Recommendation**: Use an absolute path to a dedicated data directory (e.g., `/var/lib/plexichat/database.db`)
+- **Default**: `data/plexichat.db` relative to the application directory
+- **Production Recommendation**: Use an absolute path to a dedicated data directory (e.g., `/var/lib/plexichat/plexichat.db`)
 - **Permissions**: Ensure the application user has read/write permissions to the directory and parent directories
 - **Filesystem**: Place on a filesystem with good I/O performance (SSD preferred for production)
 
@@ -200,8 +200,8 @@ Connection pool settings for PostgreSQL (ignored for SQLite).
 ```yaml
 database:
   connection_pool:
-    min_connections: 2
-    max_connections: 20
+    min_connections: 5
+    max_connections: 100
     connect_timeout: 10
 ```
 
@@ -213,7 +213,7 @@ Creating new database connections is expensive (requires network round-trip, aut
 
 **Minimum Connections**
 
-- **Default**: 2 connections
+- **Default**: 5 connections
 - **Small Deployment**: 2-5 connections sufficient for low-traffic deployments
 - **Medium Deployment**: 5-10 connections for moderate traffic
 - **Large Deployment**: 10-20 connections to handle baseline load
@@ -222,7 +222,7 @@ Creating new database connections is expensive (requires network round-trip, aut
 
 **Maximum Connections**
 
-- **Default**: 20 connections
+- **Default**: 100 connections
 - **Small Deployment**: 10-20 connections
 - **Medium Deployment**: 20-50 connections
 - **Large Deployment**: 50-100 connections (ensure PostgreSQL max_connections is configured higher)
@@ -246,7 +246,7 @@ Creating new database connections is expensive (requires network round-trip, aut
 **Pool Sizing Guidelines**
 
 - Deployment Scale: Development | Min Connections: 1 | Max Connections: 5 | Notes: Single user, minimal load
-- Deployment Scale: Small (<100 users) | Min Connections: 2 | Max Connections: 10 | Notes: Low concurrency
+- Deployment Scale: Small (<100 users) | Min Connections: 5 | Max Connections: 10 | Notes: Low concurrency
 - Deployment Scale: Medium (100-1000 users) | Min Connections: 5 | Max Connections: 30 | Notes: Moderate concurrency
 - Deployment Scale: Large (1000+ users) | Min Connections: 10 | Max Connections: 100 | Notes: High concurrency, consider read replicas
 

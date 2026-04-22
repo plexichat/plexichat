@@ -1,10 +1,16 @@
 # User Settings API
 
-Cloud-synced key-value store for user preferences.
+Endpoints for managing user preferences (cloud-synced key-value store).
+
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
 
 Settings are stored server-side and sync across all devices. Use this for storing user preferences like theme, notification settings, and UI customizations.
 
-## GET /users/@me/settings
+## GET /api/v1/users/@me/settings
 
 Get all settings for the current user.
 
@@ -34,7 +40,7 @@ Authorization: Bearer <token>
 - `count` (int): Number of settings stored
 - `limit` (int): Maximum settings allowed
 
-## GET /users/@me/settings/{key}
+## GET /api/v1/users/@me/settings/{key}
 
 Get a specific setting by key.
 
@@ -63,7 +69,7 @@ Authorization: Bearer <token>
 
 - 404 Setting not found: Setting with key doesn't exist
 
-## PUT /users/@me/settings/{key}
+## PUT /api/v1/users/@me/settings/{key}
 
 Set a setting value. Creates or updates the setting.
 
@@ -107,7 +113,7 @@ Authorization: Bearer <token>
 - 400 Value too long: Value exceeds 10000 characters
 - 400 Key reserved: Key is reserved for system use
 
-## DELETE /users/@me/settings/{key}
+## DELETE /api/v1/users/@me/settings/{key}
 
 Delete a setting.
 

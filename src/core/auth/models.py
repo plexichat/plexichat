@@ -54,6 +54,10 @@ class AuditEventType(Enum):
     SECURITY_SETTINGS_UPDATED = "security_settings_updated"
     OAUTH_LOGIN = "oauth_login"
     OAUTH_LINK = "oauth_link"
+    PASSKEY_REGISTERED = "passkey_registered"
+    PASSKEY_AUTHENTICATED = "passkey_authenticated"
+    PASSKEY_REVOKED = "passkey_revoked"
+    PASSKEY_RENAMED = "passkey_renamed"
 
 
 @dataclass
@@ -284,3 +288,29 @@ class TwoFactorChallenge:
     # Not stored
     token: Optional[str] = field(default=None, repr=False)
     token_hash: Optional[str] = field(default=None, repr=False)
+
+
+@dataclass
+class Passkey:
+    """WebAuthn/FIDO2 Passkey credential model."""
+
+    id: SnowflakeID
+    user_id: SnowflakeID
+    credential_id: str
+    sign_count: int
+    device_type: Optional[str]
+    device_name: Optional[str]
+    aaguid: Optional[str]
+    transports: List[str]
+    backed_up: bool
+    created_at: int
+    last_used_at: Optional[int]
+    revoked: bool = False
+
+
+@dataclass
+class PasskeySetup:
+    """Passkey registration challenge."""
+
+    challenge_id: str
+    options: Dict[str, Any]  # JSON-serializable WebAuthn options

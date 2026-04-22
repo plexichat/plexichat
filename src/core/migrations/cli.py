@@ -43,15 +43,53 @@ cli_logger = logging.getLogger(__name__)
 
 def setup_config():
     """Ensure config is setup for the CLI."""
+    import os
+
     try:
         # Try to use existing config if possible
         config.get("database")
     except RuntimeError:
+        db_config = {"type": "sqlite", "path": "data/plexichat.db"}
+
+        # Override if POSTGRES_HOST or DATABASE_URL is present
+        pg_host = os.environ.get("POSTGRES_HOST")
+        db_url = os.environ.get("DATABASE_URL")
+
+        if db_url and (
+            db_url.startswith("postgres://") or db_url.startswith("postgresql://")
+        ):
+            import urllib.parse
+
+            parsed = urllib.parse.urlparse(db_url)
+            db_config = {
+                "type": "postgres",
+                "postgres": {
+                    "host": parsed.hostname or "localhost",
+                    "port": parsed.port or 5432,
+                    "user": parsed.username or "postgres",
+                    "password": parsed.password or "",
+                    "dbname": parsed.path.lstrip("/") if parsed.path else "plexichat",
+                    "sslmode": "prefer",
+                },
+            }
+        elif pg_host:
+            db_config = {
+                "type": "postgres",
+                "postgres": {
+                    "host": pg_host,
+                    "port": int(os.environ.get("POSTGRES_PORT", 5432)),
+                    "user": os.environ.get("POSTGRES_USER", "postgres"),
+                    "password": os.environ.get("POSTGRES_PASSWORD", ""),
+                    "dbname": os.environ.get("POSTGRES_DBNAME", "plexichat"),
+                    "sslmode": os.environ.get("POSTGRES_SSLMODE", "prefer"),
+                },
+            }
+
         # Not setup, so setup with defaults
         config.setup(
             config_path="config/config.yaml",
             default_config={
-                "database": {"type": "sqlite", "path": "data/plexichat.db"},
+                "database": db_config,
                 "logging": {"level": "INFO"},
             },
         )

@@ -2,6 +2,12 @@
 
 The Avatars API provides endpoints for managing user avatars and server icons. Avatars are stored directly in the database as BLOBs, with automatic resizing and format optimization.
 
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/avatars/` unless otherwise specified.
+
 ## Features
 
 - Automatic image resizing to configurable max dimensions (default: 512x512)

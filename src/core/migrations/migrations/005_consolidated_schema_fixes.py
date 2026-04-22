@@ -120,8 +120,30 @@ def _add_ip_index_to_auth(db, db_type: str):
                 db.execute(
                     f"ALTER TABLE auth_ip_blacklist RENAME TO auth_ip_blacklist_old_{timestamp}"
                 )
+                if db_type == "postgres":
+                    db.execute("""
+                        CREATE TABLE IF NOT EXISTS auth_ip_blacklist (
+                            id SERIAL PRIMARY KEY,
+                            ip_index TEXT NOT NULL UNIQUE,
+                            ip_encrypted TEXT NOT NULL,
+                            expires_at BIGINT NOT NULL,
+                            reason TEXT,
+                            created_at BIGINT NOT NULL
+                        )
+                    """)
+                else:
+                    db.execute("""
+                        CREATE TABLE IF NOT EXISTS auth_ip_blacklist (
+                            id INTEGER PRIMARY KEY,
+                            ip_index TEXT NOT NULL UNIQUE,
+                            ip_encrypted TEXT NOT NULL,
+                            expires_at BIGINT NOT NULL,
+                            reason TEXT,
+                            created_at BIGINT NOT NULL
+                        )
+                    """)
             except Exception as e:
-                logger.warning(f"Could not rename auth_ip_blacklist: {e}")
+                logger.warning(f"Could not rename/recreate auth_ip_blacklist: {e}")
 
 
 def _add_columns_to_messaging(db, db_type: str):

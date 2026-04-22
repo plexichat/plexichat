@@ -377,14 +377,20 @@ class SearchManager(BaseManager):
         if is_message_encrypted(content):
             try:
                 return decrypt_message(content, message_id)
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    f"Failed to decrypt message {message_id} for search indexing: {e}"
+                )
                 return ""
 
         # Legacy format: '[encrypted]' with content_encrypted field
         if content == "[encrypted]" and content_encrypted:
             try:
                 return decrypt_data(content_encrypted)
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    f"Failed to decrypt legacy message {message_id} for search indexing: {e}"
+                )
                 return ""
 
         # Already plaintext

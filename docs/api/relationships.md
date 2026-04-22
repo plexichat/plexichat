@@ -1,6 +1,12 @@
 # Relationships API
 
-Endpoints for managing friend relationships and blocks.
+Endpoints for managing friend relationships and user blocks.
+
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/relationships/` unless otherwise specified.
 
 ## GET /relationships/@me
 

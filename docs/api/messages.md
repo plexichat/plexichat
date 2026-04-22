@@ -2,7 +2,11 @@
 
 Endpoints for message management.
 
-**Base URL**: `https://api.plexichat.com`
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
 
 ## GET /channels/{channel_id}/messages
 
@@ -17,7 +21,7 @@ Get messages in a channel with pagination.
 ### Example Request
 
 ```bash
-curl -X GET "https://api.plexichat.com/channels/123456789012345678/messages?limit=25&before=234567890123456789" \
+curl -X GET "http://localhost:8000/api/v1/channels/123456789012345678/messages?limit=25&before=234567890123456789" \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -30,7 +34,7 @@ curl -X GET "https://api.plexichat.com/channels/123456789012345678/messages?limi
     "channel_id": "123456789012345678",
     "author_id": "123456789012345678",
     "author_username": "johndoe",
-    "author_avatar_url": "https://api.plexichat.com/avatars/users/123456789012345678",
+    "author_avatar_url": "http://localhost:8000/api/v1/avatars/users/123456789012345678",
     "content": "Hello, world!",
     "created_at": 1704067200,
     "edited_at": null,
@@ -89,7 +93,7 @@ At least one of `content`, `attachments`, or `embeds` is required.
 ### Example Request
 
 ```bash
-curl -X POST https://api.plexichat.com/channels/123456789012345678/messages \
+curl -X POST http://localhost:8000/api/v1/channels/123456789012345678/messages \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -140,7 +144,7 @@ Edit a message. Only the author can edit their messages.
 ### Example Request
 
 ```bash
-curl -X PATCH https://api.plexichat.com/channels/123456789012345678/messages/234567890123456789 \
+curl -X PATCH http://localhost:8000/api/v1/channels/123456789012345678/messages/234567890123456789 \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -165,7 +169,7 @@ Delete a message. Author or users with manage messages permission can delete.
 ### Example Request
 
 ```bash
-curl -X DELETE https://api.plexichat.com/channels/123456789012345678/messages/234567890123456789 \
+curl -X DELETE http://localhost:8000/api/v1/channels/123456789012345678/messages/234567890123456789 \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 

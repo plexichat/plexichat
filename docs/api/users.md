@@ -2,16 +2,20 @@
 
 Endpoints for user profile management.
 
-**Base URL**: `https://api.plexichat.com`
+**Base URL**: `https://api.plexichat.com/api/v1`
 
-## GET /users/@me
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/users/` unless otherwise specified.
+
+## GET /api/v1/users/@me
 
 Get the current authenticated user's profile.
 
 ### Example Request
 
 ```bash
-curl -X GET https://api.plexichat.com/users/@me \
+curl -X GET http://localhost:8000/api/v1/users/@me \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -42,7 +46,7 @@ curl -X GET https://api.plexichat.com/users/@me \
 - `age_verified` (bool): Age verification status
 - `badges` (array): Array of user badge identifiers
 
-## GET /users/@me/messaging-settings
+## GET /api/v1/users/@me/messaging-settings
 
 Get current authenticated user's messaging preferences.
 
@@ -62,7 +66,7 @@ Get current authenticated user's messaging preferences.
 }
 ```
 
-## PATCH /users/@me/messaging-settings
+## PATCH /api/v1/users/@me/messaging-settings
 
 Update current authenticated user's messaging preferences.
 
@@ -103,7 +107,7 @@ Update the current user's profile.
 ### Example Request
 
 ```bash
-curl -X PATCH https://api.plexichat.com/users/@me \
+curl -X PATCH http://localhost:8000/api/v1/users/@me \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -122,14 +126,14 @@ Returns the updated user object.
 - 400 Missing current_password: Required for password change
 - 409 Already exists: Username or email taken
 
-## POST /users/@me/avatar
+## POST /api/v1/users/@me/avatar
 
 Upload a new avatar for the current user.
 
 ### Example Request
 
 ```bash
-curl -X POST https://api.plexichat.com/users/@me/avatar \
+curl -X POST http://localhost:8000/api/v1/users/@me/avatar \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -F "file=@/path/to/avatar.png"
 ```
@@ -152,7 +156,7 @@ curl -X POST https://api.plexichat.com/users/@me/avatar \
 - 400 Invalid file type: File must be an image
 - 400 File too large: Exceeds size limit
 
-## GET /users/@me/notes
+## GET /api/v1/users/@me/notes
 
 Get or create the personal notes channel for the current user.
 
@@ -176,7 +180,7 @@ Authorization: Bearer <token>
 }
 ```
 
-## GET /users/@me/channels
+## GET /api/v1/users/@me/channels
 
 Get all DM channels for the current user.
 
@@ -211,7 +215,7 @@ Authorization: Bearer <token>
 - `recipient` (object): Recipient user info
 - `last_message_id` (string?): ID of last message
 
-## POST /users/@me/channels
+## POST /api/v1/users/@me/channels
 
 Create or get a DM channel with a user.
 
@@ -254,7 +258,7 @@ Authorization: Bearer <token>
 - 403 Cannot message: User has blocked you
 - 404 User not found: Recipient doesn't exist
 
-## GET /users/search
+## GET /api/v1/users/search
 
 Search for a user by username.
 
@@ -265,7 +269,7 @@ Search for a user by username.
 ### Example Request
 
 ```bash
-curl -X GET "https://api.plexichat.com/users/search?username=johndoe" \
+curl -X GET "http://localhost:8000/api/v1/users/search?username=johndoe" \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -285,7 +289,7 @@ curl -X GET "https://api.plexichat.com/users/search?username=johndoe" \
 - 400 Username required: Missing username parameter
 - 404 User not found: No user with that username
 
-## GET /users/{user_id}
+## GET /api/v1/users/{user_id}
 
 Get public profile information for a user.
 
@@ -323,7 +327,7 @@ Authorization: Bearer <token>
 
 ### Full User Object (Private)
 
-Returned for the authenticated user (`/users/@me`).
+Returned for the authenticated user (`/api/v1/users/@me`).
 
 ```json
 {
@@ -341,7 +345,7 @@ Returned for the authenticated user (`/users/@me`).
 
 ### Public User Object
 
-Returned for other users (`/users/{user_id}`).
+Returned for other users (`/api/v1/users/{user_id}`).
 
 ```json
 {
@@ -358,5 +362,4 @@ Returned for other users (`/users/{user_id}`).
 ## Related Endpoints
 
 - [User Settings](settings.md) - Cloud-synced user preferences
-- [User Features](features.md) - Badges, tiers, and feature flags
 - [Authentication](authentication.md) - Login, registration, and 2FA

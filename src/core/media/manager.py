@@ -7,6 +7,7 @@ Handles file uploads, processing, storage, and URL signing.
 import os
 import time
 import hashlib
+import base64
 import mimetypes
 import uuid
 import threading
@@ -200,7 +201,6 @@ class MediaManager(BaseManager):
 
         # Wrap with encryption if enabled
         if encrypt_at_rest:
-            # Task #6: Ensure media encryption uses app's signing keys if no env var set
             signing_key = self._config.get("signing_key")
             if signing_key and signing_key not in [
                 "",
@@ -208,6 +208,23 @@ class MediaManager(BaseManager):
                 "change-me",
                 "changeme",
             ]:
+                # Derive media encryption key from signing key if not explicitly set.
+                # This preserves the ability to decrypt media that was encrypted
+                # with the derived key (backwards compatibility with master).
+                # NOTE: media_key lives under authentication.encryption in config,
+                # not under the media section that self._config points to.
+                auth_config = config.get("authentication", {})
+                media_key = auth_config.get("encryption", {}).get(
+                    "media_key"
+                ) or os.environ.get("PLEXICHAT_MEDIA_KEY")
+                if not media_key:
+                    derived_key = hashlib.sha256(signing_key.encode()).digest()
+                    os.environ["PLEXICHAT_MEDIA_KEY"] = base64.b64encode(
+                        derived_key
+                    ).decode()
+                    logger.info(
+                        "Derived media encryption key from signing key (no PLEXICHAT_MEDIA_KEY env var set)"
+                    )
                 storage = wrap_storage_with_encryption(storage, enabled=True)
                 logger.info(f"File encryption at rest enabled for {backend} storage")
 

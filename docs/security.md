@@ -371,9 +371,9 @@ Use environment variable interpolation (`${VAR_NAME}`) in config files to keep s
 
 ## Related Documentation
 
-- [Authentication Configuration](config-authentication.md) — Detailed auth settings and deployment considerations
-- [API & Server Configuration](config-api.md) — CORS, proxies, TLS, debug mode
-- [Rate Limiting Configuration](config-rate-limiting.md) — Rate limit tuning and bypass configuration
-- [Admin Access Tokens](admin-access-tokens.md) — API access token gating
-- [Security Logout](security-logout.md) — Logout behavior and session invalidation
-- [Access Blocked](access-blocked.md) — Access denied responses and resolution
+- [Authentication Configuration](deployment/configuration/config-authentication.md) — Detailed auth settings and deployment considerations
+- [API & Server Configuration](deployment/configuration/config-api.md) — CORS, proxies, TLS, debug mode
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) — Rate limit tuning and bypass configuration
+- [Access Tokens](admin/index.md#access-tokens) — API access token gating (in Admin Guide)
+- [Security Logout](end-user/security-logout.md) — Logout behavior and session invalidation
+- [Access Blocked](end-user/access-blocked.md) — Access denied responses and resolution

@@ -162,12 +162,12 @@ Settings for S3-compatible object storage.
 ```yaml
 media:
   storage_backend: "s3"
-  s3_bucket: "${S3_BUCKET}"
-  s3_access_key: "${S3_ACCESS_KEY}"
-  s3_secret_key: "${S3_SECRET_KEY}"
+  s3_bucket: "${S3_BUCKET:-}"
+  s3_access_key: "${S3_ACCESS_KEY:-}"
+  s3_secret_key: "${S3_SECRET_KEY:-}"
   s3_region: "${S3_REGION:-us-east-1}"
-  s3_endpoint: "${S3_ENDPOINT}"
-  s3_public_url: "${S3_PUBLIC_URL}"
+  s3_endpoint: "${S3_ENDPOINT:-}"
+  s3_public_url: "${S3_PUBLIC_URL:-}"
 ```
 
 **Note**: The S3 config keys use the prefix `s3_` directly under `media` (e.g., `s3_bucket`, `s3_access_key`), not nested under a `s3:` mapping. This matches the actual server config structure.
