@@ -1,4 +1,37 @@
+def _add_postgres_unread_count(db) -> None:
+    """Add unread_count column to user_recent_chats on PostgreSQL.
+
+    Migration 020 added scroll_position/updated_at to user_last_chat and
+    converted existing columns to BIGINT, but didn't add unread_count to
+    user_recent_chats. This fills that gap.
+    """
+    # Add unread_count column with default if it doesn't exist
+    try:
+        db.execute(
+            """ALTER TABLE user_recent_chats 
+               ADD COLUMN IF NOT EXISTS unread_count INTEGER DEFAULT 0 NOT NULL"""
+        )
+    except Exception:
+        # Fallback: check if column exists before adding
+        rows = db.fetch_all(
+            """
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name = 'user_recent_chats' AND column_name = 'unread_count'
+            """
+        )
+        if not rows:
+            db.execute(
+                """ALTER TABLE user_recent_chats 
+                   ADD COLUMN unread_count INTEGER DEFAULT 0 NOT NULL"""
+            )
+
+
 def up(db):
+    if db.type == "postgres":
+        # Only add missing columns; migration 020 already handled BIGINT conversion
+        _add_postgres_unread_count(db)
+        return
+
     if db.type != "sqlite":
         return
 
