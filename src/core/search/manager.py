@@ -45,6 +45,11 @@ from .indexer import (
     MeilisearchIndexer,
     PostgresIndexer,
 )
+from src.utils.encryption import (
+    is_message_encrypted,
+    decrypt_message,
+    decrypt_data,
+)
 from .indexer.base import IndexerConfig
 from .discovery import DiscoveryManager
 from src.core.database import cache_get, cache_set, redis_available
@@ -332,14 +337,19 @@ class SearchManager(BaseManager):
         self._search_rate_count.clear()
 
     def reindex_all(self) -> int:
+        """Reindex all messages. Properly handles encrypted content."""
         messages = self._db.fetch_all(
-            "SELECT id, content, author_id, conversation_id, created_at FROM msg_messages WHERE deleted = 0"
+            "SELECT id, content, content_encrypted, author_id, conversation_id, created_at FROM msg_messages WHERE deleted = 0"
         )
         indexed = 0
         for msg in messages:
+            # Properly decrypt encrypted content before indexing
+            plaintext = self._decrypt_message_content(
+                msg["content"], msg.get("content_encrypted"), msg["id"]
+            )
             self.index_message(
                 message_id=msg["id"],
-                content=msg["content"] or "",
+                content=plaintext,
                 metadata={
                     "author_id": msg["author_id"],
                     "conversation_id": msg["conversation_id"],
@@ -348,6 +358,37 @@ class SearchManager(BaseManager):
             )
             indexed += 1
         return indexed
+
+    def _decrypt_message_content(
+        self, content: Optional[str], content_encrypted: Optional[str], message_id: int
+    ) -> str:
+        """
+        Decrypt message content for search indexing.
+
+        Handles:
+        - New format: content starts with 'ENC:' (fully encrypted)
+        - Legacy format: content is '[encrypted]' with content_encrypted field
+        - Already plaintext: returned as-is
+        """
+        if not content:
+            return ""
+
+        # New encrypted format: starts with 'ENC:'
+        if is_message_encrypted(content):
+            try:
+                return decrypt_message(content, message_id)
+            except Exception:
+                return ""
+
+        # Legacy format: '[encrypted]' with content_encrypted field
+        if content == "[encrypted]" and content_encrypted:
+            try:
+                return decrypt_data(content_encrypted)
+            except Exception:
+                return ""
+
+        # Already plaintext
+        return content
 
     def search_server_messages(
         self,
@@ -444,16 +485,20 @@ class SearchManager(BaseManager):
             return
 
         messages = self._db.fetch_all(
-            """SELECT id, content, author_id, created_at 
+            """SELECT id, content, content_encrypted, author_id, created_at 
                FROM msg_messages 
                WHERE conversation_id = ? AND deleted = 0""",
             (conversation_id,),
         )
 
         for msg in messages:
+            # Properly decrypt encrypted content before indexing
+            plaintext = self._decrypt_message_content(
+                msg["content"], msg.get("content_encrypted"), msg["id"]
+            )
             self.index_message(
                 message_id=msg["id"],
-                content=msg["content"] or "",
+                content=plaintext,
                 metadata={
                     "author_id": msg["author_id"],
                     "conversation_id": conversation_id,

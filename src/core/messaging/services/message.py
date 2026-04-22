@@ -20,12 +20,16 @@ from ..exceptions import (
     AttachmentLimitError,
 )
 from src.core.database import cache_get, cache_set, cache_delete
+from src.utils.encryption import (
+    encrypt_message,
+    blind_index,
+    encrypt_data,
+)
 from .base import BaseService
 from .participant import ParticipantService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
 from src.core.base import SnowflakeID
-from src.utils.encryption import encrypt_message, blind_index, encrypt_data
 import utils.logger as logger
 
 
@@ -238,6 +242,22 @@ class MessageService(BaseService):
             attachments=attachment_list,
         )
 
+        # Index for search (with DECRYPTED plaintext, not encrypted content)
+        try:
+            _search_index_message(
+                msg_id,
+                content_result.sanitized_content,
+                {
+                    "author_id": user_id,
+                    "conversation_id": conversation_id,
+                    "created_at": now,
+                    "has_attachments": bool(attachments),
+                    "has_embeds": bool(embeds),
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Failed to index message for search: {e}")
+
         # Cache the message
         cache_set(f"msg:obj:{msg_id}", msg, ttl=3600)
 
@@ -310,6 +330,20 @@ class MessageService(BaseService):
         self._repo.update_content(
             message_id, final_content, now, content_index=content_idx
         )
+
+        # Update search index with DECRYPTED plaintext
+        try:
+            _search_index_message(
+                message_id,
+                content_result.sanitized_content,
+                {
+                    "author_id": user_id,
+                    "conversation_id": msg_row["conversation_id"],
+                    "created_at": msg_row["created_at"],
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Failed to update search index for message {message_id}: {e}")
 
         # Invalidate old cache
         cache_delete(f"msg:obj:{message_id}")
@@ -389,6 +423,14 @@ class MessageService(BaseService):
         else:
             self._repo.soft_delete(message_id, now)
 
+        # Remove from search index
+        try:
+            _search_remove_from_index(message_id)
+        except Exception as e:
+            logger.debug(
+                f"Failed to remove message {message_id} from search index: {e}"
+            )
+
         # Invalidate cache
         cache_delete(f"msg:obj:{message_id}")
 
@@ -461,6 +503,14 @@ class MessageService(BaseService):
 
                 # Invalidate cache
                 cache_delete(f"msg:obj:{message_id}")
+
+                # Remove from search index
+                try:
+                    from src.core import search as search_module
+
+                    search_module.remove_from_index(int(message_id))
+                except Exception:
+                    pass
 
                 success_count += 1
             except Exception as e:
@@ -765,3 +815,55 @@ class MessageService(BaseService):
     def get_message_raw(self, message_id: SnowflakeID) -> Optional[Dict[str, Any]]:
         """Get raw message row (for internal use)."""
         return self._repo.get_by_id(message_id)
+
+
+# === Module-level search indexing helpers ===
+# These are defined at module level to avoid circular import issues.
+# They safely check if the search module is initialized before indexing.
+
+
+def _search_index_message(
+    message_id: SnowflakeID,
+    plaintext_content: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Index a message for search with DECRYPTED plaintext content.
+
+    This function handles encrypted messages properly by accepting
+    already-decrypted content from the caller (MessageService).
+    Safely catches errors if the search module isn't initialized.
+
+    Args:
+        message_id: ID of the message
+        plaintext_content: The DECRYPTED plaintext content (NOT encrypted)
+        metadata: Additional metadata (author_id, conversation_id, etc.)
+    """
+    try:
+        import src.core.search as search_module
+
+        search_module.index_message(
+            message_id=int(message_id),
+            content=str(plaintext_content) if plaintext_content else "",
+            metadata=metadata,
+        )
+    except (RuntimeError, AttributeError, Exception):
+        # RuntimeError: "Search module not initialized"
+        # AttributeError: module not setup
+        # Generic Exception: any other initialization issue
+        pass
+
+
+def _search_remove_from_index(message_id: SnowflakeID) -> None:
+    """
+    Remove a message from the search index.
+
+    Args:
+        message_id: ID of the message to remove
+    """
+    try:
+        import src.core.search as search_module
+
+        search_module.remove_from_index(int(message_id))
+    except (RuntimeError, AttributeError, Exception):
+        pass
