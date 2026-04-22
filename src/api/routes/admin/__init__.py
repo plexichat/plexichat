@@ -13,6 +13,7 @@ from .telemetry import router as telemetry_router
 from .logs import router as logs_router
 from .database import router as database_router
 from .ui import router as ui_router
+from .reindex import router as reindex_router
 
 router = APIRouter()
 
@@ -27,3 +28,4 @@ router.include_router(telemetry_router)
 router.include_router(logs_router)
 router.include_router(database_router)
 router.include_router(ui_router)
+router.include_router(reindex_router)
