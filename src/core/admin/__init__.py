@@ -52,8 +52,15 @@ def _get_db():
 def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult:
     """Authenticate an administrator."""
     from src.core import auth as core_auth
+    from src.core.auth.exceptions import InvalidCredentialsError
 
-    result = core_auth.login(username, password, ip_address=ip)
+    try:
+        result = core_auth.login(username, password, ip_address=ip)
+    except InvalidCredentialsError as exc:
+        # Core auth raises this instead of returning a failed result —
+        # convert to AdminLoginResult so the route handler sees success=False
+        # and returns 401 instead of 500.
+        return AdminLoginResult(success=False, error=str(exc))
     # Convert AuthResult to AdminLoginResult
     return AdminLoginResult(
         success=result.status.value == "success",
