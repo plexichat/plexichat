@@ -58,9 +58,9 @@ class TestConnectionLimits:
             times.append(elapsed)
 
         avg_time = sum(times) / len(times)
-        assert (
-            avg_time < 0.5
-        ), f"Get conversations too slow with 29 conversations: {avg_time}s"
+        assert avg_time < 0.5, (
+            f"Get conversations too slow with 29 conversations: {avg_time}s"
+        )
 
 
 class TestLargeData:
@@ -316,9 +316,9 @@ class TestRecovery:
             (peak_increase - final_increase) / peak_increase if peak_increase > 0 else 0
         )
 
-        assert (
-            recovery_ratio > 0.3
-        ), f"Poor memory recovery: {recovery_ratio * 100:.1f}%"
+        assert recovery_ratio > 0.3, (
+            f"Poor memory recovery: {recovery_ratio * 100:.1f}%"
+        )
 
 
 class TestEdgeCases:

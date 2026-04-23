@@ -27,9 +27,9 @@ class TestAuthenticationRateLimits:
             )
             responses.append(response.status_code)
 
-        assert (
-            429 in responses
-        ), "Rate limit should be triggered on excessive login attempts"
+        assert 429 in responses, (
+            "Rate limit should be triggered on excessive login attempts"
+        )
 
     def test_register_rate_limit_enforced(self, rate_limit_client):
         """Test register endpoint enforces rate limits."""
@@ -45,9 +45,9 @@ class TestAuthenticationRateLimits:
             )
             responses.append(response.status_code)
 
-        assert (
-            429 in responses or responses.count(409) > 3
-        ), "Rate limit should be enforced"
+        assert 429 in responses or responses.count(409) > 3, (
+            "Rate limit should be enforced"
+        )
 
     def test_2fa_attempt_rate_limit_enforced(self, rate_limit_client):
         """Test 2FA completion endpoint enforces rate limits."""
@@ -133,9 +133,9 @@ class TestMessagingRateLimits:
             )
             responses.append(response.status_code)
 
-        assert (
-            429 in responses
-        ), "Rate limit should be enforced on rapid message deletions"
+        assert 429 in responses, (
+            "Rate limit should be enforced on rapid message deletions"
+        )
 
 
 @pytest.mark.slow
@@ -251,9 +251,9 @@ class TestProfileUpdateRateLimits:
             )
             responses.append(response.status_code)
 
-        assert (
-            429 in responses or responses.count(409) > 2
-        ), "Rate limit should be enforced"
+        assert 429 in responses or responses.count(409) > 2, (
+            "Rate limit should be enforced"
+        )
 
 
 @pytest.mark.slow

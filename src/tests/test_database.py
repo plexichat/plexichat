@@ -1118,9 +1118,9 @@ def test_connection_lifecycle_logging(db_config, caplog):
     log_messages = [record.message for record in caplog.records]
 
     # Should have messages about acquiring connection
-    assert any(
-        "Acquiring new database connection" in msg for msg in log_messages
-    ), f"Expected connection acquisition log, got: {log_messages}"
+    assert any("Acquiring new database connection" in msg for msg in log_messages), (
+        f"Expected connection acquisition log, got: {log_messages}"
+    )
 
     # Should have messages about thread-local state
     assert any(
@@ -1355,23 +1355,23 @@ def test_pool_exhaustion_handling(db_config, caplog):
 
         # Verify pool exhaustion error was logged
         log_messages = [record.message for record in caplog.records]
-        assert any(
-            "pool exhausted" in msg.lower() for msg in log_messages
-        ), f"Expected pool exhaustion log message, got: {log_messages}"
+        assert any("pool exhausted" in msg.lower() for msg in log_messages), (
+            f"Expected pool exhaustion log message, got: {log_messages}"
+        )
 
         # Verify the specific error message mentions pool exhaustion
-        assert any(
-            "no available connections" in msg.lower() for msg in log_messages
-        ), f"Expected 'no available connections' in logs, got: {log_messages}"
+        assert any("no available connections" in msg.lower() for msg in log_messages), (
+            f"Expected 'no available connections' in logs, got: {log_messages}"
+        )
 
         # Clean up: return connections to pool to verify putconn was called
         for conn in list(connections_out):
             mock_pool.putconn(conn)
 
         # Verify putconn was called for the connections
-        assert (
-            mock_pool.putconn.call_count >= 2
-        ), "putconn should be called to return connections to pool"
+        assert mock_pool.putconn.call_count >= 2, (
+            "putconn should be called to return connections to pool"
+        )
 
 
 def test_connect_timeout_handling(db_config, caplog):
@@ -1432,19 +1432,19 @@ def test_connect_timeout_handling(db_config, caplog):
 
         # Should have timeout-specific log message mentioning the timeout duration
         timeout_logs = [msg for msg in log_messages if "timeout" in msg.lower()]
-        assert (
-            len(timeout_logs) > 0
-        ), f"Expected timeout-specific log message, got: {log_messages}"
+        assert len(timeout_logs) > 0, (
+            f"Expected timeout-specific log message, got: {log_messages}"
+        )
 
         # Verify the timeout duration is mentioned in the log
-        assert any(
-            "5s" in msg for msg in timeout_logs
-        ), f"Expected timeout duration (5s) in logs, got: {timeout_logs}"
+        assert any("5s" in msg for msg in timeout_logs), (
+            f"Expected timeout duration (5s) in logs, got: {timeout_logs}"
+        )
 
         # Verify error is logged before re-raising
-        assert any(
-            "Connection timeout" in msg for msg in log_messages
-        ), f"Expected 'Connection timeout' in logs, got: {log_messages}"
+        assert any("Connection timeout" in msg for msg in log_messages), (
+            f"Expected 'Connection timeout' in logs, got: {log_messages}"
+        )
 
 
 # ============================================================================

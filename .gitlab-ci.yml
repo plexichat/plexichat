@@ -48,8 +48,8 @@ lint:ruff:
   extends: .python_base
   stage: lint
   script:
-    - ruff check src/ --output-format=gitlab > ruff-report.json
-    - ruff check src/
+    - ruff check . --output-format=gitlab > ruff-report.json
+    - ruff check .
   artifacts:
     reports:
       codequality: ruff-report.json
@@ -57,12 +57,6 @@ lint:ruff:
       - ruff-report.json
     expire_in: 7 days
 
-lint:format:
-  extends: .python_base
-  stage: lint
-  script:
-    - git submodule update --init --recursive
-    - ruff format --check src/ src/utils/common-utils/
 
 lint:types:
   extends: .python_base

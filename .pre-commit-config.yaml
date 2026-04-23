@@ -1,14 +1,14 @@
 repos:
   #  Ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.4
+    rev: v0.15.10
     hooks:
       - id: ruff
         pass_filenames: false
-        entry: ruff check --fix src/ src/utils/common-utils/
+        entry: ruff check --fix .
       - id: ruff-format
         pass_filenames: false
-        entry: ruff format src/ src/utils/common-utils/
+        entry: ruff format .
 
   #  Type checking
   - repo: https://github.com/RobertCraigie/pyright-python

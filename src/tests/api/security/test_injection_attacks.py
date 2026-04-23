@@ -28,9 +28,9 @@ class TestSQLInjection:
                 json={"username": payload, "password": "TestPass123!"},
             )
 
-            assert (
-                response.status_code == 401
-            ), f"SQL injection payload should be rejected: {payload}"
+            assert response.status_code == 401, (
+                f"SQL injection payload should be rejected: {payload}"
+            )
 
     def test_sql_injection_in_search(self, test_client, create_user_with_token):
         """Test SQL injection in user search."""
@@ -279,9 +279,9 @@ class TestLDAPInjection:
                 json={"username": payload, "password": "TestPass123!"},
             )
 
-            assert (
-                response.status_code == 401
-            ), f"LDAP injection should be rejected: {payload}"
+            assert response.status_code == 401, (
+                f"LDAP injection should be rejected: {payload}"
+            )
 
 
 class TestXPathInjection:

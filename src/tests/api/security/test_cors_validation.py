@@ -218,9 +218,9 @@ class TestCORSSecurityIssues:
         allow_credentials = response.headers.get("Access-Control-Allow-Credentials", "")
 
         if allow_origin == "*":
-            assert (
-                allow_credentials.lower() != "true"
-            ), "Wildcard origin with credentials is a security issue"
+            assert allow_credentials.lower() != "true", (
+                "Wildcard origin with credentials is a security issue"
+            )
 
     def test_exposed_headers_limited(self, test_client):
         """Test exposed headers are limited to necessary ones."""
