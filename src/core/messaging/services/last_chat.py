@@ -27,6 +27,19 @@ class LastChatService:
     def _get_timestamp(self) -> int:
         return int(time.time() * 1000)
 
+    @staticmethod
+    def _safe_int(value, default=None):
+        """Coerce a value to int, returning default on failure.
+
+        Handles legacy data where IDs may be stored as strings.
+        """
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
     def save_last_chat(
         self,
         user_id: int,
@@ -115,8 +128,15 @@ class LastChatService:
         cache_key = f"last_chat:{user_id}"
         cached = cache_get(cache_key)
         if cached:
+            # Coerce legacy string IDs to int for type compatibility
+            conv_id = self._safe_int(cached.get("conversation_id"))
+            msg_id = self._safe_int(cached.get("last_message_id"))
+            scroll_pos = self._safe_int(cached.get("scroll_position"), default=0)
+            # Update cached dict with coerced values
+            cached["conversation_id"] = conv_id
+            cached["last_message_id"] = msg_id
+            cached["scroll_position"] = scroll_pos
             # Verify the conversation still exists and user is still a participant
-            conv_id = cached.get("conversation_id")
             if conv_id and self._participant_svc:
                 if self._participant_svc.is_participant(conv_id, user_id):
                     return cached
@@ -147,10 +167,15 @@ class LastChatService:
                 )
                 return None
 
+        # Coerce legacy string IDs to int for type compatibility
+        conv_id = self._safe_int(data.get("conversation_id"))
+        msg_id = self._safe_int(data.get("last_message_id"))
+        scroll_pos = self._safe_int(data.get("scroll_position"), default=0)
+
         result = {
-            "conversation_id": data.get("conversation_id"),
-            "last_message_id": data.get("last_message_id"),
-            "scroll_position": data.get("scroll_position"),
+            "conversation_id": conv_id,
+            "last_message_id": msg_id,
+            "scroll_position": scroll_pos,
             "updated_at": data.get("updated_at"),
         }
 

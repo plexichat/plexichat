@@ -13,7 +13,8 @@ def test_default_config_uses_expected_branding_and_paths():
     assert config["database"]["path"] == str(
         Path.home() / ".plexichat" / "data" / "plexichat.db"
     )
-    assert config["database"]["postgres"]["dbname"] == "plexichat"
+    # dbname uses interpolation: ${POSTGRES_DBNAME:-plexichat}
+    assert config["database"]["postgres"]["dbname"] == "${POSTGRES_DBNAME:-plexichat}"
     assert config["redis"]["key_prefix"] == "plexichat:"
     assert config["authentication"]["totp"]["issuer"] == "Plexichat"
     assert config["api"]["title"] == "Plexichat API"

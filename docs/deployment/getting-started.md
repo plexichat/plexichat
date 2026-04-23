@@ -119,17 +119,17 @@ api:
 
 Then consult the dedicated config pages for each subsystem you need:
 
-- [Database Configuration](configuration/config-database.md) -- PostgreSQL setup, connection pooling, migrations
-- [Redis Configuration](configuration/config-redis.md) -- caching, sessions, connection pooling
-- [Authentication Configuration](configuration/config-authentication.md) -- password policies, 2FA, sessions, account deletion
-- [Media Configuration](configuration/config-media.md) -- storage backends, file limits, processing, security
-- [Voice Configuration](configuration/config-voice.md) -- SFU backends, STUN/TURN, NAT traversal
-- [WebSocket Configuration](configuration/config-websocket.md) -- gateway settings, compression, rate limits
-- [Rate Limiting Configuration](configuration/config-rate-limiting.md) -- global, user, IP, bot, webhook limits
-- [API and Server Configuration](configuration/config-api.md) -- CORS, trusted proxies, debug mode, TLS
-- [Search Configuration](configuration/config-search.md) -- search backends, indexing, result limits
-- [Email Configuration](configuration/config-email.md) -- SMTP for email verification and notifications
-- [Embeds Configuration](configuration/config-embeds.md) -- URL previews, link embeds
+- [Database Configuration](deployment/configuration/config-database.md) -- PostgreSQL setup, connection pooling, migrations
+- [Redis Configuration](deployment/configuration/config-redis.md) -- caching, sessions, connection pooling
+- [Authentication Configuration](deployment/configuration/config-authentication.md) -- password policies, 2FA, sessions, account deletion
+- [Media Configuration](deployment/configuration/config-media.md) -- storage backends, file limits, processing, security
+- [Voice Configuration](deployment/configuration/config-voice.md) -- SFU backends, STUN/TURN, NAT traversal
+- [WebSocket Configuration](deployment/configuration/config-websocket.md) -- gateway settings, compression, rate limits
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) -- global, user, IP, bot, webhook limits
+- [API and Server Configuration](deployment/configuration/config-api.md) -- CORS, trusted proxies, debug mode, TLS
+- [Search Configuration](deployment/configuration/config-search.md) -- search backends, indexing, result limits
+- [Email Configuration](deployment/configuration/config-email.md) -- SMTP for email verification and notifications
+- [Embeds Configuration](deployment/configuration/config-embeds.md) -- URL previews, link embeds
 
 ### Step 6: Set Environment Variables
 
@@ -559,10 +559,10 @@ Verify reverse proxy WebSocket configuration (Upgrade headers), increase proxy t
 
 - [Configuration Overview](configuration.md) -- config discovery and module-specific guides
 - [Default Configuration Reference](default-config.md) -- every key with defaults
-- [Authentication Configuration](config-authentication.md) -- password, 2FA, sessions, deletion
-- [Database Configuration](config-database.md) -- PostgreSQL/SQLite setup
-- [Redis Configuration](config-redis.md) -- caching and sessions
-- [Media Configuration](config-media.md) -- storage and processing
-- [Voice Configuration](config-voice.md) -- voice/video setup
+- [Authentication Configuration](deployment/configuration/config-authentication.md) -- password, 2FA, sessions, deletion
+- [Database Configuration](deployment/configuration/config-database.md) -- PostgreSQL/SQLite setup
+- [Redis Configuration](deployment/configuration/config-redis.md) -- caching and sessions
+- [Media Configuration](deployment/configuration/config-media.md) -- storage and processing
+- [Voice Configuration](deployment/configuration/config-voice.md) -- voice/video setup
 - [Security Best Practices](security.md) -- production security
 - [Performance Guide](performance.md) -- optimization

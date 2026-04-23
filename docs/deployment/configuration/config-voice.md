@@ -654,7 +654,7 @@ curl http://localhost:8088/janus/info
 
 ## Related Documentation
 
-- [Default Configuration Reference](default-config.md) - Complete configuration reference
-- [Deployment Guide](deployment.md) - Network configuration and scaling
-- [Security Best Practices](security.md) - Voice security considerations
+- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
+- [Deployment Guide](../getting-started.md) - Network configuration and scaling
+- [Security Best Practices](../../security.md) - Voice security considerations
 - [Media Configuration](config-media.md) - Related media processing settings

@@ -230,7 +230,7 @@ api:
 ## Related Documentation
 
 - [Default Configuration Reference](../../default-config.md) — Complete configuration reference
-- [Rate Limiting Configuration](config-rate-limiting.md) — API rate limiting
-- [WebSocket Configuration](config-websocket.md) — Gateway settings
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) — API rate limiting
+- [WebSocket Configuration](deployment/configuration/config-websocket.md) — Gateway settings
 - [Getting Started](../getting-started.md) — Production deployment guide
 - [Security](../../security.md) — Security best practices

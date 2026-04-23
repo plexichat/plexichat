@@ -282,7 +282,7 @@ media:
 - **MinIO**: Cost of your storage hardware
 - **Formula**: `users * avg_storage_per_user * cost_per_gb = monthly_cost`
 
-Consider [Database Configuration](config-database.md) for database storage costs as part of total TCO.
+Consider [Database Configuration](deployment/configuration/config-database.md) for database storage costs as part of total TCO.
 
 **Operational Notes**
 
@@ -700,7 +700,7 @@ S3 backups are automatic, but configure:
 
 ## Related Documentation
 
-- [Default Configuration Reference](default-config.md) - Complete configuration reference
-- [Deployment Guide](deployment.md) - Deployment and CDN integration
-- [Security Best Practices](security.md) - File upload security
+- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
+- [Deployment Guide](../getting-started.md) - Deployment and CDN integration
+- [Security Best Practices](../../security.md) - File upload security
 - [Voice Configuration](config-voice.md) - Voice/video file handling

@@ -71,7 +71,7 @@ The database engine choice determines your deployment's scalability, performance
 
 **Operational Notes**
 
-- Requires separate PostgreSQL server installation and maintenance. PostgreSQL connection pooling is essential for performance. See [Redis Configuration](config-redis.md) for caching configuration that can reduce database load.
+- Requires separate PostgreSQL server installation and maintenance. PostgreSQL connection pooling is essential for performance. See [Redis Configuration](deployment/configuration/config-redis.md) for caching configuration that can reduce database load.
 - Requires monitoring of connection counts and query performance
 - Backup and restore procedures differ from SQLite
 
@@ -460,7 +460,7 @@ psql -h localhost -U plexichat -d plexichat < backup.sql
 
 ## Related Documentation
 
-- [Default Configuration Reference](default-config.md) - Complete configuration reference
-- [Authentication Configuration](config-authentication.md) - Session storage and user data
-- [Redis Configuration](config-redis.md) - Caching to reduce database load
-- [Deployment Guide](deployment.md) - Production deployment and scaling
+- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
+- [Authentication Configuration](deployment/configuration/config-authentication.md) - Session storage and user data
+- [Redis Configuration](deployment/configuration/config-redis.md) - Caching to reduce database load
+- [Deployment Guide](../getting-started.md) - Production deployment and scaling

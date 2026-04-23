@@ -191,7 +191,7 @@ rate_limiting:
 
 ## Related Documentation
 
-- [Default Configuration Reference](default-config.md) — Complete configuration reference
+- [Default Configuration Reference](../../default-config.md) — Complete configuration reference
 - [API & Server Configuration](config-api.md) — Trusted proxies, CORS, debug mode
 - [WebSocket Configuration](config-websocket.md) — WebSocket-specific rate limits
-- [Rate Limits](rate-limits.md) — Dynamic rate limit reference (auto-generated from config)
+- [Rate Limits](../../rate-limits.md) — Dynamic rate limit reference (auto-generated from config)

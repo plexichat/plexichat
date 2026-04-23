@@ -73,7 +73,7 @@ The gateway provides persistent, real-time communication using a heartbeat + dis
 - **Gateway intents**: Subscribe to specific event categories (configurable, some require privileges)
 - **Compression**: Per-message deflate (RFC 7692) for bandwidth savings
 
-Configuration: [WebSocket Configuration](config-websocket.md) | Docs: [Gateway Overview](websocket/index.md) | [Events](websocket/events.md) | [Intents](websocket/intents.md)
+Configuration: [WebSocket Configuration](deployment/configuration/config-websocket.md) | Docs: [Gateway Overview](websocket/index.md) | [Events](websocket/events.md) | [Intents](websocket/intents.md)
 
 ### Presence and Typing
 
@@ -126,7 +126,7 @@ Configuration: [Media Configuration](config-media.md) | API: [Media Routes](api/
 - Server discovery directory with tags, bumping, and member thresholds
 - Write-time indexing for immediate searchability of new content
 
-Configuration: [Search Configuration](config-search.md) | API: [Search Routes](api/search.md)
+Configuration: [Search Configuration](deployment/configuration/config-search.md) | API: [Search Routes](api/search.md)
 
 ### Reports and Feedback
 
@@ -143,7 +143,7 @@ API: [Reports Routes](api/reports.md) | [Feedback Routes](api/feedback.md)
 - Admin and internal bypass options
 - Configurable bypass secret for service-to-service communication
 
-Configuration: [Rate Limiting Configuration](config-rate-limiting.md) | Docs: [Rate Limits](rate-limits.md)
+Configuration: [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) | Docs: [Rate Limits](rate-limits.md)
 
 ---
 

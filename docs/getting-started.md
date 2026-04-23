@@ -205,7 +205,7 @@ websocket:
   max_connections_per_user: 5     # concurrent WebSocket connections
 ```
 
-See [WebSocket Configuration](config-websocket.md) for all gateway settings.
+See [WebSocket Configuration](deployment/configuration/config-websocket.md) for all gateway settings.
 
 ## 6. Understand Rate Limits
 
@@ -219,7 +219,7 @@ The server enforces rate limits at multiple levels:
 
 When rate-limited, the server returns `429 Too Many Requests` with a `Retry-After` header. Always implement exponential backoff.
 
-See [Rate Limits](rate-limits.md) for dynamic limits and [Rate Limiting Configuration](config-rate-limiting.md) for configuration details.
+See [Rate Limits](rate-limits.md) for dynamic limits and [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) for configuration details.
 
 ## 7. Choose Your Documentation Surface
 

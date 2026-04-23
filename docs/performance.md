@@ -135,7 +135,7 @@ database:
 - Set `connection_pool.max_connections` to 20-50 depending on your PostgreSQL `max_connections` setting.
 - **Never** set `max_connections` higher than PostgreSQL's limit minus a safety margin for administrative connections.
 
-See [Database Configuration](config-database.md) for detailed setup guidance.
+See [Database Configuration](deployment/configuration/config-database.md) for detailed setup guidance.
 
 ---
 
@@ -165,7 +165,7 @@ redis:
 
 Without Redis, session and rate-limit state is stored in-process memory. This works for single-worker deployments but is lost on restart and cannot be shared across workers.
 
-See [Redis Configuration](config-redis.md) for detailed setup guidance.
+See [Redis Configuration](deployment/configuration/config-redis.md) for detailed setup guidance.
 
 ---
 
@@ -290,9 +290,9 @@ monitoring:
 
 ## Related Documentation
 
-- [Database Configuration](config-database.md) — PostgreSQL/SQLite setup and connection pooling
-- [Redis Configuration](config-redis.md) — Caching, session storage, and scaling
-- [WebSocket Configuration](config-websocket.md) — Gateway tuning for concurrent connections
-- [Search Configuration](config-search.md) — Search backend and indexing performance
-- [Rate Limiting Configuration](config-rate-limiting.md) — Rate limit tuning
+- [Database Configuration](deployment/configuration/config-database.md) — PostgreSQL/SQLite setup and connection pooling
+- [Redis Configuration](deployment/configuration/config-redis.md) — Caching, session storage, and scaling
+- [WebSocket Configuration](deployment/configuration/config-websocket.md) — Gateway tuning for concurrent connections
+- [Search Configuration](deployment/configuration/config-search.md) — Search backend and indexing performance
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) — Rate limit tuning
 - [Default Configuration Reference](default-config.md) — Complete configuration reference

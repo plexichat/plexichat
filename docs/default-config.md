@@ -686,12 +686,12 @@ The configuration keys in this document match the actual keys read by the applic
 ## Related Documentation
 
 - [Configuration Overview](configuration.md) — Discovery, interpolation, and module-specific guides
-- [Authentication Configuration](config-authentication.md) — Password policies, 2FA, sessions, account deletion
-- [Database Configuration](config-database.md) — PostgreSQL/SQLite setup, connection pooling, scaling
-- [Redis Configuration](config-redis.md) — Caching, session storage, connection pooling
-- [Media Configuration](config-media.md) — Storage backends, file limits, processing, security
-- [Voice Configuration](config-voice.md) — SFU backends, STUN/TURN, NAT traversal
-- [WebSocket Configuration](config-websocket.md) — Gateway, compression, rate limits
-- [Search Configuration](config-search.md) — Search backends, indexing, discovery
-- [Rate Limiting Configuration](config-rate-limiting.md) — Global, user, IP, route-level limits
-- [API & Server Configuration](config-api.md) — CORS, proxies, debug mode, docs paths
+- [Authentication Configuration](deployment/configuration/config-authentication.md) — Password policies, 2FA, sessions, account deletion
+- [Database Configuration](deployment/configuration/config-database.md) — PostgreSQL/SQLite setup, connection pooling, scaling
+- [Redis Configuration](deployment/configuration/config-redis.md) — Caching, session storage, connection pooling
+- [Media Configuration](deployment/configuration/config-media.md) — Storage backends, file limits, processing, security
+- [Voice Configuration](deployment/configuration/config-voice.md) — SFU backends, STUN/TURN, NAT traversal
+- [WebSocket Configuration](deployment/configuration/config-websocket.md) — Gateway, compression, rate limits
+- [Search Configuration](deployment/configuration/config-search.md) — Search backends, indexing, discovery
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) — Global, user, IP, route-level limits
+- [API & Server Configuration](deployment/configuration/config-api.md) — CORS, proxies, debug mode, docs paths

@@ -131,6 +131,6 @@ search:
 
 ## Related Documentation
 
-- [Default Configuration Reference](default-config.md) — Complete configuration reference
-- [Database Configuration](config-database.md) — SQLite/PostgreSQL setup for search indexes
-- [Performance Tuning](performance.md) — Optimizing search for large datasets
+- [Default Configuration Reference](../../default-config.md) — Complete configuration reference
+- [Database Configuration](deployment/configuration/config-database.md) — SQLite/PostgreSQL setup for search indexes
+- [Performance Tuning](../../performance.md) — Optimizing search for large datasets

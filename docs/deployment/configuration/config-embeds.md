@@ -130,6 +130,6 @@ embeds:
 
 ## Related Documentation
 
-- [Media Configuration](config-media.md) -- file upload and storage configuration
-- [Messaging Configuration](config-authentication.md) -- message encryption and limits
-- [Rate Limiting Configuration](config-rate-limiting.md) -- global and per-user rate limits
+- [Media Configuration](deployment/configuration/config-media.md) -- file upload and storage configuration
+- [Authentication Configuration](deployment/configuration/config-authentication.md) -- message encryption and limits
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) -- global and per-user rate limits

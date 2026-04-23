@@ -44,7 +44,7 @@ Redis is an in-memory data store that provides high-performance caching and real
 
 When Redis is disabled, Plexichat falls back to in-memory storage:
 - Session data is stored in process memory (lost on restart) - see [Authentication Configuration](config-authentication.md#session-management)
-- Caching is disabled (all queries hit the database) - see [Database Configuration](config-database.md)
+- Caching is disabled (all queries hit the database) - see [Database Configuration](deployment/configuration/config-database.md)
 - WebSocket presence is limited to single instance
 - Horizontal scaling is not possible
 
@@ -461,7 +461,7 @@ redis-cli -h <host> -p <port> -a <password> info stats
 
 ## Related Documentation
 
-- [Default Configuration Reference](default-config.md) - Complete configuration reference
-- [Database Configuration](config-database.md) - Database that Redis caches
-- [Authentication Configuration](config-authentication.md) - Session storage in Redis
-- [Deployment Guide](deployment.md) - Production deployment with Redis
+- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
+- [Database Configuration](deployment/configuration/config-database.md) - Database that Redis caches
+- [Authentication Configuration](deployment/configuration/config-authentication.md) - Session storage in Redis
+- [Deployment Guide](../getting-started.md) - Production deployment with Redis

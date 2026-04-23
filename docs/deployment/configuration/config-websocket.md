@@ -179,7 +179,7 @@ websocket:
 
 ## Related Documentation
 
-- [Default Configuration Reference](default-config.md) — Complete configuration reference
-- [API & Server Configuration](config-api.md) — CORS, proxies, debug mode
-- [Rate Limiting Configuration](config-rate-limiting.md) — Global, user, IP limits
-- [Security Best Practices](security.md) — WebSocket security considerations
+- [Default Configuration Reference](../../default-config.md) — Complete configuration reference
+- [API & Server Configuration](deployment/configuration/config-api.md) — CORS, proxies, debug mode
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) — Global, user, IP limits
+- [Security Best Practices](../../security.md) — WebSocket security considerations

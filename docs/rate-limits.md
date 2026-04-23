@@ -27,7 +27,7 @@ The server defines these baseline limits in the `rate_limiting` config section:
 - Admin bypass: enabled (admin users skip rate limits)
 - Internal bypass: enabled (internal services skip rate limits via bypass secret)
 
-Servers can override these values through configuration. See [Rate Limiting Configuration](config-rate-limiting.md) for details.
+Servers can override these values through configuration. See [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) for details.
 
 ## Route-Level Limits
 
@@ -59,7 +59,7 @@ Rate-limited requests return `429 Too Many Requests` and may include standard ra
 
 ## Related Pages
 
-- [Rate Limiting Configuration](config-rate-limiting.md)
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md)
 - [Messages](api/messages.md)
 - [Reactions](api/reactions.md)
 - [WebSocket Close Codes](websocket/close-codes.md)

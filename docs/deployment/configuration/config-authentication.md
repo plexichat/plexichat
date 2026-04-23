@@ -39,7 +39,6 @@ Password strength is your first line of defense against credential stuffing atta
 - **Minimum Length**: 12 characters is the current industry standard. Consider increasing to 14-16 for high-security deployments. Each additional character exponentially increases brute-force difficulty.
 - **Maximum Length**: 128 characters accommodates passphrases and password managers. Do not reduce this value.
 - **Complexity Requirements**: All four requirements (uppercase, lowercase, digits, special) should remain enabled for production. Disabling any requirement significantly weakens security.
-- **Balancing Security and Usability**: If users complain about password requirements, consider providing a password strength meter in your client application rather than relaxing requirements.
 
 **Security Trade-offs**
 
@@ -297,6 +296,167 @@ GDPR and similar regulations require organizations to honor user data deletion r
 
 ---
 
+## Passkeys (WebAuthn/FIDO2)
+
+Passkeys provide passwordless authentication using biometric authentication (fingerprint, face recognition) or device PINs. Built on the WebAuthn/FIDO2 standard, passkeys offer phishing-resistant security and better user experience than traditional passwords.
+
+### Configuration
+
+```yaml
+authentication:
+  passkeys:
+    enabled: true
+    rp_name: "Plexichat"
+    rp_id: "${PASSKEY_RP_ID:-localhost}"
+    origin: "${PASSKEY_ORIGIN:-http://localhost}"
+    challenge_ttl_seconds: 300
+    cleanup_interval_hours: 24
+```
+
+### Configuration Options
+
+**enabled** (boolean, default: `true`)
+- Controls whether passkey registration and authentication are available
+- Set to `false` to disable passkey functionality entirely
+- When disabled, passkey-related API endpoints return errors
+
+**rp_name** (string, default: `"Plexichat"`)
+- The Relying Party name displayed to users during passkey registration
+- Should be your application or organization name
+- Users see this name in their device's passkey management interface
+
+**rp_id** (string, required for production)
+- The Relying Party ID - the domain where passkeys are registered
+- Must be the effective domain (e.g., `api.plexichat.com`), not the bind address
+- Critical for security: passkeys only work on this domain
+- **Do not use** bind addresses like `0.0.0.0`, `127.0.0.1`, or `localhost` in production
+- Set via environment variable: `PASSKEY_RP_ID=api.plexichat.com`
+
+**origin** (string, required for production)
+- The full origin (protocol + host + port) where the application is accessed
+- Must exactly match the browser's origin for passkey verification to succeed
+- Examples:
+  - `https://api.plexichat.com` (production)
+  - `http://localhost:8000` (development)
+  - `https://app.plexichat.com` (if using a different domain)
+- Set via environment variable: `PASSKEY_ORIGIN=https://api.plexichat.com`
+
+**challenge_ttl_seconds** (integer, default: `300`)
+- How long registration/authentication challenges remain valid (in seconds)
+- Default 300 seconds (5 minutes) is appropriate for most deployments
+- Reduce to 120 seconds for higher security
+- Increase to 600 seconds for better user experience on slow connections
+
+**cleanup_interval_hours** (integer, default: `24`)
+- How often expired challenges are cleaned up from the database
+- Cleanup is performed by the Account Reaper background task
+- Default 24 hours is appropriate for most deployments
+- Reduce to 12 hours for high-volume deployments
+
+### Deployment Considerations
+
+**Why Passkeys Matter**
+
+Passkeys represent the future of authentication:
+- **Phishing-resistant**: Passkeys only work on the legitimate website/domain
+- **No passwords to remember**: Users authenticate with biometrics or PINs
+- **Stronger security**: Cryptographic keys are much harder to steal than passwords
+- **Better UX**: Face ID, Touch ID, or Windows Hello instead of typing passwords
+- **Cross-device**: Use a phone to authenticate on a computer via QR code
+
+**Production Requirements**
+
+**Critical: Correct RP ID and Origin**
+
+The `rp_id` and `origin` settings are critical for passkey functionality:
+
+- **RP ID** must be your effective domain (e.g., `api.plexichat.com`)
+- **Origin** must be the full URL with protocol (e.g., `https://api.plexichat.com`)
+- Mismatched configuration will cause all passkey operations to fail
+- These values cannot be changed after users register passkeys (would invalidate existing passkeys)
+
+**HTTPS Requirement**
+
+- Passkeys require HTTPS in production (browser security requirement)
+- Development can use HTTP with `localhost` origin
+- For production, ensure valid SSL/TLS certificates are configured
+
+**Browser and Device Support**
+
+Passkeys require:
+- Modern browser with WebAuthn support (Chrome 67+, Firefox 60+, Safari 13+, Edge 18+)
+- Device with biometric authentication or security key support
+- Operating system: macOS 12+, Windows 10/11, iOS 16+, Android 9+
+
+**Production Recommendations**
+
+**Enable Passkeys**
+
+- **Recommended**: Enable for all production deployments
+- **Optional**: Can be offered alongside password authentication
+- **Passwordless**: Can be the primary authentication method with password as backup
+
+**Configuration**
+
+- Set `rp_id` to your production domain
+- Set `origin` to your full production URL with HTTPS
+- Use environment variables for sensitive configuration
+- Document the configuration for your operations team
+
+**User Education**
+
+- Provide clear documentation on setting up passkeys
+- Explain the benefits (security, convenience)
+- Offer guidance on multiple device registration
+- Provide recovery options (password reset, backup codes)
+
+**Security Trade-offs**
+
+- **Passkeys Only**: Maximum security, may exclude users without compatible devices
+- **Passkeys + Passwords**: Best balance, allows gradual migration
+- **Passwords Only**: Lowest security, not recommended for modern deployments
+
+**Operational Notes**
+
+- Test passkey registration and authentication in your production environment before rollout
+- Monitor passkey adoption rates and user feedback
+- Ensure the Account Reaper is running to clean up expired challenges
+- Keep the `webauthn` library updated (`webauthn==2.5.0` or later)
+- Consider offering hardware security keys for users without biometric devices
+
+**Migration Strategy**
+
+For existing deployments:
+
+1. **Phase 1**: Enable passkeys alongside passwords
+2. **Phase 2**: Encourage users to register passkeys
+3. **Phase 3**: Make passkeys the default login method
+4. **Phase 4**: Optionally require passkeys for new registrations
+
+**Troubleshooting**
+
+**Passkey Registration Fails**
+
+- Verify `rp_id` matches your domain
+- Verify `origin` matches the browser's origin (check browser console)
+- Ensure HTTPS is configured correctly
+- Check browser console for WebAuthn errors
+
+**Passkey Authentication Fails**
+
+- Verify the passkey was registered on the same domain
+- Check that the challenge hasn't expired (default 5 minutes)
+- Verify the user's device supports WebAuthn
+- Check browser compatibility
+
+**Challenges Not Cleaning Up**
+
+- Verify the Account Reaper is running
+- Check the `cleanup_interval_hours` setting
+- Monitor database size for challenge table growth
+
+---
+
 ## Security Settings
 
 Security thresholds for account lockout and password change policies.
@@ -381,7 +541,7 @@ authentication:
     username_max_length: 32
   encryption:
     require_secure_source: true
-    media_key: "${PLEXICHAT_MEDIA_KEY}"
+    media_key: "${PLEXICHAT_MEDIA_KEY:-}"  # Optional, derived from signing key if not set
 ```
 
 ### Deployment Considerations
@@ -402,7 +562,7 @@ Registration settings determine who can create accounts and what verification is
 **Email Verification**
 
 - **Recommended**: Enable for production deployments to prevent spam accounts and ensure email deliverability.
-- When enabling email verification, requires email configuration (SMTP settings) to be functional. See the `email` section in the [Default Configuration Reference](default-config.md).
+- When enabling email verification, requires email configuration (SMTP settings) to be functional. See the `email` section in the [Default Configuration Reference](../../default-config.md).
 - **Trade-off**: Adds friction to registration but significantly reduces spam and fake accounts.
 
 **Bot Accounts**
@@ -414,7 +574,7 @@ Registration settings determine who can create accounts and what verification is
 **Encryption**
 
 - `require_secure_source: true` ensures session tokens are only accepted from secure (HTTPS) sources. Keep enabled in production.
-- `media_key` is a separate encryption key for media files at rest. Set via the `PLEXICHAT_MEDIA_KEY` environment variable.
+- `media_key` is a separate encryption key for media files at rest. Set via the `PLEXICHAT_MEDIA_KEY` environment variable. If not set, the key is automatically derived from the signing key (backwards compatible with existing encrypted media).
 
 **Operational Notes**
 
@@ -425,7 +585,7 @@ Registration settings determine who can create accounts and what verification is
 
 ## Related Documentation
 
-- [Default Configuration Reference](default-config.md) - Complete configuration reference
-- [Database Configuration](config-database.md) - User data storage and session persistence
-- [Security Best Practices](security.md) - Authentication security expectations
-- [Deployment Guide](deployment.md) - Production deployment procedures
+- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
+- [Database Configuration](deployment/configuration/config-database.md) - User data storage and session persistence
+- [Security Best Practices](../../security.md) - Authentication security expectations
+- [Deployment Guide](../getting-started.md) - Production deployment procedures

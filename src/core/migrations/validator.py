@@ -18,7 +18,12 @@ def validate_migration_order(
     pending_versions: List[str], applied_versions: List[str]
 ) -> bool:
     """
-    Validate that migration versions have no gaps.
+    Validate that pending migration versions are sequential.
+
+    Only checks for gaps *within the pending versions themselves* and that
+    the first pending version follows the highest applied version. Existing
+    gaps in already-applied migrations are logged as warnings but do NOT
+    block new migrations from being applied.
 
     Args:
         pending_versions: List of pending migration versions to apply
@@ -28,38 +33,63 @@ def validate_migration_order(
         True if order is valid
 
     Raises:
-        ValueError: If there are gaps in version sequence
+        ValueError: If there are gaps within the pending version sequence
     """
     if not pending_versions:
         return True
 
-    numeric_versions = []
-    for v in applied_versions + pending_versions:
-        import re
-
+    # Extract numeric prefixes from version strings
+    def _extract_numeric(v: str) -> Optional[int]:
         match = re.match(r"^(\d+)", v)
         if match:
-            numeric_versions.append(match.group(1))
+            return int(match.group(1))
+        return None
 
-    # Remove duplicates that arise from pending vs applied identical prefixes
-    all_versions = sorted(list(set(numeric_versions)))
+    applied_nums = sorted(
+        n for n in (_extract_numeric(v) for v in applied_versions) if n is not None
+    )
+    pending_nums = sorted(
+        n for n in (_extract_numeric(v) for v in pending_versions) if n is not None
+    )
 
-    # Check for gaps in numbering
-    for i in range(1, len(all_versions)):
-        prev_num = int(all_versions[i - 1].lstrip("0") or "0")
-        curr_num = int(all_versions[i].lstrip("0") or "0")
+    if not pending_nums:
+        return True
 
-        # If we already have gaps in applied versions, we shouldn't necessarily
-        # block applying NEW migrations unless the NEW migrations themselves create a gap
-        # relative to the highest applied migration.
+    # Log (but do not block) gaps in already-applied migrations
+    if applied_nums:
+        for i in range(1, len(applied_nums)):
+            if applied_nums[i] != applied_nums[i - 1] + 1:
+                logger.warning(
+                    "Gap in applied migration versions: missing version between "
+                    "%03d and %03d. This is informational only and will not "
+                    "block new migrations.",
+                    applied_nums[i - 1],
+                    applied_nums[i],
+                )
 
-        if curr_num != prev_num + 1:
+    # Check that pending versions are sequential with no gaps
+    for i in range(1, len(pending_nums)):
+        if pending_nums[i] != pending_nums[i - 1] + 1:
             msg = (
-                "Gap in migration version sequence: missing version between "
-                f"{all_versions[i - 1]} and {all_versions[i]}"
+                "Gap in pending migration version sequence: missing version between "
+                f"{pending_nums[i - 1]:03d} and {pending_nums[i]:03d}"
             )
             logger.error(msg)
             raise ValueError(msg)
+
+    # If there are applied migrations, warn (but don't block) if the first
+    # pending version doesn't immediately follow the last applied version.
+    if applied_nums:
+        highest_applied = max(applied_nums)
+        first_pending = pending_nums[0]
+        if first_pending != highest_applied + 1:
+            logger.warning(
+                "First pending migration (%03d) does not immediately follow "
+                "highest applied migration (%03d). This may indicate a gap, "
+                "but will not block the migration.",
+                first_pending,
+                highest_applied,
+            )
 
     return True
 

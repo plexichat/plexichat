@@ -70,6 +70,12 @@ from src.core.auth.oauth import (
     verify_pkce,
 )
 
+# Import rate limiting
+try:
+    from src.core.ratelimit.decorators import rate_limit
+except ImportError:
+    rate_limit = None
+
 # Import config utility
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
@@ -153,8 +159,20 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
         # AuthError could be age-related
         masked_username = mask_string(body.username)
         logger.warning(f"Registration failed for '{masked_username}': {e}")
+
+        # Add password guidance link for weak password errors
+        error_message = str(e)
+        if isinstance(e, WeakPasswordError) and config_util:
+            guidance_url = (
+                config_util.get("authentication", {})
+                .get("password", {})
+                .get("guidance_url")
+            )
+            if guidance_url:
+                error_message += f" For password guidance, see: {guidance_url}"
+
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400, detail={"error": {"code": 400, "message": error_message}}
         )
     except Exception as e:
         masked_username = mask_string(body.username)
@@ -1543,9 +1561,11 @@ async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
     summary="Get passkey registration options",
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
         500: {"model": ErrorResponse, "description": "Passkey support not available"},
     },
 )
+@(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def passkey_register_options(
     body: PasskeyRegisterOptionsRequest,
     current_user: TokenInfo = Depends(get_current_user),
@@ -1604,9 +1624,11 @@ async def passkey_register_options(
     responses={
         400: {"model": ErrorResponse, "description": "Invalid credential or challenge"},
         401: {"model": ErrorResponse, "description": "Not authenticated"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@(rate_limit(requests=3, window_seconds=60) if rate_limit else lambda f: f)
 async def passkey_register(
     body: PasskeyRegisterRequest,
     request: Request,
@@ -1673,9 +1695,11 @@ async def passkey_register(
     response_model=PasskeyAuthenticateOptionsResponse,
     summary="Get passkey authentication options",
     responses={
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
         500: {"model": ErrorResponse, "description": "Passkey support not available"},
     },
 )
+@(rate_limit(requests=10, window_seconds=60) if rate_limit else lambda f: f)
 async def passkey_authenticate_options(
     body: PasskeyAuthenticateOptionsRequest,
 ) -> PasskeyAuthenticateOptionsResponse:
@@ -1719,9 +1743,11 @@ async def passkey_authenticate_options(
     summary="Complete passkey authentication",
     responses={
         401: {"model": ErrorResponse, "description": "Authentication failed"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def passkey_authenticate(
     body: PasskeyAuthenticateRequest,
     request: Request,
@@ -1779,8 +1805,10 @@ async def passkey_authenticate(
     summary="List user's passkeys",
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
     },
 )
+@(rate_limit(requests=30, window_seconds=60) if rate_limit else lambda f: f)
 async def list_passkeys(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[PasskeyResponse]:
@@ -1824,8 +1852,10 @@ async def list_passkeys(
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         404: {"model": ErrorResponse, "description": "Passkey not found"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
     },
 )
+@(rate_limit(requests=10, window_seconds=60) if rate_limit else lambda f: f)
 async def revoke_passkey(
     passkey_id: int,
     request: Request,
@@ -1872,8 +1902,10 @@ async def revoke_passkey(
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         404: {"model": ErrorResponse, "description": "Passkey not found"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
     },
 )
+@(rate_limit(requests=20, window_seconds=60) if rate_limit else lambda f: f)
 async def rename_passkey(
     passkey_id: int,
     body: PasskeyRenameRequest,

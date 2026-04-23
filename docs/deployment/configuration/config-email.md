@@ -113,4 +113,4 @@ email:
 ## Related Documentation
 
 - [Authentication Configuration](config-authentication.md) -- email verification and registration settings
-- [Default Configuration Reference](default-config.md) -- complete config reference
+- [Default Configuration Reference](../../default-config.md) -- complete config reference
