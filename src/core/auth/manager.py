@@ -1811,9 +1811,11 @@ class AuthManager(BaseManager):
         if not token:
             return False
         token_index = self.crypto.fast_blind_index(token, "api_access_token")
+        legacy_index = self.crypto.legacy_fast_blind_index(token, "api_access_token")
+
         row = self._db.fetch_one(
-            "SELECT * FROM auth_api_access_tokens WHERE token_index = ?",
-            (token_index,),
+            "SELECT * FROM auth_api_access_tokens WHERE token_index = ? OR (token_index = ? AND ? != '')",
+            (token_index, legacy_index, legacy_index),
         )
         if not row or row["revoked"]:
             return False
@@ -2190,8 +2192,11 @@ class AuthManager(BaseManager):
         invalidate_pattern("ip_blocked:*")
 
         ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
+
         self._db.execute(
-            "DELETE FROM auth_ip_blacklist WHERE ip_index = ?", (ip_index,)
+            "DELETE FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
+            (ip_index, legacy_index, legacy_index),
         )
         logger.info("IP unblocked")
         return True
@@ -2200,8 +2205,11 @@ class AuthManager(BaseManager):
     def is_ip_blocked(self, ip_address: str) -> bool:
         """Check if an IP address is blocked."""
         ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
+
         row = self._db.fetch_one(
-            "SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ?", (ip_index,)
+            "SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
+            (ip_index, legacy_index, legacy_index),
         )
         if not row:
             return False

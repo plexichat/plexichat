@@ -42,50 +42,111 @@ cli_logger = logging.getLogger(__name__)
 
 
 def setup_config():
-    """Ensure config is setup for the CLI."""
+    """Ensure config is setup for the CLI.
+
+    Resolution order:
+    1. If config is already loaded (e.g. from config.yaml), use it as-is.
+    2. If DATABASE_URL or POSTGRES_HOST env vars are set, build config from them.
+    3. Fall back to default SQLite path.
+
+    A warning is logged whenever the database type differs from what the
+    existing config (if any) specifies, to help detect misconfiguration.
+    """
     import os
 
+    # 1. Try to use existing config if already loaded
     try:
-        # Try to use existing config if possible
-        config.get("database")
+        existing_db = config.get("database")
+        if existing_db:
+            cli_logger.info(
+                "Using existing database config: type=%s",
+                existing_db.get("type", "unknown"),
+            )
+            return
     except RuntimeError:
-        db_config = {"type": "sqlite", "path": "data/plexichat.db"}
+        pass  # Config not loaded yet
 
-        # Override if POSTGRES_HOST or DATABASE_URL is present
-        pg_host = os.environ.get("POSTGRES_HOST")
-        db_url = os.environ.get("DATABASE_URL")
+    # 2. Build config from environment or defaults
+    db_config = {"type": "sqlite", "path": "data/plexichat.db"}
+    env_source = "default"
 
-        if db_url and (
-            db_url.startswith("postgres://") or db_url.startswith("postgresql://")
-        ):
-            import urllib.parse
+    pg_host = os.environ.get("POSTGRES_HOST")
+    db_url = os.environ.get("DATABASE_URL")
 
-            parsed = urllib.parse.urlparse(db_url)
-            db_config = {
-                "type": "postgres",
-                "postgres": {
-                    "host": parsed.hostname or "localhost",
-                    "port": parsed.port or 5432,
-                    "user": parsed.username or "postgres",
-                    "password": parsed.password or "",
-                    "dbname": parsed.path.lstrip("/") if parsed.path else "plexichat",
-                    "sslmode": "prefer",
+    if db_url and (
+        db_url.startswith("postgres://") or db_url.startswith("postgresql://")
+    ):
+        import urllib.parse
+
+        parsed = urllib.parse.urlparse(db_url)
+        db_config = {
+            "type": "postgres",
+            "postgres": {
+                "host": parsed.hostname or "localhost",
+                "port": parsed.port or 5432,
+                "user": parsed.username or "postgres",
+                "password": parsed.password or "",
+                "dbname": parsed.path.lstrip("/") if parsed.path else "plexichat",
+                "sslmode": "prefer",
+            },
+        }
+        env_source = "DATABASE_URL"
+    elif pg_host:
+        db_config = {
+            "type": "postgres",
+            "postgres": {
+                "host": pg_host,
+                "port": int(os.environ.get("POSTGRES_PORT", 5432)),
+                "user": os.environ.get("POSTGRES_USER", "postgres"),
+                "password": os.environ.get("POSTGRES_PASSWORD", ""),
+                "dbname": os.environ.get("POSTGRES_DBNAME", "plexichat"),
+                "sslmode": os.environ.get("POSTGRES_SSLMODE", "prefer"),
+            },
+        }
+        env_source = "POSTGRES_HOST"
+
+    cli_logger.info(
+        "Database config resolved from %s: type=%s%s",
+        env_source,
+        db_config["type"],
+        f" host={db_config.get('postgres', {}).get('host', '')}"  # type: ignore[union-attr]
+        if db_config["type"] == "postgres"
+        else f" path={db_config.get('path', '')}",
+    )
+
+    # 3. Check if config.yaml exists on disk — if so, prefer it over env-only config
+    try:
+        config_path = "config/config.yaml"
+        if os.path.isfile(config_path):
+            config.setup(
+                config_path=config_path,
+                default_config={
+                    "database": db_config,
+                    "logging": {"level": "INFO"},
                 },
-            }
-        elif pg_host:
-            db_config = {
-                "type": "postgres",
-                "postgres": {
-                    "host": pg_host,
-                    "port": int(os.environ.get("POSTGRES_PORT", 5432)),
-                    "user": os.environ.get("POSTGRES_USER", "postgres"),
-                    "password": os.environ.get("POSTGRES_PASSWORD", ""),
-                    "dbname": os.environ.get("POSTGRES_DBNAME", "plexichat"),
-                    "sslmode": os.environ.get("POSTGRES_SSLMODE", "prefer"),
+            )
+            # Verify what was actually loaded
+            loaded_db = config.get("database", {})
+            if loaded_db.get("type") != db_config["type"]:
+                cli_logger.warning(
+                    "Config file specifies database type=%s but env vars resolved to type=%s. "
+                    "Using config file value. If this is wrong, check config/config.yaml.",
+                    loaded_db.get("type"),
+                    db_config["type"],
+                )
+        else:
+            # No config file — use the env-derived or default config.
+            # Always pass a config_path string even if the file doesn't exist,
+            # since config.setup() may not accept None.
+            config.setup(
+                config_path="config/config.yaml",
+                default_config={
+                    "database": db_config,
+                    "logging": {"level": "INFO"},
                 },
-            }
-
-        # Not setup, so setup with defaults
+            )
+    except Exception:
+        # Last resort: use the env-derived or default config
         config.setup(
             config_path="config/config.yaml",
             default_config={
@@ -94,9 +155,9 @@ def setup_config():
             },
         )
 
-        # Initialize logger
-        log_config = config.get("logging", {})
-        logger.setup(log_dir="logs", level=log_config.get("level", "INFO"))
+    # Initialize logger
+    log_config = config.get("logging", {})
+    logger.setup(log_dir="logs", level=log_config.get("level", "INFO"))
 
 
 def create_migration(name: str) -> None:

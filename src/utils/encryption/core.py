@@ -487,6 +487,20 @@ class EncryptionManager:
         """
         return self.blind_index(data, scope)
 
+    def legacy_fast_blind_index(self, data: str, scope: str) -> str:
+        """
+        Legacy xxhash based blind index to support verifying older access tokens
+        that haven't been regenerated yet.
+        """
+        if not XXHASH_AVAILABLE or xxhash is None:
+            return ""
+
+        kek = self.keyring._get_kek()
+        seed_bytes = hashlib.blake2b(kek, key=scope.encode(), digest_size=8).digest()
+        seed = int.from_bytes(seed_bytes, byteorder="big")
+
+        return xxhash.xxh64(data.lower().strip().encode(), seed=seed).hexdigest()  # type: ignore[union-attr]
+
     def rotate_keys(self, force: bool = False) -> bool:
         """Rotate keys if enough time has passed."""
         import utils.config as config

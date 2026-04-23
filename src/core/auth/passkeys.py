@@ -25,39 +25,46 @@ import utils.logger as logger
 
 from src.utils.encryption import EncryptionManager
 
+# WebAuthn components (defined as Any to satisfy pyright)
+generate_authentication_options: Any = None
+generate_registration_options: Any = None
+verify_authentication_response: Any = None
+verify_registration_response: Any = None
+AttestationConveyancePreference: Any = None
+AuthenticatorSelectionCriteria: Any = None
+PublicKeyCredentialDescriptor: Any = None
+ResidentKeyRequirement: Any = None
+UserVerificationRequirement: Any = None
+
 # WebAuthn imports
 try:
     from webauthn import (  # type: ignore
-        generate_authentication_options,
-        generate_registration_options,
-        verify_authentication_response,
-        verify_registration_response,
+        generate_authentication_options as _gao,
+        generate_registration_options as _gro,
+        verify_authentication_response as _vao,
+        verify_registration_response as _vro,
     )
     from webauthn.helpers.structs import (  # type: ignore
-        AttestationConveyancePreference,
-        AuthenticatorSelectionCriteria,
-        PublicKeyCredentialDescriptor,
-        ResidentKeyRequirement,
-        UserVerificationRequirement,
+        AttestationConveyancePreference as _acp,
+        AuthenticatorSelectionCriteria as _asc,
+        PublicKeyCredentialDescriptor as _pkd,
+        ResidentKeyRequirement as _rkr,
+        UserVerificationRequirement as _uvr,
     )
 
+    generate_authentication_options = _gao
+    generate_registration_options = _gro
+    verify_authentication_response = _vao
+    verify_registration_response = _vro
+    AttestationConveyancePreference = _acp
+    AuthenticatorSelectionCriteria = _asc
+    PublicKeyCredentialDescriptor = _pkd
+    ResidentKeyRequirement = _rkr
+    UserVerificationRequirement = _uvr
     WEBAUTHN_AVAILABLE = True
 except ImportError:
     WEBAUTHN_AVAILABLE = False
     logger.warning("webauthn library not installed. Passkey support disabled.")
-
-    from typing import Any
-
-    # Define as Any to satisfy pyright without it complaining about calling None
-    generate_authentication_options: Any = None  # type: ignore
-    generate_registration_options: Any = None  # type: ignore
-    verify_authentication_response: Any = None  # type: ignore
-    verify_registration_response: Any = None  # type: ignore
-    AttestationConveyancePreference: Any = None  # type: ignore
-    AuthenticatorSelectionCriteria: Any = None  # type: ignore
-    PublicKeyCredentialDescriptor: Any = None  # type: ignore
-    ResidentKeyRequirement: Any = None  # type: ignore
-    UserVerificationRequirement: Any = None  # type: ignore
 
 
 @dataclass
@@ -116,14 +123,40 @@ class PasskeyManager:
         self._config = config.get("authentication", {}).get("passkeys", {})
         self._challenge_ttl = self._config.get("challenge_ttl_seconds", 300)
 
-        # Get RP configuration
-        server_config = config.get("server", {})
+        # Check if passkeys are enabled
+        if not self._config.get("enabled", True):
+            logger.info("Passkeys are disabled in configuration")
+
+        # Get RP configuration with validation
         self._rp_name = self._config.get("rp_name", "Plexichat")
-        self._rp_id = self._config.get("rp_id", server_config.get("host", "localhost"))
+        self._rp_id = self._config.get("rp_id")
+        if not self._rp_id:
+            logger.warning(
+                "PASSKEY_RP_ID not configured. Passkeys will not work correctly. "
+                "Set authentication.passkeys.rp_id to your domain (e.g., 'api.plexichat.com')"
+            )
+            self._rp_id = "localhost"
+
+        # Validate and get origin
+        self._origin = self._config.get("origin")
+        if not self._origin:
+            logger.warning(
+                "PASSKEY_ORIGIN not configured. Passkeys may not work correctly. "
+                "Set authentication.passkeys.origin to your full origin (e.g., 'https://api.plexichat.com')"
+            )
+            self._origin = f"http://{self._rp_id}"
+
+        # Validate origin is a valid URL
+        if not self._origin.startswith(("http://", "https://")):
+            logger.error(
+                f"Invalid passkey origin '{self._origin}'. Must start with http:// or https://"
+            )
+            self._origin = f"http://{self._rp_id}"
 
         if not WEBAUTHN_AVAILABLE:
             logger.error(
-                "PasskeyManager initialized but webauthn library not available"
+                "PasskeyManager initialized but webauthn library not available. "
+                "Install with: pip install webauthn==2.5.0"
             )
 
     def _get_timestamp(self) -> int:
@@ -356,14 +389,16 @@ class PasskeyManager:
         if challenge_row["user_id"] != user_id:
             raise ValueError("Challenge user mismatch")
 
-        challenge = challenge_row["challenge"]
-        device_name = challenge_row.get("device_name")
-
-        # Mark challenge as used
-        self._db.execute(
-            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ?",
+        # Mark challenge as used with atomic check to prevent replay
+        result = self._db.execute(
+            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ? AND used = 0",
             (challenge_row["id"],),
         )
+        if result.rowcount == 0:
+            raise ValueError("Challenge already used - possible replay attack")
+
+        challenge = challenge_row["challenge"]
+        device_name = challenge_row.get("device_name")
 
         # Verify the registration response
         try:
@@ -371,7 +406,7 @@ class PasskeyManager:
                 credential=credential_response,
                 expected_challenge=challenge,
                 expected_rp_id=self._rp_id,
-                expected_origin=self._config.get("origin", f"https://{self._rp_id}"),
+                expected_origin=self._origin,
             )
         except Exception as e:
             logger.error(f"Passkey registration verification failed: {e}")
@@ -566,11 +601,13 @@ class PasskeyManager:
 
         challenge = challenge_row["challenge"]
 
-        # Mark challenge as used
-        self._db.execute(
-            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ?",
+        # Mark challenge as used with atomic check to prevent replay
+        result = self._db.execute(
+            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ? AND used = 0",
             (challenge_row["id"],),
         )
+        if result.rowcount == 0:
+            raise ValueError("Challenge already used - possible replay attack")
 
         # Get credential ID from response
         credential_id_b64 = credential_response.get("id", "")
@@ -592,7 +629,7 @@ class PasskeyManager:
                 credential=credential_response,
                 expected_challenge=challenge,
                 expected_rp_id=self._rp_id,
-                expected_origin=self._config.get("origin", f"https://{self._rp_id}"),
+                expected_origin=self._origin,
                 credential_public_key=credential_public_key,
                 credential_current_sign_count=current_sign_count,
             )
@@ -600,8 +637,17 @@ class PasskeyManager:
             logger.error(f"Passkey authentication verification failed: {e}")
             raise ValueError(f"Authentication verification failed: {e}")
 
-        # Update sign count
+        # Update sign count with validation to detect credential cloning
         new_sign_count = verification.new_sign_count
+        if new_sign_count <= current_sign_count:
+            logger.warning(
+                f"Sign counter did not increase for credential {credential_id_b64}: "
+                f"{current_sign_count} -> {new_sign_count}. Possible credential cloning attack."
+            )
+            raise ValueError(
+                "Sign counter validation failed - possible credential cloning"
+            )
+
         now = self._get_timestamp()
 
         self._db.execute(
@@ -646,7 +692,7 @@ class PasskeyManager:
                     device_type=row["device_type"],
                     device_name=row["device_name"],
                     aaguid=row["aaguid"],
-                    transports=row["transports"].split(",")
+                    transports=[t for t in row["transports"].split(",") if t.strip()]
                     if row["transports"]
                     else [],
                     backed_up=bool(row["backed_up"]),
