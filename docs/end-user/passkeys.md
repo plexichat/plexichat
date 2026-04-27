@@ -37,7 +37,7 @@ To use passkeys, you need:
 ### Registering Your First Passkey
 
 1. **Sign in to your account** using your password or 2FA code
-2. **Navigate to Settings** → **Security** → **Passkeys**
+2. **Navigate to Settings** -> **Security** -> **Passkeys**
 3. **Click "Add Passkey"**
 4. **Enter a device name** (e.g., "iPhone 15 Pro", "Work Laptop")
 5. **Follow your device's prompts** to create the passkey:
@@ -51,7 +51,7 @@ Your passkey is now ready to use for sign-in!
 
 You can register multiple passkeys for different devices:
 
-1. Go to **Settings** → **Security** → **Passkeys**
+1. Go to **Settings** -> **Security** -> **Passkeys**
 2. Click **"Add Passkey"**
 3. Repeat the registration process on each device
 
@@ -85,7 +85,7 @@ This works across platforms (e.g., use your iPhone to sign in on Windows).
 
 ### Viewing Your Passkeys
 
-1. Go to **Settings** → **Security** → **Passkeys**
+1. Go to **Settings** -> **Security** -> **Passkeys**
 2. You'll see a list of all registered passkeys with:
    - Device name
    - Date added
@@ -94,7 +94,7 @@ This works across platforms (e.g., use your iPhone to sign in on Windows).
 
 ### Renaming a Passkey
 
-1. Go to **Settings** → **Security** → **Passkeys**
+1. Go to **Settings** -> **Security** -> **Passkeys**
 2. Find the passkey you want to rename
 3. Click the **edit icon** or **"Rename"**
 4. Enter the new device name
@@ -104,7 +104,7 @@ This works across platforms (e.g., use your iPhone to sign in on Windows).
 
 If you lose a device or want to remove a passkey:
 
-1. Go to **Settings** → **Security** → **Passkeys**
+1. Go to **Settings** -> **Security** -> **Passkeys**
 2. Find the passkey you want to remove
 3. Click the **delete icon** or **"Revoke"**
 4. Confirm the removal
@@ -209,12 +209,12 @@ If you lose all devices with passkeys and don't remember your password:
 
 | Feature | Passkeys | Passwords |
 |---------|----------|-----------|
-| **Phishing resistance** | ✅ Excellent | ❌ Vulnerable |
-| **Reusability risk** | ✅ Unique per site | ❌ Often reused |
-| **Ease of use** | ✅ Biometric/PIN | ⚠️ Must remember |
-| **Device dependency** | ⚠️ Requires device | ✅ Works anywhere |
-| **Recovery** | ⚠️ Requires backup | ✅ Can reset via email |
-| **Security** | ✅ Cryptographic | ⚠️ Can be stolen |
+| **Phishing resistance** | [X] Excellent | [ ] Vulnerable |
+| **Reusability risk** | [X] Unique per site | [ ] Often reused |
+| **Ease of use** | [X] Biometric/PIN | [!] Must remember |
+| **Device dependency** | [!] Requires device | [X] Works anywhere |
+| **Recovery** | [!] Requires backup | [X] Can reset via email |
+| **Security** | [X] Cryptographic | [!] Can be stolen |
 
 ## FAQ
 
@@ -251,7 +251,7 @@ If you encounter issues with passkeys:
 
 ## Related Documentation
 
-- [Password Guidance](./password-guidance.md) — Creating strong passwords
-- [Two-Factor Authentication](./two-factor-authentication.md) — Using TOTP as an alternative
-- [Security Best Practices](../security.md) — General account security
-- [Account Deletion](./access-blocked.md) — What happens when you delete your account
+- [Password Guidance](./password-guidance.md) - Creating strong passwords
+- [Two-Factor Authentication](./two-factor-authentication.md) - Using TOTP as an alternative
+- [Security Best Practices](../security.md) - General account security
+- [Account Deletion](./access-blocked.md) - What happens when you delete your account

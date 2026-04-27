@@ -58,19 +58,19 @@ When you select a server, you'll see its channels organized into categories:
 
 ### Mentions
 
-- `@username` — Mention a specific user (they'll get a notification)
-- `@here` — Mention all online members in the current channel
-- `@everyone` — Mention all members in the server (if you have permission)
-- `@role` — Mention all members with a specific role
+- `@username` - Mention a specific user (they'll get a notification)
+- `@here` - Mention all online members in the current channel
+- `@everyone` - Mention all members in the server (if you have permission)
+- `@role` - Mention all members with a specific role
 
 ### Formatting
 
 Plexichat supports basic text formatting in messages:
 
-- `**bold**` → **bold**
-- `*italic*` → *italic*
-- `` `code` `` → `code`
-- ` ```code block``` ` → multi-line code block
+- `**bold**` -> **bold**
+- `*italic*` -> *italic*
+- `` `code` `` -> `code`
+- ` ```code block``` ` -> multi-line code block
 
 ### File Attachments
 
@@ -119,16 +119,16 @@ If you see content that violates server rules:
 ### Two-Factor Authentication
 
 Protect your account with 2FA:
-1. Go to Settings → Security
+1. Go to Settings -> Security
 2. Click **Enable Two-Factor Authentication**
 3. Scan the QR code with your authenticator app
 4. Enter the verification code to confirm
-5. **Save your backup codes** — these are the only way to recover your account if you lose your authenticator
+5. **Save your backup codes** - these are the only way to recover your account if you lose your authenticator
 
 ## Account Deletion
 
 If you want to delete your account:
-1. Go to Settings → Account
+1. Go to Settings -> Account
 2. Click **Delete Account**
 3. Confirm the deletion
 

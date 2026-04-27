@@ -114,6 +114,44 @@ The following SQLite settings are applied automatically and should not need adju
 - Monitor filesystem I/O wait times during peak usage
 - For high write throughput, consider placing the database on a dedicated disk
 
+**Monitoring SQLite**
+
+SQLite provides limited built-in monitoring compared to PostgreSQL. The following metrics are available through the admin panel:
+
+- **Database Size**: Total size of the database file in bytes
+- **WAL Size**: Size of the Write-Ahead Log file (if WAL mode is enabled)
+- **Page Count**: Number of database pages
+- **Page Size**: Size of each database page (typically 4096 bytes)
+
+**Monitoring Recommendations**
+
+- Monitor database file growth over time to detect unexpected data accumulation
+- Check WAL file size - if it grows large, consider running `PRAGMA wal_checkpoint(TRUNCATE)` to reclaim space
+- Monitor filesystem I/O wait times during peak usage periods
+- Track lock contention by monitoring busy timeout occurrences in application logs
+- Use the provided load testing suite (`pytest src/tests/test_sqlite_load.py`) to validate concurrency limits before production deployment
+
+**Operational Readiness**
+
+SQLite is operationally adequate for:
+- Development and testing environments
+- Small deployments with fewer than 100 concurrent users
+- Single-server deployments without horizontal scaling requirements
+
+SQLite is **not suitable** for:
+- Production deployments with high write volume (>10 writes/sec)
+- Multi-worker deployments (multiple server processes)
+- Large user bases (hundreds to thousands of concurrent users)
+- Deployments requiring high availability or horizontal scaling
+
+**When to Migrate to PostgreSQL**
+
+Consider migrating to PostgreSQL if you observe:
+- Frequent database lock timeouts in application logs
+- Degraded performance during peak usage hours
+- Need for horizontal scaling (multiple server instances)
+- Requirement for advanced database features (full-text search, complex indexes, etc.)
+
 **Backup Strategy**
 
 - SQLite backups are simple file copies, but must be taken while the database is not being written

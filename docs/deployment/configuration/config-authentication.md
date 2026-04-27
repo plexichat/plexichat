@@ -155,7 +155,7 @@ Session management balances security (shorter lifetimes, fewer sessions) against
 
 - When reducing session lifetimes, communicate changes to users in advance.
 - Consider implementing "remember me" options with different lifetimes for different security levels.
-- Monitor session invalidation rates—high rates may indicate users exceeding session limits.
+- Monitor session invalidation rates-high rates may indicate users exceeding session limits.
 
 ---
 
@@ -520,7 +520,7 @@ Account lockout prevents brute-force and credential stuffing attacks. Password c
 **Operational Notes**
 
 - Implement account unlock procedures for legitimate users who are locked out.
-- Monitor lockout rates—high rates may indicate targeted attacks against your deployment.
+- Monitor lockout rates-high rates may indicate targeted attacks against your deployment.
 - Consider CAPTCHA integration for repeated failed login attempts (not currently built-in).
 
 ---

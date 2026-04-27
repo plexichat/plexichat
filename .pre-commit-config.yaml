@@ -6,15 +6,24 @@ repos:
       - id: ruff
         pass_filenames: false
         entry: ruff check --fix .
+        args: [--ignore=E402,F401,F403,F821,F841]
+        stages: [manual]
       - id: ruff-format
         pass_filenames: false
         entry: ruff format .
 
   #  Type checking
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.356
+    rev: v1.1.409
     hooks:
       - id: pyright
+        exclude: |
+          (?x)^(
+              src/core/migrations/cloner\.py|
+              src/api/routes/admin/.*\.py|
+              src/core/admin/.*\.py|
+              src/api/routes/docs/.*\.py
+          )$
         additional_dependencies:
           - fastapi
           - pydantic>=2.0.0

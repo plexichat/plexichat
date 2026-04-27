@@ -67,7 +67,7 @@ Configuration: See `messaging` section in [Default Configuration Reference](defa
 
 The gateway provides persistent, real-time communication using a heartbeat + dispatch model:
 
-- **Connection flow**: Connect → HELLO → IDENTIFY → Heartbeat → Events
+- **Connection flow**: Connect -> HELLO -> IDENTIFY -> Heartbeat -> Events
 - **Resume support**: Reconnect and resume missed events without full re-sync
 - **Dispatch events**: MESSAGE_CREATE, PRESENCE_UPDATE, TYPING_START, and more
 - **Gateway intents**: Subscribe to specific event categories (configurable, some require privileges)
@@ -218,8 +218,8 @@ Configuration: See `selftest` section in [Default Configuration Reference](defau
 
 ## Related Documentation
 
-- [Getting Started](getting-started.md) — First steps with the API
-- [Configuration Overview](configuration.md) — How to configure your server
-- [Security Best Practices](security.md) — Production security guidance
-- [Performance Tuning](performance.md) — Scaling and optimization
-- [API Reference](api/index.md) — Detailed route documentation
+- [Getting Started](getting-started.md) - First steps with the API
+- [Configuration Overview](configuration.md) - How to configure your server
+- [Security Best Practices](security.md) - Production security guidance
+- [Performance Tuning](performance.md) - Scaling and optimization
+- [API Reference](api/index.md) - Detailed route documentation

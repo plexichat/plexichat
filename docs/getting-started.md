@@ -155,10 +155,10 @@ The gateway provides real-time events: new messages, presence updates, typing in
 ### Connection Flow
 
 1. **Connect** to `{{WEBSOCKET_URL}}`
-2. **Receive `HELLO`** — the server sends heartbeat interval and connection details
-3. **Send `IDENTIFY`** — provide your session token to authenticate the connection
-4. **Start heartbeating** — send heartbeat packets at the interval specified in `HELLO`
-5. **Consume events** — receive `DISPATCH` events such as `READY`, `MESSAGE_CREATE`, `PRESENCE_UPDATE`
+2. **Receive `HELLO`** - the server sends heartbeat interval and connection details
+3. **Send `IDENTIFY`** - provide your session token to authenticate the connection
+4. **Start heartbeating** - send heartbeat packets at the interval specified in `HELLO`
+5. **Consume events** - receive `DISPATCH` events such as `READY`, `MESSAGE_CREATE`, `PRESENCE_UPDATE`
 
 ### Example (JavaScript)
 
@@ -234,8 +234,8 @@ Use this portal for conceptual guidance. Use Swagger/ReDoc for specific endpoint
 
 ## 8. Next Steps
 
-- **[API Reference](api/index.md)** — Route-group overviews for every API module
-- **[WebSocket Events](websocket/events.md)** — All gateway event types and payloads
-- **[Configuration Overview](configuration.md)** — Setting up and customizing your server
-- **[Security Best Practices](security.md)** — Authentication, encryption, and production security
-- **[Performance Tuning](performance.md)** — Optimizing for your deployment scale
+- **[API Reference](api/index.md)** - Route-group overviews for every API module
+- **[WebSocket Events](websocket/events.md)** - All gateway event types and payloads
+- **[Configuration Overview](configuration.md)** - Setting up and customizing your server
+- **[Security Best Practices](security.md)** - Authentication, encryption, and production security
+- **[Performance Tuning](performance.md)** - Optimizing for your deployment scale

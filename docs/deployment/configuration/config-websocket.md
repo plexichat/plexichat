@@ -146,7 +146,7 @@ websocket:
 
 - **Empty Origins**: Maximum compatibility, no origin validation, vulnerable to cross-site WebSocket hijacking (CSWSH).
 - **Explicit Origins**: Prevents unauthorized websites from making WebSocket connections to your server. Recommended for production.
-- **Wildcard**: Not supported — explicitly list each allowed origin.
+- **Wildcard**: Not supported - explicitly list each allowed origin.
 
 ---
 
@@ -179,7 +179,7 @@ websocket:
 
 ## Related Documentation
 
-- [Default Configuration Reference](../../default-config.md) — Complete configuration reference
-- [API & Server Configuration](deployment/configuration/config-api.md) — CORS, proxies, debug mode
-- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) — Global, user, IP limits
-- [Security Best Practices](../../security.md) — WebSocket security considerations
+- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
+- [API & Server Configuration](deployment/configuration/config-api.md) - CORS, proxies, debug mode
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) - Global, user, IP limits
+- [Security Best Practices](../../security.md) - WebSocket security considerations

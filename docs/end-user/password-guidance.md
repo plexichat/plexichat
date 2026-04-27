@@ -2,13 +2,13 @@
 
 Your password is the first line of defense for your Plexichat account. This guide explains how to create strong passwords that protect your personal information and communications, based on the recommendations from the National Institute of Standards and Technology (NIST).
 
-**Important Note:** While Plexichat implements strict security measures—including Argon2id password hashing, rate limiting, and protection against common attacks—security ultimately rests in part with you. No system can provide complete protection if passwords are weak or reused across services.
+**Important Note:** While Plexichat implements strict security measures-including Argon2id password hashing, rate limiting, and protection against common attacks-security ultimately rests in part with you. No system can provide complete protection if passwords are weak or reused across services.
 
 ## Why Password Security Matters
 
 ### The Reality of Password Attacks
 
-Cybercriminals use automated tools that can attempt billions of password combinations per second. Weak passwords can be cracked in seconds or minutes, putting your account—and potentially your private messages, personal data, and connections—at risk.
+Cybercriminals use automated tools that can attempt billions of password combinations per second. Weak passwords can be cracked in seconds or minutes, putting your account-and potentially your private messages, personal data, and connections-at risk.
 
 **Common attack methods:**
 
@@ -67,7 +67,7 @@ When creating or changing your password on Plexichat, your password must:
 - **Be at least 12 characters long** (exceeds NIST minimum of 8)
 - **Not be in the top 10,000 most common passwords** (protected against dictionary attacks)
 - **Not contain your username or email address**
-- **Not be a simple variation of a common password** (e.g., Password123 → Password1234)
+- **Not be a simple variation of a common password** (e.g., Password123 -> Password1234)
 
 **Note:** Server administrators can configure these requirements. The default rules require a minimum of 12 characters and include uppercase, lowercase, digit, and special character requirements.
 
@@ -75,7 +75,7 @@ When creating or changing your password on Plexichat, your password must:
 
 ### Passphrases
 
-A **passphrase**—a sequence of random words or a memorable sentence—is more secure and easier to remember than a complex password.
+A **passphrase**-a sequence of random words or a memorable sentence-is more secure and easier to remember than a complex password.
 
 **Why passphrases work better:**
 

@@ -27,6 +27,10 @@ Detailed configuration for each subsystem:
 
 ## Deployment Topics
 
+### Versioning and Updates
+
+- [Versioning and Updates](versioning.md) - Version scheme, update procedures, rollback strategies
+
 ### Docker Deployment
 
 The recommended way to deploy Plexichat:

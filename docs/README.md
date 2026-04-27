@@ -4,15 +4,15 @@ This directory contains the narrative backend documentation served by the custom
 
 ## Primary Entry Points
 
-- `index.md` — portal home page
-- `getting-started.md` — first-call and capability guidance
-- `configuration.md` — high-level configuration areas
-- `deployment.md` — non-sensitive deployment guidance
-- `rate-limits.md` — request-throttling overview
-- `features.md` — backend feature map
-- `security.md` — public security guidance
-- `api/index.md` — REST route-group overview
-- `websocket/index.md` — gateway overview
+- `index.md` - portal home page
+- `getting-started.md` - first-call and capability guidance
+- `configuration.md` - high-level configuration areas
+- `deployment.md` - non-sensitive deployment guidance
+- `rate-limits.md` - request-throttling overview
+- `features.md` - backend feature map
+- `security.md` - public security guidance
+- `api/index.md` - REST route-group overview
+- `websocket/index.md` - gateway overview
 
 ## Additional Reference Pages
 

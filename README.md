@@ -188,6 +188,24 @@ Built-in admin panel for managing feedback, telemetry, admin account security, A
 
 See root README.md for full configuration options.
 
+## ⚠️ Critical Backup Requirements
+
+**Losing the encryption key files will make ALL encrypted data permanently unrecoverable.** The server will refuse to start if keyring decryption fails.
+
+You **must** regularly back up these files from `~/.plexichat/data/`:
+
+| File | What it protects |
+|------|-----------------|
+| `.machine_key` | Root KEK — decrypts all keyrings. **Lose this = lose everything.** |
+| `system_keyring.json` | Admin TOTP, API tokens, encrypted user fields |
+| `file_keyring.json` | Media files at rest (avatars, attachments) |
+| `message_keyring.json` | Message content (when `encrypt_messages: true`) |
+| `plexichat.db` | All database content |
+
+**Always stop the server before copying these files** to ensure consistent backups.
+For production, use `PLEXICHAT_SYSTEM_KEY` env var instead of `.machine_key`.
+See [SECURITY.md](SECURITY.md) for full details.
+
 ## Testing
 
 ### Quick Start
