@@ -43,25 +43,25 @@ The `security.py` module provides comprehensive security testing utilities:
 ### Usage Examples
 
 ```python
-def test_message_content_xss(modules, user_pool, xss_payloads, security_assert):
+def test_message_content_xss(messaging_manager, user_pool, xss_payloads, security_assert):
     """Test XSS prevention in message content."""
     user = user_pool.get_user()
     user2 = user_pool.get_user()
-    dm = modules.messaging.create_dm(user.id, user2.id)
-    
+    dm = messaging_manager.create_dm(user.id, user2.id)
+
     for payload in xss_payloads.SCRIPT_TAGS:
-        msg = modules.messaging.send_message(user.id, dm.id, payload)
+        msg = messaging_manager.send_message(user.id, dm.id, payload)
         security_assert.assert_no_xss(msg.content, payload)
 
-def test_login_sql_injection(modules, sql_payloads):
+def test_login_sql_injection(auth_manager, sql_payloads):
     """Test SQL injection prevention in login."""
     for payload in sql_payloads.BASIC_INJECTION:
         with pytest.raises(Exception):
-            modules.auth.login(payload, "password")
+            auth_manager.login(payload, "password")
 
-def test_username_validation(modules, malformed_inputs):
+def test_username_validation(auth_manager, malformed_inputs):
     """Test username validation with edge cases."""
     for malformed in malformed_inputs.WHITESPACE:
         with pytest.raises(Exception):
-            modules.auth.register(malformed, "test@test.com", "Pass123!")
+            auth_manager.register(malformed, "test@test.com", "Pass123!")
 ```

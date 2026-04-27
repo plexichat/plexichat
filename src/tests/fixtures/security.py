@@ -591,11 +591,11 @@ def test_xss_vectors(
         security_assert: Security assertion fixture
 
     Example:
-        def test_message_xss(modules, user_pool, xss_payloads, security_assert):
+        def test_message_xss(messaging_manager, two_users, xss_payloads, security_assert):
             def send_msg(payload):
-                user = user_pool.get_user()
-                dm = modules.messaging.create_dm(user.id, user_pool.get_user().id)
-                return modules.messaging.send_message(user.id, dm.id, payload)
+                user1, user2 = two_users
+                dm = messaging_manager.create_dm(user1.id, user2.id)
+                return messaging_manager.send_message(user1.id, dm.id, payload)
 
             test_xss_vectors(send_msg, xss_payloads, security_assert)
     """
@@ -622,9 +622,9 @@ def test_sql_injection(
         security_assert: Security assertion fixture
 
     Example:
-        def test_login_sql_injection(modules, sql_payloads, security_assert):
+        def test_login_sql_injection(auth_manager, sql_payloads, security_assert):
             test_sql_injection(
-                lambda p: modules.auth.login(p, "password"),
+                lambda p: auth_manager.login(p, "password"),
                 sql_payloads,
                 security_assert
             )
@@ -644,9 +644,9 @@ def test_input_validation(
         malformed_inputs: Malformed input fixture
 
     Example:
-        def test_username_validation(modules, malformed_inputs):
+        def test_username_validation(auth_manager, malformed_inputs):
             test_input_validation(
-                lambda i: modules.auth.register(i, "test@test.com", "Pass123!"),
+                lambda i: auth_manager.register(i, "test@test.com", "Pass123!"),
                 malformed_inputs
             )
     """

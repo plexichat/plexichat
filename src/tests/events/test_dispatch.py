@@ -148,9 +148,9 @@ class TestEventManager:
 class TestModuleLevelDispatch:
     """Tests for module-level dispatch functions."""
 
-    def test_is_setup_returns_true_after_setup(self):
+    def test_is_setup_returns_true_after_setup(self, events_module):
         """Test is_setup returns True after setup."""
-        assert events.is_setup() is True
+        assert events_module.is_setup() is True
 
     def test_dispatch_without_user_ids_returns_zero(self):
         """Test dispatch without user_ids returns 0."""
