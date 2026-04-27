@@ -79,6 +79,12 @@ def _release_file_lock(lock_file) -> None:
             pass
 
 
+class KeyringDecryptionError(RuntimeError):
+    """Raised when a keyring file cannot be decrypted (KEK mismatch or corruption)."""
+
+    pass
+
+
 class Keyring:
     """
     Manages multiple versions of encryption keys for rotation support.
@@ -127,18 +133,32 @@ class Keyring:
         if not val:
             return None
 
+        # Try Base64 first (standard format)
         try:
-            # Expecting Base64 encoded 32-byte key
             key = base64.b64decode(val)
-            if len(key) != 32:
-                logger.warning(
-                    f"Environment variable {self.env_var} must be a 32-byte key (Base64 encoded)"
-                )
-                return None
-            return key
-        except Exception as e:
-            logger.warning(f"Failed to decode environment variable {self.env_var}: {e}")
-            return None
+            if len(key) == 32:
+                return key
+            logger.debug(
+                f"Environment variable {self.env_var} decoded as Base64 but yielded {len(key)} bytes (expected 32), trying hex"
+            )
+        except Exception:
+            pass
+
+        # Try hex-encoded key (common alternative)
+        try:
+            key = bytes.fromhex(val)
+            if len(key) == 32:
+                return key
+            logger.debug(
+                f"Environment variable {self.env_var} decoded as hex but yielded {len(key)} bytes (expected 32)"
+            )
+        except Exception:
+            pass
+
+        logger.warning(
+            f"Environment variable {self.env_var} must be a 32-byte key (Base64 or hex encoded)"
+        )
+        return None
 
     def _with_file_lock(self, func, *args, **kwargs):
         """Execute function with both thread and file lock."""
@@ -181,10 +201,22 @@ class Keyring:
                     data.get("current_key_source")
                 )
             except Exception as e:
-                logger.error(f"CRITICAL: Failed to decrypt keyring at {self.path}: {e}")
+                logger.critical(
+                    f"FATAL: Failed to decrypt keyring at {self.path}: {e}. "
+                    f"This usually means the KEK (machine key or PLEXICHAT_SYSTEM_KEY) "
+                    f"has changed since the keyring was created. "
+                    f"Restore the original keyring files and machine key from backup, "
+                    f"or set the correct PLEXICHAT_SYSTEM_KEY environment variable. "
+                    f"Keyring files: ~/.plexichat/data/system_keyring.json, "
+                    f"~/.plexichat/data/file_keyring.json, "
+                    f"~/.plexichat/data/message_keyring.json. "
+                    f"Machine key: ~/.plexichat/data/.machine_key"
+                )
 
-                # If keyring decryption fails, it usually means the KEK has changed.
-                # In this case, all cached data encrypted with the old keys is now invalid.
+                # If keyring decryption fails, the server cannot operate safely.
+                # All encrypted data (TOTP secrets, access tokens, messages, files)
+                # is now inaccessible. Rather than running in a broken state,
+                # invalidate caches and raise so the caller can decide whether to abort.
                 try:
                     from src.core.database import invalidate_pattern
 
@@ -201,7 +233,13 @@ class Keyring:
                 self.current_key_source = "unknown"
                 self.keys = {}
                 self.rotated_at = 0
-                return
+
+                # Raise a fatal error — the caller (EncryptionManager / main.py)
+                # should abort startup rather than continue with no encryption keys.
+                raise KeyringDecryptionError(
+                    f"Keyring decryption failed for {self.path}: {e}. "
+                    f"Restore keyring files from backup or set PLEXICHAT_SYSTEM_KEY."
+                )
 
         self._with_file_lock(_load_impl)
 
