@@ -283,37 +283,43 @@ class TestChannelUserCount:
 class TestCrossServerIsolation:
     """Tests for isolation between servers."""
 
-    def test_voice_state_isolated_per_server(self, db_and_modules):
+    def test_voice_state_isolated_per_server(
+        self, auth_manager, server_manager, voice_manager
+    ):
         """Test voice states are isolated per server."""
-        db, auth, servers, relationships, presence, voice = db_and_modules
-
         import uuid
 
         unique_id = uuid.uuid4().hex[:8]
 
-        user = auth.register(
+        user = auth_manager.register(
             username=f"crossuser_{unique_id}",
             email=f"crossuser_{unique_id}@example.com",
             password="TestPass123!",
         )
 
-        server1 = servers.create_server(user.id, f"Server 1 {unique_id}")
-        server2 = servers.create_server(user.id, f"Server 2 {unique_id}")
+        server1 = server_manager.create_server(user.id, f"Server 1 {unique_id}")
+        server2 = server_manager.create_server(user.id, f"Server 2 {unique_id}")
 
-        voice_channel1 = servers.create_channel(
-            user.id, server1.id, "voice-1", channel_type=servers.ChannelType.VOICE
+        voice_channel1 = server_manager.create_channel(
+            user.id,
+            server1.id,
+            "voice-1",
+            channel_type=server_manager.ChannelType.VOICE,
         )
 
-        voice_channel2 = servers.create_channel(
-            user.id, server2.id, "voice-2", channel_type=servers.ChannelType.VOICE
+        voice_channel2 = server_manager.create_channel(
+            user.id,
+            server2.id,
+            "voice-2",
+            channel_type=server_manager.ChannelType.VOICE,
         )
 
-        voice.join_channel(user.id, voice_channel1.id)
+        voice_manager.join_channel(user.id, voice_channel1.id)
 
-        state = voice.get_voice_state(user.id)
+        state = voice_manager.get_voice_state(user.id)
         assert state.server_id == server1.id
 
-        voice.move_to_channel(user.id, voice_channel2.id)
+        voice_manager.move_to_channel(user.id, voice_channel2.id)
 
-        state = voice.get_voice_state(user.id)
+        state = voice_manager.get_voice_state(user.id)
         assert state.server_id == server2.id

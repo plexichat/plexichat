@@ -15,7 +15,6 @@ try:
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
-    pytest.skip("Hypothesis not installed", allow_module_level=True)
 
 from src.core.auth.passwords import validate_username
 from src.core.messaging.content import validate_content
@@ -184,6 +183,7 @@ def buffer_overflow_patterns(draw):
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestZeroWidthCharacters:
     """Tests for zero-width and invisible character handling."""
 
@@ -224,6 +224,7 @@ class TestZeroWidthCharacters:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestHomographAttacks:
     """Tests for homograph attacks and visual spoofing."""
 
@@ -250,6 +251,7 @@ class TestHomographAttacks:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestBidirectionalText:
     """Tests for bidirectional text handling."""
 
@@ -285,6 +287,7 @@ class TestBidirectionalText:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestCombiningCharacters:
     """Tests for combining diacritical marks (Zalgo text)."""
 
@@ -318,6 +321,7 @@ class TestCombiningCharacters:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestUnicodeNormalization:
     """Tests for Unicode normalization handling."""
 
@@ -344,6 +348,7 @@ class TestUnicodeNormalization:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestSQLInjectionPrevention:
     """Tests for SQL injection prevention."""
 
@@ -370,6 +375,7 @@ class TestSQLInjectionPrevention:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestXSSPrevention:
     """Tests for XSS prevention."""
 
@@ -399,6 +405,7 @@ class TestXSSPrevention:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestPathTraversalPrevention:
     """Tests for path traversal prevention."""
 
@@ -417,6 +424,7 @@ class TestPathTraversalPrevention:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestBufferOverflowPrevention:
     """Tests for buffer overflow prevention."""
 
@@ -444,6 +452,7 @@ class TestBufferOverflowPrevention:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestNullBytes:
     """Tests for null byte and special character handling."""
 
@@ -470,6 +479,7 @@ class TestNullBytes:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestEmptyAndWhitespace:
     """Tests for empty and whitespace-only inputs."""
 

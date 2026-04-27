@@ -11,11 +11,22 @@ sys.path.insert(
 from src.utils.email import SMTPEmailSender
 import src.utils.config as config
 
-# Setup config
-config.setup(config_path="non_existent.yaml", default_config={})
-
 
 class TestEmailSender(unittest.TestCase):
+    def setUp(self):
+        """Setup config with tmp_path for each test."""
+        import tempfile
+
+        self.temp_dir = tempfile.mkdtemp()
+        config_path = os.path.join(self.temp_dir, "test_config.yaml")
+        config.setup(config_path=config_path, default_config={})
+
+    def tearDown(self):
+        """Cleanup temp directory."""
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
     @patch("smtplib.SMTP")
     def test_send_email_success(self, mock_smtp):
         """Test successful email sending."""

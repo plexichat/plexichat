@@ -8,7 +8,6 @@ try:
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
-    pytest.skip("Hypothesis not installed", allow_module_level=True)
 
 from src.core.auth.passwords import validate_username, validate_email, validate_password
 from src.core.messaging.content import validate_content
@@ -27,6 +26,7 @@ def _get_server_manager():
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestUsernameValidation:
     """Property-based tests for username validation."""
 
@@ -65,6 +65,7 @@ class TestUsernameValidation:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestEmailValidation:
     """Property-based tests for email validation."""
 
@@ -94,6 +95,7 @@ class TestEmailValidation:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestPasswordValidation:
     """Property-based tests for password validation."""
 
@@ -116,6 +118,7 @@ class TestPasswordValidation:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestServerNameValidation:
     """Property-based tests for server name validation using ServerManager."""
 
@@ -135,6 +138,7 @@ class TestServerNameValidation:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestMessageLimits:
     """Tests for message length limits using real logic."""
 
