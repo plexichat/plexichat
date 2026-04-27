@@ -35,12 +35,17 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
         client_ip = request.client.host if request.client else "unknown"
         result = admin.login(login_data.username, login_data.password, client_ip)
         if not result.success:
+            status_code = 429 if result.rate_limited else 401
             raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": result.error}},
+                status_code=status_code,
+                detail={"error": {"code": status_code, "message": result.error}},
             )
         if result.token:
-            return AdminLoginResponse(status="success", token=result.token)
+            response = AdminLoginResponse(status="success", token=result.token)
+            if result.requires_password_change:
+                response.requires_password_change = True
+                response.message = "Password change required"
+            return response
         if result.requires_otp_setup:
             return AdminLoginResponse(
                 status="otp_setup_required",
@@ -58,12 +63,13 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
                 challenge_token=result.challenge_token,
             )
         return AdminLoginResponse(status="success", token=result.token)
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
         logger.error(f"Login error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -89,13 +95,20 @@ async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
                 status_code=401,
                 detail={"error": {"code": 401, "message": result.error}},
             )
-        return AdminLoginResponse(status="success", token=result.token)
+
+        response = AdminLoginResponse(status="success", token=result.token)
+        if result.requires_password_change:
+            response.requires_password_change = True
+            response.message = "Password change required"
+
+        return response
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
         logger.error(f"OTP error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -112,7 +125,7 @@ async def admin_logout(request: Request):
         from src.core import admin
 
         admin.logout(auth_header[7:])
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message="Logged out successfully")
 
 
 @router.post("/auth/change-password", response_model=SuccessResponse)
@@ -133,7 +146,65 @@ async def admin_change_password(request: Request, body: AdminChangePasswordReque
         raise HTTPException(
             status_code=400, detail={"error": {"code": 400, "message": message}}
         )
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message="Password changed successfully")
+
+
+@router.post(
+    "/auth/force-password-change/{target_admin_id}", response_model=SuccessResponse
+)
+async def admin_force_password_change(request: Request, target_admin_id: str):
+    """
+    Force a specific admin to change their password on next login.
+
+    Requires super_admin permissions.
+    """
+    check_host_restriction(request)
+    current_admin_id = get_admin_from_token(request)
+
+    # Check if current admin has permission to force password changes
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(current_admin_id, "admin.edit", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
+    try:
+        target_id = int(target_admin_id)
+        db.execute(
+            "UPDATE admin_users SET force_password_change = 1 WHERE id = ?",
+            (target_id,),
+        )
+
+        # Log the action
+        from src.core.admin.permissions import log_admin_action
+
+        log_admin_action(
+            db,
+            current_admin_id,
+            "force_password_change",
+            "admin_user",
+            target_id,
+            {"message": f"Forced password change for admin {target_id}"},
+            request.client.host if request.client else "unknown",
+        )
+
+        return SuccessResponse(
+            success=True, message="Password change forced successfully"
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid admin ID"}},
+        )
 
 
 @router.get("/auth/security-status", response_model=AdminSecurityStatusResponse)
@@ -203,7 +274,7 @@ async def admin_disable_otp(request: Request, body: AdminOTPDisableRequest):
             status_code=400,
             detail={"error": {"code": 400, "message": message}},
         )
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message="OTP disabled successfully")
 
 
 @router.post(

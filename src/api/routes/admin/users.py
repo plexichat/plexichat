@@ -31,7 +31,24 @@ async def admin_user_search(request: Request, q: str, limit: int = 20, offset: i
     Supports matching by username or email and provides paginated results.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.read", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     from src.core import admin
 
     try:
@@ -64,11 +81,33 @@ async def admin_list_scheduled_deletions(request: Request):
     List all accounts currently in the 30-day grace period for deletion.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.read", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     import src.api as api
     import time
 
     db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
     if db is None:
         logger.error("Database not available in scheduled deletions endpoint")
         raise HTTPException(
@@ -118,7 +157,24 @@ async def get_user_details(request: Request, user_id: str):
     Retrieve comprehensive information for a specific user.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.read", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     from src.core import admin
 
     try:
@@ -156,7 +212,23 @@ async def update_user_tier(request: Request, user_id: str, update: UserTierUpdat
     Change the account tier (e.g., standard, premium) for a user.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.tier", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
     from src.core import admin
 
     try:
@@ -166,7 +238,7 @@ async def update_user_tier(request: Request, user_id: str, update: UserTierUpdat
                 status_code=404,
                 detail={"error": {"code": 404, "message": "User not found"}},
             )
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message="User tier updated successfully")
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -181,6 +253,23 @@ async def add_user_badge(request: Request, user_id: str, badge: str):
     """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.badges", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     from src.core import admin
 
     try:
@@ -208,6 +297,23 @@ async def remove_user_badge(request: Request, user_id: str, badge: str):
     """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.badges", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     from src.core import admin
 
     try:
@@ -232,7 +338,24 @@ async def get_user_notes(request: Request, user_id: str):
     Retrieve internal administrator notes for a specific user.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.notes", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     from src.core import admin
 
     try:
@@ -253,12 +376,29 @@ async def update_user_notes(request: Request, user_id: str, body: UserNotesUpdat
     """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.notes", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     from src.core import admin
 
     try:
         uid = int(user_id)
         admin.save_user_notes(uid, body.notes, admin_id)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message="User notes saved successfully")
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -275,6 +415,22 @@ async def admin_force_username_change(
     """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.force_username_change", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
     from src.core import admin
 
     try:
@@ -286,7 +442,9 @@ async def admin_force_username_change(
                     user.username, body.reason or "Forced change", admin_id, False
                 )
         admin.force_username_change(uid, True)
-        return SuccessResponse(success=True)
+        return SuccessResponse(
+            success=True, message="Username change forced successfully"
+        )
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -301,6 +459,23 @@ async def admin_cancel_account_deletion(request: Request, user_id: str):
     """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.edit", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     import src.api as api
 
     auth = api.get_auth()
@@ -308,7 +483,9 @@ async def admin_cancel_account_deletion(request: Request, user_id: str):
     try:
         uid = int(user_id)
         auth.cancel_account_deletion(uid, admin_id=int(admin_id))
-        return SuccessResponse(success=True)
+        return SuccessResponse(
+            success=True, message="Account deletion cancelled successfully"
+        )
     except Exception as e:
         logger.error(f"Admin failed to cancel deletion for {user_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -323,6 +500,23 @@ async def admin_delay_account_deletion(
     """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.edit", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     import src.api as api
 
     auth = api.get_auth()
@@ -336,7 +530,9 @@ async def admin_delay_account_deletion(
                 detail="deletion_at must be in the future",
             )
         auth.delay_account_deletion(uid, deletion_at, admin_id=int(admin_id))
-        return SuccessResponse(success=True)
+        return SuccessResponse(
+            success=True, message="Account deletion delayed successfully"
+        )
     except Exception as e:
         logger.error(f"Admin failed to delay deletion for {user_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -350,6 +546,23 @@ async def admin_force_purge_account(request: Request, user_id: str):
     """
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "users.force_purge", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     import src.api as api
 
     auth = api.get_auth()
@@ -357,7 +570,7 @@ async def admin_force_purge_account(request: Request, user_id: str):
     try:
         uid = int(user_id)
         auth.force_purge_account(uid, admin_id=int(admin_id))
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message="User tier updated successfully")
     except Exception as e:
         logger.error(f"Admin failed to force purge {user_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -4,11 +4,11 @@ This directory contains the narrative gateway documentation for the Plexichat ba
 
 ## Pages
 
-- `index.md` — overview and payload shape
-- `connection.md` — connect, identify, heartbeat, and resume flow
-- `events.md` — dispatch event families exposed by the backend
-- `opcodes.md` — opcode values defined in code
-- `close-codes.md` — application close codes and client guidance
+- `index.md` - overview and payload shape
+- `connection.md` - connect, identify, heartbeat, and resume flow
+- `events.md` - dispatch event families exposed by the backend
+- `opcodes.md` - opcode values defined in code
+- `close-codes.md` - application close codes and client guidance
 
 ## Notes
 

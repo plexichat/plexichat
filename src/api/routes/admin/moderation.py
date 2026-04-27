@@ -344,7 +344,7 @@ async def unblock_hash(hash_value: str, request: Request):
             status_code=500,
             detail={"error": {"code": 500, "message": "Failed to unblock hash"}},
         )
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.get("/blocked-users", response_model=List[BlockedUserResponse])
@@ -405,7 +405,7 @@ async def unblock_user(user_id: int, request: Request):
             status_code=500,
             detail={"error": {"code": 500, "message": "Failed to unblock user"}},
         )
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 def _rule_to_response(rule) -> AutomodRuleResponse:
@@ -562,7 +562,7 @@ async def delete_automod_rule(rule_id: int, request: Request):
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Rule not found"}},
             )
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:

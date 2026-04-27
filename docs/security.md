@@ -8,9 +8,9 @@ This guide covers security considerations for deploying and operating Plexichat 
 
 Plexichat uses bearer token authentication for both REST API and WebSocket connections:
 
-- **User sessions**: `Authorization: Bearer <token>` — generated on login, validated on every request
-- **Bot tokens**: `Authorization: Bot <token>` — long-lived, created per-bot, scoped to bot permissions
-- **Admin access token**: `X-API-Access-Token: <token>` — optional additional gate for closed deployments (see [Access Tokens](admin-access-tokens.md))
+- **User sessions**: `Authorization: Bearer <token>` - generated on login, validated on every request
+- **Bot tokens**: `Authorization: Bot <token>` - long-lived, created per-bot, scoped to bot permissions
+- **Admin access token**: `X-API-Access-Token: <token>` - optional additional gate for closed deployments (see [Access Tokens](admin-access-tokens.md))
 
 **Session Configuration**
 
@@ -138,7 +138,7 @@ encryption:
 ```
 
 - Encryption keys are rotated every 180 days by default. Old data is re-encrypted on read (lazy rotation).
-- AES-GCM with 32-byte keys (256-bit) provides authenticated encryption — data cannot be read or tampered with without the key.
+- AES-GCM with 32-byte keys (256-bit) provides authenticated encryption - data cannot be read or tampered with without the key.
 
 ### Transport Encryption
 
@@ -163,7 +163,7 @@ api:
 ```
 
 - The key is `cors_origins`, not `allow_origins`. The default is a specific list, not `["*"]`.
-- When `cors_allow_credentials: true`, you cannot use wildcard origins — browsers reject it.
+- When `cors_allow_credentials: true`, you cannot use wildcard origins - browsers reject it.
 - Only list domains that host your legitimate web client.
 
 ---
@@ -206,7 +206,7 @@ admin_ui:
         - "::1"
         - "10.0.0.100"  # admin workstation
   ```
-- **Never** set `allowed_hosts: ["0.0.0.0/0"]` — this allows access from any IP.
+- **Never** set `allowed_hosts: ["0.0.0.0/0"]` - this allows access from any IP.
 
 **Admin Rate Limiting**
 
@@ -234,8 +234,8 @@ rate_limiting:
 
 **Multipliers**
 
-- `bot_multiplier: 1.5` — bots get 1.5x user limits, not 0.5x. This ensures bots can process events for all their subscribers without hitting limits.
-- `webhook_multiplier: 1.0` — webhooks get standard limits.
+- `bot_multiplier: 1.5` - bots get 1.5x user limits, not 0.5x. This ensures bots can process events for all their subscribers without hitting limits.
+- `webhook_multiplier: 1.0` - webhooks get standard limits.
 
 **Bypass Secret**
 
@@ -295,7 +295,7 @@ oauth:
 
 - `max_states_per_ip: 10` prevents state-token flooding from a single IP.
 - `cleanup_on_verify: true` removes used state tokens to prevent replay attacks.
-- `state_ttl_seconds: 600` (10 minutes) — state tokens expire quickly to limit the attack window.
+- `state_ttl_seconds: 600` (10 minutes) - state tokens expire quickly to limit the attack window.
 
 **Client Secrets**
 
@@ -369,11 +369,78 @@ Use environment variable interpolation (`${VAR_NAME}`) in config files to keep s
 
 ---
 
+## Security Fixes and Hardening
+
+This section documents recent security improvements and hardening measures applied to Plexichat.
+
+### Media Proxy SSRF Mitigation
+
+**Issue**: The media proxy previously disabled SSL verification for HTTP URLs, creating a potential SSRF (Server-Side Request Forgery) vulnerability where a man-in-the-middle attacker on an internal network could modify proxied content.
+
+**Fix Applied**: SSL verification is now enforced for all proxied URLs (both HTTP and HTTPS). The proxy always uses `verify=True` when fetching external content.
+
+**Impact**: This prevents MITM attacks on proxied content. All external URLs now require valid SSL certificates.
+
+**Configuration**: No configuration changes required. The fix is applied in `src/core/media/security/proxy.py`.
+
+**Additional Mitigations Already in Place**:
+- DNS resolution with IP filtering to prevent DNS rebinding
+- Disallows redirects (`allow_redirects=False`)
+- Content type validation (only allows image types)
+- Size limits (max 10MB)
+- Hash verification on cached content
+
+### Admin Panel XSS Hardening
+
+**Issue**: The admin panel templates had inconsistent HTML escaping when using `innerHTML` to render user-provided data. While the admin panel is only accessible to authenticated admins, this could be exploited if an admin account is compromised.
+
+**Fix Applied**: All `innerHTML` usage in admin templates now consistently uses the `escapeHtml()` function for user-provided data. This includes:
+- User IDs and usernames in deletion management
+- Migration details
+- Ticket data
+- User search results
+- Badge names
+- Report data
+- Access token details
+- AutoMod rule names and types
+
+**Impact**: Prevents XSS attacks in the admin panel through user-provided data.
+
+**Files Modified**: `src/api/templates/admin/dashboard.html`
+
+**Note**: The migrations template (`src/api/templates/admin/migrations.html`) uses DOM manipulation methods (`createElement`, `appendChild`, `textContent`) which are inherently safe from XSS.
+
+### SQLite Operational Readiness
+
+**Improvement**: Added SQLite-specific monitoring metrics to the database engine to help operators track SQLite performance and identify when to migrate to PostgreSQL.
+
+**New Metrics Available**:
+- Database size in bytes
+- WAL (Write-Ahead Log) file size
+- Page count and page size
+- Database type indicator
+
+**Monitoring Recommendations**:
+- Monitor database file growth over time
+- Check WAL file size - if large, run `PRAGMA wal_checkpoint(TRUNCATE)`
+- Track lock contention through busy timeout occurrences
+- Use the provided load testing suite (`pytest src/tests/test_sqlite_load.py`) to validate concurrency limits
+
+**When to Migrate to PostgreSQL**:
+- Frequent database lock timeouts in logs
+- Degraded performance during peak usage
+- Need for horizontal scaling (multiple server instances)
+- High write volume (>10 writes/sec)
+
+**Documentation**: See [Database Configuration](deployment/configuration/config-database.md) for detailed SQLite monitoring guidance.
+
+---
+
 ## Related Documentation
 
-- [Authentication Configuration](deployment/configuration/config-authentication.md) — Detailed auth settings and deployment considerations
-- [API & Server Configuration](deployment/configuration/config-api.md) — CORS, proxies, TLS, debug mode
-- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) — Rate limit tuning and bypass configuration
-- [Access Tokens](admin/index.md#access-tokens) — API access token gating (in Admin Guide)
-- [Security Logout](end-user/security-logout.md) — Logout behavior and session invalidation
-- [Access Blocked](end-user/access-blocked.md) — Access denied responses and resolution
+- [Authentication Configuration](deployment/configuration/config-authentication.md) - Detailed auth settings and deployment considerations
+- [API & Server Configuration](deployment/configuration/config-api.md) - CORS, proxies, TLS, debug mode
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) - Rate limit tuning and bypass configuration
+- [Access Tokens](admin/index.md#access-tokens) - API access token gating (in Admin Guide)
+- [Security Logout](end-user/security-logout.md) - Logout behavior and session invalidation
+- [Access Blocked](end-user/access-blocked.md) - Access denied responses and resolution

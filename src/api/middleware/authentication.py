@@ -261,8 +261,9 @@ class AuthenticationMiddleware:
                                         user_agent=user_agent,
                                     )
                                 finally:
-                                    if db:
-                                        db.close()
+                                    # Don't close the DB connection - it's managed by the test framework
+                                    # and the auth module needs to keep using it
+                                    pass
 
                             from fastapi.concurrency import run_in_threadpool
 

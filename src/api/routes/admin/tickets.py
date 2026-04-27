@@ -103,7 +103,7 @@ async def update_ticket_status(
             detail={"error": {"code": 404, "message": "Ticket not found"}},
         )
     admin.update_ticket_status(ticket_id, update.status, admin_id)
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.get("/tickets/{ticket_id}/notes", response_model=List[NoteResponse])

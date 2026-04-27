@@ -6,6 +6,8 @@ This script initializes all core modules and starts the API server.
 Supports clean shutdown (Ctrl+C) with client notification and restart capability.
 """
 
+# pyright: reportAttributeAccessIssue=false
+# Database class uses mixins which pyright's protocol checking doesn't fully recognize
 import os
 import sys
 import signal
@@ -15,7 +17,10 @@ import argparse
 import secrets
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.core.database import Database
 
 # Setup paths
 project_root = os.path.abspath(os.path.dirname(__file__))
@@ -44,7 +49,7 @@ class PlexichatServer:
     def __init__(self):
         self.app = None
         self.server = None
-        self.db = None
+        self.db: Optional["Database"] = None
         self.shutdown_event = threading.Event()
         self.restart_requested = False
         self._modules = {}
@@ -484,6 +489,28 @@ class PlexichatServer:
                 "parallelism", 2
             ),
         )
+
+        # Eagerly validate all keyrings at startup so the server fails fast
+        # if any keyring file is corrupted or the KEK has changed.
+        # system_keyring is already validated by EncryptionManager.__init__
+        # (called inside encryption.setup()), but file_keyring and
+        # message_keyring are loaded lazily — so we validate them now.
+        from src.utils.encryption.core import Keyring as _Keyring
+
+        keyring_paths = [
+            (Path.home() / ".plexichat" / "data" / "file_keyring.json", None),
+            (
+                Path.home() / ".plexichat" / "data" / "message_keyring.json",
+                "PLEXICHAT_MESSAGE_KEY",
+            ),
+        ]
+        for kpath, env_var in keyring_paths:
+            if kpath.exists():
+                kr = _Keyring(kpath, env_var=env_var)
+                if kr.keys:
+                    logger.info(
+                        f"Keyring validated: {kpath.name} (v{kr.current_version})"
+                    )
 
     def initialize_modules(
         self,

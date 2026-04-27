@@ -230,8 +230,8 @@ logging:
 
 **Production Recommendations**
 
-- Set `level: "INFO"` or `"WARNING"` — DEBUG logging is very verbose and impacts I/O performance.
-- `include_exception_details: false` — Exception details in logs can reveal implementation information and increase log volume.
+- Set `level: "INFO"` or `"WARNING"` - DEBUG logging is very verbose and impacts I/O performance.
+- `include_exception_details: false` - Exception details in logs can reveal implementation information and increase log volume.
 - Keep rotation enabled to prevent unbounded log growth.
 
 ---
@@ -290,9 +290,9 @@ monitoring:
 
 ## Related Documentation
 
-- [Database Configuration](deployment/configuration/config-database.md) — PostgreSQL/SQLite setup and connection pooling
-- [Redis Configuration](deployment/configuration/config-redis.md) — Caching, session storage, and scaling
-- [WebSocket Configuration](deployment/configuration/config-websocket.md) — Gateway tuning for concurrent connections
-- [Search Configuration](deployment/configuration/config-search.md) — Search backend and indexing performance
-- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) — Rate limit tuning
-- [Default Configuration Reference](default-config.md) — Complete configuration reference
+- [Database Configuration](deployment/configuration/config-database.md) - PostgreSQL/SQLite setup and connection pooling
+- [Redis Configuration](deployment/configuration/config-redis.md) - Caching, session storage, and scaling
+- [WebSocket Configuration](deployment/configuration/config-websocket.md) - Gateway tuning for concurrent connections
+- [Search Configuration](deployment/configuration/config-search.md) - Search backend and indexing performance
+- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) - Rate limit tuning
+- [Default Configuration Reference](default-config.md) - Complete configuration reference

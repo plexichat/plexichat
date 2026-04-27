@@ -53,8 +53,10 @@ aiortc==1.14.0              # Pure Python WebRTC implementation for SFU (default
 
 # Utilities
 python-multipart==0.0.26    # File uploads
-python-dotenv==1.0.0       # Environment variables
+python-dotenv==1.2.2       # Environment variables (CVE-2026-28684 fix)
 python-dateutil==2.8.0     # Date/time utilities for scheduled events
+mistune==3.0.2             # Markdown renderer for documentation
+markdown==3.7              # Markdown renderer for admin notes
 
 # Image Processing (optional, for media)
 pillow==12.2.0

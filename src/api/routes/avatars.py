@@ -330,7 +330,7 @@ async def delete_my_avatar(
                 f"Failed to invalidate cache for user {current_user.user_id} after avatar deletion: {e}"
             )
 
-        return SuccessResponse(success=deleted)
+        return SuccessResponse(success=deleted, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -761,7 +761,7 @@ async def delete_server_icon(
                 f"Failed to invalidate cache for server {sid} after icon deletion: {e}"
             )
 
-        return SuccessResponse(success=deleted)
+        return SuccessResponse(success=deleted, message=None)
     except HTTPException:
         raise
     except Exception as e:

@@ -17,7 +17,8 @@ import utils.config as global_config
 import utils.logger as logger
 from .config import get_api_config
 from .routes import create_api_router, create_docs_router, is_docs_enabled
-from .routes.docs import get_docs_config, render_redoc_page, render_swagger_ui_page
+from .routes.docs import get_docs_config
+from .routes.docs.openapi import render_redoc_page, render_swagger_ui_page
 
 # Local in-memory cache for media file metadata to avoid redundant DB lookups
 from collections import OrderedDict

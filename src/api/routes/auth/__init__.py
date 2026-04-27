@@ -863,7 +863,7 @@ async def logout(
                 f"Failed to revoke session {current_user.session_id} during logout: {e}"
             )
 
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.post(
@@ -1060,7 +1060,7 @@ async def revoke_session(
     try:
         auth.revoke_session(current_user.user_id, sid)
         logger.info(f"User {current_user.user_id} revoked session {sid}")
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except UserNotFoundError:
         logger.warning(f"Session {sid} not found for user {current_user.user_id}")
         raise HTTPException(
@@ -1249,7 +1249,7 @@ async def confirm_2fa_setup(
 
     if success:
         logger.info(f"2FA confirmed and enabled for user {current_user.user_id}")
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     else:
         logger.warning(
             f"2FA confirm failed for user {current_user.user_id}: Invalid code"
@@ -1306,7 +1306,7 @@ async def disable_2fa(
     try:
         auth.disable_2fa(current_user.user_id, password, code)
         logger.info(f"2FA disabled for user {current_user.user_id}")
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except InvalidCredentialsError:
         logger.warning(
             f"2FA disable failed for user {current_user.user_id}: Invalid password"
@@ -1488,11 +1488,11 @@ async def request_password_reset(body: PasswordResetRequest) -> SuccessResponse:
                     db.close()
 
         await run_in_threadpool(_request_reset_with_cleanup, body.email)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except Exception as e:
         logger.error(f"Password reset request failed: {e}", exc_info=True)
         # Still return success to prevent email enumeration
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
 
 
 @router.post(
@@ -1531,7 +1531,7 @@ async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
             _reset_with_cleanup, body.token, body.new_password
         )
         if success:
-            return SuccessResponse(success=True)
+            return SuccessResponse(success=True, message=None)
         else:
             raise TokenInvalidError("Invalid or expired token")
     except TokenInvalidError as e:
@@ -1886,7 +1886,7 @@ async def revoke_passkey(
                 detail={"error": {"code": 404, "message": "Passkey not found"}},
             )
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except Exception as e:
         logger.error(f"Revoke passkey failed: {e}", exc_info=True)
         raise HTTPException(
@@ -1934,7 +1934,7 @@ async def rename_passkey(
                 detail={"error": {"code": 404, "message": "Passkey not found"}},
             )
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except Exception as e:
         logger.error(f"Rename passkey failed: {e}", exc_info=True)
         raise HTTPException(
