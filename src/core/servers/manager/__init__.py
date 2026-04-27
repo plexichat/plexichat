@@ -100,6 +100,12 @@ class ServerManager(BaseManager):
         super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._config = self._load_config()
+        self._encrypt_descriptions = config.get(
+            "encryption.encrypt_descriptions", False
+        )
+        self._encrypt_thread_names = config.get(
+            "encryption.encrypt_thread_names", False
+        )
         self.instance_id = secrets.token_hex(4)
 
         # Cache TTL in seconds
@@ -283,12 +289,52 @@ class ServerManager(BaseManager):
         now = self._get_timestamp()
         server_id = self._generate_id()
 
-        self._db.execute(
-            """INSERT INTO srv_servers 
-               (id, name, owner_id, description, icon_url, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (server_id, name, owner_id, description, icon_url, now, now),
-        )
+        # Encrypt description if enabled
+        description_encrypted = None
+        if description and self._encrypt_descriptions:
+            from src.utils.encryption import encrypt_data
+
+            description_encrypted = encrypt_data(description)
+
+        # Check if description column exists (for backward compatibility with migration 028)
+        # Migration 028 drops the unencrypted description column
+        try:
+            self._db.execute("SELECT description FROM srv_servers LIMIT 1")
+            has_description_column = True
+        except Exception:
+            has_description_column = False
+
+        if has_description_column:
+            self._db.execute(
+                """INSERT INTO srv_servers 
+                   (id, name, owner_id, description, description_encrypted, icon_url, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    server_id,
+                    name,
+                    owner_id,
+                    description,
+                    description_encrypted,
+                    icon_url,
+                    now,
+                    now,
+                ),
+            )
+        else:
+            self._db.execute(
+                """INSERT INTO srv_servers 
+                   (id, name, owner_id, description_encrypted, icon_url, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    server_id,
+                    name,
+                    owner_id,
+                    description_encrypted,
+                    icon_url,
+                    now,
+                    now,
+                ),
+            )
 
         # Create default @everyone role
         role_id = self._generate_id()
@@ -506,8 +552,24 @@ class ServerManager(BaseManager):
             changes["name"] = {"old": server.name, "new": name}
 
         if description is not None:
-            updates.append("description = ?")
-            params.append(description)
+            # Only encrypt if description has changed and encryption is enabled
+            if self._encrypt_descriptions and description != server.description:
+                from src.utils.encryption import encrypt_data
+
+                description_encrypted = encrypt_data(description)
+                updates.append("description_encrypted = ?")
+                params.append(description_encrypted)
+
+            # Check if description column exists (for backward compatibility with migration 028)
+            try:
+                self._db.execute("SELECT description FROM srv_servers LIMIT 1")
+                has_description_column = True
+            except Exception:
+                has_description_column = False
+
+            if has_description_column:
+                updates.append("description = ?")
+                params.append(description)
             changes["description"] = {"old": server.description, "new": description}
 
         if icon_url is not None:
@@ -1664,11 +1726,29 @@ class ServerManager(BaseManager):
         except (KeyError, IndexError):
             pass
 
+        # Decrypt description if encryption is enabled and encrypted data exists
+        # Handle missing description column (migration 028 drops it)
+        description = None
+        try:
+            description = row["description"]
+        except (KeyError, IndexError):
+            # Column doesn't exist, use encrypted version only
+            pass
+
+        if self._encrypt_descriptions and row.get("description_encrypted"):
+            from src.utils.encryption import decrypt_data
+
+            try:
+                description = decrypt_data(row["description_encrypted"])
+            except Exception as e:
+                logger.warning(f"Failed to decrypt server description {sid}: {e}")
+                # Keep existing description or None
+
         return Server(
             id=row["id"],
             name=row["name"],
             owner_id=row["owner_id"],
-            description=row["description"],
+            description=description,
             icon_path=row["icon_url"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -1732,6 +1812,20 @@ class ServerManager(BaseManager):
 
     def _row_to_channel(self, row: Dict[str, Any]) -> Channel:
         """Convert database row to Channel model."""
+        # Decrypt topic if encryption is enabled and encrypted data exists
+        topic = None
+        if self._encrypt_descriptions and row.get("topic_encrypted"):
+            from src.utils.encryption import decrypt_data
+
+            try:
+                topic = decrypt_data(row["topic_encrypted"])
+            except Exception as e:
+                logger.warning(f"Failed to decrypt channel topic {row['id']}: {e}")
+                topic = None
+        elif row.get("topic"):
+            # Fallback to unencrypted topic for backward compatibility
+            topic = row["topic"]
+
         return Channel(
             id=row["id"],
             server_id=row["server_id"],
@@ -1739,7 +1833,7 @@ class ServerManager(BaseManager):
             channel_type=ChannelType(row["channel_type"]),
             category_id=row["category_id"],
             position=row["position"],
-            topic=row["topic"],
+            topic=topic,
             nsfw=bool(row["nsfw"]),
             slowmode_seconds=row.get("slowmode_seconds", 0),
             read_receipts_enabled=bool(row.get("read_receipts_enabled", True)),

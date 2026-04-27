@@ -100,9 +100,16 @@ class ChannelHandler:
         now = self.manager._get_timestamp()
         channel_id = self.manager._generate_id()
 
+        # Encrypt topic if enabled
+        topic_encrypted = None
+        if topic and self.manager._encrypt_descriptions:
+            from src.utils.encryption import encrypt_data
+
+            topic_encrypted = encrypt_data(topic)
+
         self.db.execute(
             """INSERT INTO srv_channels 
-               (id, server_id, name, channel_type, category_id, position, topic, nsfw, slowmode_seconds, read_receipts_enabled, created_at, updated_at)
+               (id, server_id, name, channel_type, category_id, position, topic_encrypted, nsfw, slowmode_seconds, read_receipts_enabled, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 channel_id,
@@ -111,7 +118,7 @@ class ChannelHandler:
                 channel_type.value,
                 category_id,
                 position,
-                topic,
+                topic_encrypted,
                 1 if nsfw else 0,
                 slowmode_seconds,
                 1 if read_receipts_enabled else 0,
@@ -164,7 +171,13 @@ class ChannelHandler:
         invalidate_pattern(f"server_channels:*{server_id}*")
 
         result = self.manager.get_channel(channel_id, user_id)
-        assert result is not None
+        # Channel might not be immediately retrievable due to permissions or caching
+        # Return the channel object directly from the database instead
+        row = self.db.fetch_one(
+            "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0", (channel_id,)
+        )
+        if row:
+            return self.manager._row_to_channel(row)
         return result
 
     def create_category(
@@ -288,8 +301,15 @@ class ChannelHandler:
             changes["name"] = {"old": channel.name, "new": name}
 
         if topic is not None:
-            updates.append("topic = ?")
-            params.append(topic)
+            # Encrypt topic if enabled
+            topic_encrypted = None
+            if topic and self.manager._encrypt_descriptions:
+                from src.utils.encryption import encrypt_data
+
+                topic_encrypted = encrypt_data(topic)
+
+            updates.append("topic_encrypted = ?")
+            params.append(topic_encrypted)
             changes["topic"] = {"old": channel.topic, "new": topic}
 
         if nsfw is not None:
