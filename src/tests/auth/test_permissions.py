@@ -11,6 +11,7 @@ from src.core.auth.permissions import (
     DEFAULT_BOT_PERMISSIONS,
     BOT_RESTRICTED_PERMISSIONS,
 )
+from unittest.mock import patch
 
 
 class TestPermissions:
@@ -128,29 +129,60 @@ class TestPermissions:
                 or DEFAULT_BOT_PERMISSIONS.get(restricted) is not True
             )
 
-    def test_has_capability_integration(self, logged_in_user):
+    def test_has_capability_integration(self, db, auth_manager):
         """Test has_capability with real token."""
-        user, token, auth, username = logged_in_user
+        from src.utils import encryption
 
-        token_info = auth.verify_token(token)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username="perm_test",
+                email="perm_test@example.com",
+                password="TestPass123!",
+            )
 
-        assert auth.has_capability(token_info, "messages.send") is True
-        assert auth.has_capability(token_info, "admin.system") is False
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login("perm_test", "TestPass123!")
 
-    def test_require_capability_passes(self, logged_in_user):
+        token_info = auth_manager.verify_token(result.token)
+
+        assert auth_manager.has_capability(token_info, "messages.send") is True
+        assert auth_manager.has_capability(token_info, "admin.system") is False
+
+    def test_require_capability_passes(self, db, auth_manager):
         """Test require_capability passes for valid permission."""
-        user, token, auth, username = logged_in_user
+        from src.utils import encryption
 
-        token_info = auth.verify_token(token)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username="req_perm_test",
+                email="req_perm_test@example.com",
+                password="TestPass123!",
+            )
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login("req_perm_test", "TestPass123!")
+
+        token_info = auth_manager.verify_token(result.token)
 
         # Should not raise
-        auth.require_capability(token_info, "messages.send")
+        auth_manager.require_capability(token_info, "messages.send")
 
-    def test_require_capability_raises(self, logged_in_user):
+    def test_require_capability_raises(self, db, auth_manager):
         """Test require_capability raises for missing permission."""
-        user, token, auth, username = logged_in_user
+        from src.utils import encryption
+        from src.core.auth.exceptions import PermissionDeniedError
 
-        token_info = auth.verify_token(token)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username="req_raise_test",
+                email="req_raise_test@example.com",
+                password="TestPass123!",
+            )
 
-        with pytest.raises(auth.PermissionDeniedError):
-            auth.require_capability(token_info, "admin.system")
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login("req_raise_test", "TestPass123!")
+
+        token_info = auth_manager.verify_token(result.token)
+
+        with pytest.raises(PermissionDeniedError):
+            auth_manager.require_capability(token_info, "admin.system")
