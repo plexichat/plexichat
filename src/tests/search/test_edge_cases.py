@@ -10,10 +10,6 @@ from src.core.search.exceptions import (
 )
 from src.core.search.models import ParsedQuery
 
-pytestmark = pytest.mark.skip(
-    "Search edge cases tests have fixture issues - temporarily disabled"
-)
-
 
 @pytest.mark.search
 class TestQueryEdgeCases:

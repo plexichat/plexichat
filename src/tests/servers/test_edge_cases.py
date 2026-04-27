@@ -4,14 +4,6 @@ Tests for edge cases and error handling.
 
 import pytest
 
-pytest.skip(
-    "Skipping entire file: Edge case tests need fixture redesign. "
-    "Many of these tests rely on fixtures that don't properly set up the required state "
-    "for edge case testing. The fixture architecture needs to be refactored to support "
-    "proper edge case scenarios. This will be addressed in a future PR.",
-    allow_module_level=True,
-)
-
 
 class TestServerEdgeCases:
     """Edge cases for server operations."""

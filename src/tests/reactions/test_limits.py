@@ -6,10 +6,6 @@ import pytest
 import uuid
 from src.core.reactions import ReactionLimitError
 
-pytestmark = pytest.mark.skip(
-    "Reaction limits tests have teardown timeout issues - temporarily disabled"
-)
-
 
 class TestMaxReactionsLimit:
     """Tests for maximum unique reactions per message."""

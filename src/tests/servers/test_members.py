@@ -6,11 +6,6 @@ import uuid
 
 import pytest
 
-pytest.skip(
-    "Member API has multiple failures - needs API implementation review",
-    allow_module_level=True,
-)
-
 
 class TestAddMember:
     """Tests for adding members."""

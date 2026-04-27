@@ -5,10 +5,6 @@ Tests for search permission checks.
 import pytest
 import uuid
 
-pytestmark = pytest.mark.skip(
-    "Search permissions tests have fixture issues - temporarily disabled"
-)
-
 
 @pytest.mark.search
 class TestMessageSearchPermissions:

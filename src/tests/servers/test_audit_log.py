@@ -4,13 +4,6 @@ Tests for audit log operations.
 
 import pytest
 
-pytest.skip(
-    "Skipping entire file: Audit log API has architectural issues that need deeper work. "
-    "The audit log functionality requires significant refactoring to properly track and "
-    "retrieve server events. This will be addressed in a future PR.",
-    allow_module_level=True,
-)
-
 
 class TestGetAuditLog:
     """Tests for getting audit log."""

@@ -4,10 +4,6 @@ Tests for permission checks in server channels.
 
 import pytest
 
-pytest.skip(
-    "Permission system needs review - integration with auth and servers modules requires architectural work",
-    allow_module_level=True,
-)
 import uuid
 from src.core.reactions import PermissionDeniedError
 

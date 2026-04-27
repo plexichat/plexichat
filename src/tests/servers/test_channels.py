@@ -4,14 +4,6 @@ Tests for channel operations.
 
 import pytest
 
-pytest.skip(
-    "Skipping entire file: Channel API has architectural issues that need deeper work. "
-    "The channel management functionality requires significant refactoring to properly "
-    "handle channel creation, updates, and deletion with proper integration with messaging. "
-    "This will be addressed in a future PR.",
-    allow_module_level=True,
-)
-
 
 class TestCreateChannel:
     """Tests for channel creation."""

@@ -173,9 +173,6 @@ class TestPublicServerListing:
 class TestServerBumping:
     """Test server bumping functionality."""
 
-    @pytest.mark.skip(
-        "Bump cooldown (4 hours) makes this test difficult to run in isolation"
-    )
     def test_bump_server(self, db_and_search):
         """Test bumping a server."""
         db, auth, messaging, servers, search = db_and_search
