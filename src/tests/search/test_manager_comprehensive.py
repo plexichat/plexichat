@@ -27,6 +27,10 @@ class TestSearchErrors:
 
     def test_search_messages(self, search_manager, test_db):
         """Search messages."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -48,7 +52,7 @@ class TestSearchErrors:
         """Search users."""
         test_db.execute("DELETE FROM auth_users")
         test_db.execute(
-            "INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (1001, 'testuser', 'test@example.com', 'user', 'hash', '{}', 1000, 1000, 1)"
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (1001, 'testuser', 'user', 'hash', '{}', 1000, 1000, 1)"
         )
 
         search_manager.index_user(1001, "testuser")
@@ -72,6 +76,10 @@ class TestSearchErrors:
 
     def test_search_with_filters(self, search_manager, test_db):
         """Search with filters."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -91,6 +99,10 @@ class TestSearchErrors:
 
     def test_search_with_author_filter(self, search_manager, test_db):
         """Search with author filter."""
+        # Create users first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'user1', 'user', 'hash', '{}', 1000, 1000), (2, 'user2', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -113,6 +125,10 @@ class TestSearchErrors:
 
     def test_search_pagination(self, search_manager, test_db):
         """Search with pagination."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -149,6 +165,10 @@ class TestSearchMessageFeatures:
 
     def test_search_with_date_range(self, search_manager, test_db):
         """Search messages with date range."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -171,6 +191,10 @@ class TestSearchMessageFeatures:
 
     def test_search_with_attachments_only(self, search_manager, test_db):
         """Search messages with attachments."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -200,6 +224,10 @@ class TestSearchMessageFeatures:
 
     def test_search_mentions_only(self, search_manager, test_db):
         """Search messages mentioning user."""
+        # Create users first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'user1', 'user', 'hash', '{}', 1000, 1000), (2, 'user2', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -219,6 +247,10 @@ class TestSearchMessageFeatures:
 
     def test_search_case_insensitive(self, search_manager, test_db):
         """Search is case insensitive."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -238,6 +270,10 @@ class TestSearchMessageFeatures:
 
     def test_search_partial_match(self, search_manager, test_db):
         """Search matches partial words."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -265,7 +301,7 @@ class TestSearchUserFeatures:
         """Search users by username."""
         test_db.execute("DELETE FROM auth_users")
         test_db.execute(
-            "INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (1010, 'john_doe', 'john@example.com', 'user', 'hash', '{}', 1000, 1000, 1)"
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (1010, 'john_doe', 'user', 'hash', '{}', 1000, 1000, 1)"
         )
 
         search_manager.index_user(1010, "john_doe")
@@ -276,7 +312,7 @@ class TestSearchUserFeatures:
     def test_search_users_partial(self, search_manager, test_db):
         """Search users with partial match."""
         test_db.execute(
-            "INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (11, 'developer123', 'dev@example.com', 'user', 'hash', '{}', 1000, 1000, 1)"
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (11, 'developer123', 'user', 'hash', '{}', 1000, 1000, 1)"
         )
 
         search_manager.index_user(11, "developer123")
@@ -287,7 +323,7 @@ class TestSearchUserFeatures:
     def test_search_users_exclude_bots(self, search_manager, test_db):
         """Search excludes bots by default."""
         test_db.execute(
-            "INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (12, 'botuser', 'bot@example.com', 'bot', 'hash', '{}', 1000, 1000, 1)"
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (12, 'botuser', 'bot', 'hash', '{}', 1000, 1000, 1)"
         )
 
         search_manager.index_user(12, "botuser", is_bot=True)
@@ -299,8 +335,8 @@ class TestSearchUserFeatures:
         """User search respects limit."""
         for i in range(10):
             test_db.execute(
-                "INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (?, ?, ?, 'user', 'hash', '{{}}', 1000, 1000, 1)",
-                (100 + i + 1, f"user{i}", f"user{i}@example.com"),
+                "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (?, ?, 'user', 'hash', '{}', 1000, 1000, 1)",
+                (100 + i + 1, f"user{i}"),
             )
             search_manager.index_user(100 + i + 1, f"user{i}")
 
@@ -336,6 +372,7 @@ class TestSearchServerFeatures:
         results = search_manager.search_servers(1, "private")
         assert len(results) == 0
 
+    @pytest.mark.skip("Description column removed in migration 028")
     def test_search_servers_with_description(self, search_manager, test_db):
         """Search servers includes description."""
         test_db.execute(
@@ -358,6 +395,10 @@ class TestSearchIndexing:
 
     def test_index_message(self, search_manager, test_db):
         """Index new message."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -379,6 +420,10 @@ class TestSearchIndexing:
 
     def test_remove_from_index(self, search_manager, test_db):
         """Remove message from index."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -401,6 +446,10 @@ class TestSearchIndexing:
 
     def test_reindex_all(self, search_manager, test_db):
         """Reindex all messages."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -420,6 +469,10 @@ class TestSearchPermissions:
 
     def test_search_private_conversation(self, search_manager, test_db):
         """Cannot search conversations user has no access to."""
+        # Create users first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'user1', 'user', 'hash', '{}', 1000, 1000), (2, 'user2', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -435,6 +488,10 @@ class TestSearchPermissions:
 
     def test_search_server_without_membership(self, search_manager, test_db):
         """Cannot search servers user is not member of."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (2, 'user2', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Private Server', 2, 1000, 1000)"
         )
@@ -451,6 +508,10 @@ class TestSearchSorting:
 
     def test_search_sort_by_relevance(self, search_manager, test_db):
         """Search results sorted by relevance."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -477,6 +538,10 @@ class TestSearchSorting:
 
     def test_search_sort_by_date(self, search_manager, test_db):
         """Search results sorted by date."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -503,6 +568,10 @@ class TestSearchHighlighting:
 
     def test_highlight_search_terms(self, search_manager, test_db):
         """Search results include highlights."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -528,6 +597,10 @@ class TestSearchPerformance:
 
     def test_search_with_cache(self, search_manager, test_db):
         """Search uses cache."""
+        # Create user first for foreign key constraint
+        test_db.execute(
+            "INSERT INTO auth_users (id, username, account_type, password_hash, permissions, created_at, updated_at) VALUES (1, 'testuser', 'user', 'hash', '{}', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
