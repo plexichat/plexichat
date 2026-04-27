@@ -146,9 +146,10 @@ class TestCreatePoll:
 class TestGetPoll:
     """Tests for getting polls."""
 
-    def test_get_poll_success(self, poll_with_options):
+    def test_get_poll_success(self, poll_with_options, dm_with_message):
         """Test getting a poll successfully."""
-        user1, user2, poll, polls, messaging = poll_with_options
+        poll = poll_with_options
+        user1, user2, dm, msg, polls, messaging = dm_with_message
 
         retrieved = polls.get_poll(poll.id, user1.id)
 
