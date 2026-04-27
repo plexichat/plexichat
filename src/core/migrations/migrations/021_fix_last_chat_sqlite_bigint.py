@@ -1,11 +1,5 @@
 """
-Fix last-chat tables to use BIGINT-compatible identifiers on SQLite.
-
-On SQLite, ALTER COLUMN is not supported, so tables must be recreated.
-This migration:
-- Creates new tables with proper column types
-- Copies ALL existing data, preserving NULLs where they exist
-- Verifies row counts match before dropping old tables
+Fix last-chat tables for SQLite to use BIGINT-compatible identifiers.
 - Only drops old tables after verification passes
 
 Safety: If row count verification fails, the old tables are preserved and
@@ -55,12 +49,17 @@ def _count_rows(db, table: str) -> int:
 
 
 def up(db):
+    logger.info("Migration 021: Starting last-chat BIGINT fix")
     if db.type == "postgres":
         # Only add missing columns; migration 020 already handled BIGINT conversion
+        logger.info(
+            "Migration 021: Adding unread_count column to user_recent_chats (PostgreSQL)"
+        )
         _add_postgres_unread_count(db)
         return
 
     if db.type != "sqlite":
+        logger.info("Migration 021: Skipping (not SQLite)")
         return
 
     # --- user_last_chat ---
@@ -158,14 +157,17 @@ def up(db):
 
 
 def down(db):
-    """Rollback is not supported for this migration.
+    """Rollback: Not supported due to destructive table recreation.
 
-    The table recreation changes the column types which cannot be
-    safely reversed without another full table recreation. The data
-    is preserved in the new schema, so rolling back would risk data loss.
+    This migration recreates tables to fix column types for SQLite.
+    Rollback would require another destructive recreation, so we don't support it.
     """
+    logger.info(
+        "Migration 021 rollback: Not supported (table recreation is destructive)"
+    )
     logger.warning(
         "Migration 021 rollback: Not supported - table structure change "
-        "cannot be safely reversed. Data is preserved in current schema."
+        "cannot be safely reversed without another full table recreation. The data "
+        "is preserved in the new schema, so rolling back would risk data loss."
     )
     return

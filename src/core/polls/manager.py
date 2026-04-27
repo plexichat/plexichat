@@ -46,6 +46,7 @@ class PollManager(BaseManager):
         super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._config = self._load_config()
+        self._encrypt_polls = config.get("encryption.encrypt_polls", False)
 
         logger.info("Poll module initialized")
 
@@ -176,15 +177,23 @@ class PollManager(BaseManager):
         try:
             self._db.begin_transaction()
 
+            # Encrypt question if enabled
+            question_encrypted = None
+            if self._encrypt_polls:
+                from src.utils.encryption import encrypt_data
+
+                question_encrypted = encrypt_data(question)
+
             self._db.execute(
                 """INSERT INTO poll_polls 
-                   (id, message_id, question, created_by, created_at, ends_at, 
+                   (id, message_id, question, question_encrypted, created_by, created_at, ends_at, 
                     allow_multiple_choice, results_visibility)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     poll_id,
                     message_id,
                     question,
+                    question_encrypted,
                     user_id,
                     now,
                     ends_at,
@@ -196,10 +205,16 @@ class PollManager(BaseManager):
 
             for i, option_text in enumerate(validated_options):
                 option_id = self._generate_id()
+                # Encrypt option if enabled
+                option_encrypted = None
+                if self._encrypt_polls:
+                    from src.utils.encryption import encrypt_data
+
+                    option_encrypted = encrypt_data(option_text)
                 self._db.execute(
-                    """INSERT INTO poll_options (id, poll_id, text, position)
-                       VALUES (?, ?, ?, ?)""",
-                    (option_id, poll_id, option_text, i),
+                    """INSERT INTO poll_options (id, poll_id, text, text_encrypted, position)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (option_id, poll_id, option_text, option_encrypted, i),
                     auto_commit=False,
                 )
 
@@ -484,19 +499,42 @@ class PollManager(BaseManager):
         """Convert database row to Poll."""
         poll_id = row["id"]
 
+        # Decrypt question if encryption is enabled and encrypted data exists
+        question = row["question"]
+        if self._encrypt_polls and row.get("question_encrypted"):
+            from src.utils.encryption import decrypt_data
+
+            try:
+                question = decrypt_data(row["question_encrypted"])
+            except Exception as e:
+                logger.warning(f"Failed to decrypt poll question {poll_id}: {e}")
+                question = row["question"]  # Fallback to unencrypted
+
         option_rows = self._db.fetch_all(
             "SELECT * FROM poll_options WHERE poll_id = ? ORDER BY position", (poll_id,)
         )
 
-        options = [
-            PollOption(
-                id=opt["id"],
-                poll_id=opt["poll_id"],
-                text=opt["text"],
-                position=opt["position"],
+        options = []
+        for opt in option_rows:
+            # Decrypt option text if encryption is enabled and encrypted data exists
+            option_text = opt["text"]
+            if self._encrypt_polls and opt.get("text_encrypted"):
+                from src.utils.encryption import decrypt_data
+
+                try:
+                    option_text = decrypt_data(opt["text_encrypted"])
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt poll option {opt['id']}: {e}")
+                    option_text = opt["text"]  # Fallback to unencrypted
+
+            options.append(
+                PollOption(
+                    id=opt["id"],
+                    poll_id=opt["poll_id"],
+                    text=option_text,
+                    position=opt["position"],
+                )
             )
-            for opt in option_rows
-        ]
 
         total_votes_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM poll_votes WHERE poll_id = ?", (poll_id,)
@@ -510,7 +548,7 @@ class PollManager(BaseManager):
         return Poll(
             id=row["id"],
             message_id=row["message_id"],
-            question=row["question"],
+            question=question,
             created_by=row["created_by"],
             created_at=row["created_at"],
             ends_at=row["ends_at"],

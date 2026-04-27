@@ -2,29 +2,24 @@
 Add internal_notes column to auth_users table.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def up(db):
     """Apply the migration."""
-    if db.type == "sqlite":
-        rows = db.fetch_all("PRAGMA table_info(auth_users)")
-        columns = [row["name"] for row in rows]
-        if "internal_notes" not in columns:
-            db.execute("ALTER TABLE auth_users ADD COLUMN internal_notes TEXT")
-    else:
-        # Postgres
-        row = db.fetch_one("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name='auth_users' AND column_name='internal_notes'
-        """)
-        if not row:
-            db.execute("ALTER TABLE auth_users ADD COLUMN internal_notes TEXT")
+    logger.info("Migration 010: Starting internal_notes column addition")
+    if not db.column_exists("auth_users", "internal_notes"):
+        db.execute("ALTER TABLE auth_users ADD COLUMN internal_notes TEXT")
 
 
 def down(db):
     """Rollback the migration."""
-    if db.type != "sqlite":
+    logger.info("Migration 010 rollback: Starting rollback")
+    if db.type == "postgres":
         try:
-            db.execute("ALTER TABLE auth_users DROP COLUMN IF EXISTS internal_notes")
+            if db.column_exists("auth_users", "internal_notes"):
+                db.execute("ALTER TABLE auth_users DROP COLUMN internal_notes")
         except Exception:
             pass

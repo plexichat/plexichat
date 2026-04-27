@@ -1,11 +1,17 @@
 """
-Harden admin security by ensuring admin tables exist and have correct schema.
+Harden admin security by ensuring admin tables exist with correct schema.
 Transition admin schema management to the migration system.
 """
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def up(db):
     """Apply the migration."""
+    logger.info("Migration 008: Starting admin security hardening")
+    logger.debug("Migration 008: Starting admin security hardening")
 
     # 1. Create admin_users table
     if db.type == "sqlite":
@@ -104,6 +110,14 @@ def up(db):
 
 
 def down(db):
-    """Rollback the migration."""
-    # We generally don't drop core admin tables in rollback to avoid data loss
-    pass
+    """Rollback the migration.
+
+    For PostgreSQL: Drops the admin tables.
+    For SQLite: Drops the admin tables (safe as they were created by this migration).
+    """
+    logger.info("Migration 008 rollback: Starting rollback")
+    tables = ["admin_users", "admin_sessions", "admin_notes"]
+    for table in tables:
+        if db.table_exists(table):
+            db.execute(f"DROP TABLE IF EXISTS {table}")
+    logger.info("Migration 008 rollback: Dropped admin tables")

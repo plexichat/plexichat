@@ -1,5 +1,6 @@
 """
-Feature expansion migration - Add tables and columns for new features:
+Feature expansion migration - adds multiple new features.
+
 - DM threaded conversations (thread_threads gets conversation_id for DMs)
 - Voice messages (msg_messages gets voice metadata columns)
 - Message forwarding (new forwarded_messages table)
@@ -14,20 +15,15 @@ Feature expansion migration - Add tables and columns for new features:
 - Last chat tracking (new user_last_chat table)
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def _add_column_if_missing(db, table: str, column: str, ddl: str) -> None:
     """Add a column to a table if it doesn't already exist."""
     try:
-        if db.type == "postgres":
-            rows = db.fetch_all(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
-                (table,),
-            )
-            existing = {row["column_name"] for row in rows}
-        else:
-            rows = db.fetch_all(f"PRAGMA table_info({table})")
-            existing = {row["name"] for row in rows}
-        if column in existing:
+        if db.column_exists(table, column):
             return
     except Exception:
         pass
@@ -42,6 +38,7 @@ def _add_column_if_missing(db, table: str, column: str, ddl: str) -> None:
 
 def up(db):
     """Apply the migration."""
+    logger.info("Migration 019: Starting feature expansion")
     # === Voice Messages ===
     _add_column_if_missing(
         db, "msg_messages", "voice_duration_ms", "voice_duration_ms INTEGER"
@@ -349,7 +346,13 @@ def up(db):
 
 
 def down(db):
-    """Rollback the migration - drop all new tables."""
+    """Rollback the migration.
+
+    Drops all the new tables created by this migration.
+    For PostgreSQL: Drops added columns as well.
+    For SQLite: Columns left in place (DROP COLUMN not supported).
+    """
+    logger.info("Migration 019 rollback: Starting rollback")
     tables = [
         "msg_forwarded",
         "msg_scheduled",
@@ -360,15 +363,88 @@ def down(db):
         "webhook_retry_queue",
         "push_tokens",
         "user_last_chat",
+        "user_recent_chats",
     ]
     for table in tables:
-        try:
+        if db.table_exists(table):
             db.execute(f"DROP TABLE IF EXISTS {table}")
-        except Exception:
-            pass
 
-    # Also drop recent chats table
-    try:
-        db.execute("DROP TABLE IF EXISTS user_recent_chats")
-    except Exception:
-        pass
+    # For PostgreSQL, drop the added columns
+    if db.type == "postgres":
+        # msg_messages columns
+        if db.column_exists("msg_messages", "voice_message_duration"):
+            db.execute("ALTER TABLE msg_messages DROP COLUMN voice_message_duration")
+        if db.column_exists("msg_messages", "voice_message_waveform"):
+            db.execute("ALTER TABLE msg_messages DROP COLUMN voice_message_waveform")
+
+        # reports columns
+        if db.column_exists("reports", "category"):
+            db.execute("ALTER TABLE reports DROP COLUMN category")
+        if db.column_exists("reports", "evidence"):
+            db.execute("ALTER TABLE reports DROP COLUMN evidence")
+        if db.column_exists("reports", "status"):
+            db.execute("ALTER TABLE reports DROP COLUMN status")
+        if db.column_exists("reports", "resolved_at"):
+            db.execute("ALTER TABLE reports DROP COLUMN resolved_at")
+        if db.column_exists("reports", "resolved_by"):
+            db.execute("ALTER TABLE reports DROP COLUMN resolved_by")
+
+        # thread_threads columns
+        if db.column_exists("thread_threads", "slowmode_delay"):
+            db.execute("ALTER TABLE thread_threads DROP COLUMN slowmode_delay")
+        if db.column_exists("thread_threads", "slowmode_last_reset"):
+            db.execute("ALTER TABLE thread_threads DROP COLUMN slowmode_last_reset")
+
+        # thread_members columns
+        if db.column_exists("thread_members", "slowmode_override"):
+            db.execute("ALTER TABLE thread_members DROP COLUMN slowmode_override")
+
+        # auth_users columns
+        if db.column_exists("auth_users", "profile_bio"):
+            db.execute("ALTER TABLE auth_users DROP COLUMN profile_bio")
+        if db.column_exists("auth_users", "profile_location"):
+            db.execute("ALTER TABLE auth_users DROP COLUMN profile_location")
+        if db.column_exists("auth_users", "profile_website"):
+            db.execute("ALTER TABLE auth_users DROP COLUMN profile_website")
+        if db.column_exists("auth_users", "profile_banner_url"):
+            db.execute("ALTER TABLE auth_users DROP COLUMN profile_banner_url")
+
+        logger.info("Migration 019 rollback: Dropped tables and columns (PostgreSQL)")
+    else:
+        # SQLite: Clear column values but leave columns
+        if db.column_exists("msg_messages", "voice_message_duration"):
+            db.execute("UPDATE msg_messages SET voice_message_duration = NULL")
+        if db.column_exists("msg_messages", "voice_message_waveform"):
+            db.execute("UPDATE msg_messages SET voice_message_waveform = NULL")
+
+        if db.column_exists("reports", "category"):
+            db.execute("UPDATE reports SET category = NULL")
+        if db.column_exists("reports", "evidence"):
+            db.execute("UPDATE reports SET evidence = NULL")
+        if db.column_exists("reports", "status"):
+            db.execute("UPDATE reports SET status = 'open'")
+        if db.column_exists("reports", "resolved_at"):
+            db.execute("UPDATE reports SET resolved_at = NULL")
+        if db.column_exists("reports", "resolved_by"):
+            db.execute("UPDATE reports SET resolved_by = NULL")
+
+        if db.column_exists("thread_threads", "slowmode_delay"):
+            db.execute("UPDATE thread_threads SET slowmode_delay = NULL")
+        if db.column_exists("thread_threads", "slowmode_last_reset"):
+            db.execute("UPDATE thread_threads SET slowmode_last_reset = NULL")
+
+        if db.column_exists("thread_members", "slowmode_override"):
+            db.execute("UPDATE thread_members SET slowmode_override = 0")
+
+        if db.column_exists("auth_users", "profile_bio"):
+            db.execute("UPDATE auth_users SET profile_bio = NULL")
+        if db.column_exists("auth_users", "profile_location"):
+            db.execute("UPDATE auth_users SET profile_location = NULL")
+        if db.column_exists("auth_users", "profile_website"):
+            db.execute("UPDATE auth_users SET profile_website = NULL")
+        if db.column_exists("auth_users", "profile_banner_url"):
+            db.execute("UPDATE auth_users SET profile_banner_url = NULL")
+
+        logger.info(
+            "Migration 019 rollback: Dropped tables, cleared column values (SQLite - columns left in place)"
+        )

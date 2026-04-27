@@ -114,6 +114,9 @@ class RateLimitMiddlewareASGI:
             re.compile(r"^/docs"),
             re.compile(r"^/redoc"),
             re.compile(r"^/openapi\.json$"),
+            # Admin API has its own login rate limiting in authenticate_admin()
+            # and all other admin endpoints require a valid session token.
+            re.compile(r"^/api/v\d+/admin"),
         ]
 
     def _should_exclude(self, path: str) -> bool:

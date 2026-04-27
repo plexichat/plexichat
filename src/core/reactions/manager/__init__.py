@@ -1004,14 +1004,20 @@ class ReactionManager(BaseManager):
 
         # Check name uniqueness - use transaction to prevent race condition
         try:
-            self._db.execute("BEGIN")
+            try:
+                self._db.execute("BEGIN")
+            except Exception:
+                pass  # Already in a transaction or auto-commit mode
 
             existing = self._db.fetch_one(
                 "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
                 (server_id, name),
             )
             if existing:
-                self._db.execute("ROLLBACK")
+                try:
+                    self._db.execute("ROLLBACK")
+                except Exception:
+                    pass  # No transaction to rollback
                 raise EmojiNameExistsError(
                     f"Emoji with name '{name}' already exists in this server"
                 )
@@ -1045,7 +1051,10 @@ class ReactionManager(BaseManager):
                         else:
                             # If it's something else (like javascript:), reject it
                             logger.error(f"Media module returned unsafe URL: {url}")
-                            self._db.execute("ROLLBACK")
+                            try:
+                                self._db.execute("ROLLBACK")
+                            except Exception:
+                                pass  # No transaction to rollback
                             raise InvalidEmojiFileError(
                                 "Media module returned an unsafe URL"
                             )
@@ -1053,7 +1062,10 @@ class ReactionManager(BaseManager):
                     raise
                 except Exception as e:
                     logger.error(f"Failed to upload emoji image: {e}")
-                    self._db.execute("ROLLBACK")
+                    try:
+                        self._db.execute("ROLLBACK")
+                    except Exception:
+                        pass  # No transaction to rollback
                     raise InvalidEmojiFileError(f"Failed to upload emoji: {str(e)}")
 
             now = self._get_timestamp()
@@ -1077,16 +1089,28 @@ class ReactionManager(BaseManager):
                 ),
             )
 
-            self._db.execute("COMMIT")
+            try:
+                self._db.execute("COMMIT")
+            except Exception:
+                pass  # No transaction to commit (auto-commit mode)
 
         except EmojiNameExistsError:
-            self._db.execute("ROLLBACK")
+            try:
+                self._db.execute("ROLLBACK")
+            except Exception:
+                pass  # No transaction to rollback
             raise
         except InvalidEmojiFileError:
-            self._db.execute("ROLLBACK")
+            try:
+                self._db.execute("ROLLBACK")
+            except Exception:
+                pass  # No transaction to rollback
             raise
         except Exception as e:
-            self._db.execute("ROLLBACK")
+            try:
+                self._db.execute("ROLLBACK")
+            except Exception:
+                pass  # No transaction to rollback
             # Check if it's a UNIQUE constraint violation (might not have explicit EmojiNameExistsError)
             if "UNIQUE" in str(e) or "unique" in str(e).lower():
                 raise EmojiNameExistsError(

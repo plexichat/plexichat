@@ -1,8 +1,15 @@
+"""
+Expand API access tokens with additional fields.
+"""
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 def _add_column_if_missing(db, table: str, column: str, ddl: str) -> None:
     try:
-        rows = db.fetch_all("PRAGMA table_info(?)", (table,))
-        existing = {row["name"] for row in rows}
-        if column in existing:
+        if db.column_exists(table, column):
             return
     except Exception:
         pass
@@ -103,14 +110,58 @@ def up(db):
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_events_ip ON auth_api_access_token_events(ip_index)"
         )
+        logger.info("Migration 016: API access tokens expansion complete")
     except Exception:
-        pass
+        logger.exception("Migration 016: API access tokens expansion failed")
 
 
 def down(db):
+    """Rollback the migration.
+
+    Drops the new tables and clears added columns.
+    For PostgreSQL: Drops columns as well.
+    For SQLite: Columns left in place (DROP COLUMN not supported).
+    """
+    logger.info("Migration 016 rollback: Starting rollback")
+    # Drop new tables
+    if db.table_exists("auth_api_access_token_events"):
+        db.execute("DROP TABLE IF EXISTS auth_api_access_token_events")
+    if db.table_exists("auth_api_access_token_scopes"):
+        db.execute("DROP TABLE IF EXISTS auth_api_access_token_scopes")
+
+    # For PostgreSQL, drop the added columns
     if db.type == "postgres":
-        try:
-            db.execute("DROP TABLE IF EXISTS auth_api_access_token_events")
-            db.execute("DROP TABLE IF EXISTS auth_api_access_token_scopes")
-        except Exception:
-            pass
+        columns_to_drop = [
+            "description",
+            "first_used_at",
+            "last_used_ip_index",
+            "last_used_ip_encrypted",
+            "last_used_user_agent",
+            "last_used_path",
+            "expires_at",
+            "scope_mode",
+            "use_count_total",
+        ]
+        for col in columns_to_drop:
+            if db.column_exists("auth_api_access_tokens", col):
+                db.execute(f"ALTER TABLE auth_api_access_tokens DROP COLUMN {col}")
+        logger.info("Migration 016 rollback: Dropped tables and columns (PostgreSQL)")
+    else:
+        # SQLite: Clear column values but leave columns
+        columns_to_clear = [
+            "description",
+            "first_used_at",
+            "last_used_ip_index",
+            "last_used_ip_encrypted",
+            "last_used_user_agent",
+            "last_used_path",
+            "expires_at",
+            "scope_mode",
+            "use_count_total",
+        ]
+        for col in columns_to_clear:
+            if db.column_exists("auth_api_access_tokens", col):
+                db.execute(f"UPDATE auth_api_access_tokens SET {col} = NULL")
+        logger.info(
+            "Migration 016 rollback: Dropped tables, cleared column values (SQLite - columns left in place)"
+        )

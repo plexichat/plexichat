@@ -5,8 +5,15 @@ Older deployments created `user_last_chat` and `user_recent_chats` with INTEGER
 conversation/message columns, which overflows for production snowflake IDs.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def _alter_postgres_column_type(db, table: str, column: str, target_type: str) -> None:
+    logger.debug(
+        f"Checking column {column} in table {table} for type change to {target_type}"
+    )
     rows = db.fetch_all(
         """
         SELECT data_type
@@ -31,6 +38,7 @@ def _alter_postgres_column_type(db, table: str, column: str, target_type: str) -
 
 def up(db):
     """Upgrade last-chat tables to BIGINT identifiers on existing installs."""
+    logger.info("Migration 020: Starting last-chat BIGINT fix (PostgreSQL)")
     if db.type != "postgres":
         return
 
@@ -39,11 +47,12 @@ def up(db):
     _alter_postgres_column_type(db, "user_last_chat", "conversation_id", "BIGINT")
     _alter_postgres_column_type(db, "user_last_chat", "last_message_id", "BIGINT")
 
-    _alter_postgres_column_type(db, "user_recent_chats", "id", "BIGINT")
-    _alter_postgres_column_type(db, "user_recent_chats", "user_id", "BIGINT")
-    _alter_postgres_column_type(db, "user_recent_chats", "conversation_id", "BIGINT")
-
 
 def down(db):
-    """No-op rollback; shrinking snowflake columns would be unsafe."""
+    """Rollback: No-op - shrinking columns is unsafe.
+
+    This migration changes INTEGER to BIGINT for Snowflake ID support.
+    Reverting could cause data truncation, so we don't support rollback.
+    """
+    logger.info("Migration 020 rollback: No-op (shrinking BIGINT to INTEGER is unsafe)")
     return

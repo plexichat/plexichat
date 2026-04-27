@@ -24,27 +24,40 @@ logger = logging.getLogger(__name__)
 
 def up(db):
     """Apply the migration."""
+    logger.info("Migration 018: Starting admin 2FA hardening")
 
     # 1. Add new secure columns to admin_users
-    try:
-        db.execute("ALTER TABLE admin_users ADD COLUMN totp_secret_encrypted TEXT")
-    except Exception:
-        pass  # Column may already exist
+    if not db.column_exists("admin_users", "totp_secret_encrypted"):
+        try:
+            db.execute("ALTER TABLE admin_users ADD COLUMN totp_secret_encrypted TEXT")
+            logger.info("Migration 018: Added totp_secret_encrypted column")
+        except Exception as e:
+            logger.error(f"Migration 018: Failed to add totp_secret_encrypted: {e}")
+            raise
 
-    try:
-        db.execute("ALTER TABLE admin_users ADD COLUMN backup_codes_hash TEXT")
-    except Exception:
-        pass  # Column may already exist
+    if not db.column_exists("admin_users", "backup_codes_hash"):
+        try:
+            db.execute("ALTER TABLE admin_users ADD COLUMN backup_codes_hash TEXT")
+            logger.info("Migration 018: Added backup_codes_hash column")
+        except Exception as e:
+            logger.error(f"Migration 018: Failed to add backup_codes_hash: {e}")
+            raise
 
-    try:
-        db.execute("ALTER TABLE admin_users ADD COLUMN otp_last_used_code TEXT")
-    except Exception:
-        pass
+    if not db.column_exists("admin_users", "otp_last_used_code"):
+        try:
+            db.execute("ALTER TABLE admin_users ADD COLUMN otp_last_used_code TEXT")
+            logger.info("Migration 018: Added otp_last_used_code column")
+        except Exception as e:
+            logger.error(f"Migration 018: Failed to add otp_last_used_code: {e}")
+            raise
 
-    try:
-        db.execute("ALTER TABLE admin_users ADD COLUMN otp_last_used_at INTEGER")
-    except Exception:
-        pass
+    if not db.column_exists("admin_users", "otp_last_used_at"):
+        try:
+            db.execute("ALTER TABLE admin_users ADD COLUMN otp_last_used_at INTEGER")
+            logger.info("Migration 018: Added otp_last_used_at column")
+        except Exception as e:
+            logger.error(f"Migration 018: Failed to add otp_last_used_at: {e}")
+            raise
 
     # 2. Migrate existing plaintext TOTP secrets to encrypted storage
     try:
@@ -52,6 +65,9 @@ def up(db):
 
         rows = db.fetch_all(
             "SELECT id, totp_secret, backup_codes FROM admin_users WHERE totp_secret IS NOT NULL"
+        )
+        logger.info(
+            f"Migration 018: Found {len(rows)} admin(s) with TOTP secrets to migrate"
         )
 
         # Track which admins had successful round-trip verification
@@ -66,6 +82,9 @@ def up(db):
             # Encrypt the TOTP secret and verify round-trip
             if totp_secret:
                 try:
+                    logger.debug(
+                        f"Migration 018: Encrypting TOTP secret for admin {admin_id}"
+                    )
                     encrypted = encrypt_data(
                         totp_secret, context=f"admin_totp:{admin_id}"
                     )
@@ -100,6 +119,9 @@ def up(db):
             # Hash backup codes
             if backup_codes:
                 try:
+                    logger.debug(
+                        f"Migration 018: Hashing backup codes for admin {admin_id}"
+                    )
                     codes = [c.strip() for c in backup_codes.split(",") if c.strip()]
                     hashed_codes = []
                     for code in codes:
@@ -182,9 +204,12 @@ def up(db):
             )
 
     except ImportError:
-        logger.info(
+        logger.warning(
             "Migration 018: Encryption module not available - skipping migration"
         )
+    except Exception as e:
+        logger.error(f"Migration 018: Unexpected error during migration: {e}")
+        raise
 
 
 def down(db):
@@ -194,7 +219,12 @@ def down(db):
     back into totp_secret. Also clears the encrypted/hashed columns.
     If decryption fails for any admin, that admin's encrypted data is
     preserved but plaintext remains NULL — check the backup tables.
+
+    For SQLite: Column dropping is not supported, so columns are left in place
+    but their values are cleared where possible.
     """
+    logger.info("Migration 018 rollback: Starting rollback")
+
     try:
         from src.utils.encryption import decrypt_data
 
@@ -202,6 +232,7 @@ def down(db):
             "SELECT id, totp_secret_encrypted FROM admin_users "
             "WHERE totp_secret_encrypted IS NOT NULL AND totp_secret IS NULL"
         )
+        logger.info(f"Migration 018 rollback: Found {len(rows)} admin(s) to restore")
 
         restored_count = 0
         for row in rows:
@@ -210,6 +241,9 @@ def down(db):
                 row["totp_secret_encrypted"] if isinstance(row, dict) else row[1]
             )
             try:
+                logger.debug(
+                    f"Migration 018 rollback: Decrypting TOTP secret for admin {admin_id}"
+                )
                 decrypted = decrypt_data(
                     encrypted_secret, context=f"admin_totp:{admin_id}"
                 )
@@ -219,6 +253,9 @@ def down(db):
                     (decrypted, admin_id),
                 )
                 restored_count += 1
+                logger.info(
+                    f"Migration 018 rollback: Restored TOTP secret for admin {admin_id}"
+                )
             except Exception as exc:
                 logger.warning(
                     "Migration 018 rollback: Could not decrypt TOTP secret for admin %s: %s "
@@ -247,6 +284,27 @@ def down(db):
             "WHERE totp_secret IS NOT NULL AND totp_secret_encrypted IS NULL"
         )
 
+        # For PostgreSQL, drop the new columns
+        if db.type == "postgres":
+            if db.column_exists("admin_users", "totp_secret_encrypted"):
+                db.execute("ALTER TABLE admin_users DROP COLUMN totp_secret_encrypted")
+            if db.column_exists("admin_users", "backup_codes_hash"):
+                db.execute("ALTER TABLE admin_users DROP COLUMN backup_codes_hash")
+            if db.column_exists("admin_users", "otp_last_used_code"):
+                db.execute("ALTER TABLE admin_users DROP COLUMN otp_last_used_code")
+            if db.column_exists("admin_users", "otp_last_used_at"):
+                db.execute("ALTER TABLE admin_users DROP COLUMN otp_last_used_at")
+            logger.info("Migration 018 rollback: Dropped new columns (PostgreSQL)")
+        else:
+            # SQLite: Clear column values but leave columns (DROP COLUMN not supported)
+            db.execute("UPDATE admin_users SET totp_secret_encrypted = NULL")
+            db.execute("UPDATE admin_users SET backup_codes_hash = NULL")
+            db.execute("UPDATE admin_users SET otp_last_used_code = NULL")
+            db.execute("UPDATE admin_users SET otp_last_used_at = NULL")
+            logger.info(
+                "Migration 018 rollback: Cleared new column values (SQLite - columns left in place)"
+            )
+
         if restored_count > 0:
             logger.info(
                 "Migration 018 rollback: Restored %d plaintext TOTP secret(s)",
@@ -259,7 +317,10 @@ def down(db):
             )
 
     except ImportError:
-        logger.info(
+        logger.warning(
             "Migration 018 rollback: Encryption module not available - "
             "cannot restore plaintext secrets. Check backup tables."
         )
+    except Exception as e:
+        logger.error(f"Migration 018 rollback: Unexpected error during rollback: {e}")
+        raise
