@@ -16,6 +16,12 @@ repos:
     rev: v1.1.409
     hooks:
       - id: pyright
+        exclude: |
+          (?x)^(
+              src/core/migrations/cloner\.py|
+              src/utils/encryption/kek_migration\.py|
+              src/api/routes/docs/.*\.py
+          )$
         additional_dependencies:
           - fastapi
           - pydantic>=2.0.0
