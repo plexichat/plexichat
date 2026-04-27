@@ -8,6 +8,8 @@ Uses fakeredis for unit tests (no real Redis required).
 """
 
 import pytest
+
+pytestmark = pytest.mark.redis
 import os
 import sys
 import importlib
@@ -39,35 +41,28 @@ REDIS_AVAILABLE = importlib.util.find_spec("redis") is not None
 
 
 @pytest.fixture(scope="module")
-def setup_module():
+def setup_module(tmp_path_factory):
     """Setup temp environment for tests."""
-    if not os.path.exists("temp_test"):
-        os.makedirs("temp_test")
+    temp_dir = tmp_path_factory.mktemp("redis_test")
 
-    log_dir = "temp_test/logs"
+    log_dir = str(temp_dir / "logs")
     logger.setup(log_dir=log_dir, level="DEBUG")
 
-    yield
-
-    import shutil
-
-    if os.path.exists("temp_test"):
-        try:
-            shutil.rmtree("temp_test")
-        except OSError:
-            pass
+    yield temp_dir
 
 
 @pytest.fixture
 def redis_config(setup_module):
     """Setup Redis configuration for tests."""
-    config_path = "temp_test/config.yaml"
+    temp_dir = setup_module
+    config_path = str(temp_dir / "config.yaml")
+    db_path = str(temp_dir / "test.db")
 
     if os.path.exists(config_path):
         os.remove(config_path)
 
     default_config = {
-        "database": {"type": "sqlite", "path": "temp_test/test.db"},
+        "database": {"type": "sqlite", "path": db_path},
         "redis": {
             "enabled": True,
             "host": "localhost",
@@ -91,13 +86,15 @@ def redis_config(setup_module):
 @pytest.fixture
 def redis_disabled_config(setup_module):
     """Setup config with Redis disabled."""
-    config_path = "temp_test/config_disabled.yaml"
+    temp_dir = setup_module
+    config_path = str(temp_dir / "config_disabled.yaml")
+    db_path = str(temp_dir / "test.db")
 
     if os.path.exists(config_path):
         os.remove(config_path)
 
     default_config = {
-        "database": {"type": "sqlite", "path": "temp_test/test.db"},
+        "database": {"type": "sqlite", "path": db_path},
         "redis": {"enabled": False},
     }
     config.setup(config_path=config_path, default_config=default_config)
@@ -111,7 +108,6 @@ def redis_disabled_config(setup_module):
 # ==================== RedisClient Unit Tests (with fakeredis) ====================
 
 
-@pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestRedisClientWithFake:
     """Tests using fakeredis (no real Redis needed)."""
 
@@ -346,7 +342,6 @@ class TestRedisClientWithFake:
 # ==================== Cache Module Tests ====================
 
 
-@pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestCacheModule:
     """Tests for the cache module."""
 
@@ -500,7 +495,6 @@ class TestCacheModule:
 # ==================== Session Cache Tests ====================
 
 
-@pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestSessionCache:
     """Tests for session caching."""
 
@@ -570,7 +564,6 @@ class TestSessionCache:
 # ==================== Presence Cache Tests ====================
 
 
-@pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestPresenceCache:
     """Tests for presence caching."""
 
@@ -621,7 +614,6 @@ class TestPresenceCache:
 # ==================== Rate Limiting Tests ====================
 
 
-@pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestRateLimiting:
     """Tests for rate limiting."""
 
@@ -717,7 +709,6 @@ class TestErrorHandling:
 # ==================== Integration Tests (Real Redis) ====================
 
 
-@pytest.mark.skipif(not REDIS_AVAILABLE, reason="redis not installed")
 class TestRealRedisIntegration:
     """Integration tests with real Redis (skipped if unavailable)."""
 

@@ -12,7 +12,6 @@ Tests cover:
 import pytest
 import os
 import sys
-import shutil
 
 # Setup paths before any imports
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
@@ -30,23 +29,15 @@ from src.core.database.core import Database  # noqa: E402
 
 # Fixture for setup/teardown
 @pytest.fixture(scope="module")
-def setup_module():
+def setup_module(tmp_path_factory):
     """Setup test environment once per module."""
-    if not os.path.exists("temp_test"):
-        os.makedirs("temp_test")
+    temp_dir = tmp_path_factory.mktemp("test_transactions")
 
     # Setup Logger for tests (once)
-    log_dir = "temp_test/logs"
+    log_dir = str(temp_dir / "logs")
     logger.setup(log_dir=log_dir, level="DEBUG")
 
-    yield
-
-    # Teardown
-    if os.path.exists("temp_test"):
-        try:
-            shutil.rmtree("temp_test")
-        except OSError:
-            pass
+    yield temp_dir
 
 
 @pytest.fixture
@@ -55,8 +46,9 @@ def db_config(setup_module):
     import gc
     import time
 
-    config_path = "temp_test/config.yaml"
-    db_path = "temp_test/test_transactions.db"
+    temp_dir = setup_module
+    config_path = str(temp_dir / "config.yaml")
+    db_path = str(temp_dir / "test_transactions.db")
 
     # Force garbage collection to close any lingering connections
     gc.collect()
@@ -757,12 +749,13 @@ class TestPostgresFailedTransactionRecovery:
         return pg_config
 
     @pytest.fixture
-    def postgres_db_with_table(self, postgres_config):
+    def postgres_db_with_table(self, postgres_config, setup_module):
         """Create a PostgreSQL test database with a sample table."""
         pytest.importorskip("psycopg2")
 
         # Use test database configuration
-        config_path = "temp_test/postgres_config.yaml"
+        temp_dir = setup_module
+        config_path = str(temp_dir / "postgres_config.yaml")
 
         # Setup config with PostgreSQL
         default_config = {
@@ -1127,8 +1120,9 @@ class TestPostgresErrorRecoveryReal:
     """Test PostgreSQL error recovery with real PostgreSQL errors and constraints."""
 
     @pytest.fixture
-    def postgres_recovery_config(self):
+    def postgres_recovery_config(self, setup_module):
         """Setup PostgreSQL configuration for recovery tests."""
+        temp_dir = setup_module
         pg_config = {
             "database": {
                 "type": "postgres",
@@ -1146,7 +1140,7 @@ class TestPostgresErrorRecoveryReal:
                 },
             }
         }
-        config_path = "temp_test/postgres_recovery_config.yaml"
+        config_path = str(temp_dir / "postgres_recovery_config.yaml")
         config.setup(config_path=config_path, default_config=pg_config)
         return config_path
 
@@ -1446,8 +1440,9 @@ class TestPostgresMultipleConstraintViolations:
     """Test recovery from various constraint violations in sequence."""
 
     @pytest.fixture
-    def multi_constraint_config(self):
+    def multi_constraint_config(self, setup_module):
         """Setup PostgreSQL config for constraint tests."""
+        temp_dir = setup_module
         pg_config = {
             "database": {
                 "type": "postgres",
@@ -1460,7 +1455,7 @@ class TestPostgresMultipleConstraintViolations:
                 },
             }
         }
-        config_path = "temp_test/multi_constraint_config.yaml"
+        config_path = str(temp_dir / "multi_constraint_config.yaml")
         config.setup(config_path=config_path, default_config=pg_config)
         return config_path
 

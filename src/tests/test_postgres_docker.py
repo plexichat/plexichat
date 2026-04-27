@@ -18,6 +18,11 @@ Environment Configuration:
 """
 
 import pytest
+
+pytestmark = [
+    pytest.mark.postgres,
+    pytest.mark.skip(reason="PostgreSQL Docker tests require Docker environment"),
+]
 import os
 import sys
 import threading

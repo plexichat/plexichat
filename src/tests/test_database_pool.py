@@ -23,27 +23,16 @@ from src.core.database.core import Database  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def setup_logging():
-    if not os.path.exists("temp_test_pool"):
-        os.makedirs("temp_test_pool")
-    logger.setup(log_dir="temp_test_pool/logs", level="DEBUG")
-    yield
-    import shutil
-    import time
-
-    if os.path.exists("temp_test_pool"):
-        # Give some time for files to be released
-        time.sleep(0.5)
-        try:
-            shutil.rmtree("temp_test_pool")
-        except PermissionError:
-            # On Windows, log files might still be held open by the logger
-            pass
+def setup_logging(tmp_path_factory):
+    temp_dir = tmp_path_factory.mktemp("test_pool")
+    logger.setup(log_dir=str(temp_dir / "logs"), level="DEBUG")
+    yield temp_dir
 
 
 def test_connection_age_eviction(setup_logging):
     """Test that connections exceeding max age are evicted."""
-    db_path = "temp_test_pool/age_test.db"
+    temp_dir = setup_logging
+    db_path = str(temp_dir / "age_test.db")
     if os.path.exists(db_path):
         os.remove(db_path)
 
@@ -57,7 +46,9 @@ def test_connection_age_eviction(setup_logging):
             },
         }
     }
-    config.setup(config_path="temp_test_pool/config_age.yaml", default_config=db_config)
+    config.setup(
+        config_path=str(temp_dir / "config_age.yaml"), default_config=db_config
+    )
 
     db = Database()
     db.connect()
@@ -81,7 +72,8 @@ def test_connection_age_eviction(setup_logging):
 
 def test_connection_idle_eviction(setup_logging):
     """Test that connections exceeding max idle time are evicted."""
-    db_path = "temp_test_pool/idle_test.db"
+    temp_dir = setup_logging
+    db_path = str(temp_dir / "idle_test.db")
     if os.path.exists(db_path):
         os.remove(db_path)
 
@@ -97,7 +89,7 @@ def test_connection_idle_eviction(setup_logging):
         }
     }
     config.setup(
-        config_path="temp_test_pool/config_idle.yaml", default_config=db_config
+        config_path=str(temp_dir / "config_idle.yaml"), default_config=db_config
     )
 
     db = Database()
@@ -121,7 +113,8 @@ def test_connection_idle_eviction(setup_logging):
 
 def test_close_forces_closure_for_old_connections(setup_logging):
     """Test that close() forces closure if connection is old."""
-    db_path = "temp_test_pool/close_test.db"
+    temp_dir = setup_logging
+    db_path = str(temp_dir / "close_test.db")
     if os.path.exists(db_path):
         os.remove(db_path)
 
@@ -135,7 +128,7 @@ def test_close_forces_closure_for_old_connections(setup_logging):
         }
     }
     config.setup(
-        config_path="temp_test_pool/config_close.yaml", default_config=db_config
+        config_path=str(temp_dir / "config_close.yaml"), default_config=db_config
     )
 
     db = Database()
@@ -159,11 +152,14 @@ def test_close_forces_closure_for_old_connections(setup_logging):
 
 def test_monitoring_log_interval_config(setup_logging):
     """Test that monitoring log interval is correctly read from config."""
+    temp_dir = setup_logging
     db_config = {
         "database": {"type": "sqlite", "path": ":memory:"},
         "monitoring": {"log_interval": 42},
     }
-    config.setup(config_path="temp_test_pool/config_mon.yaml", default_config=db_config)
+    config.setup(
+        config_path=str(temp_dir / "config_mon.yaml"), default_config=db_config
+    )
 
     db = Database()
     assert db.monitor._periodic_log_interval == 42

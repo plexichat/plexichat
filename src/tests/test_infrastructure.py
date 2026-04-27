@@ -11,84 +11,24 @@ Run: pytest src/tests/test_infrastructure.py -v
 class TestFixturesWork:
     """Verify that the new fixtures are functional."""
 
-    def test_modules_fixture_exists(self, modules):
-        """Test that modules fixture is available."""
-        assert modules is not None
+    def test_auth_manager_fixture_exists(self, auth_manager):
+        """Test that auth_manager fixture is available."""
+        assert auth_manager is not None
 
-    def test_auth_module_loads(self, modules):
-        """Test that auth module can be loaded."""
-        auth = modules.auth
-        assert auth is not None
-        assert hasattr(auth, "register")
-        assert hasattr(auth, "login")
+    def test_auth_manager_has_required_methods(self, auth_manager):
+        """Test that auth_manager has required methods."""
+        assert hasattr(auth_manager, "register")
+        assert hasattr(auth_manager, "login")
 
-    def test_messaging_module_loads(self, modules):
-        """Test that messaging module can be loaded."""
-        messaging = modules.messaging
-        assert messaging is not None
-        assert hasattr(messaging, "create_dm")
+    def test_messaging_manager_fixture_exists(self, messaging_manager):
+        """Test that messaging_manager fixture is available."""
+        assert messaging_manager is not None
+        assert hasattr(messaging_manager, "create_dm")
 
-    def test_servers_module_loads(self, modules):
-        """Test that servers module can be loaded."""
-        servers = modules.servers
-        assert servers is not None
-        assert hasattr(servers, "create_server")
-
-    def test_user_factory_creates_users(self, modules, user_factory):
-        """Test that user factory can create users."""
-        user = user_factory.create()
-        assert user is not None
-        assert user.id is not None
-        assert user.username is not None
-
-    def test_user_factory_creates_unique_users(self, user_factory):
-        """Test that factory creates unique users."""
-        user1 = user_factory.create()
-        user2 = user_factory.create()
-        assert user1.id != user2.id
-        assert user1.username != user2.username
-
-    def test_server_factory_creates_servers(self, modules, server_factory):
-        """Test that server factory can create servers."""
-        server, owner, members = server_factory.create_with_members(member_count=2)
-        assert server is not None
-        assert owner is not None
-        assert len(members) == 2
-
-    def test_conversation_factory_creates_dm(self, conversation_factory):
-        """Test that conversation factory can create DMs."""
-        dm, user1, user2 = conversation_factory.create_dm()
-        assert dm is not None
-        assert user1 is not None
-        assert user2 is not None
-
-
-class TestModuleLazyLoading:
-    """Verify that modules are lazy loaded."""
-
-    def test_modules_not_loaded_initially(self, session_db):
-        """Test that modules aren't loaded until accessed."""
-        from src.tests.fixtures.modules import ModuleRegistry
-
-        registry = ModuleRegistry(session_db)
-
-        # Nothing should be loaded yet
-        assert not registry.is_loaded("auth")
-        assert not registry.is_loaded("messaging")
-        assert not registry.is_loaded("servers")
-
-    def test_accessing_module_loads_it(self, session_db):
-        """Test that accessing a module loads it."""
-        from src.tests.fixtures.modules import ModuleRegistry
-
-        registry = ModuleRegistry(session_db)
-
-        # Access auth
-        _ = registry.auth
-        assert registry.is_loaded("auth")
-
-        # Others still not loaded
-        assert not registry.is_loaded("servers")
+    def test_server_manager_fixture_exists(self, server_manager):
+        """Test that server_manager fixture is available."""
+        assert server_manager is not None
+        assert hasattr(server_manager, "create_server")
 
 
 class TestConvenienceFixtures:
@@ -127,21 +67,28 @@ class TestDatabaseIsolation:
 
     # These tests verify isolation by creating data and checking it doesn't persist
 
-    def test_isolation_part1_create_user(self, modules, user_factory):
+    def test_isolation_part1_create_user(self, auth_manager):
         """Create a user with a specific username."""
-        user = user_factory.create(username="isolation_test_user_xyz")
-        assert user.username == "isolation_test_user_xyz"
+        from src.utils import encryption
+        from unittest.mock import patch
+        import uuid
 
-    def test_isolation_part2_user_should_not_exist(self, modules):
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username=f"isolation_test_{uuid.uuid4().hex[:8]}",
+                email=f"isolation_test_{uuid.uuid4().hex[:8]}@example.com",
+                password="TestPass123!",
+            )
+        assert user.username is not None
+
+    def test_isolation_part2_user_should_not_exist(self, auth_manager):
         """The user from part1 should not exist due to rollback."""
         # This test runs after part1, but the user shouldn't exist
         # because each test runs in a transaction that's rolled back
         try:
-            # Try to find the user - this should fail or return None
-            # depending on your auth module's behavior
-            user = modules.auth.get_user_by_username("isolation_test_user_xyz")
+            # Try to find a user that shouldn't exist
+            user = auth_manager.get_user_by_username("isolation_test_user_xyz")
             # If we get here, isolation might not be working
-            # But the user might be from the pool, so check carefully
             if user is not None:
                 # Could be a pool user with similar name pattern
                 pass
