@@ -126,9 +126,9 @@ class TestAvatarOverride:
 
         assert result.avatar_url == custom_avatar
 
-    def test_avatar_override_default(self, base_server_setup):
+    def test_avatar_override_default(self, fresh_server):
         """Test that default avatar is webhook avatar."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
         webhook_avatar = "https://example.com/webhook-avatar.png"
 
