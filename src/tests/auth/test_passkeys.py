@@ -40,30 +40,44 @@ class TestPasskeyManager:
 class TestPasskeyAPI:
     """Test passkey API endpoints."""
 
-    @pytest.mark.skip(
-        reason="Passkey API endpoints require webauthn library integration"
-    )
-    def test_passkey_register_options_endpoint(self, test_client):
+    def test_passkey_register_options_endpoint(self, test_client, auth_headers):
         """Test passkey registration options endpoint."""
-        pass
+        response = test_client.post(
+            "/api/v1/auth/passkeys/options/register",
+            headers=auth_headers,
+        )
+        # May return 200 with options, 501 if webauthn not available, or 403
+        assert response.status_code in (200, 403, 501)
+        if response.status_code == 200:
+            data = response.json()
+            assert "challenge_id" in data or "options" in data
 
-    @pytest.mark.skip(
-        reason="Passkey API endpoints require webauthn library integration"
-    )
-    def test_passkey_list_endpoint(self, test_client):
+    def test_passkey_list_endpoint(self, test_client, auth_headers):
         """Test passkey list endpoint."""
-        pass
+        response = test_client.get(
+            "/api/v1/auth/passkeys",
+            headers=auth_headers,
+        )
+        assert response.status_code in (200, 403, 501)
+        if response.status_code == 200:
+            data = response.json()
+            assert isinstance(data, list)
 
-    @pytest.mark.skip(
-        reason="Passkey API endpoints require webauthn library integration"
-    )
-    def test_passkey_revoke_endpoint(self, test_client):
+    def test_passkey_revoke_endpoint(self, test_client, auth_headers):
         """Test passkey revoke endpoint."""
-        pass
+        response = test_client.delete(
+            "/api/v1/auth/passkeys/999999",
+            headers=auth_headers,
+        )
+        # 404 (not found), 403 (forbidden), or 501 (not available)
+        assert response.status_code in (200, 404, 403, 501)
 
-    @pytest.mark.skip(
-        reason="Passkey API endpoints require webauthn library integration"
-    )
-    def test_passkey_rename_endpoint(self, test_client):
+    def test_passkey_rename_endpoint(self, test_client, auth_headers):
         """Test passkey rename endpoint."""
-        pass
+        response = test_client.patch(
+            "/api/v1/auth/passkeys/999999",
+            json={"name": "Renamed Key"},
+            headers=auth_headers,
+        )
+        # 404 (not found), 403 (forbidden), or 501 (not available)
+        assert response.status_code in (200, 404, 403, 501)

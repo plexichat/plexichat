@@ -5,10 +5,6 @@ Audit logging tests for auth module.
 import pytest
 from unittest.mock import patch
 
-pytestmark = pytest.mark.skip(
-    "Auth audit tests have teardown timeout issues - temporarily disabled"
-)
-
 
 class TestAudit:
     """Test audit logging."""
