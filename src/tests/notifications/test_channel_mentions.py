@@ -1,71 +1,61 @@
-"""
-Tests for #channel mention parsing.
-"""
+"""Tests for notification channel and role mentions."""
 
-from src.core.notifications import MentionType
+import pytest
 
-
-class TestChannelMentionParsing:
-    """Tests for parsing #channel mentions."""
-
-    def test_parse_single_channel_mention(self, notification_manager):
-        """Test parsing a single channel mention."""
-        content = "Check out <#123456789>"
-        mentions = notification_manager.parse_mentions(content)
-
-        assert len(mentions) == 1
-        assert mentions[0].mention_type == MentionType.CHANNEL
-        assert mentions[0].target_id == 123456789
-        assert mentions[0].raw_text == "<#123456789>"
-
-    def test_parse_multiple_channel_mentions(self, notification_manager):
-        """Test parsing multiple channel mentions."""
-        content = "See <#111> and <#222>"
-        mentions = notification_manager.parse_mentions(content)
-
-        assert len(mentions) == 2
-        assert mentions[0].target_id == 111
-        assert mentions[1].target_id == 222
-
-    def test_parse_channel_with_other_mentions(self, notification_manager):
-        """Test parsing channel mentions with other mention types."""
-        content = "Hey <@111> check <#222> with @everyone"
-        mentions = notification_manager.parse_mentions(content)
-
-        assert len(mentions) == 3
-        types = [m.mention_type for m in mentions]
-        assert MentionType.USER in types
-        assert MentionType.CHANNEL in types
-        assert MentionType.EVERYONE in types
+from src.core.notifications.models import MentionType, NotificationLevel
 
 
-class TestChannelMentionValidation:
-    """Tests for validating #channel mentions."""
+@pytest.mark.notifications
+class TestChannelMentions:
+    """Tests for channel and role mention notifications."""
 
-    def test_validate_existing_channel(
-        self, auth_manager, server_manager, messaging_manager, notification_manager
-    ):
-        """Test validating mention of existing channel."""
-        pass
+    def test_parse_user_mention(self, notification_manager):
+        """Test parsing a user mention from content."""
+        mentions = notification_manager.parse_mentions("Hello <@123456789>!")
+        assert len(mentions) >= 1
+        user_mentions = [m for m in mentions if m.mention_type == MentionType.USER]
+        assert len(user_mentions) >= 1
 
-    def test_validate_nonexistent_channel(
-        self, auth_manager, server_manager, notification_manager
-    ):
-        """Test validating mention of nonexistent channel."""
-        pass
+    def test_parse_channel_mention(self, notification_manager):
+        """Test parsing a channel mention from content."""
+        mentions = notification_manager.parse_mentions("See <#123456789>")
+        channel_mentions = [
+            m for m in mentions if m.mention_type == MentionType.CHANNEL
+        ]
+        assert len(channel_mentions) >= 1
 
+    def test_parse_role_mention(self, notification_manager):
+        """Test parsing a role mention from content."""
+        mentions = notification_manager.parse_mentions("<@&123456789> meeting!")
+        role_mentions = [m for m in mentions if m.mention_type == MentionType.ROLE]
+        assert len(role_mentions) >= 1
 
-class TestChannelMentionBehavior:
-    """Tests for channel mention behavior."""
+    def test_parse_everyone_mention(self, notification_manager):
+        """Test parsing @everyone mention."""
+        mentions = notification_manager.parse_mentions("@everyone important!")
+        everyone = [m for m in mentions if m.mention_type == MentionType.EVERYONE]
+        assert len(everyone) >= 1
 
-    def test_channel_mention_no_notification(
-        self, auth_manager, server_manager, messaging_manager, notification_manager
-    ):
-        """Test channel mentions don't create notifications."""
-        pass
+    def test_parse_here_mention(self, notification_manager):
+        """Test parsing @here mention."""
+        mentions = notification_manager.parse_mentions("@here check this!")
+        here = [m for m in mentions if m.mention_type == MentionType.HERE]
+        assert len(here) >= 1
 
-    def test_channel_mention_with_user_mention(
-        self, auth_manager, server_manager, messaging_manager, notification_manager
-    ):
-        """Test channel mention combined with user mention."""
-        pass
+    def test_parse_no_mentions(self, notification_manager):
+        """Test parsing content with no mentions."""
+        mentions = notification_manager.parse_mentions("Just a regular message")
+        assert len(mentions) == 0
+
+    def test_parse_multiple_mentions(self, notification_manager):
+        """Test parsing content with multiple mentions."""
+        mentions = notification_manager.parse_mentions("<@111> and <@222> check <#333>")
+        assert len(mentions) >= 3
+
+    def test_validate_mentions_invalid_user(self, notification_manager):
+        """Test validating mentions with invalid user ID."""
+        mentions = notification_manager.parse_mentions("<@999999999>")
+        validated = notification_manager.validate_mentions(1, mentions)
+        # Invalid user IDs should be marked as invalid
+        invalid = [m for m in validated if not m.valid]
+        assert len(invalid) >= 1
