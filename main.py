@@ -504,9 +504,9 @@ class PlexichatServer:
                 "PLEXICHAT_MESSAGE_KEY",
             ),
         ]
-        for kpath, env_var in keyring_paths:
+        for kpath, kek_env_var in keyring_paths:
             if kpath.exists():
-                kr = _Keyring(kpath, env_var=env_var)
+                kr = _Keyring(kpath, kek_env_var=kek_env_var)
                 if kr.keys:
                     logger.info(
                         f"Keyring validated: {kpath.name} (v{kr.current_version})"
@@ -1351,6 +1351,13 @@ Examples:
   python main.py --self-test     # Run API self-test and exit
   python main.py --create-config # Generate default config file
   python main.py --config custom.yaml # Use custom config file
+  
+  KEK Migration:
+  python main.py --migrate-kek --kek-validate --all
+  python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
+  python main.py --migrate-kek --kek-all --kek-new-env PLEXICHAT_SYSTEM_KEY
+  python main.py --migrate-kek --kek-rollback --kek-keyring message_keyring.json
+  python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
         """,
     )
 
@@ -1367,12 +1374,114 @@ Examples:
     parser.add_argument("--port", type=int, help="Override server port")
     parser.add_argument("--version", action="store_true", help="Show version and exit")
 
+    # KEK Migration arguments
+    parser.add_argument(
+        "--migrate-kek",
+        action="store_true",
+        help="Run KEK migration tool instead of starting server",
+    )
+    parser.add_argument(
+        "--kek-keyring", help="Specific keyring to migrate (e.g., message_keyring.json)"
+    )
+    parser.add_argument(
+        "--kek-old-env",
+        help="Environment variable name for old KEK (e.g., PLEXICHAT_SYSTEM_KEY)",
+    )
+    parser.add_argument(
+        "--kek-new-env",
+        help="Environment variable name for new KEK (e.g., PLEXICHAT_MESSAGE_KEY)",
+    )
+    parser.add_argument(
+        "--kek-all",
+        action="store_true",
+        help="Migrate all keyrings to new KEK (requires --kek-new-env)",
+    )
+    parser.add_argument(
+        "--kek-validate",
+        action="store_true",
+        help="Validate keyrings without migration",
+    )
+    parser.add_argument(
+        "--kek-rollback", action="store_true", help="Rollback keyring to backup"
+    )
+    parser.add_argument(
+        "--kek-force",
+        action="store_true",
+        help="Force migration even if validation fails",
+    )
+    parser.add_argument(
+        "--kek-dry-run",
+        action="store_true",
+        help="Validate only without making changes",
+    )
+
     # Use parse_known_args to ignore uvicorn args if wrapped
     args, _ = parser.parse_known_args()
 
     if args.version:
         print(f"Plexichat Server v{VERSION}")
         return
+
+    # Handle KEK migration
+    if args.migrate_kek:
+        from src.utils.encryption.kek_migration import (
+            validate_keyrings,
+            migrate_keyring,
+            migrate_all_keyrings,
+            rollback_keyring,
+        )
+
+        # Setup basic logging for migration
+        import logging
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
+
+        if args.kek_validate:
+            if args.kek_all:
+                success = validate_keyrings(all_keyrings=True)
+            else:
+                success = validate_keyrings(all_keyrings=False)
+            sys.exit(0 if success else 1)
+
+        if args.kek_rollback:
+            if not args.kek_keyring:
+                print("Error: --kek-rollback requires --kek-keyring")
+                sys.exit(1)
+            success = rollback_keyring(args.kek_keyring)
+            sys.exit(0 if success else 1)
+
+        if args.kek_all:
+            if not args.kek_new_env:
+                print("Error: --kek-all requires --kek-new-env")
+                sys.exit(1)
+            success = migrate_all_keyrings(
+                args.kek_new_env, args.kek_force, args.kek_dry_run
+            )
+            sys.exit(0 if success else 1)
+
+        if args.kek_keyring:
+            if not args.kek_old_env or not args.kek_new_env:
+                print(
+                    "Error: --kek-keyring requires both --kek-old-env and --kek-new-env"
+                )
+                sys.exit(1)
+            success = migrate_keyring(
+                args.kek_keyring,
+                args.kek_old_env,
+                args.kek_new_env,
+                args.kek_force,
+                args.kek_dry_run,
+            )
+            sys.exit(0 if success else 1)
+
+        print(
+            "Error: Invalid KEK migration arguments. Use --kek-validate, --kek-rollback, --kek-all, or --kek-keyring"
+        )
+        sys.exit(1)
 
     server = PlexichatServer()
 

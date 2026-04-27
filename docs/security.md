@@ -140,6 +140,151 @@ encryption:
 - Encryption keys are rotated every 180 days by default. Old data is re-encrypted on read (lazy rotation).
 - AES-GCM with 32-byte keys (256-bit) provides authenticated encryption - data cannot be read or tampered with without the key.
 
+### Encryption Key Management
+
+Plexichat uses a hierarchical encryption system with Key Encryption Keys (KEKs) to protect keyrings that store the actual encryption keys for messages, files, and system operations.
+
+**Keyring Architecture**
+
+Plexichat maintains three separate keyrings:
+
+- `system_keyring.json` - System-level encryption keys
+- `message_keyring.json` - Message encryption keys
+- `file_keyring.json` - File/media encryption keys
+
+Each keyring is encrypted with a KEK, and supports key rotation with versioned keys.
+
+**KEK Sources (Priority Order)**
+
+1. **Environment Variable** (highest priority)
+   - `PLEXICHAT_SYSTEM_KEY` - KEK for system_keyring.json
+   - `PLEXICHAT_MESSAGE_KEY` - KEK for message_keyring.json
+   - `PLEXICHAT_MEDIA_KEY` - KEK for file_keyring.json
+
+2. **HSM (Hardware Security Module)** - PKCS#11 compliant devices
+   - Stores non-extractable AES-256 keys
+   - Provides hardware-rooted security
+
+3. **TPM 2.0** - Trusted Platform Module
+   - Machine-local hardware security
+   - Uses TPM for key storage and operations
+
+4. **Machine-local file** (fallback)
+   - Stored in `~/.plexichat/data/.machine_key`
+   - Only used if no other source is available
+
+**Dedicated KEKs per Keyring**
+
+Each keyring can now use a dedicated KEK from its respective environment variable:
+
+- `system_keyring.json` uses `PLEXICHAT_SYSTEM_KEY`
+- `message_keyring.json` uses `PLEXICHAT_MESSAGE_KEY`
+- `file_keyring.json` uses `PLEXICHAT_MEDIA_KEY`
+
+If a keyring-specific KEK is not set, the system falls back to `PLEXICHAT_SYSTEM_KEY` for that keyring. This allows gradual migration from a single KEK to dedicated KEKs.
+
+**HSM Configuration**
+
+```yaml
+encryption:
+  hsm:
+    enabled: false
+    library_path: "/usr/lib/softhsm/libsofthsm2.so"
+    slot_id: 0
+    pin: ""
+    key_label: "plexichat_kek"
+```
+
+- `enabled: true` enables HSM support
+- `library_path` - Path to PKCS#11 library (e.g., SoftHSM, Nitrokey HSM)
+- `slot_id` - HSM slot number containing the token
+- `pin` - HSM user PIN (use environment variable: `${HSM_PIN}`)
+- `key_label` - Label for the KEK stored in HSM
+
+**Environment Variable Configuration**
+
+Set KEKs as Base64-encoded 32-byte keys:
+
+```bash
+export PLEXICHAT_SYSTEM_KEY="a53722a9ff25cba8d51dd015a74f4a3b2933e27534c49daf31800710f9e81b97"
+export PLEXICHAT_MESSAGE_KEY="4a77e5a1c60ef845421157aee3d94b612a8eebadec6eb121a00191e2e1ec5394"
+export PLEXICHAT_MEDIA_KEY="b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9"
+```
+
+**Secure Key Source Enforcement**
+
+For production deployments, enforce secure KEK sources:
+
+```yaml
+authentication:
+  encryption:
+    require_secure_source: true
+```
+
+When enabled, the server will fail to start if no TPM, HSM, or environment variable KEK is available, preventing fallback to the insecure machine-local file.
+
+**KEK Migration Tool**
+
+When changing KEKs (e.g., migrating from a single system key to dedicated keys), use the built-in migration tool:
+
+```bash
+# Validate current keyrings
+python main.py --migrate-kek --kek-validate --all
+
+# Migrate a specific keyring
+python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
+
+# Migrate all keyrings to a new KEK
+python main.py --migrate-kek --kek-all --kek-new-env PLEXICHAT_SYSTEM_KEY
+
+# Dry run (validate only)
+python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
+
+# Rollback a migration
+python main.py --migrate-kek --kek-rollback --kek-keyring message_keyring.json
+```
+
+The migration tool:
+- Creates automatic backups before migration
+- Validates both old and new KEKs
+- Supports dry-run mode for testing
+- Provides rollback capability
+- Logs all operations for audit trails
+
+**Keyring Backup and Recovery**
+
+Keyring files are located in `~/.plexichat/data/`:
+
+- `system_keyring.json`
+- `message_keyring.json`
+- `file_keyring.json`
+
+**Backup Strategy**:
+
+1. **Regular backups**: Copy keyring files to a secure, offsite location
+2. **KEK backup**: Securely store KEK values (environment variables) in a password manager
+3. **Migration backups**: The migration tool creates timestamped backups automatically
+4. **Test restores**: Periodically test restoring from backups
+
+**Recovery Procedure**:
+
+If keyrings are corrupted or KEKs are lost:
+
+1. Restore keyring files from backup
+2. Ensure KEK environment variables are set correctly
+3. Run validation: `python main.py --migrate-kek --kek-validate --all`
+4. If validation fails, use the migration tool to re-encrypt with current KEKs
+
+**Security Best Practices for KEKs**
+
+- **Never commit KEKs to version control** - use environment variables or secret management systems
+- **Rotate KEKs periodically** - use the migration tool to rotate KEKs every 6-12 months
+- **Use strong, random KEKs** - generate 32-byte keys with cryptographic randomness
+- **Separate KEKs per environment** - use different KEKs for development, staging, and production
+- **Limit KEK access** - only authorized personnel should have access to KEKs
+- **Monitor KEK usage** - log KEK access and migration events
+- **Plan for key rotation** - document your KEK rotation procedure and test it regularly
+
 ### Transport Encryption
 
 **HTTPS/TLS**
