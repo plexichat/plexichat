@@ -11,10 +11,6 @@ from src.core.embeds import (
 )
 from unittest.mock import patch
 
-pytestmark = pytest.mark.skip(
-    "Embed message integration tests have timeout issues - temporarily disabled"
-)
-
 
 class TestAttachEmbedToMessage:
     """Tests for attaching embeds to messages."""

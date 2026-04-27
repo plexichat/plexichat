@@ -427,6 +427,14 @@ def notification_manager(db):
 
 
 @pytest.fixture
+def automod_manager(db, server_manager, messaging_manager, notification_manager):
+    """AutoModManager fixture."""
+    from src.core.automod.manager import AutoModManager
+
+    return AutoModManager(db, server_manager, messaging_manager, notification_manager)
+
+
+@pytest.fixture
 def media_manager(db):
     """MediaManager fixture."""
     from src.core.media.manager import MediaManager
