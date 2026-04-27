@@ -481,6 +481,10 @@ def revoke_api_access_token(token_id: int, revoked_by: Optional[int]) -> bool:
     return _get_manager().revoke_api_access_token(token_id, revoked_by)
 
 
+def unrevoke_api_access_token(token_id: int, unrevoked_by: Optional[int]) -> bool:
+    return _get_manager().unrevoke_api_access_token(token_id, unrevoked_by)
+
+
 def rotate_api_access_token(
     token_id: int,
     rotated_by: Optional[int],
@@ -752,6 +756,7 @@ __all__ = [
     "get_api_access_token",
     "update_api_access_token",
     "revoke_api_access_token",
+    "unrevoke_api_access_token",
     "rotate_api_access_token",
     "add_api_access_token_scope",
     "remove_api_access_token_scope",

@@ -28,6 +28,8 @@ class AdminLoginResult:
     requires_otp_verify: bool = False
     challenge_token: Optional[str] = None
     error: Optional[str] = None
+    rate_limited: bool = False
+    requires_password_change: bool = False
 
 
 @dataclass
@@ -158,6 +160,39 @@ Login URL: https://<your-server>:8000/admin
     logger.warning(f"Admin credentials saved to: {creds_file}")
 
 
+def _sync_password_to_auth_users(db: Any, username: str, password_hash: str) -> None:
+    """Sync the password hash from admin_users to auth_users for the given username.
+
+    Keeps both tables consistent so any code path that checks auth_users
+    (e.g. user-facing APIs, future auth unification) sees the correct hash.
+    Also ensures cache invalidation so the new hash is picked up immediately.
+    """
+    try:
+        row = db.fetch_one("SELECT id FROM auth_users WHERE username = ?", (username,))
+        if row:
+            user_id = row["id"] if isinstance(row, dict) else row[0]
+            db.execute(
+                "UPDATE auth_users SET password_hash = ? WHERE id = ?",
+                (password_hash, user_id),
+            )
+            # Invalidate cached user data so the new hash is picked up immediately
+            try:
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern(f"user_data:{user_id}*")
+            except Exception:
+                pass
+        else:
+            logger.warning(
+                "No auth_users row for admin '%s' — password not synced", username
+            )
+    except Exception as exc:
+        # Don't let auth_users sync failures break the admin operation
+        logger.error(
+            "Failed to sync password to auth_users for '%s': %s", username, exc
+        )
+
+
 def ensure_admin_user(db: Any) -> None:
     """Ensure admin user exists, create with random password if not."""
     row = db.fetch_one("SELECT id FROM admin_users WHERE username = ?", ("admin",))
@@ -174,6 +209,8 @@ def ensure_admin_user(db: Any) -> None:
            VALUES (?, ?, ?, ?, ?, ?)""",
         (admin_id, "admin", password_hash, "admin@example.com", now, 1),
     )
+    # Sync the password hash to auth_users so core_auth.login() can authenticate
+    _sync_password_to_auth_users(db, "admin", password_hash)
     _save_admin_credentials(password)
     logger.info("Created admin user with random password using Argon2id")
 
@@ -233,6 +270,7 @@ def authenticate_admin(
         return AdminLoginResult(
             success=False,
             error=f"Too many login attempts. Try again in {wait_seconds} seconds.",
+            rate_limited=True,
         )
 
     row = db.fetch_one(
@@ -249,7 +287,6 @@ def authenticate_admin(
     if isinstance(row, dict):
         admin_id = row["id"]
         password_hash = row["password_hash"]
-        totp_secret = row.get("totp_secret_encrypted") or row.get("totp_secret")
         totp_enabled = bool(row["totp_enabled"])
         must_setup_otp = bool(row["must_setup_otp"])
     else:
@@ -257,7 +294,7 @@ def authenticate_admin(
         admin_id = row[0]
         password_hash = row[1]
         # Prefer encrypted column (index 3) over plaintext (index 2)
-        totp_secret = (
+        _totp_secret = (
             row[3] if len(row) > 3 and row[3] else (row[2] if len(row) > 2 else None)
         )
         totp_enabled = bool(row[4]) if len(row) > 4 else False
@@ -276,6 +313,8 @@ def authenticate_admin(
                 "UPDATE admin_users SET password_hash = ? WHERE id = ?",
                 (new_hash, admin_id),
             )
+            # Sync the upgraded hash to auth_users so core_auth.login() sees it
+            _sync_password_to_auth_users(db, username, new_hash)
     else:
         if encryption.verify_password(password, password_hash):
             authenticated = True
@@ -302,9 +341,20 @@ def authenticate_admin(
             "UPDATE admin_users SET last_login = ? WHERE id = ?",
             (int(time.time() * 1000), admin_id),
         )
-        return AdminLoginResult(success=True, token=token, user_id=admin_id)
 
-    if must_setup_otp or (not totp_enabled and not totp_secret):
+        # Check if password change is required
+        requires_password_change = check_password_change_required(db, admin_id)
+
+        return AdminLoginResult(
+            success=True,
+            token=token,
+            user_id=admin_id,
+            requires_password_change=requires_password_change,
+        )
+
+    # If OTP is required but not yet enabled (regardless of whether a
+    # secret already exists), the admin must go through OTP setup.
+    if must_setup_otp or not totp_enabled:
         import pyotp
         from src.utils.encryption import encrypt_data as _encrypt
 
@@ -314,7 +364,7 @@ def authenticate_admin(
         # Store encrypted TOTP secret instead of plaintext
         encrypted_secret = _encrypt(secret, context=f"admin_totp:{admin_id}")
         db.execute(
-            "UPDATE admin_users SET totp_secret_encrypted = ?, totp_secret = NULL WHERE id = ?",
+            "UPDATE admin_users SET totp_secret_encrypted = ?, totp_secret = NULL, must_setup_otp = 1 WHERE id = ?",
             (encrypted_secret, admin_id),
         )
         return AdminLoginResult(
@@ -334,7 +384,15 @@ def authenticate_admin(
             challenge_token=_create_otp_challenge(admin_id, is_setup=False),
         )
 
-    return AdminLoginResult(success=False, error="OTP setup required")
+    # Should be unreachable: if OTP is required and totp_enabled is True
+    # we returned the verify branch above; if False, the setup branch.
+    # Handle gracefully just in case.
+    return AdminLoginResult(
+        success=True,
+        user_id=admin_id,
+        requires_otp_verify=True,
+        challenge_token=_create_otp_challenge(admin_id, is_setup=False),
+    )
 
 
 def verify_otp_setup(
@@ -408,8 +466,15 @@ def verify_otp_setup(
         (json.dumps(hashed_codes), admin_id),
     )
     _consume_otp_challenge(challenge_token)
+
+    # Check if password change is required
+    requires_password_change = check_password_change_required(db, admin_id)
+
     return AdminLoginResult(
-        success=True, token=create_session(db, admin_id), user_id=admin_id
+        success=True,
+        token=create_session(db, admin_id),
+        user_id=admin_id,
+        requires_password_change=requires_password_change,
     )
 
 
@@ -480,8 +545,15 @@ def verify_otp(
             (code, int(time.time() * 1000), int(time.time() * 1000), admin_id),
         )
         _consume_otp_challenge(challenge_token)
+
+        # Check if password change is required
+        requires_password_change = check_password_change_required(db, admin_id)
+
         return AdminLoginResult(
-            success=True, token=create_session(db, admin_id), user_id=admin_id
+            success=True,
+            token=create_session(db, admin_id),
+            user_id=admin_id,
+            requires_password_change=requires_password_change,
         )
 
     # Try backup codes — prefer hashed codes, fall back to plaintext for legacy
@@ -500,8 +572,15 @@ def verify_otp(
                     (json.dumps(hashed_list), int(time.time() * 1000), admin_id),
                 )
                 _consume_otp_challenge(challenge_token)
+
+                # Check if password change is required
+                requires_password_change = check_password_change_required(db, admin_id)
+
                 return AdminLoginResult(
-                    success=True, token=create_session(db, admin_id), user_id=admin_id
+                    success=True,
+                    token=create_session(db, admin_id),
+                    user_id=admin_id,
+                    requires_password_change=requires_password_change,
                 )
     elif backup_codes_plaintext:
         # Legacy plaintext backup codes (being phased out)
@@ -515,10 +594,153 @@ def verify_otp(
                 (json.dumps(hashed_remaining), int(time.time() * 1000), admin_id),
             )
             _consume_otp_challenge(challenge_token)
+
+            # Check if password change is required
+            requires_password_change = check_password_change_required(db, admin_id)
+
             return AdminLoginResult(
-                success=True, token=create_session(db, admin_id), user_id=admin_id
+                success=True,
+                token=create_session(db, admin_id),
+                user_id=admin_id,
+                requires_password_change=requires_password_change,
             )
     return AdminLoginResult(success=False, error="Invalid OTP code")
+
+
+def check_password_change_required(db: Any, admin_id: int) -> bool:
+    """Check if admin is required to change password."""
+    admin_config = config.get("admin_ui", {})
+
+    # Check if force password change is enabled in config
+    if not admin_config.get("force_password_change_first_login", True):
+        return False
+
+    # Check if admin has force_password_change flag set
+    row = db.fetch_one(
+        "SELECT force_password_change, last_password_change FROM admin_users WHERE id = ?",
+        (admin_id,),
+    )
+
+    if not row:
+        return False
+
+    if isinstance(row, dict):
+        force_change = bool(row.get("force_password_change", 0))
+        last_password_change = row.get("last_password_change")
+    else:
+        force_change = bool(row[0]) if len(row) > 0 else False
+        last_password_change = row[1] if len(row) > 1 else None
+
+    # If force_password_change flag is set, require change
+    if force_change:
+        return True
+
+    # Check if password hasn't been changed in configured interval
+    password_policy = admin_config.get("security", {}).get("password_policy", {})
+    change_interval_days = password_policy.get("change_interval_days", 90)
+
+    if last_password_change and change_interval_days > 0:
+        now = int(time.time() * 1000)
+        days_since_change = (now - last_password_change) / (24 * 3600 * 1000)
+        if days_since_change >= change_interval_days:
+            return True
+
+    return False
+
+
+def change_admin_password(
+    db: Any, admin_id: int, old_password: str, new_password: str
+) -> Tuple[bool, str]:
+    """Change admin password with validation."""
+    import src.utils.encryption as encryption
+
+    # Get current password hash
+    row = db.fetch_one(
+        "SELECT password_hash FROM admin_users WHERE id = ?", (admin_id,)
+    )
+
+    if not row:
+        return False, "Admin user not found"
+
+    if isinstance(row, dict):
+        current_hash = row.get("password_hash")
+    else:
+        current_hash = row[0]
+
+    # Verify old password
+    if not current_hash or not encryption.verify_password(
+        old_password, str(current_hash)
+    ):
+        return False, "Current password is incorrect"
+
+    # Validate new password against policy
+    admin_config = config.get("admin_ui", {})
+    password_policy = admin_config.get("security", {}).get("password_policy", {})
+
+    min_length = password_policy.get("min_length", 12)
+    require_uppercase = password_policy.get("require_uppercase", True)
+    require_lowercase = password_policy.get("require_lowercase", True)
+    require_numbers = password_policy.get("require_numbers", True)
+    require_special_chars = password_policy.get("require_special_chars", True)
+    prevent_common_passwords = password_policy.get("prevent_common_passwords", True)
+
+    if len(new_password) < min_length:
+        return False, f"Password must be at least {min_length} characters"
+
+    if require_uppercase and not any(c.isupper() for c in new_password):
+        return False, "Password must contain at least one uppercase letter"
+
+    if require_lowercase and not any(c.islower() for c in new_password):
+        return False, "Password must contain at least one lowercase letter"
+
+    if require_numbers and not any(c.isdigit() for c in new_password):
+        return False, "Password must contain at least one number"
+
+    if require_special_chars and not any(
+        c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in new_password
+    ):
+        return False, "Password must contain at least one special character"
+
+    if prevent_common_passwords:
+        common_passwords = [
+            "password",
+            "123456",
+            "qwerty",
+            "admin",
+            "letmein",
+            "welcome",
+            "monkey",
+            "dragon",
+            "master",
+            "hello",
+            "football",
+            "iloveyou",
+        ]
+        if new_password.lower() in common_passwords:
+            return False, "Password is too common, please choose a stronger password"
+
+    # Hash new password
+    new_hash = encryption.hash_password(new_password)
+
+    # Update password and clear force_password_change flag
+    now = int(time.time() * 1000)
+    db.execute(
+        "UPDATE admin_users SET password_hash = ?, force_password_change = 0, last_password_change = ? WHERE id = ?",
+        (new_hash, now, admin_id),
+    )
+
+    # Sync to auth_users table
+    admin_row = db.fetch_one(
+        "SELECT username FROM admin_users WHERE id = ?", (admin_id,)
+    )
+    if admin_row:
+        username = (
+            admin_row.get("username") if isinstance(admin_row, dict) else admin_row[0]
+        )
+        if username:
+            _sync_password_to_auth_users(db, str(username), new_hash)
+
+    return True, "Password changed successfully"
 
 
 def create_session(db: Any, admin_id: int, expires_hours: int = 8) -> str:
@@ -588,16 +810,73 @@ def logout(db: Any, token: str) -> bool:
 def change_password(
     db: Any, admin_id: int, current_password: str, new_password: str
 ) -> Tuple[bool, str]:
-    """Change admin password."""
+    """Change admin password with policy validation."""
     valid, _row, message = _verify_admin_password(db, admin_id, current_password)
     if not valid:
         return False, message
+
+    # Validate new password against policy
+    admin_config = config.get("admin_ui", {})
+    password_policy = admin_config.get("security", {}).get("password_policy", {})
+
+    min_length = password_policy.get("min_length", 12)
+    require_uppercase = password_policy.get("require_uppercase", True)
+    require_lowercase = password_policy.get("require_lowercase", True)
+    require_numbers = password_policy.get("require_numbers", True)
+    require_special_chars = password_policy.get("require_special_chars", True)
+    prevent_common_passwords = password_policy.get("prevent_common_passwords", True)
+
+    if len(new_password) < min_length:
+        return False, f"Password must be at least {min_length} characters"
+
+    if require_uppercase and not any(c.isupper() for c in new_password):
+        return False, "Password must contain at least one uppercase letter"
+
+    if require_lowercase and not any(c.islower() for c in new_password):
+        return False, "Password must contain at least one lowercase letter"
+
+    if require_numbers and not any(c.isdigit() for c in new_password):
+        return False, "Password must contain at least one number"
+
+    if require_special_chars and not any(
+        c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in new_password
+    ):
+        return False, "Password must contain at least one special character"
+
+    if prevent_common_passwords:
+        common_passwords = [
+            "password",
+            "123456",
+            "qwerty",
+            "admin",
+            "letmein",
+            "welcome",
+            "monkey",
+            "dragon",
+            "master",
+            "hello",
+            "football",
+            "iloveyou",
+        ]
+        if new_password.lower() in common_passwords:
+            return False, "Password is too common, please choose a stronger password"
+
     import src.utils.encryption as encryption
 
+    new_hash = encryption.hash_password(new_password)
+    now = int(time.time() * 1000)
+
+    # Update password with timestamp and clear force_password_change flag
     db.execute(
-        "UPDATE admin_users SET password_hash = ? WHERE id = ?",
-        (encryption.hash_password(new_password), admin_id),
+        "UPDATE admin_users SET password_hash = ?, force_password_change = 0, last_password_change = ? WHERE id = ?",
+        (new_hash, now, admin_id),
     )
+
+    # Sync the new password hash to auth_users so core_auth.login() sees it.
+    # Derive username from the already-verified row instead of hardcoding "admin".
+    username = _row["username"] if _row and isinstance(_row, dict) else "admin"
+    if username:
+        _sync_password_to_auth_users(db, str(username), new_hash)
     return True, "Password updated successfully"
 
 

@@ -308,7 +308,7 @@ class ExternalProxy:
                 },
                 timeout=self._timeout,
                 stream=True,
-                verify=False if parsed.scheme == "http" else True,
+                verify=True,  # Always verify SSL for security
                 allow_redirects=False,
             )
 

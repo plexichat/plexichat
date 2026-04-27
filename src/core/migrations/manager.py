@@ -7,7 +7,7 @@ entire migration process including discovery, validation, execution, and trackin
 
 import logging
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from . import validator
 from .tracker import MigrationTracker
@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 class Migration:
     """Represents a single migration with metadata."""
 
-    def __init__(self, version: str, name: str, file_path: str, checksum: str = ""):
+    def __init__(
+        self,
+        version: str,
+        name: str,
+        file_path: str,
+        checksum: str = "",
+        depends_on: Optional[List[str]] = None,
+    ):
         """
         Initialize migration metadata.
 
@@ -28,11 +35,13 @@ class Migration:
             name: Human-readable name
             file_path: Path to migration file
             checksum: SHA256 checksum of file content
+            depends_on: List of migration versions this migration depends on
         """
         self.version = version
         self.name = name
         self.file_path = file_path
         self.checksum = checksum
+        self.depends_on = depends_on or []
 
 
 class MigrationManager:
@@ -90,11 +99,77 @@ class MigrationManager:
                 filename = Path(file_path).stem
                 name = filename.split("_", 1)[1] if "_" in filename else filename
 
-                pending.append(Migration(version, name, file_path, checksum))
+                # Extract dependencies from docstring
+                depends_on = self._extract_dependencies(file_path)
+
+                pending.append(
+                    Migration(version, name, file_path, checksum, depends_on)
+                )
             else:
                 logger.debug(f"Migration {version} already applied")
 
         return pending
+
+    def _extract_dependencies(self, file_path: str) -> List[str]:
+        """
+        Extract migration dependencies from file docstring.
+
+        Dependencies can be specified in the docstring as:
+        Depends: 001, 005, 010
+
+        Args:
+            file_path: Path to migration file
+
+        Returns:
+            List of migration version strings this migration depends on
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            # Look for "Depends:" in docstring
+            for line in content.split("\n"):
+                line = line.strip()
+                if line.startswith("Depends:"):
+                    deps_str = line.split(":", 1)[1].strip()
+                    # Parse comma-separated versions
+                    deps = [d.strip() for d in deps_str.split(",") if d.strip()]
+                    logger.debug(f"Extracted dependencies from {file_path}: {deps}")
+                    return deps
+        except Exception as e:
+            logger.warning(f"Could not extract dependencies from {file_path}: {e}")
+
+        return []
+
+    def validate_dependencies(self, migration: Migration, applied: List[str]) -> bool:
+        """
+        Validate that all dependencies for a migration are satisfied.
+
+        Args:
+            migration: Migration to validate
+            applied: List of applied migration versions
+
+        Returns:
+            True if all dependencies are satisfied
+
+        Raises:
+            ValueError: If dependencies are not satisfied
+        """
+        if not migration.depends_on:
+            return True
+
+        applied_set = set(applied)
+        unsatisfied = [dep for dep in migration.depends_on if dep not in applied_set]
+
+        if unsatisfied:
+            raise ValueError(
+                f"Migration {migration.version} depends on {unsatisfied} which are not applied"
+            )
+
+        logger.debug(
+            f"Migration {migration.version} dependencies satisfied: {migration.depends_on}"
+        )
+        return True
 
     def apply_migration(self, version: str, dry_run: bool = False) -> Dict[str, Any]:
         """
@@ -122,6 +197,25 @@ class MigrationManager:
         if migration is None:
             raise ValueError(f"Migration {version} not found in pending migrations")
 
+        # Validate dependencies
+        applied = self.tracker.get_applied_migrations()
+        self.validate_dependencies(migration, applied)
+
+        # Check if irreversible migration can be run (skip for dry-run)
+        if not dry_run:
+            import utils.config as config
+
+            delay_days = config.get(
+                "database.migrations.irreversible_migration_delay_days", 7
+            )
+            delay_hours = delay_days * 24
+
+            can_run, reason = self.tracker.can_run_irreversible_migration(
+                version, delay_hours
+            )
+            if not can_run:
+                raise ValueError(f"Cannot run migration {version}: {reason}")
+
         return self._execute_migration(migration, dry_run)
 
     def apply_all_pending(self, dry_run: bool = False) -> Dict[str, Any]:
@@ -137,13 +231,39 @@ class MigrationManager:
         Raises:
             Exception: If any migration fails
         """
-        self.tracker.ensure_table_exists()
+        # Acquire lock to prevent concurrent migration runs
+        if not dry_run:
+            if not self.tracker.acquire_lock():
+                raise Exception(
+                    "Could not acquire migration lock - another migration may be in progress"
+                )
 
-        pending = self.get_pending_migrations()
+        try:
+            self.tracker.ensure_table_exists()
 
-        if not pending:
-            logger.info("No pending migrations to apply")
-            return {
+            pending = self.get_pending_migrations()
+
+            if not pending:
+                logger.info("No pending migrations to apply")
+                return {
+                    "success": True,
+                    "applied_count": 0,
+                    "failed_count": 0,
+                    "migrations": [],
+                    "dry_run": dry_run,
+                }
+
+            # Validate migration order
+            applied = self.tracker.get_applied_migrations()
+            pending_versions = [m.version for m in pending]
+
+            try:
+                validator.validate_migration_order(pending_versions, applied)
+            except ValueError as e:
+                logger.error(f"Migration order validation failed: {str(e)}")
+                raise
+
+            results = {
                 "success": True,
                 "applied_count": 0,
                 "failed_count": 0,
@@ -151,44 +271,38 @@ class MigrationManager:
                 "dry_run": dry_run,
             }
 
-        # Validate migration order
-        applied = self.tracker.get_applied_migrations()
-        pending_versions = [m.version for m in pending]
+            for migration in pending:
+                try:
+                    # Validate dependencies before applying
+                    self.validate_dependencies(migration, applied)
 
-        try:
-            validator.validate_migration_order(pending_versions, applied)
-        except ValueError as e:
-            logger.error(f"Migration order validation failed: {str(e)}")
-            raise
+                    result = self._execute_migration(migration, dry_run)
+                    results["migrations"].append(result)
+                    results["applied_count"] += 1
 
-        results = {
-            "success": True,
-            "applied_count": 0,
-            "failed_count": 0,
-            "migrations": [],
-            "dry_run": dry_run,
-        }
+                    # Update applied list for dependency validation of subsequent migrations
+                    applied.append(migration.version)
+                except Exception as e:
+                    results["success"] = False
+                    results["failed_count"] += 1
+                    error_result = {
+                        "version": migration.version,
+                        "name": migration.name,
+                        "success": False,
+                        "error": str(e),
+                    }
+                    results["migrations"].append(error_result)
+                    logger.error(
+                        f"Failed to apply migration {migration.version}: {str(e)}"
+                    )
+                    # Continue with next migration or stop based on configuration
+                    break
 
-        for migration in pending:
-            try:
-                result = self._execute_migration(migration, dry_run)
-                results["migrations"].append(result)
-                results["applied_count"] += 1
-            except Exception as e:
-                results["success"] = False
-                results["failed_count"] += 1
-                error_result = {
-                    "version": migration.version,
-                    "name": migration.name,
-                    "success": False,
-                    "error": str(e),
-                }
-                results["migrations"].append(error_result)
-                logger.error(f"Failed to apply migration {migration.version}: {str(e)}")
-                # Continue with next migration or stop based on configuration
-                break
-
-        return results
+            return results
+        finally:
+            # Always release the lock
+            if not dry_run:
+                self.tracker.release_lock()
 
     def rollback_migration(self, version: str) -> Dict[str, Any]:
         """

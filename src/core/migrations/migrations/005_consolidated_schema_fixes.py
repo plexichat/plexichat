@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 def up(db):
     """Apply the migration."""
+    logger.info("Migration 005: Starting consolidated schema fixes")
     db_type = getattr(db, "type", "sqlite")
 
     # 1. Auth migrations: ip_index
@@ -29,6 +30,7 @@ def down(db):
     Added columns (ip_index, ip_encrypted, webhook_id, etc.) are left in place
     since dropping columns is not supported in all SQLite versions.
     """
+    logger.info("Migration 005 rollback: Starting rollback")
     db_type = getattr(db, "type", "sqlite")
 
     # Try to find and restore the old auth_ip_blacklist table
@@ -72,40 +74,12 @@ def down(db):
 
 def _column_exists(db, table_name: str, column_name: str, db_type: str) -> bool:
     """Check if a column exists in a table."""
-    if not _table_exists(db, table_name, db_type):
-        return False
-
-    if db_type == "postgres":
-        row = db.fetch_one(
-            "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
-            (table_name, column_name),
-        )
-        return row is not None
-    else:
-        safe_table = (
-            db._sanitize_identifier(table_name)
-            if hasattr(db, "_sanitize_identifier")
-            else table_name
-        )
-        rows = db.fetch_all(f"PRAGMA table_info({safe_table})")
-        return any(row["name"] == column_name for row in rows)
+    return db.column_exists(table_name, column_name)
 
 
 def _table_exists(db, table_name: str, db_type: str) -> bool:
     """Check if a table exists."""
-    if db_type == "postgres":
-        row = db.fetch_one(
-            "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
-            (table_name,),
-        )
-        return row is not None
-    else:
-        # SQLite
-        row = db.fetch_one(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (table_name,),
-        )
-        return row is not None
+    return db.table_exists(table_name)
 
 
 def _add_ip_index_to_auth(db, db_type: str):
@@ -119,26 +93,26 @@ def _add_ip_index_to_auth(db, db_type: str):
 
     for table in auth_tables:
         # Skip if table doesn't exist yet (will be created correctly by schema.py)
-        if not _table_exists(db, table, db_type):
+        if not db.table_exists(table):
             logger.debug(
                 f"Migration 005: Table {table} does not exist, skipping alterations"
             )
             continue
 
         # 1. Add ip_index if missing
-        if not _column_exists(db, table, "ip_index", db_type):
+        if not db.column_exists(table, "ip_index"):
             logger.info(f"Migration 005: Adding ip_index to {table}")
             db.execute(f"ALTER TABLE {table} ADD COLUMN ip_index TEXT")
             if table == "auth_known_ips":
                 db.execute("UPDATE auth_known_ips SET ip_index = 'legacy' || id")
 
         # 2. Add ip_encrypted if missing
-        if not _column_exists(db, table, "ip_encrypted", db_type):
+        if not db.column_exists(table, "ip_encrypted"):
             logger.info(f"Migration 005: Adding ip_encrypted to {table}")
             db.execute(f"ALTER TABLE {table} ADD COLUMN ip_encrypted TEXT")
 
         # 3. Drop old ip_address column if it exists
-        if _column_exists(db, table, "ip_address", db_type):
+        if db.column_exists(table, "ip_address"):
             logger.info(f"Migration 005: Dropping old ip_address column from {table}")
             if db_type == "postgres":
                 db.execute(f"ALTER TABLE {table} DROP COLUMN ip_address")
@@ -149,8 +123,8 @@ def _add_ip_index_to_auth(db, db_type: str):
 
     # Table: auth_ip_blacklist
     # This one is tricky because ip_index is often the PRIMARY KEY in the new schema.
-    if _table_exists(db, "auth_ip_blacklist", db_type):
-        if not _column_exists(db, "auth_ip_blacklist", "ip_index", db_type):
+    if db.table_exists("auth_ip_blacklist"):
+        if not db.column_exists("auth_ip_blacklist", "ip_index"):
             logger.info(
                 "Migration 005: auth_ip_blacklist missing ip_index. Recreating table."
             )
@@ -186,7 +160,7 @@ def _add_ip_index_to_auth(db, db_type: str):
                 # Migrate existing data from the old table into the new one.
                 # Map old ip_address column to ip_index where possible.
                 try:
-                    if _table_exists(db, old_table, db_type):
+                    if db.table_exists(old_table):
                         # Check which columns exist in the old table
                         if db_type == "postgres":
                             col_rows = db.fetch_all(
@@ -288,8 +262,8 @@ def _add_ip_index_to_auth(db, db_type: str):
 def _add_columns_to_messaging(db, db_type: str):
     """Add missing columns to messaging tables."""
     # msg_messages.webhook_id
-    if _table_exists(db, "msg_messages", db_type):
-        if not _column_exists(db, "msg_messages", "webhook_id", db_type):
+    if db.table_exists("msg_messages"):
+        if not db.column_exists("msg_messages", "webhook_id"):
             logger.info("Migration 005: Adding webhook_id to msg_messages")
             col_type = "BIGINT" if db_type == "postgres" else "INTEGER"
             db.execute(f"ALTER TABLE msg_messages ADD COLUMN webhook_id {col_type}")
@@ -298,10 +272,8 @@ def _add_columns_to_messaging(db, db_type: str):
             )
 
     # msg_user_settings.compact_messages_enabled
-    if _table_exists(db, "msg_user_settings", db_type):
-        if not _column_exists(
-            db, "msg_user_settings", "compact_messages_enabled", db_type
-        ):
+    if db.table_exists("msg_user_settings"):
+        if not db.column_exists("msg_user_settings", "compact_messages_enabled"):
             logger.info(
                 "Migration 005: Adding compact_messages_enabled to msg_user_settings"
             )
@@ -310,7 +282,7 @@ def _add_columns_to_messaging(db, db_type: str):
             )
 
     # msg_attachments.checksum
-    if _table_exists(db, "msg_attachments", db_type):
-        if not _column_exists(db, "msg_attachments", "checksum", db_type):
+    if db.table_exists("msg_attachments"):
+        if not db.column_exists("msg_attachments", "checksum"):
             logger.info("Migration 005: Adding checksum to msg_attachments")
             db.execute("ALTER TABLE msg_attachments ADD COLUMN checksum TEXT")

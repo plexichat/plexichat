@@ -13,6 +13,10 @@ Description:
     application initialization.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def up(db):
     """
@@ -94,15 +98,9 @@ def down(db):
         db: Database instance
 
     This function is optional but highly recommended. It should reverse all
-    changes made by the up() function.
-
-    Important:
-    - Write down() carefully - test in development first
-    - Consider data loss if dropping tables or columns
-    - Handle dependencies properly
-    - Make it idempotent (safe to run multiple times)
     """
-
-    # Example: Drop the table
-    sql = "DROP TABLE IF EXISTS application_settings"
-    db.execute(sql)
+    if db.table_exists("application_settings"):
+        db.execute("DROP TABLE IF EXISTS application_settings")
+    if db.index_exists("idx_application_settings_key"):
+        db.execute("DROP INDEX IF EXISTS idx_application_settings_key")
+    logger.info("Migration 001 rollback: Dropped application_settings table and index")

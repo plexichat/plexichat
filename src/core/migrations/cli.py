@@ -17,6 +17,7 @@ Usage:
 """
 
 import sys
+import os
 from pathlib import Path
 
 # Add project root to path for imports
@@ -31,6 +32,7 @@ import utils.logger as logger  # noqa: E402
 from src.core.database import Database  # noqa: E402
 from . import run_migrations, rollback, get_status  # noqa: E402
 from .manager import MigrationManager  # noqa: E402
+from .cloner import DataCloner  # noqa: E402
 
 
 logging.basicConfig(
@@ -340,13 +342,85 @@ def validate_migrations(db) -> None:
             print(f"  [{mismatch['version']}] {mismatch['error']}")
 
 
+def migrate_to_postgres(sqlite_path: str, dry_run: bool = False) -> None:
+    """
+    Execute full migration from SQLite to PostgreSQL.
+    """
+    print("\nStarting SQLite to PostgreSQL migration...")
+    print(f"Source: {sqlite_path}")
+
+    # 1. Connect to Source (SQLite)
+    os.environ["SQLITE_PATH"] = sqlite_path
+    # Save and clear postgres env vars to force SQLite
+    saved_env = {}
+    for key in [
+        "POSTGRES_HOST",
+        "DATABASE_URL",
+        "POSTGRES_PORT",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DBNAME",
+    ]:
+        saved_env[key] = os.environ.pop(key, None)
+    setup_config()
+    source_db = Database()
+    source_db.connect()
+
+    # 2. Connect to Target (PostgreSQL) - uses env vars
+    # Restore postgres env vars
+    for key, value in saved_env.items():
+        if value is not None:
+            os.environ[key] = value
+    setup_config()
+    target_db = Database()
+    target_db.connect()
+
+    cloner = DataCloner(source_db, target_db)
+
+    # 3. Validation
+    if not cloner.validate_source_status():
+        print("Error: Source database is not in a stable state. Fix migrations first.")
+        sys.exit(1)
+
+    print("\nInitializing PostgreSQL schema...")
+    # Initialize schema by running migrations on target
+    # We pass target_db to run_migrations
+    run_migrations(target_db, dry_run=dry_run)
+
+    if dry_run:
+        print("\nDRY RUN: Schema initialized in transaction (will be rolled back).")
+        print("Skipping data clone in dry run mode.")
+        target_db.rollback()
+        return
+
+    # 4. Clone Data
+    print("\nCloning data...")
+    clone_result = cloner.clone_all()
+
+    # 5. Verification
+    print("\nVerifying data integrity...")
+    verify_result = cloner.verify_counts()
+
+    if verify_result["valid"]:
+        print("\nMigration SUCCESSFUL!")
+        print(f"Total tables cloned: {clone_result['table_count']}")
+        print(f"Total rows cloned:   {clone_result['total_rows']}")
+    else:
+        print("\nMigration completed with WARNINGS - row count mismatches found!")
+        print(f"Mismatched tables: {verify_result['mismatch_count']}")
+
+    source_db.close()
+    target_db.close()
+
+
 def main():
     """Main CLI entry point."""
-    setup_config()
+    # We defer setup_config to the specific commands to handle overrides
     parser = argparse.ArgumentParser(description="Database migration management CLI")
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
+    # ... (existing commands)
     # create_migration command
     create_parser = subparsers.add_parser(
         "create_migration", help="Create a new migration"
@@ -373,13 +447,26 @@ def main():
     # validate_migrations command
     subparsers.add_parser("validate_migrations", help="Validate migration integrity")
 
+    # migrate_to_postgres command
+    migrate_parser = subparsers.add_parser(
+        "migrate_to_postgres", help="Migrate data from SQLite to PostgreSQL"
+    )
+    migrate_parser.add_argument(
+        "--sqlite-path", default="data/plexichat.db", help="Path to source SQLite file"
+    )
+    migrate_parser.add_argument(
+        "--dry-run", action="store_true", help="Initialize schema but don't clone data"
+    )
+
     args = parser.parse_args()
 
     if args.command == "create_migration":
+        setup_config()
         create_migration(args.name)
 
     elif args.command == "list_migrations":
         try:
+            setup_config()
             db = Database()
             db.connect()
             list_migrations(db)
@@ -390,6 +477,7 @@ def main():
 
     elif args.command == "apply_migrations":
         try:
+            setup_config()
             db = Database()
             db.connect()
             apply_migrations(db, dry_run=args.dry_run)
@@ -400,6 +488,7 @@ def main():
 
     elif args.command == "rollback_migration":
         try:
+            setup_config()
             db = Database()
             db.connect()
             rollback_migration(db, args.version)
@@ -410,12 +499,23 @@ def main():
 
     elif args.command == "validate_migrations":
         try:
+            setup_config()
             db = Database()
             db.connect()
             validate_migrations(db)
             db.close()
         except Exception as e:
             print(f"Error: {str(e)}")
+            sys.exit(1)
+
+    elif args.command == "migrate_to_postgres":
+        try:
+            migrate_to_postgres(args.sqlite_path, dry_run=args.dry_run)
+        except Exception as e:
+            print(f"Error during migration: {str(e)}")
+            import traceback
+
+            traceback.print_exc()
             sys.exit(1)
 
     else:

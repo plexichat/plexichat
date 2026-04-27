@@ -22,3 +22,10 @@ __all__ = [
     "_query_time_ms",
     "with_db_worker",
 ]
+
+# The Database class is composed of multiple mixins that provide:
+# - DatabaseConnectionMixin: Connection management
+# - DatabaseExecutionMixin: Query execution
+# - DatabaseTransactionMixin: Transaction handling
+# - DatabaseMaintenanceMixin: Maintenance operations (table_exists, column_exists, index_exists)
+# - DatabaseMetricsMixin: Query metrics and monitoring

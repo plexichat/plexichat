@@ -1612,6 +1612,28 @@ class AuthManager(BaseManager):
             )
         return cursor.rowcount > 0
 
+    def unrevoke_api_access_token(
+        self, token_id: int, unrevoked_by: Optional[int]
+    ) -> bool:
+        """Unrevoke a previously revoked API access token."""
+        cursor = self._db.execute(
+            "UPDATE auth_api_access_tokens SET revoked = 0, revoked_at = NULL, revoked_by = NULL WHERE id = ? AND revoked = 1",
+            (token_id,),
+        )
+        if cursor.rowcount > 0:
+            invalidate_pattern("access_token_required*")
+            self._log_audit(
+                AuditEventType.SECURITY_SETTINGS_UPDATED,
+                None,
+                True,
+                details={
+                    "access_token_id": token_id,
+                    "action": "unrevoke",
+                    "admin_id": unrevoked_by,
+                },
+            )
+        return cursor.rowcount > 0
+
     def rotate_api_access_token(
         self,
         token_id: int,
@@ -1893,14 +1915,18 @@ class AuthManager(BaseManager):
 
     @cached(ttl=30, prefix="access_token_required")
     def is_api_access_token_required(self) -> bool:
-        now = self._get_timestamp()
-        row = self._db.fetch_one(
-            """SELECT id FROM auth_api_access_tokens
-               WHERE revoked = 0 AND (expires_at IS NULL OR expires_at > ?)
-               LIMIT 1""",
-            (now,),
-        )
-        return bool(row)
+        try:
+            now = self._get_timestamp()
+            row = self._db.fetch_one(
+                """SELECT id FROM auth_api_access_tokens
+                   WHERE revoked = 0 AND (expires_at IS NULL OR expires_at > ?)
+                   LIMIT 1""",
+                (now,),
+            )
+            return bool(row)
+        except Exception:
+            # If table doesn't exist or other error, assume not required
+            return False
 
     def _normalize_access_token_scope_mode(self, scope_mode: str) -> str:
         normalized = (scope_mode or "none").strip().lower()
@@ -2200,23 +2226,27 @@ class AuthManager(BaseManager):
     @cached(ttl=300, prefix="ip_blocked")
     def is_ip_blocked(self, ip_address: str) -> bool:
         """Check if an IP address is blocked."""
-        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
-        legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
+        try:
+            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+            legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
 
-        row = self._db.fetch_one(
-            "SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
-            (ip_index, legacy_index, legacy_index),
-        )
-        if not row:
+            row = self._db.fetch_one(
+                "SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
+                (ip_index, legacy_index, legacy_index),
+            )
+            if not row:
+                return False
+
+            expires_at = row["expires_at"]
+            if expires_at and expires_at < self._get_timestamp():
+                # Block expired, cleanup
+                self.unblock_ip(ip_address)
+                return False
+
+            return True
+        except Exception:
+            # If table doesn't exist or other error, assume not blocked
             return False
-
-        expires_at = row["expires_at"]
-        if expires_at and expires_at < self._get_timestamp():
-            # Block expired, cleanup
-            self.unblock_ip(ip_address)
-            return False
-
-        return True
 
     def get_blocked_ips(self) -> List[Dict[str, Any]]:
         """Get all blocked IPs."""

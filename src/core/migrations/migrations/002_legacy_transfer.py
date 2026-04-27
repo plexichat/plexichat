@@ -6,17 +6,17 @@ hardcoded migration system into a single version-controlled migration.
 """
 
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 
 
 def up(db):
     """Apply legacy migrations to ensure schema is up to date."""
+    logger.info("Migration 002: Starting legacy transfer migration")
 
     # 1. msg_messages -> webhook_id
-    if _table_exists(db, "msg_messages"):
-        if not _column_exists(db, "msg_messages", "webhook_id"):
+    if db.table_exists("msg_messages"):
+        if not db.column_exists("msg_messages", "webhook_id"):
             logger.info("Legacy Migration: Adding webhook_id to msg_messages")
             db.execute("ALTER TABLE msg_messages ADD COLUMN webhook_id BIGINT")
             db.execute(
@@ -25,8 +25,8 @@ def up(db):
 
     # 2. Media Deduplication v2
     # media_file_hashes -> phash_value
-    if _table_exists(db, "media_file_hashes"):
-        if not _column_exists(db, "media_file_hashes", "phash_value"):
+    if db.table_exists("media_file_hashes"):
+        if not db.column_exists("media_file_hashes", "phash_value"):
             logger.info("Legacy Migration: Adding phash_value to media_file_hashes")
             db.execute("ALTER TABLE media_file_hashes ADD COLUMN phash_value TEXT")
             db.execute(
@@ -34,8 +34,8 @@ def up(db):
             )
 
     # media_hash_reports -> phash_value
-    if _table_exists(db, "media_hash_reports"):
-        if not _column_exists(db, "media_hash_reports", "phash_value"):
+    if db.table_exists("media_hash_reports"):
+        if not db.column_exists("media_hash_reports", "phash_value"):
             logger.info("Legacy Migration: Adding phash_value to media_hash_reports")
             db.execute("ALTER TABLE media_hash_reports ADD COLUMN phash_value TEXT")
             db.execute(
@@ -43,8 +43,8 @@ def up(db):
             )
 
     # media_blocked_hashes -> hash_type
-    if _table_exists(db, "media_blocked_hashes"):
-        if not _column_exists(db, "media_blocked_hashes", "hash_type"):
+    if db.table_exists("media_blocked_hashes"):
+        if not db.column_exists("media_blocked_hashes", "hash_type"):
             logger.info("Legacy Migration: Adding hash_type to media_blocked_hashes")
             db.execute(
                 "ALTER TABLE media_blocked_hashes ADD COLUMN hash_type TEXT NOT NULL DEFAULT 'sha256'"
@@ -54,8 +54,8 @@ def up(db):
             )
 
     # 3. thread_threads -> conversation_id
-    if _table_exists(db, "thread_threads"):
-        if not _column_exists(db, "thread_threads", "conversation_id"):
+    if db.table_exists("thread_threads"):
+        if not db.column_exists("thread_threads", "conversation_id"):
             logger.info("Legacy Migration: Adding conversation_id to thread_threads")
             db.execute("ALTER TABLE thread_threads ADD COLUMN conversation_id BIGINT")
             db.execute(
@@ -63,8 +63,8 @@ def up(db):
             )
 
     # 4. srv_members -> updated_at
-    if _table_exists(db, "srv_members"):
-        if not _column_exists(db, "srv_members", "updated_at"):
+    if db.table_exists("srv_members"):
+        if not db.column_exists("srv_members", "updated_at"):
             logger.info("Legacy Migration: Adding updated_at to srv_members")
             db.execute("ALTER TABLE srv_members ADD COLUMN updated_at BIGINT")
             # Backfill existing rows: set updated_at = joined_at
@@ -73,82 +73,46 @@ def up(db):
             )
 
     # 5. auth_users -> age_verified, date_of_birth
-    if _table_exists(db, "auth_users"):
-        if not _column_exists(db, "auth_users", "age_verified"):
+    if db.table_exists("auth_users"):
+        if not db.column_exists("auth_users", "age_verified"):
             logger.info("Legacy Migration: Adding age_verified to auth_users")
             db.execute(
                 "ALTER TABLE auth_users ADD COLUMN age_verified INTEGER DEFAULT 0"
             )
 
-        if not _column_exists(db, "auth_users", "date_of_birth"):
+        if not db.column_exists("auth_users", "date_of_birth"):
             logger.info("Legacy Migration: Adding date_of_birth to auth_users")
             db.execute("ALTER TABLE auth_users ADD COLUMN date_of_birth TEXT")
 
 
 def down(db):
-    """Rollback legacy migrations (optional)."""
-    # Note: Traditional migrations often avoid dropping columns in down()
-    # because it causes data loss. We leave it empty or implement carefully.
-    pass
+    """Rollback legacy migrations.
 
-
-def _table_exists(db, table_name: str) -> bool:
-    """Strictly check if a table exists."""
-    if not re.match(r"^[a-zA-Z0-9_]+$", table_name):
-        return False
-
-    db_type = getattr(db, "type", "sqlite")
-    if db_type == "postgres":
-        row = db.fetch_one(
-            "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
-            (table_name,),
-        )
-        return row is not None
+    For PostgreSQL: Drops the added columns.
+    For SQLite: Columns are left in place (DROP COLUMN not supported).
+    """
+    logger.info("Migration 002 rollback: Starting rollback")
+    if db.type == "postgres":
+        # Drop columns if they exist
+        if db.column_exists("msg_messages", "webhook_id"):
+            db.execute("ALTER TABLE msg_messages DROP COLUMN webhook_id")
+        if db.column_exists("media_file_hashes", "phash_value"):
+            db.execute("ALTER TABLE media_file_hashes DROP COLUMN phash_value")
+        if db.column_exists("media_hash_reports", "phash_value"):
+            db.execute("ALTER TABLE media_hash_reports DROP COLUMN phash_value")
+        if db.column_exists("media_blocked_hashes", "hash_type"):
+            db.execute("ALTER TABLE media_blocked_hashes DROP COLUMN hash_type")
+        if db.column_exists("thread_threads", "conversation_id"):
+            db.execute("ALTER TABLE thread_threads DROP COLUMN conversation_id")
+        if db.column_exists("srv_members", "updated_at"):
+            db.execute("ALTER TABLE srv_members DROP COLUMN updated_at")
+        if db.column_exists("auth_users", "age_verified"):
+            db.execute("ALTER TABLE auth_users DROP COLUMN age_verified")
+        if db.column_exists("auth_users", "date_of_birth"):
+            db.execute("ALTER TABLE auth_users DROP COLUMN date_of_birth")
+        logger.info("Migration 002 rollback: Dropped legacy columns (PostgreSQL)")
     else:
-        row = db.fetch_one(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (table_name,),
+        # SQLite: Columns left in place (DROP COLUMN not supported)
+        logger.info(
+            "Migration 002 rollback: Columns left in place (SQLite - DROP COLUMN not supported)"
         )
-        return row is not None
-
-
-def _column_exists(db, table_name: str, column_name: str) -> bool:
-    """Strictly check if a column exists in a table."""
-    if not re.match(r"^[a-zA-Z0-9_]+$", table_name) or not re.match(
-        r"^[a-zA-Z0-9_]+$", column_name
-    ):
-        return False
-
-    db_type = getattr(db, "type", "sqlite")
-
-    # We use db._get_conn() to get direct access for meta-queries
-    conn = db._get_conn()
-    cursor = conn.cursor()
-
-    try:
-        if db_type == "postgres":
-            cursor.execute(
-                "SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
-                (table_name, column_name),
-            )
-            return cursor.fetchone() is not None
-        else:
-            safe_table = (
-                db._sanitize_identifier(table_name)
-                if hasattr(db, "_sanitize_identifier")
-                else table_name
-            )
-            cursor.execute(f"PRAGMA table_info({safe_table})")
-            rows = cursor.fetchall()
-            # SQLite fetchall returns list of tuples/dicts depending on cursor type
-            # Standard cursor returns tuples, Database class uses dict-like rows
-            for row in rows:
-                if isinstance(row, dict) and row["name"] == column_name:
-                    return True
-                if (
-                    not isinstance(row, dict) and row[1] == column_name
-                ):  # index 1 is name in standard sqlite cursor
-                    return True
-            return False
-    finally:
-        cursor.close()
