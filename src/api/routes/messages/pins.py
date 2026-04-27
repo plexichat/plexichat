@@ -120,7 +120,7 @@ async def pin_message(
 
                 asyncio.create_task(dispatch_pin())
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -244,7 +244,7 @@ async def unpin_message(
 
                 asyncio.create_task(dispatch_unpin())
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:

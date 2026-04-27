@@ -62,6 +62,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "migrations": {
                 "auto_migrate": True,
                 "migration_dir": str(home_dir / "migrations"),
+                "irreversible_migration_delay_days": 7,
             },
         },
         "redis": {
@@ -502,6 +503,9 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "enabled": True,
             "path": "/admin",
             "require_otp": True,
+            "force_password_change_first_login": True,
+            "session_timeout_minutes": 480,
+            "max_concurrent_sessions": 3,
             "host_restriction": {
                 "enabled": True,
                 "allowed_hosts": ["127.0.0.1", "localhost", "::1"],
@@ -512,6 +516,47 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "max_attempts": 5,
                 "window_seconds": 300,
                 "lockout_seconds": 900,
+            },
+            "rbac": {
+                "enabled": True,
+                "default_role": "super_admin",
+            },
+            "approval_workflows": {
+                "enabled": True,
+                "single_admin_bypass": True,
+                "require_approval_for": [
+                    "users.force_purge",
+                    "users.delete",
+                    "servers.delete",
+                ],
+                "approval_required_admins": 2,
+                "approval_timeout_hours": 48,
+                "auto_approve_after_hours": 72,
+            },
+            "audit": {
+                "log_to_file": True,
+                "log_to_database": True,
+                "sensitive_actions_always_db": True,
+                "retention_days": 365,
+            },
+            "notifications": {
+                "email_on_critical_actions": False,
+                "email_on_approval_required": False,
+                "webhook_url": "",
+            },
+            "security": {
+                "password_policy": {
+                    "min_length": 12,
+                    "require_uppercase": True,
+                    "require_lowercase": True,
+                    "require_numbers": True,
+                    "require_special_chars": True,
+                    "prevent_common_passwords": True,
+                },
+                "session": {
+                    "max_concurrent_sessions": 3,
+                    "timeout_idle_minutes": 30,
+                },
             },
         },
         "tls": {

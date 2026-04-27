@@ -598,7 +598,7 @@ async def accept_friend_request(
         except Exception as e:
             logger.debug(f"Failed to invalidate relationship cache: {e}")
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -832,7 +832,7 @@ async def delete_relationship(
                 },
             )
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:

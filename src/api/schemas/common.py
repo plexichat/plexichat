@@ -95,6 +95,7 @@ class SuccessResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(True, description="Whether the operation was successful")
+    message: Optional[str] = Field(None, description="Optional success message")
 
 
 class RootResponse(BaseModel):

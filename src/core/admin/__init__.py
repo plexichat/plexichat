@@ -50,27 +50,14 @@ def _get_db():
 
 
 def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult:
-    """Authenticate an administrator."""
-    from src.core import auth as core_auth
-    from src.core.auth.exceptions import InvalidCredentialsError
+    """Authenticate an administrator.
 
-    try:
-        result = core_auth.login(username, password, ip_address=ip)
-    except InvalidCredentialsError as exc:
-        # Core auth raises this instead of returning a failed result —
-        # convert to AdminLoginResult so the route handler sees success=False
-        # and returns 401 instead of 500.
-        return AdminLoginResult(success=False, error=str(exc))
-    # Convert AuthResult to AdminLoginResult
-    return AdminLoginResult(
-        success=result.status.value == "success",
-        token=result.token,
-        user_id=result.user.id if result.user else None,
-        requires_otp_setup=False,
-        requires_otp_verify=result.status.value == "2fa_required",
-        challenge_token=result.challenge_token,
-        error=None if result.status.value == "success" else result.status.value,
-    )
+    Uses admin.auth.authenticate_admin() which validates credentials against
+    admin_users and creates sessions in admin_sessions — the same table that
+    get_admin_from_token() validates against.  This ensures the token returned
+    at login can actually be used for subsequent admin API calls.
+    """
+    return auth.authenticate_admin(_get_db(), username, password, ip)
 
 
 def verify_otp_setup(

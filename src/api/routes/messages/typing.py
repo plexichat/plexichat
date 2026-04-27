@@ -64,7 +64,7 @@ async def trigger_typing(
                     )
                     if channel_type_str in ("voice", "stage"):
                         # Voice channels don't support typing - return success silently
-                        return SuccessResponse(success=True)
+                        return SuccessResponse(success=True, message=None)
 
                     server_id = getattr(channel, "server_id", None)
                     if server_id:
@@ -134,7 +134,7 @@ async def trigger_typing(
             # Fire and forget - don't wait for dispatch to complete
             asyncio.create_task(dispatch_typing())
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:

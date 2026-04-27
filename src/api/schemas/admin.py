@@ -22,7 +22,8 @@ class AdminLoginResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     status: str = Field(
-        ..., description="Login status (success, otp_required, otp_setup_required)"
+        ...,
+        description="Login status (success, otp_required, otp_setup_required, password_change_required)",
     )
     token: Optional[str] = Field(
         default=None, description="Session token if successful"
@@ -35,6 +36,9 @@ class AdminLoginResponse(BaseModel):
     message: Optional[str] = Field(default=None, description="Instruction message")
     challenge_token: Optional[str] = Field(
         default=None, description="Short-lived challenge token for OTP verification"
+    )
+    requires_password_change: bool = Field(
+        default=False, description="Whether admin is required to change password"
     )
 
 

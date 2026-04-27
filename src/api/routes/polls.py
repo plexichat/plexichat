@@ -417,7 +417,7 @@ async def delete_poll(
 
     try:
         polls_module.delete_poll(current_user.user_id, pid)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except PollNotFoundError as e:
         raise HTTPException(
             status_code=404, detail={"error": {"code": 404, "message": str(e)}}

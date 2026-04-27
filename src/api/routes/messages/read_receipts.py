@@ -364,7 +364,7 @@ async def acknowledge_messages_bulk(
             except Exception as e:
                 logger.warning(f"Bulk ACK: Failed for channel {channel_id}: {e}")
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except Exception as e:
         logger.error(f"Bulk ACK failed: {e}", exc_info=True)
         raise HTTPException(

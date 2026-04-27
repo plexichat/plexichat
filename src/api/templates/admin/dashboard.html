@@ -7,302 +7,7 @@
     <title>Plexichat Admin Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230066ff'/><text x='50' y='70' font-family='sans-serif' font-weight='900' font-size='60' text-anchor='middle' fill='white'>P</text></svg>">
     <script src="https://cdn.jsdelivr.net/npm/chart.js" nonce="{{ csp_nonce }}"></script>
-    <style>
-        :root {
-            --bg: #0a0a0a;
-            --card: #141414;
-            --header-bg: #1a1a1c;
-            --accent: #0066ff;
-            --accent-hover: #3388ff;
-            --text: #ffffff;
-            --text-dim: #999999;
-            --border: #2a2a2a;
-            --good: #00ff88;
-            --warn: #ffaa00;
-            --bad: #ff4444;
-            --chart-bg: #0d0d0f;
-            --line-primary: #36a2eb;
-            --line-secondary: #ff9f40;
-            --line-tertiary: #4bc0c0;
-            --line-quaternary: #ff6384;
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.4;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        .header {
-            background: var(--header-bg);
-            padding: 0.6rem 1.5rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border);
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-
-        .container {
-            max-width: 1800px;
-            margin: 0 auto;
-            padding: 1rem;
-        }
-
-        .btn {
-            padding: 0.5rem 1rem;
-            border-radius: 3px;
-            border: 1px solid transparent;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.1s ease;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            font-size: 0.8rem;
-        }
-
-        .btn-primary { background: var(--accent); color: white; }
-        .btn-primary:hover { background: var(--accent-hover); }
-        .btn-secondary { background: #2a2a2a; color: var(--text); border-color: #3a3a3a; }
-        .btn-outline { background: transparent; border-color: #333; color: var(--text-dim); }
-        .btn-danger { background: var(--bad); color: white; }
-
-        .card {
-            background: var(--card);
-            border-radius: 4px;
-            border: 1px solid var(--border);
-            padding: 1.25rem;
-            margin-bottom: 1rem;
-        }
-
-        .grid { display: grid; gap: 1rem; }
-        .grid-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-
-        .tabs {
-            display: flex;
-            gap: 2px;
-            margin-bottom: 1rem;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .tab {
-            padding: 0.75rem 1.5rem;
-            border: 1px solid transparent;
-            border-bottom: none;
-            background: transparent;
-            color: var(--text-dim);
-            cursor: pointer;
-            font-size: 0.85rem;
-            font-weight: 600;
-            margin-bottom: -1px;
-        }
-
-        .tab.active {
-            background: var(--card);
-            color: var(--line-primary);
-            border-color: var(--border);
-            border-top: 3px solid var(--line-primary);
-        }
-
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
-            gap: 1.25rem;
-        }
-
-        .metric-tile {
-            background: var(--card);
-            border: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            height: 320px;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-
-        .tile-header {
-            padding: 0.6rem 1rem;
-            background: #1c1c1e;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .tile-title {
-            font-size: 0.7rem;
-            font-weight: 800;
-            text-transform: uppercase;
-            color: #888;
-            letter-spacing: 1px;
-        }
-
-        .tile-body {
-            flex: 1;
-            padding: 0.75rem;
-            position: relative;
-            background: var(--chart-bg);
-        }
-
-        .stat-value {
-            font-size: 1.75rem;
-            font-weight: 800;
-            font-family: monospace;
-            color: #fff;
-        }
-
-        .stat-label {
-            font-size: 0.7rem;
-            color: #777;
-            text-transform: uppercase;
-            font-weight: 800;
-            margin-bottom: 0.25rem;
-        }
-
-        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem; }
-        th { background: #1c1c1e; padding: 0.75rem 1rem; color: #888; border-bottom: 1px solid var(--border); font-weight: 800; text-transform: uppercase; font-size: 0.65rem; }
-        td { padding: 0.75rem 1rem; border-bottom: 1px solid #1c1c1e; }
-
-        input, select, textarea {
-            background: #000;
-            border: 1px solid #333;
-            color: #eee;
-            padding: 0.5rem 0.75rem;
-            border-radius: 2px;
-            font-size: 0.85rem;
-        }
-
-        .badge {
-            padding: 0.2rem 0.5rem;
-            border-radius: 2px;
-            font-size: 0.7rem;
-            font-weight: 900;
-        }
-
-        .hidden { display: none !important; }
-
-        #log-viewer {
-            background: #000;
-            color: #eee;
-            font-family: monospace;
-            font-size: 0.75rem;
-            padding: 1rem;
-            height: 600px;
-            overflow: auto;
-            line-height: 1.4;
-            white-space: pre-wrap;
-        }
-
-        .log-debug { color: #888; }
-        .log-info { color: #fff; }
-        .log-warning { color: #ffaa00; }
-        .log-error { color: #ff4444; font-weight: bold; }
-
-        .media-report-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-            gap: 0.75rem;
-        }
-
-        .media-report-card {
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            overflow: hidden;
-            background: #111;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .media-report-thumb {
-            position: relative;
-            width: 100%;
-            aspect-ratio: 16 / 9;
-            background: #0b0b0b;
-            overflow: hidden;
-        }
-
-        .media-report-thumb img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            display: block;
-            z-index: 1;
-        }
-
-        .media-report-overlay {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: flex-end;
-            padding: 0.6rem;
-            background: rgba(0, 0, 0, 0.55);
-            opacity: 0;
-            transition: opacity 0.15s ease;
-            backdrop-filter: blur(6px);
-            z-index: 2;
-        }
-
-        .media-report-thumb:hover .media-report-overlay {
-            opacity: 1;
-        }
-
-        .media-report-flag {
-            background: rgba(0, 0, 0, 0.75);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            color: #fff;
-            font-size: 0.7rem;
-            font-weight: 900;
-            letter-spacing: 0.5px;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            text-transform: uppercase;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-        }
-
-        .media-report-thumb[data-luma="light"] .media-report-overlay {
-            background: rgba(0, 0, 0, 0.7);
-        }
-
-        .media-report-thumb[data-luma="light"] .media-report-flag {
-            background: rgba(0, 0, 0, 0.85);
-            color: #fff;
-            border-color: rgba(255, 255, 255, 0.35);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-        }
-
-        .media-report-thumb[data-luma="dark"] .media-report-overlay {
-            background: rgba(255, 255, 255, 0.08);
-        }
-
-        .media-report-thumb[data-luma="dark"] .media-report-flag {
-            background: rgba(255, 255, 255, 0.9);
-            color: #000;
-            border-color: rgba(0, 0, 0, 0.2);
-            text-shadow: none;
-        }
-
-        .media-report-meta {
-            padding: 0.6rem 0.75rem;
-            display: flex;
-            flex-direction: column;
-            gap: 0.4rem;
-            font-size: 0.75rem;
-        }
-
-        .media-report-actions {
-            display: flex;
-            gap: 0.35rem;
-            flex-wrap: wrap;
-        }
-    </style>
+    <link rel="stylesheet" href="/api/v1/admin/static/dashboard.css" nonce="{{ csp_nonce }}">
 </head>
 
 <body>
@@ -312,7 +17,10 @@
             <h1 style="color: #fff; font-size: 1.1rem; font-weight: 700;">System Dashboard</h1>
             <span id="server-version" style="font-size: 0.75rem; background: #222; padding: 3px 10px; border-radius: 12px; color: var(--line-primary); font-weight: 800; font-family: monospace;">...</span>
         </div>
-        <button class="btn btn-outline" data-click="logout">Logout</button>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <a href="/docs/admin" target="_blank" class="btn btn-secondary" style="text-decoration: none;">Documentation</a>
+            <button class="btn btn-outline" data-click="logout">Logout</button>
+        </div>
     </div>
 
     <div class="container">
@@ -324,6 +32,8 @@
             <button class="tab" data-tab="security">Security</button>
             <button class="tab" data-tab="automod">AutoMod</button>
             <button class="tab" data-tab="logs">Logs</button>
+            <button class="tab" data-tab="roles">Roles</button>
+            <button class="tab" data-tab="approvals">Approvals</button>
         </div>
 
         <div id="tab-metrics" class="tab-content">
@@ -695,7 +405,8 @@
                                         <button class="btn btn-primary btn-sm" data-click="saveAccessTokenSettings">Save Settings</button>
                                         <button class="btn btn-secondary btn-sm" data-click="clearAccessTokenExpiry">Clear Expiry</button>
                                         <button class="btn btn-danger btn-sm" data-click="rotateAccessToken">Rotate Token</button>
-                                        <button class="btn btn-outline btn-sm" data-click="revokeSelectedAccessToken">Revoke Token</button>
+                                        <button id="btn-unrevoke-token" class="btn btn-secondary btn-sm" data-click="unrevokeSelectedAccessToken" style="display:none;">Unrevoke Token</button>
+                                        <button id="btn-revoke-token" class="btn btn-outline btn-sm" data-click="revokeSelectedAccessToken">Revoke Token</button>
                                     </div>
                                     <div id="access-token-rotated" style="font-size:0.8rem;color:#bbb;"></div>
                                 </div>
@@ -992,6 +703,62 @@
             </div>
         </div>
 
+        <div id="tab-roles" class="tab-content hidden">
+            <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;">
+                    <h3>Admin Roles</h3>
+                    <button class="btn btn-primary btn-sm" data-click="createRole">Create Role</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr><th>Name</th><th>Description</th><th>Permissions</th><th>System</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody id="roles-tbody"></tbody>
+                </table>
+            </div>
+            <div id="role-detail" class="card hidden">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <h2 id="role-detail-title"></h2>
+                    <button class="btn btn-outline" data-click="closeRoleDetail">Close</button>
+                </div>
+                <div style="margin:1rem 0;">
+                    <label style="font-size:0.7rem; font-weight:800; color:#555;">DESCRIPTION</label>
+                    <input type="text" id="role-description-input" style="width:100%;margin-top:0.25rem;">
+                </div>
+                <div style="margin:1rem 0;">
+                    <label style="font-size:0.7rem; font-weight:800; color:#555;">PERMISSIONS (JSON)</label>
+                    <textarea id="role-permissions-input" rows="10" style="width:100%;margin-top:0.25rem;font-family:monospace;"></textarea>
+                </div>
+                <div style="display:flex;gap:0.5rem;">
+                    <button class="btn btn-primary" data-click="updateRole">Update Role</button>
+                    <button class="btn btn-danger" data-click="deleteRole">Delete Role</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-approvals" class="tab-content hidden">
+            <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;">
+                    <h3>Approval Requests</h3>
+                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                        <select id="approval-status-filter" style="min-width:160px;">
+                            <option value="">All Statuses</option>
+                            <option value="pending">Pending</option>
+                            <option value="approved">Approved</option>
+                            <option value="rejected">Rejected</option>
+                        </select>
+                        <button class="btn btn-secondary btn-sm" data-click="refreshApprovals">Refresh</button>
+                    </div>
+                </div>
+                <table>
+                    <thead>
+                        <tr><th>ID</th><th>Action</th><th>Requested By</th><th>Status</th><th>Approvals</th><th>Created</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody id="approvals-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- Export Modal -->
         <div id="export-modal" class="card hidden" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1000;width:400px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
@@ -1024,6 +791,7 @@
         </div>
     </div>
 
+    <script src="/api/v1/admin/static/dashboard.js" nonce="{{ csp_nonce }}"></script>
     <script nonce="{{ csp_nonce }}">
         let token = sessionStorage.getItem('plexichat-admin-token');
         if (token) {
@@ -1084,6 +852,8 @@
                 if (serverId) loadAutomodRules();
             }
             else if (n === 'logs') loadLogs();
+            else if (n === 'roles') loadRoles();
+            else if (n === 'approvals') loadApprovals();
         };
 
         async function refreshMetrics() {
@@ -1161,16 +931,16 @@
 
                 return `
                     <tr>
-                        <td style="font-weight:600;">${d.username}</td>
-                        <td style="font-family:monospace;color:#888;">${d.user_id}</td>
-                        <td>${scheduledDate}</td>
-                        <td>${deletionDate}</td>
+                        <td style="font-weight:600;">${escapeHtml(d.username)}</td>
+                        <td style="font-family:monospace;color:#888;">${escapeHtml(d.user_id)}</td>
+                        <td>${escapeHtml(scheduledDate)}</td>
+                        <td>${escapeHtml(deletionDate)}</td>
                         <td style="${urgencyClass}">${daysLeft} days</td>
                         <td>
                             <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
-                                <button class="btn btn-secondary btn-sm" data-action="cancel" data-user-id="${d.user_id}" data-username="${d.username}" title="Cancel deletion">Cancel</button>
-                                <button class="btn btn-outline btn-sm" data-action="delay" data-user-id="${d.user_id}" data-username="${d.username}" title="Extend grace period">Delay</button>
-                                <button class="btn btn-danger btn-sm" data-action="purge" data-user-id="${d.user_id}" data-username="${d.username}" title="Immediately purge account">Purge</button>
+                                <button class="btn btn-secondary btn-sm" data-action="cancel" data-user-id="${escapeHtml(d.user_id)}" data-username="${escapeHtml(d.username)}" title="Cancel deletion">Cancel</button>
+                                <button class="btn btn-outline btn-sm" data-action="delay" data-user-id="${escapeHtml(d.user_id)}" data-username="${escapeHtml(d.username)}" title="Extend grace period">Delay</button>
+                                <button class="btn btn-danger btn-sm" data-action="purge" data-user-id="${escapeHtml(d.user_id)}" data-username="${escapeHtml(d.username)}" title="Immediately purge account">Purge</button>
                             </div>
                         </td>
                     </tr>
@@ -1199,7 +969,7 @@
             dialog.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
             dialog.innerHTML = `
                 <div style="background:#1e1e1e;padding:1.5rem;border-radius:8px;max-width:400px;width:90%;">
-                    <h3 style="margin:0 0 1rem 0;color:#fff;">Extend grace period for "${username}"</h3>
+                    <h3 style="margin:0 0 1rem 0;color:#fff;">Extend grace period for "${escapeHtml(username)}"</h3>
                     <p style="margin:0 0 1rem 0;color:#aaa;">Select new deletion date:</p>
                     <input type="date" id="delay-date-picker" min="${input.min}" value="${input.value}" style="width:100%;padding:0.5rem;margin-bottom:1rem;background:#2a2a2a;border:1px solid #444;color:#fff;border-radius:4px;">
                     <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
@@ -1404,12 +1174,16 @@
         function renderChart(id, type, data, options) { if (charts[id]) charts[id].destroy(); const ctx = document.getElementById(id); if(!ctx) return; charts[id] = new Chart(ctx.getContext('2d'), { type, data, options }); }
         
         function updateHist(id, metrics) {
+            const HISTORY_SIZE = 120; // Increased from 60 to 120 for better historical data
             if (!historicalData[id]) {
                 historicalData[id] = { 
-                    labels: Array(60).fill(''), 
+                    labels: Array(HISTORY_SIZE).fill('').map((_, i) => {
+                        const date = new Date(Date.now() - (HISTORY_SIZE - 1 - i) * 15000); // 15-second intervals
+                        return date.toLocaleTimeString();
+                    }), 
                     datasets: metrics.map(m => ({ 
                         label: m.label,
-                        data: Array(60).fill(0), 
+                        data: Array(HISTORY_SIZE).fill(0), 
                         borderColor: m.col, 
                         backgroundColor: m.col,
                         tension: 0.3,
@@ -1417,6 +1191,10 @@
                     }))
                 };
             }
+            // Update labels with current timestamp
+            historicalData[id].labels.push(new Date().toLocaleTimeString());
+            historicalData[id].labels.shift();
+            
             metrics.forEach((m, i) => { 
                 historicalData[id].datasets[i].data.push(m.val); 
                 historicalData[id].datasets[i].data.shift(); 
@@ -1424,7 +1202,22 @@
             renderChart(id, 'line', historicalData[id], { 
                 responsive: true, maintainAspectRatio: false, animation: false, 
                 scales: { 
-                    x: { display: false }, 
+                    x: { 
+                        display: true,
+                        grid: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { 
+                            color: '#aaa', 
+                            font: { size: 9 },
+                            maxTicksLimit: 12,
+                            callback: function(value, index, values) {
+                                // Show fewer labels to prevent overcrowding
+                                if (index % 10 === 0) {
+                                    return this.getLabelForValue(value);
+                                }
+                                return '';
+                            }
+                        } 
+                    }, 
                     y: { grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { font: { size: 8 } } } 
                 } 
             });
@@ -1667,8 +1460,8 @@
             ];
 
             container.innerHTML = items.map(([label, value, color]) => `
-                <div class="card" style="padding:0.75rem 0.9rem;border-left:4px solid ${color};">
-                    <div class="stat-label">${label}</div>
+                <div class="card" style="padding:0.75rem 0.9rem;border-left:4px solid ${escapeHtml(color)};">
+                    <div class="stat-label">${escapeHtml(label)}</div>
                     <div class="stat-value" style="font-size:1.2rem;">${Number(value).toLocaleString()}</div>
                 </div>
             `).join('');
@@ -1781,7 +1574,7 @@
                     <td>${t.revoked ? 'Revoked' : (t.expires_at && t.expires_at <= Date.now() ? 'Expired' : 'Active')}</td>
                     <td style="display:flex;gap:0.35rem;flex-wrap:wrap;">
                         <button class="btn btn-secondary btn-sm" data-click="viewAccessToken" data-id="${escapeHtml(t.id)}">View</button>
-                        ${t.revoked ? '' : `<button class="btn btn-outline btn-sm" data-click="revokeAccessToken" data-id="${escapeHtml(t.id)}">Revoke</button>`}
+                        ${t.revoked ? `<button class="btn btn-secondary btn-sm" data-click="unrevokeAccessToken" data-id="${escapeHtml(t.id)}">Unrevoke</button>` : `<button class="btn btn-outline btn-sm" data-click="revokeAccessToken" data-id="${escapeHtml(t.id)}">Revoke</button>`}
                     </td>
                 </tr>
             `).join('');
@@ -1795,7 +1588,7 @@
             }
             const token = detail.access_token;
             panel.classList.remove('hidden');
-            document.getElementById('access-token-detail-title').textContent = `Token Detail: ${token.name || token.id}`;
+            document.getElementById('access-token-detail-title').textContent = `Token Detail: ${escapeHtml(token.name || token.id)}`;
             document.getElementById('access-token-stat-requests').textContent = Number(detail.total_events || token.use_count_total || 0).toLocaleString();
             document.getElementById('access-token-stat-ips').textContent = Number(detail.distinct_ip_count || token.distinct_ip_count || 0).toLocaleString();
             document.getElementById('access-token-stat-denied').textContent = Number(detail.denied_count_total || token.denied_count_total || 0).toLocaleString();
@@ -1810,6 +1603,16 @@
             document.getElementById('access-token-detail-last-path').textContent = token.last_used_path || 'Unknown';
             document.getElementById('access-token-detail-last-ua').textContent = token.last_used_user_agent || 'Unknown';
             document.getElementById('access-token-rotated').textContent = '';
+            // Toggle revoke/unrevoke buttons based on token status
+            const unrevokeBtn = document.getElementById('btn-unrevoke-token');
+            const revokeBtn = document.getElementById('btn-revoke-token');
+            if (token.revoked) {
+                if (unrevokeBtn) unrevokeBtn.style.display = '';
+                if (revokeBtn) revokeBtn.style.display = 'none';
+            } else {
+                if (unrevokeBtn) unrevokeBtn.style.display = 'none';
+                if (revokeBtn) revokeBtn.style.display = '';
+            }
 
             const scopesTbody = document.getElementById('access-token-scopes-tbody');
             scopesTbody.innerHTML = (detail.scopes || []).length === 0
@@ -2083,15 +1886,15 @@
             }
             tbody.innerHTML = automodRules.map(r => `
                 <tr>
-                    <td>${r.name}</td>
-                    <td>${r.rule_type}</td>
+                    <td>${escapeHtml(r.name)}</td>
+                    <td>${escapeHtml(r.rule_type)}</td>
                     <td>${r.enabled ? '<span class="badge" style="background:var(--good);color:#000;">On</span>' : '<span class="badge" style="background:var(--bad);color:#000;">Off</span>'}</td>
-                    <td>${r.priority}</td>
-                    <td>${(r.actions || []).map(a => a.action_type).join(', ')}</td>
+                    <td>${escapeHtml(String(r.priority))}</td>
+                    <td>${escapeHtml((r.actions || []).map(a => a.action_type).join(', '))}</td>
                     <td style="display:flex;gap:0.35rem;flex-wrap:wrap;">
-                        <button class="btn btn-secondary btn-sm" data-click="editAutomodRule" data-id="${r.id}">Edit</button>
-                        <button class="btn btn-outline btn-sm" data-click="toggleAutomodRule" data-id="${r.id}" data-enabled="${r.enabled ? 'false' : 'true'}">${r.enabled ? 'Disable' : 'Enable'}</button>
-                        <button class="btn btn-danger btn-sm" data-click="deleteAutomodRule" data-id="${r.id}">Delete</button>
+                        <button class="btn btn-secondary btn-sm" data-click="editAutomodRule" data-id="${escapeHtml(r.id)}">Edit</button>
+                        <button class="btn btn-outline btn-sm" data-click="toggleAutomodRule" data-id="${escapeHtml(r.id)}" data-enabled="${r.enabled ? 'false' : 'true'}">${r.enabled ? 'Disable' : 'Enable'}</button>
+                        <button class="btn btn-danger btn-sm" data-click="deleteAutomodRule" data-id="${escapeHtml(r.id)}">Delete</button>
                     </td>
                 </tr>
             `).join('');
@@ -2517,6 +2320,11 @@
                     loadSecurity();
                 });
             }
+            else if (a === 'unrevokeAccessToken') {
+                api(`/api/v1/admin/security/access-tokens/${id}/unrevoke`, { method: 'POST' }).then(() => {
+                    loadSecurity();
+                });
+            }
             else if (a === 'saveAccessTokenSettings') {
                 if (!selectedAccessTokenId) return;
                 api(`/api/v1/admin/security/access-tokens/${selectedAccessTokenId}`, {
@@ -2551,6 +2359,12 @@
                 if (!selectedAccessTokenId) return;
                 api(`/api/v1/admin/security/access-tokens/${selectedAccessTokenId}/revoke`, { method: 'POST' }).then(() => {
                     closeAccessTokenDetail();
+                    loadSecurity();
+                });
+            }
+            else if (a === 'unrevokeSelectedAccessToken') {
+                if (!selectedAccessTokenId) return;
+                api(`/api/v1/admin/security/access-tokens/${selectedAccessTokenId}/unrevoke`, { method: 'POST' }).then(() => {
                     loadSecurity();
                 });
             }
@@ -2672,6 +2486,30 @@
             else if (a === 'refreshDeletions') {
                 refreshDeletions();
             }
+            else if (a === 'createRole') {
+                createRole();
+            }
+            else if (a === 'editRole') {
+                editRole(id);
+            }
+            else if (a === 'closeRoleDetail') {
+                closeRoleDetail();
+            }
+            else if (a === 'updateRole') {
+                updateRole();
+            }
+            else if (a === 'deleteRole') {
+                deleteRole();
+            }
+            else if (a === 'refreshApprovals') {
+                refreshApprovals();
+            }
+            else if (a === 'approveRequest') {
+                approveRequest(id);
+            }
+            else if (a === 'rejectRequest') {
+                rejectRequest(id);
+            }
             else if (a === 'triggerDownload') {
                 const fmt = document.querySelector('input[name="export_format"]:checked').value;
                 const hrs = document.getElementById('metric-hours').value;
@@ -2748,6 +2586,7 @@
         document.getElementById('hash-report-status').addEventListener('change', loadSecurity);
         document.getElementById('ticket-status-filter').addEventListener('change', loadTickets);
         document.getElementById('deletion-filter-days').addEventListener('change', refreshDeletions);
+        document.getElementById('approval-status-filter').addEventListener('change', loadApprovals);
 
         // Event delegation for deletion action buttons
         document.getElementById('deletions-tbody').addEventListener('click', (e) => {

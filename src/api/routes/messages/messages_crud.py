@@ -819,7 +819,7 @@ async def delete_message(
 
         asyncio.create_task(dispatch_delete())
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:

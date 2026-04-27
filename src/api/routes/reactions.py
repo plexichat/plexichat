@@ -176,7 +176,7 @@ async def add_reaction(
                 "add", current_user.user_id, mid, cid, decoded_emoji
             )
 
-            return SuccessResponse(success=True)
+            return SuccessResponse(success=True, message=None)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
@@ -185,7 +185,7 @@ async def add_reaction(
                     detail={"error": {"code": 404, "message": "Message not found"}},
                 )
             elif "Exists" in exc_name:
-                return SuccessResponse(success=True)
+                return SuccessResponse(success=True, message=None)
             elif "Permission" in exc_name:
                 logger.warning(
                     f"User {current_user.user_id} denied permission to react to message {mid}"
@@ -323,11 +323,11 @@ async def remove_reaction(
                 "remove", current_user.user_id, mid, cid, decoded_emoji
             )
 
-            return SuccessResponse(success=True)
+            return SuccessResponse(success=True, message=None)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
-                return SuccessResponse(success=True)
+                return SuccessResponse(success=True, message=None)
 
             logger.error(
                 f"Failed to remove reaction from message {mid} for user {current_user.user_id}: {e}",

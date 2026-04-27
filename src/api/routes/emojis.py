@@ -703,7 +703,7 @@ async def delete_emoji(
             # Dispatch WebSocket event
             await _dispatch_emoji_update(sid)
 
-            return SuccessResponse(success=True)
+            return SuccessResponse(success=True, message=None)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:

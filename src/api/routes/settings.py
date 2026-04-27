@@ -120,7 +120,7 @@ async def bulk_update_settings(
             except Exception as e:
                 logger.warning(f"Bulk: Failed to set setting '{key}': {e}")
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except Exception as e:
         logger.error(f"Bulk update failed: {e}", exc_info=True)
         raise HTTPException(
@@ -321,7 +321,7 @@ async def delete_setting(
 
         logger.info(f"Deleted setting '{key}' for user {current_user.user_id}")
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
