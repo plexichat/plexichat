@@ -336,16 +336,17 @@ class TestKeyRotationErrorHandling:
 
     def test_keyring_corruption_recovery(self, temp_keyring_path):
         """Test that keyring handles corrupted file gracefully."""
-        keyring1 = Keyring(temp_keyring_path)
-        keyring1.get_key()
-        keyring1.save()
+        # Keyring now raises error on corruption instead of silently resetting
+        # This test verifies that the error is raised correctly
+        from src.utils.encryption.core import Keyring, KeyringDecryptionError
 
+        # Create a corrupted keyring file
         with open(temp_keyring_path, "w") as f:
-            f.write("corrupted data {{{")
+            f.write("corrupted data")
 
-        keyring2 = Keyring(temp_keyring_path)
-        assert keyring2.current_version == 0
-        assert len(keyring2.keys) == 0
+        # Should raise KeyringDecryptionError
+        with pytest.raises(KeyringDecryptionError):
+            Keyring(temp_keyring_path)
 
 
 class TestAutomaticKeyRotation:
@@ -356,7 +357,8 @@ class TestAutomaticKeyRotation:
         manager_with_keyring.keyring.get_key()
         initial_version = manager_with_keyring.keyring.current_version
 
-        manager_with_keyring.keyring.rotated_at = int(time.time()) - (100 * 86400)
+        # Set rotated_at to 200 days ago (default rotation interval is 180 days)
+        manager_with_keyring.keyring.rotated_at = int(time.time()) - (200 * 86400)
 
         rotated = manager_with_keyring.rotate_keys()
         assert rotated is True

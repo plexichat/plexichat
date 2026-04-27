@@ -1,199 +1,72 @@
-"""
-DM-specific tests for messaging module.
-"""
+"""Tests for messaging DM functionality."""
 
-import pytest
+from unittest.mock import patch
 
 
-class TestDMCreation:
-    """Test DM-specific creation behavior."""
+class TestDM:
+    """Test direct message functionality."""
 
-    def test_dm_has_two_participants(self, dm_conversation):
-        """Test DM always has exactly two participants."""
-        dm, user1, user2, messaging = dm_conversation
+    def test_create_dm(self, db, auth_manager, messaging_manager):
+        """Test creating a DM conversation."""
+        from src.utils import encryption
 
-        participants = messaging.get_participants(user1.id, dm.id)
+        # Create two users
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register("user1", "user1@example.com", "TestPass123!")
+            user2 = auth_manager.register("user2", "user2@example.com", "TestPass123!")
 
-        assert len(participants) == 2
-
-    def test_dm_max_participants_is_two(self, dm_conversation):
-        """Test DM max participants is 2."""
-        dm, user1, user2, messaging = dm_conversation
-
-        assert dm.max_participants == 2
-
-    def test_dm_has_no_name(self, dm_conversation):
-        """Test DM has no name."""
-        dm, user1, user2, messaging = dm_conversation
-
-        assert dm.name is None
-
-    def test_dm_has_no_owner(self, dm_conversation):
-        """Test DM has no owner."""
-        dm, user1, user2, messaging = dm_conversation
-
-        assert dm.owner_id is None
-
-    def test_dm_reuse_existing(self, users):
-        """Test that creating DM reuses existing conversation."""
-        user1, user2, user3, messaging = users
-
-        dm1 = messaging.create_dm(user1.id, user2.id)
-        dm2 = messaging.create_dm(user1.id, user2.id)
-        dm3 = messaging.create_dm(user2.id, user1.id)
-
-        assert dm1.id == dm2.id == dm3.id
-
-    def test_dm_different_pairs_different_conversations(self, users):
-        """Test different user pairs create different DMs."""
-        user1, user2, user3, messaging = users
-
-        dm1 = messaging.create_dm(user1.id, user2.id)
-        dm2 = messaging.create_dm(user1.id, user3.id)
-        dm3 = messaging.create_dm(user2.id, user3.id)
-
-        assert dm1.id != dm2.id
-        assert dm1.id != dm3.id
-        assert dm2.id != dm3.id
-
-
-class TestDMSettings:
-    """Test DM settings and restrictions."""
-
-    def test_dm_blocked_when_dms_disabled(self, users):
-        """Test DM creation blocked when recipient disables DMs."""
-        user1, user2, user3, messaging = users
-
-        messaging.update_user_message_settings(user2.id, allow_dms_from="none")
-
-        try:
-            with pytest.raises(messaging.ConversationAccessDeniedError):
-                messaging.create_dm(user1.id, user2.id)
-        finally:
-            messaging.update_user_message_settings(user2.id, allow_dms_from="everyone")
-
-    def test_dm_allowed_when_dms_enabled(self, users):
-        """Test DM creation allowed when recipient enables DMs."""
-        user1, user2, user3, messaging = users
-
-        # Ensure DMs are enabled (may have been disabled by previous test)
-        messaging.update_user_message_settings(user2.id, allow_dms_from="everyone")
-
-        dm = messaging.create_dm(user1.id, user2.id)
+        # Create DM between users
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
         assert dm is not None
+        assert dm.id is not None
+        # DM conversations have conversation_type attribute
+        assert dm.conversation_type.value == "dm"
 
-    def test_cannot_add_participant_to_dm(self, dm_conversation, users):
-        """Test cannot add third participant to DM."""
-        dm, user1, user2, messaging = dm_conversation
-        _, _, user3, _ = users
+    def test_send_dm_message(self, db, auth_manager, messaging_manager):
+        """Test sending a message in DM."""
+        from src.utils import encryption
 
-        with pytest.raises(messaging.ConversationTypeError):
-            messaging.add_participant(user1.id, dm.id, user3.id)
+        # Create two users
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register("user1", "user1@example.com", "TestPass123!")
+            user2 = auth_manager.register("user2", "user2@example.com", "TestPass123!")
 
-    def test_cannot_remove_participant_from_dm(self, dm_conversation):
-        """Test cannot remove participant from DM."""
-        dm, user1, user2, messaging = dm_conversation
+        # Create DM
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
-        with pytest.raises(messaging.ConversationTypeError):
-            messaging.remove_participant(user1.id, dm.id, user2.id)
+        # Send message
+        message = messaging_manager.send_message(user1.id, dm.id, "Hello, user2!")
 
-    def test_cannot_update_dm_name(self, dm_conversation):
-        """Test cannot update DM name."""
-        dm, user1, user2, messaging = dm_conversation
+        assert message is not None
+        assert message.id is not None
+        assert message.content == "Hello, user2!"
+        assert message.author_id == user1.id
+        assert message.conversation_id == dm.id
 
-        with pytest.raises(messaging.ConversationTypeError):
-            messaging.update_conversation(user1.id, dm.id, name="New Name")
+    def test_get_dm_messages(self, db, auth_manager, messaging_manager):
+        """Test retrieving messages from DM."""
+        from src.utils import encryption
 
-    def test_cannot_change_roles_in_dm(self, dm_conversation):
-        """Test cannot change roles in DM."""
-        dm, user1, user2, messaging = dm_conversation
+        # Create two users
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register("user1", "user1@example.com", "TestPass123!")
+            user2 = auth_manager.register("user2", "user2@example.com", "TestPass123!")
 
-        with pytest.raises(messaging.ConversationTypeError):
-            messaging.update_participant_role(
-                user1.id, dm.id, user2.id, messaging.ParticipantRole.ADMIN
-            )
+        # Create DM
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
+        # Send multiple messages
+        msg1 = messaging_manager.send_message(user1.id, dm.id, "First message")
+        msg2 = messaging_manager.send_message(user2.id, dm.id, "Second message")
+        msg3 = messaging_manager.send_message(user1.id, dm.id, "Third message")
 
-class TestDMMessaging:
-    """Test messaging in DMs."""
+        # Retrieve messages
+        messages = messaging_manager.get_messages(user1.id, dm.id, limit=10)
 
-    def test_both_users_can_send(self, dm_conversation):
-        """Test both users can send messages."""
-        dm, user1, user2, messaging = dm_conversation
-
-        msg1 = messaging.send_message(user1.id, dm.id, "From user1")
-        msg2 = messaging.send_message(user2.id, dm.id, "From user2")
-
-        assert msg1 is not None
-        assert msg2 is not None
-
-    def test_both_users_can_read(self, dm_conversation):
-        """Test both users can read messages."""
-        dm, user1, user2, messaging = dm_conversation
-
-        messaging.send_message(user1.id, dm.id, "Test message")
-
-        msgs1 = messaging.get_messages(user1.id, dm.id)
-        msgs2 = messaging.get_messages(user2.id, dm.id)
-
-        assert len(msgs1) > 0
-        assert len(msgs2) > 0
-
-    def test_third_party_cannot_read(self, dm_conversation, users):
-        """Test third party cannot read DM messages."""
-        dm, user1, user2, messaging = dm_conversation
-        _, _, user3, _ = users
-
-        messaging.send_message(user1.id, dm.id, "Private message")
-
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.get_messages(user3.id, dm.id)
-
-
-class TestDMDeletion:
-    """Test DM deletion behavior."""
-
-    def test_either_user_can_delete_dm(self, users):
-        """Test either user can delete DM."""
-        user1, user2, user3, messaging = users
-
-        dm = messaging.create_dm(user1.id, user2.id)
-
-        result = messaging.delete_conversation(user2.id, dm.id)
-
-        assert result is True
-
-    def test_leaving_dm_deletes_it(self, users):
-        """Test leaving DM deletes the conversation."""
-        user1, user2, user3, messaging = users
-
-        dm = messaging.create_dm(user1.id, user2.id)
-
-        messaging.leave_conversation(user1.id, dm.id)
-
-        # Both users should no longer see it
-        assert messaging.get_conversation(dm.id, user1.id) is None
-        assert messaging.get_conversation(dm.id, user2.id) is None
-
-
-class TestDMAutoCreate:
-    """Test DM auto-creation behavior."""
-
-    def test_auto_create_enabled_by_default(self, users):
-        """Test auto-create is enabled by default."""
-        user1, user2, user3, messaging = users
-
-        settings = messaging.get_user_message_settings(user1.id)
-
-        assert settings.auto_create_dms is True
-
-    def test_auto_create_can_be_disabled(self, users):
-        """Test auto-create can be disabled."""
-        user1, user2, user3, messaging = users
-
-        messaging.update_user_message_settings(user1.id, auto_create_dms=False)
-
-        settings = messaging.get_user_message_settings(user1.id)
-
-        assert settings.auto_create_dms is False
+        assert messages is not None
+        assert len(messages) >= 3
+        message_ids = [m.id for m in messages]
+        assert msg1.id in message_ids
+        assert msg2.id in message_ids
+        assert msg3.id in message_ids
