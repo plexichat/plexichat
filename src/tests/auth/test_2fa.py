@@ -4,43 +4,64 @@ Two-factor authentication tests for auth module.
 
 import pytest
 import pyotp
-import uuid
-from src.core.auth import (
-    AuthStatus,
+from src.core.auth import AuthStatus
+from src.core.auth.exceptions import (
     TwoFactorInvalidError,
     InvalidCredentialsError,
     TokenInvalidError,
 )
 from src.core.auth.tokens import parse_token
 from src.core.auth.totp import get_totp_config
+from unittest.mock import patch
 
 
 class TestTwoFactorAuth:
     """Test 2FA functionality."""
 
-    def test_setup_2fa_returns_secret(self, registered_user):
+    def test_setup_2fa_returns_secret(self, db, auth_manager):
         """Test 2FA setup returns secret."""
-        user, auth, username = registered_user
+        from src.utils import encryption
 
-        setup = auth.setup_2fa(user.id)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "setup_secret_test",
+                "setup_secret_test@example.com",
+                "TestPass123!",
+            )
+
+        setup = auth_manager.setup_2fa(user.id)
 
         assert setup.secret is not None
         assert len(setup.secret) > 0
 
-    def test_setup_2fa_returns_qr_uri(self, registered_user):
+    def test_setup_2fa_returns_qr_uri(self, db, auth_manager):
         """Test 2FA setup returns QR URI."""
-        user, auth, username = registered_user
+        from src.utils import encryption
 
-        setup = auth.setup_2fa(user.id)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "setup_qr_test",
+                "setup_qr_test@example.com",
+                "TestPass123!",
+            )
+
+        setup = auth_manager.setup_2fa(user.id)
 
         assert setup.qr_uri is not None
         assert setup.qr_uri.startswith("otpauth://totp/")
 
-    def test_setup_2fa_returns_backup_codes(self, registered_user):
+    def test_setup_2fa_returns_backup_codes(self, db, auth_manager):
         """Test 2FA setup returns backup codes."""
-        user, auth, username = registered_user
+        from src.utils import encryption
 
-        setup = auth.setup_2fa(user.id)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "setup_backup_test",
+                "setup_backup_test@example.com",
+                "TestPass123!",
+            )
+
+        setup = auth_manager.setup_2fa(user.id)
 
         assert setup.backup_codes is not None
         expected_count = get_totp_config().get("backup_code_count", 10)
@@ -48,88 +69,97 @@ class TestTwoFactorAuth:
         for code in setup.backup_codes:
             assert "-" in code
 
-    def test_confirm_2fa_with_valid_code(self, db_and_auth):
+    def test_confirm_2fa_with_valid_code(self, db, auth_manager):
         """Test confirming 2FA with valid code."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
+        from src.utils import encryption
 
-        user = auth.register(
-            f"confirm2fa_{unique_id}",
-            f"confirm2fa_{unique_id}@example.com",
-            "TestPass123!",
-        )
-        setup = auth.setup_2fa(user.id)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "confirm2fa_test1",
+                "confirm2fa_test1@example.com",
+                "TestPass123!",
+            )
+        setup = auth_manager.setup_2fa(user.id)
 
         totp = pyotp.TOTP(setup.secret)
         code = totp.now()
 
-        result = auth.confirm_2fa(user.id, code)
+        result = auth_manager.confirm_2fa(user.id, code)
         assert result is True
 
-        status = auth.get_2fa_status(user.id)
+        status = auth_manager.get_2fa_status(user.id)
         assert status.enabled is True
 
-    def test_confirm_2fa_with_invalid_code(self, db_and_auth):
+    def test_confirm_2fa_with_invalid_code(self, db, auth_manager):
         """Test confirming 2FA with invalid code fails."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
+        from src.utils import encryption
 
-        user = auth.register(
-            f"invalid2fa_{unique_id}",
-            f"invalid2fa_{unique_id}@example.com",
-            "TestPass123!",
-        )
-        auth.setup_2fa(user.id)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "invalid2fa_test1",
+                "invalid2fa_test1@example.com",
+                "TestPass123!",
+            )
+        auth_manager.setup_2fa(user.id)
 
         with pytest.raises(TwoFactorInvalidError):
-            auth.confirm_2fa(user.id, "000000")
+            auth_manager.confirm_2fa(user.id, "000000")
 
-    def test_login_requires_2fa_when_enabled(self, db_and_auth):
+    def test_login_requires_2fa_when_enabled(self, db, auth_manager):
         """Test login requires 2FA when enabled."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
-        username = f"require2fa_{unique_id}"
+        from src.utils import encryption
 
-        user = auth.register(username, f"{username}@example.com", "TestPass123!")
-        setup = auth.setup_2fa(user.id)
+        username = "require2fa_test1"
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username, f"{username}@example.com", "TestPass123!"
+            )
+        setup = auth_manager.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
-        auth.confirm_2fa(user.id, totp.now())
+        auth_manager.confirm_2fa(user.id, totp.now())
 
-        result = auth.login(username, "TestPass123!")
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(username, "TestPass123!")
 
         assert result.status == AuthStatus.TWO_FACTOR_REQUIRED
         assert result.challenge_token is not None
         assert "totp" in result.methods
 
-    def test_complete_2fa_with_totp(self, db_and_auth):
+    def test_complete_2fa_with_totp(self, db, auth_manager):
         """Test completing 2FA with TOTP code."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
-        username = f"complete2fa_{unique_id}"
+        from src.utils import encryption
 
-        user = auth.register(username, f"{username}@example.com", "TestPass123!")
-        setup = auth.setup_2fa(user.id)
+        username = "complete2fa_test1"
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username, f"{username}@example.com", "TestPass123!"
+            )
+        setup = auth_manager.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
-        auth.confirm_2fa(user.id, totp.now())
+        auth_manager.confirm_2fa(user.id, totp.now())
 
-        result = auth.login(username, "TestPass123!")
-        final = auth.complete_2fa(result.challenge_token, totp.now())
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(username, "TestPass123!")
+        final = auth_manager.complete_2fa(result.challenge_token, totp.now())
 
         assert final.status == AuthStatus.SUCCESS
         assert final.token is not None
 
-    def test_complete_2fa_rejects_tampered_challenge_hash(self, db_and_auth):
+    def test_complete_2fa_rejects_tampered_challenge_hash(self, db, auth_manager):
         """Test 2FA completion rejects a challenge whose stored hash was tampered."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
-        username = f"tampered2fa_{unique_id}"
+        from src.utils import encryption
 
-        user = auth.register(username, f"{username}@example.com", "TestPass123!")
-        setup = auth.setup_2fa(user.id)
+        username = "tampered2fa_test1"
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username, f"{username}@example.com", "TestPass123!"
+            )
+        setup = auth_manager.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
-        auth.confirm_2fa(user.id, totp.now())
+        auth_manager.confirm_2fa(user.id, totp.now())
 
-        result = auth.login(username, "TestPass123!")
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(username, "TestPass123!")
         parsed = parse_token(result.challenge_token)
         db.execute(
             "UPDATE auth_2fa_challenges SET token_hash = ? WHERE id = ?",
@@ -137,112 +167,134 @@ class TestTwoFactorAuth:
         )
 
         with pytest.raises(TokenInvalidError):
-            auth.complete_2fa(result.challenge_token, totp.now())
+            auth_manager.complete_2fa(result.challenge_token, totp.now())
 
-    def test_complete_2fa_with_backup_code(self, db_and_auth):
+    def test_complete_2fa_with_backup_code(self, db, auth_manager):
         """Test completing 2FA with backup code."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
-        username = f"backup2fa_{unique_id}"
+        from src.utils import encryption
 
-        user = auth.register(username, f"{username}@example.com", "TestPass123!")
-        setup = auth.setup_2fa(user.id)
+        username = "backup2fa_test1"
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username, f"{username}@example.com", "TestPass123!"
+            )
+        setup = auth_manager.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
-        auth.confirm_2fa(user.id, totp.now())
+        auth_manager.confirm_2fa(user.id, totp.now())
 
         backup_code = setup.backup_codes[0]
 
-        result = auth.login(username, "TestPass123!")
-        final = auth.complete_2fa(result.challenge_token, backup_code)
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(username, "TestPass123!")
+        final = auth_manager.complete_2fa(result.challenge_token, backup_code)
 
         assert final.status == AuthStatus.SUCCESS
 
-    def test_backup_code_single_use(self, db_and_auth):
+    def test_backup_code_single_use(self, db, auth_manager):
         """Test backup code can only be used once."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
-        username = f"singleuse_{unique_id}"
+        from src.utils import encryption
 
-        user = auth.register(username, f"{username}@example.com", "TestPass123!")
-        setup = auth.setup_2fa(user.id)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "singleuse_test",
+                "singleuse_test@example.com",
+                "TestPass123!",
+            )
+        setup = auth_manager.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
-        auth.confirm_2fa(user.id, totp.now())
+        auth_manager.confirm_2fa(user.id, totp.now())
 
         backup_code = setup.backup_codes[0]
 
-        result1 = auth.login(username, "TestPass123!")
-        auth.complete_2fa(result1.challenge_token, backup_code)
+        with patch.object(encryption, "verify_password", return_value=True):
+            result1 = auth_manager.login("singleuse_test", "TestPass123!")
+        auth_manager.complete_2fa(result1.challenge_token, backup_code)
 
-        result2 = auth.login(username, "TestPass123!")
+        with patch.object(encryption, "verify_password", return_value=True):
+            result2 = auth_manager.login("singleuse_test", "TestPass123!")
 
         with pytest.raises(TwoFactorInvalidError):
-            auth.complete_2fa(result2.challenge_token, backup_code)
+            auth_manager.complete_2fa(result2.challenge_token, backup_code)
 
-    def test_disable_2fa(self, db_and_auth):
+    def test_disable_2fa(self, db, auth_manager):
         """Test disabling 2FA."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
-        username = f"disable2fa_{unique_id}"
+        from src.utils import encryption
 
-        user = auth.register(username, f"{username}@example.com", "TestPass123!")
-        setup = auth.setup_2fa(user.id)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "disable2fa_test",
+                "disable2fa_test@example.com",
+                "TestPass123!",
+            )
+        setup = auth_manager.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
-        auth.confirm_2fa(user.id, totp.now())
+        auth_manager.confirm_2fa(user.id, totp.now())
 
-        result = auth.disable_2fa(user.id, "TestPass123!", totp.now())
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.disable_2fa(user.id, "TestPass123!", totp.now())
         assert result is True
 
-        status = auth.get_2fa_status(user.id)
+        status = auth_manager.get_2fa_status(user.id)
         assert status.enabled is False
 
-    def test_disable_2fa_wrong_password(self, db_and_auth):
+    def test_disable_2fa_wrong_password(self, db, auth_manager):
         """Test disabling 2FA with wrong password fails."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
-        username = f"wrongpwd2fa_{unique_id}"
+        from src.utils import encryption
 
-        user = auth.register(username, f"{username}@example.com", "TestPass123!")
-        setup = auth.setup_2fa(user.id)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "wrongpwd2fa_test",
+                "wrongpwd2fa_test@example.com",
+                "TestPass123!",
+            )
+        setup = auth_manager.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
-        auth.confirm_2fa(user.id, totp.now())
+        auth_manager.confirm_2fa(user.id, totp.now())
 
         with pytest.raises(InvalidCredentialsError):
-            auth.disable_2fa(user.id, "WrongPassword!", totp.now())
+            auth_manager.disable_2fa(user.id, "WrongPassword!", totp.now())
 
-    def test_regenerate_backup_codes(self, db_and_auth):
+    def test_regenerate_backup_codes(self, db, auth_manager):
         """Test regenerating backup codes."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
-        username = f"regen2fa_{unique_id}"
+        from src.utils import encryption
 
-        user = auth.register(username, f"{username}@example.com", "TestPass123!")
-        setup = auth.setup_2fa(user.id)
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "regen2fa_test",
+                "regen2fa_test@example.com",
+                "TestPass123!",
+            )
+        setup = auth_manager.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
-        auth.confirm_2fa(user.id, totp.now())
+        auth_manager.confirm_2fa(user.id, totp.now())
 
         old_codes = setup.backup_codes
-        new_codes = auth.regenerate_backup_codes(user.id, "TestPass123!")
+        with patch.object(encryption, "verify_password", return_value=True):
+            new_codes = auth_manager.regenerate_backup_codes(user.id, "TestPass123!")
 
         expected_count = get_totp_config().get("backup_code_count", 10)
         assert len(new_codes) == expected_count
         assert new_codes != old_codes
 
-    def test_get_2fa_status(self, db_and_auth):
+    def test_get_2fa_status(self, db, auth_manager):
         """Test getting 2FA status."""
-        db, auth = db_and_auth
-        unique_id = uuid.uuid4().hex[:8]
-        username = f"status2fa_{unique_id}"
+        from src.utils import encryption
 
-        user = auth.register(username, f"{username}@example.com", "TestPass123!")
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "status2fa_test",
+                "status2fa_test@example.com",
+                "TestPass123!",
+            )
 
-        status = auth.get_2fa_status(user.id)
+        status = auth_manager.get_2fa_status(user.id)
         assert status.enabled is False
 
-        setup = auth.setup_2fa(user.id)
+        setup = auth_manager.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
-        auth.confirm_2fa(user.id, totp.now())
+        auth_manager.confirm_2fa(user.id, totp.now())
 
-        status = auth.get_2fa_status(user.id)
+        status = auth_manager.get_2fa_status(user.id)
         assert status.enabled is True
         expected_count = get_totp_config().get("backup_code_count", 10)
         assert status.backup_codes_remaining == expected_count
