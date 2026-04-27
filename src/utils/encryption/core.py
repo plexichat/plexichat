@@ -88,14 +88,25 @@ class KeyringDecryptionError(RuntimeError):
 class Keyring:
     """
     Manages multiple versions of encryption keys for rotation support.
-    Keys are encrypted at rest using a Master Key (KEK).
+    Keys are encrypted at rest using a Key Encryption Key (KEK).
 
     Thread-safe within a process and uses file locking for multi-process safety.
+
+    Each keyring can have its own dedicated KEK for enhanced security:
+    - system_keyring.json: PLEXICHAT_SYSTEM_KEY (or fallback)
+    - message_keyring.json: PLEXICHAT_MESSAGE_KEY (or fallback)
+    - file_keyring.json: PLEXICHAT_MEDIA_KEY (or fallback)
     """
 
-    def __init__(self, keyring_path: Path, env_var: Optional[str] = None):
+    def __init__(
+        self,
+        keyring_path: Path,
+        kek_env_var: Optional[str] = None,
+        fallback_to_system: bool = True,
+    ):
         self.path = keyring_path
-        self.env_var = env_var
+        self.kek_env_var = kek_env_var or "PLEXICHAT_SYSTEM_KEY"
+        self.fallback_to_system = fallback_to_system
         self.lock_path = keyring_path.with_suffix(".lock")
         self.current_version: int = 0
         self.current_key_source: str = "unknown"
@@ -105,8 +116,8 @@ class Keyring:
         self.load()
 
     def _detect_current_key_source(self, stored_source: Optional[str] = None) -> str:
-        """Infer where the current message key came from."""
-        if stored_source in {"env", "generated"}:
+        """Infer where the current key came from."""
+        if stored_source in {"generated"}:
             return stored_source
 
         current_key = self.keys.get(self.current_version)
@@ -116,49 +127,52 @@ class Keyring:
         if self.current_version > 1:
             return "generated"
 
-        env_key = self._get_env_key()
-        if env_key and current_key == env_key:
-            return "env"
-
         return "generated"
 
-    def _get_kek(self) -> bytes:
-        return vault.get_kek()
+    def _get_kek(self, fallback: bool = False) -> bytes:
+        """
+        Get the Key Encryption Key (KEK) for this keyring.
 
-    def _get_env_key(self) -> Optional[bytes]:
-        if not self.env_var:
-            return None
+        Args:
+            fallback: If True, try PLEXICHAT_SYSTEM_KEY as fallback
 
-        val = os.environ.get(self.env_var)
-        if not val:
-            return None
+        Returns:
+            The KEK bytes
+        """
+        from .vault import HardwareVault
 
-        # Try Base64 first (standard format)
+        # Try dedicated KEK first
         try:
-            key = base64.b64decode(val)
-            if len(key) == 32:
-                return key
-            logger.debug(
-                f"Environment variable {self.env_var} decoded as Base64 but yielded {len(key)} bytes (expected 32), trying hex"
+            vault_instance = HardwareVault(kek_env_var=self.kek_env_var)
+            kek = vault_instance.get_kek()
+            if kek:
+                return kek
+        except Exception as e:
+            if not fallback:
+                raise KeyringDecryptionError(
+                    f"Failed to get KEK from {self.kek_env_var}: {e}"
+                )
+            logger.warning(
+                f"Failed to get KEK from {self.kek_env_var}, trying fallback: {e}"
             )
-        except Exception:
-            pass
 
-        # Try hex-encoded key (common alternative)
-        try:
-            key = bytes.fromhex(val)
-            if len(key) == 32:
-                return key
-            logger.debug(
-                f"Environment variable {self.env_var} decoded as hex but yielded {len(key)} bytes (expected 32)"
-            )
-        except Exception:
-            pass
+        # Fallback to system KEK if enabled
+        if fallback and self.kek_env_var != "PLEXICHAT_SYSTEM_KEY":
+            try:
+                vault_instance = HardwareVault(kek_env_var="PLEXICHAT_SYSTEM_KEY")
+                kek = vault_instance.get_kek()
+                if kek:
+                    logger.info(
+                        f"Using fallback KEK from PLEXICHAT_SYSTEM_KEY for {self.path.name}"
+                    )
+                    return kek
+            except Exception as e:
+                logger.error(f"Fallback KEK retrieval failed: {e}")
 
-        logger.warning(
-            f"Environment variable {self.env_var} must be a 32-byte key (Base64 or hex encoded)"
+        raise KeyringDecryptionError(
+            f"Unable to retrieve KEK for keyring {self.path.name}. "
+            f"Ensure {self.kek_env_var} is set or configure HSM/TPM."
         )
-        return None
 
     def _with_file_lock(self, func, *args, **kwargs):
         """Execute function with both thread and file lock."""
@@ -172,7 +186,7 @@ class Keyring:
                     _release_file_lock(lock_file)
 
     def load(self):
-        """Load encrypted keyring from disk."""
+        """Load encrypted keyring from disk with KEK fallback."""
 
         def _load_impl():
             if not self.path.exists():
@@ -182,7 +196,18 @@ class Keyring:
                 with open(self.path, "r") as f:
                     encrypted_data = json.load(f)
 
-                kek = self._get_kek()
+                # Try dedicated KEK first
+                try:
+                    kek = self._get_kek(fallback=False)
+                except KeyringDecryptionError:
+                    if self.fallback_to_system:
+                        logger.warning(
+                            f"Failed to decrypt {self.path.name} with dedicated KEK, trying system KEK fallback"
+                        )
+                        kek = self._get_kek(fallback=True)
+                    else:
+                        raise
+
                 aesgcm = AESGCM(kek)
 
                 # Decrypt the keyring payload
@@ -200,23 +225,22 @@ class Keyring:
                 self.current_key_source = self._detect_current_key_source(
                     data.get("current_key_source")
                 )
+                logger.info(
+                    f"Loaded keyring {self.path.name} with {len(self.keys)} key version(s)"
+                )
             except Exception as e:
                 logger.critical(
                     f"FATAL: Failed to decrypt keyring at {self.path}: {e}. "
-                    f"This usually means the KEK (machine key or PLEXICHAT_SYSTEM_KEY) "
-                    f"has changed since the keyring was created. "
-                    f"Restore the original keyring files and machine key from backup, "
-                    f"or set the correct PLEXICHAT_SYSTEM_KEY environment variable. "
+                    f"This usually means the KEK has changed since the keyring was created. "
+                    f"Restore the original keyring files and KEK from backup, "
+                    f"or set the correct KEK environment variable. "
                     f"Keyring files: ~/.plexichat/data/system_keyring.json, "
                     f"~/.plexichat/data/file_keyring.json, "
-                    f"~/.plexichat/data/message_keyring.json. "
-                    f"Machine key: ~/.plexichat/data/.machine_key"
+                    f"~/.plexichat/data/message_keyring.json."
                 )
 
                 # If keyring decryption fails, the server cannot operate safely.
-                # All encrypted data (TOTP secrets, access tokens, messages, files)
-                # is now inaccessible. Rather than running in a broken state,
-                # invalidate caches and raise so the caller can decide whether to abort.
+                # All encrypted data is now inaccessible.
                 try:
                     from src.core.database import invalidate_pattern
 
@@ -234,11 +258,9 @@ class Keyring:
                 self.keys = {}
                 self.rotated_at = 0
 
-                # Raise a fatal error — the caller (EncryptionManager / main.py)
-                # should abort startup rather than continue with no encryption keys.
                 raise KeyringDecryptionError(
                     f"Keyring decryption failed for {self.path}: {e}. "
-                    f"Restore keyring files from backup or set PLEXICHAT_SYSTEM_KEY."
+                    f"Restore keyring files from backup or set correct KEK."
                 )
 
         self._with_file_lock(_load_impl)
@@ -259,8 +281,8 @@ class Keyring:
                 },
             }
 
-            # Encrypt the keyring
-            kek = self._get_kek()
+            # Encrypt the keyring with current KEK
+            kek = self._get_kek(fallback=False)
             aesgcm = AESGCM(kek)
             nonce = os.urandom(12)
             payload = aesgcm.encrypt(nonce, json.dumps(raw_data).encode(), None)
@@ -290,25 +312,14 @@ class Keyring:
 
         def _get_key_impl():
             if not self.keys:
-                # 1. Try environment variable override
-                env_key = self._get_env_key()
-                if env_key:
-                    self.current_version = 1
-                    self.current_key_source = "env"
-                    self.keys[1] = env_key
-                    self.rotated_at = int(time.time())
-                    logger.info(
-                        f"Initialized keyring with key from environment variable {self.env_var}"
-                    )
-                    self._save_without_lock()
-                else:
-                    # 2. Generate new random key
-                    new_key = AESGCM.generate_key(bit_length=256)
-                    self.current_version = 1
-                    self.current_key_source = "generated"
-                    self.keys[1] = new_key
-                    self.rotated_at = int(time.time())
-                    self._save_without_lock()
+                # Keyring is empty, generate new key
+                new_key = AESGCM.generate_key(bit_length=256)
+                self.current_version = 1
+                self.current_key_source = "generated"
+                self.keys[1] = new_key
+                self.rotated_at = int(time.time())
+                logger.info(f"Generated new key for keyring {self.path.name}")
+                self._save_without_lock()
 
             v = (
                 version
@@ -336,7 +347,7 @@ class Keyring:
             },
         }
 
-        kek = self._get_kek()
+        kek = self._get_kek(fallback=False)
         aesgcm = AESGCM(kek)
         nonce = os.urandom(12)
         payload = aesgcm.encrypt(nonce, json.dumps(raw_data).encode(), None)
@@ -402,7 +413,7 @@ class EncryptionManager:
         )
         self.keyring = Keyring(
             Path.home() / ".plexichat" / "data" / "system_keyring.json",
-            env_var="PLEXICHAT_ENCRYPTION_KEY",
+            kek_env_var="PLEXICHAT_SYSTEM_KEY",
         )
 
     def derive_key(
@@ -688,7 +699,7 @@ class MessageEncryptor:
     def __init__(self, keyring: Optional[Keyring] = None):
         self.keyring = keyring or Keyring(
             Path.home() / ".plexichat" / "data" / "message_keyring.json",
-            env_var="PLEXICHAT_MESSAGE_KEY",
+            kek_env_var="PLEXICHAT_MESSAGE_KEY",
         )
 
     def encrypt_message(self, content: str, message_id: Optional[int] = None) -> str:

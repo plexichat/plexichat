@@ -1,33 +1,38 @@
 """
 Hardware-rooted vault for master key management.
-Supports TPM 2.0 (via tpm2-pytss) and environment-derived KEK.
+Supports TPM 2.0 (via tpm2-pytss), HSM (via PKCS#11), and environment-derived KEK.
 """
 
 import os
 import hashlib
 import utils.logger as logger
-from typing import Optional
+from typing import Optional, Dict, Any
 from pathlib import Path
 
 
 class HardwareVault:
     """
     Manages the Root of Trust (ROT) for the application.
-    Prioritizes TPM 2.0 hardware if available.
+    Supports HSM (PKCS#11), TPM 2.0, and environment-derived KEK.
+
+    KEK priority order:
+    1. Environment variable (PLEXICHAT_SYSTEM_KEY or keyring-specific KEK)
+    2. HSM (PKCS#11)
+    3. TPM 2.0
+    4. Machine-local file (fallback)
     """
 
-    def __init__(self):
+    def __init__(self, kek_env_var: Optional[str] = None):
         self._master_key: Optional[bytes] = None
+        self._source: str = "unknown"
+        self._kek_env_var = kek_env_var or "PLEXICHAT_SYSTEM_KEY"
         self._tpm_available = False
+        self._hsm_available = False
+        self._hsm_config: Dict[str, Any] = {}
 
-        # Prioritize environment key over hardware even during initialization
-        if "PLEXICHAT_SYSTEM_KEY" in os.environ:
-            try:
-                logger.info("PLEXICHAT_SYSTEM_KEY found, skipping TPM detection")
-            except Exception:
-                pass
-        else:
-            self._init_tpm()
+        # Initialize hardware sources
+        self._init_hsm()
+        self._init_tpm()
 
     def _init_tpm(self):
         """Try to initialize TPM 2.0 connection."""
@@ -42,36 +47,118 @@ class HardwareVault:
                     self._tpm_available = True
                     try:
                         logger.info("TPM 2.0 hardware detected and available")
-                    except Exception:
-                        pass
+                    except RuntimeError:
+                        pass  # Logger not configured yet
         except (ImportError, Exception):
             try:
                 logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
-            except Exception:
-                pass
+            except RuntimeError:
+                pass  # Logger not configured yet
+
+    def _init_hsm(self):
+        """Try to initialize HSM (PKCS#11) connection."""
+        try:
+            import utils.config as config
+
+            hsm_config = config.get("encryption", {}).get("hsm", {})
+            if not hsm_config.get("enabled", False):
+                try:
+                    logger.debug("HSM support disabled in configuration")
+                except RuntimeError:
+                    pass  # Logger not configured yet
+                return
+
+            # Check for required HSM configuration
+            required_fields = ["library_path", "slot_id", "pin"]
+            for field in required_fields:
+                if not hsm_config.get(field):
+                    try:
+                        logger.warning(
+                            f"HSM enabled but missing required field: {field}"
+                        )
+                    except RuntimeError:
+                        pass  # Logger not configured yet
+                    return
+
+            # Try to import PyKCS11
+            from PyKCS11 import PyKCS11  # type: ignore[import-not-found]
+
+            # Test HSM connection
+            pkcs11 = PyKCS11.PyKCS11Lib()
+            pkcs11.load(hsm_config["library_path"])
+
+            # Get slot info
+            slots = pkcs11.getSlotList(tokenPresent=True)
+            if not slots:
+                try:
+                    logger.warning("HSM enabled but no slots with tokens available")
+                except RuntimeError:
+                    pass  # Logger not configured yet
+                return
+
+            # Verify the configured slot exists
+            slot_id = int(hsm_config["slot_id"])
+            if slot_id not in slots:
+                try:
+                    logger.warning(
+                        f"HSM configured slot {slot_id} not found in available slots: {slots}"
+                    )
+                except RuntimeError:
+                    pass  # Logger not configured yet
+                return
+
+            self._hsm_available = True
+            self._hsm_config = hsm_config
+            try:
+                logger.info(f"HSM (PKCS#11) available on slot {slot_id}")
+            except RuntimeError:
+                pass  # Logger not configured yet
+
+        except ImportError:
+            try:
+                logger.debug("PyKCS11 not installed, HSM support unavailable")
+            except RuntimeError:
+                pass  # Logger not configured yet
+        except Exception as e:
+            try:
+                logger.warning(f"HSM initialization failed: {e}")
+            except RuntimeError:
+                pass  # Logger not configured yet
 
     def get_kek(self) -> bytes:
         """
         Get the Key Encryption Key (KEK).
-        Derived from PLEXICHAT_SYSTEM_KEY env var, TPM hardware, or machine-local file.
+        Derived from keyring-specific env var, HSM, TPM, or machine-local file.
 
         Prioritizes:
-        1. PLEXICHAT_SYSTEM_KEY (Explicitly provided, best for consistency)
-        2. TPM 2.0 (Hardware-bound security)
-        3. Machine-local file (Fallback for simple deployments)
+        1. Environment variable (keyring-specific KEK)
+        2. HSM (PKCS#11)
+        3. TPM 2.0
+        4. Machine-local file (fallback)
         """
         if self._master_key:
             return self._master_key
 
-        # 1. Check for explicit environment key (Highest Priority for consistency)
-        system_key = os.environ.get("PLEXICHAT_SYSTEM_KEY")
-        if system_key:
-            self._master_key = hashlib.sha512(system_key.encode("utf-8")).digest()[:32]
+        # 1. Check for dedicated environment key (Highest Priority)
+        env_key = os.environ.get(self._kek_env_var)
+        if env_key:
+            self._master_key = self._decode_env_key(env_key)
             self._source = "env"
-            logger.info("Using environment-provided system encryption key")
+            logger.info(f"Using environment-provided KEK from {self._kek_env_var}")
             return self._master_key
 
-        # 2. Try TPM 2.0
+        # 2. Try HSM (PKCS#11)
+        if self._hsm_available:
+            try:
+                self._master_key = self._get_hsm_key()
+                if self._master_key:
+                    self._source = "hsm"
+                    logger.info("Using HSM (PKCS#11) derived encryption key")
+                    return self._master_key
+            except Exception as e:
+                logger.error(f"HSM key retrieval failed: {e}")
+
+        # 3. Try TPM 2.0
         if self._tpm_available:
             try:
                 self._master_key = self._get_tpm_key()
@@ -82,7 +169,7 @@ class HardwareVault:
             except Exception as e:
                 logger.error(f"TPM key retrieval failed: {e}")
 
-        # 3. Single-machine mode: auto-generate and persist a machine-local key
+        # 4. Single-machine mode: auto-generate and persist a machine-local key
         key_file = self._get_machine_key_path()
         if key_file.exists():
             try:
@@ -97,8 +184,8 @@ class HardwareVault:
         # Generate new machine-local key
         logger.warning(
             "CRITICAL SECURITY WARNING: Generating machine-local encryption key. "
-            "This key is NOT hardware-bound and is less secure than TPM or Environment Variable. "
-            "For production deployments, set PLEXICHAT_SYSTEM_KEY environment variable or ensure TPM is available."
+            "This key is NOT hardware-bound and is less secure than HSM, TPM, or Environment Variable. "
+            f"For production deployments, set {self._kek_env_var} environment variable or configure HSM/TPM."
         )
         self._master_key = os.urandom(32)
         self._source = "local"
@@ -138,9 +225,115 @@ class HardwareVault:
 
         return self._master_key
 
-    def _get_machine_key_path(self):
+    def _get_machine_key_path(self) -> Path:
         """Get path for machine-local key file."""
+        # Use keyring-specific machine key file if not using SYSTEM_KEY
+        if self._kek_env_var != "PLEXICHAT_SYSTEM_KEY":
+            key_name = self._kek_env_var.lower().replace("_key", "") + "_key"
+            return Path.home() / ".plexichat" / "data" / f".{key_name}"
         return Path.home() / ".plexichat" / "data" / ".machine_key"
+
+    def _decode_env_key(self, env_value: str) -> bytes:
+        """Decode environment variable key (supports Base64 and hex)."""
+        import base64
+
+        # Try Base64 first (standard format)
+        try:
+            key = base64.b64decode(env_value)
+            if len(key) == 32:
+                return key
+            logger.debug(
+                f"Environment variable {self._kek_env_var} decoded as Base64 but yielded {len(key)} bytes (expected 32), trying hex"
+            )
+        except Exception:
+            pass
+
+        # Try hex-encoded key (common alternative)
+        try:
+            key = bytes.fromhex(env_value)
+            if len(key) == 32:
+                return key
+            logger.debug(
+                f"Environment variable {self._kek_env_var} decoded as hex but yielded {len(key)} bytes (expected 32)"
+            )
+        except Exception:
+            pass
+
+        raise ValueError(
+            f"Environment variable {self._kek_env_var} must be a 32-byte key (Base64 or hex encoded)"
+        )
+
+    def _get_hsm_key(self) -> Optional[bytes]:
+        """
+        Retrieve or derive encryption key from HSM (PKCS#11).
+
+        Uses the HSM's key management capabilities to either:
+        1. Retrieve an existing key object by label
+        2. Derive a key from a master key stored in HSM
+        """
+        try:
+            from PyKCS11 import PyKCS11  # type: ignore[import-not-found]
+
+            pkcs11 = PyKCS11.PyKCS11Lib()
+            pkcs11.load(self._hsm_config["library_path"])
+
+            slot_id = int(self._hsm_config["slot_id"])
+            pin = self._hsm_config["pin"]
+            key_label = self._hsm_config.get("key_label", "plexichat_kek")
+
+            # Open session and login
+            session = pkcs11.openSession(
+                slot_id, PyKCS11.CKF_SERIAL_SESSION | PyKCS11.CKF_RW_SESSION
+            )
+            session.login(pin)
+
+            try:
+                # Try to find existing key by label
+                template = [
+                    (PyKCS11.CKA_LABEL, key_label),
+                    (PyKCS11.CKA_CLASS, PyKCS11.CKO_SECRET_KEY),
+                    (PyKCS11.CKA_KEY_TYPE, PyKCS11.CKK_AES),
+                    (PyKCS11.CKA_VALUE_LEN, 32),
+                ]
+
+                objects = session.findObjects(template)
+
+                if objects:
+                    # Key exists, extract it
+                    key_obj = objects[0]
+                    key_value = session.getAttributeValue(key_obj, [PyKCS11.CKA_VALUE])[
+                        0
+                    ]
+                    logger.info(f"Retrieved existing key '{key_label}' from HSM")
+                    return bytes(key_value)
+                else:
+                    # Key doesn't exist, create it in HSM
+                    logger.info(f"Key '{key_label}' not found in HSM, creating new key")
+
+                    new_key = os.urandom(32)
+
+                    key_template = [
+                        (PyKCS11.CKA_CLASS, PyKCS11.CKO_SECRET_KEY),
+                        (PyKCS11.CKA_KEY_TYPE, PyKCS11.CKK_AES),
+                        (PyKCS11.CKA_VALUE_LEN, 32),
+                        (PyKCS11.CKA_LABEL, key_label),
+                        (PyKCS11.CKA_VALUE, new_key),
+                        (PyKCS11.CKA_ENCRYPT, PyKCS11.CK_TRUE),
+                        (PyKCS11.CKA_DECRYPT, PyKCS11.CK_TRUE),
+                        (PyKCS11.CKA_EXTRACTABLE, PyKCS11.CK_FALSE),  # Non-extractable
+                    ]
+
+                    session.createObject(key_template)
+                    logger.info(f"Created new non-extractable key '{key_label}' in HSM")
+                    return new_key
+
+            finally:
+                session.logout()
+                session.closeSession()
+
+        except Exception as e:
+            logger.error(f"HSM key retrieval/creation failed: {e}")
+            raise
 
     def _get_tpm_key(self) -> Optional[bytes]:
         """
@@ -193,11 +386,18 @@ class HardwareVault:
             return None
 
     def is_using_secure_source(self) -> bool:
-        """Check if the current master key is from a secure source (Env or TPM)."""
+        """Check if the current master key is from a secure source (Env, HSM, or TPM)."""
         # Ensure key is loaded
         if not self._master_key:
             self.get_kek()
-        return self._source in ("env", "tpm")
+        return self._source in ("env", "hsm", "tpm")
+
+    def get_source(self) -> str:
+        """Get the current KEK source."""
+        if not self._master_key:
+            self.get_kek()
+        return self._source
 
 
+# Global vault instance for backward compatibility
 vault = HardwareVault()

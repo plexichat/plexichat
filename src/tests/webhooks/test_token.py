@@ -4,13 +4,6 @@ Tests for webhook token validation and regeneration.
 
 import pytest
 
-pytest.skip(
-    "Skipping webhook token tests - token API issues with validation and regeneration. "
-    "Tests expect specific token format and validation behavior that doesn't match current implementation. "
-    "Requires token API refactoring to align with test expectations.",
-    allow_module_level=True,
-)
-
 
 class TestTokenFormat:
     """Tests for webhook token format."""

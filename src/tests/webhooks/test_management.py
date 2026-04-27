@@ -4,13 +4,6 @@ Tests for webhook management (get, update, delete).
 
 import pytest
 
-pytest.skip(
-    "Skipping webhook management tests - management API issues with get, update, delete operations. "
-    "Tests expect specific API signatures and error handling that don't match current implementation. "
-    "Requires management API refactoring to align with test expectations.",
-    allow_module_level=True,
-)
-
 import uuid
 
 

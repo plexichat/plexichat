@@ -9,10 +9,6 @@ import uuid
 class TestWebhookLimits:
     """Tests for webhook limits."""
 
-    @pytest.mark.skip(
-        reason="Webhook limit enforcement not implemented - channel webhook limits are not currently enforced. "
-        "Requires limit checking logic in webhook creation."
-    )
     def test_channel_webhook_limit(self, fresh_server):
         """Test channel webhook limit enforcement."""
         setup = fresh_server

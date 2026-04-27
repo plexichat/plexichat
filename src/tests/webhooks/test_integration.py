@@ -4,13 +4,6 @@ Tests for webhook integration with messaging and embeds modules.
 
 import pytest
 
-pytest.skip(
-    "Skipping webhook integration tests - integration issues between webhook, messaging, and embeds modules. "
-    "Tests expect database tables and integration points that may not exist or work differently. "
-    "Requires integration architecture review and alignment.",
-    allow_module_level=True,
-)
-
 
 class TestMessagingIntegration:
     """Tests for webhook integration with messaging module."""

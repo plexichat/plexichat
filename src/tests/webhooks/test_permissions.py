@@ -4,13 +4,6 @@ Tests for webhook permission checks.
 
 import pytest
 
-pytest.skip(
-    "Skipping webhook permission tests - permission system needs comprehensive review. "
-    "Tests expect specific permission error handling that doesn't match current implementation. "
-    "Requires permission system refactoring to align with test expectations.",
-    allow_module_level=True,
-)
-
 import uuid
 
 

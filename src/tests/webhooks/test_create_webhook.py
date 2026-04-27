@@ -101,10 +101,6 @@ class TestCreateWebhook:
                 user_id=setup["owner"].id, channel_id=999999999, name="Invalid Channel"
             )
 
-    @pytest.mark.skip(
-        reason="Permission check not implemented - non-members can currently create webhooks. "
-        "Requires permission system integration with webhook creation."
-    )
     def test_create_webhook_no_permission(self, fresh_server):
         """Test creating webhook without permission."""
         setup = fresh_server
