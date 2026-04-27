@@ -11,10 +11,6 @@ from src.core.reactions import (
     ReactionExistsError,
 )
 
-pytestmark = pytest.mark.skip(
-    "Reaction edge cases tests have teardown timeout issues - temporarily disabled"
-)
-
 
 class TestMessageEdgeCases:
     """Tests for message-related edge cases."""
@@ -276,9 +272,6 @@ class TestDataIntegrity:
             reaction = reaction_manager.add_reaction(user1.id, msg.id, emoji)
             assert reaction.emoji == emoji
 
-    @pytest.mark.skip(
-        "Custom emoji API needs alignment - requires image_data and content_type parameters"
-    )
     def test_custom_emoji_id_preserved(self, users_with_server):
         """Test custom emoji ID is preserved correctly."""
         owner, member, server, group, msg, server_manager, reaction_manager = (

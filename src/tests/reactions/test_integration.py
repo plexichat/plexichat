@@ -4,10 +4,6 @@ Tests for integration with messaging and servers modules.
 
 import pytest
 
-pytest.skip(
-    "Integration issues - complex integration with messaging, servers, and relationships modules needs deeper work",
-    allow_module_level=True,
-)
 import uuid
 from src.core.reactions import MessageNotFoundError
 

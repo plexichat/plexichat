@@ -4,10 +4,6 @@ Tests for custom emoji functionality.
 
 import pytest
 
-pytest.skip(
-    "Emoji manager API issues - custom emoji creation and management methods need API alignment",
-    allow_module_level=True,
-)
 from unittest.mock import MagicMock, patch
 
 from src.core.reactions.exceptions import (

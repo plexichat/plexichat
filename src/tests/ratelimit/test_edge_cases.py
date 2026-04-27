@@ -9,10 +9,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.core.ratelimit.models import RateLimitConfig, RateLimitAlgorithm, BucketType
 from src.core.ratelimit.manager import RateLimitManager
 
-pytestmark = pytest.mark.skip(
-    "Ratelimit edge case tests need memory_storage fixture - temporarily disabled"
-)
-
 
 class TestConcurrentRequests:
     """Tests for concurrent request handling."""

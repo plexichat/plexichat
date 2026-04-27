@@ -11,10 +11,6 @@ from src.core.reactions import (
     PermissionDeniedError,
 )
 
-pytestmark = pytest.mark.skip(
-    "Reaction add/remove tests have teardown timeout issues - temporarily disabled"
-)
-
 
 class TestAddReaction:
     """Tests for adding reactions."""

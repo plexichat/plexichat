@@ -5,10 +5,6 @@ Tests for reaction counts and user lists.
 import pytest
 import uuid
 
-pytestmark = pytest.mark.skip(
-    "Reaction counts tests have teardown timeout issues - temporarily disabled"
-)
-
 
 class TestReactionCounts:
     """Tests for reaction count aggregation."""

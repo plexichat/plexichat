@@ -265,9 +265,6 @@ class TestMiddlewareBypass:
                 f"Request {i + 1} failed with {response.status_code}"
             )
 
-    @pytest.mark.skip(
-        "TestClient doesn't support setting request.state.is_selftest; needs custom test setup"
-    )
     def test_internal_request_bypasses(self, app_with_bypass):
         """Test internal requests bypass rate limiting."""
         client = TestClient(app_with_bypass)

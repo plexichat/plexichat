@@ -9,10 +9,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.core.ratelimit.storage import MemoryStorage
 
-pytestmark = pytest.mark.skip(
-    "Ratelimit storage tests have locking issues - temporarily disabled"
-)
-
 
 class TestBasicOperations:
     """Tests for basic storage operations."""

@@ -38,7 +38,6 @@ class TestVoting:
         voted_option = next(o for o in results.options if o.id == option_id)
         assert voted_option.vote_count >= 1
 
-    @pytest.mark.skip(reason="Poll manager may not enforce duplicate vote prevention")
     def test_vote_already_voted_fails(self, dm_with_message):
         """Test voting twice fails."""
         user1, user2, dm, msg, polls, messaging = dm_with_message

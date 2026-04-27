@@ -7,10 +7,6 @@ from src.core.presence import (
     UserStatus,
 )
 
-pytestmark = pytest.mark.skip(
-    "Presence status tests need fixture updates - temporarily disabled"
-)
-
 
 class TestSetStatus:
     """Tests for setting user status."""
