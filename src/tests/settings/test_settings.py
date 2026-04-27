@@ -10,10 +10,6 @@ Tests cover:
 
 import pytest
 
-pytestmark = pytest.mark.skip(
-    "Settings tests have fixture issues - temporarily disabled"
-)
-
 
 class TestSettingsBasicOperations:
     """Test basic settings CRUD operations."""

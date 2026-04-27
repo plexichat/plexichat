@@ -4,11 +4,6 @@ Tests for server onboarding step functionality.
 
 import pytest
 
-pytest.skip(
-    "Skipping entire file: onboarding API issues need to be fixed",
-    allow_module_level=True,
-)
-
 
 @pytest.mark.servers
 class TestOnboardingStepCreation:

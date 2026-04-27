@@ -4,11 +4,6 @@ Tests for server template functionality.
 
 import pytest
 
-pytest.skip(
-    "Skipping entire file: Templates API needs to be implemented and fixed",
-    allow_module_level=True,
-)
-
 
 @pytest.mark.servers
 class TestTemplateCreation:

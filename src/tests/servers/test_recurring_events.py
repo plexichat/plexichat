@@ -5,11 +5,6 @@ Tests for recurring scheduled events functionality.
 import pytest
 import time
 
-pytest.skip(
-    "Skipping entire file: Recurring events API needs to be implemented and fixed",
-    allow_module_level=True,
-)
-
 
 @pytest.mark.servers
 class TestRecurringEventCreation:

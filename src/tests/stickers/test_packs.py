@@ -4,7 +4,6 @@ Tests for sticker pack management.
 
 import pytest
 
-pytestmark = pytest.mark.skip(reason="Stickers tests have fixture/API issues")
 import uuid
 from src.core.stickers import (
     PackNotFoundError,

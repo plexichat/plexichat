@@ -4,11 +4,6 @@ Tests for permission operations.
 
 import pytest
 
-pytest.skip(
-    "Skipping entire file: permissions API issues need to be fixed",
-    allow_module_level=True,
-)
-
 
 class TestHasPermission:
     """Tests for checking permissions."""

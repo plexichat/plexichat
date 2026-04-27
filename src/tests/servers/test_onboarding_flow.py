@@ -4,11 +4,6 @@ Tests for server onboarding flow and progress tracking.
 
 import pytest
 
-pytest.skip(
-    "Skipping entire file: onboarding flow API issues need to be fixed",
-    allow_module_level=True,
-)
-
 
 @pytest.mark.servers
 class TestOnboardingStart:

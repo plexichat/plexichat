@@ -7,11 +7,6 @@ from unittest.mock import patch
 
 import asyncio
 
-pytest.skip(
-    "Server API has multiple failures - needs API implementation review",
-    allow_module_level=True,
-)
-
 
 @pytest.mark.asyncio
 class TestServersAsync:
