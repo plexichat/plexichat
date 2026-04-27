@@ -3,49 +3,65 @@ API test fixtures.
 
 Uses shared fixtures from root conftest.py for database and modules.
 Provides API-specific fixtures for test client and authentication.
+
+NOTE: All fixtures here are function-scoped to match the root conftest's
+function-scoped db/modules fixtures. Using module scope would cause
+ScopeMismatch errors.
 """
 
 import pytest
 import uuid
+from unittest.mock import patch
+from src.utils import encryption
 
 
-@pytest.fixture(scope="module")
-def test_user(modules, session_users):
+@pytest.fixture
+def test_user(modules):
     """
     Create a test user and return credentials dict.
 
-    Uses a user from the session pool for speed.
     Returns dict format expected by API tests.
     """
-    # Get a user from the pool (already created with real Argon2)
-    user, username, password = session_users[0]
+    with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+        user = modules.auth.register(
+            username=f"apiuser_{uuid.uuid4().hex[:8]}",
+            email=f"api_{uuid.uuid4().hex[:8]}@example.com",
+            password="TestPass123!",
+        )
 
-    # Login to get token
-    result = modules.auth.login(username, password)
+    with patch.object(encryption, "verify_password", return_value=True):
+        result = modules.auth.login(user.username, "TestPass123!")
 
     return {
         "user": user,
         "token": result.token,
-        "username": username,
-        "password": password,
+        "username": user.username,
+        "password": "TestPass123!",
     }
 
 
-@pytest.fixture(scope="module")
-def second_test_user(modules, session_users):
+@pytest.fixture
+def second_test_user(modules):
     """Get a second test user for relationship/interaction tests."""
-    user, username, password = session_users[1]
-    result = modules.auth.login(username, password)
+    with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+        user = modules.auth.register(
+            username=f"apiuser2_{uuid.uuid4().hex[:8]}",
+            email=f"api2_{uuid.uuid4().hex[:8]}@example.com",
+            password="TestPass123!",
+        )
+
+    with patch.object(encryption, "verify_password", return_value=True):
+        result = modules.auth.login(user.username, "TestPass123!")
 
     return {
         "user": user,
         "token": result.token,
-        "username": username,
-        "password": password,
+        "username": user.username,
+        "password": "TestPass123!",
     }
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def test_server(modules, test_user):
     """Create a test server."""
     unique_id = uuid.uuid4().hex[:8]
@@ -76,7 +92,7 @@ def second_auth_headers(second_test_user):
 
 
 # Legacy compatibility - some tests use db_and_modules directly
-@pytest.fixture(scope="module")
+@pytest.fixture
 def db_and_modules(modules):
     """
     Legacy fixture for backward compatibility.

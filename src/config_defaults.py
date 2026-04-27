@@ -470,6 +470,13 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "datacenter_id": None,
             },
             "key_rotation_days": 180,  # 6 months, configurable via encryption.key_rotation_days
+            "hsm": {
+                "enabled": False,
+                "library_path": "/usr/lib/softhsm/libsofthsm2.so",
+                "slot_id": 0,
+                "pin": "",
+                "key_label": "plexichat_kek",
+            },
         },
         "monitoring": {
             "enabled": True,

@@ -4,6 +4,7 @@ Admin user management routes.
 
 import time
 from fastapi import APIRouter, Request, HTTPException
+from pydantic import BaseModel
 from src.api.schemas.admin import (
     UserSearchListResponse,
     UserSearchResponse,
@@ -574,3 +575,454 @@ async def admin_force_purge_account(request: Request, user_id: str):
     except Exception as e:
         logger.error(f"Admin failed to force purge {user_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Admin User Management Endpoints
+
+
+class AdminUserCreate(BaseModel):
+    username: str
+    email: str
+    password: str
+    role: str = "admin"
+
+
+class AdminUserUpdate(BaseModel):
+    username: str | None = None
+    email: str | None = None
+    password: str | None = None
+    role: str | None = None
+
+
+class AdminUserResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    role: str
+    is_active: bool
+    created_at: int
+    last_login_at: int | None = None
+
+
+class AdminUserListResponse(BaseModel):
+    users: list[AdminUserResponse]
+
+
+@router.get("/admin-users", response_model=AdminUserListResponse)
+async def list_admin_users(request: Request):
+    """
+    List all admin users.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "admin.users", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
+    try:
+        # Query admin users from database
+        rows = db.fetch_all(  # type: ignore
+            "SELECT id, username, email, is_admin, is_active, created_at, last_login FROM auth_users WHERE is_admin = 1 ORDER BY created_at DESC"
+        )
+
+        users = []
+        for row in rows:
+            users.append(
+                AdminUserResponse(
+                    id=str(row["id"]),
+                    username=row["username"],
+                    email=row["email"] or "",
+                    role="admin",  # Default role for now
+                    is_active=row["is_active"] == 1,
+                    created_at=row["created_at"],
+                    last_login_at=row["last_login"],
+                )
+            )
+
+        return AdminUserListResponse(users=users)
+    except Exception as e:
+        logger.error(f"Failed to list admin users: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.get("/admin-users/{user_id}", response_model=AdminUserResponse)
+async def get_admin_user(request: Request, user_id: str):
+    """
+    Get a specific admin user by ID.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "admin.users", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
+    try:
+        uid = int(user_id)
+        row = db.fetch_one(  # type: ignore
+            "SELECT id, username, email, is_admin, is_active, created_at, last_login FROM auth_users WHERE id = ? AND is_admin = 1",
+            (uid,),
+        )
+
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Admin user not found"}},
+            )
+
+        return AdminUserResponse(
+            id=str(row["id"]),
+            username=row["username"],
+            email=row["email"] or "",
+            role="admin",
+            is_active=row["is_active"] == 1,
+            created_at=row["created_at"],
+            last_login_at=row["last_login"],
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid user ID"}},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get admin user: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post("/admin-users", response_model=SuccessResponse)
+async def create_admin_user(request: Request, user_data: AdminUserCreate):
+    """
+    Create a new admin user.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "admin.users", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
+    try:
+        import src.api as api
+
+        auth = api.get_auth()
+        assert auth is not None
+
+        # Check if username already exists
+        existing = db.fetch_one(  # type: ignore
+            "SELECT id FROM auth_users WHERE username = ?", (user_data.username,)
+        )
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Username already exists"}},
+            )
+
+        # Check if email already exists
+        existing = db.fetch_one(  # type: ignore
+            "SELECT id FROM auth_users WHERE email = ?", (user_data.email,)
+        )
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Email already exists"}},
+            )
+
+        # Create user with admin flag
+        user_id = auth.register_user(
+            username=user_data.username,
+            email=user_data.email,
+            password=user_data.password,
+            is_admin=True,
+        )
+
+        logger.info(f"Admin user created: {user_data.username} by admin {admin_id}")
+        return SuccessResponse(success=True, message="Admin user created successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create admin user: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.put("/admin-users/{user_id}", response_model=SuccessResponse)
+async def update_admin_user(request: Request, user_id: str, user_data: AdminUserUpdate):
+    """
+    Update an existing admin user.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "admin.users", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
+    try:
+        uid = int(user_id)
+
+        # Check if user exists and is admin
+        user = db.fetch_one(  # type: ignore
+            "SELECT id, username, email FROM auth_users WHERE id = ? AND is_admin = 1",
+            (uid,),
+        )
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Admin user not found"}},
+            )
+
+        # Build update query dynamically based on provided fields
+        updates = []
+        params = []
+
+        if user_data.username:
+            # Check if username already exists
+            existing = db.fetch_one(  # type: ignore
+                "SELECT id FROM auth_users WHERE username = ? AND id != ?",
+                (user_data.username, uid),
+            )
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {"code": 400, "message": "Username already exists"}
+                    },
+                )
+            updates.append("username = ?")
+            params.append(user_data.username)
+
+        if user_data.email:
+            # Check if email already exists
+            existing = db.fetch_one(  # type: ignore
+                "SELECT id FROM auth_users WHERE email = ? AND id != ?",
+                (user_data.email, uid),
+            )
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Email already exists"}},
+                )
+            updates.append("email = ?")
+            params.append(user_data.email)
+
+        if user_data.password:
+            import src.api as api
+
+            auth = api.get_auth()
+            assert auth is not None
+            password_hash = auth.hash_password(user_data.password)
+            updates.append("password_hash = ?")
+            params.append(password_hash)
+
+        if updates:
+            params.append(uid)
+            query = f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?"
+            db.execute(query, tuple(params))  # type: ignore
+            logger.info(f"Admin user updated: {user_id} by admin {admin_id}")
+
+        return SuccessResponse(success=True, message="Admin user updated successfully")
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid user ID"}},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update admin user: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.delete("/admin-users/{user_id}", response_model=SuccessResponse)
+async def delete_admin_user(request: Request, user_id: str):
+    """
+    Delete an admin user.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "admin.users", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
+    try:
+        uid = int(user_id)
+
+        # Prevent deleting yourself
+        if str(uid) == str(admin_id):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {"code": 400, "message": "Cannot delete your own account"}
+                },
+            )
+
+        # Check if user exists and is admin
+        user = db.fetch_one(  # type: ignore
+            "SELECT id FROM auth_users WHERE id = ? AND is_admin = 1", (uid,)
+        )
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Admin user not found"}},
+            )
+
+        # Delete user
+        db.execute("DELETE FROM auth_users WHERE id = ?", (uid,))  # type: ignore
+        logger.info(f"Admin user deleted: {user_id} by admin {admin_id}")
+
+        return SuccessResponse(success=True, message="Admin user deleted successfully")
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid user ID"}},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete admin user: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post("/admin-users/{user_id}/toggle-status", response_model=SuccessResponse)
+async def toggle_admin_user_status(request: Request, user_id: str):
+    """
+    Toggle the active status of an admin user.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+
+    # Check permission
+    from src.core.admin.permissions import check_admin_permission
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, "admin.users", db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
+    try:
+        uid = int(user_id)
+
+        # Prevent disabling yourself
+        if str(uid) == str(admin_id):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {"code": 400, "message": "Cannot disable your own account"}
+                },
+            )
+
+        # Check if user exists and is admin
+        user = db.fetch_one(  # type: ignore
+            "SELECT id, is_active FROM auth_users WHERE id = ? AND is_admin = 1", (uid,)
+        )
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Admin user not found"}},
+            )
+
+        # Toggle status
+        new_status = 0 if user["is_active"] == 1 else 1
+        db.execute(  # type: ignore
+            "UPDATE auth_users SET is_active = ? WHERE id = ?", (new_status, uid)
+        )
+        logger.info(
+            f"Admin user status toggled: {user_id} to {new_status} by admin {admin_id}"
+        )
+
+        return SuccessResponse(
+            success=True, message="Admin user status updated successfully"
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid user ID"}},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to toggle admin user status: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )

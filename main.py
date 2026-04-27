@@ -495,7 +495,7 @@ class PlexichatServer:
         # system_keyring is already validated by EncryptionManager.__init__
         # (called inside encryption.setup()), but file_keyring and
         # message_keyring are loaded lazily — so we validate them now.
-        from src.utils.encryption.core import Keyring as _Keyring
+        from src.utils.encryption.core import Keyring
 
         keyring_paths = [
             (Path.home() / ".plexichat" / "data" / "file_keyring.json", None),
@@ -506,7 +506,10 @@ class PlexichatServer:
         ]
         for kpath, kek_env_var in keyring_paths:
             if kpath.exists():
-                kr = _Keyring(kpath, kek_env_var=kek_env_var)
+                if kek_env_var:
+                    kr = Keyring(kpath, kek_env_var)  # type: ignore[arg-type]
+                else:
+                    kr = Keyring(kpath)
                 if kr.keys:
                     logger.info(
                         f"Keyring validated: {kpath.name} (v{kr.current_version})"

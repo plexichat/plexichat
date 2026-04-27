@@ -7,7 +7,7 @@ with special handling for irreversible migrations and emergency overrides.
 
 import re
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Depends, status, Request
+from fastapi import APIRouter, HTTPException, Depends, status as http_status, Request
 from pydantic import BaseModel
 
 import utils.config as config
@@ -108,7 +108,7 @@ def validate_version(version: str) -> None:
     """Validate migration version format to prevent path traversal."""
     if not VERSION_PATTERN.match(version):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid migration version format. Expected 3 digits (e.g., '001', '025')",
         )
 
@@ -198,7 +198,7 @@ async def list_migrations(
     except Exception as e:
         logger.error(f"Failed to list migrations: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list migrations: {str(e)}",
         )
 
@@ -231,7 +231,7 @@ async def get_migration_details(
 
             if not migration:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
+                    status_code=http_status.HTTP_404_NOT_FOUND,
                     detail=f"Migration {version} not found",
                 )
 
@@ -288,7 +288,7 @@ async def get_migration_details(
     except Exception as e:
         logger.error(f"Failed to get migration details: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get migration details: {str(e)}",
         )
 
@@ -318,7 +318,7 @@ async def run_migration(
         if is_irreversible and not body.dry_run:
             if body.confirmation_text != "THE DATABASE IS BACKED UP":
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail='For irreversible migrations, confirmation text must be "THE DATABASE IS BACKED UP"',
                 )
 
@@ -333,7 +333,7 @@ async def run_migration(
 
         if not can_run:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot run migration: {can_run_reason}",
             )
 
@@ -355,13 +355,13 @@ async def run_migration(
         raise
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:
         logger.error(f"Failed to run migration {version}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to run migration: {str(e)}",
         )
 
@@ -386,7 +386,7 @@ async def rollback_migration(
         metadata = manager.tracker.get_migration_metadata(version)
         if metadata.get("irreversible"):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Cannot rollback irreversible migration",
             )
 
@@ -399,13 +399,13 @@ async def rollback_migration(
         raise
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:
         logger.error(f"Failed to rollback migration {version}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to rollback migration: {str(e)}",
         )
 
@@ -441,7 +441,7 @@ async def generate_emergency_override(
     except Exception as e:
         logger.error(f"Failed to generate emergency override: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate emergency override: {str(e)}",
         )
 
@@ -473,6 +473,6 @@ async def get_migration_system_status(
     except Exception as e:
         logger.error(f"Failed to get migration system status: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get migration system status: {str(e)}",
         )
