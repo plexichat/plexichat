@@ -110,16 +110,16 @@ The tests include performance baselines defined in `conftest.py`:
 The `memory_tracker` fixture tracks memory usage during test execution:
 
 ```python
-def test_memory_leak(modules, memory_tracker):
+def test_memory_leak(auth_manager, memory_tracker):
     initial = memory_tracker.snapshot()
-    
+
     # Perform operations
     for i in range(1000):
-        modules.auth.login(username, password)
-    
+        auth_manager.login(username, password)
+
     final = memory_tracker.snapshot()
     increase = final - initial
-    
+
     assert increase < 50, f"Memory increased by {increase}MB"
 ```
 
@@ -128,16 +128,16 @@ def test_memory_leak(modules, memory_tracker):
 Degradation tests ensure performance remains stable over time:
 
 ```python
-def test_performance_degradation(modules):
+def test_performance_degradation(auth_manager):
     times = []
     for i in range(100):
         start = time.time()
-        modules.auth.login(username, password)
+        auth_manager.login(username, password)
         times.append(time.time() - start)
-    
+
     first_avg = sum(times[:10]) / 10
     last_avg = sum(times[-10:]) / 10
-    
+
     degradation = (last_avg - first_avg) / first_avg
     assert degradation < 0.5  # Max 50% degradation
 ```
@@ -147,14 +147,14 @@ def test_performance_degradation(modules):
 Tests verify the system handles concurrent operations:
 
 ```python
-def test_concurrent_operations(modules):
+def test_concurrent_operations(auth_manager):
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = [
-            executor.submit(modules.auth.login, username, password)
+            executor.submit(auth_manager.login, username, password)
             for _ in range(50)
         ]
         results = [f.result() for f in as_completed(futures)]
-    
+
     assert len(results) == 50
 ```
 
