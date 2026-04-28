@@ -234,21 +234,16 @@ class HardwareVault:
         return Path.home() / ".plexichat" / "data" / ".machine_key"
 
     def _decode_env_key(self, env_value: str) -> bytes:
-        """Decode environment variable key (supports Base64 and hex)."""
+        """Decode environment variable key (supports hex and Base64).
+
+        Tries hex first (the standard Plexichat production format: 64-char hex = 32 bytes),
+        then falls back to Base64. This order is important because a 64-char hex string
+        decodes to 48 bytes in Base64 — it passes the length check incorrectly when
+        Base64 is tried first.
+        """
         import base64
 
-        # Try Base64 first (standard format)
-        try:
-            key = base64.b64decode(env_value)
-            if len(key) == 32:
-                return key
-            logger.debug(
-                f"Environment variable {self._kek_env_var} decoded as Base64 but yielded {len(key)} bytes (expected 32), trying hex"
-            )
-        except Exception:
-            pass
-
-        # Try hex-encoded key (common alternative)
+        # Try hex first (standard Plexichat production format: 64 hex chars = 32 bytes)
         try:
             key = bytes.fromhex(env_value)
             if len(key) == 32:
@@ -259,8 +254,19 @@ class HardwareVault:
         except Exception:
             pass
 
+        # Try Base64 (alternative format)
+        try:
+            key = base64.b64decode(env_value)
+            if len(key) == 32:
+                return key
+            logger.debug(
+                f"Environment variable {self._kek_env_var} decoded as Base64 but yielded {len(key)} bytes (expected 32)"
+            )
+        except Exception:
+            pass
+
         raise ValueError(
-            f"Environment variable {self._kek_env_var} must be a 32-byte key (Base64 or hex encoded)"
+            f"Environment variable {self._kek_env_var} must be a 32-byte key (hex or Base64 encoded)"
         )
 
     def _get_hsm_key(self) -> Optional[bytes]:
