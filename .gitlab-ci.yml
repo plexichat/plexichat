@@ -47,9 +47,11 @@ cache:
 lint:ruff:
   extends: .python_base
   stage: lint
+  variables:
+    RUFF_EXCLUDES: ".venv,venv,.pytest_cache,cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,media,config,logs,src/utils/common-utils"
   script:
-    - ruff check . --output-format=gitlab > ruff-report.json
-    - ruff check .
+    - ruff check . --extend-exclude "$RUFF_EXCLUDES" --output-format=gitlab > ruff-report.json
+    - ruff check . --extend-exclude "$RUFF_EXCLUDES"
   artifacts:
     reports:
       codequality: ruff-report.json

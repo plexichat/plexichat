@@ -226,6 +226,17 @@ async def docs_security(request: Request):
     return await _serve_page(request, _doc_path("security.md"), "Security", "/security")
 
 
+@router.get("/keyrings")
+async def docs_keyrings(request: Request):
+    """Serve the keyring and KEK migration guide."""
+    return await _serve_page(
+        request,
+        _doc_path("keyrings.md"),
+        "Keyrings and KEK Migration",
+        "/keyrings",
+    )
+
+
 @router.get("/performance")
 async def docs_performance(request: Request):
     """Serve the performance guidance page."""

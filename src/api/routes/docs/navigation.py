@@ -17,6 +17,7 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Getting Started", "/getting-started"),
             NavItem("Deployment", "/deployment"),
             NavItem("Security", "/security"),
+            NavItem("Keyrings & KEKs", "/keyrings"),
             NavItem("Performance", "/performance"),
         ],
         "Reference": [
