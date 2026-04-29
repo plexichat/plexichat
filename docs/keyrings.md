@@ -40,9 +40,10 @@ That failure mode is intentional. It prevents the server from silently booting w
 Use the built-in migration mode in `main.py` when changing KEKs or moving from a shared KEK to dedicated keyring KEKs:
 
 ```bash
-python main.py --migrate-kek --kek-validate --all
+python main.py --migrate-kek --kek-validate --kek-all
+python main.py --migrate-kek --kek-keyring system_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_SYSTEM_KEY
 python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
-python main.py --migrate-kek --kek-all --kek-new-env PLEXICHAT_SYSTEM_KEY
+python main.py --migrate-kek --kek-keyring file_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MEDIA_KEY
 python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
 python main.py --migrate-kek --kek-rollback --kek-keyring message_keyring.json
 ```

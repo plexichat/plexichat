@@ -248,9 +248,8 @@ class KeyringMigration:
             decrypted = aesgcm_old.decrypt(nonce, payload, None)
             keyring_data = json.loads(decrypted)
 
-            logger.info(
-                f"Decrypted keyring with {keyring_data['key_count']} key version(s)"
-            )
+            key_count = len(keyring_data.get("keys", {}))
+            logger.info(f"Decrypted keyring with {key_count} key version(s)")
 
             # Save metadata for rollback
             self._save_migration_metadata(keyring_data, old_kek, new_kek)

@@ -134,6 +134,273 @@ If you want to delete your account:
 
 Your account enters a grace period (typically 30 days). During this time, you can cancel the deletion by logging back in. After the grace period, your account and data are permanently removed. Your messages may be anonymized (replaced with "[This message was sent by a deleted user]") to preserve conversation context.
 
+**Data Retention:**
+- Messages: May be anonymized but not deleted to preserve conversation context
+- Servers: You are removed from all servers you were a member of
+- Direct messages: Your DM conversations are removed
+- Files: Your uploaded files may be deleted or retained based on server policy
+- Audit logs: Your actions remain in server audit logs for accountability
+
+**Cancellation:**
+- Log in at any time during the grace period to cancel deletion
+- Your account is restored with all data intact
+- After the grace period expires, deletion cannot be reversed
+
+## Creating and Managing Servers
+
+### Creating a Server
+
+1. Click the **Add Server** button (plus icon) in the server list
+2. Choose **Create My Own** or start from a template
+3. Enter a server name
+4. Upload an icon (optional, 512x512px recommended)
+5. Click **Create**
+
+### Server Settings
+
+Access server settings by right-clicking the server icon and selecting **Server Settings**:
+
+- **Overview**: Server name, icon, and description
+- **Roles**: Create and manage roles with permissions
+- **Channels**: Create and organize text and voice channels
+- **Moderation**: Configure moderation tools and auto-moderation
+- **Members**: View and manage server members
+- **Integrations**: Manage bots and webhooks
+- **Audit Log**: View server moderation history
+
+### Channel Management
+
+**Creating Channels:**
+1. Click the **+** next to a category or channel
+2. Choose **Text Channel** or **Voice Channel**
+3. Enter channel name
+4. Set permissions (who can view, send messages, join voice)
+5. Click **Create Channel**
+
+**Channel Categories:**
+- Organize channels into collapsible categories
+- Set permissions at the category level
+- Drag channels to reorder within categories
+
+**Channel Permissions:**
+- Override role permissions per channel
+- Allow or deny specific actions (view, send, speak, connect)
+- Use permission sync to copy permissions from another channel
+
+### Role Management
+
+**Creating Roles:**
+1. Go to Server Settings -> Roles
+2. Click **Create Role**
+3. Enter role name
+4. Choose role color
+5. Set permissions using the permission tree
+6. Click **Save Changes**
+
+**Role Hierarchy:**
+- Roles higher in the list have more permissions
+- Drag roles to reorder hierarchy
+- Members can have multiple roles
+- Role colors are displayed in member lists
+
+**Common Permissions:**
+- **Administrator**: Full control of server (use with caution)
+- **Manage Server**: Change server settings
+- **Manage Roles**: Create and edit roles
+- **Manage Channels**: Create and edit channels
+- **Kick Members**: Remove members from server
+- **Ban Members**: Permanently remove members
+- **Mute Members**: Prevent members from speaking
+- **Deafen Members**: Prevent members from hearing
+- **Move Members**: Move members between voice channels
+- **Manage Messages**: Delete any message
+- **Send Messages**: Send text messages
+- **Speak**: Use voice channels
+- **Connect**: Join voice channels
+
+### Member Management
+
+**Moderating Members:**
+1. Right-click a member in the member list
+2. Select an action:
+   - **Kick**: Remove from server (can rejoin with invite)
+   - **Ban**: Permanently remove (cannot rejoin)
+   - **Timeout**: Temporarily restrict actions
+   - **Mute**: Prevent speaking in voice
+   - **Deafen**: Prevent hearing in voice
+   - **Move**: Move to different voice channel
+   - **Assign Role**: Add or remove roles
+
+**Viewing Member Info:**
+- Click a member to view their profile
+- See their roles, join date, and activity
+- View mutual servers and friends
+
+## Advanced Messaging Features
+
+### Threads
+
+Threads allow focused discussions within a channel without cluttering the main conversation.
+
+**Creating a Thread:**
+1. Hover over a message
+2. Click the thread icon
+3. Enter a thread name (optional)
+4. Type your reply
+5. Click **Send**
+
+**Thread Features:**
+- Threaded replies are grouped under the original message
+- Thread count shows number of replies
+- Click a thread to view and participate
+- Threads can be archived to close discussion
+
+### Message Pinning
+
+Pin important messages for easy reference:
+
+1. Hover over a message
+2. Click the pin icon
+3. Enter a pin reason (optional)
+4. Click **Pin**
+
+View pinned messages by clicking the pin icon at the top of the channel. Only users with the "Manage Messages" permission can pin messages.
+
+### Bookmarks
+
+Bookmark messages to find them later:
+
+1. Hover over a message
+2. Click the bookmark icon
+3. View your bookmarks from your user menu
+
+Bookmarks are personal and not visible to other users.
+
+### Message Forwarding
+
+Forward messages to other channels:
+
+1. Hover over a message
+2. Click the forward icon
+3. Select destination channel
+4. Add a comment (optional)
+5. Click **Forward**
+
+The forwarded message shows the original author and timestamp.
+
+### Scheduled Messages
+
+Schedule messages to be sent later:
+
+1. Type your message in the input box
+2. Click the schedule icon (clock)
+3. Select a date and time
+4. Click **Schedule**
+
+Scheduled messages are sent automatically at the specified time. You can view and cancel scheduled messages from your user menu.
+
+## Polls
+
+Create polls to gather opinions from channel members.
+
+**Creating a Poll:**
+1. Click the poll icon in the message input
+2. Enter your poll question
+3. Add poll options (minimum 2, maximum 10)
+4. Set poll duration (optional, defaults to 24 hours)
+5. Click **Create Poll**
+
+**Voting in Polls:**
+- Click on an option to cast your vote
+- You can change your vote until the poll closes
+- Poll results are visible to all channel members
+
+**Poll Results:**
+- View current vote counts for each option
+- Results update in real-time
+- Poll creator can close the poll early
+- Closed polls show final results
+
+## Stickers
+
+Use stickers to add personality to your messages.
+
+**Using Stickers:**
+1. Click the sticker icon in the message input
+2. Browse available stickers
+3. Click a sticker to send it
+
+Stickers are larger than emoji and often animated. Server administrators can upload custom stickers for their community.
+
+**Server Stickers:**
+- Go to Server Settings -> Stickers
+- Upload sticker images (PNG, GIF, WebP)
+- Set sticker names for easy searching
+- Manage sticker permissions
+
+## Search
+
+Search across messages, users, and servers.
+
+**Message Search:**
+1. Click the search icon in the channel header
+2. Enter your search query
+3. Use filters to narrow results:
+   - `from:username` - Search messages from specific user
+   - `in:#channel` - Search in specific channel
+   - `has:image` - Search messages with images
+   - `before:YYYY-MM-DD` - Search before date
+   - `after:YYYY-MM-DD` - Search after date
+4. Press Enter to search
+
+**User Search:**
+1. Click the search icon in the member list
+2. Enter username or display name
+3. Click on a user to view their profile
+
+**Server Search:**
+1. Click the search icon in the server list
+2. Enter server name
+3. Click on a server to view it (if you have an invite)
+
+## Notification Management
+
+Configure notifications to stay informed without being overwhelmed.
+
+**Notification Settings:**
+1. Go to User Settings -> Notifications
+2. Configure global notification preferences:
+   - Enable/disable desktop notifications
+   - Set notification sound
+   - Configure notification position
+   - Set notification duration
+
+**Per-Server Notifications:**
+1. Right-click a server icon
+2. Select **Notification Settings**
+3. Choose notification level:
+   - **All Messages**: Notify for all messages
+   - **Only Mentions**: Notify only when mentioned
+   - **Nothing**: Disable notifications for this server
+
+**Per-Channel Notifications:**
+1. Right-click a channel
+2. Select **Notification Settings**
+3. Choose notification level:
+   - **All Messages**: Notify for all messages
+   - **Only Mentions**: Notify only when mentioned
+   - **Nothing**: Disable notifications for this channel
+
+**Muting Channels:**
+- Right-click a channel and select **Mute**
+- Choose mute duration (15 min, 1 hour, 8 hours, 24 hours, Until I turn it back on)
+- Muted channels don't show unread badges
+
+**Muting Servers:**
+- Right-click a server and select **Mute Server**
+- Choose mute duration
+- Muted servers don't show notification badges
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |

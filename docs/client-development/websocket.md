@@ -506,6 +506,396 @@ function connect() {
 }
 ```
 
+## Connection State Machine
+
+The WebSocket connection follows a state machine with these states:
+
+```
+DISCONNECTED -> CONNECTING -> CONNECTED -> RESUMING
+     ^              |              |              |
+     |              v              v              |
+     +-----------<-----------------<--------------+
+```
+
+**State Transitions:**
+
+- **DISCONNECTED**: Initial state, no connection
+- **CONNECTING**: WebSocket connection initiated
+- **CONNECTED**: WebSocket open, authenticated, receiving events
+- **RESUMING**: Attempting to resume existing session
+
+**State Implementation:**
+
+```javascript
+const ConnectionState = {
+  DISCONNECTED: 'DISCONNECTED',
+  CONNECTING: 'CONNECTING',
+  CONNECTED: 'CONNECTED',
+  RESUMING: 'RESUMING'
+};
+
+class GatewayConnection {
+  constructor(token, intents) {
+    this.token = token;
+    this.intents = intents;
+    this.state = ConnectionState.DISCONNECTED;
+    this.ws = null;
+    this.sequence = 0;
+    this.sessionId = null;
+  }
+
+  connect() {
+    this.state = ConnectionState.CONNECTING;
+    this.ws = new WebSocket('ws://localhost:8000/gateway');
+
+    this.ws.onopen = () => {
+      this.state = ConnectionState.CONNECTED;
+      this.identify();
+    };
+
+    this.ws.onclose = (event) => {
+      this.state = ConnectionState.DISCONNECTED;
+      this.handleDisconnect(event);
+    };
+  }
+
+  resume() {
+    this.state = ConnectionState.RESUMING;
+    this.ws = new WebSocket('ws://localhost:8000/gateway');
+
+    this.ws.onopen = () => {
+      this.ws.send(JSON.stringify({
+        op: 6,
+        d: {
+          token: this.token,
+          session_id: this.sessionId,
+          seq: this.sequence
+        }
+      }));
+    };
+  }
+
+  handleDisconnect(event) {
+    if (this.sessionId && this.sequence > 0) {
+      // Try to resume
+      setTimeout(() => this.resume(), 1000);
+    } else {
+      // Fresh connect
+      setTimeout(() => this.connect(), 5000);
+    }
+  }
+}
+```
+
+## Reconnection Strategy
+
+### Exponential Backoff
+
+Implement exponential backoff for reconnection attempts:
+
+```javascript
+class GatewayConnection {
+  constructor(token, intents) {
+    this.reconnectAttempts = 0;
+    this.maxReconnectDelay = 30000; // 30 seconds
+    this.baseReconnectDelay = 1000; // 1 second
+  }
+
+  handleDisconnect(event) {
+    this.reconnectAttempts++;
+    const delay = Math.min(
+      this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts),
+      this.maxReconnectDelay
+    );
+
+    console.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+
+    setTimeout(() => {
+      if (this.sessionId && this.sequence > 0) {
+        this.resume();
+      } else {
+        this.connect();
+      }
+    }, delay);
+  }
+
+  onOpen() {
+    this.reconnectAttempts = 0; // Reset on successful connection
+  }
+}
+```
+
+### Resume vs Fresh Connect
+
+**Resume (op: 6):**
+- Use when you have a valid session_id and sequence
+- Resumes existing session without re-authentication
+- Missed events are replayed
+- Faster than fresh connect
+
+**Fresh Connect (op: 2):**
+- Use when no session exists or resume fails
+- Full authentication required
+- No event replay
+- Slower but more reliable
+
+**Decision Logic:**
+
+```javascript
+function shouldResume(closeCode) {
+  // Cannot resume after these codes
+  const nonResumableCodes = [4004, 4010, 4011, 4012, 4013, 4014, 4015, 4016, 4017];
+
+  if (nonResumableCodes.includes(closeCode)) {
+    return false;
+  }
+
+  // Can resume if we have session state
+  return this.sessionId !== null && this.sequence > 0;
+}
+```
+
+## Heartbeat Management
+
+### Heartbeat Implementation
+
+```javascript
+class GatewayConnection {
+  constructor(token, intents) {
+    this.heartbeatInterval = null;
+    this.heartbeatIntervalMs = null;
+    this.lastHeartbeatAck = Date.now();
+    this.heartbeatTimeoutMs = 20000; // 20 seconds
+  }
+
+  startHeartbeat(intervalMs) {
+    this.heartbeatIntervalMs = intervalMs;
+    this.heartbeatInterval = setInterval(() => {
+      this.sendHeartbeat();
+    }, intervalMs);
+  }
+
+  sendHeartbeat() {
+    if (this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        op: 1,
+        d: this.sequence
+      }));
+    }
+  }
+
+  handleHeartbeatAck() {
+    this.lastHeartbeatAck = Date.now();
+  }
+
+  monitorHeartbeat() {
+    setInterval(() => {
+      const timeSinceAck = Date.now() - this.lastHeartbeatAck;
+      if (timeSinceAck > this.heartbeatTimeoutMs) {
+        console.error('Heartbeat timeout - reconnecting');
+        this.ws.close();
+      }
+    }, 5000);
+  }
+}
+```
+
+### Heartbeat Timeout Handling
+
+When heartbeat ACK is not received within timeout:
+
+1. Close WebSocket connection
+2. Attempt reconnection
+3. Reset heartbeat state on successful connection
+
+```javascript
+ws.onmessage = (event) => {
+  const payload = JSON.parse(event.data);
+
+  if (payload.op === 11) { // Heartbeat ACK
+    this.handleHeartbeatAck();
+  }
+};
+```
+
+## Event Dispatching Architecture
+
+### Event Router
+
+```javascript
+class EventDispatcher {
+  constructor() {
+    this.handlers = {};
+  }
+
+  on(eventType, handler) {
+    if (!this.handlers[eventType]) {
+      this.handlers[eventType] = [];
+    }
+    this.handlers[eventType].push(handler);
+  }
+
+  emit(eventType, data) {
+    const handlers = this.handlers[eventType] || [];
+    handlers.forEach(handler => {
+      try {
+        handler(data);
+      } catch (error) {
+        console.error(`Error in ${eventType} handler:`, error);
+      }
+    });
+  }
+
+  off(eventType, handler) {
+    const handlers = this.handlers[eventType] || [];
+    const index = handlers.indexOf(handler);
+    if (index > -1) {
+      handlers.splice(index, 1);
+    }
+  }
+}
+
+// Usage
+const dispatcher = new EventDispatcher();
+
+dispatcher.on('MESSAGE_CREATE', (message) => {
+  console.log('New message:', message.content);
+});
+
+dispatcher.emit('MESSAGE_CREATE', { content: 'Hello' });
+```
+
+### Gateway Event Processing
+
+```javascript
+class GatewayConnection {
+  constructor(token, intents) {
+    this.dispatcher = new EventDispatcher();
+  }
+
+  handleMessage(payload) {
+    if (payload.s) {
+      this.sequence = payload.s;
+    }
+
+    switch (payload.op) {
+      case 0: // Dispatch
+        this.handleEvent(payload.t, payload.d);
+        break;
+      case 11: // Heartbeat ACK
+        this.handleHeartbeatAck();
+        break;
+    }
+  }
+
+  handleEvent(eventType, data) {
+    this.dispatcher.emit(eventType, data);
+  }
+
+  on(eventType, handler) {
+    this.dispatcher.on(eventType, handler);
+  }
+}
+```
+
+## Tab Visibility Handling
+
+### Page Visibility API
+
+Suspend WebSocket when tab is hidden to save resources:
+
+```javascript
+class GatewayConnection {
+  constructor(token, intents) {
+    this.setupVisibilityHandler();
+  }
+
+  setupVisibilityHandler() {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.handleTabHidden();
+      } else {
+        this.handleTabVisible();
+      }
+    });
+  }
+
+  handleTabHidden() {
+    // Optionally suspend heartbeat
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
+  handleTabVisible() {
+    // Resume heartbeat
+    if (this.heartbeatIntervalMs && !this.heartbeatInterval) {
+      this.startHeartbeat(this.heartbeatIntervalMs);
+    }
+
+    // Check connection health
+    const timeSinceAck = Date.now() - this.lastHeartbeatAck;
+    if (timeSinceAck > this.heartbeatTimeoutMs) {
+      console.warn('Connection stale while hidden, reconnecting');
+      this.ws.close();
+    }
+  }
+}
+```
+
+### Resource Saving
+
+When tab is hidden:
+- Reduce heartbeat frequency or suspend
+- Pause non-critical event processing
+- Throttle UI updates
+- Reduce polling intervals
+
+## Certificate Warning Handling
+
+### Self-Signed Certificate Detection
+
+```javascript
+class GatewayConnection {
+  connect(url) {
+    this.ws = new WebSocket(url);
+
+    this.ws.onerror = (error) => {
+      if (this.isCertificateError(error)) {
+        this.handleCertificateError();
+      }
+    };
+  }
+
+  isCertificateError(error) {
+    // Check for certificate-related errors
+    return error.message && (
+      error.message.includes('certificate') ||
+      error.message.includes('SSL') ||
+      error.message.includes('TLS')
+    );
+  }
+
+  handleCertificateError() {
+    const message = `
+      This server uses a self-signed certificate.
+      Please open the server URL in a new tab and accept the certificate,
+      then reload this page.
+    `;
+    alert(message);
+  }
+}
+```
+
+### User Guidance
+
+When certificate error occurs:
+1. Display user-friendly message
+2. Provide link to open server URL
+3. Instruct user to accept certificate
+4. Offer reload button after acceptance
+
 ## Best Practices
 
 ### 1. Message Queuing

@@ -206,9 +206,9 @@ encryption:
 Set KEKs as Base64-encoded 32-byte keys:
 
 ```bash
-export PLEXICHAT_SYSTEM_KEY="a53722a9ff25cba8d51dd015a74f4a3b2933e27534c49daf31800710f9e81b97"
-export PLEXICHAT_MESSAGE_KEY="4a77e5a1c60ef845421157aee3d94b612a8eebadec6eb121a00191e2e1ec5394"
-export PLEXICHAT_MEDIA_KEY="b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9"
+export PLEXICHAT_SYSTEM_KEY="<64-character-hex-system-kek>"
+export PLEXICHAT_MESSAGE_KEY="<64-character-hex-message-kek>"
+export PLEXICHAT_MEDIA_KEY="<64-character-hex-media-kek>"
 ```
 
 **Secure Key Source Enforcement**
@@ -229,13 +229,15 @@ When changing KEKs (e.g., migrating from a single system key to dedicated keys),
 
 ```bash
 # Validate current keyrings
-python main.py --migrate-kek --kek-validate --all
+python main.py --migrate-kek --kek-validate --kek-all
 
-# Migrate a specific keyring
+# Migrate a specific keyring from the old shared system KEK to the new dedicated KEK
 python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
 
-# Migrate all keyrings to a new KEK
-python main.py --migrate-kek --kek-all --kek-new-env PLEXICHAT_SYSTEM_KEY
+# Migrate all keyrings to their dedicated KEKs
+python main.py --migrate-kek --kek-keyring system_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_SYSTEM_KEY
+python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
+python main.py --migrate-kek --kek-keyring file_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MEDIA_KEY
 
 # Dry run (validate only)
 python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
