@@ -252,45 +252,20 @@ pytest src/tests/voice/ -v
 
 ## WebRTC Signaling
 
-The voice module includes a signaling submodule for WebRTC connections:
+The voice module includes a signaling submodule for WebRTC connections. The current implementation uses a peer-to-peer mesh topology where each client connects directly to every other peer in the channel. The gateway relays signaling messages (SDP offers/answers, ICE candidates) but does not process media.
 
-```python
-from src.core.voice import signaling
+### Signaling Flow
 
-# Setup signaling (in main.py)
-signaling.setup(
-    voice_module=voice,
-    sfu_backend="mediasoup",  # or "janus"
-    mediasoup_url="http://localhost:3000",
-    stun_urls=["stun:stun.l.google.com:19302"],
-    turn_urls=["turn:turn.example.com:3478"],
-    turn_secret="your_turn_secret",
-    turn_ttl=86400,
-)
+The voice connection flow follows this sequence:
 
-# Get voice server info with TURN credentials
-info = signaling.get_voice_server_info(user_id, channel_id)
-
-# Create voice connection
-info = signaling.create_voice_connection(user_id, channel_id)
-
-# Handle SDP offer/answer exchange
-answer = signaling.handle_sdp_offer(user_id, channel_id, sdp_offer)
-
-# Handle ICE candidates
-signaling.handle_ice_candidate(user_id, channel_id, candidate, sdp_mid, sdp_mline_index)
-
-# Screen sharing
-state = signaling.start_screen_share(user_id, channel_id)
-signaling.stop_screen_share(user_id, channel_id)
-
-# Connection quality
-quality = signaling.get_connection_quality(user_id, channel_id)
-signaling.update_quality_hint(user_id, channel_id, target_bitrate=128000)
-
-# Disconnect
-signaling.disconnect_voice(user_id)
-```
+1. Client sends VOICE_CONNECT to gateway with channel_id
+2. Gateway updates voice state and returns ICE servers
+3. Client requests microphone access and creates RTCPeerConnection
+4. Client sends VOICE_SDP_OFFER to gateway for each peer
+5. Gateway relays offer to target peer
+6. Target peer sends VOICE_SDP_ANSWER through gateway
+7. Both peers exchange ICE candidates via gateway
+8. WebRTC connection establishes directly between peers
 
 ### WebSocket Opcodes
 
@@ -298,24 +273,150 @@ signaling.disconnect_voice(user_id)
 |--------|------|-----------|-------------|
 | 20 | VOICE_CONNECT | Client -> Server | Connect to voice channel |
 | 21 | VOICE_DISCONNECT | Client -> Server | Disconnect from voice |
-| 22 | VOICE_SDP_OFFER | Client -> Server | Send SDP offer |
-| 23 | VOICE_SDP_ANSWER | Server -> Client | SDP answer response |
+| 22 | VOICE_SDP_OFFER | Bidirectional | Send SDP offer |
+| 23 | VOICE_SDP_ANSWER | Bidirectional | SDP answer response |
 | 24 | VOICE_ICE_CANDIDATE | Bidirectional | ICE candidate exchange |
 | 25 | VOICE_SPEAKING | Client -> Server | Speaking state update |
 | 26 | VOICE_QUALITY | Bidirectional | Quality metrics/hints |
 
-### SFU Backends
+### Connection Topology
 
-The signaling module supports two SFU backends:
+**Current Implementation: Peer-to-Peer Mesh**
 
-- **mediasoup**: High-performance SFU with simulcast support
+- Each client maintains a direct RTCPeerConnection to every other peer
+- Gateway relays signaling only (no media processing)
+- Scales well for small channels (2-10 users)
+- Bandwidth usage grows quadratically with user count
+- No server-side SFU required
+
+**Future: SFU (Selective Forwarding Unit)**
+
+The signaling module includes SFU adapters for future use:
+- **aiortc**: In-process Python SFU (recommended for self-hosted deployments)
+- **mediasoup**: High-performance Node.js SFU with WebSocket adapter
+- **mediasoup-ws**: WebSocket-based mediasoup integration
 - **janus**: Flexible WebRTC gateway with VideoRoom plugin
+
+SFU topology would centralize media processing, reducing client bandwidth and improving scalability for larger channels.
+
+### SFU Backend Configuration
+
+To use an SFU backend instead of mesh topology:
+
+```python
+from src.core.voice import signaling
+
+# Setup with aiortc (in-process)
+signaling.setup(
+    voice_module=voice,
+    sfu_backend="aiortc",
+    stun_urls=["stun:stun.l.google.com:19302"],
+    turn_urls=["turn:turn.example.com:3478"],
+    turn_secret="your_turn_secret",
+    turn_ttl=86400,
+)
+
+# Setup with mediasoup (external)
+signaling.setup(
+    voice_module=voice,
+    sfu_backend="mediasoup",
+    mediasoup_url="http://localhost:3000",
+    stun_urls=["stun:stun.l.google.com:19302"],
+    turn_urls=["turn:turn.example.com:3478"],
+    turn_secret="your_turn_secret",
+    turn_ttl=86400,
+)
+
+# Setup with janus (external)
+signaling.setup(
+    voice_module=voice,
+    sfu_backend="janus",
+    janus_url="http://localhost:8088/janus",
+    janus_admin_secret="your_admin_secret",
+    stun_urls=["stun:stun.l.google.com:19302"],
+    turn_urls=["turn:turn.example.com:3478"],
+    turn_secret="your_turn_secret",
+    turn_ttl=86400,
+)
+```
+
+### Signaling API
+
+```python
+from src.core.voice import signaling
+
+# Get voice server info with TURN credentials
+info = signaling.get_voice_server_info(user_id, channel_id)
+# Returns: {"ice_servers": [...], "session_id": "..."}
+
+# Create voice connection
+info = signaling.create_voice_connection(user_id, channel_id)
+
+# Handle SDP offer/answer exchange
+answer = signaling.handle_sdp_offer(user_id, channel_id, sdp_offer, peer_user_id)
+
+# Handle ICE candidates
+signaling.handle_ice_candidate(user_id, channel_id, candidate, sdp_mid, sdp_mline_index, peer_user_id)
+
+# Disconnect
+signaling.disconnect_voice(user_id)
+```
 
 ### TURN Credentials
 
 TURN credentials are generated using HMAC-SHA1 per RFC 5389:
 - Username format: `expiry_timestamp:user_id`
 - Credential: Base64-encoded HMAC-SHA1 of username
+- TTL is configurable (default 86400 seconds = 24 hours)
+
+This allows time-limited credentials without storing passwords.
+
+### Connection Quality Monitoring
+
+The signaling module tracks connection quality for adaptive bitrate:
+
+```python
+# Get current connection quality
+quality = signaling.get_connection_quality(user_id, channel_id)
+# Returns: {"level": "good"|"fair"|"poor", "bitrate": 128000, "packet_loss": 0.01}
+
+# Update quality hint (client reports target bitrate)
+signaling.update_quality_hint(user_id, channel_id, target_bitrate=128000)
+
+# Server sends VOICE_QUALITY opcode to clients with quality adjustments
+```
+
+Quality levels:
+- **good**: Low packet loss (<1%), stable connection
+- **fair**: Moderate packet loss (1-5%), some degradation
+- **poor**: High packet loss (>5%), significant degradation
+
+### Screen Sharing
+
+Screen sharing uses the WebRTCgetDisplayMedia API:
+
+```python
+# Start screen share (client-side)
+state = signaling.start_screen_share(user_id, channel_id)
+# Updates voice state with streaming=True
+
+# Stop screen share
+signaling.stop_screen_share(user_id, channel_id)
+# Updates voice state with streaming=False
+```
+
+**Implementation Details:**
+- Client calls `navigator.mediaDevices.getDisplayMedia()`
+- Video track is added to existing RTCPeerConnection
+- Gateway relays signaling for screen share tracks
+- Screen share is treated as a separate media track
+- Browser-specific behavior varies (permission prompts, system audio)
+
+**Browser Considerations:**
+- Chrome: Requires user permission, supports system audio
+- Firefox: Requires user permission, limited system audio support
+- Safari: Requires user permission, no system audio support
+- Mobile browsers: Limited or no screen share support
 
 ## Notes
 
