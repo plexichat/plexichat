@@ -31,7 +31,7 @@ import hashlib
 import argparse
 import logging
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Optional, Dict, List, Any
 from datetime import datetime
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -283,9 +283,9 @@ class KeyringMigration:
                 f"Successfully migrated keyring to new KEK: {self.keyring_path.name}"
             )
 
-            # Validate the migration
-            post_validation = self.validate_keyring(new_kek, old_kek)
-            if not post_validation["can_decrypt_with_new_kek"]:
+            # Validate the migration (new_kek is the first arg → "old_kek" param in validate_keyring)
+            post_validation = self.validate_keyring(new_kek)
+            if not post_validation["can_decrypt_with_old_kek"]:
                 logger.error("Post-migration validation failed - rolling back")
                 self.rollback()
                 return False
@@ -383,14 +383,14 @@ class KeyringMigration:
                     decoded = base64.b64decode(env_value)
                     if decoded == kek:
                         return f"Environment variable {env_var} (Base64)"
-                except:
+                except Exception:
                     pass
                 try:
                     # Try hex
                     decoded = bytes.fromhex(env_value)
                     if decoded == kek:
                         return f"Environment variable {env_var} (hex)"
-                except:
+                except Exception:
                     pass
 
         # Check if it matches machine key file
@@ -399,7 +399,7 @@ class KeyringMigration:
             if machine_key_path.exists():
                 if machine_key_path.read_bytes() == kek:
                     return "Machine-local key file"
-        except:
+        except Exception:
             pass
 
         return "Unknown source"
@@ -490,7 +490,7 @@ def migrate_keyring(
     Returns:
         True if migration successful, False otherwise
     """
-    logger.info(f"=== KEK Migration Started ===")
+    logger.info("=== KEK Migration Started ===")
     logger.info(f"Keyring: {keyring_name}")
     logger.info(f"Old KEK env var: {old_kek_env}")
     logger.info(f"New KEK env var: {new_kek_env}")
@@ -516,8 +516,8 @@ def migrate_keyring(
         logger.error(f"Failed to decode KEK: {e}")
         return False
 
-    logger.info(f"Old KEK decoded successfully (32 bytes)")
-    logger.info(f"New KEK decoded successfully (32 bytes)")
+    logger.info("Old KEK decoded successfully (32 bytes)")
+    logger.info("New KEK decoded successfully (32 bytes)")
 
     # Get keyring path
     data_dir = Path.home() / ".plexichat" / "data"
@@ -569,7 +569,7 @@ def migrate_all_keyrings(
         logger.error(f"Failed to decode new KEK: {e}")
         return False
 
-    logger.info(f"New KEK decoded successfully (32 bytes)")
+    logger.info("New KEK decoded successfully (32 bytes)")
 
     keyring_configs = [
         ("system_keyring.json", "PLEXICHAT_SYSTEM_KEY"),
@@ -637,7 +637,7 @@ def rollback_keyring(keyring_name: str) -> bool:
     Returns:
         True if rollback successful, False otherwise
     """
-    logger.info(f"=== Keyring Rollback Started ===")
+    logger.info("=== Keyring Rollback Started ===")
     logger.info(f"Keyring: {keyring_name}")
 
     data_dir = Path.home() / ".plexichat" / "data"
