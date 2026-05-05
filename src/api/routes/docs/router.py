@@ -21,7 +21,7 @@ from .navigation import build_sidebar_html, build_shell_header_html, build_foote
 from .theme import build_brand_styles
 
 router = APIRouter(tags=["Documentation"])
-DOCS_ROOT = Path(__file__).resolve().parents[3] / "docs"
+DOCS_ROOT = Path(__file__).resolve().parents[4] / "docs"
 
 # Module state
 _docs_cache: Dict[str, tuple[str, float]] = {}

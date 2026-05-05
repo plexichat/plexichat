@@ -2,7 +2,6 @@
 
 from unittest.mock import Mock
 from src.core.notifications.models import MentionType, Mention
-from src.core.notifications.exceptions import *
 
 
 class TestNotificationErrors:

@@ -60,7 +60,9 @@ class TestServerPerformance:
     """Test server-specific performance scenarios."""
 
     @pytest.mark.slow
-    def test_large_server_member_operations(self, server_manager, load_test_server):
+    def test_large_server_member_operations(
+        self, server_manager, load_test_server, auth_manager
+    ):
         """Test operations on a server with many members."""
         # Basic test to ensure server operations work
         from src.utils import encryption
@@ -74,7 +76,7 @@ class TestServerPerformance:
 
     @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_permission_check_performance(
-        self, benchmark, server_manager, load_test_server
+        self, benchmark, server_manager, load_test_server, auth_manager
     ):
         """Benchmark permission checking."""
         # Basic permission check test
@@ -87,7 +89,7 @@ class TestServerPerformance:
         assert isinstance(has_perm, bool)
 
     @pytest.mark.slow
-    def test_server_with_many_channels(self, server_manager, user_pool):
+    def test_server_with_many_channels(self, server_manager, user_pool, auth_manager):
         """Test performance with many channels in a server."""
         # Basic test to ensure channel creation works
         from src.utils import encryption

@@ -323,12 +323,12 @@ def db(setup_config):
     # Cleanup
     try:
         db.close()
-    except:
+    except Exception:
         pass
 
     try:
         os.unlink(temp_db.name)
-    except:
+    except Exception:
         pass
 
     # Restore config
