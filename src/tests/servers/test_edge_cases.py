@@ -3,6 +3,12 @@ Tests for edge cases and error handling.
 """
 
 import pytest
+from src.core.servers.exceptions import (
+    ServerNotFoundError,
+    ChannelNotFoundError,
+    RoleNotFoundError,
+    CategoryNotFoundError,
+)
 
 
 class TestServerEdgeCases:
@@ -16,12 +22,12 @@ class TestServerEdgeCases:
 
     def test_update_nonexistent_server(self, server_manager, test_user):
         """Test updating nonexistent server."""
-        with pytest.raises(servers.ServerNotFoundError):
+        with pytest.raises(ServerNotFoundError):
             server_manager.update_server(test_user.id, 999999999, name="Test")
 
     def test_delete_nonexistent_server(self, server_manager, test_user):
         """Test deleting nonexistent server."""
-        with pytest.raises(servers.ServerNotFoundError):
+        with pytest.raises(ServerNotFoundError):
             server_manager.delete_server(test_user.id, 999999999)
 
 
@@ -36,20 +42,20 @@ class TestChannelEdgeCases:
 
     def test_update_nonexistent_channel(self, server_manager, test_user):
         """Test updating nonexistent channel."""
-        with pytest.raises(servers.ChannelNotFoundError):
+        with pytest.raises(ChannelNotFoundError):
             server_manager.update_channel(test_user.id, 999999999, name="test")
 
     def test_delete_nonexistent_channel(self, server_manager, test_user):
         """Test deleting nonexistent channel."""
-        with pytest.raises(servers.ChannelNotFoundError):
+        with pytest.raises(ChannelNotFoundError):
             server_manager.delete_channel(test_user.id, 999999999)
 
     def test_create_channel_invalid_category(self, fresh_server_tuple):
         """Test creating channel with invalid category."""
-        server, owner, servers = fresh_server_tuple
+        server, owner, server_manager = fresh_server_tuple
 
-        with pytest.raises(servers.CategoryNotFoundError):
-            servers.create_channel(
+        with pytest.raises(CategoryNotFoundError):
+            server_manager.create_channel(
                 user_id=owner.id,
                 server_id=server.id,
                 name="test",
@@ -68,12 +74,12 @@ class TestRoleEdgeCases:
 
     def test_update_nonexistent_role(self, server_manager, test_user):
         """Test updating nonexistent role."""
-        with pytest.raises(servers.RoleNotFoundError):
+        with pytest.raises(RoleNotFoundError):
             server_manager.update_role(test_user.id, 999999999, name="test")
 
     def test_delete_nonexistent_role(self, server_manager, test_user):
         """Test deleting nonexistent role."""
-        with pytest.raises(servers.RoleNotFoundError):
+        with pytest.raises(RoleNotFoundError):
             server_manager.delete_role(test_user.id, 999999999)
 
     def test_assign_nonexistent_role(self, server_with_members):
