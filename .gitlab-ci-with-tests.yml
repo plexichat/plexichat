@@ -85,9 +85,9 @@ lint:types:
 # STAGE 2: SECURITY
 # =============================================================================
 
-security:secret_detection:
+security:secret_detection:  # pragma: allowlist secret
   stage: security
-  image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest  # pragma: allowlist secret
   variables:
     GIT_DEPTH: 100
   before_script: []
@@ -96,7 +96,7 @@ security:secret_detection:
     - /analyzer run
   artifacts:
     reports:
-      secret_detection: gl-secret-detection-report.json
+      secret_detection: gl-secret-detection-report.json  # pragma: allowlist secret
     paths:
       - gl-secret-detection-report.json
     expire_in: 30 days
