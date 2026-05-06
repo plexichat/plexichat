@@ -75,9 +75,24 @@ def build_brand_styles(conf: DocsConfig) -> str:
             border-right: 1px solid var(--border);
             height: 100vh;
             overflow-y: auto;
-            padding: var(--spacing-xl) var(--spacing-lg);
+            padding: var(--spacing-lg) var(--spacing-md);
             position: sticky;
             top: 0;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border-light) transparent;
+        }}
+
+        .sidebar::-webkit-scrollbar {{
+            width: 6px;
+        }}
+
+        .sidebar::-webkit-scrollbar-track {{
+            background: transparent;
+        }}
+
+        .sidebar::-webkit-scrollbar-thumb {{
+            background-color: var(--border-light);
+            border-radius: 3px;
         }}
 
         .sidebar-header {{
@@ -87,11 +102,11 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .brand-mark {{
             color: var(--text);
             display: inline-block;
-            font-size: 1.125rem;
-            font-weight: 600;
-            letter-spacing: 0.025em;
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
             text-decoration: none;
-            margin-bottom: var(--spacing-sm);
+            margin-bottom: var(--spacing-md);
         }}
 
         .brand-mark:hover {{
@@ -126,15 +141,21 @@ def build_brand_styles(conf: DocsConfig) -> str:
 
         .nav-category {{
             color: var(--text-muted);
-            font-size: 0.75rem;
-            font-weight: 600;
-            letter-spacing: 0.1em;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
             margin: var(--spacing-xl) var(--spacing-md) var(--spacing-sm);
             text-transform: uppercase;
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: var(--spacing-sm);
+            gap: var(--spacing-xs);
+            user-select: none;
+            transition: color var(--transition-speed) ease;
+        }}
+
+        .nav-category:hover {{
+            color: var(--text);
         }}
 
         .nav-category::after {{
@@ -153,26 +174,27 @@ def build_brand_styles(conf: DocsConfig) -> str:
 
         .nav-list a {{
             border: 1px solid transparent;
-            border-radius: var(--border-radius-medium);
+            border-radius: var(--border-radius-small);
             color: var(--text-muted);
             display: block;
             font-size: 0.875rem;
-            padding: var(--spacing-sm) var(--spacing-md);
+            padding: var(--spacing-xs) var(--spacing-sm);
             text-decoration: none;
             transition: all var(--transition-speed) ease;
+            line-height: 1.4;
         }}
 
-        .nav-list a:hover,
-        .nav-list a.active {{
-            background: var(--surface);
+        .nav-list a:hover {{
+            background: rgba(59, 130, 246, 0.08);
             border-color: var(--border-light);
             color: var(--text);
         }}
 
         .nav-list a.active {{
             background: rgba(59, 130, 246, 0.12);
-            border-color: rgba(59, 130, 246, 0.28);
+            border-color: rgba(59, 130, 246, 0.3);
             color: var(--text);
+            font-weight: 500;
             position: relative;
         }}
 
@@ -206,6 +228,11 @@ def build_brand_styles(conf: DocsConfig) -> str:
             margin: 0 auto;
         }}
 
+        .page-card > * {{
+            max-width: 100%;
+            overflow-x: auto;
+        }}
+
         .shell-header {{
             border-bottom: 1px solid var(--border);
         }}
@@ -231,10 +258,10 @@ def build_brand_styles(conf: DocsConfig) -> str:
         }}
 
         .shell-title {{
-            font-size: 2.5rem;
-            font-weight: 600;
-            letter-spacing: -0.025em;
-            line-height: 1.1;
+            font-size: 2.25rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1.2;
             margin: 0 0 var(--spacing-md);
             color: var(--text);
         }}
@@ -273,7 +300,8 @@ def build_brand_styles(conf: DocsConfig) -> str:
         }}
 
         .content-container {{
-            padding: var(--spacing-2xl) var(--spacing-xl);
+            padding: var(--spacing-2xl) var(--spacing-lg);
+            max-width: 100%;
         }}
 
         .content-container > :first-child {{ margin-top: 0; }}
@@ -287,15 +315,17 @@ def build_brand_styles(conf: DocsConfig) -> str:
         }}
 
         h1 {{
-            font-size: 2rem;
-            letter-spacing: -0.025em;
+            font-size: 1.875rem;
+            letter-spacing: -0.02em;
             border-bottom: 1px solid var(--border);
-            padding-bottom: var(--spacing-lg);
+            padding-bottom: var(--spacing-md);
+            margin-top: var(--spacing-2xl);
         }}
 
         h2 {{
             font-size: 1.5rem;
-            letter-spacing: -0.025em;
+            letter-spacing: -0.02em;
+            margin-top: var(--spacing-2xl);
         }}
 
         h3 {{
@@ -309,7 +339,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         p, li, td, th {{ 
             color: var(--text-muted); 
             font-size: 1rem;
-            line-height: 1.6;
+            line-height: 1.7;
         }}
 
         strong {{ 
@@ -349,8 +379,9 @@ def build_brand_styles(conf: DocsConfig) -> str:
             border: 1px solid var(--border);
             border-radius: var(--border-radius-medium);
             overflow-x: auto;
-            padding: var(--spacing-lg);
+            padding: var(--spacing-md);
             margin: var(--spacing-lg) 0;
+            font-size: 0.875rem;
         }}
 
         pre code {{

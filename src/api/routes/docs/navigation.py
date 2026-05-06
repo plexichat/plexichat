@@ -57,7 +57,7 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
 
     html = ['<aside class="sidebar">']
     html.append('<div class="sidebar-header">')
-    html.append(f'<a href="{conf.path}" class="brand-mark">PLEXI<span>CHAT</span></a>')
+    html.append(f'<a href="{conf.path}" class="brand-mark">PLEXICHAT</a>')
     html.append('<span class="sidebar-caption">Documentation</span>')
     html.append(f"<h3>{conf.title}</h3>")
     html.append(f'<p class="sidebar-description">{conf.description}</p>')
@@ -161,7 +161,7 @@ def build_shell_header_html(
         '<header class="shell-header">'
         '<div class="shell-header-inner">'
         '<div class="shell-brand-block">'
-        f'<a href="{conf.path}" class="brand-mark">PLEXI<span>CHAT</span></a>'
+        f'<a href="{conf.path}" class="brand-mark">PLEXICHAT</a>'
         f'<span class="surface-badge">{surface_label}</span>'
         f'<h1 class="shell-title">{page_title}</h1>'
         f'<p class="shell-summary">{page_summary}</p>'
