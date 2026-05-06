@@ -23,9 +23,9 @@ pytestmark = [
     pytest.mark.postgres,
     pytest.mark.skip(reason="PostgreSQL Docker tests require Docker environment"),
 ]
-import os
-import sys
-import threading
+import os  # noqa: E402
+import sys  # noqa: E402
+import threading  # noqa: E402
 
 # Setup paths
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))

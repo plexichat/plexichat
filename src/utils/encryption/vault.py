@@ -4,7 +4,6 @@ Supports TPM 2.0 (via tpm2-pytss), HSM (via PKCS#11), and environment-derived KE
 """
 
 import os
-import hashlib
 import utils.logger as logger
 from typing import Optional, Dict, Any
 from pathlib import Path

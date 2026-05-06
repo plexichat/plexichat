@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.core.migrations.manager import Migration, MigrationManager
+from src.core.migrations.manager import Migration
 
 
 @pytest.mark.migrations
@@ -67,7 +67,7 @@ class TestManagerSecurity:
 
     def test_dry_run_does_not_record(self, migration_manager):
         """Test that dry run does not record migration in tracker."""
-        status_before = migration_manager.get_migration_status()
+        migration_manager.get_migration_status()
         result = migration_manager.apply_all_pending(dry_run=True)
         assert result["dry_run"] is True
         # Applied count should not change from dry run

@@ -1,6 +1,6 @@
 # User Profiles Module
 
-Custom status, bio, social links, and profile management for PlexiChat users.
+Custom status, bio, social links, and profile management for Plexichat users.
 
 ## Files
 

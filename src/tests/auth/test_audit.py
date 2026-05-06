@@ -2,7 +2,6 @@
 Audit logging tests for auth module.
 """
 
-import pytest
 from unittest.mock import patch
 
 

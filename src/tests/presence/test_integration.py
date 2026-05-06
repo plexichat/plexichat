@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.core.presence.models import UserStatus, ActivityType
+from src.core.presence.models import UserStatus
 
 
 @pytest.mark.presence

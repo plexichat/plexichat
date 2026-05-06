@@ -296,9 +296,9 @@ class TestTimestamps:
         user1, user2, presence_manager = fresh_users
         import time
 
-        before = int(time.time() * 1000)
+        int(time.time() * 1000)
         result = presence_manager.set_activity(user1.id, ActivityType.PLAYING, "Game")
-        after = int(time.time() * 1000)
+        int(time.time() * 1000)
 
         # Note: created_at may be 0 if table schema doesn't support it properly
         # Just verify the activity was set successfully

@@ -2,8 +2,6 @@
 Tests for sticker suggestions.
 """
 
-import pytest
-
 from src.core.stickers import StickerFormat
 
 

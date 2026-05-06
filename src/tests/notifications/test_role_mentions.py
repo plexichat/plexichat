@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.core.notifications.models import MentionType, NotificationLevel
+from src.core.notifications.models import MentionType
 
 
 @pytest.mark.notifications

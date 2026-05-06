@@ -17,8 +17,8 @@ for path in [project_root, src_path, utils_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-import utils.config as config
-import utils.version as version
+import utils.config as config  # noqa: E402
+import utils.version as version  # noqa: E402
 
 # Setup config before importing voice modules
 DEFAULT_TEST_CONFIG = {

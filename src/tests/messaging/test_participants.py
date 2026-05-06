@@ -2,10 +2,7 @@
 
 import pytest
 
-from src.core.messaging.models import ConversationType, ParticipantRole
 from src.core.messaging.exceptions import (
-    ParticipantNotFoundError,
-    ParticipantLimitError,
     ConversationTypeError,
     ConversationAccessDeniedError,
 )

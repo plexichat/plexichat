@@ -129,7 +129,7 @@ config.setup(config_path=_test_config_path, default_config=DEFAULT_TEST_CONFIG)
 version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
 
 # Initialize logger for tests
-import utils.logger as logger
+import utils.logger as logger  # noqa: E402
 
 _test_log_dir = tempfile.mkdtemp()
 try:
@@ -138,7 +138,7 @@ except Exception:
     pass
 
 # Patch Database to add missing fetch_last_insert_id method for migration tracker
-from src.core.database import Database
+from src.core.database import Database  # noqa: E402
 
 if not hasattr(Database, "fetch_last_insert_id"):
 
@@ -873,7 +873,7 @@ def fresh_server_tuple(db, server_manager, two_users):
     # Disable encryption for tests to avoid keyring issues
     server_manager._encrypt_descriptions = False
 
-    channel = server_manager.create_channel(
+    server_manager.create_channel(
         owner.id, server.id, "general", channel_type=server_manager.ChannelType.TEXT
     )
 

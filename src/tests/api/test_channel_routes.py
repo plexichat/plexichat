@@ -1,7 +1,5 @@
 """Tests for channel routes."""
 
-import pytest
-
 
 def test_get_channel(test_client, test_server, test_user_with_token):
     """Test getting a channel by ID."""

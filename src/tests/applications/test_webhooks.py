@@ -13,7 +13,7 @@ class TestWebhooks:
 
     def test_verify_valid_signature(self, app_manager, test_user):
         """Test verifying a valid webhook signature."""
-        app = app_manager.create_application(owner_id=test_user.id, name="Webhook App")
+        app_manager.create_application(owner_id=test_user.id, name="Webhook App")
         body = b'{"type": 1}'
         timestamp = "1234567890"
         secret = app_manager._config.get("webhook_signature_secret", "")
@@ -25,7 +25,7 @@ class TestWebhooks:
 
     def test_verify_invalid_signature(self, app_manager, test_user):
         """Test that invalid signature raises error."""
-        app = app_manager.create_application(owner_id=test_user.id, name="Bad Sig App")
+        app_manager.create_application(owner_id=test_user.id, name="Bad Sig App")
         body = b'{"type": 1}'
         timestamp = "1234567890"
         bad_signature = "invalid_signature"
@@ -35,7 +35,7 @@ class TestWebhooks:
 
     def test_verify_tampered_body(self, app_manager, test_user):
         """Test that tampered body causes signature mismatch."""
-        app = app_manager.create_application(owner_id=test_user.id, name="Tamper App")
+        app_manager.create_application(owner_id=test_user.id, name="Tamper App")
         original_body = b'{"type": 1}'
         timestamp = "1234567890"
         secret = app_manager._config.get("webhook_signature_secret", "")
@@ -48,7 +48,7 @@ class TestWebhooks:
 
     def test_verify_wrong_timestamp(self, app_manager, test_user):
         """Test that wrong timestamp causes signature mismatch."""
-        app = app_manager.create_application(owner_id=test_user.id, name="Time App")
+        app_manager.create_application(owner_id=test_user.id, name="Time App")
         body = b'{"type": 1}'
         original_timestamp = "1234567890"
         secret = app_manager._config.get("webhook_signature_secret", "")

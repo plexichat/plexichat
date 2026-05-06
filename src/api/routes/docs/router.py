@@ -145,6 +145,7 @@ async def _serve_page(
             {shell_header}
             <section class="page-card">
                 <div class="content-container">{html_content}</div>
+                {{related_links_html}}
                 {footer_html}
             </section>
         </main>
@@ -194,7 +195,7 @@ async def docs_getting_started(request: Request):
 async def docs_deployment(request: Request):
     """Serve the 'Deployment' documentation page."""
     return await _serve_page(
-        request, _doc_path("deployment.md"), "Deployment", "/deployment"
+        request, _doc_path("deployment/index.md"), "Deployment", "/deployment"
     )
 
 
@@ -216,7 +217,7 @@ async def docs_features(request: Request):
 async def docs_permissions(request: Request):
     """Serve the permissions reference page."""
     return await _serve_page(
-        request, _doc_path("permissions.md"), "Permissions", "/permissions"
+        request, _doc_path("end-user/permissions.md"), "Permissions", "/permissions"
     )
 
 
@@ -242,25 +243,6 @@ async def docs_performance(request: Request):
     """Serve the performance guidance page."""
     return await _serve_page(
         request, _doc_path("performance.md"), "Performance", "/performance"
-    )
-
-
-@router.get("/admin-access-tokens")
-async def docs_admin_access_tokens(request: Request):
-    """Serve the API access token page."""
-    return await _serve_page(
-        request,
-        _doc_path("admin-access-tokens.md"),
-        "Admin Access Tokens",
-        "/admin-access-tokens",
-    )
-
-
-@router.get("/oauth-scopes")
-async def docs_oauth_scopes(request: Request):
-    """Serve the OAuth scopes reference page."""
-    return await _serve_page(
-        request, _doc_path("oauth-scopes.md"), "OAuth Scopes", "/oauth-scopes"
     )
 
 

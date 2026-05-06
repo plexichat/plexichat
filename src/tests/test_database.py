@@ -8,10 +8,10 @@ logging integration, and the new helper methods.
 import pytest
 
 pytestmark = pytest.mark.database_integration
-import os
-import sys
-import shutil
-import sqlite3
+import os  # noqa: E402
+import sys  # noqa: E402
+import shutil  # noqa: E402
+import sqlite3  # noqa: E402
 
 # Setup paths before any imports
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))

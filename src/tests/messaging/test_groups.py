@@ -3,10 +3,6 @@
 import pytest
 
 from src.core.messaging.models import ConversationType, ParticipantRole
-from src.core.messaging.exceptions import (
-    ParticipantLimitError,
-    ConversationAccessDeniedError,
-)
 
 
 @pytest.mark.messaging

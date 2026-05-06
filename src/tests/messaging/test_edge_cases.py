@@ -2,13 +2,6 @@
 
 import pytest
 
-from src.core.messaging.exceptions import (
-    ConversationNotFoundError,
-    ConversationAccessDeniedError,
-    ContentTooLongError,
-    InvalidRecipientError,
-)
-
 
 @pytest.mark.messaging
 class TestEdgeCases:

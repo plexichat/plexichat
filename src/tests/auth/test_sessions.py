@@ -43,7 +43,7 @@ class TestSessions:
         from src.core.auth.exceptions import TokenInvalidError
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 username="secret_test",
                 email="secret_test@example.com",
                 password="TestPass123!",
@@ -64,7 +64,7 @@ class TestSessions:
         from src.core.auth.exceptions import TokenInvalidError
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 username="revoke_test",
                 email="revoke_test@example.com",
                 password="TestPass123!",
@@ -84,7 +84,7 @@ class TestSessions:
         from src.core.auth.exceptions import TokenInvalidError
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 username="logout_test",
                 email="logout_test@example.com",
                 password="TestPass123!",
@@ -221,7 +221,7 @@ class TestSessions:
         from src.utils import encryption
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 username="format_test",
                 email="format_test@example.com",
                 password="TestPass123!",
@@ -240,7 +240,7 @@ class TestSessions:
         from src.utils import encryption
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 username="tokeninfo_test",
                 email="tokeninfo_test@example.com",
                 password="TestPass123!",

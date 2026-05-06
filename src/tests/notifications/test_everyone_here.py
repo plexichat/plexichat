@@ -68,7 +68,7 @@ class TestEveryoneValidation:
                 username="testuser2", email="user2@example.com", password="TestPass123!"
             )
 
-        dm = messaging_manager.create_dm(user1.id, user2.id)
+        messaging_manager.create_dm(user1.id, user2.id)
 
         content = "@everyone"
         mentions = notification_manager.parse_mentions(content)
@@ -88,12 +88,12 @@ class TestEveryoneValidation:
                 email="owner1@example.com",
                 password="TestPass123!",
             )
-            member1 = auth_manager.register(
+            auth_manager.register(
                 username="testmember1",
                 email="member1@example.com",
                 password="TestPass123!",
             )
-            member2 = auth_manager.register(
+            auth_manager.register(
                 username="testmember2",
                 email="member2@example.com",
                 password="TestPass123!",
@@ -120,7 +120,7 @@ class TestEveryoneValidation:
                 username="testuser4", email="user4@example.com", password="TestPass123!"
             )
 
-        dm = messaging_manager.create_dm(user1.id, user2.id)
+        messaging_manager.create_dm(user1.id, user2.id)
 
         content = "@here"
         mentions = notification_manager.parse_mentions(content)

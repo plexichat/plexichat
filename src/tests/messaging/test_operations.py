@@ -2,8 +2,6 @@
 
 import pytest
 
-from src.core.messaging.models import ConversationType, MessageType
-
 
 @pytest.mark.messaging
 class TestOperations:
@@ -83,8 +81,8 @@ class TestOperations:
         """Test that messages are returned in chronological order."""
         user1, user2 = two_users
         dm = messaging_manager.create_dm(user1.id, user2.id)
-        msg1 = messaging_manager.send_message(user1.id, dm.id, "First")
-        msg2 = messaging_manager.send_message(user1.id, dm.id, "Second")
-        msg3 = messaging_manager.send_message(user1.id, dm.id, "Third")
+        messaging_manager.send_message(user1.id, dm.id, "First")
+        messaging_manager.send_message(user1.id, dm.id, "Second")
+        messaging_manager.send_message(user1.id, dm.id, "Third")
         messages = messaging_manager.get_messages(user1.id, dm.id)
         assert len(messages) == 3

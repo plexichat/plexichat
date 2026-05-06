@@ -4,7 +4,6 @@ import pytest
 
 from src.core.applications.models import OAuth2Scope
 from src.core.applications.exceptions import (
-    OAuth2Error,
     InvalidClientError,
     InvalidScopeError,
     InvalidRedirectUriError,
@@ -57,7 +56,7 @@ class TestOAuthFlows:
 
     def test_revoke_token(self, app_manager, test_user):
         """Test revoking an OAuth2 token."""
-        app = app_manager.create_application(owner_id=test_user.id, name="Revoke App")
+        app_manager.create_application(owner_id=test_user.id, name="Revoke App")
         result = app_manager.revoke_token("nonexistent_token")
         assert result is True or result is False
 

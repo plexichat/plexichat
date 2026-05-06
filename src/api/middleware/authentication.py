@@ -253,7 +253,7 @@ class AuthenticationMiddleware:
 
                             # Use a wrapper to ensure DB connection is returned to pool in the worker thread
                             def _verify_with_cleanup(token_str, client_ip, user_agent):
-                                db = api.get_db()
+                                api.get_db()
                                 try:
                                     return auth.verify_token(
                                         token_str,

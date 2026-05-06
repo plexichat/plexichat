@@ -19,7 +19,7 @@ class TestGetChannelOverride:
 
     def test_get_existing_override(self, notification_manager):
         """Test getting existing override."""
-        override = notification_manager.set_channel_override(
+        notification_manager.set_channel_override(
             user_id=123, channel_id=456, level=NotificationLevel.MUTED
         )
 

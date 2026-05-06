@@ -2,11 +2,7 @@
 
 import pytest
 
-from src.core.applications.models import CommandType, CommandOptionType
-from src.core.applications.exceptions import (
-    CommandValidationError,
-    CommandOptionLimitError,
-)
+from src.core.applications.models import CommandOptionType
 
 
 @pytest.mark.applications

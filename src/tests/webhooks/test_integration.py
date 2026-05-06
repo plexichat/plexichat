@@ -2,8 +2,6 @@
 Tests for webhook integration with messaging and embeds modules.
 """
 
-import pytest
-
 
 class TestMessagingIntegration:
     """Tests for webhook integration with messaging module."""
