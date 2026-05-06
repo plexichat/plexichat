@@ -8,9 +8,7 @@ repos:
         entry: ruff check --fix .
         args: [
           "--extend-exclude",
-          ".venv,venv,.pytest_cache,cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,media,config,logs,src/utils/common-utils,plexichat/src/tests/,plexichat/plexichat/src/tests/,src/tests/unit/conftest.py,src/tests/voice/conftest.py,src/tests/websocket/conftest.py,src/tests/test_database.py,src/tests/test_postgres_docker.py,src/tests/test_redis.py,src/tests/test_selftest.py",
-          "--ignore",
-           "E402,F401,F841"
+          ".venv,venv,.pytest_cache,cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,media,config,logs,src/utils/common-utils,plexichat/src/tests/,plexichat/plexichat/src/tests/,src/tests/unit/conftest.py,src/tests/voice/conftest.py,src/tests/websocket/conftest.py,src/tests/test_database.py,src/tests/test_postgres_docker.py,src/tests/test_redis.py,src/tests/test_selftest.py"
         ]
       - id: ruff-format
         pass_filenames: false
