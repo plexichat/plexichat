@@ -15,7 +15,7 @@ import concurrent.futures
 
 # Check if PostgreSQL is available
 try:
-    import psycopg2
+    import psycopg2  # noqa: F401
 
     HAS_POSTGRES = True
 except ImportError:

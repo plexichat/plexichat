@@ -2,7 +2,6 @@
 Tests for memory storage operations.
 """
 
-import pytest
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor

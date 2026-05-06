@@ -37,6 +37,7 @@ This portal documents the Plexichat backend: the REST API, the WebSocket gateway
 ### Deployment & Operations
 
 - [Deployment](deployment/index.md) -- installation, security hardening, scaling, monitoring, backup
+- **[Docker Deployment](deployment/docker/index.md)** -- quick start, configuration, development, production setup, troubleshooting
 - [Versioning and Updates](deployment/versioning.md) -- version scheme, update procedures, rollback strategies
 - [SQLite to PostgreSQL Migration](./deployment/postgres-migration.md) -- automated migration guide
 - [Security Best Practices](security.md) -- authentication security, encryption, production checklist

@@ -10,15 +10,10 @@ from src.core.embeds.link_preview import (
 )
 from src.core.embeds.validator import (
     validate_url,
-    validate_color,
     sanitize_content,
-    validate_embed_data,
-    calculate_embed_chars,
-    ValidationResult,
 )
 from src.core.embeds.exceptions import (
     InvalidUrlError,
-    InvalidColorError,
     EmbedSanitizationError,
 )
 from src.core.embeds.models import EmbedType, EmbedProvider

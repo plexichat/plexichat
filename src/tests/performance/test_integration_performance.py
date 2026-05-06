@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 # Check if pytest-benchmark is available
 try:
-    import pytest_benchmark
+    import pytest_benchmark  # noqa: F401
 
     HAS_BENCHMARK = True
 except ImportError:
@@ -34,7 +34,7 @@ class TestCompleteUserJourney:
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user = auth_manager.register("perfuser", "perf@example.com", "Password123!")
         with patch.object(encryption, "verify_password", return_value=True):
-            result = auth_manager.login("perfuser", "Password123!")
+            auth_manager.login("perfuser", "Password123!")
         dm = messaging_manager.create_dm(user.id, user.id)
         msg = messaging_manager.send_message(user.id, dm.id, "Test message")
         assert msg is not None

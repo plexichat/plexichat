@@ -8,9 +8,7 @@ from src.core.automod.models import (
     ViolationSeverity,
     RuleMatch,
     RuleAction,
-    Violation,
 )
-from src.core.automod.exceptions import ActionExecutionError
 
 
 @pytest.mark.automod

@@ -2,7 +2,6 @@
 
 import pytest
 
-from src.core.automod.models import RuleType
 from src.core.automod.exceptions import ExemptionError
 
 

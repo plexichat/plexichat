@@ -125,7 +125,7 @@ class TestAuthManagerErrorPaths:
         from src.utils import encryption
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register("testuser", "test@example.com", "Password123!")
+            auth_manager.register("testuser", "test@example.com", "Password123!")
 
         # Make failed login attempts to reach threshold (default is 3 in test config)
         # The threshold check happens AFTER incrementing, so we need threshold attempts
@@ -147,7 +147,7 @@ class TestAuthManagerErrorPaths:
         from src.utils import encryption
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register("testuser", "test@example.com", "Password123!")
+            auth_manager.register("testuser", "test@example.com", "Password123!")
 
         # Login should succeed even without email verification
         with patch.object(encryption, "verify_password", return_value=True):
@@ -659,7 +659,7 @@ class TestAuthManagerSessions:
         from src.utils import encryption
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register("testuser", "test@example.com", "Password123!")
+            auth_manager.register("testuser", "test@example.com", "Password123!")
 
         # Create multiple sessions - should work within default limits
         with patch.object(encryption, "verify_password", return_value=True):

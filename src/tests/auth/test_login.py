@@ -109,7 +109,7 @@ class TestLogin:
         from src.utils import encryption
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 username="ip_test",
                 email="ip_test@example.com",
                 password="TestPass123!",

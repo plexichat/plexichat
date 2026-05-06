@@ -8,7 +8,7 @@ def test_tamper_with_user_id_in_url(test_client, auth_manager):
 
     # Create a user and get their token
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-        user = auth_manager.register(
+        auth_manager.register(
             username="testuser",
             email="test@example.com",
             password="TestPass123!",

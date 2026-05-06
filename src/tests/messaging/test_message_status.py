@@ -2,8 +2,6 @@
 
 import pytest
 
-from src.core.messaging.models import MessageStatusType
-
 
 @pytest.mark.messaging
 class TestMessageStatus:
@@ -21,7 +19,7 @@ class TestMessageStatus:
         """Test marking messages as read."""
         user1, user2 = two_users
         dm = messaging_manager.create_dm(user1.id, user2.id)
-        msg = messaging_manager.send_message(user1.id, dm.id, "Hello")
+        messaging_manager.send_message(user1.id, dm.id, "Hello")
         count = messaging_manager.mark_read(user2.id, dm.id)
         assert count >= 1
 

@@ -19,6 +19,7 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Security", "/security"),
             NavItem("Keyrings & KEKs", "/keyrings"),
             NavItem("Performance", "/performance"),
+            NavItem("Configuration", "/configuration"),
         ],
         "Reference": [
             NavItem("API Routes", "/reference"),
@@ -27,7 +28,6 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Error Codes", "/errors"),
             NavItem("Data Types", "/data-types"),
             NavItem("Permissions", "/permissions"),
-            NavItem("OAuth Scopes", "/oauth-scopes"),
         ],
         "Configuration": [
             NavItem("Overview", "/configuration"),
@@ -57,7 +57,7 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
 
     html = ['<aside class="sidebar">']
     html.append('<div class="sidebar-header">')
-    html.append(f'<a href="{conf.path}" class="brand-mark">PLEXICHAT</a>')
+    html.append(f'<a href="{conf.path}" class="brand-mark">Plexichat</a>')
     html.append('<span class="sidebar-caption">Documentation</span>')
     html.append(f"<h3>{conf.title}</h3>")
     html.append(f'<p class="sidebar-description">{conf.description}</p>')
@@ -161,7 +161,7 @@ def build_shell_header_html(
         '<header class="shell-header">'
         '<div class="shell-header-inner">'
         '<div class="shell-brand-block">'
-        f'<a href="{conf.path}" class="brand-mark">PLEXICHAT</a>'
+        f'<a href="{conf.path}" class="brand-mark">Plexichat</a>'
         f'<span class="surface-badge">{surface_label}</span>'
         f'<h1 class="shell-title">{page_title}</h1>'
         f'<p class="shell-summary">{page_summary}</p>'
@@ -194,3 +194,61 @@ def build_footer_html(conf: DocsConfig) -> str:
         if footer_content
         else f'<footer class="footer"><div class="footer-runtime">{runtime_pills}</div></footer>'
     )
+
+
+def build_related_links_html(current_path: str) -> str:
+    """Build related links section for better navigation between docs."""
+    related_links = {
+        "/": [
+            ("Getting Started", "/getting-started"),
+            ("Deployment", "/deployment"),
+            ("API Reference", "/reference"),
+        ],
+        "/getting-started": [
+            ("Home", "/"),
+            ("Deployment", "/deployment"),
+            ("Configuration", "/configuration"),
+            ("API Reference", "/reference"),
+        ],
+        "/deployment": [
+            ("Home", "/"),
+            ("Getting Started", "/getting-started"),
+            ("Configuration", "/configuration"),
+            ("Docker Deployment", "/deployment/docker"),
+            ("Security", "/security"),
+        ],
+        "/configuration": [
+            ("Home", "/"),
+            ("Getting Started", "/getting-started"),
+            ("Deployment", "/deployment"),
+            ("Default Config", "/default-config"),
+        ],
+        "/reference": [
+            ("Home", "/"),
+            ("WebSocket", "/websocket"),
+            ("Getting Started", "/getting-started"),
+        ],
+        "/websocket": [
+            ("Home", "/"),
+            ("API Reference", "/reference"),
+            ("Getting Started", "/getting-started"),
+        ],
+        "/admin": [
+            ("Home", "/"),
+            ("Getting Started", "/getting-started"),
+            ("Deployment", "/deployment"),
+            ("Security", "/security"),
+        ],
+    }
+
+    links = related_links.get(current_path, [])
+    if not links:
+        return ""
+
+    links_html = '<div class="related-links">'
+    links_html += "<h4>Related Pages</h4>"
+    links_html += '<div class="related-links-list">'
+    for label, path in links:
+        links_html += f'<a href="{path}" class="related-link">{label}</a>'
+    links_html += "</div></div>"
+    return links_html

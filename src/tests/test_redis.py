@@ -10,10 +10,10 @@ Uses fakeredis for unit tests (no real Redis required).
 import pytest
 
 pytestmark = pytest.mark.redis
-import os
-import sys
-import importlib
-import importlib.util
+import os  # noqa: E402
+import sys  # noqa: E402
+import importlib  # noqa: E402
+import importlib.util  # noqa: E402
 
 # Setup paths before any imports
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))

@@ -117,8 +117,6 @@ class TestPreferences:
 def server_manager_create_channel(notification_manager, user, server):
     """Helper to create a channel via server manager."""
     try:
-        from src.core.servers.manager import ServerManager
-
         # Not available from notification_manager, return None
         return None
     except Exception:

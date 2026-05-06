@@ -2,12 +2,7 @@
 
 import pytest
 
-from src.core.messaging.models import ConversationType, ParticipantRole
-from src.core.messaging.exceptions import (
-    ConversationNotFoundError,
-    ConversationAccessDeniedError,
-    ConversationTypeError,
-)
+from src.core.messaging.models import ConversationType
 
 
 @pytest.mark.messaging

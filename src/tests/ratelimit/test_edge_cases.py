@@ -2,7 +2,6 @@
 Tests for edge cases - concurrent requests, clock skew, etc.
 """
 
-import pytest
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 

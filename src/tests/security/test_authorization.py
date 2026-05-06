@@ -230,7 +230,7 @@ class TestAuthorizationChecks:
 
     def test_invite_code_validation(self, server_manager, test_user):
         """Test that invite codes properly validate access."""
-        server = server_manager.create_server(owner_id=test_user.id, name="Test Server")
+        server_manager.create_server(owner_id=test_user.id, name="Test Server")
 
         # Skip invite test for now - requires additional setup
         # The channel creation and invite system may have additional requirements

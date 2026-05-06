@@ -2,11 +2,9 @@
 
 import pytest
 
-from src.core.applications.models import Application, CommandType
 from src.core.applications.exceptions import (
     ApplicationNotFoundError,
     ApplicationAccessDeniedError,
-    ApplicationLimitError,
     InvalidApplicationNameError,
 )
 
@@ -109,8 +107,8 @@ class TestOperations:
 
     def test_get_user_applications(self, app_manager, test_user):
         """Test getting all applications for a user."""
-        app1 = app_manager.create_application(owner_id=test_user.id, name="App 1")
-        app2 = app_manager.create_application(owner_id=test_user.id, name="App 2")
+        app_manager.create_application(owner_id=test_user.id, name="App 1")
+        app_manager.create_application(owner_id=test_user.id, name="App 2")
         apps = app_manager.get_user_applications(test_user.id)
         assert len(apps) >= 2
         names = {a.name for a in apps}

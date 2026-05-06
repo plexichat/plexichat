@@ -3,7 +3,6 @@
 import pytest
 
 from src.core.applications.models import (
-    CommandType,
     InteractionType,
     InteractionResponseType,
     InteractionResponse,

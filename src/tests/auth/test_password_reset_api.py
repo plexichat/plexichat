@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import patch
 
 
@@ -11,7 +10,7 @@ class TestPasswordResetAPI:
 
         # Create a user
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register("testuser", "test@example.com", "TestPass123!")
+            auth_manager.register("testuser", "test@example.com", "TestPass123!")
 
         # Request password reset
         response = test_client.post(
@@ -46,7 +45,7 @@ class TestPasswordResetAPI:
         # Create a user
         email = f"reset_{uuid.uuid4().hex[:8]}@example.com"
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 f"resetuser_{uuid.uuid4().hex[:8]}",
                 email,
                 "TestPass123!",

@@ -771,7 +771,7 @@ async def create_admin_user(request: Request, user_data: AdminUserCreate):
             )
 
         # Create user with admin flag
-        user_id = auth.register_user(
+        _ = auth.register_user(
             username=user_data.username,
             email=user_data.email,
             password=user_data.password,

@@ -2,7 +2,6 @@
 
 import pytest
 
-from src.core.events.manager import EventManager
 from src.core.events.models import Event
 from src.core.events.types import EventType
 

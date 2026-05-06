@@ -215,6 +215,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
             padding: 0;
             display: flex;
             justify-content: center;
+            width: 100%;
         }}
 
         .page-card {{
@@ -224,7 +225,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
             overflow: hidden;
             position: relative;
             width: 100%;
-            max-width: var(--content-max-width);
+            max-width: 1400px;
             margin: 0 auto;
         }}
 
@@ -351,10 +352,16 @@ def build_brand_styles(conf: DocsConfig) -> str:
             color: var(--accent); 
             text-decoration: none;
             transition: color var(--transition-speed) ease;
+            border-bottom: 1px solid transparent;
         }}
 
         a:hover {{ 
             color: var(--accent-hover);
+            border-bottom-color: var(--accent-hover);
+        }}
+
+        a:active {{
+            color: var(--accent);
         }}
 
         ul, ol {{ 
@@ -491,6 +498,45 @@ def build_brand_styles(conf: DocsConfig) -> str:
         }}
 
         .footer-runtime span.accent {{
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }}
+
+        .related-links {{
+            border-top: 1px solid var(--border);
+            margin-top: var(--spacing-2xl);
+            padding: var(--spacing-xl) 0;
+        }}
+
+        .related-links h4 {{
+            color: var(--text);
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin: 0 0 var(--spacing-md);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }}
+
+        .related-links-list {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--spacing-sm);
+        }}
+
+        .related-link {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius-small);
+            color: var(--text-muted);
+            display: inline-block;
+            font-size: 0.875rem;
+            padding: var(--spacing-xs) var(--spacing-md);
+            text-decoration: none;
+            transition: all var(--transition-speed) ease;
+        }}
+
+        .related-link:hover {{
             background: var(--accent);
             border-color: var(--accent);
             color: white;

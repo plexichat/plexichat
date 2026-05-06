@@ -40,7 +40,7 @@ class TestEmojiCacheInvalidation:
         from src.api.routes.emojis import _invalidate_emoji_cache
 
         # Mock the invalidate_pattern function
-        mock_invalidate = monkeypatch.setattr(
+        monkeypatch.setattr(
             "src.api.routes.emojis.invalidate_pattern", lambda pattern: None
         )
 
@@ -56,7 +56,7 @@ class TestEmojiCacheInvalidation:
         from src.api.routes.emojis import _invalidate_emoji_cache
 
         # Mock the invalidate_pattern function
-        mock_invalidate = monkeypatch.setattr(
+        monkeypatch.setattr(
             "src.api.routes.emojis.invalidate_pattern", lambda pattern: None
         )
 

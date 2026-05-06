@@ -42,7 +42,6 @@ def test_rate_limit_headers(rate_limit_client):
     )
 
     # Check for rate limit headers
-    headers = response.headers
     # Rate limit headers may or may not be present depending on implementation
     # Just verify the request doesn't crash
     assert response.status_code in [401, 429]

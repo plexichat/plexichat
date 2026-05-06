@@ -6,7 +6,8 @@ Welcome to the Plexichat deployment documentation. This section covers everythin
 
 New to Plexichat deployment? Start here:
 
-- **[Getting Started](getting-started.md)** - Step-by-step production deployment guide with Docker
+- **[Docker Deployment](docker/index.md)** - Complete Docker setup guide (development, production, troubleshooting)
+- **[Getting Started](getting-started.md)** - Step-by-step production deployment guide
 - **[Requirements](requirements.md)** - System requirements for production and development
 - **[Overview](overview.md)** - High-level deployment architecture
 
@@ -27,26 +28,23 @@ Detailed configuration for each subsystem:
 
 ## Deployment Topics
 
+### Docker Deployment
+
+The recommended way to deploy Plexichat is using Docker Compose:
+
+- **[Docker Index](docker/index.md)** - Overview and system requirements
+- **[Quick Start](docker/quick-start.md)** - Get running in 5 minutes
+- **[Configuration](docker/configuration.md)** - Environment variables and profiles
+- **[Development Workflow](docker/development-workflow.md)** - Hot reload, testing, debugging
+- **[Production Setup](docker/production-setup.md)** - Security, TLS, scaling, Proxmox
+- **[Connection Pooling](docker/connection-pooling.md)** - Database tuning
+- **[Healthchecks](docker/healthchecks.md)** - Service monitoring
+- **[Troubleshooting](docker/troubleshooting.md)** - Common issues and solutions
+- **[Architecture](docker/architecture.md)** - System design and data flows
+
 ### Versioning and Updates
 
 - [Versioning and Updates](versioning.md) - Version scheme, update procedures, rollback strategies
-
-### Docker Deployment
-
-The recommended way to deploy Plexichat:
-
-```yaml
-# See getting-started.md for complete docker-compose.yml
-services:
-  plexichat:
-    build: .
-    ports:
-      - "8000:8000"
-  postgres:
-    image: postgres:15-alpine
-  redis:
-    image: redis:7-alpine
-```
 
 ### Environment Variables
 
@@ -74,10 +72,10 @@ See [Configuration Overview](../configuration.md) for details.
 
 ```bash
 # Docker
-docker-compose exec plexichat python -m alembic upgrade head
+docker compose exec backend python main.py
 
 # Native
-python -m alembic upgrade head
+python main.py
 ```
 
 ### Health Monitoring
@@ -108,6 +106,7 @@ Available endpoints for monitoring:
 - Ensure gateway is enabled in config
 
 For more help, see:
+- [Docker Troubleshooting](docker/troubleshooting.md)
 - [Configuration Overview](../configuration.md)
 - [Default Configuration Reference](../default-config.md)
 - [Admin Panel Guide](../admin/index.md)

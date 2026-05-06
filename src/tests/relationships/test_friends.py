@@ -301,7 +301,7 @@ class TestMutualServers:
         user1, user2, user3 = three_users
 
         # Create a server and add only user1
-        server = server_manager.create_server(user1.id, "Test Server")
+        server_manager.create_server(user1.id, "Test Server")
 
         # Create rel_manager with server_manager
         rel_manager = RelationshipManager(db, servers_module=server_manager)

@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.core.automod.models import RuleType, ActionType
+from src.core.automod.models import RuleType
 
 
 @pytest.mark.automod

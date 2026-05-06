@@ -134,7 +134,7 @@ class TestPermissions:
         from src.utils import encryption
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 username="perm_test",
                 email="perm_test@example.com",
                 password="TestPass123!",
@@ -153,7 +153,7 @@ class TestPermissions:
         from src.utils import encryption
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 username="req_perm_test",
                 email="req_perm_test@example.com",
                 password="TestPass123!",
@@ -173,7 +173,7 @@ class TestPermissions:
         from src.core.auth.exceptions import PermissionDeniedError
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user = auth_manager.register(
+            auth_manager.register(
                 username="req_raise_test",
                 email="req_raise_test@example.com",
                 password="TestPass123!",

@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.core.migrations.manager import MigrationManager, Migration
+from src.core.migrations.manager import Migration
 
 
 @pytest.mark.migrations
@@ -102,6 +102,6 @@ class TestManager:
         result = migration_manager.apply_all_pending(dry_run=True)
         assert result["dry_run"] is True
         # After dry run, applied_count should be the same
-        status_before = migration_manager.get_migration_status()
+        migration_manager.get_migration_status()
         # Dry run should not change applied count
         # (it skips tracker operations)

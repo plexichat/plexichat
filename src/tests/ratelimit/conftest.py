@@ -19,7 +19,7 @@ for path in [project_root, src_path, utils_path, common_utils_path]:
 # Config is already setup in the main conftest.py at import time
 # No need to setup again here
 
-from src.core.ratelimit.models import RateLimitConfig
+from src.core.ratelimit.models import RateLimitConfig  # noqa: E402
 
 
 @pytest.fixture

@@ -6,8 +6,8 @@ import pytest
 
 requests = pytest.importorskip("requests")
 
-from src.core.selftest.runner import SelfTestRunner
-from src.api.middleware.error_handling import get_status_code_for_exception
+from src.core.selftest.runner import SelfTestRunner  # noqa: E402
+from src.api.middleware.error_handling import get_status_code_for_exception  # noqa: E402
 
 
 def test_status_code_mapping():

@@ -54,7 +54,7 @@ class TestPagination:
     def test_get_conversations_pagination(self, messaging_manager, two_users):
         """Test getting conversations with pagination."""
         user1, user2 = two_users
-        dm = messaging_manager.create_dm(user1.id, user2.id)
+        messaging_manager.create_dm(user1.id, user2.id)
         conversations = messaging_manager.get_conversations(user1.id, limit=10)
         assert len(conversations) >= 1
 

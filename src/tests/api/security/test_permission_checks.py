@@ -15,7 +15,7 @@ def test_access_admin_route_as_regular_user(test_client, auth_manager):
 
     # Create a regular user
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-        user = auth_manager.register(
+        auth_manager.register(
             username="regularuser",
             email="regular@example.com",
             password="TestPass123!",
@@ -40,7 +40,7 @@ def test_access_other_user_data(test_client, auth_manager):
 
     # Create two users
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-        user1 = auth_manager.register(
+        auth_manager.register(
             username="user1",
             email="user1@example.com",
             password="TestPass123!",
@@ -79,7 +79,7 @@ def test_modify_resource_without_ownership(test_client, auth_manager, server_man
             email="user1@example.com",
             password="TestPass123!",
         )
-        user2 = auth_manager.register(
+        auth_manager.register(
             username="user2",
             email="user2@example.com",
             password="TestPass123!",

@@ -32,7 +32,6 @@ except Exception:
     InvalidHash = Exception
 
 import utils.logger as logger
-from .vault import vault
 
 
 def _acquire_file_lock(lock_file, exclusive: bool = True) -> bool:
