@@ -104,7 +104,7 @@ class Keyring:
         fallback_to_system: bool = True,
     ):
         self.path = keyring_path
-        self.kek_env_var = kek_env_var or "PLEXICHAT_SYSTEM_KEY"
+        self.kek_env_var = kek_env_var or self._default_kek_env_var(keyring_path)
         self.fallback_to_system = fallback_to_system
         self.lock_path = keyring_path.with_suffix(".lock")
         self.current_version: int = 0
@@ -113,6 +113,16 @@ class Keyring:
         self.rotated_at: int = 0
         self._thread_lock = threading.Lock()
         self.load()
+
+    @staticmethod
+    def _default_kek_env_var(keyring_path: Path) -> str:
+        """Select the production KEK for known keyring filenames."""
+        keyring_name = keyring_path.name
+        if keyring_name == "message_keyring.json":
+            return "PLEXICHAT_MESSAGE_KEY"
+        if keyring_name == "file_keyring.json":
+            return "PLEXICHAT_MEDIA_KEY"
+        return "PLEXICHAT_SYSTEM_KEY"
 
     def _detect_current_key_source(self, stored_source: Optional[str] = None) -> str:
         """Infer where the current key came from."""
@@ -195,25 +205,27 @@ class Keyring:
                 with open(self.path, "r") as f:
                     encrypted_data = json.load(f)
 
-                # Try dedicated KEK first
-                try:
-                    kek = self._get_kek(fallback=False)
-                except KeyringDecryptionError:
-                    if self.fallback_to_system:
-                        logger.warning(
-                            f"Failed to decrypt {self.path.name} with dedicated KEK, trying system KEK fallback"
-                        )
-                        kek = self._get_kek(fallback=True)
-                    else:
-                        raise
-
-                aesgcm = AESGCM(kek)
-
                 # Decrypt the keyring payload
                 payload = base64.b64decode(encrypted_data["payload"])
                 nonce = base64.b64decode(encrypted_data["nonce"])
 
-                decrypted = aesgcm.decrypt(nonce, payload, None)
+                # Try dedicated KEK first, then the system KEK for old keyrings
+                # that have not yet been migrated to dedicated KEKs.
+                try:
+                    kek = self._get_kek(fallback=False)
+                    decrypted = AESGCM(kek).decrypt(nonce, payload, None)
+                except Exception:
+                    if not (
+                        self.fallback_to_system
+                        and self.kek_env_var != "PLEXICHAT_SYSTEM_KEY"
+                    ):
+                        raise
+                    logger.warning(
+                        f"Failed to decrypt {self.path.name} with {self.kek_env_var}, trying PLEXICHAT_SYSTEM_KEY fallback"
+                    )
+                    system_kek = self._get_kek(fallback=True)
+                    decrypted = AESGCM(system_kek).decrypt(nonce, payload, None)
+
                 data = json.loads(decrypted)
 
                 self.current_version = data.get("current_version", 0)
