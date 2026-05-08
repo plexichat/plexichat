@@ -35,6 +35,14 @@ The server validates keyrings during startup so KEK mismatches are visible immed
 
 That failure mode is intentional. It prevents the server from silently booting with a weaker root of trust than the deployment expects.
 
+Runtime keyring loading uses the keyring filename to select the default dedicated KEK:
+
+- `system_keyring.json` loads with `PLEXICHAT_SYSTEM_KEY`
+- `message_keyring.json` loads with `PLEXICHAT_MESSAGE_KEY`
+- `file_keyring.json` loads with `PLEXICHAT_MEDIA_KEY`
+
+For compatibility with pre-migration keyrings, non-system keyrings may retry `PLEXICHAT_SYSTEM_KEY` only as a recovery fallback. After migration, each keyring should validate with its dedicated KEK.
+
 ## Migration Workflow
 
 Use the built-in migration mode in `main.py` when changing KEKs or moving from a shared KEK to dedicated keyring KEKs:
@@ -53,7 +61,8 @@ The migration path is:
 1. Back up the keyring files
 2. Validate the current KEK and the target KEK
 3. Re-encrypt the keyring under the new KEK
-4. Re-open the application and confirm the new keyring loads cleanly
+4. Run `python main.py --migrate-kek --kek-validate --kek-all`
+5. Re-open the application and confirm the new keyring loads cleanly
 
 If validation fails, restore the backup before retrying. Do not overwrite a working keyring just to "see if it works."
 
