@@ -124,11 +124,16 @@ docker compose down -v
 
 ## First-Time Setup
 
-1. Clone the repository
-2. Copy `.env.example` to `.env` (optional - defaults are auto-generated)
-3. Run: `docker compose --profile dev up`
+1. Generate secure `.env` using the [Environment Generator](/docs/api/deployment/env-generator)
+2. Save as `.env` in your Plexichat directory
+3. Run: `VERSION=latest docker compose up -d`
 4. Wait for all services to report `healthy`
 5. Access frontend at http://localhost
+
+For versioned deployment:
+```bash
+VERSION=a.1.0-53 docker compose up -d
+```
 
 See [Quick Start](quick-start.md) for detailed steps.
 

@@ -6,14 +6,14 @@ Deploy Plexichat to production with security, TLS, and scaling considerations.
 
 Before deploying, ensure:
 
-- [ ] All encryption keys are strong and unique (in `.env.generated`)
+- [ ] All encryption keys are strong and unique (use [Environment Generator](/docs/api/deployment/env-generator))
 - [ ] Database password is secure and different from defaults
 - [ ] Redis password is set and secure
 - [ ] TLS certificates are generated or obtained
 - [ ] Firewall rules are configured
 - [ ] Backups are tested and working
 - [ ] Monitoring and alerting are configured
-- [ ] Team has access to `.env.generated` (securely stored, never in git)
+- [ ] Team has access to `.env` (securely stored, never in git)
 
 ## Production Profile
 
@@ -27,12 +27,12 @@ docker compose --profile prod up -d
 
 ### 1. Strong Secrets
 
-Generate secure passwords (minimum 32 characters):
+Generate secure passwords using the [Environment Generator](/docs/api/deployment/env-generator) or manually:
 ```bash
 openssl rand -base64 32
 ```
 
-Update `.env.generated`:
+Update `.env`:
 ```bash
 POSTGRES_PASSWORD=<your-32-char-password>
 REDIS_PASSWORD=<your-32-char-password>
@@ -40,7 +40,7 @@ MINIO_ROOT_PASSWORD=<your-32-char-password>
 S3_SECRET_KEY=<your-32-char-key>
 ```
 
-Never commit `.env.generated` to git. Store securely:
+Never commit `.env` to git. Store securely:
 - GitLab Secrets / GitHub Secrets (for CI/CD)
 - HashiCorp Vault (for production)
 - Secrets Manager (AWS Secrets Manager, Azure Key Vault)
@@ -355,7 +355,7 @@ docker compose logs backend --tail 50
 Common causes:
 - Out of memory (check `docker stats`)
 - Corrupted database (restore from backup)
-- Invalid environment variables (check `.env.generated`)
+- Invalid environment variables (check `.env`)
 
 ### Database connection errors
 
@@ -367,7 +367,7 @@ docker compose exec backend grep "pool" config/docker-config.yaml
 Increase if needed:
 ```bash
 docker compose down
-# Edit .env or .env.generated
+# Edit .env
 docker compose up
 ```
 
