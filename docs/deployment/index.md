@@ -6,6 +6,7 @@ Welcome to the Plexichat deployment documentation. This section covers everythin
 
 New to Plexichat deployment? Start here:
 
+- **[Environment Generator](/docs/api/deployment/env-generator)** - Generate secure .env file with cryptographically random values
 - **[Docker Deployment](docker/index.md)** - Complete Docker setup guide (development, production, troubleshooting)
 - **[Getting Started](getting-started.md)** - Step-by-step production deployment guide
 - **[Requirements](requirements.md)** - System requirements for production and development
@@ -41,6 +42,10 @@ The recommended way to deploy Plexichat is using Docker Compose:
 - **[Healthchecks](docker/healthchecks.md)** - Service monitoring
 - **[Troubleshooting](docker/troubleshooting.md)** - Common issues and solutions
 - **[Architecture](docker/architecture.md)** - System design and data flows
+
+### Environment Setup
+
+- **[Environment Generator](/docs/api/deployment/env-generator)** - Generate secure .env file online
 
 ### Versioning and Updates
 

@@ -52,6 +52,7 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         ],
         "Operations": [
             NavItem("Versioning and Updates", "/deployment/versioning"),
+            NavItem("Env Generator", "/deployment/env-generator"),
         ],
     }
 

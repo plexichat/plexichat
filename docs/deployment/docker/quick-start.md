@@ -16,23 +16,27 @@ docker --version
 docker compose version
 ```
 
-## Step 1: Clone and Navigate
+## Step 1: Generate Environment Configuration
+
+Visit the [Environment Generator](/docs/api/deployment/env-generator) to generate a secure `.env` file, or create one manually from `.env.example`.
+
+Save it as `.env` in your Plexichat directory.
+
+## Step 2: Start Services
 
 ```bash
-cd ~/coding-plexichat/plexichat
+VERSION=latest docker compose up -d
 ```
 
-## Step 2: Start Services (Development Profile)
-
+For a specific version:
 ```bash
-docker compose --profile dev up
+VERSION=a.1.0-53 docker compose up -d
 ```
 
 This command:
-- Builds Docker images for backend and frontend
+- Pulls Docker images from GitLab registry
 - Starts all services (database, cache, storage, backend, frontend)
-- Streams logs to your terminal
-- Auto-generates `.env.generated` with secure keys on first run
+- Uses the `.env` file for configuration
 
 Expected first-run time: 2-3 minutes (builds images and initializes database)
 
@@ -161,9 +165,9 @@ If errors persist after 60 seconds, see [Troubleshooting](troubleshooting.md).
 
 ### Forget a password?
 
-`.env.generated` contains all auto-generated secrets. Check it:
+Your `.env` file contains all secrets. Keep it secure:
 ```bash
-cat .env.generated
+cat .env
 ```
 
 ### Need to reset everything?
