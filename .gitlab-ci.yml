@@ -42,68 +42,36 @@ cache:
     - git submodule update --init --recursive
 
 # =========================================================
-# LINT STAGE (mirrors pre-commit exactly)
+# LINT STAGE (Consolidated via pre-commit)
 # =========================================================
 
-lint:ruff:
+lint:pre-commit:
   extends: .python_base
   stage: lint
   variables:
-    RUFF_EXCLUDES: ".venv,venv,.pytest_cache,cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,media,config,logs,src/utils/common-utils"
-  script:
-    - ruff check . --extend-exclude "$RUFF_EXCLUDES" --output-format=gitlab > ruff-report.json
-    - ruff check . --extend-exclude "$RUFF_EXCLUDES"
-  artifacts:
-    reports:
-      codequality: ruff-report.json
+    PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.cache/pre-commit"
+  cache:
+    key:
+      files:
+        - .pre-commit-config.yaml
+      prefix: pre-commit-${CI_COMMIT_REF_SLUG}
     paths:
-      - ruff-report.json
-    expire_in: 7 days
-
-
-lint:types:
-  extends: .python_base
-  stage: lint
+      - .cache/pre-commit
+    policy: pull-push
   script:
-    - pyright src/ --outputjson > pyright-report.json || true
+    - pip install pre-commit
+    - pre-commit run --all-files --show-diff-on-failure
   artifacts:
     paths:
-      - pyright-report.json
-    expire_in: 7 days
-  allow_failure: true
+      - .cache/pre-commit
+    expire_in: 1 day
 
 # =========================================================
 # SECURITY STAGE (FULL COVERAGE)
 # =========================================================
 
-# --- Bandit (matches pre-commit) ---
-security:bandit:
-  extends: .python_base
-  stage: security
-  script:
-    - bandit -r src/ -c .bandit -f json -o bandit-report.json
-    - bandit -r src/ -c .bandit
-  artifacts:
-    paths:
-      - bandit-report.json
-    expire_in: 30 days
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-    - if: $CI_PIPELINE_SOURCE == "web"
-      when: manual
-
-# --- Detect-secrets (matches pre-commit) ---
-security:detect_secrets:
-  extends: .python_base
-  stage: security
-  script:
-    - detect-secrets scan > .secrets.baseline
-    - detect-secrets audit .secrets.baseline || true
-  artifacts:
-    paths:
-      - .secrets.baseline
-    expire_in: 30 days
-  allow_failure: true
+# Bandit and detect-secrets are now handled by pre-commit in the lint stage.
+# We keep GitLab-specific and dependency scanning jobs here.
 
 # --- GitLab Secret Detection (extra coverage) ---
 security:secret_detection:  # pragma: allowlist secret
@@ -157,7 +125,7 @@ security:dependency_scanning:
       - safety-report.json
     expire_in: 30 days
 
-docker:compose_bundle:
+docker:build_and_push:
   stage: docker
   image: docker:27
   services:
@@ -172,9 +140,58 @@ docker:compose_bundle:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
     - echo "Building backend docker image for tag $CI_COMMIT_TAG"
-    - docker build -t plexichat-backend:$CI_COMMIT_TAG .
-    - docker save plexichat-backend:$CI_COMMIT_TAG -o backend-image.tar
+    - docker build -t $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_TAG -t $CI_REGISTRY_IMAGE/backend:latest .
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker push $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_TAG
+    - docker push $CI_REGISTRY_IMAGE/backend:latest
+    - docker save $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_TAG -o backend-image.tar
   artifacts:
     paths:
       - backend-image.tar
     expire_in: 14 days
+
+docker:cleanup_old_images:
+  stage: docker
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+  script:
+    - echo "Cleaning up old Docker images based on retention policy"
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - |
+      # Get all tags for backend image
+      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY_IMAGE/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V)
+      
+      # Separate by version type
+      ALPHA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-alpha' || echo "")
+      BETA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-beta' || echo "")
+      RELEASE_TAGS=$(echo "$ALL_TAGS" | grep -v -E '\-(alpha|beta)' || echo "")
+      
+      # Keep last 5 alpha builds
+      if [ -n "$ALPHA_TAGS" ]; then
+        ALPHA_TO_DELETE=$(echo "$ALPHA_TAGS" | head -n -5)
+        for tag in $ALPHA_TO_DELETE; do
+          echo "Deleting old alpha build: $tag"
+          docker rmi $CI_REGISTRY_IMAGE/backend:$tag || true
+        done
+      fi
+      
+      # Keep last 10 beta builds
+      if [ -n "$BETA_TAGS" ]; then
+        BETA_TO_DELETE=$(echo "$BETA_TAGS" | head -n -10)
+        for tag in $BETA_TO_DELETE; do
+          echo "Deleting old beta build: $tag"
+          docker rmi $CI_REGISTRY_IMAGE/backend:$tag || true
+        done
+      fi
+      
+      # Keep all releases (no deletion)
+      echo "Keeping all release tags: $RELEASE_TAGS"
+  allow_failure: true
