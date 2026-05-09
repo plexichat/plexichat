@@ -52,11 +52,11 @@ aiortc==1.14.0              # Pure Python WebRTC implementation for SFU (default
 # cryptography==46.0.7       # Required for SRTP (already listed above)
 
 # Utilities
-python-multipart==0.0.26    # File uploads
+python-multipart==0.0.27    # File uploads (CVE-2026-42561 fix)
 python-dotenv==1.2.2       # Environment variables (CVE-2026-28684 fix)
 python-dateutil==2.8.0     # Date/time utilities for scheduled events
-mistune==3.0.2             # Markdown renderer for documentation
-markdown==3.7              # Markdown renderer for admin notes
+mistune==3.2.1             # Markdown renderer for documentation (CVE-2026-33079, CVE-2026-44708, CVE-2026-44896, CVE-2026-44897 fix)
+markdown==3.8.1            # Markdown renderer for admin notes (CVE-2025-69534 fix)
 
 # Image Processing (optional, for media)
 pillow==12.2.0
@@ -78,6 +78,4 @@ pytest-cov==4.0.0          # Code coverage
 pytest-timeout==2.2.0      # Enforce per-test timeouts
 psutil==7.2.2              # System and process utilities (for performance tests)
 fakeredis==2.34.1          # In-memory Redis for testing
-hypothesis==6.0.0          # Property-based testing
-diskcache==5.6.3           # Persistent local file-backed cache
-
+hypothesis==6.0.4          # Property-based testing (PVE-2023-59726 fix)

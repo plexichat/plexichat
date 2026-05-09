@@ -1,5 +1,9 @@
 name: plexichat
 
+# Version to deploy (e.g., a.1.0-53)
+# Set via: VERSION=a.1.0-53 docker compose up -d
+# Defaults to latest if not specified
+
 services:
   bootstrap:
     image: python:3.12-slim
@@ -9,11 +13,13 @@ services:
       - ../plexichat-client/docker/runtime:/workspace-client-runtime
     command: python /workspace/docker/bootstrap/bootstrap.py
     restart: "no"
+    profiles:
+      - setup
 
   db:
     image: postgres:16-alpine
     env_file:
-      - .env.generated
+      - .env
     environment:
       POSTGRES_DB: ${POSTGRES_DBNAME:-plexichat}
       POSTGRES_USER: ${POSTGRES_USER:-plexichat}
@@ -29,7 +35,7 @@ services:
   redis:
     image: redis:7-alpine
     env_file:
-      - .env.generated
+      - .env
     command: >
       sh -c "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""
     volumes:
@@ -43,7 +49,7 @@ services:
   minio:
     image: minio/minio:latest
     env_file:
-      - .env.generated
+      - .env
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -57,7 +63,7 @@ services:
   minio-init:
     image: minio/mc:latest
     env_file:
-      - .env.generated
+      - .env
     depends_on:
       minio:
         condition: service_started
@@ -81,13 +87,13 @@ services:
       fi
       "
     restart: "no"
+    profiles:
+      - setup
 
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${VERSION}
     env_file:
-      - .env.generated
+      - .env
     environment:
       PLEXICHAT_CONFIG: /app/config/docker-config.yaml
       PLEXICHAT_SMTP_PASSWORD: ${PLEXICHAT_SMTP_PASSWORD:-}
@@ -109,27 +115,24 @@ services:
       - "30000-30100:30000-30100/udp"
 
   client:
-    build:
-      context: ../plexichat-client
-      dockerfile: Dockerfile
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${VERSION}
     env_file:
-      - .env.generated
+      - .env
     depends_on:
       backend:
         condition: service_started
       cert-init:
-        condition: service_completed_successfully
+        condition: service_started
     volumes:
       - certs:/etc/nginx/certs
-      - ../plexichat-client/docker/runtime/client-config.js:/usr/share/nginx/html/config.js:ro
+      - ./docker/runtime/client-config.js:/usr/share/nginx/html/config.js:ro
     ports:
       - "80:80"
-      - "443:443"
 
   backup:
     image: postgres:16-alpine
     env_file:
-      - .env.generated
+      - .env
     depends_on:
       db:
         condition: service_healthy
