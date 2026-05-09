@@ -502,7 +502,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],
             "test_user": {
                 "username": "selftest_admin",
-                "email": "selftest@internal.local",
+                "email": "selftest@plexichat.com",
                 "password": "SelfTest_Password_123!",  # pragma: allowlist secret
             },
         },
