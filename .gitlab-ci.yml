@@ -24,7 +24,9 @@ cache:
 # =========================================================
 
 .python_base:
-  image: python:3.12-bullseye
+  image: 
+    name: python:3.12-bullseye
+    pull_policy: if-not-present
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
     - |
@@ -68,10 +70,6 @@ lint:pre-commit:
     - pip install pre-commit
     - pre-commit run --all-files --show-diff-on-failure
   resource_group: plexichat-ci
-  artifacts:
-    paths:
-      - .cache/pre-commit
-    expire_in: 1 day
 
 # =========================================================
 # SECURITY STAGE (FULL COVERAGE)
