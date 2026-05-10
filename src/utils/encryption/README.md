@@ -239,7 +239,7 @@ All cryptographic operations that may fail (verification, decryption) return `Fa
 import utils.encryption as encryption
 
 # Registration
-password = "user_password"
+password = "user_password"  # pragma: allowlist secret
 password_hash = encryption.hash_password(password)
 # Store password_hash in database
 

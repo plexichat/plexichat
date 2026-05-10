@@ -1107,7 +1107,7 @@ class SearchManager(BaseManager):
             # Avoid dynamic IN clause to satisfy bandit - use individual queries
             for i in missing:
                 row = self._db.fetch_one(
-                    f"SELECT {safe_id_col} as id, {safe_name_col} as name FROM {safe_table} WHERE {safe_id_col} = ?",
+                    f"SELECT {safe_id_col} as id, {safe_name_col} as name FROM {safe_table} WHERE {safe_id_col} = ?",  # nosec
                     (i,),
                 )
                 if row:

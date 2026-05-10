@@ -124,7 +124,7 @@ class ParticipantRepository(BaseRepository[Participant]):
         params = [user_id] + list(conversation_ids)
 
         self._execute(
-            f"DELETE FROM msg_participants WHERE user_id = ? AND conversation_id IN ({placeholders})",  # nosec: B608
+            f"DELETE FROM msg_participants WHERE user_id = ? AND conversation_id IN ({placeholders})",
             tuple(params),
             auto_commit=auto_commit,
         )

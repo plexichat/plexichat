@@ -56,7 +56,8 @@ class TOTPReplayCache:
 
     def _cleanup(self, now: int) -> None:
         """Remove expired entries. Called while holding lock."""
-        if now - self._last_cleanup < 30:  # Cleanup at most every 30 seconds
+        # Cleanup if 30 seconds passed OR if cache is getting large
+        if now - self._last_cleanup < 30 and len(self._used_codes) < 1000:
             return
         self._last_cleanup = now
         expired = [k for k, v in self._used_codes.items() if v < now]

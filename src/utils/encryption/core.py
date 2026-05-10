@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import os
+import secrets
 import time
 import json
 import threading
@@ -110,9 +111,15 @@ class Keyring:
         self.current_version: int = 0
         self.current_key_source: str = "unknown"
         self.keys: Dict[int, bytes] = {}
+        self.blind_index_root_key: Optional[bytes] = None
         self.rotated_at: int = 0
         self._thread_lock = threading.Lock()
         self.load()
+
+        # Initialize blind index root key if it doesn't exist
+        if not self.blind_index_root_key and self.keys:
+            self.blind_index_root_key = secrets.token_bytes(32)
+            self.save()
 
     @staticmethod
     def _default_kek_env_var(keyring_path: Path) -> str:
@@ -233,6 +240,11 @@ class Keyring:
                 self.keys = {
                     int(v): base64.b64decode(k) for v, k in data.get("keys", {}).items()
                 }
+                self.blind_index_root_key = (
+                    base64.b64decode(data["blind_index_root_key"])
+                    if data.get("blind_index_root_key")
+                    else None
+                )
                 self.current_key_source = self._detect_current_key_source(
                     data.get("current_key_source")
                 )
@@ -290,6 +302,11 @@ class Keyring:
                     str(v): base64.b64encode(k).decode("utf-8")
                     for v, k in self.keys.items()
                 },
+                "blind_index_root_key": (
+                    base64.b64encode(self.blind_index_root_key).decode("utf-8")
+                    if self.blind_index_root_key
+                    else None
+                ),
             }
 
             # Encrypt the keyring with current KEK
@@ -532,8 +549,12 @@ class EncryptionManager:
         """
         Generate a keyed hash for searching encrypted fields.
         """
-        kek = self.keyring._get_kek()
-        index_key = hashlib.blake2b(kek, key=scope.encode(), digest_size=32).digest()
+        # FIX: Use a dedicated root key for blind indexes to allow KEK rotation
+        # without breaking indexes. Fallback to KEK for backward compatibility if root key is missing.
+        root_key = self.keyring.blind_index_root_key or self.keyring._get_kek()
+        index_key = hashlib.blake2b(
+            root_key, key=scope.encode(), digest_size=32
+        ).digest()
         return hashlib.blake2b(
             data.lower().strip().encode(), key=index_key, digest_size=32
         ).hexdigest()

@@ -142,4 +142,4 @@ class SqliteEngine(BaseEngine):
         placeholders = ", ".join(["?"] * len(columns))
         conflict_cols = ", ".join(conflict_columns)
         updates = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
-        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"  # nosec: B608
+        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"

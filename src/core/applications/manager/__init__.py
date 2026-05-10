@@ -341,7 +341,7 @@ class ApplicationManager(BaseManager):
             params.append(application_id)
 
             self._db.execute(
-                f"UPDATE app_applications SET {', '.join(updates)} WHERE id = ?",  # nosec: B608
+                f"UPDATE app_applications SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
 

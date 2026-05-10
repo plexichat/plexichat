@@ -199,34 +199,8 @@ def db(setup_config):
     # Mock the hashing to be instant
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
         with patch.object(encryption, "verify_password", return_value=True):
-            # Skip migration 028 (irreversible, high-risk) for tests
-            from src.core.migrations import manager as migration_manager
-
-            def skip_028_apply_all(self, dry_run=False):
-                # Get list of pending migrations
-                pending = self.get_pending_migrations()
-                # Filter out migration 028
-                filtered = [m for m in pending if m.version != "028"]
-                # Apply filtered migrations
-                results = {
-                    "success": True,
-                    "applied_count": 0,
-                    "failed_count": 0,
-                    "migrations": [],
-                    "dry_run": dry_run,
-                }
-                for migration in filtered:
-                    result = self._execute_migration(migration, dry_run)
-                    results["migrations"].append(result)
-                    results["applied_count"] += 1
-                return results
-
-            with patch.object(
-                migration_manager.MigrationManager,
-                "apply_all_pending",
-                skip_028_apply_all,
-            ):
-                run_migrations(db)
+            # Apply all migrations (including irreversible ones) for tests
+            run_migrations(db)
 
             # Insert system user (ID 0) for system messages
             db.execute(

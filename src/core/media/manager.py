@@ -1333,7 +1333,7 @@ class MediaManager(BaseManager):
 
         placeholders = ",".join("?" for _ in filenames)
         rows = self._db.fetch_all(
-            f"SELECT * FROM media_files WHERE filename IN ({placeholders}) AND deleted = 0",  # nosec: B608
+            f"SELECT * FROM media_files WHERE filename IN ({placeholders}) AND deleted = 0",
             tuple(filenames),
         )
 
