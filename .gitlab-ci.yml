@@ -24,7 +24,7 @@ cache:
 # =========================================================
 
 .python_base:
-  image: python:3.11-bullseye
+  image: python:3.12-bullseye
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
     - python -m venv .venv
