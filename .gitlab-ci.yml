@@ -67,6 +67,7 @@ lint:pre-commit:
   script:
     - pip install pre-commit
     - pre-commit run --all-files --show-diff-on-failure
+  resource_group: plexichat-ci
   artifacts:
     paths:
       - .cache/pre-commit
@@ -95,6 +96,7 @@ security:secret_detection:  # pragma: allowlist secret
     paths:
       - gl-secret-detection-report.json
     expire_in: 30 days
+  resource_group: plexichat-ci
   allow_failure: false
 
 # --- SAST (Semgrep) ---
@@ -114,6 +116,7 @@ security:sast:
     paths:
       - gl-sast-report.json
     expire_in: 30 days
+  resource_group: plexichat-ci
   allow_failure: true
 
 # --- Dependency scanning (NOT in pre-commit, keep it) ---
@@ -130,6 +133,7 @@ security:dependency_scanning:
       - pip-audit-report.json
       - safety-report.json
     expire_in: 30 days
+  resource_group: plexichat-ci
 
 docker:build_and_push:
   stage: docker
@@ -155,6 +159,7 @@ docker:build_and_push:
     paths:
       - backend-image.tar
     expire_in: 14 days
+  resource_group: plexichat-ci
 
 docker:cleanup_old_images:
   stage: docker
@@ -201,3 +206,4 @@ docker:cleanup_old_images:
       # Keep all releases (no deletion)
       echo "Keeping all release tags: $RELEASE_TAGS"
   allow_failure: true
+  resource_group: plexichat-ci
