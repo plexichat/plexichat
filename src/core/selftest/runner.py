@@ -325,7 +325,17 @@ class SelfTestRunner:
         """Create a temporary test user and necessary resources."""
         user_config = self.config.get("test_user", {})
         username = user_config.get("username", "selftest_admin")
-        password = user_config.get("password", "SelfTest_Password_123!")
+
+        # Security fix: Use random password if not configured
+        password = user_config.get("password")
+        if not password:
+            password = secrets.token_urlsafe(16)
+            # Store it back in config so schema generation can find it
+            user_config["password"] = password
+            logger.info(
+                "No self-test password configured; generated and saved random password."
+            )
+
         email = user_config.get("email", "selftest@plexichat.com")
 
         logger.info(f"Setting up test user and resources: {username}")
@@ -669,7 +679,9 @@ class SelfTestRunner:
         # Apply specific overrides based on path for better success rate
         if isinstance(body, dict):
             user_config = self.config.get("test_user", {})
-            test_pass = user_config.get("password", "SelfTest_Password_123!")
+            test_pass = (
+                user_config.get("password") or "SelfTest_Generated_123!"
+            )  # Placeholder for schema generation
 
             if "auth/login" in path:
                 body["username"] = user_config.get("username", "selftest_admin")
@@ -828,11 +840,11 @@ class SelfTestRunner:
                     return f"test_{random.randint(1000, 9999)}@example.com"
                 if pn == "password":
                     return self.config.get("test_user", {}).get(
-                        "password", "Password123!@#"
+                        "password", "SelfTest_Generated_123!"
                     )
                 if pn == "current_password":
                     return self.config.get("test_user", {}).get(
-                        "password", "Password123!@#"
+                        "password", "SelfTest_Generated_123!"
                     )
                 if "id" in pn:
                     if "server" in pn:
@@ -881,7 +893,7 @@ class SelfTestRunner:
             if fmt == "email":
                 return f"test_{random.randint(1000, 9999)}@example.com"
             if fmt == "password":
-                return "Password123!@#"
+                return "SelfTest_Generated_123!"
             if fmt == "date-time":
                 return "2024-01-01T00:00:00Z"
 

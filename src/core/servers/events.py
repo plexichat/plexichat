@@ -304,9 +304,9 @@ class ScheduledEventManager:
                 col_name = update.split(" = ")[0]
                 value = params[i]
                 query = (
-                    "UPDATE srv_scheduled_events SET "  # nosec: B608
+                    "UPDATE srv_scheduled_events SET "
                     + col_name
-                    + " = ?, updated_at = ? WHERE id = ?"  # nosec: B608
+                    + " = ?, updated_at = ? WHERE id = ?"
                 )
                 self._db.execute(query, (value, now, event_id))
 

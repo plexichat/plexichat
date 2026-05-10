@@ -463,15 +463,18 @@ class PlexichatServer:
         # SECURITY: Check for secure key source if configured
         auth_config = config.get("authentication", {})
         enc_security = auth_config.get("encryption", {})
-        if enc_security.get("require_secure_source", False):
+        # Default to True for safety if not explicitly set
+        require_secure = enc_security.get("require_secure_source", True)
+
+        if require_secure:
             from src.utils.encryption.vault import vault
 
             if not vault.is_using_secure_source():
                 error_msg = (
                     "CRITICAL SECURITY ERROR: Application is configured to require a secure "
-                    "encryption key source (TPM or Environment Variable), but none was found. "
+                    "encryption key source (TPM, HSM, or Environment Variable), but none was found. "
                     "The application has fallen back to an insecure local key file. "
-                    "To fix: Set PLEXICHAT_SYSTEM_KEY env var or ensure TPM is accessible. "
+                    "To fix: Set PLEXICHAT_SYSTEM_KEY env var or ensure TPM/HSM is accessible. "
                     "To bypass (DEV ONLY): Set authentication.encryption.require_secure_source to False."
                 )
                 logger.critical(error_msg)
@@ -621,21 +624,22 @@ class PlexichatServer:
 
         def timed_init(name: str, init_func):
             """Initialize a module and track how long it takes."""
-            start = time.perf_counter()
-            logger.info(f"Initializing {name} module...")
-            try:
-                result = init_func()
-                elapsed = (time.perf_counter() - start) * 1000
-                with startup_lock:
+            # Use a lock to ensure thread-safe initialization of modules
+            # that might touch global state (ADR-005)
+            with startup_lock:
+                start = time.perf_counter()
+                logger.info(f"Initializing {name} module...")
+                try:
+                    result = init_func()
+                    elapsed = (time.perf_counter() - start) * 1000
                     startup_times[name] = elapsed
-                logger.info(f"  -> {name} initialized in {elapsed:.1f}ms")
-                return result
-            except Exception as e:
-                elapsed = (time.perf_counter() - start) * 1000
-                with startup_lock:
+                    logger.info(f"  -> {name} initialized in {elapsed:.1f}ms")
+                    return result
+                except Exception as e:
+                    elapsed = (time.perf_counter() - start) * 1000
                     startup_times[name] = elapsed
-                logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
-                raise
+                    logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
+                    raise
 
         # Independent initialization group (Parallel)
         def init_independent():
@@ -967,9 +971,20 @@ class PlexichatServer:
                         )
                     else:
                         storage = MemoryStorage()
-                        logger.info(
-                            "Using in-memory storage for rate limiting (fallback)"
+                        logger.warning("=" * 60)
+                        logger.warning(
+                            "SECURITY WARNING: Using in-memory storage for rate limiting!"
                         )
+                        logger.warning(
+                            "In a multi-worker environment (Uvicorn), this will result in"
+                        )
+                        logger.warning(
+                            "independent counters per worker, allowing rate-limit bypass."
+                        )
+                        logger.warning(
+                            "To fix: Enable Redis or configure a shared database."
+                        )
+                        logger.warning("=" * 60)
 
                     ratelimit.setup(
                         storage_backend=storage,
@@ -1376,6 +1391,11 @@ Examples:
     parser.add_argument("--host", help="Override server host")
     parser.add_argument("--port", type=int, help="Override server port")
     parser.add_argument("--version", action="store_true", help="Show version and exit")
+    parser.add_argument(
+        "--rotate-secrets",
+        action="store_true",
+        help="Rotate rate-limit bypass and webhook signature secrets in config",
+    )
 
     # KEK Migration arguments
     parser.add_argument(
@@ -1540,6 +1560,29 @@ Examples:
         early_logs.append(
             ("info", f"Config loaded from auto-detected path: {config_path}")
         )
+
+    # Handle secret rotation
+    if args.rotate_secrets:
+        print(f"Rotating secrets in {config_path}...")
+        rl_config = config.get("rate_limiting", {})
+        app_config = config.get("applications", {})
+
+        rl_config["bypass_secret"] = secrets.token_hex(32)
+        app_config["webhook_signature_secret"] = secrets.token_hex(32)
+
+        config.set("rate_limiting", rl_config)
+        config.set("applications", app_config)
+
+        # Save config back to file
+        import yaml
+
+        with open(config_path, "w") as f:
+            yaml.dump(config.get_all(), f, default_flow_style=False)
+
+        print(
+            "Successfully rotated rate_limiting.bypass_secret and applications.webhook_signature_secret"
+        )
+        return
 
     # Setup logging - NOW we can use logger
     log_config = config.get("logging", {})

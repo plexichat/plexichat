@@ -81,7 +81,7 @@ class AlertModeratorsAction(BaseAction):
             placeholders = ",".join("?" * len(role_ids))
             members = self._db.fetch_all(
                 f"""SELECT DISTINCT user_id FROM srv_member_roles
-                    WHERE server_id = ? AND role_id IN ({placeholders})""",  # nosec: B608
+                    WHERE server_id = ? AND role_id IN ({placeholders})""",
                 (server_id, *role_ids),
             )
             for m in members:

@@ -292,7 +292,7 @@ class TestICECandidateInjection:
                 parsed = parser.parse(candidate)
                 validator.validate(parsed)
                 # Security test: explicitly check for all-interfaces binding which should be rejected
-                if parsed.get("address") == "0.0.0.0":  # nosec: B104
+                if parsed.get("address") == "0.0.0.0":
                     pytest.fail(
                         f"Should have rejected malicious candidate: {candidate}"
                     )

@@ -1307,7 +1307,7 @@ class ReactionManager(BaseManager):
                            MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
                     FROM react_reactions r
                     LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
-                    WHERE r.message_id IN ({placeholders})"""  # nosec: B608
+                    WHERE r.message_id IN ({placeholders})"""
         params = [user_id] + list(message_ids)
 
         # Filter out blocked users in the main query to avoid N+1
@@ -1404,7 +1404,7 @@ class ReactionManager(BaseManager):
 
         placeholders = ",".join("?" * len(message_ids))
         rows = self._db.fetch_all(
-            f"SELECT DISTINCT message_id FROM react_reactions WHERE user_id = ? AND message_id IN ({placeholders})",  # nosec: B608
+            f"SELECT DISTINCT message_id FROM react_reactions WHERE user_id = ? AND message_id IN ({placeholders})",
             (user_id, *message_ids),
         )
         return [row["message_id"] for row in rows]

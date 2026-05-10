@@ -503,7 +503,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "test_user": {
                 "username": "selftest_admin",
                 "email": "selftest@plexichat.com",
-                "password": "SelfTest_Password_123!",  # pragma: allowlist secret
+                "password": None,  # pragma: allowlist secret
             },
         },
         "admin_ui": {

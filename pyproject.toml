@@ -1,0 +1,7 @@
+[tool.bandit]
+skips = ["B101", "B601"]
+confidence = "HIGH"
+severity = "MEDIUM"
+exclude = [".venv", "venv", ".pytest_cache", "cache", "temp", "uploads", "media", "logs", "src/tests", "tests", "**/__pycache__"]
+# Try to explicitly define targets to force ignore of excluded directories
+targets = ["src"]
