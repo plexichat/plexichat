@@ -24,9 +24,7 @@ cache:
 # =========================================================
 
 .python_base:
-  image: 
-    name: python:3.12-bullseye
-    pull_policy: if-not-present
+  image: python:3.12-bullseye
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
     - |
