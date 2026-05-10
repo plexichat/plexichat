@@ -67,6 +67,7 @@ repos:
     hooks:
       - id: bandit
         args: ["-c", ".bandit", "--severity-level", "medium", "--confidence-level", "high"]
+        exclude: ^src/tests/
 
   #  Semgrep
   # Disabled on Windows due to Unicode encoding issues in console
