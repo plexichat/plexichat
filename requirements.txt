@@ -39,7 +39,7 @@ PyYAML==6.0.3
 
 # HTTP Client (for webhooks, etc.)
 requests==2.33.1
-urllib3==2.6.3             # Fixed for GHSA-2xpw-w6gg-jr37, GHSA-38jv-5279-wg99, GHSA-gm62-xv2j-4w53, GHSA-pq67-6m6q-mj2v
+urllib3==2.7.0             # Fixed for GHSA-2xpw-w6gg-jr37, GHSA-38jv-5279-wg99, GHSA-gm62-xv2j-4w53, GHSA-pq67-6m6q-mj2v, CVE-2026-44431, CVE-2026-44432
 httpx==0.27.2
 aiohttp==3.13.5
 
