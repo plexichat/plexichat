@@ -202,3 +202,46 @@ class PermissionDeniedError(ApplicationError):
     def __init__(self, message: str, permission: Optional[str] = None):
         super().__init__(message)
         self.permission = permission
+
+
+class BotNotFoundError(ApplicationError):
+    """Bot does not exist."""
+
+    pass
+
+
+class BotLimitError(ApplicationError):
+    """Maximum bot limit reached."""
+
+    def __init__(self, message: str, max_allowed: int, current: int):
+        super().__init__(message)
+        self.max_allowed = max_allowed
+        self.current = current
+
+
+class BotRequestError(ApplicationError):
+    """Bot request error."""
+
+    def __init__(self, message: str, request_id: Optional[int] = None):
+        super().__init__(message)
+        self.request_id = request_id
+
+
+class BotRequestExistsError(ApplicationError):
+    """A pending bot request already exists."""
+
+    pass
+
+
+class BotAlreadyApprovedError(ApplicationError):
+    """Bot is already approved on this server."""
+
+    pass
+
+
+class LicenseFeatureError(ApplicationError):
+    """Feature requires a valid license."""
+
+    def __init__(self, message: str, feature: str):
+        super().__init__(message)
+        self.feature = feature

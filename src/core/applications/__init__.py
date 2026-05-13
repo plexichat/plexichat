@@ -45,6 +45,11 @@ from .models import (
     ComponentType,
     ButtonStyle,
     TextInputStyle,
+    ApprovedBot,
+    BotApprovalStatus,
+    BotRequest,
+    BotProfile,
+    UserAuthorizedApplication,
 )
 from .exceptions import (
     ApplicationError,
@@ -74,6 +79,12 @@ from .exceptions import (
     WebhookDeliveryError,
     RateLimitError,
     PermissionDeniedError,
+    BotNotFoundError,
+    BotLimitError,
+    BotRequestError,
+    BotRequestExistsError,
+    BotAlreadyApprovedError,
+    LicenseFeatureError,
 )
 from .oauth import (
     VALID_SCOPES,
@@ -218,6 +229,31 @@ __all__ = [
     "get_installations",
     # Rate limiting
     "check_rate_limit",
+    # Bot management
+    "approve_bot",
+    "remove_approved_bot",
+    "get_approved_bots",
+    "request_bot",
+    "review_bot_request",
+    "get_bot_requests",
+    "get_bot_profile",
+    "update_bot_profile",
+    "get_user_authorized_apps",
+    "revoke_authorized_app",
+    "get_bot_directory",
+    # Bot models
+    "ApprovedBot",
+    "BotRequest",
+    "BotProfile",
+    "BotApprovalStatus",
+    "UserAuthorizedApplication",
+    # Bot exceptions
+    "BotNotFoundError",
+    "BotLimitError",
+    "BotRequestError",
+    "BotRequestExistsError",
+    "BotAlreadyApprovedError",
+    "LicenseFeatureError",
 ]
 
 _manager = None
@@ -535,3 +571,155 @@ def get_installations(
 def check_rate_limit(application_id: int) -> bool:
     """Check if an application is rate limited."""
     return _get_manager().check_rate_limit(application_id)
+
+
+# === Bot Management ===
+
+
+def approve_bot(
+    server_id: int,
+    application_id: int,
+    approved_by: int,
+    permissions: str = "0",
+    bot_name: Optional[str] = None,
+) -> ApprovedBot:
+    """Approve a bot for installation on a server."""
+    return _get_manager().approve_bot(
+        server_id=server_id,
+        application_id=application_id,
+        approved_by=approved_by,
+        permissions=permissions,
+        bot_name=bot_name,
+    )
+
+
+def remove_approved_bot(
+    server_id: int,
+    application_id: int,
+    user_id: int,
+) -> bool:
+    """Remove an approved bot from a server."""
+    return _get_manager().remove_approved_bot(
+        server_id=server_id,
+        application_id=application_id,
+        user_id=user_id,
+    )
+
+
+def get_approved_bots(
+    server_id: Optional[int] = None,
+    application_id: Optional[int] = None,
+    status: Optional[str] = None,
+) -> List[ApprovedBot]:
+    """Get approved bots with optional filters."""
+    return _get_manager().get_approved_bots(
+        server_id=server_id,
+        application_id=application_id,
+        status=status,
+    )
+
+
+def request_bot(
+    server_id: int,
+    application_id: int,
+    requester_id: int,
+    reason: Optional[str] = None,
+) -> BotRequest:
+    """Request approval for a bot on a server."""
+    return _get_manager().request_bot(
+        server_id=server_id,
+        application_id=application_id,
+        requester_id=requester_id,
+        reason=reason,
+    )
+
+
+def review_bot_request(
+    server_id: Optional[int],
+    request_id: int,
+    reviewer_id: int,
+    approve: bool,
+    review_reason: Optional[str] = None,
+) -> BotRequest:
+    """Review a bot request (approve or deny)."""
+    return _get_manager().review_bot_request(
+        server_id=server_id,
+        request_id=request_id,
+        reviewer_id=reviewer_id,
+        approve=approve,
+        review_reason=review_reason,
+    )
+
+
+def get_bot_requests(
+    server_id: Optional[int] = None,
+    requester_id: Optional[int] = None,
+    status: Optional[str] = None,
+) -> List[BotRequest]:
+    """Get bot requests with optional filters."""
+    return _get_manager().get_bot_requests(
+        server_id=server_id,
+        requester_id=requester_id,
+        status=status,
+    )
+
+
+def get_bot_profile(application_id: int) -> Optional[BotProfile]:
+    """Get a bot's public profile."""
+    return _get_manager().get_bot_profile(application_id)
+
+
+def update_bot_profile(
+    application_id: int,
+    user_id: int,
+    description: Optional[str] = None,
+    short_description: Optional[str] = None,
+    avatar_url: Optional[str] = None,
+    banner_url: Optional[str] = None,
+    website_url: Optional[str] = None,
+    support_url: Optional[str] = None,
+    github_url: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    nsfw: Optional[bool] = None,
+    private: Optional[bool] = None,
+) -> BotProfile:
+    """Update a bot's public profile."""
+    return _get_manager().update_bot_profile(
+        application_id=application_id,
+        user_id=user_id,
+        description=description,
+        short_description=short_description,
+        avatar_url=avatar_url,
+        banner_url=banner_url,
+        website_url=website_url,
+        support_url=support_url,
+        github_url=github_url,
+        tags=tags,
+        nsfw=nsfw,
+        private=private,
+    )
+
+
+def get_user_authorized_apps(user_id: int) -> List[UserAuthorizedApplication]:
+    """Get all OAuth2 applications authorized by a user."""
+    return _get_manager().get_user_authorized_apps(user_id)
+
+
+def revoke_authorized_app(token_id: int, user_id: int) -> bool:
+    """Revoke an authorized application."""
+    return _get_manager().revoke_authorized_app(token_id, user_id)
+
+
+def get_bot_directory(
+    server_id: Optional[int] = None,
+    include_public: bool = True,
+    limit: int = 50,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """Get a directory of available bots."""
+    return _get_manager().get_bot_directory(
+        server_id=server_id,
+        include_public=include_public,
+        limit=limit,
+        offset=offset,
+    )

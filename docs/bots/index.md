@@ -494,11 +494,156 @@ services:
     restart: unless-stopped
 ```
 
-## Bot Installation
+## Bot Installation & Approval Workflow
 
-Users add bots to their servers via OAuth2 authorization.
+Bots must be approved by a server administrator before they can interact with a server. This two-step process ensures bot security and prevents unauthorized installations.
 
-### OAuth2 Authorization URL
+### Approval Workflow
+
+1. **User discovers a bot** via the bot directory or external link
+2. **User requests the bot** on a server (or an admin directly approves it)
+3. **Admin reviews the request** and approves or denies it
+4. **Once approved**, the bot is automatically installed on the server
+5. **Bot appears** in the server's approved bots list with a BOT tag
+
+### Server Bot Management (Admin)
+
+Navigate to **Server Settings > Bots** to manage bots:
+
+**Approve a Bot:**
+```http
+POST /api/v1/bots/servers/{server_id}/approve
+Authorization: Bearer your_token
+Content-Type: application/json
+
+{
+  "application_id": 123456789,
+  "permissions": "0",
+  "bot_name": "My Utility Bot"
+}
+```
+
+**List Approved Bots:**
+```http
+GET /api/v1/bots/servers/{server_id}/approved
+Authorization: Bearer your_token
+```
+
+**Remove an Approved Bot:**
+```http
+DELETE /api/v1/bots/servers/{server_id}/approved/{application_id}
+Authorization: Bearer your_token
+```
+
+### Bot Request Flow (Users)
+
+Users can request that a bot be added to a server:
+
+**Request a Bot:**
+```http
+POST /api/v1/bots/servers/{server_id}/request
+Authorization: Bearer your_token
+Content-Type: application/json
+
+{
+  "application_id": 123456789,
+  "reason": "This bot would help with moderation"
+}
+```
+
+**Admin Reviews Request:**
+```http
+PUT /api/v1/bots/servers/{server_id}/requests/{request_id}
+Authorization: Bearer your_token
+Content-Type: application/json
+
+{
+  "approve": true,
+  "review_reason": "Approved, looks useful"
+}
+```
+
+**View Pending Requests:**
+```http
+GET /api/v1/bots/servers/{server_id}/requests?status_filter=pending
+Authorization: Bearer your_token
+```
+
+### Bot Directory
+
+Browse available bots:
+```http
+GET /api/v1/bots/directory?limit=50&offset=0
+```
+
+Optionally filter out already-installed bots for a server:
+```http
+GET /api/v1/bots/directory?server_id={server_id}&limit=50&offset=0
+```
+
+### Bot Profiles
+
+Bot owners can customize their bot's public profile:
+
+**Get Profile:**
+```http
+GET /api/v1/bots/profiles/{application_id}
+```
+
+**Update Profile:**
+```http
+PUT /api/v1/bots/profiles/{application_id}
+Authorization: Bearer your_token
+Content-Type: application/json
+
+{
+  "short_description": "A moderation bot with auto-flagging",
+  "website_url": "https://mybot.example.com",
+  "support_url": "https://discord.gg/mybotsupport",
+  "tags": ["moderation", "automod", "security"],
+  "nsfw": false,
+  "private": false
+}
+```
+
+### Authorized Applications
+
+Users can view and revoke OAuth2 applications they've authorized:
+
+**List Authorized Apps:**
+```http
+GET /api/v1/bots/authorized-apps
+Authorization: Bearer your_token
+```
+
+**Revoke an App:**
+```http
+DELETE /api/v1/bots/authorized-apps/{token_id}
+Authorization: Bearer your_token
+```
+
+### Admin Panel
+
+Server administrators can manage bots across all servers via the admin dashboard:
+
+1. Log into the admin panel at `/admin`
+2. Navigate to the **Bots** tab
+3. View statistics: total bots, approved installations, pending requests
+4. Browse all applications with their approval counts
+5. Review and manage pending bot requests
+
+### Licensing & Limits
+
+Bot features are gated by the instance license:
+
+| Feature | Free Tier | Premium Tier |
+|---|---|---|
+| Max approved bots per server | 10 | 50 |
+| Custom (non-curated) bots | Disabled | Enabled |
+| Bot directory access | Read-only | Full access |
+| Bot profile management | Limited | Full |
+
+## OAuth2 Authorization URL
 
 ```
 https://your-server.com/oauth2/authorize?

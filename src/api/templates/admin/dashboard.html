@@ -35,6 +35,7 @@
             <button class="tab" data-tab="roles">Roles</button>
             <button class="tab" data-tab="approvals">Approvals</button>
             <button class="tab" data-tab="migrations">Migrations</button>
+            <button class="tab" data-tab="bots">Bots</button>
         </div>
 
         <div id="tab-metrics" class="tab-content">
@@ -805,7 +806,74 @@
             </div>
         </div>
 
-        <div id="tab-migrations" class="tab-content hidden">
+        <div id="tab-bots" class="tab-content hidden">
+        <h2>Bot Management</h2>
+        <div id="bots-loading" class="status-card" style="text-align: center; padding: 2rem;">Loading bot data...</div>
+        <div id="bots-content" style="display: none;">
+            <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+                <div class="status-card" style="flex: 1; min-width: 150px;">
+                    <div class="stat-label">Total Bots</div>
+                    <div class="stat-value" id="bot-stat-total">0</div>
+                </div>
+                <div class="status-card" style="flex: 1; min-width: 150px;">
+                    <div class="stat-label">Approved Installations</div>
+                    <div class="stat-value" id="bot-stat-approved">0</div>
+                </div>
+                <div class="status-card" style="flex: 1; min-width: 150px;">
+                    <div class="stat-label">Pending Requests</div>
+                    <div class="stat-value" id="bot-stat-pending">0</div>
+                </div>
+                <div class="status-card" style="flex: 1; min-width: 150px;">
+                    <div class="stat-label">Servers with Bots</div>
+                    <div class="stat-value" id="bot-stat-servers">0</div>
+                </div>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                <h3 style="flex: 1;">Applications & Bots</h3>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-secondary btn-sm" data-click="bots-refresh">Refresh</button>
+                </div>
+            </div>
+            <div style="overflow-x: auto;">
+                <table class="data-table" id="bots-table">
+                    <thead>
+                        <tr>
+                            <th>Application</th>
+                            <th>Bot ID</th>
+                            <th>Owner</th>
+                            <th>Approved Servers</th>
+                            <th>Pending Requests</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bots-table-body">
+                        <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No bots found</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 2rem; margin-bottom: 1rem;">
+                <h3 style="flex: 1;">Pending Bot Requests</h3>
+            </div>
+            <div style="overflow-x: auto;">
+                <table class="data-table" id="bots-requests-table">
+                    <thead>
+                        <tr>
+                            <th>Application</th>
+                            <th>Server</th>
+                            <th>Requester</th>
+                            <th>Reason</th>
+                            <th>Status</th>
+                            <th>Requested</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bots-requests-body">
+                        <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No requests found</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div id="tab-migrations" class="tab-content hidden">
             <div class="card">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;">
                     <h3>Database Migrations</h3>

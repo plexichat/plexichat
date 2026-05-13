@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-55"
+DEFAULT_VERSION = "a.1.0-56"
 
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
@@ -652,6 +652,34 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "rate_limits": {
                 "requests_per_minute": 60,
             },
+        },
+        "bots": {
+            "enabled": True,
+            "max_per_server": 10,
+            "max_per_server_premium": 50,
+            "allow_custom_bots": False,
+            "allow_custom_bots_premium": True,
+            "manage_bots_role": "admin",
+            "request_bot_enabled": True,
+            "curated_bots_only": False,
+            "webhook_retention_days": 30,
+            "interaction_timeout": 900,
+            "slash_commands_enabled": True,
+            "oauth_consent_required": True,
+            "bot_avatar_max_size": 512,
+            "bot_avatar_max_file_size": 5242880,
+            "bot_avatar_allowed_types": [
+                "image/jpeg",
+                "image/png",
+                "image/gif",
+                "image/webp",
+            ],
+            "rate_limits": {
+                "requests_per_minute": 30,
+                "burst_limit": 10,
+            },
+            "approved_bots_page_size": 50,
+            "max_requests_pending_per_user": 10,
         },
         "versioning": {"min_supported_version": version, "update_url": None},
         "docs": {
