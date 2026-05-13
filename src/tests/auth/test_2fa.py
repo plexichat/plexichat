@@ -145,6 +145,33 @@ class TestTwoFactorAuth:
         assert final.status == AuthStatus.SUCCESS
         assert final.token is not None
 
+    def test_complete_2fa_preserves_session_metadata(self, db, auth_manager):
+        """Test 2FA completion carries decrypted IP and user agent into session."""
+        from src.utils import encryption
+
+        username = "complete2fa_meta_test1"
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username, f"{username}@example.com", "TestPass123!"
+            )
+        setup = auth_manager.setup_2fa(user.id)
+        totp = pyotp.TOTP(setup.secret)
+        auth_manager.confirm_2fa(user.id, totp.now())
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                username,
+                "TestPass123!",
+                ip_address="1.2.3.4",
+                user_agent="PlexichatTest/1.0",
+            )
+        final = auth_manager.complete_2fa(result.challenge_token, totp.now())
+
+        assert final.status == AuthStatus.SUCCESS
+        assert final.session is not None
+        assert final.session.ip_address == "1.2.3.4"
+        assert final.session.user_agent == "PlexichatTest/1.0"
+
     def test_complete_2fa_rejects_tampered_challenge_hash(self, db, auth_manager):
         """Test 2FA completion rejects a challenge whose stored hash was tampered."""
         from src.utils import encryption

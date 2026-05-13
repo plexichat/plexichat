@@ -17,6 +17,7 @@ from .reindex import router as reindex_router
 from .migrations import router as migrations_router
 from .roles import router as roles_router
 from .approvals import router as approvals_router
+from .bots import router as admin_bots_router
 
 router = APIRouter()
 
@@ -35,3 +36,4 @@ router.include_router(reindex_router)
 router.include_router(migrations_router)
 router.include_router(roles_router)
 router.include_router(approvals_router)
+router.include_router(admin_bots_router)

@@ -227,7 +227,8 @@ def db(setup_config):
                     device_id INTEGER,
                     ip_index TEXT,
                     ip_encrypted TEXT,
-                    user_agent TEXT,
+                    ua_index TEXT,
+                    ua_encrypted TEXT,
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
                     last_activity INTEGER NOT NULL,
@@ -249,7 +250,8 @@ def db(setup_config):
                     last_used_at INTEGER,
                     last_used_ip_index TEXT,
                     last_used_ip_encrypted TEXT,
-                    last_used_user_agent TEXT,
+                    ua_index TEXT,
+                    ua_encrypted TEXT,
                     last_used_path TEXT,
                     expires_at INTEGER,
                     scope_mode TEXT NOT NULL DEFAULT 'none',
@@ -495,39 +497,69 @@ def feedback(db):
 # =============================================================================
 
 
+class TestPIIGenerator:
+    """Helper to generate non-PII test data for tests."""
+
+    def __init__(self):
+        self._counter = 0
+
+    def email(self) -> str:
+        """Generate a test email that doesn't contain real PII."""
+        self._counter += 1
+        return f"test_user_{self._counter}_{uuid.uuid4().hex[:8]}@test.local"
+
+    def dob(self) -> str:
+        """Generate a static non-PII date of birth."""
+        return "2000-01-01"
+
+    def ip(self) -> str:
+        """Generate a test IP address."""
+        return f"127.0.0.{self._counter % 255}"
+
+    def user_agent(self) -> str:
+        """Generate a test user agent."""
+        return "TestAgent/1.0 (Plexichat; Testing)"
+
+
+@pytest.fixture(scope="session")
+def pii_gen():
+    """PII generator fixture."""
+    return TestPIIGenerator()
+
+
 @pytest.fixture
-def test_user(auth_manager):
-    """Create a test user with fake hashing."""
+def test_user(auth_manager, pii_gen):
+    """Create a test user with fake hashing and non-PII data."""
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
         user = auth_manager.register(
             username=f"testuser_{uuid.uuid4().hex[:8]}",
-            email=f"test_{uuid.uuid4().hex[:8]}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
     return user
 
 
 @pytest.fixture
-def registered_user(auth_manager):
+def registered_user(auth_manager, pii_gen):
     """Create a registered user for tests (returns tuple: user, auth_manager, username)."""
     username = f"testuser_{uuid.uuid4().hex[:8]}"
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
         user = auth_manager.register(
             username=username,
-            email=f"{username}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
     return user, auth_manager, username
 
 
 @pytest.fixture
-def logged_in_user(auth_manager):
+def logged_in_user(auth_manager, pii_gen):
     """Create a logged-in user for tests (returns tuple: user, token, auth_manager, username)."""
     username = f"testuser_{uuid.uuid4().hex[:8]}"
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
         user = auth_manager.register(
             username=username,
-            email=f"{username}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
     with patch.object(encryption, "verify_password", return_value=True):
@@ -549,39 +581,39 @@ def test_user_with_token(auth_manager, test_user):
 
 
 @pytest.fixture
-def two_users(auth_manager):
+def two_users(auth_manager, pii_gen):
     """Create two test users."""
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
         user1 = auth_manager.register(
             username=f"testuser_{uuid.uuid4().hex[:8]}",
-            email=f"test1_{uuid.uuid4().hex[:8]}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
         user2 = auth_manager.register(
             username=f"testuser_{uuid.uuid4().hex[:8]}",
-            email=f"test2_{uuid.uuid4().hex[:8]}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
     return user1, user2
 
 
 @pytest.fixture
-def three_users(auth_manager):
+def three_users(auth_manager, pii_gen):
     """Create three test users."""
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
         user1 = auth_manager.register(
             username=f"testuser_{uuid.uuid4().hex[:8]}",
-            email=f"test1_{uuid.uuid4().hex[:8]}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
         user2 = auth_manager.register(
             username=f"testuser_{uuid.uuid4().hex[:8]}",
-            email=f"test2_{uuid.uuid4().hex[:8]}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
         user3 = auth_manager.register(
             username=f"testuser_{uuid.uuid4().hex[:8]}",
-            email=f"test3_{uuid.uuid4().hex[:8]}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
     return user1, user2, user3
@@ -605,18 +637,18 @@ def test_dm(messaging_manager, two_users):
 
 
 @pytest.fixture
-def fresh_users_with_dm(auth_manager, messaging_manager, embeds_manager):
+def fresh_users_with_dm(auth_manager, messaging_manager, embeds_manager, pii_gen):
     """Create two fresh users with a DM and a message for embeds testing."""
     # Create two users with fake hashing
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
         user1 = auth_manager.register(
             username=f"embed_user1_{uuid.uuid4().hex[:8]}",
-            email=f"embed1_{uuid.uuid4().hex[:8]}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
         user2 = auth_manager.register(
             username=f"embed_user2_{uuid.uuid4().hex[:8]}",
-            email=f"embed2_{uuid.uuid4().hex[:8]}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
 
@@ -676,11 +708,11 @@ def users_with_server(server_manager, messaging_manager, reaction_manager, two_u
 
 
 @pytest.fixture
-def users_with_server_search(server_manager, search_manager, auth_manager):
+def users_with_server_search(server_manager, search_manager, auth_manager, pii_gen):
     """Create a server with owner and 10 members for search testing (requires 10+ members to list)."""
     owner = auth_manager.register(
         username="search_owner",
-        email="search_owner@example.com",
+        email=pii_gen.email(),
         password="TestPass123!",
     )
     server = server_manager.create_server(owner.id, "Test Server")
@@ -689,7 +721,7 @@ def users_with_server_search(server_manager, search_manager, auth_manager):
     for i in range(10):
         member = auth_manager.register(
             username=f"search_member_{i}",
-            email=f"search_member_{i}@example.com",
+            email=pii_gen.email(),
             password="TestPass123!",
         )
         server_manager.add_member(server.id, member.id)

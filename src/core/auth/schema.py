@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     ip_index TEXT,
     -- Encrypted IP for display
     ip_encrypted TEXT,
-    user_agent TEXT,
+    -- Blind index for User-Agent matching
+    ua_index TEXT,
+    -- Encrypted User-Agent for display
+    ua_encrypted TEXT,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     last_activity INTEGER NOT NULL,
@@ -131,7 +134,8 @@ CREATE TABLE IF NOT EXISTS auth_2fa_challenges (
     -- Encrypted IP address
     ip_index TEXT,
     ip_encrypted TEXT,
-    user_agent TEXT,
+    ua_index TEXT,
+    ua_encrypted TEXT,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     used INTEGER DEFAULT 0,
@@ -171,7 +175,8 @@ CREATE TABLE IF NOT EXISTS auth_api_access_tokens (
     last_used_at INTEGER,
     last_used_ip_index TEXT,
     last_used_ip_encrypted TEXT,
-    last_used_user_agent TEXT,
+    ua_index TEXT,
+    ua_encrypted TEXT,
     last_used_path TEXT,
     expires_at INTEGER,
     scope_mode TEXT NOT NULL DEFAULT 'none',
@@ -200,7 +205,8 @@ CREATE TABLE IF NOT EXISTS auth_api_access_token_events (
     ip_encrypted TEXT,
     method TEXT,
     path TEXT,
-    user_agent TEXT,
+    ua_index TEXT,
+    ua_encrypted TEXT,
     allowed INTEGER NOT NULL DEFAULT 1,
     scope_match INTEGER,
     reject_reason TEXT,

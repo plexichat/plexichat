@@ -17,6 +17,8 @@ from .reactions import router as reactions_router
 from .emojis import router as emojis_router
 from .search import router as search_router
 from .webhooks import router as webhooks_router
+from .applications import router as applications_router
+from .bots import router as bots_router
 from .version import router as version_router
 from .settings import router as settings_router
 from .feedback import router as feedback_router
@@ -98,6 +100,8 @@ def create_api_router() -> APIRouter:
     api_router.include_router(presence_router, tags=["Presence"])
     api_router.include_router(reactions_router, tags=["Reactions"])
     api_router.include_router(webhooks_router, tags=["Webhooks"])
+    api_router.include_router(bots_router, tags=["Bots"])
+    api_router.include_router(applications_router, tags=["Applications"])
     api_router.include_router(
         settings_router, prefix="/users/@me/settings", tags=["Settings"]
     )

@@ -50,6 +50,7 @@ const showTab = (n) => {
     else if (n === 'deletions') refreshDeletions();
     else if (n === 'security') loadSecurity();
     else if (n === 'migrations') refreshMigrations();
+    else if (n === 'bots') refreshAdminBots();
     else if (n === 'users') loadAdminUsers();
     else if (n === 'automod') {
         loadAutomodConfig();
@@ -1629,5 +1630,102 @@ document.addEventListener('click', (e) => {
         case 'blockUser':
             blockUser();
             break;
+        case 'bots-refresh':
+            refreshAdminBots();
+            break;
     }
+
+
+// === Bot Management ===
+
+let adminBotsData = [];
+
+async function refreshAdminBots() {
+    try {
+        document.getElementById('bots-loading').style.display = 'block';
+        document.getElementById('bots-content').style.display = 'none';
+
+        const token = sessionStorage.getItem('plexichat-admin-token');
+        if (!token) return;
+
+        const headers = { 'Authorization': `Bearer ${token}` };
+
+        // Fetch stats
+        const statsRes = await fetch('/api/v1/admin/bots/stats', { headers });
+        if (statsRes.ok) {
+            const stats = await statsRes.json();
+            document.getElementById('bot-stat-total').textContent = stats.total_bots || 0;
+            document.getElementById('bot-stat-approved').textContent = stats.total_approved || 0;
+            document.getElementById('bot-stat-pending').textContent = stats.total_pending_requests || 0;
+            document.getElementById('bot-stat-servers').textContent = stats.servers_with_bots || 0;
+        }
+
+        // Fetch applications list
+        const appsRes = await fetch('/api/v1/admin/bots/applications?limit=50', { headers });
+        if (appsRes.ok) {
+            const apps = await appsRes.json();
+            renderBotApplications(apps);
+        }
+
+        // Fetch pending requests
+        const reqsRes = await fetch('/api/v1/admin/bots/requests?status_filter=pending&limit=50', { headers });
+        if (reqsRes.ok) {
+            const reqs = await reqsRes.json();
+            renderBotRequests(reqs);
+        }
+
+        document.getElementById('bots-loading').style.display = 'none';
+        document.getElementById('bots-content').style.display = 'block';
+    } catch (error) {
+        console.error('Failed to load admin bots:', error);
+        document.getElementById('bots-loading').innerHTML = '<div class="error-card">Failed to load bot data. Make sure the server is running.</div>';
+    }
+}
+
+function renderBotApplications(apps) {
+    const tbody = document.getElementById('bots-table-body');
+    if (!apps || apps.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No applications found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = apps.map(app => {
+        const icon = app.icon_url
+            ? `<img src="${app.icon_url}" style="width: 24px; height: 24px; border-radius: 50%; vertical-align: middle; margin-right: 8px;">`
+            : '<div style="width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: white; vertical-align: middle; margin-right: 8px;">' + app.name.charAt(0).toUpperCase() + '</div>';
+        const botId = app.bot_id || '<span style="color: var(--text-muted);">No bot</span>';
+        const created = new Date(app.created_at * 1000).toLocaleDateString();
+
+        return `<tr>
+            <td style="display: flex; align-items: center; gap: 8px;">${icon}${app.name}</td>
+            <td style="font-family: monospace;">${botId}</td>
+            <td style="font-family: monospace; color: var(--text-muted);">${app.owner_id}</td>
+            <td><span class="badge badge-success">${app.approved_servers}</span></td>
+            <td>${app.pending_requests > 0 ? '<span class="badge badge-warning">' + app.pending_requests + '</span>' : '<span style="color: var(--text-muted);">0</span>'}</td>
+            <td style="color: var(--text-muted);">${created}</td>
+        </tr>`;
+    }).join('');
+}
+
+function renderBotRequests(reqs) {
+    const tbody = document.getElementById('bots-requests-body');
+    if (!reqs || reqs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No pending requests</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = reqs.map(req => {
+        const statusClass = req.status === 'pending' ? 'badge-warning' : req.status === 'approved' ? 'badge-success' : 'badge-error';
+        const created = new Date(req.created_at * 1000).toLocaleDateString();
+
+        return `<tr>
+            <td>${req.application_name}</td>
+            <td style="font-family: monospace; color: var(--text-muted);">${req.server_id}</td>
+            <td style="font-family: monospace; color: var(--text-muted);">${req.requester_id}</td>
+            <td>${req.reason || '<span style="color: var(--text-muted);">No reason provided</span>'}</td>
+            <td><span class="badge ${statusClass}">${req.status}</span></td>
+            <td style="color: var(--text-muted);">${created}</td>
+        </tr>`;
+    }).join('');
+}
 });

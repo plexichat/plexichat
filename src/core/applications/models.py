@@ -359,3 +359,75 @@ class WebhookDelivery:
     response_body: Optional[str]
     delivered_at: int
     success: bool
+
+
+class BotApprovalStatus(Enum):
+    """Status of a bot approval request."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    REMOVED = "removed"
+
+
+@dataclass
+class ApprovedBot:
+    """Represents a server-approved bot installation."""
+
+    id: SnowflakeID
+    server_id: SnowflakeID
+    application_id: SnowflakeID
+    approved_by: SnowflakeID
+    permissions: str
+    bot_name: Optional[str]
+    bot_avatar_url: Optional[str]
+    status: BotApprovalStatus
+    installed_at: int
+    updated_at: int
+
+
+@dataclass
+class BotRequest:
+    """Represents a user request for bot approval on a server."""
+
+    id: SnowflakeID
+    server_id: SnowflakeID
+    application_id: SnowflakeID
+    requester_id: SnowflakeID
+    reason: Optional[str]
+    status: BotApprovalStatus
+    reviewed_by: Optional[SnowflakeID]
+    review_reason: Optional[str]
+    created_at: int
+    updated_at: int
+
+
+@dataclass
+class BotProfile:
+    """Represents a bot's profile configuration."""
+
+    application_id: SnowflakeID
+    description: Optional[str]
+    short_description: Optional[str]
+    avatar_url: Optional[str]
+    banner_url: Optional[str]
+    website_url: Optional[str]
+    support_url: Optional[str]
+    github_url: Optional[str]
+    tags: List[str]
+    nsfw: bool
+    private: bool
+    updated_at: int
+
+
+@dataclass
+class UserAuthorizedApplication:
+    """Represents a user's authorized OAuth2 application."""
+
+    id: SnowflakeID
+    application_id: SnowflakeID
+    application_name: str
+    application_icon: Optional[str]
+    scopes: List[str]
+    authorized_at: int
+    last_used_at: int
