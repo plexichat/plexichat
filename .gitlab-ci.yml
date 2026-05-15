@@ -148,11 +148,11 @@ docker:build_and_push:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
     - echo "Building backend docker image for tag $CI_COMMIT_TAG"
-    - docker build -t $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_TAG -t $CI_REGISTRY_IMAGE/backend:latest .
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
-    - docker push $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_TAG
-    - docker push $CI_REGISTRY_IMAGE/backend:latest
-    - docker save $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_TAG -o backend-image.tar
+    - docker build -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest .
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
+    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG
+    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest
+    - docker save $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG -o backend-image.tar
   artifacts:
     paths:
       - backend-image.tar
@@ -173,10 +173,10 @@ docker:cleanup_old_images:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
     - echo "Cleaning up old Docker images based on retention policy"
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
     - |
       # Get all tags for backend image
-      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY_IMAGE/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V)
+      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY:80/$CI_PROJECT_PATH/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V)
       
       # Separate by version type
       ALPHA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-alpha' || echo "")
@@ -188,7 +188,7 @@ docker:cleanup_old_images:
         ALPHA_TO_DELETE=$(echo "$ALPHA_TAGS" | head -n -5)
         for tag in $ALPHA_TO_DELETE; do
           echo "Deleting old alpha build: $tag"
-          docker rmi $CI_REGISTRY_IMAGE/backend:$tag || true
+          docker rmi $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$tag || true
         done
       fi
       
@@ -197,7 +197,7 @@ docker:cleanup_old_images:
         BETA_TO_DELETE=$(echo "$BETA_TAGS" | head -n -10)
         for tag in $BETA_TO_DELETE; do
           echo "Deleting old beta build: $tag"
-          docker rmi $CI_REGISTRY_IMAGE/backend:$tag || true
+          docker rmi $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$tag || true
         done
       fi
       
