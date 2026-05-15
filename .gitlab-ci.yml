@@ -137,7 +137,12 @@ docker:build_and_push:
   stage: docker
   image: docker:27
   services:
-    - docker:27-dind
+    - name: docker:27-dind
+      command:
+        - "--insecure-registry=registry.plexichat.com:80"
+        - "--insecure-registry=registry.plexichat.com"
+        - "--insecure-registry=192.168.3.150:80"
+        - "--insecure-registry=192.168.3.150"
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_HOST: tcp://docker:2376
@@ -163,7 +168,12 @@ docker:cleanup_old_images:
   stage: docker
   image: docker:27
   services:
-    - docker:27-dind
+    - name: docker:27-dind
+      command:
+        - "--insecure-registry=registry.plexichat.com:80"
+        - "--insecure-registry=registry.plexichat.com"
+        - "--insecure-registry=192.168.3.150:80"
+        - "--insecure-registry=192.168.3.150"
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_HOST: tcp://docker:2376
