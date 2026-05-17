@@ -151,11 +151,6 @@ docker:build_and_push:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
     - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG
     - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest
-    - docker save $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG -o backend-image.tar
-  artifacts:
-    paths:
-      - backend-image.tar
-    expire_in: 14 days
   resource_group: plexichat-ci
 
 docker:cleanup_old_images:
@@ -174,7 +169,7 @@ docker:cleanup_old_images:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
     - |
       # Get all tags for backend image
-      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY:80/$CI_PROJECT_PATH/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V)
+      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY:80/$CI_PROJECT_PATH/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V || true)
       
       # Separate by version type
       ALPHA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-alpha' || echo "")
