@@ -139,6 +139,9 @@ docker:build_and_push:
   services:
     - name: docker:27-dind
       alias: docker
+      command:
+        - "--insecure-registry=registry.plexichat.com:80"
+        - "--insecure-registry=192.168.3.150:80"
   variables:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_HOST: tcp://docker:2375
@@ -164,6 +167,9 @@ docker:cleanup_old_images:
   services:
     - name: docker:27-dind
       alias: docker
+      command:
+        - "--insecure-registry=registry.plexichat.com:80"
+        - "--insecure-registry=192.168.3.150:80"
   variables:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_HOST: tcp://docker:2375
