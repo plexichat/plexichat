@@ -8,23 +8,23 @@ Configuration flows through multiple sources in this order (highest to lowest pr
 
 1. System environment variables
 2. `docker-compose.yml` `environment:` section
-3. `.env` file (if present)
-4. Auto-generated `.env.generated` (created by bootstrap on first run)
-5. Built-in defaults
+3. `.env` file (created by the deploy script or manually)
+4. Built-in defaults
 
 ## Auto-Generated Configuration
 
-On first startup, the `bootstrap` service automatically creates:
+The standalone deploy scripts (`deploy.sh` / `deploy.ps1`) automatically create:
 
-- `.env.generated` - Secure keys and connection strings
+- `.env` - Cryptographically secure keys and connection strings
 - `config/docker-config.yaml` - Backend service configuration
+- `docker/runtime/client-config.js` - Client runtime configuration
 
 These are generated once and persist across restarts. You typically don't need to modify them.
 
-To regenerate:
+To regenerate, delete the files and re-run the deploy script:
 ```bash
-rm .env.generated config/docker-config.yaml
-docker compose up bootstrap
+rm .env config/docker-config.yaml docker/runtime/client-config.js
+curl -sSL https://plexichat.com/deploy.sh | bash
 ```
 
 ## Manual Configuration

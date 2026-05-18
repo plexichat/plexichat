@@ -7,13 +7,14 @@ Plexichat is a distributed messaging platform that can be deployed in various en
 Plexichat supports multiple deployment strategies:
 - **Development**: Local setup with SQLite database
 - **Production**: PostgreSQL with Redis caching and external storage
-- **Containerized**: Docker/Kubernetes deployments (community-supported)
+- **Containerized**: Official Docker Compose stack via standalone deploy scripts (Primary)
+- **Manual/Development**: Direct installation via Git clone
 - **Cloud**: Various cloud provider options
 
 ## Key Components
 
 1. **Backend Server** (`plexichat`): Python/FastAPI application providing REST API and WebSocket gateway
-2. **Client Interface** (`plexichat-client`): Python/Flask web application serving the frontend
+2. **Client Interface** (`plexichat-client`): Modern Vite web application served via Nginx
 3. **Shared Utilities** (`common-utils`): Common functionality used by both server and client
 4. **Database**: PostgreSQL (recommended) or SQLite (development only)
 5. **Cache**: Redis (recommended for production)
@@ -29,7 +30,21 @@ Before deploying Plexichat, ensure you have:
 - PostgreSQL 12+ (for production deployments)
 - Redis 6+ (recommended for production)
 
-## Deployment Flow
+## Primary Deployment Flow (Zero-Clone)
+
+The recommended, officially supported way to deploy Plexichat is using the standalone deploy scripts. This completely automates credential generation, configuration, and image downloading without requiring a Git clone.
+
+**Linux / macOS:**
+```bash
+curl -sSL https://plexichat.com/deploy.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://plexichat.com/deploy.ps1 | iex
+```
+
+## Manual Deployment Flow (Development)
 
 1. Clone the repositories from GitLab
 2. Install dependencies for both server and client

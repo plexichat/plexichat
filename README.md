@@ -4,6 +4,22 @@ A real-time messaging platform server with REST API and WebSocket gateway.
 
 ## Installation
 
+The recommended way to deploy Plexichat is via our standalone deployment scripts. These scripts automate version selection, network configuration, secret generation, and Docker Compose orchestration—without requiring a git clone.
+
+**Linux / macOS:**
+```bash
+curl -sSL https://plexichat.com/deploy.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://plexichat.com/deploy.ps1 | iex
+```
+
+## Manual Installation (Development)
+
+If you are a developer and wish to run the project from source:
+
 ```bash
 # Clone with submodules (required)
 git clone --recurse-submodules https://gitlab.plexichat.com/plexichat/plexichat.git
@@ -47,7 +63,9 @@ git submodule update --init --recursive
   - Flexible database support (SQLite/PostgreSQL) with automatic migrations
   - Redis integration for distributed caching
 
-## Quick Start
+## Quick Start (Development)
+
+If you have cloned the repository and wish to run it manually (not recommended for production):
 
 ```bash
 # Create virtual environment
@@ -237,4 +255,4 @@ pytest src/tests
 
 ## Version
 
-Current version: `a.1.0-56` (Alpha)
+Current version: `a.1.0-57` (Alpha)
