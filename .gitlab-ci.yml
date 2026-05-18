@@ -151,6 +151,12 @@ docker:build_and_push:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
     - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG
     - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest
+    # Push to Docker Hub
+    - echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USER" --password-stdin
+    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:$CI_COMMIT_TAG
+    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:latest
+    - docker push plexichat/plexichat:$CI_COMMIT_TAG
+    - docker push plexichat/plexichat:latest
   resource_group: plexichat-ci
 
 docker:cleanup_old_images:
