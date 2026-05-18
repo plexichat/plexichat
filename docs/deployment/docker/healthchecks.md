@@ -305,14 +305,13 @@ docker compose up
 Services wait for dependencies to be healthy before starting:
 
 ```
-bootstrap -> db, redis, minio
 minio-init -> minio
-backend -> bootstrap, db, redis, minio-init
+backend -> db, redis, minio-init
 client -> backend, cert-init
 ```
 
 **Example timeline:**
-1. `bootstrap` starts (creates config)
+1. Deploy script generates config files (`.env`, `docker-config.yaml`, `client-config.js`)
 2. `db`, `redis`, `minio` start in parallel
 3. `minio-init` waits for `minio` to be healthy, then initializes buckets
 4. `backend` waits for all above to be healthy before starting
@@ -341,7 +340,7 @@ backend:
 
 Conditions:
 - `service_healthy` - Wait for healthcheck to pass
-- `service_completed_successfully` - Wait for service to finish and exit (for one-time tasks like bootstrap)
+- `service_completed_successfully` - Wait for service to finish and exit (for one-time tasks like minio-init)
 - `service_started` - Don't wait (service just needs to be running)
 
 ## Healthcheck Interval Tuning

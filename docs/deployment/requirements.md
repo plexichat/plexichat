@@ -84,7 +84,7 @@ This document outlines the system requirements for running Plexichat in differen
 ### Ports
 - **HTTP/HTTPS**: 80/443 (or custom via reverse proxy)
 - **Application Server**: 8000 (configurable, typically behind proxy)
-- **Client Server**: 5000 (configurable, typically behind proxy; served by the Flask client app)
+- **Client Server**: 80/443 (served by Nginx static container)
 - **PostgreSQL**: 5432 (default)
 - **Redis**: 6379 (default)
 
@@ -98,7 +98,7 @@ This document outlines the system requirements for running Plexichat in differen
 ### Supported Platforms
 - **Bare Metal**: Full performance, direct hardware access
 - **Virtual Machines**: KVM, VMware, Hyper-V, VirtualBox
-- **Containers**: Docker, containerd, CRI-O (community-supported)
+- **Containers**: Docker Compose (Primary Deployment Method)
 - **Orchestration**: Kubernetes, Docker Swarm, Nomad
 
 ### Resource Allocation Guidelines
@@ -164,14 +164,13 @@ All required Python packages are available on PyPI for:
 ### Diagnostic Commands
 ```bash
 # Check service status
-systemctl status plexichat-server plexichat-client
+docker compose ps
 
 # View recent logs
-journalctl -u plexichat-server -f
-journalctl -u plexichat-client -f
+docker compose logs -f backend
 
 # Test connectivity
-curl -f http://localhost:8000/health
+curl -f http://localhost:8000/api/v1/health
 curl -f http://localhost:8000/api/v1/version
 ws://localhost:8000/gateway  # WebSocket test
 

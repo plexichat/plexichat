@@ -43,24 +43,7 @@ EXTERNAL
 
 ## Containers
 
-### 1. Bootstrap (One-time initialization)
-
-**Purpose:** Generate configuration files on first startup
-
-**Services:**
-- Runs once at startup
-- Creates `.env.generated` with secure keys
-- Creates `config/docker-config.yaml` from template
-- Exits when complete
-
-**Exit Status:** Success
-- Other services start only after bootstrap completes
-
-**Data:**
-- Output: `.env.generated`, `config/docker-config.yaml`
-- Input: None (uses defaults)
-
-### 2. Database (PostgreSQL)
+### 1. Database (PostgreSQL)
 
 **Purpose:** Store all application data
 
@@ -83,7 +66,7 @@ EXTERNAL
 - Interval: 10 seconds
 - Timeout: 5 seconds
 
-### 3. Redis (Cache)
+### 2. Redis (Cache)
 
 **Purpose:** High-speed caching and session storage
 
@@ -106,7 +89,7 @@ EXTERNAL
 - `redis-cli ping` command
 - Returns `PONG` when healthy
 
-### 4. MinIO (Object Storage)
+### 3. MinIO (Object Storage)
 
 **Purpose:** S3-compatible storage for media files
 
@@ -128,7 +111,7 @@ EXTERNAL
 - HTTP health endpoint
 - Interval: 10 seconds
 
-### 5. MinIO-Init (One-time setup)
+### 4. MinIO-Init (One-time setup)
 
 **Purpose:** Create S3 buckets
 
@@ -144,7 +127,7 @@ EXTERNAL
 
 **Exit Status:** Success
 
-### 6. Cert-Init (One-time setup)
+### 5. Cert-Init (One-time setup)
 
 **Purpose:** Generate or verify TLS certificates
 
@@ -159,7 +142,7 @@ EXTERNAL
 
 **Exit Status:** Success
 
-### 7. Backend (FastAPI Server)
+### 6. Backend (FastAPI Server)
 
 **Purpose:** Core application logic
 
@@ -171,7 +154,7 @@ EXTERNAL
 - Admin UI (`/admin`)
 
 **Dependencies:**
-- Depends on: Bootstrap, Database, Redis, MinIO-Init, Cert-Init
+- Depends on: Database, Redis, MinIO-Init
 
 **Connections:**
 - Database (pooled): `db:5432`
@@ -193,12 +176,12 @@ EXTERNAL
 - API: 8000/TCP
 - WebRTC: 30000-30100/UDP
 
-### 8. Client (Nginx)
+### 7. Client (Nginx)
 
 **Purpose:** Frontend web server and reverse proxy
 
 **Services:**
-- Static file serving (Vue.js app)
+- Static file serving (Vite-built web app)
 - Reverse proxy to backend
 - TLS termination
 - HTTP -> HTTPS redirect
@@ -232,7 +215,6 @@ EXTERNAL
 - Redis
 - MinIO
 - Backend
-- Bootstrap
 - MinIO-Init
 - Cert-Init
 
@@ -273,7 +255,7 @@ EXTERNAL
 | `backend-media` | Backend | Uploaded media cache | Yes |
 | `backend-temp` | Backend | Temporary files | Yes |
 | `nginx-certs` | Nginx | TLS certificates | Yes |
-| `client-runtime` | Bootstrap | Client JS config | Yes |
+| `client-runtime` | Deploy Script | Client JS config | Yes |
 
 **Data Loss Risk:**
 - `docker compose down -v` deletes ALL volumes
@@ -381,8 +363,8 @@ User C (receives via WebSocket)
 
 ## Startup Sequence
 
-1. Docker Compose parses configuration
-2. Bootstrap service starts, generates config, exits
+1. Deploy script generates `.env`, `docker-config.yaml`, and `client-config.js`
+2. Docker Compose parses configuration
 3. Database, Redis, MinIO services start in parallel
 4. MinIO-Init waits for MinIO health, creates bucket, exits
 5. Cert-Init generates TLS certs, exits
