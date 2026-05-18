@@ -873,7 +873,7 @@ async def schedule_account_deletion(
         )
 
         logger.info(f"User {current_user.user_id} scheduled account deletion")
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
 
     except (InvalidCredentialsError, TwoFactorInvalidError) as e:
         raise HTTPException(

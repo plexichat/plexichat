@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     ip_index TEXT,
     -- Encrypted IP for display
     ip_encrypted TEXT,
-    user_agent TEXT,
+    -- Blind index for User-Agent matching
+    ua_index TEXT,
+    -- Encrypted User-Agent for display
+    ua_encrypted TEXT,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     last_activity INTEGER NOT NULL,
@@ -103,10 +106,23 @@ CREATE TABLE IF NOT EXISTS auth_email_tokens (
     user_id INTEGER NOT NULL,
     token_hash TEXT NOT NULL,
     token_type TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     used INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+);
+
+-- User notes table (Private notes about other users)
+CREATE TABLE IF NOT EXISTS auth_user_notes (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    target_user_id INTEGER NOT NULL,
+    note_encrypted TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    UNIQUE(user_id, target_user_id)
 );
 
 -- 2FA challenge tokens (Restored)
@@ -118,7 +134,8 @@ CREATE TABLE IF NOT EXISTS auth_2fa_challenges (
     -- Encrypted IP address
     ip_index TEXT,
     ip_encrypted TEXT,
-    user_agent TEXT,
+    ua_index TEXT,
+    ua_encrypted TEXT,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     used INTEGER DEFAULT 0,
@@ -158,7 +175,8 @@ CREATE TABLE IF NOT EXISTS auth_api_access_tokens (
     last_used_at INTEGER,
     last_used_ip_index TEXT,
     last_used_ip_encrypted TEXT,
-    last_used_user_agent TEXT,
+    ua_index TEXT,
+    ua_encrypted TEXT,
     last_used_path TEXT,
     expires_at INTEGER,
     scope_mode TEXT NOT NULL DEFAULT 'none',
@@ -187,7 +205,8 @@ CREATE TABLE IF NOT EXISTS auth_api_access_token_events (
     ip_encrypted TEXT,
     method TEXT,
     path TEXT,
-    user_agent TEXT,
+    ua_index TEXT,
+    ua_encrypted TEXT,
     allowed INTEGER NOT NULL DEFAULT 1,
     scope_match INTEGER,
     reject_reason TEXT,
@@ -209,7 +228,10 @@ CREATE TABLE IF NOT EXISTS auth_audit_log (
 );
 
 -- Indexes
-CREATE INDEX IF NOT EXISTS idx_auth_users_email_index ON auth_users(email_index);        
+CREATE INDEX IF NOT EXISTS idx_auth_users_email_index ON auth_users(email_index);
+CREATE INDEX IF NOT EXISTS idx_auth_user_notes_user ON auth_user_notes(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_user_notes_target ON auth_user_notes(target_user_id);
+
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_auth_bots_owner ON auth_bots(owner_id);
 CREATE INDEX IF NOT EXISTS idx_auth_devices_user ON auth_devices(user_id);
@@ -221,6 +243,38 @@ CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_scopes_token ON auth_api_ac
 CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_events_token_time ON auth_api_access_token_events(token_id, used_at DESC);
 CREATE INDEX IF NOT EXISTS idx_auth_api_access_token_events_ip ON auth_api_access_token_events(ip_index);
 
+-- WebAuthn/FIDO2 Passkey credentials
+CREATE TABLE IF NOT EXISTS auth_passkeys (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    credential_id TEXT NOT NULL,
+    credential_public_key BLOB NOT NULL,
+    sign_count INTEGER DEFAULT 0,
+    device_type TEXT,
+    device_name TEXT,
+    aaguid TEXT,
+    transports TEXT,
+    backed_up INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    revoked INTEGER DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    UNIQUE(credential_id)
+);
+
+-- Passkey challenges (temporary)
+CREATE TABLE IF NOT EXISTS auth_passkey_challenges (
+    id INTEGER PRIMARY KEY,
+    challenge_id TEXT UNIQUE NOT NULL,
+    user_id INTEGER,
+    challenge_type TEXT NOT NULL,
+    challenge BLOB NOT NULL,
+    device_name TEXT,
+    expires_at INTEGER NOT NULL,
+    used INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
 -- Username blacklist table (used by auth blacklist checks)
 CREATE TABLE IF NOT EXISTS username_blacklist (
     id INTEGER PRIMARY KEY,
@@ -230,6 +284,12 @@ CREATE TABLE IF NOT EXISTS username_blacklist (
     created_by INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Passkey indexes
+CREATE INDEX IF NOT EXISTS idx_auth_passkeys_user ON auth_passkeys(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_passkeys_credential ON auth_passkeys(credential_id);
+CREATE INDEX IF NOT EXISTS idx_auth_passkey_challenges_expires ON auth_passkey_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_passkey_challenges_id ON auth_passkey_challenges(challenge_id);
 """
 
 

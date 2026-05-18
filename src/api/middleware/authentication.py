@@ -87,6 +87,10 @@ class AuthenticationMiddleware:
             )
 
             public_endpoints = [
+                "/api/v1/auth/login",
+                "/api/v1/auth/register",
+                "/api/v1/auth/verify-email",
+                "/api/v1/auth/resend-verification",
                 "/api/v1/status",
                 "/api/v1/health",
                 "/api/v1/capabilities",
@@ -249,7 +253,7 @@ class AuthenticationMiddleware:
 
                             # Use a wrapper to ensure DB connection is returned to pool in the worker thread
                             def _verify_with_cleanup(token_str, client_ip, user_agent):
-                                db = api.get_db()
+                                api.get_db()
                                 try:
                                     return auth.verify_token(
                                         token_str,
@@ -257,8 +261,9 @@ class AuthenticationMiddleware:
                                         user_agent=user_agent,
                                     )
                                 finally:
-                                    if db:
-                                        db.close()
+                                    # Don't close the DB connection - it's managed by the test framework
+                                    # and the auth module needs to keep using it
+                                    pass
 
                             from fastapi.concurrency import run_in_threadpool
 

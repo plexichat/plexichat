@@ -1,21 +1,33 @@
+default_language_version:
+  python: python3.12
+
 repos:
   #  Ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.4
+    rev: v0.15.10
     hooks:
       - id: ruff
-        args: ["--fix"]
         pass_filenames: false
-        entry: ruff check --fix src/ src/utils/common-utils/
+        entry: ruff check --fix .
+        args: [
+          "--extend-exclude",
+          ".venv,venv,.pytest_cache,cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,media,config,logs,src/utils/common-utils,src/tests"
+        ]
       - id: ruff-format
         pass_filenames: false
-        entry: ruff format src/ src/utils/common-utils/
+        entry: ruff format .
 
   #  Type checking
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.356
+    rev: v1.1.409
     hooks:
       - id: pyright
+        exclude: |
+          (?x)^(
+              src/core/migrations/cloner\.py|
+              src/utils/encryption/kek_migration\.py|
+              src/api/routes/docs/.*\.py
+          )$
         additional_dependencies:
           - fastapi
           - pydantic>=2.0.0
@@ -28,7 +40,7 @@ repos:
           - pyotp
           - pillow
           - redis
-          - diskcache
+          - cachetools
           - pytest
           - qrcode[pil]
           - xxhash
@@ -54,7 +66,8 @@ repos:
     rev: 1.7.8
     hooks:
       - id: bandit
-        args: ["-c", ".bandit"]
+        args: ["-c", ".bandit", "--severity-level", "medium", "--confidence-level", "high"]
+        exclude: ^src/tests/
 
   #  Semgrep
   # Disabled on Windows due to Unicode encoding issues in console
@@ -77,4 +90,5 @@ repos:
               src/tests/.*|
               docs/.*|
               .*/README\.md|
+              src/core/selftest/.*|
           )$

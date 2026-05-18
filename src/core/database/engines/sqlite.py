@@ -3,6 +3,8 @@ import os
 from typing import Any, Optional, Dict, List, Tuple
 from .base import BaseEngine
 
+import utils.logger as logger
+
 
 class SqliteEngine(BaseEngine):
     """SQLite database engine implementation."""
@@ -39,14 +41,72 @@ class SqliteEngine(BaseEngine):
         return conn
 
     def get_pool_stats(self, pool: Any) -> Dict[str, Any]:
-        return {
+        """Get SQLite-specific database statistics."""
+        stats = {
             "active_connections": 0,
             "idle_connections": 0,
             "total_connections": 0,
             "max_connections": 0,
             "min_connections": 0,
             "utilization_percent": 0,
+            "database_type": "sqlite",
         }
+
+        # Try to get SQLite-specific metrics if connection is available
+        try:
+            # Note: SQLite doesn't have connection pooling like PostgreSQL
+            # These metrics are placeholders for monitoring consistency
+            stats["database_type"] = "sqlite"
+            stats["database_path"] = self.config.get("path", "data/database.db")
+        except Exception as e:
+            logger.debug(f"Could not retrieve SQLite stats: {e}")
+
+        return stats
+
+    def get_detailed_stats(
+        self, conn: Optional[sqlite3.Connection] = None
+    ) -> Dict[str, Any]:
+        """Get detailed SQLite database statistics for monitoring."""
+        stats = {
+            "database_type": "sqlite",
+            "database_path": self.config.get("path", "data/database.db"),
+            "page_size": 0,
+            "page_count": 0,
+            "database_size_bytes": 0,
+            "wal_size_bytes": 0,
+            "checkpoint_count": 0,
+        }
+
+        if not conn:
+            return stats
+
+        try:
+            # Get page size
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA page_size;")
+            stats["page_size"] = cursor.fetchone()[0] or 0
+
+            # Get page count
+            cursor.execute("PRAGMA page_count;")
+            stats["page_count"] = cursor.fetchone()[0] or 0
+
+            # Calculate database size
+            stats["database_size_bytes"] = stats["page_size"] * stats["page_count"]
+
+            # Get WAL file size (if WAL mode is enabled)
+            cursor.execute("PRAGMA journal_mode;")
+            journal_mode = cursor.fetchone()[0] or ""
+            if journal_mode.upper() == "WAL":
+                db_path = self.config.get("path", "data/database.db")
+                wal_path = f"{db_path}-wal"
+                if os.path.exists(wal_path):
+                    stats["wal_size_bytes"] = os.path.getsize(wal_path)
+
+            cursor.close()
+        except Exception as e:
+            logger.debug(f"Could not retrieve detailed SQLite stats: {e}")
+
+        return stats
 
     def close_connection(
         self,
@@ -82,4 +142,4 @@ class SqliteEngine(BaseEngine):
         placeholders = ", ".join(["?"] * len(columns))
         conflict_cols = ", ".join(conflict_columns)
         updates = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
-        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"  # nosec: B608
+        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"

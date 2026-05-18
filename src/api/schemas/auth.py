@@ -248,3 +248,94 @@ class OAuthCallbackRequest(BaseModel):
     code_verifier: Optional[str] = Field(
         None, description="PKCE code verifier (required if PKCE was used)"
     )
+
+
+# === Passkey (WebAuthn/FIDO2) Schemas ===
+
+
+class PasskeyRegisterOptionsRequest(BaseModel):
+    """Request passkey registration options."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    device_name: Optional[str] = Field(
+        None, description="User-friendly device name (e.g., 'My YubiKey')"
+    )
+
+
+class PasskeyRegisterOptionsResponse(BaseModel):
+    """Passkey registration options response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    challenge_id: str = Field(..., description="Challenge ID for this registration")
+    options: dict = Field(
+        ..., description="WebAuthn PublicKeyCredentialCreationOptions as dict"
+    )
+
+
+class PasskeyRegisterRequest(BaseModel):
+    """Complete passkey registration."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    challenge_id: str = Field(..., description="Challenge ID from options request")
+    credential: dict = Field(..., description="WebAuthn PublicKeyCredential response")
+
+
+class PasskeyAuthenticateOptionsRequest(BaseModel):
+    """Request passkey authentication options."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    username: Optional[str] = Field(
+        None,
+        description="Username to filter credentials (omit for usernameless/discoverable credential)",
+    )
+
+
+class PasskeyAuthenticateOptionsResponse(BaseModel):
+    """Passkey authentication options response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    challenge_id: str = Field(..., description="Challenge ID for this authentication")
+    options: dict = Field(
+        ..., description="WebAuthn PublicKeyCredentialRequestOptions as dict"
+    )
+
+
+class PasskeyAuthenticateRequest(BaseModel):
+    """Complete passkey authentication."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    challenge_id: str = Field(..., description="Challenge ID from options request")
+    credential: dict = Field(..., description="WebAuthn PublicKeyCredential response")
+
+
+class PasskeyResponse(BaseModel):
+    """Passkey information response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: SnowflakeID = Field(..., description="Passkey ID")
+    credential_id: str = Field(..., description="WebAuthn credential ID (base64url)")
+    device_name: Optional[str] = Field(None, description="User-friendly device name")
+    device_type: Optional[str] = Field(
+        None, description="Device type: 'platform' or 'cross-platform'"
+    )
+    created_at: int = Field(..., description="Registration timestamp")
+    last_used_at: Optional[int] = Field(
+        None, description="Last authentication timestamp"
+    )
+    backed_up: bool = Field(False, description="Whether credential is synced/backed up")
+    revoked: bool = Field(False, description="Whether credential is revoked")
+
+
+class PasskeyRenameRequest(BaseModel):
+    """Rename a passkey."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str = Field(..., min_length=1, max_length=100, description="New device name")

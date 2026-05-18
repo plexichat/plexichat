@@ -189,8 +189,8 @@ class DatabaseStorage(StorageBackendBase):
             return deleted
 
         except Exception as e:
-            logger.error(f"Failed to delete blob at {path}: {e}")  # nosec: B608
-            raise StorageDeleteError(f"Failed to delete from database: {e}", "database")  # nosec: B608
+            logger.error(f"Failed to delete blob at {path}: {e}")
+            raise StorageDeleteError(f"Failed to delete from database: {e}", "database")
 
     def exists(self, path: str) -> bool:
         """Check if file exists in database."""

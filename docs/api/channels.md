@@ -2,7 +2,11 @@
 
 Endpoints for channel management.
 
-**Base URL**: `https://api.plexichat.com`
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
 
 ## GET /channels/{channel_id}
 
@@ -11,7 +15,7 @@ Get channel details. Requires access to the channel.
 ### Example Request
 
 ```bash
-curl -X GET https://api.plexichat.com/channels/123456789012345678 \
+curl -X GET http://localhost:8000/api/v1/channels/123456789012345678 \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -34,11 +38,9 @@ curl -X GET https://api.plexichat.com/channels/123456789012345678 \
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid channel ID | ID format invalid |
-| 403 | Access denied | No permission to view |
-| 404 | Channel not found | Channel doesn't exist |
+- 400 Invalid channel ID: ID format invalid
+- 403 Access denied: No permission to view
+- 404 Channel not found: Channel doesn't exist
 
 ## PATCH /channels/{channel_id}
 
@@ -46,18 +48,16 @@ Update channel settings. Requires manage channels permission.
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| name | string | No | 1-100 characters | Channel name |
-| topic | string | No | Max 1024 characters | Channel topic |
-| position | int | No | >= 0 | Channel position |
-| nsfw | bool | No | - | NSFW flag |
-| slowmode_seconds | int | No | 0-21600 | Slowmode delay in seconds |
+- `name` (string, optional, 1-100 characters): Channel name
+- `topic` (string, optional, Max 1024 characters): Channel topic
+- `position` (int, optional, >= 0): Channel position
+- `nsfw` (bool, optional): NSFW flag
+- `slowmode_seconds` (int, optional, 0-21600): Slowmode delay in seconds
 
 ### Example Request
 
 ```bash
-curl -X PATCH https://api.plexichat.com/channels/123456789012345678 \
+curl -X PATCH http://localhost:8000/api/v1/channels/123456789012345678 \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -73,10 +73,8 @@ Returns the updated channel object.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Permission denied | Missing manage channels permission |
-| 404 | Channel not found | Channel doesn't exist |
+- 403 Permission denied: Missing manage channels permission
+- 404 Channel not found: Channel doesn't exist
 
 ## DELETE /channels/{channel_id}
 
@@ -98,10 +96,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Permission denied | Missing manage channels permission |
-| 404 | Channel not found | Channel doesn't exist |
+- 403 Permission denied: Missing manage channels permission
+- 404 Channel not found: Channel doesn't exist
 
 ---
 
@@ -135,10 +131,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Permission denied | Missing manage webhooks permission |
-| 404 | Channel not found | Channel doesn't exist |
+- 403 Permission denied: Missing manage webhooks permission
+- 404 Channel not found: Channel doesn't exist
 
 ---
 
@@ -150,16 +144,14 @@ Create an invite for a channel. Requires create invite permission.
 
 ### Request Body
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| max_age | int | No | 86400 | Invite expiration in seconds (0 = never) |
-| max_uses | int | No | 0 | Max uses (0 = unlimited) |
-| temporary | bool | No | false | Grant temporary membership |
+- `max_age` (int, optional, 86400): Invite expiration in seconds (0 = never)
+- `max_uses` (int, optional, 0): Max uses (0 = unlimited)
+- `temporary` (bool, optional, false): Grant temporary membership
 
 ### Example Request
 
 ```bash
-curl -X POST https://api.plexichat.com/channels/123456789012345678/invites \
+curl -X POST http://localhost:8000/api/v1/channels/123456789012345678/invites \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -185,10 +177,8 @@ curl -X POST https://api.plexichat.com/channels/123456789012345678/invites \
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Permission denied | Missing create invite permission |
-| 404 | Channel not found | Channel doesn't exist |
+- 403 Permission denied: Missing create invite permission
+- 404 Channel not found: Channel doesn't exist
 
 ## GET /channels/invites/{invite_code}
 
@@ -217,9 +207,7 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 404 | Invite not found | Invite doesn't exist or expired |
+- 404 Invite not found: Invite doesn't exist or expired
 
 ## POST /channels/invites/{invite_code}
 
@@ -242,11 +230,9 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Banned | You are banned from this server |
-| 404 | Invite not found | Invite doesn't exist or expired |
-| 409 | Already member | Already a member of this server |
+- 403 Banned: You are banned from this server
+- 404 Invite not found: Invite doesn't exist or expired
+- 409 Already member: Already a member of this server
 
 ## DELETE /channels/invites/{invite_code}
 
@@ -283,9 +269,7 @@ Content-Type: multipart/form-data
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| file | file | Yes | File to upload |
+- `file` (file, required): File to upload
 
 ### Response (200 OK)
 
@@ -303,18 +287,14 @@ Content-Type: multipart/form-data
 
 File size limits are based on user tier:
 
-| Tier | Max Size |
-|------|----------|
-| Standard | 10 MB |
-| Alpha | 25 MB |
-| Premium | 100 MB |
+- Standard: 10 MB
+- Alpha: 25 MB
+- Premium: 100 MB
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | File too large | Exceeds tier limit |
-| 404 | Channel not found | Channel doesn't exist |
+- 400 File too large: Exceeds tier limit
+- 404 Channel not found: Channel doesn't exist
 
 ---
 
@@ -335,35 +315,29 @@ File size limits are based on user tier:
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| id | string | Channel's snowflake ID |
-| server_id | string | Parent server's ID |
-| name | string | Channel name |
-| channel_type | string | Channel type (text, voice, category) |
-| topic | string? | Channel topic/description |
-| position | int | Display position |
-| category_id | string? | Parent category ID |
-| nsfw | bool | NSFW content flag |
-| slowmode_seconds | int | Slowmode delay (0 = disabled) |
-| created_at | int | Unix timestamp of creation |
+- `id` (string): Channel's snowflake ID
+- `server_id` (string): Parent server's ID
+- `name` (string): Channel name
+- `channel_type` (string): Channel type (text, voice, category)
+- `topic` (string?): Channel topic/description
+- `position` (int): Display position
+- `category_id` (string?): Parent category ID
+- `nsfw` (bool): NSFW content flag
+- `slowmode_seconds` (int): Slowmode delay (0 = disabled)
+- `created_at` (int): Unix timestamp of creation
 
 ## Channel Types
 
-| Type | Description |
-|------|-------------|
-| text | Text channel for messages |
-| voice | Voice channel for audio communication |
-| category | Category for organizing channels |
+- text: Text channel for messages
+- voice: Voice channel for audio communication
+- category: Category for organizing channels
 
 ## Slowmode
 
 Slowmode limits how often users can send messages in a channel.
 
-| Value | Description |
-|-------|-------------|
-| 0 | Disabled |
-| 1-21600 | Seconds between messages |
+- 0: Disabled
+- 1-21600: Seconds between messages
 
 Maximum slowmode: 6 hours (21600 seconds)
 

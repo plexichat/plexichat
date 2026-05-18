@@ -3,6 +3,7 @@ Tests for sticker pack management.
 """
 
 import pytest
+
 import uuid
 from src.core.stickers import (
     PackNotFoundError,

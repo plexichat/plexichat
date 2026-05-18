@@ -2,6 +2,12 @@
 
 Endpoints for webhook management and execution.
 
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
+
 ## POST /webhooks
 
 Create a new webhook for a channel.
@@ -14,11 +20,9 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| channel_id | string | Yes | Snowflake ID | Target channel |
-| name | string | Yes | 1-80 chars | Webhook name |
-| avatar_url | string | No | Valid URL | Webhook avatar |
+- `channel_id` (string, required, Snowflake ID): Target channel
+- `name` (string, required, 1-80 chars): Webhook name
+- `avatar_url` (string, optional, Valid URL): Webhook avatar
 
 ### Example Request
 
@@ -41,7 +45,7 @@ Authorization: Bearer <token>
   "name": "My Webhook",
   "avatar_url": "https://cdn.example.com/avatars/webhook.png",
   "token": "webhook_token_here",
-  "url": "https://api.plexichat.com/webhooks/123456789012345678/webhook_token_here",
+  "url": "http://localhost:8000/api/v1/webhooks/123456789012345678/webhook_token_here",
   "created_at": 1704067200
 }
 ```
@@ -50,12 +54,10 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid input | Validation failed |
-| 400 | Webhook limit | Channel webhook limit reached |
-| 403 | Permission denied | No manage webhooks permission |
-| 404 | Channel not found | Channel doesn't exist |
+- 400 Invalid input: Validation failed
+- 400 Webhook limit: Channel webhook limit reached
+- 403 Permission denied: No manage webhooks permission
+- 404 Channel not found: Channel doesn't exist
 
 ## GET /webhooks/{webhook_id}
 
@@ -85,11 +87,9 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid webhook ID | ID format invalid |
-| 403 | Access denied | No permission to view |
-| 404 | Webhook not found | Webhook doesn't exist |
+- 400 Invalid webhook ID: ID format invalid
+- 403 Access denied: No permission to view
+- 404 Webhook not found: Webhook doesn't exist
 
 ## DELETE /webhooks/{webhook_id}
 
@@ -111,10 +111,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Permission denied | No manage webhooks permission |
-| 404 | Webhook not found | Webhook doesn't exist |
+- 403 Permission denied: No manage webhooks permission
+- 404 Webhook not found: Webhook doesn't exist
 
 ## POST /webhooks/{webhook_id}/{token}
 
@@ -122,26 +120,20 @@ Execute a webhook to send a message. No authentication required if token is vali
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| webhook_id | string | Webhook's snowflake ID |
-| token | string | Webhook token |
+- `webhook_id` (string): Webhook's snowflake ID
+- `token` (string): Webhook token
 
 ### Query Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| wait | bool | false | Wait for message and return it |
+- wait: bool
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| content | string | Conditional | Max 2000 chars | Message content |
-| username | string | No | Max 80 chars | Override webhook name |
-| avatar_url | string | No | Valid URL | Override webhook avatar |
-| embeds | array | No | - | Rich embeds |
-| thread_id | string | No | Snowflake ID | Thread to post to |
+- `content` (string, optional, Max 2000 chars): Message content
+- `username` (string, optional, Max 80 chars): Override webhook name
+- `avatar_url` (string, optional, Valid URL): Override webhook avatar
+- `embeds` (array, optional): Rich embeds
+- `thread_id` (string, optional, Snowflake ID): Thread to post to
 
 At least one of `content` or `embeds` is required.
 
@@ -181,12 +173,10 @@ Returns a standard success response.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Empty message | No content or embeds |
-| 400 | Invalid content | Content validation failed |
-| 401 | Invalid token | Webhook token invalid |
-| 404 | Webhook not found | Webhook doesn't exist |
+- 400 Empty message: No content or embeds
+- 400 Invalid content: Content validation failed
+- 401 Invalid token: Webhook token invalid
+- 404 Webhook not found: Webhook doesn't exist
 
 ## Webhook Object
 
@@ -204,14 +194,12 @@ Returns a standard success response.
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| id | string | Webhook's snowflake ID |
-| channel_id | string | Target channel ID |
-| server_id | string | Server ID |
-| creator_id | string | Creator's user ID |
-| name | string | Webhook name |
-| avatar_url | string? | Webhook avatar URL |
-| token | string? | Webhook token (only on create) |
-| url | string? | Full webhook URL (only on create) |
-| created_at | int | Unix timestamp of creation |
+- `id` (string): Webhook's snowflake ID
+- `channel_id` (string): Target channel ID
+- `server_id` (string): Server ID
+- `creator_id` (string): Creator's user ID
+- `name` (string): Webhook name
+- `avatar_url` (string?): Webhook avatar URL
+- `token` (string?): Webhook token (only on create)
+- `url` (string?): Full webhook URL (only on create)
+- `created_at` (int): Unix timestamp of creation

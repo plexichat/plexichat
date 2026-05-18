@@ -1,244 +1,221 @@
-"""
-Integration tests for automod module.
-"""
+"""Tests for automod integration with other modules."""
 
 import pytest
 
-from src.core.automod import RuleType
+from src.core.automod.models import RuleType, ViolationSeverity, RuleMatch
 
 
 @pytest.mark.automod
-@pytest.mark.integration
-class TestAutoModIntegration:
-    """Integration tests for full automod workflow."""
+class TestIntegration:
+    """Tests for automod integration with servers, messaging, and notifications."""
 
-    def test_full_violation_workflow(
-        self, automod_module, test_server_for_automod, user_pool
-    ):
-        """Test complete violation detection and processing."""
-        server, channel, owner = test_server_for_automod
-        user = user_pool.get_user()
-
-        rule = automod_module.create_rule(
+    def test_check_message_triggers_rule(self, automod_manager, test_server):
+        """Test that check_message detects content matching a rule."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
             user_id=owner.id,
             server_id=server.id,
-            name="Integration Test",
+            name="Profanity Filter",
             rule_type=RuleType.KEYWORD,
             rule_config={
-                "keywords": ["violation"],
+                "keywords": ["badword"],
                 "case_sensitive": False,
                 "whole_word": True,
             },
-            actions=[
-                {"action_type": "delete_message"},
-                {"action_type": "alert_moderators"},
-                {"action_type": "log_only"},
-            ],
+            actions=[{"action_type": "log_only"}],
         )
 
-        result = automod_module.check_message(
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1", (server.id,)
+        )
+        channel_id = channel["id"] if channel else 0
+
+        result = automod_manager.check_message(
             server_id=server.id,
-            channel_id=channel.id,
-            user_id=user.id,
-            content="This contains violation word",
+            channel_id=channel_id,
+            user_id=owner.id,
+            content="This contains badword in it",
+        )
+        assert result is not None
+        assert len(result) >= 1
+        assert result[0].rule_id == rule.id
+
+    def test_check_message_no_match(self, automod_manager, test_server):
+        """Test that check_message returns empty when no rules match."""
+        server, owner = test_server
+        automod_manager.create_rule(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Filter",
+            rule_type=RuleType.KEYWORD,
+            rule_config={
+                "keywords": ["badword"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "log_only"}],
         )
 
-        assert not result.passed
-        assert len(result.violations) == 1
-        assert len(result.actions_to_take) == 3
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1", (server.id,)
+        )
+        channel_id = channel["id"] if channel else 0
 
-        violation = automod_module.process_violation(
+        result = automod_manager.check_message(
             server_id=server.id,
-            channel_id=channel.id,
-            user_id=user.id,
+            channel_id=channel_id,
+            user_id=owner.id,
+            content="This is a perfectly fine message",
+        )
+        assert result is not None
+        assert len(result) == 0
+
+    def test_process_violation_records_in_audit_log(self, automod_manager, test_server):
+        """Test that processing a violation creates an audit log entry."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Audit Rule",
+            rule_type=RuleType.KEYWORD,
+            rule_config={
+                "keywords": ["audit"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "log_only"}],
+        )
+
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1", (server.id,)
+        )
+        channel_id = channel["id"] if channel else 0
+
+        match = RuleMatch(
+            rule_id=rule.id,
+            rule_type=RuleType.KEYWORD,
+            matched=True,
+            matched_content="audit",
+            severity=ViolationSeverity.MEDIUM,
+        )
+        automod_manager.process_violation(
+            server_id=server.id,
+            channel_id=channel_id,
+            user_id=99999,
             message_id=None,
-            match=result.violations[0],
-            actions=result.actions_to_take,
+            match=match,
+            actions=rule.actions,
         )
 
-        assert violation.id is not None
-        assert violation.user_id == user.id
-        assert violation.rule_id == rule.id
+        entries = automod_manager.get_audit_log(server.id)
+        assert len(entries) >= 1
 
-        violations = automod_module.get_violations(server.id, user_id=user.id)
-        assert len(violations) > 0
-        assert violations[0].id == violation.id
-
-        reputation = automod_module.get_user_reputation(user.id, server.id)
-        assert reputation.score < 100.0
-        assert reputation.violation_count > 0
-
-    def test_multiple_rules_priority(
-        self, automod_module, test_server_for_automod, user_pool
-    ):
-        """Test multiple rules with priority ordering."""
-        server, channel, owner = test_server_for_automod
-        user = user_pool.get_user()
-
-        automod_module.create_rule(
+    def test_disabled_rule_does_not_trigger(self, automod_manager, test_server):
+        """Test that a disabled rule does not trigger on message check."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
             user_id=owner.id,
             server_id=server.id,
-            name="Low Priority",
+            name="Disabled Rule",
             rule_type=RuleType.KEYWORD,
             rule_config={
-                "keywords": ["test"],
+                "keywords": ["shouldnotmatch"],
                 "case_sensitive": False,
                 "whole_word": True,
             },
             actions=[{"action_type": "log_only"}],
-            priority=1,
         )
 
-        high_priority = automod_module.create_rule(
+        automod_manager.set_rule_enabled(owner.id, rule.id, False)
+
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1", (server.id,)
+        )
+        channel_id = channel["id"] if channel else 0
+
+        result = automod_manager.check_message(
+            server_id=server.id,
+            channel_id=channel_id,
+            user_id=owner.id,
+            content="This contains shouldnotmatch word",
+        )
+        assert len(result) == 0
+
+    def test_exempt_channel_skips_rule(self, automod_manager, test_server):
+        """Test that a channel exemption prevents rule enforcement."""
+        server, owner = test_server
+        automod_manager.create_rule(
             user_id=owner.id,
             server_id=server.id,
-            name="High Priority",
+            name="Exempt Test Rule",
             rule_type=RuleType.KEYWORD,
             rule_config={
-                "keywords": ["test"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "delete_message"}],
-            priority=10,
-        )
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=user.id,
-            content="test message",
-        )
-
-        assert not result.passed
-        assert result.violations[0].rule_id == high_priority.id
-
-    def test_check_all_rules(self, automod_module, test_server_for_automod, user_pool):
-        """Test check_all flag continues checking after match."""
-        server, channel, owner = test_server_for_automod
-        user = user_pool.get_user()
-
-        automod_module.create_rule(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Rule 1",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["word1"],
+                "keywords": ["exemptword"],
                 "case_sensitive": False,
                 "whole_word": True,
             },
             actions=[{"action_type": "log_only"}],
-            check_all=True,
         )
 
-        automod_module.create_rule(
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1", (server.id,)
+        )
+        channel_id = channel["id"] if channel else 0
+
+        # Add channel exemption
+        automod_manager.add_exemption(
             user_id=owner.id,
             server_id=server.id,
-            name="Rule 2",
+            target_type="channel",
+            target_id=channel_id,
+        )
+
+        result = automod_manager.check_message(
+            server_id=server.id,
+            channel_id=channel_id,
+            user_id=owner.id,
+            content="This contains exemptword",
+        )
+        assert len(result) == 0
+
+    def test_reputation_decreases_with_violations(self, automod_manager, test_server):
+        """Test that reputation score decreases when violations are processed."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Rep Rule",
             rule_type=RuleType.KEYWORD,
             rule_config={
-                "keywords": ["word2"],
+                "keywords": ["repbad"],
                 "case_sensitive": False,
                 "whole_word": True,
             },
             actions=[{"action_type": "log_only"}],
-            check_all=True,
         )
 
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=user.id,
-            content="message with word1 and word2",
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1", (server.id,)
         )
+        channel_id = channel["id"] if channel else 0
 
-        assert not result.passed
-        assert len(result.violations) == 2
+        initial_rep = automod_manager.get_user_reputation(88888, server.id)
 
-    def test_rule_enable_disable(
-        self, automod_module, test_server_for_automod, user_pool
-    ):
-        """Test enabling and disabling rules."""
-        server, channel, owner = test_server_for_automod
-        user = user_pool.get_user()
-
-        rule = automod_module.create_rule(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Toggle Test",
+        match = RuleMatch(
+            rule_id=rule.id,
             rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["toggle"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "delete_message"}],
+            matched=True,
+            matched_content="repbad",
+            severity=ViolationSeverity.MEDIUM,
         )
-
-        result = automod_module.check_message(
+        automod_manager.process_violation(
             server_id=server.id,
-            channel_id=channel.id,
-            user_id=user.id,
-            content="toggle test",
-        )
-        assert not result.passed
-
-        automod_module.set_rule_enabled(owner.id, rule.id, False)
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=user.id,
-            content="toggle test",
-        )
-        assert result.passed
-
-        automod_module.set_rule_enabled(owner.id, rule.id, True)
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=user.id,
-            content="toggle test",
-        )
-        assert not result.passed
-
-    def test_bulk_message_scan(
-        self, automod_module, test_server_for_automod, modules, user_pool
-    ):
-        """Test bulk message scanning for raids."""
-        server, channel, owner = test_server_for_automod
-        user = user_pool.get_user()
-
-        modules.servers.add_member(server.id, user.id)
-
-        automod_module.create_rule(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Raid Detection",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["raid"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "delete_message"}],
+            channel_id=channel_id,
+            user_id=88888,
+            message_id=None,
+            match=match,
+            actions=rule.actions,
         )
 
-        conv = modules.messaging.create_dm(user.id, owner.id)
-
-        msg1 = modules.messaging.send_message(user.id, conv.id, "normal message")
-        msg2 = modules.messaging.send_message(user.id, conv.id, "raid spam")
-        msg3 = modules.messaging.send_message(user.id, conv.id, "another raid")
-
-        result = automod_module.scan_messages_bulk(
-            server_id=server.id,
-            channel_id=channel.id,
-            message_ids=[msg1.id, msg2.id, msg3.id],
-        )
-
-        assert result.total_scanned == 3
-        assert result.violations_found == 2
-        assert len(result.messages_flagged) == 2
-        assert user.id in result.user_violations
+        after_rep = automod_manager.get_user_reputation(88888, server.id)
+        assert after_rep.score < initial_rep.score

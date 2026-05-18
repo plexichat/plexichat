@@ -1,22 +1,24 @@
 # Authentication API
 
-Endpoints for user registration, login, session management, and two-factor authentication.
+Endpoints for user registration, login, session management, two-factor authentication, and OAuth.
 
-**Base URL**: `{{BASE_URL}}`
+**Base URL**: `https://api.plexichat.com/api/v1`
 
-## POST /auth/register
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/auth/` unless otherwise specified.
+
+## POST /api/v1/auth/register
 
 Register a new user account.
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| username | string | Yes | 3-32 characters | Unique username |
-| email | string | Yes | Valid email format | Email address |
-| password | string | Yes | See requirements | Password |
-| age | integer | No | >0 | Age (required if age gate enabled in boolean mode) |
-| dob | string | No | YYYY-MM-DD | Date of birth (required if age gate enabled in dob mode) |
+- `username` (string, required, 3-32 characters): Unique username
+- `email` (string, required, Valid email format): Email address
+- `password` (string, required, See requirements): Password
+- `age` (integer, optional, >0): Age (required if age gate enabled in boolean mode)
+- `dob` (string, optional, YYYY-MM-DD): Date of birth (required if age gate enabled in dob mode)
 
 ### Password Requirements
 
@@ -27,12 +29,12 @@ Default requirements (configurable):
 - At least one digit
 - At least one special character
 
-Check current requirements via `GET /auth/password-requirements`.
+Check current requirements via `GET /api/v1/auth/password-requirements`.
 
 ### Example Request
 
 ```bash
-curl -X POST {{BASE_URL}}/auth/register \
+curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "username": "johndoe",
@@ -64,27 +66,23 @@ curl -X POST {{BASE_URL}}/auth/register \
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Invalid input | Validation failed |
-| 400 | Weak password | Password doesn't meet requirements |
-| 409 | Already exists | Username or email taken |
+- `400` (Invalid input): Validation failed
+- `400` (Weak password): Password doesn't meet requirements
+- `409` (Already exists): Username or email taken
 
-## POST /auth/login
+## POST /api/v1/auth/login
 
 Authenticate a user and obtain a session token.
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| username | string | Yes | Username or email |
-| password | string | Yes | Password |
+- `username` (string, required): Username or email
+- `password` (string, required): Password
 
 ### Example Request
 
 ```bash
-curl -X POST {{BASE_URL}}/auth/login \
+curl -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "username": "johndoe",
@@ -128,22 +126,18 @@ curl -X POST {{BASE_URL}}/auth/login \
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 401 | Invalid credentials | Wrong username/password |
-| 403 | Account locked | Too many failed attempts |
-| 403 | Email not verified | Email verification required |
+- `401` (Invalid credentials): Wrong username/password
+- `403` (Account locked): Too many failed attempts
+- `403` (Email not verified): Email verification required
 
-## POST /auth/2fa
+## POST /api/v1/auth/2fa
 
 Complete two-factor authentication challenge.
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| challenge_token | string | Yes | Token from login response |
-| code | string | Yes | 6-digit TOTP or backup code |
+- `challenge_token` (string, required): Token from login response
+- `code` (string, required): 6-digit TOTP or backup code
 
 ### Example Request
 
@@ -169,19 +163,17 @@ Complete two-factor authentication challenge.
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 401 | Invalid code | Wrong 2FA code |
-| 401 | Expired token | Challenge token expired |
+- `401` (Invalid code): Wrong 2FA code
+- `401` (Expired token): Challenge token expired
 
-## POST /auth/logout
+## POST /api/v1/auth/logout
 
 Logout and revoke the current session.
 
 ### Example Request
 
 ```bash
-curl -X POST {{BASE_URL}}/auth/logout \
+curl -X POST http://localhost:8000/api/v1/auth/logout \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -193,14 +185,14 @@ curl -X POST {{BASE_URL}}/auth/logout \
 }
 ```
 
-## POST /auth/refresh
+## POST /api/v1/auth/refresh
 
 Refresh the current session token. Extends session lifetime if near expiration.
 
 ### Example Request
 
 ```bash
-curl -X POST {{BASE_URL}}/auth/refresh \
+curl -X POST http://localhost:8000/api/v1/auth/refresh \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -208,15 +200,15 @@ curl -X POST {{BASE_URL}}/auth/refresh \
 
 Returns standard `LoginResponse`.
 
-## POST /auth/password-reset/request
+## POST /api/v1/auth/password-reset/request
+
+> **Note**: This endpoint is planned but not currently implemented. Email integration is required for password reset functionality.
 
 Request a password reset email. Always returns success to prevent email enumeration.
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| email | string | Yes | Account email address |
+- `email` (string, required): Account email address
 
 ### Response (200 OK)
 
@@ -226,16 +218,16 @@ Request a password reset email. Always returns success to prevent email enumerat
 }
 ```
 
-## POST /auth/password-reset/confirm
+## POST /api/v1/auth/password-reset/confirm
+
+> **Note**: This endpoint is planned but not currently implemented.
 
 Complete password reset using token from email.
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| token | string | Yes | Reset token from email |
-| new_password | string | Yes | New password |
+- `token` (string, required): Reset token from email
+- `new_password` (string, required): New password
 
 ### Response (200 OK)
 
@@ -245,14 +237,14 @@ Complete password reset using token from email.
 }
 ```
 
-## GET /auth/sessions
+## GET /api/v1/auth/sessions
 
 Get all active sessions for the current user.
 
 ### Example Request
 
 ```bash
-curl -X GET {{BASE_URL}}/auth/sessions \
+curl -X GET http://localhost:8000/api/v1/auth/sessions \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -273,7 +265,9 @@ curl -X GET {{BASE_URL}}/auth/sessions \
 ]
 ```
 
-## DELETE /auth/sessions/{session_id}
+## DELETE /api/v1/auth/sessions/{session_id}
+
+> **Note**: This endpoint is planned but not currently implemented. Use `POST /api/v1/auth/logout` to revoke the current session.
 
 Revoke a specific session.
 
@@ -285,9 +279,7 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| session_id | string | Session's snowflake ID |
+- `session_id` (string): Session's snowflake ID
 
 ### Response (200 OK)
 
@@ -299,12 +291,12 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Invalid session ID | ID format invalid |
-| 404 | Session not found | Session doesn't exist |
+- `400` (Invalid session ID): ID format invalid
+- `404` (Session not found): Session doesn't exist
 
-## POST /auth/sessions/revoke-all
+## POST /api/v1/auth/sessions/revoke-all
+
+> **Note**: This endpoint is planned but not currently implemented.
 
 Revoke all sessions except optionally the current one.
 
@@ -316,9 +308,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| except_current | bool | true | Keep current session active |
+- except_current: bool
 
 ### Response (200 OK)
 
@@ -329,7 +319,7 @@ Authorization: Bearer <token>
 }
 ```
 
-## GET /auth/2fa/status
+## GET /api/v1/auth/2fa/status
 
 Get current 2FA status for the authenticated user.
 
@@ -348,7 +338,7 @@ Authorization: Bearer <token>
 }
 ```
 
-## POST /auth/2fa/enable
+## POST /api/v1/auth/2fa/enable
 
 Start 2FA setup process. Returns QR code and secret.
 
@@ -360,9 +350,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| password | string | Yes | Current password for verification |
+- `password` (string, required): Current password for verification
 
 ### Response (200 OK)
 
@@ -376,13 +364,11 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Password required | Missing password |
-| 401 | Invalid password | Wrong password |
-| 409 | 2FA is already enabled | Already active |
+- `400` (Password required): Missing password
+- `401` (Invalid password): Wrong password
+- `409` (2FA is already enabled): Already active
 
-## POST /auth/2fa/confirm
+## POST /api/v1/auth/2fa/confirm
 
 Confirm 2FA setup with TOTP code from authenticator app.
 
@@ -394,9 +380,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| code | string | Yes | 6-digit code from authenticator |
+- `code` (string, required): 6-digit code from authenticator
 
 ### Response (200 OK)
 
@@ -408,13 +392,11 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Valid 6-digit code required | Invalid code format |
-| 400 | 2FA setup not started | No pending setup |
-| 401 | Invalid code | Wrong code |
+- `400` (Valid 6-digit code required): Invalid code format
+- `400` (2FA setup not started): No pending setup
+- `401` (Invalid code): Wrong code
 
-## POST /auth/2fa/disable
+## POST /api/v1/auth/2fa/disable
 
 Disable 2FA on the account.
 
@@ -426,10 +408,8 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| password | string | Yes | Current password |
-| code | string | Yes | Current 2FA code |
+- `password` (string, required): Current password
+- `code` (string, required): Current 2FA code
 
 ### Response (200 OK)
 
@@ -441,14 +421,12 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Message | Description |
-|--------|---------|-------------|
-| 400 | Password required | Missing password |
-| 400 | 2FA code required | Missing code |
-| 400 | 2FA is not enabled | Not active |
-| 401 | Invalid password or code | Wrong credentials |
+- `400` (Password required): Missing password
+- `400` (2FA code required): Missing code
+- `400` (2FA is not enabled): Not active
+- `401` (Invalid password or code): Wrong credentials
 
-## GET /auth/password-requirements
+## GET /api/v1/auth/password-requirements
 
 Get server password policy (no authentication required).
 
@@ -470,43 +448,33 @@ Get server password policy (no authentication required).
 
 ## Token Types
 
-| Type | Header Format | Description |
-|------|---------------|-------------|
-| User Session | `Bearer <token>` | User session token |
-| Bot Token | `Bot <token>` | Bot application token |
+- `User Session` (`Bearer <token>`): User session token
+- `Bot Token` (`Bot <token>`): Bot application token
 
 ## Session Limits
 
-| Setting | Default |
-|---------|---------|
-| Max sessions per user | 10 |
-| Session expiration | 7 days (168 hours) |
-| Extend on activity | Yes |
+- Max sessions per user: 10
+- Session expiration: 7 days (168 hours)
+- Extend on activity: Yes
 
 ## Account Lockout
 
-| Setting | Default |
-|---------|---------|
-| Max failed attempts | 5 |
-| Lockout duration | 15 minutes |
+- Max failed attempts: 5
+- Lockout duration: 15 minutes
 
 ## OAuth Sign-In
 
-OAuth allows users to sign in using external providers like Google, GitHub, and Microsoft.
+OAuth allows users to sign in using external providers like Google, GitHub, Microsoft, and GitLab. Supports PKCE for enhanced security.
 
-### GET /auth/oauth/{provider}/login
+### GET /api/v1/auth/oauth/{provider}/login
 
 Initiate an OAuth login flow.
 
 **Path Parameters:**
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| provider | string | `google`, `github`, `microsoft`, or `gitlab` |
+- `provider` (string): `google`, `github`, `microsoft`, or `gitlab`
 
 **Query Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| redirect_uri | string | Yes | The URI where the provider should redirect after auth |
+- `redirect_uri` (string, required): The URI where the provider should redirect after auth
 
 **Response (200 OK):**
 ```json
@@ -517,22 +485,233 @@ Initiate an OAuth login flow.
 }
 ```
 
-### POST /auth/oauth/{provider}/callback
+### POST /api/v1/auth/oauth/{provider}/callback
 
 Handle the callback from the OAuth provider.
 
 **Path Parameters:**
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| provider | string | `google`, `github`, `microsoft`, or `gitlab` |
+- `provider` (string): `google`, `github`, `microsoft`, or `gitlab`
 
 **Request Body:**
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| code | string | Yes | Authorization code from the provider |
-| state | string | Yes | State parameter from the provider |
-| redirect_uri | string | Yes | Same redirect URI used in initiation |
-| code_verifier | string | No | PKCE verifier returned from the login step when PKCE is enabled |
+- `code` (string, required): Authorization code from the provider
+- `state` (string, required): State parameter from the provider
+- `redirect_uri` (string, required): Same redirect URI used in initiation
+- `code_verifier` (string, optional): PKCE verifier returned from the login step when PKCE is enabled
 
 **Response (200 OK):**
 Standard `LoginResponse` (same as `/auth/login`).
+
+## Passkey Authentication (WebAuthn/FIDO2)
+
+Plexichat supports WebAuthn/FIDO2 passkeys for passwordless authentication. Passkeys can be used as a primary authentication method or alongside passwords.
+
+### Security Features
+
+- **Platform authenticators**: Touch ID, Face ID, Windows Hello
+- **Cross-platform authenticators**: YubiKey, Titan Security Key
+- **Discoverable credentials**: Usernameless authentication support
+- **Signature counters**: Clone detection
+- **Backup detection**: Identifies synced credentials (Apple Keychain, Google Password Manager)
+
+### POST /api/v1/auth/passkeys/options/register
+
+Get WebAuthn registration options to register a new passkey.
+
+**Headers:**
+```http
+Authorization: Bearer <token>
+```
+
+**Request Body:**
+```json
+{
+  "device_name": "My YubiKey"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "challenge_id": "challenge_uuid",
+  "options": {
+    "rp": {
+      "name": "Plexichat",
+      "id": "chat.example.com"
+    },
+    "user": {
+      "id": "base64_user_handle",
+      "name": "username",
+      "displayName": "User Name"
+    },
+    "challenge": "base64_challenge",
+    "pubKeyCredParams": [...],
+    "excludeCredentials": [...],
+    "authenticatorSelection": {
+      "residentKey": "preferred",
+      "userVerification": "preferred"
+    }
+  }
+}
+```
+
+### POST /api/v1/auth/passkeys/register
+
+Complete passkey registration with the credential from the authenticator.
+
+**Headers:**
+```http
+Authorization: Bearer <token>
+```
+
+**Request Body:**
+```json
+{
+  "challenge_id": "challenge_uuid",
+  "credential": {
+    "id": "credential_id",
+    "rawId": "base64_raw_id",
+    "type": "public-key",
+    "response": {
+      "clientDataJSON": "base64_json",
+      "attestationObject": "base64_object"
+    }
+  }
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "id": "123456789012345678",
+  "credential_id": "base64url_credential_id",
+  "device_name": "My YubiKey",
+  "device_type": "cross-platform",
+  "created_at": 1704067200,
+  "last_used_at": null,
+  "backed_up": false,
+  "revoked": false
+}
+```
+
+### POST /api/v1/auth/passkeys/options/authenticate
+
+Get authentication options for passkey login. Call this before showing the browser's passkey prompt.
+
+**Request Body:**
+```json
+{
+  "username": "johndoe"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "challenge_id": "challenge_uuid",
+  "options": {
+    "challenge": "base64_challenge",
+    "rpId": "chat.example.com",
+    "allowCredentials": [...],
+    "userVerification": "preferred"
+  }
+}
+```
+
+### POST /api/v1/auth/passkeys/authenticate
+
+Complete passkey authentication.
+
+**Request Body:**
+```json
+{
+  "challenge_id": "challenge_uuid",
+  "credential": {
+    "id": "credential_id",
+    "rawId": "base64_raw_id",
+    "type": "public-key",
+    "response": {
+      "clientDataJSON": "base64_json",
+      "authenticatorData": "base64_data",
+      "signature": "base64_sig",
+      "userHandle": "base64_user_handle"
+    }
+  }
+}
+```
+
+**Response (200 OK):**
+Standard `LoginResponse` (same as `/auth/login`).
+
+### GET /api/v1/auth/passkeys
+
+List registered passkeys for the current user.
+
+**Headers:**
+```http
+Authorization: Bearer <token>
+```
+
+**Response (200 OK):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "credential_id": "base64url_credential_id",
+    "device_name": "My YubiKey",
+    "device_type": "cross-platform",
+    "created_at": 1704067200,
+    "last_used_at": 1704153600,
+    "backed_up": false,
+    "revoked": false
+  }
+]
+```
+
+### DELETE /api/v1/auth/passkeys/{passkey_id}
+
+Revoke a passkey.
+
+**Headers:**
+```http
+Authorization: Bearer <token>
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true
+}
+```
+
+### PATCH /api/v1/auth/passkeys/{passkey_id}
+
+Rename a passkey.
+
+**Headers:**
+```http
+Authorization: Bearer <token>
+```
+
+**Request Body:**
+```json
+{
+  "name": "New Device Name"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true
+}
+```
+
+## Authentication Methods Priority
+
+When multiple methods are enabled, the login flow follows this priority:
+
+1. **Passkey** - If user has registered passkeys, offer passkey authentication
+2. **Password + 2FA** - Traditional authentication
+3. **OAuth** - External provider authentication
+
+Users can disable password authentication if at least one passkey is registered.

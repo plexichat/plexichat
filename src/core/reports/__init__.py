@@ -65,12 +65,17 @@ class MessageReport:
     category: str
     details: Optional[str]
     message_content: Optional[str]
+    evidence_urls: Optional[str]
+    priority: str
     status: ReportStatus
     reported_at: int
     reviewed_at: Optional[int]
     reviewed_by: Optional[int]
     admin_notes: Optional[str]
     action_taken: Optional[str]
+    assigned_to: Optional[int]
+    escalated_at: Optional[int]
+    resolution: Optional[str]
 
 
 @dataclass
@@ -84,12 +89,17 @@ class UserReport:
     category: str
     details: Optional[str]
     evidence_message_ids: Optional[List[int]]
+    evidence_urls: Optional[str]
+    priority: str
     status: ReportStatus
     reported_at: int
     reviewed_at: Optional[int]
     reviewed_by: Optional[int]
     admin_notes: Optional[str]
     action_taken: Optional[str]
+    assigned_to: Optional[int]
+    escalated_at: Optional[int]
+    resolution: Optional[str]
 
 
 SCHEMA = """
@@ -105,12 +115,17 @@ CREATE TABLE IF NOT EXISTS message_reports (
     category TEXT NOT NULL DEFAULT 'other',
     details TEXT,
     message_content TEXT,
+    evidence_urls TEXT,
+    priority TEXT NOT NULL DEFAULT 'medium',
     status TEXT NOT NULL DEFAULT 'pending',
     reported_at BIGINT NOT NULL,
     reviewed_at BIGINT,
     reviewed_by BIGINT,
     admin_notes TEXT,
-    action_taken TEXT
+    action_taken TEXT,
+    assigned_to BIGINT,
+    escalated_at BIGINT,
+    resolution TEXT
 );
 
 -- User reports
@@ -122,12 +137,17 @@ CREATE TABLE IF NOT EXISTS user_reports (
     category TEXT NOT NULL DEFAULT 'other',
     details TEXT,
     evidence_message_ids TEXT,
+    evidence_urls TEXT,
+    priority TEXT NOT NULL DEFAULT 'medium',
     status TEXT NOT NULL DEFAULT 'pending',
     reported_at BIGINT NOT NULL,
     reviewed_at BIGINT,
     reviewed_by BIGINT,
     admin_notes TEXT,
-    action_taken TEXT
+    action_taken TEXT,
+    assigned_to BIGINT,
+    escalated_at BIGINT,
+    resolution TEXT
 );
 
 -- Indexes
@@ -135,9 +155,13 @@ CREATE INDEX IF NOT EXISTS idx_message_reports_status ON message_reports(status)
 CREATE INDEX IF NOT EXISTS idx_message_reports_reporter ON message_reports(reporter_id);
 CREATE INDEX IF NOT EXISTS idx_message_reports_reported ON message_reports(reported_user_id);
 CREATE INDEX IF NOT EXISTS idx_message_reports_message ON message_reports(message_id);
+CREATE INDEX IF NOT EXISTS idx_message_reports_priority ON message_reports(priority);
+CREATE INDEX IF NOT EXISTS idx_message_reports_assigned ON message_reports(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_user_reports_status ON user_reports(status);
 CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports(reporter_id);
 CREATE INDEX IF NOT EXISTS idx_user_reports_reported ON user_reports(reported_user_id);
+CREATE INDEX IF NOT EXISTS idx_user_reports_priority ON user_reports(priority);
+CREATE INDEX IF NOT EXISTS idx_user_reports_assigned ON user_reports(assigned_to);
 """
 
 _db: Any = None
@@ -284,12 +308,17 @@ def report_message(
         category=category,
         details=details,
         message_content=message_content,
+        evidence_urls=None,
+        priority="medium",
         status=ReportStatus.PENDING,
         reported_at=now,
         reviewed_at=None,
         reviewed_by=None,
         admin_notes=None,
         action_taken=None,
+        assigned_to=None,
+        escalated_at=None,
+        resolution=None,
     )
 
 
@@ -401,14 +430,30 @@ def _row_to_message_report(row) -> MessageReport:
             category=row.get("category", "other"),
             details=row.get("details"),
             message_content=row.get("message_content"),
+            evidence_urls=row.get("evidence_urls"),
+            priority=row.get("priority", "medium"),
             status=ReportStatus(row["status"]),
             reported_at=row["reported_at"],
             reviewed_at=row.get("reviewed_at"),
             reviewed_by=row.get("reviewed_by"),
             admin_notes=row.get("admin_notes"),
             action_taken=row.get("action_taken"),
+            assigned_to=row.get("assigned_to"),
+            escalated_at=row.get("escalated_at"),
+            resolution=row.get("resolution"),
         )
     else:
+        # Column order: id(0), message_id(1), channel_id(2), server_id(3), reporter_id(4),
+        # reported_user_id(5), reason(6), category(7), details(8), message_content(9),
+        # evidence_urls(10), priority(11), status(12), reported_at(13), reviewed_at(14),
+        # reviewed_by(15), admin_notes(16), action_taken(17), assigned_to(18),
+        # escalated_at(19), resolution(20)
+        def _safe_get(idx, default=None):
+            try:
+                return row[idx]
+            except IndexError:
+                return default
+
         return MessageReport(
             id=row[0],
             message_id=row[1],
@@ -417,15 +462,20 @@ def _row_to_message_report(row) -> MessageReport:
             reporter_id=row[4],
             reported_user_id=row[5],
             reason=row[6],
-            category=row[7],
-            details=row[8],
-            message_content=row[9],
-            status=ReportStatus(row[10]),
-            reported_at=row[11],
-            reviewed_at=row[12],
-            reviewed_by=row[13],
-            admin_notes=row[14],
-            action_taken=row[15],
+            category=_safe_get(7, "other"),
+            details=_safe_get(8),
+            message_content=_safe_get(9),
+            evidence_urls=_safe_get(10),
+            priority=_safe_get(11, "medium"),
+            status=ReportStatus(_safe_get(12, "pending")),
+            reported_at=row[13] if len(row) > 13 else row[11],
+            reviewed_at=_safe_get(14),
+            reviewed_by=_safe_get(15),
+            admin_notes=_safe_get(16),
+            action_taken=_safe_get(17),
+            assigned_to=_safe_get(18),
+            escalated_at=_safe_get(19),
+            resolution=_safe_get(20),
         )
 
 
@@ -490,12 +540,17 @@ def report_user(
         category=category,
         details=details,
         evidence_message_ids=evidence_message_ids,
+        evidence_urls=None,
+        priority="medium",
         status=ReportStatus.PENDING,
         reported_at=now,
         reviewed_at=None,
         reviewed_by=None,
         admin_notes=None,
         action_taken=None,
+        assigned_to=None,
+        escalated_at=None,
+        resolution=None,
     )
 
 
@@ -610,14 +665,29 @@ def _row_to_user_report(row) -> UserReport:
             category=row.get("category", "other"),
             details=row.get("details"),
             evidence_message_ids=evidence_ids,
+            evidence_urls=row.get("evidence_urls"),
+            priority=row.get("priority", "medium"),
             status=ReportStatus(row["status"]),
             reported_at=row["reported_at"],
             reviewed_at=row.get("reviewed_at"),
             reviewed_by=row.get("reviewed_by"),
             admin_notes=row.get("admin_notes"),
             action_taken=row.get("action_taken"),
+            assigned_to=row.get("assigned_to"),
+            escalated_at=row.get("escalated_at"),
+            resolution=row.get("resolution"),
         )
     else:
+        # Column order: id(0), reported_user_id(1), reporter_id(2), reason(3), category(4),
+        # details(5), evidence_message_ids(6), evidence_urls(7), priority(8), status(9),
+        # reported_at(10), reviewed_at(11), reviewed_by(12), admin_notes(13),
+        # action_taken(14), assigned_to(15), escalated_at(16), resolution(17)
+        def _safe_get(idx, default=None):
+            try:
+                return row[idx]
+            except IndexError:
+                return default
+
         evidence_str = row[6]
         if evidence_str:
             evidence_ids = [int(x) for x in evidence_str.split(",") if x]
@@ -627,13 +697,18 @@ def _row_to_user_report(row) -> UserReport:
             reported_user_id=row[1],
             reporter_id=row[2],
             reason=row[3],
-            category=row[4],
-            details=row[5],
+            category=_safe_get(4, "other"),
+            details=_safe_get(5),
             evidence_message_ids=evidence_ids,
-            status=ReportStatus(row[7]),
-            reported_at=row[8],
-            reviewed_at=row[9],
-            reviewed_by=row[10],
-            admin_notes=row[11],
-            action_taken=row[12],
+            evidence_urls=_safe_get(7),
+            priority=_safe_get(8, "medium"),
+            status=ReportStatus(_safe_get(9, "pending")),
+            reported_at=row[10] if len(row) > 10 else row[8],
+            reviewed_at=_safe_get(11),
+            reviewed_by=_safe_get(12),
+            admin_notes=_safe_get(13),
+            action_taken=_safe_get(14),
+            assigned_to=_safe_get(15),
+            escalated_at=_safe_get(16),
+            resolution=_safe_get(17),
         )

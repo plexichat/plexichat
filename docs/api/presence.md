@@ -2,6 +2,12 @@
 
 Endpoints for managing user presence and status.
 
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
+
 ## PUT /users/@me/presence
 
 Update the current user's presence status.
@@ -14,21 +20,17 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| status | string | Yes | Valid status | Online status |
-| custom_status | string | No | Max 128 chars | Custom status text |
-| custom_emoji | string | No | - | Custom status emoji |
+- `status` (string, required, Valid status): Online status
+- `custom_status` (string, optional, Max 128 chars): Custom status text
+- `custom_emoji` (string, optional): Custom status emoji
 
 ### Status Values
 
-| Status | Description |
-|--------|-------------|
-| online | User is online |
-| idle | User is idle/away |
-| dnd | Do not disturb |
-| invisible | Appear offline to others |
-| offline | Go offline |
+- online: User is online
+- idle: User is idle/away
+- dnd: Do not disturb
+- invisible: Appear offline to others
+- offline: Go offline
 
 ### Example Request
 
@@ -54,9 +56,7 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid status | Status value not recognized |
+- 400 Invalid status: Status value not recognized
 
 ## GET /users/{user_id}/presence
 
@@ -70,9 +70,7 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| user_id | string | User's snowflake ID |
+- `user_id` (string): User's snowflake ID
 
 ### Response (200 OK)
 
@@ -104,10 +102,8 @@ Authorization: Bearer <token>
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| user_id | string | User's snowflake ID |
-| status | string | Current status |
-| custom_status | string? | Custom status text |
-| custom_emoji | string? | Custom status emoji |
-| last_seen | int? | Unix timestamp of last activity |
+- `user_id` (string): User's snowflake ID
+- `status` (string): Current status
+- `custom_status` (string?): Custom status text
+- `custom_emoji` (string?): Custom status emoji
+- `last_seen` (int?): Unix timestamp of last activity

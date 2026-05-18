@@ -5,6 +5,8 @@ Feedback and ticket management for Plexichat Admin.
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 import time
+import utils.config as config
+import utils.logger as logger
 
 
 @dataclass
@@ -40,11 +42,13 @@ def get_feedback_tickets(
     db: Any, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
 ) -> List[FeedbackTicket]:
     """Get feedback tickets with optional status filter."""
+    encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
+
     if status_filter:
         rows = db.fetch_all(
             """SELECT f.id, f.user_id, u.username, f.content, f.category, f.rating,
                       COALESCE(f.status, 'open') as status, f.created_at, 
-                      f.resolved_at, f.resolved_by, f.internal_notes
+                      f.resolved_at, f.resolved_by, f.internal_notes, f.internal_notes_encrypted
                FROM feedback f
                LEFT JOIN auth_users u ON f.user_id = u.id
                WHERE COALESCE(f.status, 'open') = ?
@@ -56,7 +60,7 @@ def get_feedback_tickets(
         rows = db.fetch_all(
             """SELECT f.id, f.user_id, u.username, f.content, f.category, f.rating,
                       COALESCE(f.status, 'open') as status, f.created_at,
-                      f.resolved_at, f.resolved_by, f.internal_notes
+                      f.resolved_at, f.resolved_by, f.internal_notes, f.internal_notes_encrypted
                FROM feedback f
                LEFT JOIN auth_users u ON f.user_id = u.id
                ORDER BY f.created_at DESC
@@ -67,6 +71,17 @@ def get_feedback_tickets(
     tickets = []
     for row in rows:
         if isinstance(row, dict):
+            # Decrypt internal_notes if encryption is enabled
+            internal_notes = row["internal_notes"]
+            if encrypt_internal_notes and row.get("internal_notes_encrypted"):
+                from src.utils.encryption import decrypt_data
+
+                try:
+                    internal_notes = decrypt_data(row["internal_notes_encrypted"])
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt feedback notes {row['id']}: {e}")
+                    internal_notes = row["internal_notes"]  # Fallback
+
             tickets.append(
                 FeedbackTicket(
                     id=row["id"],
@@ -79,10 +94,21 @@ def get_feedback_tickets(
                     created_at=row["created_at"],
                     resolved_at=row["resolved_at"],
                     resolved_by=row["resolved_by"],
-                    internal_notes=row["internal_notes"],
+                    internal_notes=internal_notes,
                 )
             )
         else:
+            # Handle tuple rows (legacy)
+            internal_notes = row[10]
+            if encrypt_internal_notes and len(row) > 11 and row[11]:
+                from src.utils.encryption import decrypt_data
+
+                try:
+                    internal_notes = decrypt_data(row[11])
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt feedback notes {row[0]}: {e}")
+                    internal_notes = row[10]  # Fallback
+
             tickets.append(
                 FeedbackTicket(
                     id=row[0],
@@ -95,7 +121,7 @@ def get_feedback_tickets(
                     created_at=row[7],
                     resolved_at=row[8],
                     resolved_by=row[9],
-                    internal_notes=row[10],
+                    internal_notes=internal_notes,
                 )
             )
     return tickets
@@ -103,10 +129,12 @@ def get_feedback_tickets(
 
 def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
     """Get a single feedback ticket by ID."""
+    encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
+
     row = db.fetch_one(
         """SELECT f.id, f.user_id, u.username, f.content, f.category, f.rating,
                   COALESCE(f.status, 'open') as status, f.created_at,
-                  f.resolved_at, f.resolved_by, f.internal_notes
+                  f.resolved_at, f.resolved_by, f.internal_notes, f.internal_notes_encrypted
            FROM feedback f
            LEFT JOIN auth_users u ON f.user_id = u.id
            WHERE f.id = ?""",
@@ -116,6 +144,17 @@ def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
         return None
 
     if isinstance(row, dict):
+        # Decrypt internal_notes if encryption is enabled
+        internal_notes = row["internal_notes"]
+        if encrypt_internal_notes and row.get("internal_notes_encrypted"):
+            from src.utils.encryption import decrypt_data
+
+            try:
+                internal_notes = decrypt_data(row["internal_notes_encrypted"])
+            except Exception as e:
+                logger.warning(f"Failed to decrypt feedback notes {row['id']}: {e}")
+                internal_notes = row["internal_notes"]  # Fallback
+
         return FeedbackTicket(
             id=row["id"],
             user_id=row["user_id"],
@@ -127,8 +166,20 @@ def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
             created_at=row["created_at"],
             resolved_at=row["resolved_at"],
             resolved_by=row["resolved_by"],
-            internal_notes=row["internal_notes"],
+            internal_notes=internal_notes,
         )
+
+    # Handle tuple rows (legacy)
+    internal_notes = row[10]
+    if encrypt_internal_notes and len(row) > 11 and row[11]:
+        from src.utils.encryption import decrypt_data
+
+        try:
+            internal_notes = decrypt_data(row[11])
+        except Exception as e:
+            logger.warning(f"Failed to decrypt feedback notes {row[0]}: {e}")
+            internal_notes = row[10]  # Fallback
+
     return FeedbackTicket(
         id=row[0],
         user_id=row[1],
@@ -140,7 +191,7 @@ def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
         created_at=row[7],
         resolved_at=row[8],
         resolved_by=row[9],
-        internal_notes=row[10],
+        internal_notes=internal_notes,
     )
 
 
@@ -158,6 +209,32 @@ def update_ticket_status(db: Any, ticket_id: int, status: str, admin_id: int) ->
            WHERE id = ?""",
         (status, resolved_at, resolved_by, ticket_id),
     )
+    return True
+
+
+def update_ticket_internal_notes(
+    db: Any, ticket_id: int, notes: str, admin_id: int
+) -> bool:
+    """Update internal notes for a feedback ticket."""
+    encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
+
+    # Encrypt notes if enabled
+    notes_encrypted = None
+    if notes and encrypt_internal_notes:
+        from src.utils.encryption import encrypt_data
+
+        notes_encrypted = encrypt_data(notes)
+
+    if encrypt_internal_notes:
+        db.execute(
+            "UPDATE feedback SET internal_notes = ?, internal_notes_encrypted = ? WHERE id = ?",
+            (notes, notes_encrypted, ticket_id),
+        )
+    else:
+        db.execute(
+            "UPDATE feedback SET internal_notes = ? WHERE id = ?", (notes, ticket_id)
+        )
+    logger.info(f"Admin {admin_id} updated internal notes for ticket {ticket_id}")
     return True
 
 

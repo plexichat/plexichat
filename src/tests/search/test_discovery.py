@@ -12,22 +12,21 @@ from src.core.search.exceptions import (
 )
 
 
-@pytest.mark.search
 class TestServerCategories:
     """Test server category functionality."""
 
-    def test_get_categories(self, db_and_modules):
+    def test_get_categories(self, db_and_search):
         """Test getting all categories."""
-        db, auth, messaging, servers, search = db_and_modules
+        db, auth, messaging, servers, search = db_and_search
 
         categories = search.get_server_categories()
 
         assert isinstance(categories, list)
         assert len(categories) > 0
 
-    def test_category_has_required_fields(self, db_and_modules):
+    def test_category_has_required_fields(self, db_and_search):
         """Test categories have required fields."""
-        db, auth, messaging, servers, search = db_and_modules
+        db, auth, messaging, servers, search = db_and_search
 
         categories = search.get_server_categories()
 
@@ -36,9 +35,9 @@ class TestServerCategories:
             assert cat.id is not None
             assert cat.name is not None
 
-    def test_default_categories_exist(self, db_and_modules):
+    def test_default_categories_exist(self, db_and_search):
         """Test default categories are seeded."""
-        db, auth, messaging, servers, search = db_and_modules
+        db, auth, messaging, servers, search = db_and_search
 
         categories = search.get_server_categories()
         category_ids = [c.id for c in categories]
@@ -52,9 +51,9 @@ class TestServerCategories:
 class TestServerListing:
     """Test server listing functionality."""
 
-    def test_list_server(self, users_with_server):
+    def test_list_server(self, users_with_server_search):
         """Test listing a server."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         listing = search.list_server(
             user_id=owner.id,
@@ -68,18 +67,18 @@ class TestServerListing:
         assert listing.server_id == server.id
         assert listing.category == "gaming"
 
-    def test_list_server_invalid_category(self, users_with_server):
+    def test_list_server_invalid_category(self, users_with_server_search):
         """Test listing with invalid category raises error."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         with pytest.raises(CategoryNotFoundError):
             search.list_server(
                 user_id=owner.id, server_id=server.id, category="invalid_category_xyz"
             )
 
-    def test_list_server_updates_existing(self, users_with_server):
+    def test_list_server_updates_existing(self, users_with_server_search):
         """Test listing an already listed server updates it."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         search.list_server(
             user_id=owner.id,
@@ -97,9 +96,9 @@ class TestServerListing:
 
         assert listing2.category == "music"
 
-    def test_unlist_server(self, users_with_server):
+    def test_unlist_server(self, users_with_server_search):
         """Test unlisting a server."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
@@ -107,9 +106,9 @@ class TestServerListing:
 
         assert result is True
 
-    def test_unlist_server_not_listed(self, db_and_modules):
+    def test_unlist_server_not_listed(self, db_and_search):
         """Test unlisting a server that's not listed."""
-        db, auth, messaging, servers, search = db_and_modules
+        db, auth, messaging, servers, search = db_and_search
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -128,9 +127,9 @@ class TestServerListing:
 class TestPublicServerListing:
     """Test public server listing."""
 
-    def test_list_public_servers(self, users_with_server):
+    def test_list_public_servers(self, users_with_server_search):
         """Test listing public servers."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
@@ -138,9 +137,9 @@ class TestPublicServerListing:
 
         assert isinstance(listings, list)
 
-    def test_list_public_servers_by_category(self, users_with_server):
+    def test_list_public_servers_by_category(self, users_with_server_search):
         """Test listing public servers by category."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
@@ -149,9 +148,9 @@ class TestPublicServerListing:
         for listing in listings:
             assert listing.category == "gaming"
 
-    def test_list_public_servers_sort_by_members(self, users_with_server):
+    def test_list_public_servers_sort_by_members(self, users_with_server_search):
         """Test sorting by member count."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
@@ -161,9 +160,9 @@ class TestPublicServerListing:
             for i in range(len(listings) - 1):
                 assert listings[i].member_count >= listings[i + 1].member_count
 
-    def test_list_public_servers_limit(self, users_with_server):
+    def test_list_public_servers_limit(self, users_with_server_search):
         """Test listing with limit."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         listings = search.list_public_servers(limit=5)
 
@@ -174,9 +173,26 @@ class TestPublicServerListing:
 class TestServerBumping:
     """Test server bumping functionality."""
 
-    def test_bump_server(self, users_with_server):
+    def test_bump_server(self, db_and_search):
         """Test bumping a server."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        db, auth, messaging, servers, search = db_and_search
+
+        unique_id = uuid.uuid4().hex[:8]
+        owner = auth.register(
+            username=f"bump_owner_{unique_id}",
+            email=f"bump_owner_{unique_id}@example.com",
+            password="TestPass123!",
+        )
+        server = servers.create_server(owner.id, f"Bump Test {unique_id}")
+
+        # Add 10 members to meet minimum requirement
+        for i in range(10):
+            member = auth.register(
+                username=f"bump_member_{unique_id}_{i}",
+                email=f"bump_member_{unique_id}_{i}@example.com",
+                password="TestPass123!",
+            )
+            servers.add_member(server.id, member.id)
 
         search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
@@ -184,9 +200,9 @@ class TestServerBumping:
 
         assert result is True
 
-    def test_bump_server_not_listed(self, db_and_modules):
+    def test_bump_server_not_listed(self, db_and_search):
         """Test bumping a server that's not listed."""
-        db, auth, messaging, servers, search = db_and_modules
+        db, auth, messaging, servers, search = db_and_search
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -205,9 +221,9 @@ class TestServerBumping:
 class TestServerVerification:
     """Test server verification functionality."""
 
-    def test_verify_server(self, users_with_server):
+    def test_verify_server(self, users_with_server_search):
         """Test verifying a server."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
@@ -215,9 +231,9 @@ class TestServerVerification:
 
         assert result is True
 
-    def test_verify_server_not_listed(self, db_and_modules):
+    def test_verify_server_not_listed(self, db_and_search):
         """Test verifying a server that's not listed."""
-        db, auth, messaging, servers, search = db_and_modules
+        db, auth, messaging, servers, search = db_and_search
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -236,9 +252,9 @@ class TestServerVerification:
 class TestServerSearch:
     """Test server search functionality."""
 
-    def test_search_servers(self, users_with_server):
+    def test_search_servers(self, users_with_server_search):
         """Test searching servers."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         unique_id = uuid.uuid4().hex[:8]
 
@@ -255,9 +271,9 @@ class TestServerSearch:
 
         assert isinstance(results, list)
 
-    def test_search_servers_by_category(self, users_with_server):
+    def test_search_servers_by_category(self, users_with_server_search):
         """Test searching servers by category."""
-        owner, member1, member2, server, servers_mod, search = users_with_server
+        owner, members, server, servers_mod, search = users_with_server_search
 
         unique_id = uuid.uuid4().hex[:8]
 

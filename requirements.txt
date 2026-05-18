@@ -27,6 +27,7 @@ hiredis==2.3.2             # Redis parser (optional, for performance)
 argon2-cffi==25.1.0        # Password hashing
 cryptography==46.0.7       # Encryption (CVE-2026-39892 fix)
 pyotp==2.9.0               # TOTP 2FA
+webauthn==2.5.0            # WebAuthn/FIDO2 passkey support
 xxhash==3.4.1              # Fast non-cryptographic hashing
 
 # Validation & Serialization
@@ -38,7 +39,7 @@ PyYAML==6.0.3
 
 # HTTP Client (for webhooks, etc.)
 requests==2.33.1
-urllib3==2.6.3             # Fixed for GHSA-2xpw-w6gg-jr37, GHSA-38jv-5279-wg99, GHSA-gm62-xv2j-4w53, GHSA-pq67-6m6q-mj2v
+urllib3==2.7.0             # Fixed for GHSA-2xpw-w6gg-jr37, GHSA-38jv-5279-wg99, GHSA-gm62-xv2j-4w53, GHSA-pq67-6m6q-mj2v, CVE-2026-44431, CVE-2026-44432
 httpx==0.27.2
 aiohttp==3.13.5
 
@@ -51,9 +52,11 @@ aiortc==1.14.0              # Pure Python WebRTC implementation for SFU (default
 # cryptography==46.0.7       # Required for SRTP (already listed above)
 
 # Utilities
-python-multipart==0.0.26    # File uploads
-python-dotenv==1.0.0       # Environment variables
+python-multipart==0.0.27    # File uploads (CVE-2026-42561 fix)
+python-dotenv==1.2.2       # Environment variables (CVE-2026-28684 fix)
 python-dateutil==2.8.0     # Date/time utilities for scheduled events
+mistune==3.2.1             # Markdown renderer for documentation (CVE-2026-33079, CVE-2026-44708, CVE-2026-44896, CVE-2026-44897 fix)
+markdown==3.8.1            # Markdown renderer for admin notes (CVE-2025-69534 fix)
 
 # Image Processing (optional, for media)
 pillow==12.2.0
@@ -69,12 +72,10 @@ qrcode[pil]==7.4.2
 boto3==1.42.82              # AWS S3 SDK (also works with MinIO)
 
 # Testing & Development (optional, for running tests)
-pytest==7.0.0              # Testing framework
+pytest==9.0.3              # Testing framework (CVE-2025-71176 fix)
 pytest-asyncio==0.21.0     # Async test support
 pytest-cov==4.0.0          # Code coverage
 pytest-timeout==2.2.0      # Enforce per-test timeouts
 psutil==7.2.2              # System and process utilities (for performance tests)
 fakeredis==2.34.1          # In-memory Redis for testing
-hypothesis==6.0.0          # Property-based testing
-diskcache==5.6.3           # Persistent local file-backed cache
-
+hypothesis==6.0.4          # Property-based testing (PVE-2023-59726 fix)

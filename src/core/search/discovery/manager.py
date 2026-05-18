@@ -416,7 +416,7 @@ class DiscoveryManager:
             FROM search_server_listings l
             LEFT JOIN srv_servers s ON s.id = l.server_id
             WHERE l.server_id IN ({placeholders})
-            """,  # nosec: B608
+            """,
             tuple(server_ids),
         )
 

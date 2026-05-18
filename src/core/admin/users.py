@@ -6,6 +6,7 @@ from typing import List, Optional, Any
 from dataclasses import dataclass
 import time
 import json
+import utils.config as config
 import utils.logger as logger
 from src.core.database import invalidate_pattern
 
@@ -440,16 +441,46 @@ def unlock_user(db: Any, user_id: int) -> bool:
 
 def get_user_notes(db: Any, user_id: int) -> str:
     """Get internal admin notes for a user."""
-    row = db.fetch_one("SELECT internal_notes FROM auth_users WHERE id = ?", (user_id,))
+    encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
+
+    row = db.fetch_one(
+        "SELECT internal_notes, internal_notes_encrypted FROM auth_users WHERE id = ?",
+        (user_id,),
+    )
     if row:
-        return (row["internal_notes"] if isinstance(row, dict) else row[0]) or ""
+        notes = (row["internal_notes"] if isinstance(row, dict) else row[0]) or ""
+        # Decrypt if encryption is enabled and encrypted data exists
+        if encrypt_internal_notes and row.get("internal_notes_encrypted"):
+            from src.utils.encryption import decrypt_data
+
+            try:
+                notes = decrypt_data(row["internal_notes_encrypted"])
+            except Exception as e:
+                logger.warning(f"Failed to decrypt user notes {user_id}: {e}")
+                notes = row["internal_notes"] or ""  # Fallback to unencrypted
+        return notes
     return ""
 
 
 def save_user_notes(db: Any, user_id: int, notes: str, admin_id: int) -> bool:
     """Save internal admin notes for a user."""
-    db.execute(
-        "UPDATE auth_users SET internal_notes = ? WHERE id = ?", (notes, user_id)
-    )
+    encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
+
+    # Encrypt notes if enabled
+    notes_encrypted = None
+    if notes and encrypt_internal_notes:
+        from src.utils.encryption import encrypt_data
+
+        notes_encrypted = encrypt_data(notes)
+
+    if encrypt_internal_notes:
+        db.execute(
+            "UPDATE auth_users SET internal_notes = ?, internal_notes_encrypted = ? WHERE id = ?",
+            (notes, notes_encrypted, user_id),
+        )
+    else:
+        db.execute(
+            "UPDATE auth_users SET internal_notes = ? WHERE id = ?", (notes, user_id)
+        )
     logger.info(f"Admin {admin_id} updated notes for user {user_id}")
     return True

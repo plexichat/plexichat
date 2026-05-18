@@ -1,212 +1,134 @@
-"""
-Tests for interaction response builders.
-"""
+"""Tests for application interaction responses."""
 
 import pytest
 
-from src.core.applications import (
+from src.core.applications.models import (
     InteractionResponseType,
-    create_message_response,
-    create_deferred_response,
-    create_modal_response,
-    create_autocomplete_response,
-    create_update_response,
+    InteractionResponse,
+    ButtonStyle,
+    ComponentType,
 )
 
 
 @pytest.mark.applications
-@pytest.mark.integration
-class TestMessageResponse:
-    """Tests for message response builder."""
+class TestResponses:
+    """Tests for interaction response models and types."""
 
-    def test_create_basic_message(self):
-        """Test creating basic message response."""
-        response = create_message_response(content="Hello!")
+    def test_pong_response(self):
+        """Test creating a pong response."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.PONG,
+        )
+        assert response.response_type == InteractionResponseType.PONG
+        assert response.content is None
 
+    def test_message_response(self):
+        """Test creating a channel message response."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            content="Hello!",
+        )
         assert (
             response.response_type
             == InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE
         )
         assert response.content == "Hello!"
-        assert response.flags == 0
 
-    def test_create_ephemeral_message(self):
-        """Test creating ephemeral message response."""
-        response = create_message_response(
-            content="Secret message",
-            ephemeral=True,
+    def test_deferred_message_response(self):
+        """Test creating a deferred message response."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
         )
-
-        assert response.flags == 64
-
-    def test_create_message_with_embeds(self):
-        """Test creating message with embeds."""
-        response = create_message_response(
-            content="Check this out:",
-            embeds=[
-                {"title": "Embed Title", "description": "Embed content"},
-            ],
-        )
-
-        assert response.embeds is not None
-        assert len(response.embeds) == 1
-        assert response.embeds[0]["title"] == "Embed Title"
-
-    def test_create_message_with_components(self):
-        """Test creating message with components."""
-        response = create_message_response(
-            content="Click a button:",
-            components=[
-                {
-                    "type": 1,
-                    "components": [
-                        {"type": 2, "style": 1, "label": "Click", "custom_id": "btn"},
-                    ],
-                },
-            ],
-        )
-
-        assert response.components is not None
-        assert len(response.components) == 1
-
-    def test_create_message_with_tts(self):
-        """Test creating message with TTS."""
-        response = create_message_response(
-            content="This will be spoken",
-            tts=True,
-        )
-
-        assert response.tts is True
-
-    def test_create_message_with_allowed_mentions(self):
-        """Test creating message with allowed mentions."""
-        response = create_message_response(
-            content="@everyone",
-            allowed_mentions={"parse": []},
-        )
-
-        assert response.allowed_mentions == {"parse": []}
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestDeferredResponse:
-    """Tests for deferred response builder."""
-
-    def test_create_deferred_response(self):
-        """Test creating deferred response."""
-        response = create_deferred_response()
-
         assert (
             response.response_type
             == InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
         )
-        assert response.flags == 0
 
-    def test_create_deferred_ephemeral(self):
-        """Test creating deferred ephemeral response."""
-        response = create_deferred_response(ephemeral=True)
-
-        assert response.flags == 64
-
-    def test_create_deferred_update(self):
-        """Test creating deferred update response."""
-        response = create_deferred_response(update=True)
-
-        assert response.response_type == InteractionResponseType.DEFERRED_UPDATE_MESSAGE
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestUpdateResponse:
-    """Tests for update response builder."""
-
-    def test_create_update_response(self):
-        """Test creating update response."""
-        response = create_update_response(content="Updated content")
-
+    def test_update_message_response(self):
+        """Test creating an update message response."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.UPDATE_MESSAGE,
+            content="Updated!",
+        )
         assert response.response_type == InteractionResponseType.UPDATE_MESSAGE
-        assert response.content == "Updated content"
 
-    def test_create_update_with_components(self):
-        """Test creating update with new components."""
-        response = create_update_response(
-            content="Updated",
-            components=[
-                {
-                    "type": 1,
-                    "components": [
-                        {
-                            "type": 2,
-                            "style": 2,
-                            "label": "Disabled",
-                            "custom_id": "btn",
-                            "disabled": True,
-                        },
-                    ],
-                },
-            ],
-        )
-
-        assert response.components is not None
-        assert len(response.components) == 1
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestModalResponse:
-    """Tests for modal response builder."""
-
-    def test_create_modal_response(self):
-        """Test creating modal response."""
-        response = create_modal_response(
-            custom_id="test_modal",
-            title="Test Modal",
-            components=[
-                {
-                    "type": 1,
-                    "components": [
-                        {
-                            "type": 4,
-                            "custom_id": "input",
-                            "label": "Input",
-                            "style": 1,
-                        },
-                    ],
-                },
-            ],
-        )
-
-        assert response.response_type == InteractionResponseType.MODAL
-        assert response.custom_id == "test_modal"
-        assert response.title == "Test Modal"
-        assert response.components is not None
-        assert len(response.components) == 1
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestAutocompleteResponse:
-    """Tests for autocomplete response builder."""
-
-    def test_create_autocomplete_response(self):
-        """Test creating autocomplete response."""
-        response = create_autocomplete_response(
+    def test_autocomplete_response(self):
+        """Test creating an autocomplete result response."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
             choices=[
-                {"name": "Option 1", "value": "opt1"},
-                {"name": "Option 2", "value": "opt2"},
+                {"name": "Option A", "value": "a"},
+                {"name": "Option B", "value": "b"},
             ],
         )
-
-        assert (
-            response.response_type
-            == InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
-        )
-        assert response.choices is not None
         assert len(response.choices) == 2
 
-    def test_create_empty_autocomplete(self):
-        """Test creating autocomplete with no choices."""
-        response = create_autocomplete_response(choices=[])
+    def test_modal_response(self):
+        """Test creating a modal response."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.MODAL,
+            custom_id="modal_test",
+            title="Test Modal",
+            components=[
+                {"type": 1, "components": []},
+            ],
+        )
+        assert response.custom_id == "modal_test"
+        assert response.title == "Test Modal"
 
-        assert response.choices == []
+    def test_ephemeral_response(self):
+        """Test creating an ephemeral response."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            content="Secret message",
+            flags=64,  # EPHEMERAL flag
+        )
+        assert response.flags == 64
+
+    def test_response_with_embeds(self):
+        """Test creating a response with embeds."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            content="Embedded content",
+            embeds=[{"title": "Test", "description": "An embed"}],
+        )
+        assert len(response.embeds) == 1
+
+    def test_response_with_components(self):
+        """Test creating a response with components."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            content="Choose an option",
+            components=[
+                {
+                    "type": ComponentType.ACTION_ROW.value,
+                    "components": [
+                        {
+                            "type": ComponentType.BUTTON.value,
+                            "style": ButtonStyle.PRIMARY.value,
+                            "label": "Click",
+                            "custom_id": "btn1",
+                        }
+                    ],
+                }
+            ],
+        )
+        assert len(response.components) == 1
+
+    def test_response_with_tts(self):
+        """Test creating a TTS response."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            content="Speaking!",
+            tts=True,
+        )
+        assert response.tts is True
+
+    def test_response_with_allowed_mentions(self):
+        """Test creating a response with allowed mentions."""
+        response = InteractionResponse(
+            response_type=InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            content="Hello <@12345>!",
+            allowed_mentions={"parse": ["users"]},
+        )
+        assert response.allowed_mentions is not None

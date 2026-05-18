@@ -2,7 +2,13 @@
 
 Endpoints for managing message reactions.
 
-## PUT /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
+
+## PUT /api/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 
 Add a reaction to a message.
 
@@ -14,11 +20,9 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| channel_id | string | Channel's snowflake ID |
-| message_id | string | Message's snowflake ID |
-| emoji | string | Emoji (Unicode or custom ID) |
+- `channel_id` (string): Channel's snowflake ID
+- `message_id` (string): Message's snowflake ID
+- `emoji` (string): Emoji (Unicode or custom ID)
 
 ### Response (200 OK)
 
@@ -30,12 +34,10 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid emoji | Emoji not recognized |
-| 400 | Reaction limit | Too many reactions on message |
-| 403 | Permission denied | No add reactions permission |
-| 404 | Message not found | Message doesn't exist |
+- 400 Invalid emoji: Emoji not recognized
+- 400 Reaction limit: Too many reactions on message
+- 403 Permission denied: No add reactions permission
+- 404 Message not found: Message doesn't exist
 
 ## DELETE /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 
@@ -86,10 +88,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid message ID | ID format invalid |
-| 404 | Message not found | Message doesn't exist |
+- 400 Invalid message ID: ID format invalid
+- 404 Message not found: Message doesn't exist
 
 ## GET /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 
@@ -103,10 +103,8 @@ Authorization: Bearer <token>
 
 ### Query Parameters
 
-| Parameter | Type | Default | Constraints | Description |
-|-----------|------|---------|-------------|-------------|
-| limit | int | 50 | 1-100 | Max users to return |
-| after | string | - | Snowflake ID | Get users after this ID |
+- `limit` (int, optional, 1-100): Max users to return
+- `after` (string, optional, Snowflake ID): Get users after this ID
 
 ### Response (200 OK)
 
@@ -125,10 +123,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid message ID | ID format invalid |
-| 404 | Message not found | Message doesn't exist |
+- 400 Invalid message ID: ID format invalid
+- 404 Message not found: Message doesn't exist
 
 ## Reaction Object
 
@@ -140,11 +136,9 @@ Authorization: Bearer <token>
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| emoji | string | Emoji identifier |
-| count | int | Number of users who reacted |
-| me | bool | Whether current user reacted |
+- `emoji` (string): Emoji identifier
+- `count` (int): Number of users who reacted
+- `me` (bool): Whether current user reacted
 
 ## Reaction User Object
 
@@ -155,10 +149,8 @@ Authorization: Bearer <token>
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| user_id | string | User's snowflake ID |
-| reacted_at | int | Unix timestamp of reaction |
+- `user_id` (string): User's snowflake ID
+- `reacted_at` (int): Unix timestamp of reaction
 
 ## Emoji Format
 

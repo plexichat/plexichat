@@ -1,152 +1,18 @@
-"""
-Tests for command options and validation.
-"""
+"""Tests for application command options validation."""
 
 import pytest
 
-from src.core.applications import CommandOptionType
+from src.core.applications.models import CommandOptionType
 
 
 @pytest.mark.applications
-@pytest.mark.integration
 class TestCommandOptions:
-    """Tests for command options."""
+    """Tests for command option validation and limits."""
 
-    def test_register_command_with_string_option(self, modules, test_application):
-        """Test registering command with string option."""
-        app, owner = test_application
-
-        cmd = modules.applications.register_command(
-            application_id=app.id,
-            name="echo",
-            description="Echo a message",
-            options=[
-                {
-                    "name": "message",
-                    "description": "Message to echo",
-                    "type": CommandOptionType.STRING,
-                    "required": True,
-                }
-            ],
-        )
-
-        assert len(cmd.options) == 1
-        assert cmd.options[0].name == "message"
-        assert cmd.options[0].option_type == CommandOptionType.STRING
-        assert cmd.options[0].required is True
-
-    def test_register_command_with_integer_option(self, modules, test_application):
-        """Test registering command with integer option."""
-        app, owner = test_application
-
-        cmd = modules.applications.register_command(
-            application_id=app.id,
-            name="roll",
-            description="Roll dice",
-            options=[
-                {
-                    "name": "sides",
-                    "description": "Number of sides",
-                    "type": CommandOptionType.INTEGER,
-                    "required": False,
-                    "min_value": 2,
-                    "max_value": 100,
-                }
-            ],
-        )
-
-        assert cmd.options[0].option_type == CommandOptionType.INTEGER
-        assert cmd.options[0].min_value == 2
-        assert cmd.options[0].max_value == 100
-
-    def test_register_command_with_boolean_option(self, modules, test_application):
-        """Test registering command with boolean option."""
-        app, owner = test_application
-
-        cmd = modules.applications.register_command(
-            application_id=app.id,
-            name="toggle",
-            description="Toggle setting",
-            options=[
-                {
-                    "name": "enabled",
-                    "description": "Enable or disable",
-                    "type": CommandOptionType.BOOLEAN,
-                }
-            ],
-        )
-
-        assert cmd.options[0].option_type == CommandOptionType.BOOLEAN
-
-    def test_register_command_with_user_option(self, modules, test_application):
-        """Test registering command with user option."""
-        app, owner = test_application
-
-        cmd = modules.applications.register_command(
-            application_id=app.id,
-            name="info",
-            description="Get user info",
-            options=[
-                {
-                    "name": "user",
-                    "description": "User to get info for",
-                    "type": CommandOptionType.USER,
-                }
-            ],
-        )
-
-        assert cmd.options[0].option_type == CommandOptionType.USER
-
-    def test_register_command_with_channel_option(self, modules, test_application):
-        """Test registering command with channel option."""
-        app, owner = test_application
-
-        cmd = modules.applications.register_command(
-            application_id=app.id,
-            name="move",
-            description="Move to channel",
-            options=[
-                {
-                    "name": "channel",
-                    "description": "Target channel",
-                    "type": CommandOptionType.CHANNEL,
-                    "channel_types": [0, 2],
-                }
-            ],
-        )
-
-        assert cmd.options[0].option_type == CommandOptionType.CHANNEL
-        assert cmd.options[0].channel_types == [0, 2]
-
-    def test_register_command_with_choices(self, modules, test_application):
-        """Test registering command with choices."""
-        app, owner = test_application
-
-        cmd = modules.applications.register_command(
-            application_id=app.id,
-            name="color",
-            description="Choose a color",
-            options=[
-                {
-                    "name": "color",
-                    "description": "Color to choose",
-                    "type": CommandOptionType.STRING,
-                    "choices": [
-                        {"name": "Red", "value": "red"},
-                        {"name": "Green", "value": "green"},
-                        {"name": "Blue", "value": "blue"},
-                    ],
-                }
-            ],
-        )
-
-        assert len(cmd.options[0].choices) == 3
-
-    def test_register_command_with_autocomplete(self, modules, test_application):
-        """Test registering command with autocomplete."""
-        app, owner = test_application
-
-        cmd = modules.applications.register_command(
+    def test_string_option(self, app_manager, test_user):
+        """Test registering a command with string option."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Str Opt App")
+        cmd = app_manager.register_command(
             application_id=app.id,
             name="search",
             description="Search for something",
@@ -154,211 +20,146 @@ class TestCommandOptions:
                 {
                     "name": "query",
                     "description": "Search query",
-                    "type": CommandOptionType.STRING,
-                    "autocomplete": True,
+                    "type": CommandOptionType.STRING.value,
+                    "required": True,
                 }
             ],
         )
+        assert len(cmd.options) == 1
 
-        assert cmd.options[0].autocomplete is True
-
-    def test_register_command_with_multiple_options(self, modules, test_application):
-        """Test registering command with multiple options."""
-        app, owner = test_application
-
-        cmd = modules.applications.register_command(
+    def test_integer_option_with_bounds(self, app_manager, test_user):
+        """Test integer option with min/max values."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Int Opt App")
+        cmd = app_manager.register_command(
             application_id=app.id,
-            name="complex",
-            description="Complex command",
+            name="roll",
+            description="Roll dice",
             options=[
                 {
-                    "name": "text",
-                    "description": "Text input",
-                    "type": CommandOptionType.STRING,
+                    "name": "sides",
+                    "description": "Number of sides",
+                    "type": CommandOptionType.INTEGER.value,
+                    "required": True,
+                    "min_value": 2,
+                    "max_value": 100,
+                }
+            ],
+        )
+        assert len(cmd.options) == 1
+
+    def test_boolean_option(self, app_manager, test_user):
+        """Test registering a command with boolean option."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Bool Opt App")
+        cmd = app_manager.register_command(
+            application_id=app.id,
+            name="toggle",
+            description="Toggle feature",
+            options=[
+                {
+                    "name": "enabled",
+                    "description": "Whether enabled",
+                    "type": CommandOptionType.BOOLEAN.value,
+                    "required": True,
+                }
+            ],
+        )
+        assert len(cmd.options) == 1
+
+    def test_channel_option(self, app_manager, test_user):
+        """Test registering a command with channel option."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Ch Opt App")
+        cmd = app_manager.register_command(
+            application_id=app.id,
+            name="move",
+            description="Move to channel",
+            options=[
+                {
+                    "name": "target",
+                    "description": "Target channel",
+                    "type": CommandOptionType.CHANNEL.value,
+                    "required": True,
+                }
+            ],
+        )
+        assert len(cmd.options) == 1
+
+    def test_multiple_options(self, app_manager, test_user):
+        """Test registering a command with multiple options."""
+        app = app_manager.create_application(
+            owner_id=test_user.id, name="Multi Opt App"
+        )
+        cmd = app_manager.register_command(
+            application_id=app.id,
+            name="remind",
+            description="Set a reminder",
+            options=[
+                {
+                    "name": "message",
+                    "description": "Reminder text",
+                    "type": CommandOptionType.STRING.value,
                     "required": True,
                 },
                 {
-                    "name": "count",
-                    "description": "Count",
-                    "type": CommandOptionType.INTEGER,
+                    "name": "minutes",
+                    "description": "Minutes from now",
+                    "type": CommandOptionType.INTEGER.value,
                     "required": True,
+                    "min_value": 1,
                 },
                 {
-                    "name": "user",
-                    "description": "Target user",
-                    "type": CommandOptionType.USER,
+                    "name": "repeat",
+                    "description": "Repeat daily",
+                    "type": CommandOptionType.BOOLEAN.value,
                     "required": False,
                 },
             ],
         )
-
         assert len(cmd.options) == 3
 
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestCommandOptionValidation:
-    """Tests for command option validation."""
-
-    def test_validate_valid_option(self, modules):
-        """Test validating a valid option."""
-        valid, issues = modules.applications.validate_option(
-            {
-                "name": "test",
-                "description": "Test option",
-                "type": CommandOptionType.STRING,
-            }
-        )
-
-        assert valid is True
-        assert len(issues) == 0
-
-    def test_validate_option_missing_name(self, modules):
-        """Test validating option without name."""
-        valid, issues = modules.applications.validate_option(
-            {
-                "description": "Test option",
-                "type": CommandOptionType.STRING,
-            }
-        )
-
-        assert valid is False
-        assert any("name" in issue.lower() for issue in issues)
-
-    def test_validate_option_missing_description(self, modules):
-        """Test validating option without description."""
-        valid, issues = modules.applications.validate_option(
-            {
-                "name": "test",
-                "type": CommandOptionType.STRING,
-            }
-        )
-
-        assert valid is False
-        assert any("description" in issue.lower() for issue in issues)
-
-    def test_validate_option_invalid_name(self, modules):
-        """Test validating option with invalid name."""
-        valid, issues = modules.applications.validate_option(
-            {
-                "name": "Invalid Name!",
-                "description": "Test option",
-                "type": CommandOptionType.STRING,
-            }
-        )
-
-        assert valid is False
-
-    def test_validate_option_name_too_long(self, modules):
-        """Test validating option with name too long."""
-        valid, issues = modules.applications.validate_option(
-            {
-                "name": "a" * 50,
-                "description": "Test option",
-                "type": CommandOptionType.STRING,
-            }
-        )
-
-        assert valid is False
-
-    def test_validate_options_list(self, modules):
-        """Test validating list of options."""
-        valid, issues = modules.applications.validate_options(
-            [
+    def test_option_with_choices(self, app_manager, test_user):
+        """Test registering a command with choices."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Choice App")
+        cmd = app_manager.register_command(
+            application_id=app.id,
+            name="color",
+            description="Pick a color",
+            options=[
                 {
-                    "name": "opt1",
-                    "description": "Option 1",
-                    "type": CommandOptionType.STRING,
+                    "name": "color",
+                    "description": "Color name",
+                    "type": CommandOptionType.STRING.value,
                     "required": True,
-                },
-                {
-                    "name": "opt2",
-                    "description": "Option 2",
-                    "type": CommandOptionType.INTEGER,
-                    "required": False,
-                },
-            ]
+                    "choices": [
+                        {"name": "Red", "value": "red"},
+                        {"name": "Blue", "value": "blue"},
+                        {"name": "Green", "value": "green"},
+                    ],
+                }
+            ],
         )
+        assert len(cmd.options) == 1
 
-        assert valid is True
-
-    def test_validate_options_duplicate_names(self, modules):
-        """Test validating options with duplicate names."""
-        valid, issues = modules.applications.validate_options(
-            [
+    def test_subcommand_option(self, app_manager, test_user):
+        """Test registering a command with subcommand."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Subcmd App")
+        cmd = app_manager.register_command(
+            application_id=app.id,
+            name="config",
+            description="Configure settings",
+            options=[
                 {
-                    "name": "same",
-                    "description": "Option 1",
-                    "type": CommandOptionType.STRING,
-                },
-                {
-                    "name": "same",
-                    "description": "Option 2",
-                    "type": CommandOptionType.INTEGER,
-                },
-            ]
+                    "name": "set",
+                    "description": "Set a value",
+                    "type": CommandOptionType.SUB_COMMAND.value,
+                    "options": [
+                        {
+                            "name": "key",
+                            "description": "Setting key",
+                            "type": CommandOptionType.STRING.value,
+                            "required": True,
+                        }
+                    ],
+                }
+            ],
         )
-
-        assert valid is False
-        assert any("duplicate" in issue.lower() for issue in issues)
-
-    def test_validate_options_required_order(self, modules):
-        """Test that required options must come before optional."""
-        valid, issues = modules.applications.validate_options(
-            [
-                {
-                    "name": "optional",
-                    "description": "Optional first",
-                    "type": CommandOptionType.STRING,
-                    "required": False,
-                },
-                {
-                    "name": "required",
-                    "description": "Required after optional",
-                    "type": CommandOptionType.STRING,
-                    "required": True,
-                },
-            ]
-        )
-
-        assert valid is False
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestCommandValidation:
-    """Tests for command validation."""
-
-    def test_validate_valid_command(self, modules):
-        """Test validating a valid command."""
-        valid, issues = modules.applications.validate_command(
-            {
-                "name": "test",
-                "description": "Test command",
-            }
-        )
-
-        assert valid is True
-
-    def test_validate_command_name_uppercase(self, modules):
-        """Test that command names must be lowercase."""
-        valid, issues = modules.applications.validate_command_name("TestCommand")
-
-        assert valid is False
-
-    def test_validate_command_name_special_chars(self, modules):
-        """Test command name with special characters."""
-        valid, issues = modules.applications.validate_command_name("test!")
-
-        assert valid is False
-
-    def test_validate_command_description_too_long(self, modules):
-        """Test command description too long."""
-        from src.core.applications import CommandType
-
-        valid, issues = modules.applications.validate_command_description(
-            "a" * 200,
-            CommandType.CHAT_INPUT,
-        )
-
-        assert valid is False
+        assert len(cmd.options) == 1

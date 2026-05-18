@@ -46,19 +46,11 @@ class TestTLSModule:
 
         assert is_tls_enabled() is True
 
-    @pytest.mark.skipif(
-        not pytest.importorskip("cryptography", reason="cryptography not installed"),
-        reason="cryptography library required",
-    )
     def test_ensure_certificates_generates_files(self):
         """Test certificate generation creates files."""
         from src.core.tls import ensure_certificates
-        import utils.logger as logger
 
-        # Setup logger for test
         with tempfile.TemporaryDirectory() as tmpdir:
-            logger.setup(log_dir=tmpdir, level="ERROR")
-
             cert_path = os.path.join(tmpdir, "test.crt")
             key_path = os.path.join(tmpdir, "test.key")
 
@@ -85,22 +77,11 @@ class TestTLSModule:
                 key_content = f.read()
                 assert "BEGIN RSA PRIVATE KEY" in key_content
 
-            # Shutdown logger to release file handles before tmpdir cleanup
-            logger.shutdown()
-
-    @pytest.mark.skipif(
-        not pytest.importorskip("cryptography", reason="cryptography not installed"),
-        reason="cryptography library required",
-    )
     def test_ensure_certificates_reuses_existing(self):
         """Test that existing valid certificates are reused."""
         from src.core.tls import ensure_certificates
-        import utils.logger as logger
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Setup logger for test
-            logger.setup(log_dir=tmpdir, level="ERROR")
-
             cert_path = os.path.join(tmpdir, "test.crt")
             key_path = os.path.join(tmpdir, "test.key")
 
@@ -123,9 +104,6 @@ class TestTLSModule:
                 # Modification time should be the same
                 second_mtime = os.path.getmtime(cert_path)
                 assert first_mtime == second_mtime
-
-            # Shutdown logger to release file handles before tmpdir cleanup
-            logger.shutdown()
 
     def test_get_ssl_context_missing_cert(self):
         """Test get_ssl_context raises error for missing cert."""

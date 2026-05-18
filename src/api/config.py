@@ -56,6 +56,8 @@ class APIConfig:
     docs_url: Optional[str] = "/docs"
     redoc_url: Optional[str] = "/redoc"
     openapi_url: Optional[str] = "/openapi.json"
+    # Maximum request body size in bytes (default 10MB for voice message uploads)
+    max_request_body_size: int = 10 * 1024 * 1024  # 10MB
 
 
 def get_api_config() -> APIConfig:
@@ -143,4 +145,5 @@ def get_api_config() -> APIConfig:
         docs_url=api_conf.get("docs_url", "/docs"),
         redoc_url=api_conf.get("redoc_url", "/redoc"),
         openapi_url=api_conf.get("openapi_url", "/openapi.json"),
+        max_request_body_size=api_conf.get("max_request_body_size", 10 * 1024 * 1024),
     )

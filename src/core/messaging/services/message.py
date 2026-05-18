@@ -20,12 +20,16 @@ from ..exceptions import (
     AttachmentLimitError,
 )
 from src.core.database import cache_get, cache_set, cache_delete
+from src.utils.encryption import (
+    encrypt_message,
+    blind_index,
+    encrypt_data,
+)
 from .base import BaseService
 from .participant import ParticipantService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
 from src.core.base import SnowflakeID
-from src.utils.encryption import encrypt_message, blind_index, encrypt_data
 import utils.logger as logger
 
 
@@ -238,6 +242,22 @@ class MessageService(BaseService):
             attachments=attachment_list,
         )
 
+        # Index for search (with DECRYPTED plaintext, not encrypted content)
+        try:
+            _search_index_message(
+                msg_id,
+                content_result.sanitized_content,
+                {
+                    "author_id": user_id,
+                    "conversation_id": conversation_id,
+                    "created_at": now,
+                    "has_attachments": bool(attachments),
+                    "has_embeds": bool(embeds),
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Failed to index message for search: {e}")
+
         # Cache the message
         cache_set(f"msg:obj:{msg_id}", msg, ttl=3600)
 
@@ -310,6 +330,20 @@ class MessageService(BaseService):
         self._repo.update_content(
             message_id, final_content, now, content_index=content_idx
         )
+
+        # Update search index with DECRYPTED plaintext
+        try:
+            _search_index_message(
+                message_id,
+                content_result.sanitized_content,
+                {
+                    "author_id": user_id,
+                    "conversation_id": msg_row["conversation_id"],
+                    "created_at": msg_row["created_at"],
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Failed to update search index for message {message_id}: {e}")
 
         # Invalidate old cache
         cache_delete(f"msg:obj:{message_id}")
@@ -389,6 +423,14 @@ class MessageService(BaseService):
         else:
             self._repo.soft_delete(message_id, now)
 
+        # Remove from search index
+        try:
+            _search_remove_from_index(message_id)
+        except Exception as e:
+            logger.debug(
+                f"Failed to remove message {message_id} from search index: {e}"
+            )
+
         # Invalidate cache
         cache_delete(f"msg:obj:{message_id}")
 
@@ -398,16 +440,163 @@ class MessageService(BaseService):
 
             client = get_client()
             if client:
-                # We can't easily LREM because we don't have conversation_id here easily without fetching
-                # but soft_delete already invalidates the conversation cache list
-                # Let's try to get conversation_id if we can to be thorough
-                if msg_row:
-                    list_key = f"msg:recent:{msg_row['conversation_id']}"
-                    client.delete(list_key)
-        except Exception as e:
-            logger.debug(f"Failed to clear recent messages list on delete: {e}")
+                client.delete(f"recent_messages:{msg_row['conversation_id']}")
+        except Exception:
+            pass
 
         return True
+
+    def delete_messages_bulk(
+        self,
+        user_id: SnowflakeID,
+        message_ids: List[SnowflakeID],
+        hard_delete: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Delete multiple messages in bulk.
+
+        Args:
+            user_id: ID of the user deleting messages
+            message_ids: List of message IDs to delete
+            hard_delete: If True, permanently delete; if False, soft delete
+
+        Returns:
+            Dict with success count, failed count, and failed IDs
+
+        Raises:
+            MessageAccessDeniedError: If user lacks permission for any message
+        """
+        success_count = 0
+        failed_ids = []
+        now = self._get_timestamp()
+
+        for message_id in message_ids:
+            try:
+                msg_row = self._repo.get_by_id(message_id)
+                if not msg_row:
+                    failed_ids.append(message_id)
+                    continue
+
+                # Check permission
+                can_delete = msg_row["author_id"] == user_id
+
+                if not can_delete:
+                    from ..models import ParticipantRole
+
+                    participant = self._participant_svc.get_participant(
+                        msg_row["conversation_id"], user_id
+                    )
+                    if participant and participant.role in [
+                        ParticipantRole.OWNER,
+                        ParticipantRole.ADMIN,
+                    ]:
+                        can_delete = True
+
+                if not can_delete:
+                    failed_ids.append(message_id)
+                    continue
+
+                if hard_delete:
+                    self._repo.hard_delete(message_id)
+                else:
+                    self._repo.soft_delete(message_id, now)
+
+                # Invalidate cache
+                cache_delete(f"msg:obj:{message_id}")
+
+                # Remove from search index
+                try:
+                    from src.core import search as search_module
+
+                    search_module.remove_from_index(int(message_id))
+                except Exception:
+                    pass
+
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Failed to delete message {message_id}: {e}")
+                failed_ids.append(message_id)
+
+        return {
+            "success_count": success_count,
+            "failed_count": len(failed_ids),
+            "failed_ids": failed_ids,
+        }
+
+    def archive_messages_bulk(
+        self,
+        user_id: SnowflakeID,
+        message_ids: List[SnowflakeID],
+    ) -> Dict[str, Any]:
+        """
+        Archive multiple messages (mark as archived for cleanup).
+
+        Args:
+            user_id: ID of the user archiving messages
+            message_ids: List of message IDs to archive
+
+        Returns:
+            Dict with success count, failed count, and failed IDs
+
+        Raises:
+            MessageAccessDeniedError: If user lacks permission for any message
+        """
+        success_count = 0
+        failed_ids = []
+        now = self._get_timestamp()
+
+        for message_id in message_ids:
+            try:
+                msg_row = self._repo.get_by_id(message_id)
+                if not msg_row:
+                    failed_ids.append(message_id)
+                    continue
+
+                # Check permission - only owner/admin can archive
+                can_archive = False
+
+                participant = self._participant_svc.get_participant(
+                    msg_row["conversation_id"], user_id
+                )
+                if participant:
+                    from ..models import ParticipantRole
+
+                    if participant.role in [
+                        ParticipantRole.OWNER,
+                        ParticipantRole.ADMIN,
+                    ]:
+                        can_archive = True
+
+                if not can_archive:
+                    failed_ids.append(message_id)
+                    continue
+
+                # Mark as archived (update metadata)
+                import json
+
+                metadata = {}
+                if msg_row.get("metadata"):
+                    try:
+                        metadata = json.loads(msg_row["metadata"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                metadata["archived"] = True
+                metadata["archived_by"] = user_id
+                metadata["archived_at"] = now
+
+                self._repo.update_metadata(message_id, metadata, now)
+
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Failed to archive message {message_id}: {e}")
+                failed_ids.append(message_id)
+
+        return {
+            "success_count": success_count,
+            "failed_count": len(failed_ids),
+            "failed_ids": failed_ids,
+        }
 
     def get_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID
@@ -626,3 +815,55 @@ class MessageService(BaseService):
     def get_message_raw(self, message_id: SnowflakeID) -> Optional[Dict[str, Any]]:
         """Get raw message row (for internal use)."""
         return self._repo.get_by_id(message_id)
+
+
+# === Module-level search indexing helpers ===
+# These are defined at module level to avoid circular import issues.
+# They safely check if the search module is initialized before indexing.
+
+
+def _search_index_message(
+    message_id: SnowflakeID,
+    plaintext_content: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Index a message for search with DECRYPTED plaintext content.
+
+    This function handles encrypted messages properly by accepting
+    already-decrypted content from the caller (MessageService).
+    Safely catches errors if the search module isn't initialized.
+
+    Args:
+        message_id: ID of the message
+        plaintext_content: The DECRYPTED plaintext content (NOT encrypted)
+        metadata: Additional metadata (author_id, conversation_id, etc.)
+    """
+    try:
+        import src.core.search as search_module
+
+        search_module.index_message(
+            message_id=int(message_id),
+            content=str(plaintext_content) if plaintext_content else "",
+            metadata=metadata,
+        )
+    except (RuntimeError, AttributeError, Exception):
+        # RuntimeError: "Search module not initialized"
+        # AttributeError: module not setup
+        # Generic Exception: any other initialization issue
+        pass
+
+
+def _search_remove_from_index(message_id: SnowflakeID) -> None:
+    """
+    Remove a message from the search index.
+
+    Args:
+        message_id: ID of the message to remove
+    """
+    try:
+        import src.core.search as search_module
+
+        search_module.remove_from_index(int(message_id))
+    except (RuntimeError, AttributeError, Exception):
+        pass

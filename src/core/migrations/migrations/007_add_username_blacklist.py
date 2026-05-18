@@ -2,26 +2,23 @@
 Add username blacklist table and user force_change flag.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def up(db):
     """Apply the migration."""
+    logger.info("Migration 007: Starting username blacklist addition")
     # 1. Add force_username_change column to users table
     try:
-        if db.type == "sqlite":
-            rows = db.fetch_all("PRAGMA table_info(auth_users)")
-            columns = [row["name"] for row in rows]
-            if "force_username_change" not in columns:
+        if not db.column_exists("auth_users", "force_username_change"):
+            if db.type == "sqlite":
                 db.execute(
                     "ALTER TABLE auth_users ADD COLUMN force_username_change BOOLEAN DEFAULT 0"
                 )
-        else:
-            # Postgres
-            row = db.fetch_one("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name='auth_users' AND column_name='force_username_change'
-            """)
-            if not row:
+            else:
+                # Postgres
                 db.execute(
                     "ALTER TABLE auth_users ADD COLUMN force_username_change BOOLEAN DEFAULT FALSE"
                 )
@@ -87,12 +84,12 @@ def up(db):
 
 def down(db):
     """Rollback the migration."""
+    logger.info("Migration 007 rollback: Starting rollback")
     db.execute("DROP TABLE IF EXISTS username_blacklist")
 
-    try:
-        if db.type != "sqlite":
-            db.execute(
-                "ALTER TABLE auth_users DROP COLUMN IF EXISTS force_username_change"
-            )
-    except Exception:
-        pass
+    if db.type == "postgres":
+        try:
+            if db.column_exists("auth_users", "force_username_change"):
+                db.execute("ALTER TABLE auth_users DROP COLUMN force_username_change")
+        except Exception:
+            pass

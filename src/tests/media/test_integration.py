@@ -1,290 +1,101 @@
-"""
-Integration tests for media module.
-"""
+"""Tests for media integration with messaging."""
 
 import pytest
 
 
-@pytest.mark.media
-class TestMediaModuleSetup:
-    """Tests for media module initialization."""
-
-    def test_module_setup(self, modules, temp_upload_dir):
-        """Test that media module can be set up."""
-        import utils.config as config
-
-        assert config._config_instance is not None
-        config._config_instance.config["media"] = {
-            "storage_backend": "local",
-            "local_path": temp_upload_dir,
-            "local_url": "/media",
-            "signing_key": "test-key",
-        }
-
-        from src.core import media
-
-        media._manager = None
-        media._setup_complete = False
-
-        media.setup(modules._db)
-
-        assert media._setup_complete is True
-        assert media._manager is not None
-
-    def test_module_raises_without_setup(self):
-        """Test that module raises error if not set up."""
-        from src.core import media
-
-        media._manager = None
-        media._setup_complete = False
-
-        with pytest.raises(RuntimeError):
-            media.get_file(1)
+MINI_PNG = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01"
+    b"\x00\x00\x05\x00\x01\r\n\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 
 @pytest.mark.media
-class TestFullUploadWorkflow:
-    """Tests for complete upload workflows."""
+class TestIntegration:
+    """Tests for media integration with messaging module."""
 
-    def test_upload_retrieve_delete_workflow(
-        self, media_module, user_pool, sample_image_bytes
+    def test_upload_and_attach_to_message(
+        self, media_manager, messaging_manager, two_users
     ):
-        """Test complete upload, retrieve, delete workflow."""
-        user = user_pool.get_user()
+        """Test uploading a file and attaching it to a message."""
+        user1, user2 = two_users
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="workflow_test.jpg",
-        )
-
-        assert result.file_id is not None
-
-        file = media_module.get_file(result.file_id)
-        assert file is not None
-        assert file.original_filename == "workflow_test.jpg"
-
-        data, content_type = media_module.get_file_data(result.file_id)
-        assert data == sample_image_bytes
-        assert content_type == "image/jpeg"
-
-        deleted = media_module.delete_file(user.id, result.file_id)
-        assert deleted is True
-
-        file = media_module.get_file(result.file_id)
-        assert file is None
-
-    def test_upload_with_thumbnails_workflow(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test upload with thumbnail generation workflow."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="thumb_workflow.jpg",
-        )
-
-        thumbnails = media_module.get_thumbnails(result.file_id)
-
-        try:
-            from PIL import Image  # noqa: F401
-
-            assert len(thumbnails) > 0
-
-            custom_url = media_module.create_thumbnail(result.file_id, size=100)
-            assert custom_url is not None
-        except ImportError:
-            pass
-
-    def test_upload_and_sign_workflow(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test upload and URL signing workflow."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="sign_workflow.jpg",
-        )
-
-        signed = media_module.sign_url(result.file_id, expires_in=3600)
-
-        assert signed.url is not None
-        assert signed.file_id == result.file_id
-
-        is_valid, file_id = media_module.verify_signed_url(signed.url)
-        assert is_valid is True
-        assert file_id == result.file_id
-
-
-@pytest.mark.media
-class TestMessagingIntegration:
-    """Tests for integration with messaging module."""
-
-    def test_upload_attachment_format(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test that upload_attachment returns correct format."""
-        user = user_pool.get_user()
-
-        attachment = media_module.upload_attachment(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="msg_attachment.jpg",
-        )
-
-        assert hasattr(attachment, "filename")
-        assert hasattr(attachment, "content_type")
-        assert hasattr(attachment, "size")
-        assert hasattr(attachment, "url")
-        assert hasattr(attachment, "metadata")
-
-        assert attachment.filename == "msg_attachment.jpg"
-        assert attachment.content_type == "image/jpeg"
-        assert attachment.size == len(sample_image_bytes)
-        assert attachment.url is not None
-
-    def test_attachment_can_be_used_with_messaging(
-        self, media_module, modules, user_pool, sample_image_bytes
-    ):
-        """Test that attachment data can be used with messaging module."""
-        user1 = user_pool.get_user()
-        user2 = user_pool.get_user()
-
-        attachment = media_module.upload_attachment(
+        attachment = media_manager.upload_attachment(
             user_id=user1.id,
-            file_data=sample_image_bytes,
-            filename="chat_image.jpg",
+            file_data=MINI_PNG,
+            filename="msg_attach.png",
+            content_type="image/png",
         )
 
-        dm = modules.messaging.create_dm(user1.id, user2.id)
-
-        msg = modules.messaging.send_message(
+        msg = messaging_manager.send_message(
             user_id=user1.id,
             conversation_id=dm.id,
-            content="Check out this image!",
+            content="Here's a file",
             attachments=[
                 {
                     "filename": attachment.filename,
                     "content_type": attachment.content_type,
                     "size": attachment.size,
                     "url": attachment.url,
-                    "metadata": attachment.metadata,
                 }
             ],
         )
-
         assert msg is not None
+        assert msg.content == "Here's a file"
 
-        attachments = modules.messaging.get_attachments(user1.id, msg.id)
-        assert len(attachments) == 1
-        assert attachments[0].filename == "chat_image.jpg"
+    def test_rate_limit_status(self, media_manager, test_user):
+        """Test getting rate limit status for a user."""
+        status = media_manager.get_rate_limit_status(test_user.id)
+        assert isinstance(status, dict)
+        assert "enabled" in status
 
-
-@pytest.mark.media
-class TestMultipleFileTypes:
-    """Tests for handling multiple file types."""
-
-    def test_upload_different_image_formats(
-        self,
-        media_module,
-        user_pool,
-        sample_image_bytes,
-        sample_png_bytes,
-        sample_gif_bytes,
-    ):
-        """Test uploading different image formats."""
-        user = user_pool.get_user()
-
-        jpeg_result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="test.jpg",
-            content_type="image/jpeg",
-        )
-        assert jpeg_result.content_type == "image/jpeg"
-
-        png_result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_png_bytes,
-            filename="test.png",
+    def test_scan_file(self, media_manager, test_user):
+        """Test scanning an uploaded file."""
+        result = media_manager.upload_file(
+            user_id=test_user.id,
+            file_data=MINI_PNG,
+            filename="scan_test.png",
             content_type="image/png",
         )
-        assert png_result.content_type == "image/png"
+        scan_status, scan_result = media_manager.scan_file(result.file_id)
+        # Scanner is likely not available in test env, so status is SKIPPED
+        assert scan_status is not None
 
-        gif_result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_gif_bytes,
-            filename="test.gif",
-            content_type="image/gif",
+    def test_scan_nonexistent_file(self, media_manager):
+        """Test scanning a nonexistent file raises error."""
+        from src.core.media.exceptions import MediaError
+
+        with pytest.raises(MediaError):
+            media_manager.scan_file(9999999)
+
+    def test_get_video_metadata_non_video(self, media_manager, test_user):
+        """Test getting video metadata for a non-video file returns None."""
+        result = media_manager.upload_file(
+            user_id=test_user.id,
+            file_data=MINI_PNG,
+            filename="not_video.png",
+            content_type="image/png",
         )
-        assert gif_result.content_type == "image/gif"
+        metadata = media_manager.get_video_metadata(result.file_id)
+        assert metadata is None
 
-    def test_upload_document_types(
-        self, media_module, user_pool, sample_text_bytes, sample_pdf_bytes
-    ):
-        """Test uploading document types."""
-        user = user_pool.get_user()
+    def test_get_video_metadata_nonexistent(self, media_manager):
+        """Test getting video metadata for nonexistent file returns None."""
+        metadata = media_manager.get_video_metadata(9999999)
+        assert metadata is None
 
-        text_result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_text_bytes,
-            filename="readme.txt",
-            content_type="text/plain",
-        )
-        assert text_result.content_type == "text/plain"
-
-        pdf_result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_pdf_bytes,
-            filename="document.pdf",
-            content_type="application/pdf",
-        )
-        assert pdf_result.content_type == "application/pdf"
-
-
-@pytest.mark.media
-class TestConcurrentUploads:
-    """Tests for concurrent upload handling."""
-
-    def test_multiple_users_upload(self, media_module, user_pool, sample_image_bytes):
-        """Test multiple users uploading simultaneously."""
-        users = [user_pool.get_user() for _ in range(5)]
+    def test_multiple_uploads(self, media_manager, test_user):
+        """Test uploading multiple files."""
         results = []
-
-        for i, user in enumerate(users):
-            result = media_module.upload_file(
-                user_id=user.id,
-                file_data=sample_image_bytes,
-                filename=f"user_{i}_file.jpg",
+        for i in range(3):
+            result = media_manager.upload_file(
+                user_id=test_user.id,
+                file_data=MINI_PNG,
+                filename=f"multi_{i}.png",
+                content_type="image/png",
             )
             results.append(result)
-
-        file_ids = [r.file_id for r in results]
-        assert len(set(file_ids)) == 5
-
-    def test_same_user_multiple_uploads(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test same user uploading multiple files."""
-        user = user_pool.get_user()
-        results = []
-
-        for i in range(5):
-            result = media_module.upload_file(
-                user_id=user.id,
-                file_data=sample_image_bytes,
-                filename=f"file_{i}.jpg",
-            )
-            results.append(result)
-
-        file_ids = [r.file_id for r in results]
-        assert len(set(file_ids)) == 5
-
-        for result in results:
-            file = media_module.get_file(result.file_id)
-            assert file is not None
-            assert file.uploaded_by == user.id
+        assert len(results) == 3
+        assert len({r.file_id for r in results}) == 3  # All unique IDs

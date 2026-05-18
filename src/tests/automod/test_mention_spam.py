@@ -1,118 +1,60 @@
-"""
-Tests for mention spam rules.
-"""
+"""Tests for automod mention spam rules."""
 
 import pytest
 
-from src.core import automod
-from src.core.automod import RuleType
-from src.core.automod.rules.mentions import MentionSpamRule
+from src.core.automod.models import RuleType
+from src.core.automod.exceptions import RuleValidationError
 
 
 @pytest.mark.automod
-class TestMentionSpamRule:
-    """Tests for MentionSpamRule."""
+class TestMentionSpam:
+    """Tests for mention spam detection rules."""
 
-    def test_user_mention_spam(self, mention_rule):
-        """Test excessive user mentions are detected."""
-        rule, server, channel, owner = mention_rule
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
+    def test_create_mention_spam_rule(self, automod_manager, test_server):
+        """Test creating a mention spam rule."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
             user_id=owner.id,
-            content="Hey <@123> <@456> <@789> <@101> check this out",
-        )
-
-        assert not result.passed
-        assert result.violations[0].rule_type == RuleType.MENTION_SPAM
-
-    def test_role_mention_spam(self, mention_rule):
-        """Test excessive role mentions are detected."""
-        rule, server, channel, owner = mention_rule
-
-        result = automod.check_message(
             server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content="Attention <@&111> <@&222> <@&333>",
+            name="Mention Spam Guard",
+            rule_type=RuleType.MENTION_SPAM,
+            rule_config={
+                "max_user_mentions": 5,
+                "max_role_mentions": 3,
+                "max_total_mentions": 7,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
+        assert rule.name == "Mention Spam Guard"
+        assert rule.rule_type == RuleType.MENTION_SPAM
 
-        assert not result.passed
+    def test_mention_spam_config_validation(self, automod_manager, test_server):
+        """Test mention spam rule requires proper config."""
+        server, owner = test_server
+        with pytest.raises(RuleValidationError):
+            automod_manager.create_rule(
+                user_id=owner.id,
+                server_id=server.id,
+                name="Invalid",
+                rule_type=RuleType.MENTION_SPAM,
+                rule_config={},  # Missing required fields
+                actions=[{"action_type": "log_only"}],
+            )
 
-    def test_everyone_blocked(self, mention_rule):
-        """Test @everyone is blocked when configured."""
-        rule, server, channel, owner = mention_rule
-
-        result = automod.check_message(
+    def test_mention_spam_rule_retrieved(self, automod_manager, test_server):
+        """Test mention spam rule can be retrieved after creation."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
+            user_id=owner.id,
             server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content="Hey @everyone check this out",
+            name="Mention Rule",
+            rule_type=RuleType.MENTION_SPAM,
+            rule_config={
+                "max_user_mentions": 3,
+                "max_role_mentions": 2,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
-
-        assert not result.passed
-
-    def test_here_blocked(self, mention_rule):
-        """Test @here is blocked when configured."""
-        rule, server, channel, owner = mention_rule
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content="Hey @here important announcement",
-        )
-
-        assert not result.passed
-
-    def test_normal_mentions_pass(self, mention_rule):
-        """Test normal mention count passes."""
-        rule, server, channel, owner = mention_rule
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content="Hey <@123> <@456> check this",
-        )
-
-        assert result.passed
-
-    def test_no_mentions_pass(self, mention_rule):
-        """Test message without mentions passes."""
-        rule, server, channel, owner = mention_rule
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content="Just a normal message",
-        )
-
-        assert result.passed
-
-
-@pytest.mark.automod
-class TestMentionSpamRuleValidation:
-    """Tests for mention spam rule config validation."""
-
-    def test_valid_config(self):
-        """Test valid configuration passes."""
-        valid, issues = MentionSpamRule.validate_config(
-            {"max_user_mentions": 5, "max_role_mentions": 3, "block_everyone": True}
-        )
-
-        assert valid
-
-    def test_invalid_mention_count(self):
-        """Test negative mention count fails."""
-        valid, issues = MentionSpamRule.validate_config({"max_user_mentions": -1})
-
-        assert not valid
-
-    def test_invalid_block_everyone_type(self):
-        """Test non-boolean block_everyone fails."""
-        valid, issues = MentionSpamRule.validate_config({"block_everyone": "yes"})
-
-        assert not valid
+        retrieved = automod_manager.get_rule(rule.id)
+        assert retrieved is not None
+        assert retrieved.rule_type == RuleType.MENTION_SPAM

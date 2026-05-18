@@ -6,13 +6,13 @@ expecting a sequence/autoincrement if it was incorrectly created.
 """
 
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 
 
 def up(db):
     """Apply migration to fix user_settings pk."""
+    logger.info("Migration 004: Starting user_settings PK fix")
     db_type = getattr(db, "type", "sqlite")
 
     if db_type == "postgres":
@@ -26,25 +26,24 @@ def up(db):
 
 
 def down(db):
-    """Rollback: (optional) would involve adding SERIAL back, but we prefer Snowflake IDs."""
-    pass
+    """Rollback: Restore SERIAL default for PostgreSQL.
 
-
-def _table_exists(db, table_name: str) -> bool:
-    """Strictly check if a table exists."""
-    if not re.match(r"^[a-zA-Z0-9_]+$", table_name):
-        return False
-
-    db_type = getattr(db, "type", "sqlite")
-    if db_type == "postgres":
-        row = db.fetch_one(
-            "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
-            (table_name,),
-        )
-        return row is not None
+    For SQLite: No action needed (uses INTEGER AUTOINCREMENT).
+    For PostgreSQL: Restores SERIAL default if desired.
+    """
+    logger.info("Migration 004 rollback: Starting rollback")
+    if db.type == "postgres":
+        # Note: We generally prefer Snowflake IDs, so this rollback
+        # is optional. If restoring SERIAL is needed:
+        try:
+            db.execute(
+                "ALTER TABLE user_settings ALTER COLUMN id SET DEFAULT nextval('user_settings_id_seq')"
+            )
+            db.execute("ALTER TABLE user_settings ALTER COLUMN id TYPE SERIAL")
+            logger.info(
+                "Migration 004 rollback: Restored SERIAL for user_settings.id (PostgreSQL)"
+            )
+        except Exception as e:
+            logger.warning(f"Migration 004 rollback: Could not restore SERIAL: {e}")
     else:
-        row = db.fetch_one(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (table_name,),
-        )
-        return row is not None
+        logger.info("Migration 004 rollback: No action needed for SQLite")

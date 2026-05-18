@@ -23,7 +23,7 @@ Plexichat supports multiple deployment strategies:
 
 Before deploying Plexichat, ensure you have:
 - Git (for cloning repositories)
-- Python 3.11+ (for both server and client)
+- Python **3.11+** (for both server and client; 3.10 will not work)
 - pip (Python package manager)
 - Node.js 16+ (only needed for client testing with Playwright)
 - PostgreSQL 12+ (for production deployments)
@@ -38,4 +38,4 @@ Before deploying Plexichat, ensure you have:
 5. Start the services
 6. Verify deployment through health check endpoints
 
-For detailed instructions, see the [Installation Guide](./installation.md).
+For system requirements, see [Requirements](requirements.md). For configuration, see the [Configuration Overview](../configuration.md) and the per-subsystem config guides linked from [Deployment](../deployment.md).

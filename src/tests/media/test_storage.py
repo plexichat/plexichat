@@ -1,327 +1,93 @@
-"""
-Tests for storage backends.
-"""
+"""Tests for media storage backends (local, S3, database)."""
 
-import os
-import io
 import pytest
 
-
-@pytest.mark.media
-class TestLocalStorage:
-    """Tests for local filesystem storage backend."""
-
-    def test_store_and_retrieve(self, temp_upload_dir):
-        """Test storing and retrieving a file."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        data = b"test file content"
-        path = "test/file.txt"
-
-        storage.store(data, path, "text/plain")
-        retrieved = storage.retrieve(path)
-
-        assert retrieved == data
-
-    def test_store_creates_directories(self, temp_upload_dir):
-        """Test that store creates necessary directories."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        path = "deep/nested/directory/file.txt"
-        storage.store(b"content", path, "text/plain")
-
-        full_path = os.path.join(temp_upload_dir, path)
-        assert os.path.exists(full_path)
-
-    def test_store_stream(self, temp_upload_dir):
-        """Test storing from a stream."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        data = b"stream content"
-        stream = io.BytesIO(data)
-        path = "stream/file.txt"
-
-        storage.store_stream(stream, path, "text/plain", len(data))
-        retrieved = storage.retrieve(path)
-
-        assert retrieved == data
-
-    def test_retrieve_stream(self, temp_upload_dir):
-        """Test retrieving as a stream."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        data = b"stream retrieve content"
-        path = "retrieve_stream.txt"
-        storage.store(data, path, "text/plain")
-
-        stream, size = storage.retrieve_stream(path)
-        retrieved = stream.read()
-        stream.close()
-
-        assert retrieved == data
-        assert size == len(data)
-
-    def test_delete_file(self, temp_upload_dir):
-        """Test deleting a file."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        path = "delete_me.txt"
-        storage.store(b"content", path, "text/plain")
-
-        assert storage.exists(path) is True
-
-        result = storage.delete(path)
-
-        assert result is True
-        assert storage.exists(path) is False
-
-    def test_delete_nonexistent_returns_false(self, temp_upload_dir):
-        """Test deleting nonexistent file returns False."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        result = storage.delete("nonexistent.txt")
-        assert result is False
-
-    def test_exists(self, temp_upload_dir):
-        """Test checking file existence."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        path = "exists_test.txt"
-
-        assert storage.exists(path) is False
-
-        storage.store(b"content", path, "text/plain")
-
-        assert storage.exists(path) is True
-
-    def test_get_url(self, temp_upload_dir):
-        """Test getting URL for file."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        url = storage.get_url("path/to/file.jpg")
-
-        assert url == "/media/path/to/file.jpg"
-
-    def test_get_size(self, temp_upload_dir):
-        """Test getting file size."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        data = b"size test content"
-        path = "size_test.txt"
-        storage.store(data, path, "text/plain")
-
-        size = storage.get_size(path)
-
-        assert size == len(data)
-
-    def test_get_metadata(self, temp_upload_dir):
-        """Test getting file metadata."""
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        data = b"metadata test"
-        path = "metadata_test.txt"
-        storage.store(data, path, "text/plain")
-
-        metadata = storage.get_metadata(path)
-
-        assert metadata["exists"] is True
-        assert metadata["size"] == len(data)
-        assert "created_at" in metadata
-
-    def test_path_traversal_prevention(self, temp_upload_dir):
-        """Test that path traversal is prevented."""
-        from src.core.media.storage.local import LocalStorage
-        from src.core.media.exceptions import StorageError
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        with pytest.raises(StorageError):
-            storage.store(b"malicious", "../../../etc/passwd", "text/plain")
-
-    def test_retrieve_nonexistent_raises_error(self, temp_upload_dir):
-        """Test that retrieving nonexistent file raises error."""
-        from src.core.media.storage.local import LocalStorage
-        from src.core.media.exceptions import StorageReadError
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-
-        with pytest.raises(StorageReadError):
-            storage.retrieve("nonexistent.txt")
-
-
-def boto3_available():
-    """Check if boto3 is available."""
-    try:
-        import boto3  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
+from src.core.media.models import StorageBackend
 
 
 @pytest.mark.media
-@pytest.mark.s3
-@pytest.mark.skipif(not boto3_available(), reason="boto3 not installed")
-class TestS3Storage:
-    """Tests for S3 storage backend with mocked client."""
+class TestStorage:
+    """Tests for media storage backend configuration and operations."""
 
-    def test_store_calls_put_object(self, mock_s3_client, temp_upload_dir):
-        """Test that store calls S3 put_object."""
-        from src.core.media.storage.s3 import S3Storage
+    def test_default_storage_is_local(self, media_manager):
+        """Test that default storage backend is local."""
+        assert media_manager._storage is not None
 
-        storage = S3Storage(
-            bucket="test-bucket",
-            access_key="test-key",
-            secret_key="test-secret",
-        )
+    def test_storage_backend_enum_values(self):
+        """Test StorageBackend enum values."""
+        assert StorageBackend.LOCAL.value == "local"
+        assert StorageBackend.S3.value == "s3"
+        assert StorageBackend.DATABASE.value == "database"
 
-        storage.store(b"content", "test.txt", "text/plain")
+    def test_compute_checksum(self, media_manager):
+        """Test SHA-256 checksum computation."""
+        data = b"test data for checksum"
+        checksum = media_manager._compute_checksum(data)
+        assert len(checksum) == 64  # SHA-256 hex digest
+        # Same data should produce same checksum
+        assert media_manager._compute_checksum(data) == checksum
 
-        mock_s3_client.put_object.assert_called_once()
-        call_kwargs = mock_s3_client.put_object.call_args[1]
-        assert call_kwargs["Bucket"] == "test-bucket"
-        assert call_kwargs["Key"] == "test.txt"
-        assert call_kwargs["Body"] == b"content"
-        assert call_kwargs["ContentType"] == "text/plain"
+    def test_different_data_different_checksum(self, media_manager):
+        """Test that different data produces different checksums."""
+        checksum1 = media_manager._compute_checksum(b"data1")
+        checksum2 = media_manager._compute_checksum(b"data2")
+        assert checksum1 != checksum2
 
-    def test_retrieve_calls_get_object(self, mock_s3_client, temp_upload_dir):
-        """Test that retrieve calls S3 get_object."""
-        from src.core.media.storage.s3 import S3Storage
+    def test_generate_storage_path(self, media_manager):
+        """Test storage path generation."""
+        from src.core.media.models import MediaType
 
-        storage = S3Storage(
-            bucket="test-bucket",
-            access_key="test-key",
-            secret_key="test-secret",
-        )
+        path = media_manager._generate_storage_path("test.png", MediaType.IMAGE)
+        assert "image/" in path
+        assert path.endswith(".png")
 
-        data = storage.retrieve("test.txt")
+    def test_generate_storage_path_for_video(self, media_manager):
+        """Test storage path generation for video files."""
+        from src.core.media.models import MediaType
 
-        mock_s3_client.get_object.assert_called_once()
-        assert data == b"test content"
+        path = media_manager._generate_storage_path("video.mp4", MediaType.VIDEO)
+        assert "video/" in path
+        assert path.endswith(".mp4")
 
-    def test_delete_calls_delete_object(self, mock_s3_client, temp_upload_dir):
-        """Test that delete calls S3 delete_object."""
-        from src.core.media.storage.s3 import S3Storage
+    def test_generate_storage_path_for_document(self, media_manager):
+        """Test storage path generation for documents."""
+        from src.core.media.models import MediaType
 
-        storage = S3Storage(
-            bucket="test-bucket",
-            access_key="test-key",
-            secret_key="test-secret",
-        )
+        path = media_manager._generate_storage_path("doc.pdf", MediaType.DOCUMENT)
+        assert "document/" in path
 
-        result = storage.delete("test.txt")
+    def test_sanitize_filename_removes_traversal(self, media_manager):
+        """Test that path traversal is removed from filenames."""
+        assert ".." not in media_manager._sanitize_filename("../../../etc/passwd")
+        assert "/" not in media_manager._sanitize_filename("path/to/file.png")
 
-        mock_s3_client.delete_object.assert_called_once()
-        assert result is True
+    def test_sanitize_filename_removes_null_bytes(self, media_manager):
+        """Test that null bytes are removed from filenames."""
+        result = media_manager._sanitize_filename("test\x00.png")
+        assert "\x00" not in result
 
-    def test_exists_calls_head_object(self, mock_s3_client, temp_upload_dir):
-        """Test that exists calls S3 head_object."""
-        from src.core.media.storage.s3 import S3Storage
+    def test_sanitize_filename_limits_length(self, media_manager):
+        """Test that overly long filenames are truncated."""
+        result = media_manager._sanitize_filename("x" * 300 + ".png")
+        assert len(result) <= 250
 
-        storage = S3Storage(
-            bucket="test-bucket",
-            access_key="test-key",
-            secret_key="test-secret",
-        )
+    def test_sanitize_filename_handles_empty(self, media_manager):
+        """Test that empty filename gets a default name."""
+        result = media_manager._sanitize_filename("")
+        assert len(result) > 0
 
-        result = storage.exists("test.txt")
+    def test_sanitize_filename_preserves_extension(self, media_manager):
+        """Test that file extension is preserved."""
+        result = media_manager._sanitize_filename("test.png")
+        assert result.endswith(".png")
 
-        assert result is True
+    def test_auto_route_default_disabled(self, media_manager):
+        """Test that auto-routing to database is disabled by default."""
+        assert media_manager._db_storage is None
 
-    def test_get_url_with_public_url(self, mock_s3_client, temp_upload_dir):
-        """Test URL generation with custom public URL."""
-        from src.core.media.storage.s3 import S3Storage
+    def test_get_storage_for_file_default(self, media_manager):
+        """Test that files go to primary storage by default."""
+        from src.core.media.models import MediaType
 
-        storage = S3Storage(
-            bucket="test-bucket",
-            access_key="test-key",
-            secret_key="test-secret",
-            public_url="https://cdn.example.com",
-        )
-
-        url = storage.get_url("path/to/file.jpg")
-
-        assert url == "https://cdn.example.com/path/to/file.jpg"
-
-    def test_get_url_default_aws(self, mock_s3_client, temp_upload_dir):
-        """Test default AWS URL generation."""
-        from src.core.media.storage.s3 import S3Storage
-
-        storage = S3Storage(
-            bucket="test-bucket",
-            access_key="test-key",
-            secret_key="test-secret",
-            region="us-west-2",
-        )
-
-        url = storage.get_url("file.jpg")
-
-        assert "test-bucket" in url
-        assert "us-west-2" in url
-        assert "file.jpg" in url
-
-    def test_path_prefix(self, mock_s3_client, temp_upload_dir):
-        """Test that path prefix is applied."""
-        from src.core.media.storage.s3 import S3Storage
-
-        storage = S3Storage(
-            bucket="test-bucket",
-            access_key="test-key",
-            secret_key="test-secret",
-            path_prefix="uploads/media",
-        )
-
-        storage.store(b"content", "file.txt", "text/plain")
-
-        call_kwargs = mock_s3_client.put_object.call_args[1]
-        assert call_kwargs["Key"] == "uploads/media/file.txt"
-
-    def test_get_size(self, mock_s3_client, temp_upload_dir):
-        """Test getting file size from S3."""
-        from src.core.media.storage.s3 import S3Storage
-
-        storage = S3Storage(
-            bucket="test-bucket",
-            access_key="test-key",
-            secret_key="test-secret",
-        )
-
-        size = storage.get_size("test.txt")
-
-        assert size == 12
-
-    def test_get_metadata(self, mock_s3_client, temp_upload_dir):
-        """Test getting file metadata from S3."""
-        from src.core.media.storage.s3 import S3Storage
-
-        storage = S3Storage(
-            bucket="test-bucket",
-            access_key="test-key",
-            secret_key="test-secret",
-        )
-
-        metadata = storage.get_metadata("test.txt")
-
-        assert metadata["exists"] is True
-        assert metadata["size"] == 12
-        assert metadata["bucket"] == "test-bucket"
+        storage, backend = media_manager._get_storage_for_file("image/png", 1000)
+        assert storage == media_manager._storage

@@ -28,14 +28,14 @@ def mock_websocket():
 
 
 @pytest.fixture
-def websocket_manager(modules):
+def websocket_manager(auth_manager, presence_manager, server_manager):
     """Setup WebSocket components."""
     from src.api.websocket import setup, get_session_manager, get_dispatcher
 
     setup(
-        auth_module=modules.auth,
-        presence_module=modules.presence,
-        servers_module=modules.servers,
+        auth_module=auth_manager,
+        presence_module=presence_manager,
+        servers_module=server_manager,
         heartbeat_interval_ms=45000,
     )
 
@@ -187,7 +187,8 @@ class TestWebSocketPerformance:
     async def test_heartbeat_performance(self, websocket_manager, test_user_with_token):
         """Test heartbeat processing performance."""
         session_manager = websocket_manager["session_manager"]
-        user, token = test_user_with_token
+        user_data = test_user_with_token
+        user = user_data["user"]
 
         from src.api.websocket import Connection
 

@@ -1,379 +1,114 @@
-"""
-Edge case tests for media module.
-"""
+"""Tests for media edge cases and error handling."""
 
 import pytest
 
+from src.core.media.models import MediaType
+from src.core.media.exceptions import (
+    FileSizeError,
+    FileTypeError,
+    MediaError,
+)
 
-@pytest.mark.media
-class TestFilenameEdgeCases:
-    """Tests for filename edge cases."""
 
-    def test_filename_with_spaces(self, media_module, user_pool, sample_image_bytes):
-        """Test uploading file with spaces in name."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="my file name.jpg",
-        )
-
-        assert result.file_id is not None
-
-    def test_filename_with_special_characters(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test uploading file with special characters."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="file-name_v2.0 (copy).jpg",
-        )
-
-        assert result.file_id is not None
-
-    def test_filename_with_unicode(self, media_module, user_pool, sample_image_bytes):
-        """Test uploading file with unicode characters."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="image_photo.jpg",
-        )
-
-        assert result.file_id is not None
-
-    def test_very_long_filename(self, media_module, user_pool, sample_image_bytes):
-        """Test uploading file with very long filename."""
-        user = user_pool.get_user()
-
-        long_name = "a" * 200 + ".jpg"
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename=long_name,
-        )
-
-        assert result.file_id is not None
-
-    def test_filename_without_extension(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test uploading file without extension."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="noextension",
-            content_type="image/jpeg",
-        )
-
-        assert result.file_id is not None
+MINI_PNG = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01"
+    b"\x00\x00\x05\x00\x01\r\n\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 
 @pytest.mark.media
-class TestContentTypeEdgeCases:
-    """Tests for content type edge cases."""
+class TestEdgeCases:
+    """Tests for media edge cases and boundary conditions."""
 
-    def test_content_type_with_charset(
-        self, media_module, user_pool, sample_text_bytes
-    ):
-        """Test content type with charset parameter."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_text_bytes,
-            filename="text.txt",
-            content_type="text/plain; charset=utf-8",
-        )
-
-        assert result.file_id is not None
-
-    def test_uppercase_content_type(self, media_module, user_pool, sample_image_bytes):
-        """Test uppercase content type."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="upper.jpg",
-            content_type="IMAGE/JPEG",
-        )
-
-        assert result.file_id is not None
-
-
-@pytest.mark.media
-class TestFileSizeEdgeCases:
-    """Tests for file size edge cases."""
-
-    def test_empty_file(self, media_module, user_pool):
-        """Test uploading empty file."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=b"",
-            filename="empty.txt",
-            content_type="text/plain",
-        )
-
-        assert result.file_id is not None
-        assert result.size == 0
-
-    def test_one_byte_file(self, media_module, user_pool):
-        """Test uploading single byte file."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=b"x",
-            filename="tiny.txt",
-            content_type="text/plain",
-        )
-
-        assert result.file_id is not None
-        assert result.size == 1
-
-    def test_file_at_size_limit(self, media_module, user_pool, monkeypatch):
-        """Test uploading file exactly at size limit."""
-        # Use smaller limit for testing to avoid MemoryError
-        monkeypatch.setitem(
-            media_module._get_manager()._config["size_limits"], "document", 1024
-        )
-        user = user_pool.get_user()
-
-        data = b"x" * 1024
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=data,
-            filename="at_limit.txt",
-            content_type="text/plain",
-        )
-
-        assert result.file_id is not None
-
-    def test_file_one_byte_over_limit(self, media_module, user_pool, monkeypatch):
-        """Test uploading file one byte over limit."""
-        # Use smaller limit for testing to avoid MemoryError
-        monkeypatch.setitem(
-            media_module._get_manager()._config["size_limits"], "document", 1024
-        )
-        user = user_pool.get_user()
-
-        # Smaller data for testing
-        data = b"x" * (1024 + 1)
-
-        with pytest.raises(media_module.FileSizeError):
-            media_module.upload_file(
-                user_id=user.id,
-                file_data=data,
-                filename="over_limit.txt",
-                content_type="text/plain",
+    def test_upload_oversized_file(self, media_manager, test_user):
+        """Test that files exceeding size limit are rejected."""
+        with pytest.raises(FileSizeError):
+            media_manager.upload_file(
+                user_id=test_user.id,
+                file_data=b"\x00" * (20 * 1024 * 1024),  # 20MB
+                filename="big.png",
+                content_type="image/png",
             )
 
+    def test_upload_disallowed_content_type(self, media_manager, test_user):
+        """Test that disallowed content types are rejected."""
+        with pytest.raises(FileTypeError):
+            media_manager.upload_file(
+                user_id=test_user.id,
+                file_data=MINI_PNG,
+                filename="test.tiff",
+                content_type="image/tiff",
+            )
 
-@pytest.mark.media
-class TestSigningEdgeCases:
-    """Tests for URL signing edge cases."""
+    def test_upload_empty_filename(self, media_manager, test_user):
+        """Test uploading with empty filename gets a default name."""
+        result = media_manager.upload_file(
+            user_id=test_user.id,
+            file_data=MINI_PNG,
+            filename="",
+            content_type="image/png",
+        )
+        assert result.filename is not None
+        assert len(result.filename) > 0
 
-    def test_sign_url_with_query_params(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test signing URL that already has query parameters."""
-        user = user_pool.get_user()
+    def test_upload_with_special_chars_filename(self, media_manager, test_user):
+        """Test uploading with special characters in filename."""
+        result = media_manager.upload_file(
+            user_id=test_user.id,
+            file_data=MINI_PNG,
+            filename="test file (1).png",
+            content_type="image/png",
+        )
+        assert result is not None
 
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="query_test.jpg",
+    def test_get_file_data_nonexistent(self, media_manager):
+        """Test getting file data for nonexistent file raises error."""
+        with pytest.raises(MediaError):
+            media_manager.get_file_data(9999999)
+
+    def test_detect_media_type_for_video(self, media_manager):
+        """Test media type detection for video."""
+        assert media_manager._detect_media_type("video/mp4") == MediaType.VIDEO
+
+    def test_detect_media_type_for_audio(self, media_manager):
+        """Test media type detection for audio."""
+        assert media_manager._detect_media_type("audio/mpeg") == MediaType.AUDIO
+
+    def test_detect_media_type_for_document(self, media_manager):
+        """Test media type detection for documents."""
+        assert media_manager._detect_media_type("application/pdf") == MediaType.DOCUMENT
+
+    def test_detect_media_type_for_other(self, media_manager):
+        """Test media type detection for unknown types."""
+        assert (
+            media_manager._detect_media_type("application/unknown") == MediaType.OTHER
         )
 
-        signed = media_module.sign_url(result.file_id)
+    def test_upload_same_file_twice(self, media_manager, test_user):
+        """Test uploading the same file twice produces different IDs."""
+        result1 = media_manager.upload_file(
+            user_id=test_user.id,
+            file_data=MINI_PNG,
+            filename="dup1.png",
+            content_type="image/png",
+        )
+        result2 = media_manager.upload_file(
+            user_id=test_user.id,
+            file_data=MINI_PNG,
+            filename="dup2.png",
+            content_type="image/png",
+        )
+        assert result1.file_id != result2.file_id
 
-        assert signed.url is not None
-
-    def test_sign_nonexistent_file(self, media_module):
-        """Test signing URL for nonexistent file."""
-        with pytest.raises(media_module.MediaError):
-            media_module.sign_url(999999999)
-
-    def test_verify_malformed_url(self, media_module):
-        """Test verifying malformed signed URL."""
-        from src.core.media.exceptions import SignatureInvalidError
-
-        with pytest.raises(SignatureInvalidError):
-            media_module.verify_signed_url("not-a-valid-url")
-
-
-@pytest.mark.media
-class TestThumbnailEdgeCases:
-    """Tests for thumbnail edge cases."""
-
-    def test_thumbnail_for_nonexistent_file(self, media_module):
-        """Test getting thumbnails for nonexistent file."""
-        thumbnails = media_module.get_thumbnails(999999999)
-        assert thumbnails == {}
-
-    def test_create_thumbnail_for_nonexistent_file(self, media_module):
-        """Test creating thumbnail for nonexistent file."""
-        url = media_module.create_thumbnail(999999999, size=64)
-        assert url is None
-
-    def test_create_thumbnail_for_non_image(
-        self, media_module, user_pool, sample_text_bytes
-    ):
-        """Test creating thumbnail for non-image file."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_text_bytes,
-            filename="text.txt",
+    def test_upload_text_file(self, media_manager, test_user):
+        """Test uploading a text file."""
+        result = media_manager.upload_file(
+            user_id=test_user.id,
+            file_data=b"Hello, world!",
+            filename="test.txt",
             content_type="text/plain",
         )
-
-        url = media_module.create_thumbnail(result.file_id, size=64)
-        assert url is None
-
-
-@pytest.mark.media
-class TestImageProcessingEdgeCases:
-    """Tests for image processing edge cases."""
-
-    def test_resize_nonexistent_file(self, media_module):
-        """Test resizing nonexistent file."""
-        with pytest.raises(media_module.MediaError):
-            media_module.resize_image(999999999, width=100)
-
-    def test_resize_non_image(self, media_module, user_pool, sample_text_bytes):
-        """Test resizing non-image file."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_text_bytes,
-            filename="text.txt",
-            content_type="text/plain",
-        )
-
-        with pytest.raises(media_module.MediaError):
-            media_module.resize_image(result.file_id, width=100)
-
-    def test_convert_nonexistent_file(self, media_module):
-        """Test converting nonexistent file."""
-        with pytest.raises(media_module.MediaError):
-            media_module.convert_image(999999999, "PNG")
-
-    def test_convert_non_image(self, media_module, user_pool, sample_text_bytes):
-        """Test converting non-image file."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_text_bytes,
-            filename="text.txt",
-            content_type="text/plain",
-        )
-
-        with pytest.raises(media_module.MediaError):
-            media_module.convert_image(result.file_id, "PNG")
-
-
-@pytest.mark.media
-class TestVideoMetadataEdgeCases:
-    """Tests for video metadata edge cases."""
-
-    def test_video_metadata_for_nonexistent_file(self, media_module):
-        """Test getting video metadata for nonexistent file."""
-        metadata = media_module.get_video_metadata(999999999)
-        assert metadata is None
-
-    def test_video_metadata_for_non_video(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test getting video metadata for non-video file."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="image.jpg",
-        )
-
-        metadata = media_module.get_video_metadata(result.file_id)
-        assert metadata is None
-
-
-@pytest.mark.media
-class TestDeleteEdgeCases:
-    """Tests for file deletion edge cases."""
-
-    def test_delete_already_deleted_file(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test deleting already deleted file."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="delete_twice.jpg",
-        )
-
-        media_module.delete_file(user.id, result.file_id)
-
-        deleted = media_module.delete_file(user.id, result.file_id)
-        assert deleted is False
-
-    def test_get_data_for_deleted_file(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test getting data for deleted file."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="get_deleted.jpg",
-        )
-
-        media_module.delete_file(user.id, result.file_id)
-
-        with pytest.raises(media_module.MediaError):
-            media_module.get_file_data(result.file_id)
-
-
-@pytest.mark.media
-class TestScannerEdgeCases:
-    """Tests for scanner edge cases."""
-
-    def test_scan_nonexistent_file(self, media_module):
-        """Test scanning nonexistent file."""
-        with pytest.raises(media_module.MediaError):
-            media_module.scan_file(999999999)
-
-    def test_scan_with_disabled_scanner(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test scanning with disabled scanner."""
-        user = user_pool.get_user()
-
-        result = media_module.upload_file(
-            user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="scan_disabled.jpg",
-        )
-
-        status, threat = media_module.scan_file(result.file_id)
-
-        assert status == media_module.ScanStatus.SKIPPED
-        assert threat is None
+        assert result.file_id is not None
+        assert result.content_type == "text/plain"

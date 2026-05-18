@@ -82,9 +82,13 @@ class TestMessageSearchFilters:
 class TestMessageSearchPermissions:
     """Test message search permission checks."""
 
-    def test_user_only_sees_accessible_messages(self, db_and_modules):
+    def test_user_only_sees_accessible_messages(
+        self, auth_manager, messaging_manager, search_manager
+    ):
         """Test users only see messages they can access."""
-        db, auth, messaging, servers, search = db_and_modules
+        auth = auth_manager
+        messaging = messaging_manager
+        search = search_manager
 
         unique_id = uuid.uuid4().hex[:8]
 
@@ -126,9 +130,11 @@ class TestMessageSearchPermissions:
 class TestMessageSearchIndexing:
     """Test message indexing."""
 
-    def test_index_message(self, db_and_modules):
+    def test_index_message(self, auth_manager, messaging_manager, search_manager):
         """Test indexing a message."""
-        db, auth, messaging, servers, search = db_and_modules
+        auth = auth_manager
+        messaging = messaging_manager
+        search = search_manager
 
         unique_id = uuid.uuid4().hex[:8]
 
@@ -159,9 +165,11 @@ class TestMessageSearchIndexing:
 
         assert len(results) >= 1
 
-    def test_remove_from_index(self, db_and_modules):
+    def test_remove_from_index(self, auth_manager, messaging_manager, search_manager):
         """Test removing a message from index."""
-        db, auth, messaging, servers, search = db_and_modules
+        auth = auth_manager
+        messaging = messaging_manager
+        search = search_manager
 
         unique_id = uuid.uuid4().hex[:8]
 

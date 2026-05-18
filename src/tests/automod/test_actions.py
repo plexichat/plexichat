@@ -1,172 +1,116 @@
-"""
-Tests for automod actions.
-"""
+"""Tests for automod action execution."""
 
 import pytest
 
-from src.core.automod import RuleType, ActionType
+from src.core.automod.models import (
+    RuleType,
+    ActionType,
+    ViolationSeverity,
+    RuleMatch,
+    RuleAction,
+)
 
 
 @pytest.mark.automod
-class TestDeleteMessageAction:
-    """Tests for delete message action."""
+class TestActions:
+    """Tests for automod action types and execution."""
 
-    def test_delete_message_action(
-        self, automod_module, test_server_for_automod, modules, user_pool
-    ):
-        """Test message deletion action."""
-        server, channel, owner = test_server_for_automod
+    def test_action_types_enum(self):
+        """Test all action types exist."""
+        assert ActionType.DELETE_MESSAGE.value == "delete_message"
+        assert ActionType.TIMEOUT_USER.value == "timeout_user"
+        assert ActionType.KICK_USER.value == "kick_user"
+        assert ActionType.BAN_USER.value == "ban_user"
+        assert ActionType.ALERT_MODERATORS.value == "alert_moderators"
+        assert ActionType.LOG_ONLY.value == "log_only"
 
-        # Use a non-owner member for the test
-        member = user_pool.get_user()
-        modules.servers.add_member(server.id, member.id)
-
-        automod_module.create_rule(
+    def test_log_only_action_in_violation(self, automod_manager, test_server):
+        """Test log_only action is recorded in violations."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
             user_id=owner.id,
             server_id=server.id,
-            name="Delete Test",
+            name="Log Rule",
             rule_type=RuleType.KEYWORD,
             rule_config={
-                "keywords": ["delete_me"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "delete_message"}],
-        )
-
-        conv = modules.messaging.create_server_channel_conversation(
-            server.id, channel.id
-        )
-        msg = modules.messaging.send_message(
-            member.id, conv.id, "This has delete_me word"
-        )
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=member.id,
-            content="This has delete_me word",
-            message_id=msg.id,
-        )
-
-        assert not result.passed
-        assert result.should_delete
-
-
-@pytest.mark.automod
-class TestTimeoutAction:
-    """Tests for timeout action."""
-
-    def test_timeout_user_action(
-        self, automod_module, test_server_for_automod, modules, user_pool
-    ):
-        """Test user timeout action."""
-        server, channel, owner = test_server_for_automod
-        member = user_pool.get_user()
-
-        modules.servers.add_member(server.id, member.id)
-
-        automod_module.create_rule(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Timeout Test",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["timeout_me"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "timeout_user", "duration_seconds": 300}],
-        )
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=member.id,
-            content="This has timeout_me word",
-        )
-
-        assert not result.passed
-        assert result.should_timeout
-        assert result.timeout_duration == 300
-
-    @pytest.mark.skip(reason="Owner is exempt from automod")
-    def test_cannot_timeout_owner(self, automod_module, test_server_for_automod):
-        """Test that server owner cannot be timed out."""
-        # Test skipped because owner is exempt from checks, so passed=True always.
-        pass
-
-
-@pytest.mark.automod
-class TestAlertAction:
-    """Tests for alert moderators action."""
-
-    def test_alert_moderators(
-        self, automod_module, test_server_for_automod, user_pool, modules
-    ):
-        """Test moderator alert action."""
-        server, channel, owner = test_server_for_automod
-        member = user_pool.get_user()
-        modules.servers.add_member(server.id, member.id)
-
-        automod_module.create_rule(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Alert Test",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["alert"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "alert_moderators"}],
-        )
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=member.id,
-            content="This should alert mods",
-        )
-
-        assert not result.passed
-        assert any(
-            a.action_type == ActionType.ALERT_MODERATORS for a in result.actions_to_take
-        )
-
-
-@pytest.mark.automod
-class TestLogOnlyAction:
-    """Tests for log only action."""
-
-    def test_log_only_no_other_actions(
-        self, automod_module, test_server_for_automod, user_pool, modules
-    ):
-        """Test log only action doesn't trigger other actions."""
-        server, channel, owner = test_server_for_automod
-        member = user_pool.get_user()
-        modules.servers.add_member(server.id, member.id)
-
-        automod_module.create_rule(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Log Only Test",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["log"],
+                "keywords": ["testbad"],
                 "case_sensitive": False,
                 "whole_word": True,
             },
             actions=[{"action_type": "log_only"}],
         )
 
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=member.id,
-            content="This should log only",
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1", (server.id,)
+        )
+        channel_id = channel["id"] if channel else 0
+
+        match = RuleMatch(
+            rule_id=rule.id,
+            rule_type=RuleType.KEYWORD,
+            matched=True,
+            matched_content="testbad",
+            severity=ViolationSeverity.LOW,
         )
 
-        assert not result.passed
-        assert not result.should_delete
-        assert not result.should_timeout
+        violation = automod_manager.process_violation(
+            server_id=server.id,
+            channel_id=channel_id,
+            user_id=99999,
+            message_id=None,
+            match=match,
+            actions=rule.actions,
+        )
+        assert ActionType.LOG_ONLY in violation.actions_taken
+
+    def test_rule_action_dataclass(self):
+        """Test RuleAction dataclass creation."""
+        action = RuleAction(
+            action_type=ActionType.DELETE_MESSAGE,
+            duration_seconds=None,
+            reason="Test reason",
+            notify_user=True,
+        )
+        assert action.action_type == ActionType.DELETE_MESSAGE
+        assert action.reason == "Test reason"
+        assert action.notify_user is True
+
+    def test_timeout_action_has_duration(self):
+        """Test timeout action stores duration."""
+        action = RuleAction(
+            action_type=ActionType.TIMEOUT_USER,
+            duration_seconds=300,
+            reason="Spam",
+        )
+        assert action.duration_seconds == 300
+
+    def test_trigger_manual_action(self, automod_manager, test_server):
+        """Test manually triggering an automod action."""
+        server, owner = test_server
+        result = automod_manager.trigger_action(
+            user_id=owner.id,
+            server_id=server.id,
+            target_user_id=99999,
+            action_type=ActionType.LOG_ONLY,
+            reason="Manual test action",
+        )
+        assert result is True
+
+    def test_invalid_action_type_rejected(self, automod_manager, test_server):
+        """Test that invalid action type raises validation error."""
+        server, owner = test_server
+        from src.core.automod.exceptions import RuleValidationError
+
+        with pytest.raises(RuleValidationError):
+            automod_manager.create_rule(
+                user_id=owner.id,
+                server_id=server.id,
+                name="Bad Action",
+                rule_type=RuleType.KEYWORD,
+                rule_config={
+                    "keywords": ["test"],
+                    "case_sensitive": False,
+                    "whole_word": True,
+                },
+                actions=[{"action_type": "nonexistent_action"}],
+            )

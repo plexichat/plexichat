@@ -27,6 +27,7 @@ class FilterType(Enum):
     MENTIONS_USER = "mentions"
     PINNED = "pinned"
     EXACT_PHRASE = "exact"
+    HAS_REACTION = "reaction"
 
 
 class VerificationLevel(Enum):
@@ -93,6 +94,8 @@ class MessageSearchResult(SearchResult):
     channel_name: Optional[str] = None
     created_at: int = 0
     has_attachments: bool = False
+    attachment_types: List[str] = field(default_factory=list)
+    reactions: List[str] = field(default_factory=list)
     is_pinned: bool = False
 
 
@@ -207,9 +210,11 @@ class IndexedMessage:
     channel_id: Optional[SnowflakeID] = None
     created_at: int = 0
     has_attachments: bool = False
+    attachment_types: List[str] = field(default_factory=list)
     has_embeds: bool = False
     has_links: bool = False
     mentions: List[SnowflakeID] = field(default_factory=list)
+    reactions: List[str] = field(default_factory=list)
     is_pinned: bool = False
 
 

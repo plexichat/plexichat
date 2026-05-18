@@ -388,7 +388,7 @@ async def cancel_upload_session(
             )
 
         logger.info(f"User {user.user_id} cancelled upload session {session_id}")
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:

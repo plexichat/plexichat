@@ -1,3 +1,12 @@
+"""
+Add API access tokens table for authentication.
+"""
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 def up(db):
     try:
         db.execute(
@@ -27,8 +36,11 @@ def up(db):
 
 
 def down(db):
-    if db.type == "postgres":
-        try:
-            db.execute("DROP TABLE IF EXISTS auth_api_access_tokens")
-        except Exception:
-            pass
+    """Rollback the migration.
+
+    Drops the auth_api_access_tokens table.
+    """
+    logger.info("Migration 014 rollback: Starting rollback")
+    if db.table_exists("auth_api_access_tokens"):
+        db.execute("DROP TABLE IF EXISTS auth_api_access_tokens")
+        logger.info("Migration 014 rollback: Dropped auth_api_access_tokens table")

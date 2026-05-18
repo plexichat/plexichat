@@ -1,0 +1,153 @@
+name: plexichat
+
+# Version to deploy (e.g., a.1.0-55)
+# Set via: VERSION=a.1.0-55 docker compose up -d
+# Defaults to latest if not specified
+
+services:
+  bootstrap:
+    image: python:3.12-slim
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - ../plexichat-client/docker/runtime:/workspace-client-runtime
+    command: python /workspace/docker/bootstrap/bootstrap.py
+    restart: "no"
+    profiles:
+      - setup
+
+  db:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DBNAME:-plexichat}
+      POSTGRES_USER: ${POSTGRES_USER:-plexichat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    env_file:
+      - .env
+    command: >
+      sh -c "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    env_file:
+      - .env
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  minio-init:
+    image: minio/mc:latest
+    env_file:
+      - .env
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\"; do sleep 2; done;
+      mc mb -p local/$${S3_BUCKET} || true;
+      mc anonymous set download local/$${S3_BUCKET} || true;
+      "
+    restart: "no"
+
+  cert-init:
+    image: alpine:3.20
+    volumes:
+      - certs:/certs
+    entrypoint: >
+      /bin/sh -c "
+      apk add --no-cache openssl >/dev/null;
+      if [ ! -f /certs/fullchain.pem ] || [ ! -f /certs/privkey.pem ]; then
+        openssl req -x509 -nodes -newkey rsa:2048 -keyout /certs/privkey.pem -out /certs/fullchain.pem -days 365 -subj '/CN=localhost';
+      fi
+      "
+    restart: "no"
+    profiles:
+      - setup
+
+  backend:
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${VERSION}
+    env_file:
+      - .env
+    environment:
+      PLEXICHAT_CONFIG: /app/config/docker-config.yaml
+      PLEXICHAT_SMTP_PASSWORD: ${PLEXICHAT_SMTP_PASSWORD:-}
+      NO_STRICT_CONFIG: "false"
+    volumes:
+      - ./config/docker-config.yaml:/app/config/docker-config.yaml:ro
+      - plexichat_home:/root/.plexichat
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"
+      - "30000-30100:30000-30100/udp"
+
+  client:
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${VERSION}
+    env_file:
+      - .env
+    depends_on:
+      backend:
+        condition: service_started
+      cert-init:
+        condition: service_started
+    volumes:
+      - certs:/etc/nginx/certs
+      - ./docker/runtime/client-config.js:/usr/share/nginx/html/config.js:ro
+    ports:
+      - "80:80"
+
+  backup:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - postgres_data:/var/lib/postgresql/data:ro
+      - plexichat_home:/plexichat-home:ro
+      - minio_data:/minio-data:ro
+      - ./backups:/backups
+      - ./docker/backup/backup.sh:/backup.sh:ro
+    entrypoint: ["sh", "/backup.sh"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  plexichat_home:
+  certs:

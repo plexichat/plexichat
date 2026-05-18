@@ -354,7 +354,7 @@ class RoleHandler:
         # Invalidate permissions cache
         from src.core.database import invalidate_pattern
 
-        self.manager._permission_cache.clear()
+        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         if target_type == "member":
             invalidate_pattern(f"perms:{target_id}:{channel.server_id}:*")
         else:
@@ -406,7 +406,7 @@ class RoleHandler:
         # Invalidate permissions cache
         from src.core.database import invalidate_pattern
 
-        self.manager._permission_cache.clear()
+        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         if target_type == "member":
             invalidate_pattern(f"perms:{target_id}:{channel.server_id}:*")
         else:
@@ -485,7 +485,9 @@ class RoleHandler:
 
             # Populate cache
             cache_key = (user_id, server_id, cid)
-            self.manager._cache_set(self.manager._permission_cache, cache_key, perms)
+            self.manager._cache_set(
+                self.manager._permission_cache_prefix, cache_key, perms
+            )
 
         return result
 
@@ -499,7 +501,9 @@ class RoleHandler:
         cache_key = f"perms:{user_id}:{server_id}:{channel_id or 0}"
 
         # 1. Try internal memory first
-        mem_cached = self.manager._cache_get(self.manager._permission_cache, cache_key)
+        mem_cached = self.manager._cache_get(
+            self.manager._permission_cache_prefix, cache_key
+        )
         if mem_cached is not None:
             return mem_cached
 
@@ -514,12 +518,14 @@ class RoleHandler:
                 else:
                     perms = redis_cached
                 self.manager._cache_set(
-                    self.manager._permission_cache, cache_key, perms
+                    self.manager._permission_cache_prefix, cache_key, perms
                 )
                 return perms
 
         # 3. Calculate permissions
-        owner_id = self.manager._cache_get(self.manager._server_owner_cache, server_id)
+        owner_id = self.manager._cache_get(
+            self.manager._server_owner_cache_prefix, server_id
+        )
         if owner_id is None:
             server_row = self.db.fetch_one(
                 "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
@@ -529,7 +535,7 @@ class RoleHandler:
                 return {}
             owner_id = int(server_row["owner_id"])
             self.manager._cache_set(
-                self.manager._server_owner_cache, server_id, owner_id
+                self.manager._server_owner_cache_prefix, server_id, owner_id
             )
 
         is_owner = int(owner_id) == int(user_id)
@@ -588,7 +594,9 @@ class RoleHandler:
                     result[perm] = False
 
         # 5. Cache result
-        self.manager._cache_set(self.manager._permission_cache, cache_key, result)
+        self.manager._cache_set(
+            self.manager._permission_cache_prefix, cache_key, result
+        )
         if redis_available():
             cache_set(cache_key, result, ttl=60)
 
@@ -663,13 +671,10 @@ class RoleHandler:
             (self.manager._generate_id(), member.id, role_id, now, user_id),
         )
 
-        for key in list(self.manager._permission_cache.keys()):
-            if key[0] == member_user_id and key[1] == server_id:
-                self.manager._cache_invalidate(self.manager._permission_cache, key)
-
-        # Invalidate Redis
+        # Invalidate caches
         from src.core.database import invalidate_pattern
 
+        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
         invalidate_pattern(f"member_data:*{member_user_id}*")
 
@@ -717,13 +722,10 @@ class RoleHandler:
             (member.id, role_id),
         )
 
-        for key in list(self.manager._permission_cache.keys()):
-            if key[0] == member_user_id and key[1] == server_id:
-                self.manager._cache_invalidate(self.manager._permission_cache, key)
-
-        # Invalidate Redis
+        # Invalidate caches
         from src.core.database import invalidate_pattern
 
+        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
         invalidate_pattern(f"member_data:*{member_user_id}*")
 

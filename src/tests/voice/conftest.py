@@ -1,163 +1,44 @@
 """
-Shared fixtures for voice tests.
-
-Uses the session-scoped fixtures from root conftest for efficiency.
+Voice test fixtures.
 """
 
 import pytest
-import uuid
+import os
+import sys
+import tempfile
+
+# Setup paths at import time
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+src_path = os.path.join(project_root, "src")
+utils_path = os.path.join(project_root, "src", "utils")
+common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
+
+for path in [project_root, src_path, utils_path, common_utils_path]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+import utils.config as config  # noqa: E402
+import utils.version as version  # noqa: E402
+
+# Setup config before importing voice modules
+DEFAULT_TEST_CONFIG = {
+    "voice": {
+        "enabled": True,
+        "janus_url": "http://localhost:8088/janus",
+    },
+}
+
+config.setup(
+    config_path=tempfile.mktemp(suffix=".yaml"), default_config=DEFAULT_TEST_CONFIG
+)
+version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
 
 
 @pytest.fixture
-def db_and_modules(modules):
-    """Legacy fixture for backward compatibility."""
-    return (
-        modules._db,
-        modules.auth,
-        modules.servers,
-        modules.relationships,
-        modules.presence,
-        modules.voice,
-    )
-
-
-@pytest.fixture
-def users(modules, user_pool):
-    """Get test users."""
-    user1 = user_pool.get_user()
-    user2 = user_pool.get_user()
-    user3 = user_pool.get_user()
-    user4 = user_pool.get_user()
-    return user1, user2, user3, user4, modules.voice
-
-
-@pytest.fixture
-def fresh_users(modules):
-    """Create fresh users for tests needing isolation."""
-    unique_id = uuid.uuid4().hex[:8]
-
-    user1 = modules.auth.register(
-        username=f"fresh1_{unique_id}",
-        email=f"fresh1_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    user2 = modules.auth.register(
-        username=f"fresh2_{unique_id}",
-        email=f"fresh2_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    return user1, user2, modules.voice
-
-
-@pytest.fixture
-def server_with_voice(modules):
-    """Create a server with voice channels."""
-    unique_id = uuid.uuid4().hex[:8]
-
-    owner = modules.auth.register(
-        username=f"owner_{unique_id}",
-        email=f"owner_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    member1 = modules.auth.register(
-        username=f"member1_{unique_id}",
-        email=f"member1_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    member2 = modules.auth.register(
-        username=f"member2_{unique_id}",
-        email=f"member2_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    server = modules.servers.create_server(owner.id, f"Voice Test Server {unique_id}")
-    modules.servers.add_member(server.id, member1.id)
-    modules.servers.add_member(server.id, member2.id)
-
-    voice_channel = modules.servers.create_channel(
-        owner.id,
-        server.id,
-        "voice-chat",
-        channel_type=modules.servers.ChannelType.VOICE,
-    )
-
-    stage_channel = modules.servers.create_channel(
-        owner.id,
-        server.id,
-        "stage-talk",
-        channel_type=modules.servers.ChannelType.STAGE,
-    )
-
-    return (
-        owner,
-        member1,
-        member2,
-        server,
-        voice_channel,
-        stage_channel,
-        modules.servers,
-        modules.voice,
-    )
-
-
-@pytest.fixture
-def server_with_moderator(modules):
-    """Create a server with a moderator role."""
-    unique_id = uuid.uuid4().hex[:8]
-
-    owner = modules.auth.register(
-        username=f"modowner_{unique_id}",
-        email=f"modowner_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    moderator = modules.auth.register(
-        username=f"mod_{unique_id}",
-        email=f"mod_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    member = modules.auth.register(
-        username=f"modmember_{unique_id}",
-        email=f"modmember_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    server = modules.servers.create_server(owner.id, f"Mod Test Server {unique_id}")
-    modules.servers.add_member(server.id, moderator.id)
-    modules.servers.add_member(server.id, member.id)
-
-    mod_role = modules.servers.create_role(
-        owner.id,
-        server.id,
-        "Moderator",
-        permissions={
-            "voice.mute_members": True,
-            "voice.deafen_members": True,
-            "voice.move_members": True,
-        },
-    )
-    modules.servers.assign_role(owner.id, server.id, moderator.id, mod_role.id)
-
-    voice_channel = modules.servers.create_channel(
-        owner.id, server.id, "mod-voice", channel_type=modules.servers.ChannelType.VOICE
-    )
-
-    stage_channel = modules.servers.create_channel(
-        owner.id, server.id, "mod-stage", channel_type=modules.servers.ChannelType.STAGE
-    )
-
-    return (
-        owner,
-        moderator,
-        member,
-        server,
-        voice_channel,
-        stage_channel,
-        modules.servers,
-        modules.voice,
-    )
+def mock_voice_config():
+    """Mock voice configuration for tests."""
+    return {
+        "enabled": True,
+        "janus_url": "http://localhost:8088/janus",
+        "turn_servers": [],
+    }

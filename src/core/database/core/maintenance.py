@@ -1,3 +1,4 @@
+import re
 from typing import Any, Optional, Protocol
 
 import utils.logger as logger
@@ -24,6 +25,15 @@ class _DatabaseMaintenanceProtocol(Protocol):
     def in_transaction(self, value: bool) -> None: ...
 
     def get_correlation_id(self) -> Optional[str]: ...
+    def fetch_one(
+        self, query: str, params: Optional[tuple] = None
+    ) -> Optional[dict]: ...
+    def fetch_all(self, query: str, params: Optional[tuple] = None) -> list: ...
+    def execute(self, query: str, params: Optional[tuple] = None) -> None: ...
+    def table_exists(self, table: str) -> bool: ...
+    def column_exists(self, table: str, column: str) -> bool: ...
+    def index_exists(self, index_name: str) -> bool: ...
+    def _sanitize_identifier(self, identifier: str) -> str: ...
 
 
 class DatabaseMaintenanceMixin:
@@ -125,3 +135,92 @@ class DatabaseMaintenanceMixin:
         if correlation_id:
             ctx.append(f"correlation_id={correlation_id}")
         return f"[{' '.join(ctx)}]"
+
+    def table_exists(self: _DatabaseMaintenanceProtocol, table_name: str) -> bool:
+        """
+        Check if a table exists in the database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            True if table exists, False otherwise
+        """
+        if not re.match(r"^[a-zA-Z0-9_]+$", table_name):
+            logger.warning(f"Invalid table name for existence check: {table_name}")
+            return False
+
+        if self.type == "postgres":
+            row = self.fetch_one(
+                "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
+                (table_name,),
+            )
+            return row is not None
+        else:
+            row = self.fetch_one(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            )
+            return row is not None
+
+    def column_exists(
+        self: _DatabaseMaintenanceProtocol, table_name: str, column_name: str
+    ) -> bool:
+        """
+        Check if a column exists in a table.
+
+        Args:
+            table_name: Name of the table
+            column_name: Name of the column
+
+        Returns:
+            True if column exists, False otherwise
+        """
+        if not re.match(r"^[a-zA-Z0-9_]+$", table_name) or not re.match(
+            r"^[a-zA-Z0-9_]+$", column_name
+        ):
+            logger.warning(
+                f"Invalid table/column name for existence check: {table_name}.{column_name}"
+            )
+            return False
+
+        if not self.table_exists(table_name):
+            return False
+
+        if self.type == "postgres":
+            row = self.fetch_one(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
+                (table_name, column_name),
+            )
+            return row is not None
+        else:
+            safe_table = self._sanitize_identifier(table_name)
+            rows = self.fetch_all(f"PRAGMA table_info({safe_table})")
+            return any(row["name"] == column_name for row in rows)
+
+    def index_exists(self: _DatabaseMaintenanceProtocol, index_name: str) -> bool:
+        """
+        Check if an index exists in the database.
+
+        Args:
+            index_name: Name of the index to check
+
+        Returns:
+            True if index exists, False otherwise
+        """
+        if not re.match(r"^[a-zA-Z0-9_]+$", index_name):
+            logger.warning(f"Invalid index name for existence check: {index_name}")
+            return False
+
+        if self.type == "postgres":
+            row = self.fetch_one(
+                "SELECT 1 FROM pg_indexes WHERE indexname = ?",
+                (index_name,),
+            )
+            return row is not None
+        else:
+            row = self.fetch_one(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+                (index_name,),
+            )
+            return row is not None

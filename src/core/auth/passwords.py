@@ -6,7 +6,7 @@ Provides configurable password strength validation.
 """
 
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Set
 
 import utils.config as config
 
@@ -14,6 +14,30 @@ import utils.config as config
 from src.utils.encryption import hash_password as _hash, verify_password as _verify
 
 from .models import PasswordValidation
+
+
+# Common passwords list (top 10,000 most common passwords)
+# Loaded from SecLists - https://github.com/danielmiessler/SecLists
+_COMMON_PASSWORDS: Set[str] = set()
+
+
+def _load_common_passwords() -> None:
+    """Load common passwords from the bundled file."""
+    global _COMMON_PASSWORDS
+
+    # Path to the bundled common passwords file
+    import os
+
+    common_passwords_file = os.path.join(
+        os.path.dirname(__file__), "data", "common-passwords.txt"
+    )
+
+    with open(common_passwords_file, "r", encoding="utf-8") as f:
+        _COMMON_PASSWORDS = set(line.strip().lower() for line in f if line.strip())
+
+
+# Load common passwords on module import
+_load_common_passwords()
 
 
 def hash_password(password: str) -> str:
@@ -79,6 +103,11 @@ def validate_password(password: str) -> PasswordValidation:
 
     if len(password) > max_length:
         issues.append(f"Password must be at most {max_length} characters")
+
+    # Common password blacklist check
+    password_lower = password.lower()
+    if password_lower in _COMMON_PASSWORDS:
+        issues.append("Password is too common. Please choose a stronger password.")
 
     # Complexity checks
     if pwd_config.get("require_uppercase", True):

@@ -17,6 +17,8 @@ from .reactions import router as reactions_router
 from .emojis import router as emojis_router
 from .search import router as search_router
 from .webhooks import router as webhooks_router
+from .applications import router as applications_router
+from .bots import router as bots_router
 from .version import router as version_router
 from .settings import router as settings_router
 from .feedback import router as feedback_router
@@ -39,6 +41,7 @@ from .reports import router as reports_router
 from .qr import router as qr_router
 from .help import router as help_router, robots_router
 from .config import router as config_router
+from .feature_routes import router as feature_expansion_router
 
 import utils.config as config
 import utils.logger as logger
@@ -97,6 +100,8 @@ def create_api_router() -> APIRouter:
     api_router.include_router(presence_router, tags=["Presence"])
     api_router.include_router(reactions_router, tags=["Reactions"])
     api_router.include_router(webhooks_router, tags=["Webhooks"])
+    api_router.include_router(bots_router, tags=["Bots"])
+    api_router.include_router(applications_router, tags=["Applications"])
     api_router.include_router(
         settings_router, prefix="/users/@me/settings", tags=["Settings"]
     )
@@ -135,6 +140,11 @@ def create_api_router() -> APIRouter:
     api_router.include_router(robots_router)
     api_router.include_router(help_router, prefix="/help", tags=["Help"])
 
+    # Include feature expansion routes under /features prefix
+    api_router.include_router(
+        feature_expansion_router, prefix="/features", tags=["Feature Expansion"]
+    )
+
     return api_router
 
 
@@ -149,4 +159,5 @@ __all__ = [
     "is_docs_enabled",
     "clear_docs_cache",
     "get_docs_stats",
+    "feature_expansion_router",
 ]

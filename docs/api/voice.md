@@ -1,11 +1,17 @@
 # Voice Routes
 
-The REST voice routes provide signaling metadata rather than media transport.
+Endpoints for WebRTC voice/video signaling.
+
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
 
 ## Routes
 
-- `GET /voice/ice-servers`
-- `GET /voice/channels/{channel_id}/info`
+- `GET /api/v1/voice/ice-servers`
+- `GET /api/v1/voice/channels/{channel_id}/info`
 
 ## Purpose
 
@@ -14,18 +20,17 @@ The REST voice routes provide signaling metadata rather than media transport.
 
 ## SFU Backend
 
-Plexichat uses aiortc as the default SFU (Selective Forwarding Unit) backend. aiortc is a pure Python WebRTC implementation that runs in-process with the FastAPI application, providing:
+Plexichat uses mediasoup as the default SFU (Selective Forwarding Unit) backend. The mediasoup backend connects to an external mediasoup server via REST API, providing:
 
-- **Integrated deployment**: No external SFU service required
-- **Full Python control**: Complete visibility into media routing
-- **Flexibility**: Easy to customize and extend
+- **High performance**: Native C++ SFU with efficient media routing
+- **Scalable**: Separate SFU process allows independent scaling
+- **Production-ready**: Designed for real-world deployment loads
 
 Alternative backends are available for specific use cases:
-- `mediasoup-ws`: WebSocket-based adapter for mediasoup-demo server
-- `mediasoup`: REST API adapter for custom mediasoup servers
+- `aiortc`: Pure Python WebRTC implementation that runs in-process -- ideal for development or lightweight deployments without a separate SFU
 - `janus`: REST API adapter for Janus Gateway
 
-Configure the SFU backend via the `voice.sfu_backend` config option (default: `aiortc`).
+Configure the SFU backend via the `voice.sfu_backend` config option (default: `mediasoup`). See [Voice Configuration](../config-voice.md) for details.
 
 ## Notes
 

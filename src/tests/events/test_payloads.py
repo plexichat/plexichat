@@ -319,16 +319,28 @@ class TestReactionPayloads:
 class TestEventToDict:
     """Tests for event serialization."""
 
-    def test_event_to_dict(self, sample_message_event):
+    def test_event_to_dict(self):
         """Test event to_dict method."""
-        result = sample_message_event.to_dict()
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+        )
+        result = event.to_dict()
         assert "t" in result
         assert "d" in result
         assert result["t"] == "MESSAGE_CREATE"
         assert isinstance(result["d"], dict)
 
-    def test_event_data_has_string_ids(self, sample_message_event):
+    def test_event_data_has_string_ids(self):
         """Test that IDs in event data are strings."""
-        data = sample_message_event.data
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+        )
+        data = event.data
         assert isinstance(data["id"], str)
         assert isinstance(data["channel_id"], str)

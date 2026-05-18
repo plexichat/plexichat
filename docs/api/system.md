@@ -1,16 +1,23 @@
 # System And Utility Routes
 
-This page collects the small public utility route groups that are useful to clients and operators.
+Public utility endpoints for clients and operators.
+
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
 
 ## Routes
 
-- `GET /health`
-- `GET /version`
-- `POST /version/negotiate`
-- `GET /status`
-- `GET /capabilities`
-- `GET /help/security-logout`
-- `GET /help/access-blocked`
+- `GET /api/v1/health`
+- `GET /api/v1/version`
+- `POST /api/v1/version/negotiate`
+- `GET /api/v1/status`
+- `GET /api/v1/capabilities`
+- `GET /api/v1/help/security-logout`
+- `GET /api/v1/help/access-blocked`
+- `GET /api/v1/qr`
 - `GET /qr`
 
 ## Purpose

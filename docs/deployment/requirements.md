@@ -16,7 +16,7 @@ This document outlines the system requirements for running Plexichat in differen
 - **Network**: 1Gbps+ recommended
 
 ### Software Dependencies
-- **Python**: 3.11+ (both server and client)
+- **Python**: **3.11+** (both server and client; 3.10 will not work due to 3.11+ language features in the server codebase)
 - **Git**: 2.20+ (for cloning repositories)
 - **pip**: 21.0+ (Python package manager)
 
@@ -43,7 +43,8 @@ This document outlines the system requirements for running Plexichat in differen
 
 ### Monitoring & Logging
 - **Log Storage**: Adequate disk space or remote logging solution
-- **Metrics**: Prometheus-compatible endpoint (when telemetry enabled)
+- **Metrics**: Status endpoints available at `/health`, `/api/v1/status` for external monitoring tools (no built-in Prometheus endpoint)
+- **Telemetry**: Optional telemetry module can be configured for external metrics collection
 - **Health Checks**: Internal endpoints available at `/health`, `/api/v1/status`
 
 ## Development Requirements
@@ -83,7 +84,7 @@ This document outlines the system requirements for running Plexichat in differen
 ### Ports
 - **HTTP/HTTPS**: 80/443 (or custom via reverse proxy)
 - **Application Server**: 8000 (configurable, typically behind proxy)
-- **Client Server**: 5000 (configurable, typically behind proxy)
+- **Client Server**: 5000 (configurable, typically behind proxy; served by the Flask client app)
 - **PostgreSQL**: 5432 (default)
 - **Redis**: 6379 (default)
 
@@ -147,7 +148,7 @@ All required Python packages are available on PyPI for:
 - **Media Storage**: Shared filesystem or S3-compatible service required
 
 ### Load Balancer Configuration
-- **Sticky Sessions**: Not required (stateless design)
+- **Sticky Sessions**: Required for WebSocket connections; not required for REST API
 - **Health Checks**: Use `/health` endpoint
 - **WebSocket Support**: Ensure proxy supports WebSocket upgrades
 - **Timeouts**: Configure appropriate read/write timeouts
@@ -180,4 +181,4 @@ df -h
 free -h
 ```
 
-For more detailed troubleshooting, see the [Troubleshooting Guide](./troubleshooting.md).
+For configuration details, see [Configuration Overview](../configuration.md) and [Default Configuration Reference](../default-config.md). For performance guidance, see [Performance Tuning](../performance.md).

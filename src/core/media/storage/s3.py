@@ -183,8 +183,8 @@ class S3Storage(StorageBackendBase):
             logger.debug(f"Deleted file at s3://{self._bucket}/{key}")
             return True
         except self._ClientError as e:
-            logger.error(f"Failed to delete file at s3://{self._bucket}/{key}: {e}")  # nosec: B608
-            raise StorageDeleteError(f"Failed to delete from S3: {e}", "s3")  # nosec: B608
+            logger.error(f"Failed to delete file at s3://{self._bucket}/{key}: {e}")
+            raise StorageDeleteError(f"Failed to delete from S3: {e}", "s3")
 
     def exists(self, path: str) -> bool:
         """Check if file exists in storage."""

@@ -55,7 +55,9 @@ class MemberHandler:
         cache_key = f"is_member:{sid}:{uid}"
 
         # 1. Try internal memory first
-        mem_cached = self.manager._cache_get(self.manager._member_cache, cache_key)
+        mem_cached = self.manager._cache_get(
+            self.manager._member_cache_prefix, cache_key
+        )
         if mem_cached is not None:
             return mem_cached
 
@@ -67,12 +69,12 @@ class MemberHandler:
             if redis_cached is not None:
                 is_member = bool(int(redis_cached))
                 self.manager._cache_set(
-                    self.manager._member_cache, cache_key, is_member
+                    self.manager._member_cache_prefix, cache_key, is_member
                 )
                 return is_member
 
         # 3. Check if user is the owner
-        owner_id = self.manager._cache_get(self.manager._server_owner_cache, sid)
+        owner_id = self.manager._cache_get(self.manager._server_owner_cache_prefix, sid)
         if owner_id is None:
             # Check Redis for owner
             owner_cache_key = f"server_owner:{sid}"
@@ -81,7 +83,7 @@ class MemberHandler:
                 if owner_id_cached:
                     owner_id = int(owner_id_cached)
                     self.manager._cache_set(
-                        self.manager._server_owner_cache, sid, owner_id
+                        self.manager._server_owner_cache_prefix, sid, owner_id
                     )
 
             if owner_id is None:
@@ -92,13 +94,13 @@ class MemberHandler:
                 if row:
                     owner_id = int(row["owner_id"])
                     self.manager._cache_set(
-                        self.manager._server_owner_cache, sid, owner_id
+                        self.manager._server_owner_cache_prefix, sid, owner_id
                     )
                     if redis_available():
                         cache_set(owner_cache_key, str(owner_id), ttl=3600)
 
         if owner_id == uid:
-            self.manager._cache_set(self.manager._member_cache, cache_key, True)
+            self.manager._cache_set(self.manager._member_cache_prefix, cache_key, True)
             if redis_available():
                 cache_set(cache_key, "1", ttl=300)
             return True
@@ -110,7 +112,7 @@ class MemberHandler:
         is_member = row is not None
 
         # Cache result
-        self.manager._cache_set(self.manager._member_cache, cache_key, is_member)
+        self.manager._cache_set(self.manager._member_cache_prefix, cache_key, is_member)
         if redis_available():
             cache_set(cache_key, "1" if is_member else "0", ttl=300)
 
@@ -200,7 +202,9 @@ class MemberHandler:
                     f"Error adding member {user_id} to server conversations: {e}"
                 )
 
-        self.manager._cache_invalidate(self.manager._member_cache, (server_id, user_id))
+        self.manager._cache_invalidate(
+            self.manager._member_cache_prefix, (server_id, user_id)
+        )
 
         # Invalidate Redis
         from src.core.database import cache_delete, invalidate_pattern
@@ -370,13 +374,13 @@ class MemberHandler:
                 )
 
         self.manager._cache_invalidate(
-            self.manager._member_cache, (server_id, member_user_id)
+            self.manager._member_cache_prefix, (server_id, member_user_id)
         )
         self.manager._cache_invalidate(
-            self.manager._member_cache, f"is_member:{server_id}:{member_user_id}"
+            self.manager._member_cache_prefix, f"is_member:{server_id}:{member_user_id}"
         )
         self.manager._cache_invalidate(
-            self.manager._permission_cache, (member_user_id, server_id, None)
+            self.manager._permission_cache_prefix, (member_user_id, server_id, None)
         )
 
         # Invalidate Redis
@@ -559,7 +563,7 @@ class MemberHandler:
                 (server_id, member_user_id),
             )
             self.manager._cache_invalidate(
-                self.manager._member_cache, (server_id, member_user_id)
+                self.manager._member_cache_prefix, (server_id, member_user_id)
             )
 
             cache_delete(f"is_member:{server_id}:{member_user_id}")

@@ -1,70 +1,82 @@
-"""
-Tests for notification feed functionality.
-"""
+"""Tests for notification feed functionality."""
 
 import pytest
+from unittest.mock import patch
+from src.utils import encryption
 
 
 class TestGetNotificationFeed:
     """Tests for getting notification feed."""
 
-    def test_empty_feed(self, fresh_users):
+    def test_empty_feed(self, notification_manager):
         """Test empty feed for new user."""
-        (
-            user1,
-            user2,
-            auth,
-            messaging,
-            servers,
-            relationships,
-            presence,
-            notifications,
-        ) = fresh_users
-
-        feed = notifications.get_notification_feed(user1.id)
+        feed = notification_manager.get_notification_feed(1)
 
         assert len(feed.notifications) == 0
         assert feed.total_count == 0
         assert feed.unread_count == 0
         assert feed.has_more is False
 
-    def test_feed_with_notifications(self, users_with_dm):
+    def test_feed_with_notifications(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test feed with notifications."""
-        user1, user2, dm, messaging, notifications = users_with_dm
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username="user1", email="user1@example.com", password="TestPass123!"
+            )
+            user2 = auth_manager.register(
+                username="user2", email="user2@example.com", password="TestPass123!"
+            )
+
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}> check this"
-        msg = messaging.send_message(user1.id, dm.id, content)
+        msg = messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifications.create_notifications_for_message(
+        notification_manager.create_notifications_for_message(
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content,
         )
 
-        feed = notifications.get_notification_feed(user2.id)
+        feed = notification_manager.get_notification_feed(user2.id)
 
         assert len(feed.notifications) >= 1
         assert feed.total_count >= 1
         assert feed.unread_count >= 1
 
-    def test_feed_order(self, group_conversation):
+    def test_feed_order(self, auth_manager, messaging_manager, notification_manager):
         """Test feed is ordered by most recent first."""
-        owner, member1, member2, group, messaging, notifications, relationships = (
-            group_conversation
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            owner = auth_manager.register(
+                username="groupowner",
+                email="owner@example.com",
+                password="TestPass123!",
+            )
+            member1 = auth_manager.register(
+                username="member1", email="member1@example.com", password="TestPass123!"
+            )
+            member2 = auth_manager.register(
+                username="member2", email="member2@example.com", password="TestPass123!"
+            )
+
+        group = messaging_manager.create_group(
+            owner.id, "Test Group", [member1.id, member2.id]
         )
 
         for i in range(3):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging.send_message(owner.id, group.id, content)
-            notifications.create_notifications_for_message(
+            msg = messaging_manager.send_message(owner.id, group.id, content)
+            notification_manager.create_notifications_for_message(
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content,
             )
 
-        feed = notifications.get_notification_feed(member1.id)
+        feed = notification_manager.get_notification_feed(member1.id)
 
         assert len(feed.notifications) >= 3
         for i in range(len(feed.notifications) - 1):
@@ -72,52 +84,80 @@ class TestGetNotificationFeed:
                 feed.notifications[i].created_at >= feed.notifications[i + 1].created_at
             )
 
-    def test_feed_pagination(self, group_conversation):
+    def test_feed_pagination(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test feed pagination with before_id."""
-        owner, member1, member2, group, messaging, notifications, relationships = (
-            group_conversation
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            owner = auth_manager.register(
+                username="groupowner",
+                email="owner@example.com",
+                password="TestPass123!",
+            )
+            member1 = auth_manager.register(
+                username="member1", email="member1@example.com", password="TestPass123!"
+            )
+            member2 = auth_manager.register(
+                username="member2", email="member2@example.com", password="TestPass123!"
+            )
+
+        group = messaging_manager.create_group(
+            owner.id, "Test Group", [member1.id, member2.id]
         )
 
         for i in range(5):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging.send_message(owner.id, group.id, content)
-            notifications.create_notifications_for_message(
+            msg = messaging_manager.send_message(owner.id, group.id, content)
+            notification_manager.create_notifications_for_message(
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content,
             )
 
-        feed1 = notifications.get_notification_feed(member1.id, limit=2)
+        feed1 = notification_manager.get_notification_feed(member1.id, limit=2)
 
         assert len(feed1.notifications) == 2
 
         if len(feed1.notifications) > 0:
             last_id = feed1.notifications[-1].id
-            feed2 = notifications.get_notification_feed(
+            feed2 = notification_manager.get_notification_feed(
                 member1.id, limit=2, before_id=last_id
             )
 
             for notif in feed2.notifications:
                 assert notif.id < last_id
 
-    def test_feed_has_more(self, group_conversation):
+    def test_feed_has_more(self, auth_manager, messaging_manager, notification_manager):
         """Test feed has_more flag."""
-        owner, member1, member2, group, messaging, notifications, relationships = (
-            group_conversation
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            owner = auth_manager.register(
+                username="groupowner",
+                email="owner@example.com",
+                password="TestPass123!",
+            )
+            member1 = auth_manager.register(
+                username="member1", email="member1@example.com", password="TestPass123!"
+            )
+            member2 = auth_manager.register(
+                username="member2", email="member2@example.com", password="TestPass123!"
+            )
+
+        group = messaging_manager.create_group(
+            owner.id, "Test Group", [member1.id, member2.id]
         )
 
         for i in range(5):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging.send_message(owner.id, group.id, content)
-            notifications.create_notifications_for_message(
+            msg = messaging_manager.send_message(owner.id, group.id, content)
+            notification_manager.create_notifications_for_message(
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content,
             )
 
-        feed = notifications.get_notification_feed(member1.id, limit=2)
+        feed = notification_manager.get_notification_feed(member1.id, limit=2)
 
         assert feed.has_more is True
 
@@ -125,70 +165,112 @@ class TestGetNotificationFeed:
 class TestGetNotifications:
     """Tests for getting notifications list."""
 
-    def test_get_notifications(self, users_with_dm):
+    def test_get_notifications(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test getting notifications list."""
-        user1, user2, dm, messaging, notifications = users_with_dm
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username="user1", email="user1@example.com", password="TestPass123!"
+            )
+            user2 = auth_manager.register(
+                username="user2", email="user2@example.com", password="TestPass123!"
+            )
+
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}>"
-        msg = messaging.send_message(user1.id, dm.id, content)
+        msg = messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifications.create_notifications_for_message(
+        notification_manager.create_notifications_for_message(
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content,
         )
 
-        notifs = notifications.get_notifications(user2.id)
+        notifs = notification_manager.get_notifications(user2.id)
 
         assert len(notifs) >= 1
 
-    def test_get_unread_only(self, group_conversation):
+    def test_get_unread_only(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test getting only unread notifications."""
-        owner, member1, member2, group, messaging, notifications, relationships = (
-            group_conversation
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            owner = auth_manager.register(
+                username="groupowner",
+                email="owner@example.com",
+                password="TestPass123!",
+            )
+            member1 = auth_manager.register(
+                username="member1", email="member1@example.com", password="TestPass123!"
+            )
+            member2 = auth_manager.register(
+                username="member2", email="member2@example.com", password="TestPass123!"
+            )
+
+        group = messaging_manager.create_group(
+            owner.id, "Test Group", [member1.id, member2.id]
         )
 
         for i in range(3):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging.send_message(owner.id, group.id, content)
-            notifications.create_notifications_for_message(
+            msg = messaging_manager.send_message(owner.id, group.id, content)
+            notification_manager.create_notifications_for_message(
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content,
             )
 
-        all_notifs = notifications.get_notifications(member1.id)
+        all_notifs = notification_manager.get_notifications(member1.id)
         if len(all_notifs) > 0:
-            notifications.mark_notification_read(member1.id, all_notifs[0].id)
+            notification_manager.mark_notification_read(member1.id, all_notifs[0].id)
 
-        unread_notifs = notifications.get_notifications(member1.id, unread_only=True)
+        unread_notifs = notification_manager.get_notifications(
+            member1.id, unread_only=True
+        )
 
         assert len(unread_notifs) < len(all_notifs)
 
-    def test_get_notifications_pagination(self, group_conversation):
+    def test_get_notifications_pagination(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test notifications pagination."""
-        owner, member1, member2, group, messaging, notifications, relationships = (
-            group_conversation
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            owner = auth_manager.register(
+                username="groupowner",
+                email="owner@example.com",
+                password="TestPass123!",
+            )
+            member1 = auth_manager.register(
+                username="member1", email="member1@example.com", password="TestPass123!"
+            )
+            member2 = auth_manager.register(
+                username="member2", email="member2@example.com", password="TestPass123!"
+            )
+
+        group = messaging_manager.create_group(
+            owner.id, "Test Group", [member1.id, member2.id]
         )
 
         for i in range(5):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging.send_message(owner.id, group.id, content)
-            notifications.create_notifications_for_message(
+            msg = messaging_manager.send_message(owner.id, group.id, content)
+            notification_manager.create_notifications_for_message(
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content,
             )
 
-        page1 = notifications.get_notifications(member1.id, limit=2)
+        page1 = notification_manager.get_notifications(member1.id, limit=2)
 
         assert len(page1) == 2
 
         if len(page1) > 0:
-            page2 = notifications.get_notifications(
+            page2 = notification_manager.get_notifications(
                 member1.id, limit=2, before_id=page1[-1].id
             )
 
@@ -199,14 +281,24 @@ class TestGetNotifications:
 class TestDeleteNotification:
     """Tests for deleting notifications."""
 
-    def test_delete_notification(self, users_with_dm):
+    def test_delete_notification(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test deleting a notification."""
-        user1, user2, dm, messaging, notifications = users_with_dm
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username="user1", email="user1@example.com", password="TestPass123!"
+            )
+            user2 = auth_manager.register(
+                username="user2", email="user2@example.com", password="TestPass123!"
+            )
+
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}>"
-        msg = messaging.send_message(user1.id, dm.id, content)
+        msg = messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notifications.create_notifications_for_message(
+        notifs = notification_manager.create_notifications_for_message(
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
@@ -215,39 +307,38 @@ class TestDeleteNotification:
 
         assert len(notifs) == 1
 
-        result = notifications.delete_notification(user2.id, notifs[0].id)
+        result = notification_manager.delete_notification(user2.id, notifs[0].id)
 
         assert result is True
 
-        notif = notifications.get_notification(notifs[0].id)
+        notif = notification_manager.get_notification(notifs[0].id)
         assert notif is None
 
-    def test_delete_nonexistent_notification(self, fresh_users):
+    def test_delete_nonexistent_notification(self, notification_manager):
         """Test deleting nonexistent notification raises error."""
-        (
-            user1,
-            user2,
-            auth,
-            messaging,
-            servers,
-            relationships,
-            presence,
-            notifications,
-        ) = fresh_users
-
         from src.core.notifications import NotificationNotFoundError
 
         with pytest.raises(NotificationNotFoundError):
-            notifications.delete_notification(user1.id, 999999999)
+            notification_manager.delete_notification(1, 999999999)
 
-    def test_delete_other_users_notification(self, users_with_dm):
+    def test_delete_other_users_notification(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test cannot delete another user's notification."""
-        user1, user2, dm, messaging, notifications = users_with_dm
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username="user1", email="user1@example.com", password="TestPass123!"
+            )
+            user2 = auth_manager.register(
+                username="user2", email="user2@example.com", password="TestPass123!"
+            )
+
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}>"
-        msg = messaging.send_message(user1.id, dm.id, content)
+        msg = messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notifications.create_notifications_for_message(
+        notifs = notification_manager.create_notifications_for_message(
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
@@ -257,4 +348,4 @@ class TestDeleteNotification:
         from src.core.notifications import NotificationNotFoundError
 
         with pytest.raises(NotificationNotFoundError):
-            notifications.delete_notification(user1.id, notifs[0].id)
+            notification_manager.delete_notification(user1.id, notifs[0].id)

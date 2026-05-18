@@ -20,16 +20,21 @@ for path in [project_root, src_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-import utils.logger as logger  # noqa: E402
-
-try:
-    os.makedirs("temp_ms_test/logs", exist_ok=True)
-    logger.setup(log_dir="temp_ms_test/logs", level="WARNING", zip_logs=False)
-except Exception:
-    pass
-
 from src.core.search.indexer.meilisearch import MeilisearchIndexer  # noqa: E402
 from src.core.search.models import IndexedMessage  # noqa: E402
+
+
+@pytest.fixture(scope="module", autouse=True)
+def setup_logger(tmp_path_factory):
+    """Setup logger for meilisearch tests."""
+    import utils.logger as logger
+
+    log_dir = str(tmp_path_factory.mktemp("ms_test_logs"))
+    try:
+        logger.setup(log_dir=log_dir, level="WARNING", zip_logs=False)
+    except Exception:
+        pass
+    yield
 
 
 class MeilisearchMock:

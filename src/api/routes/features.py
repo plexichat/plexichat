@@ -409,7 +409,7 @@ async def set_user_tier(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def add_user_badge(
+async def add_feature_badge(
     user_id: str, badge: str, current_user: TokenInfo = Depends(get_admin_access)
 ) -> UserBadgeUpdateResponse:
     """
@@ -467,7 +467,8 @@ async def add_user_badge(
         raise
     except Exception as e:
         logger.error(
-            f"Unexpected error in add_user_badge for user {user_id}: {e}", exc_info=True
+            f"Unexpected error in add_feature_badge for user {user_id}: {e}",
+            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -487,7 +488,7 @@ async def add_user_badge(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def remove_user_badge(
+async def remove_feature_badge(
     user_id: str, badge: str, current_user: TokenInfo = Depends(get_admin_access)
 ) -> UserBadgeUpdateResponse:
     """
@@ -544,7 +545,7 @@ async def remove_user_badge(
         raise
     except Exception as e:
         logger.error(
-            f"Unexpected error in remove_user_badge for user {user_id}: {e}",
+            f"Unexpected error in remove_feature_badge for user {user_id}: {e}",
             exc_info=True,
         )
         raise HTTPException(

@@ -3,6 +3,7 @@ Tests for custom emoji functionality.
 """
 
 import pytest
+
 from unittest.mock import MagicMock, patch
 
 from src.core.reactions.exceptions import (

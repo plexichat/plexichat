@@ -31,7 +31,7 @@ class TestFileEncryptor:
         result = encryptor.encrypt(original_data)
 
         assert result.encrypted_data != original_data
-        assert result.header.version == 1
+        assert result.header.version == 2
         assert result.header.original_size == len(original_data)
 
         decrypted = encryptor.decrypt(result.encrypted_data, result.header)
@@ -61,7 +61,7 @@ class TestFileEncryptor:
         blob = encryptor.encrypt_to_blob(original_data)
 
         # Blob should start with magic bytes
-        assert blob[:5] == b"PXENC"
+        assert blob[:5] == b"PXSTR"
 
         decrypted = encryptor.decrypt_from_blob(blob)
         assert decrypted == original_data

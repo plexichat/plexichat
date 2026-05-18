@@ -254,9 +254,36 @@ class DatabaseExecutionMixin:
 
         cursor = self.execute(query, params)
         result = cursor.fetchone()
-        cursor.close()
 
-        final_result = dict(result) if result else None
+        # Capture column names BEFORE closing the cursor, since cursor.description
+        # becomes None after close() on most database drivers (e.g. sqlite3).
+        if result is None:
+            final_result = None
+        elif hasattr(result, "keys"):
+            final_result = dict(result)
+        else:
+            column_names = (
+                [desc[0] for desc in cursor.description] if cursor.description else []
+            )
+            if column_names:
+                final_result = dict(zip(column_names, result))
+            else:
+                logger.error(
+                    "fetch_one: Could not determine column names for query "
+                    "(cursor.description unavailable after close). Query: %s. "
+                    "This usually indicates a database driver compatibility issue.",
+                    query[:200],
+                )
+                # Return None instead of an empty dict to signal failure.
+                # Empty dicts cause confusing KeyErrors downstream, whereas
+                # callers already handle None (no row found).
+                final_result = None
+                # Do NOT cache this error result — the underlying issue may
+                # be transient, and caching None would mask real data.
+                cursor.close()
+                return final_result
+
+        cursor.close()
 
         with self._query_cache_lock:
             self._query_cache[cache_key] = (now + self._query_cache_ttl, final_result)
@@ -282,9 +309,35 @@ class DatabaseExecutionMixin:
 
         cursor = self.execute(query, params)
         results = cursor.fetchall()
-        cursor.close()
 
-        final_results = [dict(row) for row in results]
+        # Capture column names BEFORE closing the cursor, since cursor.description
+        # becomes None after close() on most database drivers (e.g. sqlite3).
+        if results and hasattr(results[0], "keys"):
+            final_results = [dict(row) for row in results]
+        elif results:
+            column_names = (
+                [desc[0] for desc in cursor.description] if cursor.description else []
+            )
+            if column_names:
+                final_results = [dict(zip(column_names, row)) for row in results]
+            else:
+                logger.error(
+                    "fetch_all: Could not determine column names for %d result(s) "
+                    "(cursor.description unavailable after close). Query: %s. "
+                    "This usually indicates a database driver compatibility issue. "
+                    "Returning empty list to avoid confusing KeyErrors downstream.",
+                    len(results),
+                    query[:200],
+                )
+                final_results = []
+                # Do NOT cache this error result — the underlying issue may
+                # be transient, and caching an empty list would mask real data.
+                cursor.close()
+                return final_results
+        else:
+            final_results = []
+
+        cursor.close()
 
         with self._query_cache_lock:
             self._query_cache[cache_key] = (now + self._query_cache_ttl, final_results)

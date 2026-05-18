@@ -91,64 +91,85 @@ class TestIntentMapping:
 class TestIntentFiltering:
     """Tests for intent-based event filtering."""
 
-    def test_guild_event_passes_with_guilds_intent(
-        self, sample_guild_event, all_intents
-    ):
+    def test_guild_event_passes_with_guilds_intent(self):
         """Test guild event passes with GUILDS intent."""
-        assert filter_by_intents(sample_guild_event, all_intents) is True
+        event = events.create_guild_create(
+            server_id=123, owner_id=456, name="Test Guild"
+        )
+        all_intents = GatewayIntent.GUILDS
+        assert filter_by_intents(event, all_intents) is True
 
-    def test_guild_event_fails_without_guilds_intent(
-        self, sample_guild_event, no_intents
-    ):
+    def test_guild_event_fails_without_guilds_intent(self):
         """Test guild event fails without GUILDS intent."""
-        assert filter_by_intents(sample_guild_event, no_intents) is False
+        event = events.create_guild_create(
+            server_id=123, owner_id=456, name="Test Guild"
+        )
+        no_intents = GatewayIntent(0)
+        assert filter_by_intents(event, no_intents) is False
 
-    def test_message_event_passes_with_guild_messages_intent(
-        self, sample_message_event
-    ):
+    def test_message_event_passes_with_guild_messages_intent(self):
         """Test message event passes with GUILD_MESSAGES intent."""
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+            server_id=111,
+        )
         intents = GatewayIntent.GUILD_MESSAGES
-        assert filter_by_intents(sample_message_event, intents) is True
+        assert filter_by_intents(event, intents) is True
 
-    def test_message_event_fails_without_guild_messages_intent(
-        self, sample_message_event
-    ):
+    def test_message_event_fails_without_guild_messages_intent(self):
         """Test message event fails without GUILD_MESSAGES intent."""
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+            server_id=111,
+        )
         intents = GatewayIntent.GUILDS
-        assert filter_by_intents(sample_message_event, intents) is False
+        assert filter_by_intents(event, intents) is False
 
-    def test_dm_event_passes_with_direct_messages_intent(self, sample_dm_event):
+    def test_dm_event_passes_with_direct_messages_intent(self):
         """Test DM event passes with DIRECT_MESSAGES intent."""
+        event = events.create_message_create(
+            message_id=123, channel_id=456, author_id=789, content="Hello!"
+        )
         intents = GatewayIntent.DIRECT_MESSAGES
-        assert filter_by_intents(sample_dm_event, intents) is True
+        assert filter_by_intents(event, intents) is True
 
-    def test_dm_event_fails_without_direct_messages_intent(self, sample_dm_event):
+    def test_dm_event_fails_without_direct_messages_intent(self):
         """Test DM event fails without DIRECT_MESSAGES intent."""
+        event = events.create_message_create(
+            message_id=123, channel_id=456, author_id=789, content="Hello!"
+        )
         intents = GatewayIntent.GUILD_MESSAGES
-        assert filter_by_intents(sample_dm_event, intents) is False
+        assert filter_by_intents(event, intents) is False
 
-    def test_presence_event_passes_with_presences_intent(self, sample_presence_event):
+    def test_presence_event_passes_with_presences_intent(self):
         """Test presence event passes with GUILD_PRESENCES intent."""
+        event = events.create_presence_update(user_id=123, status="online")
+        event.server_id = 123
         intents = GatewayIntent.GUILD_PRESENCES
-        sample_presence_event.server_id = 123
-        assert filter_by_intents(sample_presence_event, intents) is True
+        assert filter_by_intents(event, intents) is True
 
-    def test_presence_event_fails_without_presences_intent(self, sample_presence_event):
+    def test_presence_event_fails_without_presences_intent(self):
         """Test presence event fails without GUILD_PRESENCES intent."""
+        event = events.create_presence_update(user_id=123, status="online")
+        event.server_id = 123
         intents = GatewayIntent.GUILDS
-        sample_presence_event.server_id = 123
-        assert filter_by_intents(sample_presence_event, intents) is False
+        assert filter_by_intents(event, intents) is False
 
-    def test_typing_event_passes_with_typing_intent(self, sample_typing_event):
+    def test_typing_event_passes_with_typing_intent(self):
         """Test typing event passes with GUILD_MESSAGE_TYPING intent."""
+        event = events.create_typing_start(user_id=123, channel_id=456, server_id=789)
         intents = GatewayIntent.GUILD_MESSAGE_TYPING
-        assert filter_by_intents(sample_typing_event, intents) is True
+        assert filter_by_intents(event, intents) is True
 
-    def test_default_intents_allow_guild_messages(
-        self, sample_message_event, default_intents
-    ):
-        """Test default intents allow guild messages."""
-        assert filter_by_intents(sample_message_event, default_intents) is True
+
+class TestDefaultIntents:
+    """Tests for default intent behavior."""
 
     def test_default_intents_block_member_events(self):
         """Test default intents block member events."""
@@ -160,29 +181,40 @@ class TestIntentFiltering:
 class TestEventRouter:
     """Tests for EventRouter class."""
 
-    def test_router_initialization(self, event_router):
+    def test_router_initialization(self):
         """Test router initializes correctly."""
-        assert event_router is not None
+        from src.core.events.router import EventRouter
 
-    def test_get_recipients_with_explicit_user_ids(
-        self, event_router, sample_message_event
-    ):
+        router = EventRouter()
+        assert router is not None
+
+    def test_get_recipients_with_explicit_user_ids(self):
         """Test get_recipients with explicit user IDs."""
+        from src.core.events.router import EventRouter
+
+        event = events.create_message_create(
+            message_id=123, channel_id=456, author_id=789, content="Hello!"
+        )
+        router = EventRouter()
         user_ids = [1, 2, 3]
-        recipients = event_router.get_recipients(
-            sample_message_event,
+        recipients = router.get_recipients(
+            event,
             user_ids=user_ids,
         )
         assert recipients == user_ids
 
-    def test_get_recipients_excludes_specified_users(
-        self, event_router, sample_message_event
-    ):
+    def test_get_recipients_excludes_specified_users(self):
         """Test get_recipients excludes specified users."""
+        from src.core.events.router import EventRouter
+
+        event = events.create_message_create(
+            message_id=123, channel_id=456, author_id=789, content="Hello!"
+        )
+        router = EventRouter()
         user_ids = [1, 2, 3, 4, 5]
         exclude = [2, 4]
-        recipients = event_router.get_recipients(
-            sample_message_event,
+        recipients = router.get_recipients(
+            event,
             user_ids=user_ids,
             exclude_user_ids=exclude,
         )
@@ -192,27 +224,45 @@ class TestEventRouter:
         assert 3 in recipients
         assert 5 in recipients
 
-    def test_get_recipients_returns_empty_without_modules(
-        self, event_router, sample_message_event
-    ):
+    def test_get_recipients_returns_empty_without_modules(self):
         """Test get_recipients returns empty without routing modules."""
-        recipients = event_router.get_recipients(sample_message_event)
+        from src.core.events.router import EventRouter
+
+        event = events.create_message_create(
+            message_id=123, channel_id=456, author_id=789, content="Hello!"
+        )
+        router = EventRouter()
+        recipients = router.get_recipients(event)
         assert recipients == []
 
-    def test_get_recipients_uses_event_server_id(
-        self, event_router, sample_message_event
-    ):
+    def test_get_recipients_uses_event_server_id(self):
         """Test get_recipients uses event's server_id."""
-        recipients = event_router.get_recipients(
-            sample_message_event,
+        from src.core.events.router import EventRouter
+
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+            server_id=111,
+        )
+        router = EventRouter()
+        recipients = router.get_recipients(
+            event,
             server_id=None,
         )
         assert recipients == []
 
-    def test_get_recipients_uses_event_channel_id(self, event_router, sample_dm_event):
+    def test_get_recipients_uses_event_channel_id(self):
         """Test get_recipients uses event's channel_id for DMs."""
-        recipients = event_router.get_recipients(
-            sample_dm_event,
+        from src.core.events.router import EventRouter
+
+        event = events.create_message_create(
+            message_id=123, channel_id=456, author_id=789, content="Hello!"
+        )
+        router = EventRouter()
+        recipients = router.get_recipients(
+            event,
             channel_id=None,
         )
         assert recipients == []
@@ -221,85 +271,109 @@ class TestEventRouter:
 class TestEventDispatch:
     """Tests for event dispatch functionality."""
 
-    def test_dispatch_returns_zero_with_empty_recipients(self, sample_message_event):
+    def test_dispatch_returns_zero_with_empty_recipients(self, events_module):
         """Test dispatch returns 0 with empty recipients."""
-        count = events.dispatch(sample_message_event, user_ids=[])
+        from src.core.events import Event, EventType
+
+        event = Event(EventType.READY, {})
+        count = events.dispatch(event, user_ids=[])
         assert count == 0
 
-    def test_subscribe_and_dispatch(self, sample_message_event):
+    def test_subscribe_and_dispatch(self, events_module):
         """Test subscribing and dispatching events."""
-        received_events = []
-        received_users = []
+        from src.core.events import Event, EventType
+
+        callback_called = []
 
         def callback(event, user_ids):
-            received_events.append(event)
-            received_users.extend(user_ids)
+            callback_called.append((event, user_ids))
 
         events.subscribe(callback)
-        try:
-            count = events.dispatch(sample_message_event, user_ids=[1, 2, 3])
-            assert count == 3
-            assert len(received_events) == 1
-            assert received_events[0] == sample_message_event
-            assert set(received_users) == {1, 2, 3}
-        finally:
-            events.unsubscribe(callback)
 
-    def test_unsubscribe_stops_callbacks(self, sample_message_event):
+        event = Event(EventType.READY, {"data": "test"})
+        count = events.dispatch(event, user_ids=[1, 2, 3])
+
+        assert count == 3
+        assert len(callback_called) == 1
+        assert callback_called[0][0] == event
+        assert callback_called[0][1] == [1, 2, 3]
+
+    def test_unsubscribe_stops_callbacks(self, events_module):
         """Test unsubscribing stops callbacks."""
-        call_count = [0]
+        from src.core.events import Event, EventType
+
+        callback_called = []
 
         def callback(event, user_ids):
-            call_count[0] += 1
+            callback_called.append((event, user_ids))
 
         events.subscribe(callback)
-        events.dispatch(sample_message_event, user_ids=[1])
-        assert call_count[0] == 1
-
         events.unsubscribe(callback)
-        events.dispatch(sample_message_event, user_ids=[1])
-        assert call_count[0] == 1
 
-    def test_dispatch_with_exclude(self, sample_message_event):
+        event = Event(EventType.READY, {"data": "test"})
+        count = events.dispatch(event, user_ids=[1, 2, 3])
+
+        assert count == 3  # Still dispatches to users, but no callbacks
+        assert len(callback_called) == 0
+
+    def test_dispatch_with_exclude(self, events_module):
         """Test dispatch excludes specified users."""
-        received_users = []
+        from src.core.events import Event, EventType
+
+        callback_called = []
 
         def callback(event, user_ids):
-            received_users.extend(user_ids)
+            callback_called.append((event, user_ids))
 
         events.subscribe(callback)
-        try:
-            events.dispatch(
-                sample_message_event,
-                user_ids=[1, 2, 3, 4, 5],
-                exclude_user_ids=[2, 4],
-            )
-            assert 2 not in received_users
-            assert 4 not in received_users
-        finally:
-            events.unsubscribe(callback)
 
-    def test_dispatch_returns_zero_with_empty_user_ids(self, sample_message_event):
+        event = Event(EventType.READY, {"data": "test"})
+        count = events.dispatch(
+            event, user_ids=[1, 2, 3, 4, 5], exclude_user_ids=[2, 4]
+        )
+
+        assert count == 3  # Only 1, 3, 5 receive it
+        assert len(callback_called) == 1
+        assert callback_called[0][1] == [1, 3, 5]
+
+    def test_dispatch_returns_zero_with_empty_user_ids(self, events_module):
         """Test dispatch returns 0 with empty user_ids."""
-        count = events.dispatch(sample_message_event, user_ids=[])
+        from src.core.events import Event, EventType
+
+        callback_called = []
+
+        def callback(event, user_ids):
+            callback_called.append((event, user_ids))
+
+        events.subscribe(callback)
+
+        event = Event(EventType.READY, {"data": "test"})
+        count = events.dispatch(event, user_ids=[])
+
         assert count == 0
+        assert len(callback_called) == 0
 
-    def test_multiple_subscribers(self, sample_message_event):
+    def test_multiple_subscribers(self, events_module):
         """Test multiple subscribers receive events."""
-        calls = {"a": 0, "b": 0}
+        from src.core.events import Event, EventType
 
-        def callback_a(event, user_ids):
-            calls["a"] += 1
+        callback1_called = []
+        callback2_called = []
 
-        def callback_b(event, user_ids):
-            calls["b"] += 1
+        def callback1(event, user_ids):
+            callback1_called.append((event, user_ids))
 
-        events.subscribe(callback_a)
-        events.subscribe(callback_b)
-        try:
-            events.dispatch(sample_message_event, user_ids=[1])
-            assert calls["a"] == 1
-            assert calls["b"] == 1
-        finally:
-            events.unsubscribe(callback_a)
-            events.unsubscribe(callback_b)
+        def callback2(event, user_ids):
+            callback2_called.append((event, user_ids))
+
+        events.subscribe(callback1)
+        events.subscribe(callback2)
+
+        event = Event(EventType.READY, {"data": "test"})
+        count = events.dispatch(event, user_ids=[1, 2])
+
+        assert count == 2
+        assert len(callback1_called) == 1
+        assert len(callback2_called) == 1
+        assert callback1_called[0][1] == [1, 2]
+        assert callback2_called[0][1] == [1, 2]

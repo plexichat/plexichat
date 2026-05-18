@@ -123,6 +123,9 @@ class TestGlobalLimit:
         manager = RateLimitManager(
             storage_backend=memory_storage,
             enable_global_limit=False,
+            user_config=RateLimitConfig(
+                requests=1000, window_seconds=60
+            ),  # High user limit to test global limit
         )
         for i in range(100):
             result = manager.check_rate_limit(user_id=test_user_id)

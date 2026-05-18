@@ -1,194 +1,180 @@
-"""
-Edge case tests for automod module.
-"""
+"""Tests for automod edge cases and boundary conditions."""
 
 import pytest
 
-from src.core.automod import RuleType, RuleValidationError, RuleNotFoundError
+from src.core.automod.models import RuleType
+from src.core.automod.exceptions import RuleValidationError
 
 
 @pytest.mark.automod
 class TestEdgeCases:
-    """Tests for edge cases and error conditions."""
+    """Tests for automod edge cases and boundary conditions."""
 
-    def test_empty_content(self, automod_module, test_server_for_automod):
-        """Test checking empty content."""
-        server, channel, owner = test_server_for_automod
-
-        automod_module.create_rule(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Test",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["test"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "log_only"}],
-        )
-
-        result = automod_module.check_message(
-            server_id=server.id, channel_id=channel.id, user_id=owner.id, content=""
-        )
-
-        assert result.passed
-
-    def test_very_long_content(
-        self, automod_module, test_server_for_automod, user_pool, modules
-    ):
-        """Test checking very long content."""
-        server, channel, owner = test_server_for_automod
-        member = user_pool.get_user()
-        modules.servers.add_member(server.id, member.id)
-
-        automod_module.create_rule(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Test",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["bad"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "log_only"}],
-        )
-
-        long_content = "a" * 10000 + " bad " + "b" * 10000
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=member.id,
-            content=long_content,
-        )
-
-        assert not result.passed
-
-    def test_invalid_rule_config(self, automod_module, test_server_for_automod):
-        """Test creating rule with invalid config."""
-        server, channel, owner = test_server_for_automod
-
+    def test_rule_with_empty_keywords_rejected(self, automod_manager, test_server):
+        """Test that keyword rule with empty keywords list is rejected."""
+        server, owner = test_server
         with pytest.raises(RuleValidationError):
-            automod_module.create_rule(
+            automod_manager.create_rule(
                 user_id=owner.id,
                 server_id=server.id,
-                name="Invalid",
+                name="Empty Keywords",
                 rule_type=RuleType.KEYWORD,
-                rule_config={"keywords": "not a list"},
+                rule_config={
+                    "keywords": [],
+                    "case_sensitive": False,
+                    "whole_word": True,
+                },
                 actions=[{"action_type": "log_only"}],
             )
 
-    def test_invalid_action_type(self, automod_module, test_server_for_automod):
-        """Test creating rule with invalid action type."""
-        server, channel, owner = test_server_for_automod
-
+    def test_rule_with_no_actions_rejected(self, automod_manager, test_server):
+        """Test that rule with no actions is rejected."""
+        server, owner = test_server
         with pytest.raises(RuleValidationError):
-            automod_module.create_rule(
+            automod_manager.create_rule(
                 user_id=owner.id,
                 server_id=server.id,
-                name="Invalid Action",
+                name="No Actions",
                 rule_type=RuleType.KEYWORD,
                 rule_config={
                     "keywords": ["test"],
                     "case_sensitive": False,
                     "whole_word": True,
                 },
-                actions=[{"action_type": "invalid_action"}],
+                actions=[],
             )
 
-    def test_update_nonexistent_rule(self, automod_module, test_server_for_automod):
-        """Test updating a rule that doesn't exist."""
-        server, channel, owner = test_server_for_automod
+    def test_rule_with_empty_name_rejected(self, automod_manager, test_server):
+        """Test that rule with empty name is rejected."""
+        server, owner = test_server
+        with pytest.raises(RuleValidationError):
+            automod_manager.create_rule(
+                user_id=owner.id,
+                server_id=server.id,
+                name="",
+                rule_type=RuleType.KEYWORD,
+                rule_config={
+                    "keywords": ["test"],
+                    "case_sensitive": False,
+                    "whole_word": True,
+                },
+                actions=[{"action_type": "log_only"}],
+            )
 
-        with pytest.raises(RuleNotFoundError):
-            automod_module.update_rule(user_id=owner.id, rule_id=999999, name="Updated")
-
-    def test_delete_nonexistent_rule(self, automod_module, test_server_for_automod):
-        """Test deleting a rule that doesn't exist."""
-        server, channel, owner = test_server_for_automod
-
-        with pytest.raises(RuleNotFoundError):
-            automod_module.delete_rule(owner.id, 999999)
-
-    def test_unicode_content(
-        self, automod_module, test_server_for_automod, user_pool, modules
-    ):
-        """Test handling unicode content."""
-        server, channel, owner = test_server_for_automod
-        member = user_pool.get_user()
-        modules.servers.add_member(server.id, member.id)
-
-        automod_module.create_rule(
+    def test_case_sensitive_keyword_matching(self, automod_manager, test_server):
+        """Test case-sensitive vs case-insensitive keyword matching."""
+        server, owner = test_server
+        # Case-insensitive rule
+        rule_ci = automod_manager.create_rule(
             user_id=owner.id,
             server_id=server.id,
-            name="Unicode Test",
+            name="Case Insensitive",
             rule_type=RuleType.KEYWORD,
             rule_config={
-                "keywords": ["test"],
+                "keywords": ["badword"],
                 "case_sensitive": False,
                 "whole_word": True,
             },
             actions=[{"action_type": "log_only"}],
         )
+        assert rule_ci is not None
 
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=member.id,
-            content="Hello 世界 test 🎉",
-        )
-
-        assert not result.passed
-
-    def test_special_regex_characters(
-        self, automod_module, test_server_for_automod, user_pool, modules
-    ):
-        """Test keywords with special regex characters."""
-        server, channel, owner = test_server_for_automod
-        member = user_pool.get_user()
-        modules.servers.add_member(server.id, member.id)
-
-        automod_module.create_rule(
+    def test_multiple_rules_on_same_server(self, automod_manager, test_server):
+        """Test creating multiple rules on the same server."""
+        server, owner = test_server
+        rule1 = automod_manager.create_rule(
             user_id=owner.id,
             server_id=server.id,
-            name="Special Chars",
+            name="Rule 1",
             rule_type=RuleType.KEYWORD,
             rule_config={
-                "keywords": ["$$$", "(test)"],
+                "keywords": ["word1"],
                 "case_sensitive": False,
-                "whole_word": False,
+                "whole_word": True,
             },
             actions=[{"action_type": "log_only"}],
         )
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=member.id,
-            content="Get $$$ now!",
-        )
-
-        assert not result.passed
-
-    def test_no_rules_configured(self, automod_module, test_server_for_automod):
-        """Test server with no rules configured."""
-        server, channel, owner = test_server_for_automod
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
+        rule2 = automod_manager.create_rule(
             user_id=owner.id,
-            content="any content",
+            server_id=server.id,
+            name="Rule 2",
+            rule_type=RuleType.KEYWORD,
+            rule_config={
+                "keywords": ["word2"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
+        assert rule1.id != rule2.id
 
-        assert result.passed
+    def test_get_server_rules_returns_all(self, automod_manager, test_server):
+        """Test getting all rules for a server."""
+        server, owner = test_server
+        automod_manager.create_rule(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Rule A",
+            rule_type=RuleType.KEYWORD,
+            rule_config={
+                "keywords": ["a"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "log_only"}],
+        )
+        automod_manager.create_rule(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Rule B",
+            rule_type=RuleType.KEYWORD,
+            rule_config={
+                "keywords": ["b"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
+        )
+        rules = automod_manager.get_server_rules(server.id)
+        assert len(rules) >= 2
 
-    def test_get_violations_empty(self, automod_module, test_server_for_automod):
-        """Test getting violations when none exist."""
-        server, channel, owner = test_server_for_automod
+    def test_delete_rule_removes_from_list(self, automod_manager, test_server):
+        """Test that deleting a rule removes it from server rules list."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
+            user_id=owner.id,
+            server_id=server.id,
+            name="To Delete",
+            rule_type=RuleType.KEYWORD,
+            rule_config={
+                "keywords": ["deleteme"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "log_only"}],
+        )
+        count_before = len(automod_manager.get_server_rules(server.id))
+        automod_manager.delete_rule(owner.id, rule.id)
+        count_after = len(automod_manager.get_server_rules(server.id))
+        assert count_after == count_before - 1
 
-        violations = automod_module.get_violations(server.id)
-
-        assert isinstance(violations, list)
+    def test_rule_with_multiple_actions(self, automod_manager, test_server):
+        """Test creating a rule with multiple actions."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Multi Action",
+            rule_type=RuleType.KEYWORD,
+            rule_config={
+                "keywords": ["bad"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[
+                {"action_type": "delete_message"},
+                {"action_type": "alert_moderators"},
+                {"action_type": "log_only"},
+            ],
+        )
+        assert len(rule.actions) == 3

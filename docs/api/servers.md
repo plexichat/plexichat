@@ -2,7 +2,11 @@
 
 Endpoints for server (guild) management.
 
-**Base URL**: `https://api.plexichat.com`
+**Base URL**: `https://api.plexichat.com/api/v1`
+
+For development, use `http://localhost:8000/api/v1`.
+
+All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
 
 ## GET /servers
 
@@ -11,7 +15,7 @@ Get all servers the authenticated user is a member of.
 ### Example Request
 
 ```bash
-curl -X GET https://api.plexichat.com/servers \
+curl -X GET http://localhost:8000/api/v1/servers \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -23,7 +27,7 @@ curl -X GET https://api.plexichat.com/servers \
     "id": "123456789012345678",
     "name": "My Server",
     "description": "A cool server",
-    "icon_url": "https://api.plexichat.com/avatars/servers/123456789012345678",
+    "icon_url": "http://localhost:8000/api/v1/avatars/servers/123456789012345678",
     "owner_id": "123456789012345678",
     "member_count": 150,
     "default_channel_id": "234567890123456789",
@@ -38,15 +42,13 @@ Create a new server. The authenticated user becomes the owner.
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| name | string | Yes | 2-100 characters | Server name |
-| description | string | No | Max 1000 characters | Server description |
+- `name` (string, required, 2-100 characters): Server name
+- `description` (string, optional, Max 1000 characters): Server description
 
 ### Example Request
 
 ```bash
-curl -X POST https://api.plexichat.com/servers \
+curl -X POST http://localhost:8000/api/v1/servers \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -61,9 +63,7 @@ Returns the created server object.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Server limit | User has reached server creation limit |
+- 400 Server limit: User has reached server creation limit
 
 ## GET /servers/{server_id}
 
@@ -77,9 +77,7 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| server_id | string | Server's snowflake ID |
+- `server_id` (string): Server's snowflake ID
 
 ### Response (200 OK)
 
@@ -98,11 +96,9 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid server ID | ID format invalid |
-| 403 | Access denied | Not a member |
-| 404 | Server not found | Server doesn't exist |
+- 400 Invalid server ID: ID format invalid
+- 403 Access denied: Not a member
+- 404 Server not found: Server doesn't exist
 
 ## PATCH /servers/{server_id}
 
@@ -116,10 +112,8 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| name | string | No | 2-100 characters | Server name |
-| description | string | No | Max 1000 characters | Server description |
+- `name` (string, optional, 2-100 characters): Server name
+- `description` (string, optional, Max 1000 characters): Server description
 
 ### Example Request
 
@@ -136,10 +130,8 @@ Returns the updated server object.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Permission denied | Missing manage server permission |
-| 404 | Server not found | Server doesn't exist |
+- 403 Permission denied: Missing manage server permission
+- 404 Server not found: Server doesn't exist
 
 ## DELETE /servers/{server_id}
 
@@ -161,10 +153,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Not owner | Only owner can delete |
-| 404 | Server not found | Server doesn't exist |
+- 403 Not owner: Only owner can delete
+- 404 Server not found: Server doesn't exist
 
 ## POST /servers/{server_id}/icon
 
@@ -179,9 +169,7 @@ Content-Type: multipart/form-data
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| file | file | Yes | Image file (JPEG, PNG, GIF, WebP) |
+- `file` (file, required): Image file (JPEG, PNG, GIF, WebP)
 
 ### Response (200 OK)
 
@@ -189,11 +177,9 @@ Returns the updated server object with new icon_url.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid file type | Must be JPEG, PNG, GIF, or WebP |
-| 400 | File too large | Exceeds size limit (default 2MB) |
-| 403 | Permission denied | Missing manage server permission |
+- 400 Invalid file type: Must be JPEG, PNG, GIF, or WebP
+- 400 File too large: Exceeds size limit (default 2MB)
+- 403 Permission denied: Missing manage server permission
 
 ---
 
@@ -230,18 +216,14 @@ Authorization: Bearer <token>
 
 ### Channel Types
 
-| Type | Description |
-|------|-------------|
-| text | Text channel for messages |
-| voice | Voice channel for audio |
-| category | Category for organizing channels |
+- text: Text channel for messages
+- voice: Voice channel for audio
+- category: Category for organizing channels
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Access denied | Not a member |
-| 404 | Server not found | Server doesn't exist |
+- 403 Access denied: Not a member
+- 404 Server not found: Server doesn't exist
 
 ## POST /servers/{server_id}/channels
 
@@ -255,13 +237,11 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| name | string | Yes | Channel name (1-100 characters) |
-| type | string | No | Channel type (text, voice, category) |
-| topic | string | No | Channel topic |
-| category_id | string | No | Parent category ID |
-| nsfw | bool | No | NSFW flag |
+- `name` (string, required): Channel name (1-100 characters)
+- `type` (string, optional): Channel type (text, voice, category)
+- `topic` (string, optional): Channel topic
+- `category_id` (string, optional): Parent category ID
+- `nsfw` (bool, optional): NSFW flag
 
 ### Example Request
 
@@ -293,10 +273,8 @@ Authorization: Bearer <token>
 
 ### Query Parameters
 
-| Parameter | Type | Default | Constraints | Description |
-|-----------|------|---------|-------------|-------------|
-| limit | int | 100 | 1-1000 | Max members to return |
-| after | string | null | Snowflake ID | Get members after this user ID |
+- `limit` (int, optional, 1-1000): Max members to return
+- `after` (string, optional, Snowflake ID): Get members after this user ID
 
 ### Response (200 OK)
 
@@ -318,15 +296,13 @@ Authorization: Bearer <token>
 
 ### Response Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| user_id | string | Member's user ID |
-| username | string | Member's username |
-| avatar_url | string? | Member's avatar URL |
-| nickname | string? | Server-specific nickname |
-| roles | array | Array of role IDs |
-| joined_at | int | Unix timestamp of join |
-| presence | object | User's presence status |
+- `user_id` (string): Member's user ID
+- `username` (string): Member's username
+- `avatar_url` (string?): Member's avatar URL
+- `nickname` (string?): Server-specific nickname
+- `roles` (array): Array of role IDs
+- `joined_at` (int): Unix timestamp of join
+- `presence` (object): User's presence status
 
 ## DELETE /servers/{server_id}/members/{member_id}
 
@@ -348,10 +324,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Permission denied | Missing kick permission or hierarchy violation |
-| 404 | Member not found | Member doesn't exist |
+- 403 Permission denied: Missing kick permission or hierarchy violation
+- 404 Member not found: Member doesn't exist
 
 ## PUT /servers/{server_id}/members/{member_id}/roles/{role_id}
 
@@ -433,13 +407,11 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| name | string | No | Role name (default: "New Role") |
-| color | string | No | Hex color code in `#RRGGBB` format. |
-| permissions | object | No | Permission flags |
-| hoist | bool | No | Display separately in member list |
-| mentionable | bool | No | Allow @mentions |
+- `name` (string, optional): Role name (default: "New Role")
+- `color` (string, optional): Hex color code in `#RRGGBB` format.
+- `permissions` (object, optional): Permission flags
+- `hoist` (bool, optional): Display separately in member list
+- `mentionable` (bool, optional): Allow @mentions
 
 ### Example Request
 
@@ -531,10 +503,8 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| reason | string | No | Ban reason |
-| delete_message_days | int | No | Days of messages to delete (0-7) |
+- `reason` (string, optional): Ban reason
+- `delete_message_days` (int, optional): Days of messages to delete (0-7)
 
 ### Example Request
 
@@ -626,10 +596,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 403 | Owners cannot leave | You must transfer ownership first |
-| 404 | Server not found | Server doesn't exist |
+- 403 Owners cannot leave: You must transfer ownership first
+- 404 Server not found: Server doesn't exist
 
 ## GET /servers/{server_id}/permissions
 
@@ -669,9 +637,7 @@ Authorization: Bearer <token>
 
 ### Query Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| limit | int | 50 | Max entries to return |
+- limit: int
 
 ### Response (200 OK)
 
@@ -738,18 +704,16 @@ Authorization: Bearer <token>
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| id | string | Server's snowflake ID |
-| name | string | Server name |
-| description | string? | Server description |
-| icon_url | string? | Server icon URL |
-| owner_id | string | Owner's user ID |
-| member_count | int | Number of members |
-| default_channel_id | string? | Default channel ID |
-| verification_level | int | Verification level required to join |
-| default_message_notifications | int | Default notification level (0=all, 1=mentions) |
-| created_at | int | Unix timestamp of creation |
+- `id` (string): Server's snowflake ID
+- `name` (string): Server name
+- `description` (string?): Server description
+- `icon_url` (string?): Server icon URL
+- `owner_id` (string): Owner's user ID
+- `member_count` (int): Number of members
+- `default_channel_id` (string?): Default channel ID
+- `verification_level` (int): Verification level required to join
+- `default_message_notifications` (int): Default notification level (0=all, 1=mentions)
+- `created_at` (int): Unix timestamp of creation
 
 ---
 

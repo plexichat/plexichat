@@ -1,76 +1,60 @@
-"""
-Tests for webhook signature verification.
-"""
+"""Tests for application webhook signature verification."""
 
 import pytest
 import hmac
 import hashlib
 
+from src.core.applications.exceptions import WebhookSignatureError
+
 
 @pytest.mark.applications
-@pytest.mark.integration
-class TestWebhookSignature:
+class TestWebhooks:
     """Tests for webhook signature verification."""
 
-    def test_verify_valid_signature(self, modules):
+    def test_verify_valid_signature(self, app_manager, test_user):
         """Test verifying a valid webhook signature."""
+        app_manager.create_application(owner_id=test_user.id, name="Webhook App")
         body = b'{"type": 1}'
         timestamp = "1234567890"
-        secret = "plexichat-webhook-secret"
-
+        secret = app_manager._config.get("webhook_signature_secret", "")
         message = timestamp.encode() + body
-        signature = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+        expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
-        result = modules.applications.verify_webhook_signature(
-            body=body,
-            signature=signature,
-            timestamp=timestamp,
-        )
-
+        result = app_manager.verify_webhook_signature(body, expected, timestamp)
         assert result is True
 
-    def test_verify_invalid_signature(self, modules):
-        """Test verifying an invalid webhook signature."""
+    def test_verify_invalid_signature(self, app_manager, test_user):
+        """Test that invalid signature raises error."""
+        app_manager.create_application(owner_id=test_user.id, name="Bad Sig App")
         body = b'{"type": 1}'
         timestamp = "1234567890"
+        bad_signature = "invalid_signature"
 
-        with pytest.raises(modules.applications.WebhookSignatureError):
-            modules.applications.verify_webhook_signature(
-                body=body,
-                signature="invalid_signature",
-                timestamp=timestamp,
-            )
+        with pytest.raises(WebhookSignatureError):
+            app_manager.verify_webhook_signature(body, bad_signature, timestamp)
 
-    def test_verify_tampered_body(self, modules):
-        """Test that tampered body fails verification."""
+    def test_verify_tampered_body(self, app_manager, test_user):
+        """Test that tampered body causes signature mismatch."""
+        app_manager.create_application(owner_id=test_user.id, name="Tamper App")
         original_body = b'{"type": 1}'
-        tampered_body = b'{"type": 2}'
         timestamp = "1234567890"
-        secret = "plexichat-webhook-secret"
-
+        secret = app_manager._config.get("webhook_signature_secret", "")
         message = timestamp.encode() + original_body
-        signature = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+        expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
-        with pytest.raises(modules.applications.WebhookSignatureError):
-            modules.applications.verify_webhook_signature(
-                body=tampered_body,
-                signature=signature,
-                timestamp=timestamp,
-            )
+        tampered_body = b'{"type": 2}'
+        with pytest.raises(WebhookSignatureError):
+            app_manager.verify_webhook_signature(tampered_body, expected, timestamp)
 
-    def test_verify_tampered_timestamp(self, modules):
-        """Test that tampered timestamp fails verification."""
+    def test_verify_wrong_timestamp(self, app_manager, test_user):
+        """Test that wrong timestamp causes signature mismatch."""
+        app_manager.create_application(owner_id=test_user.id, name="Time App")
         body = b'{"type": 1}'
         original_timestamp = "1234567890"
-        tampered_timestamp = "9999999999"
-        secret = "plexichat-webhook-secret"
-
+        secret = app_manager._config.get("webhook_signature_secret", "")
         message = original_timestamp.encode() + body
-        signature = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+        expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
-        with pytest.raises(modules.applications.WebhookSignatureError):
-            modules.applications.verify_webhook_signature(
-                body=body,
-                signature=signature,
-                timestamp=tampered_timestamp,
-            )
+        wrong_timestamp = "9999999999"
+        with pytest.raises(WebhookSignatureError):
+            app_manager.verify_webhook_signature(body, expected, wrong_timestamp)

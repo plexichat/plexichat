@@ -25,24 +25,14 @@ from typing import (
     Awaitable,
     Callable,
     Dict,
-    Iterable,
     List,
     Optional,
-    Protocol,
     Tuple,
     Union,
     cast,
 )
 from functools import wraps
 import os
-
-try:
-    import diskcache
-
-    _DISKCACHE_AVAILABLE = True
-except ImportError:
-    diskcache = None
-    _DISKCACHE_AVAILABLE = False
 
 import utils.logger as logger
 
@@ -54,14 +44,6 @@ from ..redis_client import (
 )
 
 
-class _DiskCacheLike(Protocol):
-    def get(self, key: str) -> Any: ...
-    def set(self, key: str, value: Any, expire: Optional[int] = None) -> Any: ...
-    def pop(self, key: str, default: Any = None) -> Any: ...
-    def keys(self, *args, **kwargs) -> Iterable[Any]: ...
-    def iterkeys(self, *args, **kwargs) -> Iterable[Any]: ...
-
-
 # Cache statistics
 _cache_stats = {
     "hits": 0,
@@ -69,57 +51,29 @@ _cache_stats = {
     "errors": 0,
 }
 
-# Simple in-memory fallback cache (or diskcache if available)
-if _DISKCACHE_AVAILABLE and diskcache is not None:
-    cache_dir = os.path.join(
-        os.path.expanduser("~"), ".plexichat", "cache", "local_cache"
-    )
-    try:
-        if not os.path.exists(cache_dir):
-            os.makedirs(cache_dir, exist_ok=True)
-        _mem_cache: Union[_DiskCacheLike, Dict[str, Tuple[float, Any]]] = cast(
-            _DiskCacheLike, diskcache.Cache(cache_dir, disk=diskcache.JSONDisk)
-        )
-        _mem_cache_is_diskcache = True
-        logger.info(f"Initialized DiskCache at {cache_dir}")
-    except Exception as e:
-        if getattr(logger, "_setup_called", False):
-            logger.warning(f"Failed to initialize DiskCache, using memory cache: {e}")
-        _mem_cache = {}
-        _mem_cache_is_diskcache = False
-else:
-    _mem_cache = {}
-    _mem_cache_is_diskcache = False
+# Simple in-memory fallback cache
+_mem_cache: Dict[str, Tuple[float, Any]] = {}
 _MEM_CACHE_MAX_SIZE = 1000
 
 
 def _mem_cache_get(key: str) -> Optional[Any]:
-    if _mem_cache_is_diskcache:
-        # DiskCache handles expiry automatically
-        # It returns None if key is missing or expired
-        return cast(_DiskCacheLike, _mem_cache).get(key)
-    else:
-        mem_cache = cast(Dict[str, Tuple[float, Any]], _mem_cache)
-        if key in mem_cache:
-            expiry, value = mem_cache[key]
-            if expiry > time.time():
-                return value
-            del mem_cache[key]
-        return None
+    """Get a value from the in-memory cache, handling expiry."""
+    if key in _mem_cache:
+        expiry, value = _mem_cache[key]
+        if expiry > time.time():
+            return value
+        del _mem_cache[key]
+    return None
 
 
-def _mem_cache_set(key: str, value: Any, ttl: int):
-    if _mem_cache_is_diskcache:
-        # DiskCache handles expiry (ttl in seconds)
-        cast(_DiskCacheLike, _mem_cache).set(key, value, expire=ttl)
-    else:
-        mem_cache = cast(Dict[str, Tuple[float, Any]], _mem_cache)
-        if len(mem_cache) >= _MEM_CACHE_MAX_SIZE:
-            # Very simple eviction: clear half the cache if it gets too big
-            keys = list(mem_cache.keys())
-            for k in keys[: _MEM_CACHE_MAX_SIZE // 2]:
-                del mem_cache[k]
-        mem_cache[key] = (time.time() + ttl, value)
+def _mem_cache_set(key: str, value: Any, ttl: int) -> None:
+    """Set a value in the in-memory cache with TTL."""
+    if len(_mem_cache) >= _MEM_CACHE_MAX_SIZE:
+        # Very simple eviction: clear half the cache if it gets too big
+        keys = list(_mem_cache.keys())
+        for k in keys[: _MEM_CACHE_MAX_SIZE // 2]:
+            del _mem_cache[k]
+    _mem_cache[key] = (time.time() + ttl, value)
 
 
 class CacheError(Exception):
@@ -568,27 +522,12 @@ def invalidate_pattern(pattern: str) -> int:
     Returns:
         Number of keys invalidated.
     """
-    # Always clear in-memory cache entries that match the pattern
-    # Wrap keys() in list() to handle both dict and DiskCache (which returns iterator)
-    if _mem_cache_is_diskcache:
-        # Limit the number of keys we check to avoid performance hit on huge caches
-        # For diskcache, iterating all keys can be slow, but for local cache usage it is acceptable
-        mem_keys = []
-        for k in list(cast(_DiskCacheLike, _mem_cache).iterkeys()):
-            # Handle potential bytes keys from diskcache
-            k_str = k.decode("utf-8") if isinstance(k, bytes) else str(k)
-            if fnmatch.fnmatch(k_str, pattern):
-                mem_keys.append(k)
-    else:
-        mem_keys = [
-            k
-            for k in list(cast(Dict[str, Tuple[float, Any]], _mem_cache).keys())
-            if fnmatch.fnmatch(str(k), pattern)
-        ]
+    # Clear in-memory cache entries that match the pattern
+    mem_cache = cast(Dict[str, Tuple[float, Any]], _mem_cache)
+    mem_keys = [k for k in list(mem_cache.keys()) if fnmatch.fnmatch(str(k), pattern)]
 
     for k in mem_keys:
-        # pop works for both dict and DiskCache
-        _mem_cache.pop(k, None)
+        del mem_cache[k]
 
     client = get_client()
     if not client or not is_available():

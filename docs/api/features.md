@@ -39,11 +39,9 @@ Authorization: Bearer <token>
 
 ### Response Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| badges | array | User's badges with display info |
-| tier | string | User's rate limit tier |
-| tier_limits | object | Tier-specific limits |
+- `badges` (array): User's badges with display info
+- `tier` (string): User's rate limit tier
+- `tier_limits` (object): Tier-specific limits
 
 ---
 
@@ -90,11 +88,9 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| rate_limit_tier | string | No | Rate limit tier |
-| expires_at | int | No | Unix timestamp when features expire |
-| notes | string | No | Admin notes |
+- `rate_limit_tier` (string, optional): Rate limit tier
+- `expires_at` (int, optional): Unix timestamp when features expire
+- `notes` (string, optional): Admin notes
 
 ### Example Request
 
@@ -120,10 +116,8 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| tier | string | Yes | Tier name |
-| expires_at | int | No | Unix timestamp when tier expires |
+- `tier` (string, required): Tier name
+- `expires_at` (int, optional): Unix timestamp when tier expires
 
 ### Example Request
 
@@ -159,10 +153,8 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid badge | Badge name not recognized |
-| 404 | User not found | User doesn't exist |
+- 400 Invalid badge: Badge name not recognized
+- 404 User not found: User doesn't exist
 
 ### DELETE /admin/users/{user_id}/badges/{badge}
 
@@ -273,11 +265,9 @@ Authorization: Bearer <token>
 
 ## Rate Limit Tiers
 
-| Tier | Multiplier | Voice Minutes/Day | File Uploads/Day | Max File Size |
-|------|------------|-------------------|------------------|---------------|
-| standard | 1.0x | 120 | 50 | 10 MB |
-| alpha | 2.0x | 480 | 200 | 25 MB |
-| premium | 3.0x | Unlimited | 500 | 100 MB |
+- standard: 1.0x
+- alpha: 2.0x
+- premium: 3.0x
 
 The multiplier affects rate limit windows - higher multipliers allow more requests.
 
@@ -285,12 +275,10 @@ The multiplier affects rate limit windows - higher multipliers allow more reques
 
 ## Available Badges
 
-| Badge | Display Name | Description |
-|-------|--------------|-------------|
-| alpha_tester | Alpha Tester | Early alpha tester |
-| early_supporter | Early Supporter | Supported the project early |
-| staff | Staff | Plexichat staff member |
-| verified | Verified | Verified account |
+- `alpha_tester` (Alpha Tester): Early alpha tester
+- `early_supporter` (Early Supporter): Supported the project early
+- `staff` (Staff): Plexichat staff member
+- `verified` (Verified): Verified account
 
 ---
 

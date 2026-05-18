@@ -6,6 +6,8 @@ This script initializes all core modules and starts the API server.
 Supports clean shutdown (Ctrl+C) with client notification and restart capability.
 """
 
+# pyright: reportAttributeAccessIssue=false
+# Database class uses mixins which pyright's protocol checking doesn't fully recognize
 import os
 import sys
 import signal
@@ -15,7 +17,10 @@ import argparse
 import secrets
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.core.database import Database
 
 # Setup paths
 project_root = os.path.abspath(os.path.dirname(__file__))
@@ -35,7 +40,7 @@ validator.setup(auto_sanitize_html=True)
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
-VERSION = "a.1.0-51"
+VERSION = "a.1.0-56"
 
 
 class PlexichatServer:
@@ -44,7 +49,7 @@ class PlexichatServer:
     def __init__(self):
         self.app = None
         self.server = None
-        self.db = None
+        self.db: Optional["Database"] = None
         self.shutdown_event = threading.Event()
         self.restart_requested = False
         self._modules = {}
@@ -458,15 +463,18 @@ class PlexichatServer:
         # SECURITY: Check for secure key source if configured
         auth_config = config.get("authentication", {})
         enc_security = auth_config.get("encryption", {})
-        if enc_security.get("require_secure_source", False):
+        # Default to True for safety if not explicitly set
+        require_secure = enc_security.get("require_secure_source", True)
+
+        if require_secure:
             from src.utils.encryption.vault import vault
 
             if not vault.is_using_secure_source():
                 error_msg = (
                     "CRITICAL SECURITY ERROR: Application is configured to require a secure "
-                    "encryption key source (TPM or Environment Variable), but none was found. "
+                    "encryption key source (TPM, HSM, or Environment Variable), but none was found. "
                     "The application has fallen back to an insecure local key file. "
-                    "To fix: Set PLEXICHAT_SYSTEM_KEY env var or ensure TPM is accessible. "
+                    "To fix: Set PLEXICHAT_SYSTEM_KEY env var or ensure TPM/HSM is accessible. "
                     "To bypass (DEV ONLY): Set authentication.encryption.require_secure_source to False."
                 )
                 logger.critical(error_msg)
@@ -484,6 +492,31 @@ class PlexichatServer:
                 "parallelism", 2
             ),
         )
+
+        # Eagerly validate all keyrings at startup so the server fails fast
+        # if any keyring file is corrupted or the KEK has changed.
+        # system_keyring is already validated by EncryptionManager.__init__
+        # (called inside encryption.setup()), but file_keyring and
+        # message_keyring are loaded lazily — so we validate them now.
+        from src.utils.encryption.core import Keyring
+
+        keyring_paths = [
+            (Path.home() / ".plexichat" / "data" / "file_keyring.json", None),
+            (
+                Path.home() / ".plexichat" / "data" / "message_keyring.json",
+                "PLEXICHAT_MESSAGE_KEY",
+            ),
+        ]
+        for kpath, kek_env_var in keyring_paths:
+            if kpath.exists():
+                if kek_env_var:
+                    kr = Keyring(kpath, kek_env_var)  # type: ignore[arg-type]
+                else:
+                    kr = Keyring(kpath)
+                if kr.keys:
+                    logger.info(
+                        f"Keyring validated: {kpath.name} (v{kr.current_version})"
+                    )
 
     def initialize_modules(
         self,
@@ -591,21 +624,22 @@ class PlexichatServer:
 
         def timed_init(name: str, init_func):
             """Initialize a module and track how long it takes."""
-            start = time.perf_counter()
-            logger.info(f"Initializing {name} module...")
-            try:
-                result = init_func()
-                elapsed = (time.perf_counter() - start) * 1000
-                with startup_lock:
+            # Use a lock to ensure thread-safe initialization of modules
+            # that might touch global state (ADR-005)
+            with startup_lock:
+                start = time.perf_counter()
+                logger.info(f"Initializing {name} module...")
+                try:
+                    result = init_func()
+                    elapsed = (time.perf_counter() - start) * 1000
                     startup_times[name] = elapsed
-                logger.info(f"  -> {name} initialized in {elapsed:.1f}ms")
-                return result
-            except Exception as e:
-                elapsed = (time.perf_counter() - start) * 1000
-                with startup_lock:
+                    logger.info(f"  -> {name} initialized in {elapsed:.1f}ms")
+                    return result
+                except Exception as e:
+                    elapsed = (time.perf_counter() - start) * 1000
                     startup_times[name] = elapsed
-                logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
-                raise
+                    logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
+                    raise
 
         # Independent initialization group (Parallel)
         def init_independent():
@@ -937,9 +971,20 @@ class PlexichatServer:
                         )
                     else:
                         storage = MemoryStorage()
-                        logger.info(
-                            "Using in-memory storage for rate limiting (fallback)"
+                        logger.warning("=" * 60)
+                        logger.warning(
+                            "SECURITY WARNING: Using in-memory storage for rate limiting!"
                         )
+                        logger.warning(
+                            "In a multi-worker environment (Uvicorn), this will result in"
+                        )
+                        logger.warning(
+                            "independent counters per worker, allowing rate-limit bypass."
+                        )
+                        logger.warning(
+                            "To fix: Enable Redis or configure a shared database."
+                        )
+                        logger.warning("=" * 60)
 
                     ratelimit.setup(
                         storage_backend=storage,
@@ -1324,6 +1369,13 @@ Examples:
   python main.py --self-test     # Run API self-test and exit
   python main.py --create-config # Generate default config file
   python main.py --config custom.yaml # Use custom config file
+  
+  KEK Migration:
+  python main.py --migrate-kek --kek-validate --all
+  python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
+  python main.py --migrate-kek --kek-all --kek-new-env PLEXICHAT_SYSTEM_KEY
+  python main.py --migrate-kek --kek-rollback --kek-keyring message_keyring.json
+  python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
         """,
     )
 
@@ -1339,6 +1391,52 @@ Examples:
     parser.add_argument("--host", help="Override server host")
     parser.add_argument("--port", type=int, help="Override server port")
     parser.add_argument("--version", action="store_true", help="Show version and exit")
+    parser.add_argument(
+        "--rotate-secrets",
+        action="store_true",
+        help="Rotate rate-limit bypass and webhook signature secrets in config",
+    )
+
+    # KEK Migration arguments
+    parser.add_argument(
+        "--migrate-kek",
+        action="store_true",
+        help="Run KEK migration tool instead of starting server",
+    )
+    parser.add_argument(
+        "--kek-keyring", help="Specific keyring to migrate (e.g., message_keyring.json)"
+    )
+    parser.add_argument(
+        "--kek-old-env",
+        help="Environment variable name for old KEK (e.g., PLEXICHAT_SYSTEM_KEY)",
+    )
+    parser.add_argument(
+        "--kek-new-env",
+        help="Environment variable name for new KEK (e.g., PLEXICHAT_MESSAGE_KEY)",
+    )
+    parser.add_argument(
+        "--kek-all",
+        action="store_true",
+        help="Migrate all keyrings to new KEK (requires --kek-new-env)",
+    )
+    parser.add_argument(
+        "--kek-validate",
+        action="store_true",
+        help="Validate keyrings without migration",
+    )
+    parser.add_argument(
+        "--kek-rollback", action="store_true", help="Rollback keyring to backup"
+    )
+    parser.add_argument(
+        "--kek-force",
+        action="store_true",
+        help="Force migration even if validation fails",
+    )
+    parser.add_argument(
+        "--kek-dry-run",
+        action="store_true",
+        help="Validate only without making changes",
+    )
 
     # Use parse_known_args to ignore uvicorn args if wrapped
     args, _ = parser.parse_known_args()
@@ -1346,6 +1444,67 @@ Examples:
     if args.version:
         print(f"Plexichat Server v{VERSION}")
         return
+
+    # Handle KEK migration
+    if args.migrate_kek:
+        from src.utils.encryption.kek_migration import (
+            validate_keyrings,
+            migrate_keyring,
+            migrate_all_keyrings,
+            rollback_keyring,
+        )
+
+        # Setup basic logging for migration
+        import logging
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
+
+        if args.kek_validate:
+            if args.kek_all:
+                success = validate_keyrings(all_keyrings=True)
+            else:
+                success = validate_keyrings(all_keyrings=False)
+            sys.exit(0 if success else 1)
+
+        if args.kek_rollback:
+            if not args.kek_keyring:
+                print("Error: --kek-rollback requires --kek-keyring")
+                sys.exit(1)
+            success = rollback_keyring(args.kek_keyring)
+            sys.exit(0 if success else 1)
+
+        if args.kek_all:
+            if not args.kek_new_env:
+                print("Error: --kek-all requires --kek-new-env")
+                sys.exit(1)
+            success = migrate_all_keyrings(
+                args.kek_new_env, args.kek_force, args.kek_dry_run
+            )
+            sys.exit(0 if success else 1)
+
+        if args.kek_keyring:
+            if not args.kek_old_env or not args.kek_new_env:
+                print(
+                    "Error: --kek-keyring requires both --kek-old-env and --kek-new-env"
+                )
+                sys.exit(1)
+            success = migrate_keyring(
+                args.kek_keyring,
+                args.kek_old_env,
+                args.kek_new_env,
+                args.kek_force,
+                args.kek_dry_run,
+            )
+            sys.exit(0 if success else 1)
+
+        print(
+            "Error: Invalid KEK migration arguments. Use --kek-validate, --kek-rollback, --kek-all, or --kek-keyring"
+        )
+        sys.exit(1)
 
     server = PlexichatServer()
 
@@ -1401,6 +1560,29 @@ Examples:
         early_logs.append(
             ("info", f"Config loaded from auto-detected path: {config_path}")
         )
+
+    # Handle secret rotation
+    if args.rotate_secrets:
+        print(f"Rotating secrets in {config_path}...")
+        rl_config = config.get("rate_limiting", {})
+        app_config = config.get("applications", {})
+
+        rl_config["bypass_secret"] = secrets.token_hex(32)
+        app_config["webhook_signature_secret"] = secrets.token_hex(32)
+
+        config.set("rate_limiting", rl_config)
+        config.set("applications", app_config)
+
+        # Save config back to file
+        import yaml
+
+        with open(config_path, "w") as f:
+            yaml.dump(config.get_all(), f, default_flow_style=False)
+
+        print(
+            "Successfully rotated rate_limiting.bypass_secret and applications.webhook_signature_secret"
+        )
+        return
 
     # Setup logging - NOW we can use logger
     log_config = config.get("logging", {})

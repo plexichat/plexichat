@@ -145,7 +145,7 @@
                     } else if (data.token) {
                         console.log("Login successful, token received");
                         sessionStorage.setItem('plexichat-admin-token', data.token);
-                        window.location.href = '/api/v1/admin/ui';
+                        window.location.href = '/api/v1/admin/ui-dashboard';
                     } else {
                         throw new Error("Invalid response from server: " + JSON.stringify(data));
                     }
@@ -184,7 +184,7 @@
                     const data = await res.json();
                     if (!res.ok) throw new Error(data.detail || 'Verification failed');
                     sessionStorage.setItem('plexichat-admin-token', data.token);
-                    window.location.href = '/api/v1/admin/ui';
+                    window.location.href = '/api/v1/admin/ui-dashboard';
                 } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
             }
 
@@ -209,7 +209,7 @@
                 fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
                     .then(r => { 
                         if (r.ok) {
-                            window.location.href = '/api/v1/admin/ui';
+                            window.location.href = '/api/v1/admin/ui-dashboard';
                         } else if (r.status === 401) {
                             sessionStorage.removeItem('plexichat-admin-token');
                         }

@@ -47,6 +47,12 @@ All paths below are relative to the configured admin base path, shown here as `<
 - `GET <admin-base>/users/{user_id}/notes`
 - `POST <admin-base>/users/{user_id}/notes`
 - `POST <admin-base>/users/{user_id}/force-username-change`
+- `POST <admin-base>/users/{user_id}/scheduled-deletions`
+- `PATCH <admin-base>/users/{user_id}/cancel-deletion`
+- `PATCH <admin-base>/users/{user_id}/delay-deletion`
+- `POST <admin-base>/users/{user_id}/force-purge`
+- `POST <admin-base>/users/{user_id}/unlock-user`
+- `POST <admin-base>/users/{user_id}/logout-all`
 
 ### Security Controls
 

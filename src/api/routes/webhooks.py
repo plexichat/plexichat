@@ -465,7 +465,7 @@ async def delete_webhook(
             logger.info(f"User {current_user.user_id} deleted webhook {wid}")
             # Invalidate webhook cache for this server
             invalidate_pattern("webhooks:*")
-            return SuccessResponse(success=True)
+            return SuccessResponse(success=True, message=None)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
@@ -567,7 +567,7 @@ async def execute_webhook(
 
             logger.debug(f"Executed webhook {wid}")
             if not wait:
-                return SuccessResponse(success=True)
+                return SuccessResponse(success=True, message=None)
 
             if message is None:
                 logger.error(

@@ -1,6 +1,7 @@
 stages:
   - lint
   - security
+  - docker
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -23,85 +24,59 @@ cache:
 # =========================================================
 
 .python_base:
-  image: python:3.11-bullseye
+  image: 
+    name: python:3.12-bullseye
+    pull_policy: if-not-present
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
-    - python -m venv .venv
-    - source .venv/bin/activate
-    - pip install --upgrade pip
-    - pip install -r requirements.txt
-    # Install ALL tooling once
-    - pip install \
-        ruff \
-        pyright \
-        bandit[toml] \
-        detect-secrets \
-        pip-audit \
-        safety
+    - |
+      if [ -d ".venv" ]; then
+        echo "Using cached virtual environment"
+        source .venv/bin/activate
+      else
+        echo "Creating new virtual environment"
+        python -m venv .venv
+        source .venv/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install \
+            ruff==0.15.10 \
+            pyright \
+            bandit[toml] \
+            detect-secrets \
+            pip-audit \
+            safety
+      fi
     - git submodule update --init --recursive
 
 # =========================================================
-# LINT STAGE (mirrors pre-commit exactly)
+# LINT STAGE (Consolidated via pre-commit)
 # =========================================================
 
-lint:ruff:
+lint:pre-commit:
   extends: .python_base
   stage: lint
-  script:
-    - ruff check src/ --output-format=gitlab > ruff-report.json
-    - ruff check src/
-  artifacts:
-    reports:
-      codequality: ruff-report.json
+  variables:
+    PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.cache/pre-commit"
+  cache:
+    key:
+      files:
+        - .pre-commit-config.yaml
+      prefix: pre-commit-${CI_COMMIT_REF_SLUG}
     paths:
-      - ruff-report.json
-    expire_in: 7 days
-
-lint:format:
-  extends: .python_base
-  stage: lint
+      - .cache/pre-commit
+    policy: pull-push
   script:
-    - ruff format --check src/ src/utils/common-utils/
-
-lint:types:
-  extends: .python_base
-  stage: lint
-  script:
-    - pyright src/ --outputjson > pyright-report.json || true
-  artifacts:
-    paths:
-      - pyright-report.json
-    expire_in: 7 days
-  allow_failure: true
+    - pip install pre-commit
+    - pre-commit run --all-files --show-diff-on-failure
+  resource_group: plexichat-ci
 
 # =========================================================
 # SECURITY STAGE (FULL COVERAGE)
 # =========================================================
 
-# --- Bandit (matches pre-commit) ---
-security:bandit:
-  extends: .python_base
-  stage: security
-  script:
-    - bandit -r src/ -c .bandit -f json -o bandit-report.json
-    - bandit -r src/ -c .bandit
-  artifacts:
-    paths:
-      - bandit-report.json
-    expire_in: 30 days
-
-# --- Detect-secrets (matches pre-commit) ---
-security:detect_secrets:
-  extends: .python_base
-  stage: security
-  script:
-    - detect-secrets scan > .secrets.baseline
-    - detect-secrets audit .secrets.baseline || true
-  artifacts:
-    paths:
-      - .secrets.baseline
-    expire_in: 30 days
-  allow_failure: true
+# Bandit and detect-secrets are now handled by pre-commit in the lint stage.
+# We keep GitLab-specific and dependency scanning jobs here.
 
 # --- GitLab Secret Detection (extra coverage) ---
 security:secret_detection:  # pragma: allowlist secret
@@ -119,6 +94,7 @@ security:secret_detection:  # pragma: allowlist secret
     paths:
       - gl-secret-detection-report.json
     expire_in: 30 days
+  resource_group: plexichat-ci
   allow_failure: false
 
 # --- SAST (Semgrep) ---
@@ -138,6 +114,7 @@ security:sast:
     paths:
       - gl-sast-report.json
     expire_in: 30 days
+  resource_group: plexichat-ci
   allow_failure: true
 
 # --- Dependency scanning (NOT in pre-commit, keep it) ---
@@ -154,3 +131,70 @@ security:dependency_scanning:
       - pip-audit-report.json
       - safety-report.json
     expire_in: 30 days
+  resource_group: plexichat-ci
+
+docker:build_and_push:
+  stage: docker
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_BUILDKIT: "1"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+  script:
+    - echo "Building backend docker image for tag $CI_COMMIT_TAG"
+    - docker build -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest .
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
+    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG
+    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest
+  resource_group: plexichat-ci
+
+docker:cleanup_old_images:
+  stage: docker
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+  script:
+    - echo "Cleaning up old Docker images based on retention policy"
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
+    - |
+      # Get all tags for backend image
+      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY:80/$CI_PROJECT_PATH/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V || true)
+      
+      # Separate by version type
+      ALPHA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-alpha' || echo "")
+      BETA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-beta' || echo "")
+      RELEASE_TAGS=$(echo "$ALL_TAGS" | grep -v -E '\-(alpha|beta)' || echo "")
+      
+      # Keep last 5 alpha builds
+      if [ -n "$ALPHA_TAGS" ]; then
+        ALPHA_TO_DELETE=$(echo "$ALPHA_TAGS" | head -n -5)
+        for tag in $ALPHA_TO_DELETE; do
+          echo "Deleting old alpha build: $tag"
+          docker rmi $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$tag || true
+        done
+      fi
+      
+      # Keep last 10 beta builds
+      if [ -n "$BETA_TAGS" ]; then
+        BETA_TO_DELETE=$(echo "$BETA_TAGS" | head -n -10)
+        for tag in $BETA_TO_DELETE; do
+          echo "Deleting old beta build: $tag"
+          docker rmi $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$tag || true
+        done
+      fi
+      
+      # Keep all releases (no deletion)
+      echo "Keeping all release tags: $RELEASE_TAGS"
+  allow_failure: true
+  resource_group: plexichat-ci

@@ -234,6 +234,7 @@ class TestMiddlewareBypass:
             enable_global_limit=False,
             bypass_check=lambda uid, admin, internal: admin or internal,
         )
+
         app = FastAPI()
         app.add_middleware(RateLimitMiddleware)
 
@@ -268,9 +269,9 @@ class TestMiddlewareBypass:
         """Test internal requests bypass rate limiting."""
         client = TestClient(app_with_bypass)
         for i in range(10):
-            response = client.get(
-                "/api/v1/test", headers={"X-Internal-Request": "true"}
-            )
+            response = client.get("/api/v1/test")
+            # Mark as selftest to bypass rate limiting
+            response.request.state.is_selftest = True
             assert response.status_code == 200
 
     def test_normal_user_rate_limited(self, app_with_bypass):

@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 def up(db):
     """Apply the migration."""
+    logger.info("Migration 006: Starting msg_status index addition")
     logger.info(
         "Migration 006: Creating index idx_msg_status_msg_status on msg_message_status"
     )
@@ -26,6 +27,11 @@ def up(db):
 
 
 def down(db):
-    """Rollback migration."""
-    logger.info("Migration 006: Dropping index idx_msg_status_msg_status")
-    db.execute("DROP INDEX IF EXISTS idx_msg_status_msg_status")
+    """Rollback the migration.
+
+    Drops the index.
+    """
+    logger.info("Migration 006 rollback: Starting rollback")
+    if db.index_exists("idx_msg_status_msg_status"):
+        db.execute("DROP INDEX idx_msg_status_msg_status")
+        logger.info("Migration 006 rollback: Dropped idx_msg_status_msg_status index")

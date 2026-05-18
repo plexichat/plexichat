@@ -14,7 +14,6 @@ try:
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
-    pytest.skip("Hypothesis not installed", allow_module_level=True)
 
 from src.core.auth.passwords import validate_username, validate_email, validate_password
 from src.core.messaging.content import validate_content
@@ -25,6 +24,7 @@ QUICK_SETTINGS = settings(max_examples=50, deadline=1000)
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestQuickAuthValidation:
     """Quick auth validation tests."""
 
@@ -70,6 +70,7 @@ class TestQuickAuthValidation:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestQuickMessageValidation:
     """Quick message validation tests."""
 
@@ -97,6 +98,7 @@ class TestQuickMessageValidation:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestQuickSecurityValidation:
     """Quick security validation tests."""
 
@@ -118,6 +120,7 @@ class TestQuickSecurityValidation:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestQuickUnicodeHandling:
     """Quick Unicode handling tests."""
 
@@ -152,6 +155,7 @@ class TestQuickUnicodeHandling:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="Hypothesis not installed")
 class TestQuickBoundaryConditions:
     """Quick boundary condition tests."""
 

@@ -50,8 +50,14 @@ def _get_db():
 
 
 def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult:
-    """Authenticate an administrator."""
-    return auth.login(_get_db(), username, password, ip)
+    """Authenticate an administrator.
+
+    Uses admin.auth.authenticate_admin() which validates credentials against
+    admin_users and creates sessions in admin_sessions — the same table that
+    get_admin_from_token() validates against.  This ensures the token returned
+    at login can actually be used for subsequent admin API calls.
+    """
+    return auth.authenticate_admin(_get_db(), username, password, ip)
 
 
 def verify_otp_setup(

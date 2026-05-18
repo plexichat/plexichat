@@ -1,115 +1,81 @@
-"""
-Tests for @user mention parsing and notifications.
-"""
+"""Tests for @user mention parsing and notifications."""
 
+from unittest.mock import patch
+from src.utils import encryption
 from src.core.notifications import MentionType
 
 
 class TestUserMentionParsing:
     """Tests for parsing @user mentions."""
 
-    def test_parse_single_user_mention(self, db_and_modules):
+    def test_parse_single_user_mention(self, notification_manager):
         """Test parsing a single user mention."""
-        db, auth, messaging, servers, relationships, presence, notifications = (
-            db_and_modules
-        )
-
         content = "Hello <@123456789>"
-        mentions = notifications.parse_mentions(content)
+        mentions = notification_manager.parse_mentions(content)
 
         assert len(mentions) == 1
         assert mentions[0].mention_type == MentionType.USER
         assert mentions[0].target_id == 123456789
         assert mentions[0].raw_text == "<@123456789>"
 
-    def test_parse_multiple_user_mentions(self, db_and_modules):
+    def test_parse_multiple_user_mentions(self, notification_manager):
         """Test parsing multiple user mentions."""
-        db, auth, messaging, servers, relationships, presence, notifications = (
-            db_and_modules
-        )
-
         content = "Hey <@111> and <@222> check this out"
-        mentions = notifications.parse_mentions(content)
+        mentions = notification_manager.parse_mentions(content)
 
         assert len(mentions) == 2
         assert mentions[0].target_id == 111
         assert mentions[1].target_id == 222
 
-    def test_parse_user_mention_positions(self, db_and_modules):
+    def test_parse_user_mention_positions(self, notification_manager):
         """Test mention positions are correct."""
-        db, auth, messaging, servers, relationships, presence, notifications = (
-            db_and_modules
-        )
-
         content = "Hello <@123>"
-        mentions = notifications.parse_mentions(content)
+        mentions = notification_manager.parse_mentions(content)
 
         assert mentions[0].start_pos == 6
         assert mentions[0].end_pos == 12
 
-    def test_parse_no_mentions(self, db_and_modules):
+    def test_parse_no_mentions(self, notification_manager):
         """Test parsing content with no mentions."""
-        db, auth, messaging, servers, relationships, presence, notifications = (
-            db_and_modules
-        )
-
         content = "Hello world, no mentions here"
-        mentions = notifications.parse_mentions(content)
+        mentions = notification_manager.parse_mentions(content)
 
         assert len(mentions) == 0
 
-    def test_parse_empty_content(self, db_and_modules):
+    def test_parse_empty_content(self, notification_manager):
         """Test parsing empty content."""
-        db, auth, messaging, servers, relationships, presence, notifications = (
-            db_and_modules
-        )
-
-        mentions = notifications.parse_mentions("")
+        mentions = notification_manager.parse_mentions("")
         assert len(mentions) == 0
 
-        mentions = notifications.parse_mentions(None)
+        mentions = notification_manager.parse_mentions(None)
         assert len(mentions) == 0
 
 
 class TestUserMentionValidation:
     """Tests for validating @user mentions."""
 
-    def test_validate_existing_user(self, fresh_users):
+    def test_validate_existing_user(self, auth_manager, notification_manager):
         """Test validating mention of existing user."""
-        (
-            user1,
-            user2,
-            auth,
-            messaging,
-            servers,
-            relationships,
-            presence,
-            notifications,
-        ) = fresh_users
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username="user1", email="user1@example.com", password="TestPass123!"
+            )
+            user2 = auth_manager.register(
+                username="user2", email="user2@example.com", password="TestPass123!"
+            )
 
         content = f"Hey <@{user2.id}>"
-        mentions = notifications.parse_mentions(content)
-        validated = notifications.validate_mentions(user1.id, mentions)
+        mentions = notification_manager.parse_mentions(content)
+        validated = notification_manager.validate_mentions(user1.id, mentions)
 
         assert len(validated) == 1
         assert validated[0].valid is True
 
-    def test_validate_nonexistent_user(self, fresh_users):
+    def test_validate_nonexistent_user(self, notification_manager):
         """Test validating mention of nonexistent user."""
-        (
-            user1,
-            user2,
-            auth,
-            messaging,
-            servers,
-            relationships,
-            presence,
-            notifications,
-        ) = fresh_users
-
         content = "<@999999999999>"
-        mentions = notifications.parse_mentions(content)
-        validated = notifications.validate_mentions(user1.id, mentions)
+        mentions = notification_manager.parse_mentions(content)
+        validated = notification_manager.validate_mentions(1, mentions)
 
         assert len(validated) == 1
         assert validated[0].valid is False
@@ -119,14 +85,24 @@ class TestUserMentionValidation:
 class TestUserMentionNotifications:
     """Tests for creating notifications from @user mentions."""
 
-    def test_create_notification_for_user_mention(self, users_with_dm):
+    def test_create_notification_for_user_mention(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test notification is created for mentioned user."""
-        user1, user2, dm, messaging, notifications = users_with_dm
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username="user1", email="user1@example.com", password="TestPass123!"
+            )
+            user2 = auth_manager.register(
+                username="user2", email="user2@example.com", password="TestPass123!"
+            )
+
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"Hey <@{user2.id}> check this out"
-        msg = messaging.send_message(user1.id, dm.id, content)
+        msg = messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notifications.create_notifications_for_message(
+        notifs = notification_manager.create_notifications_for_message(
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
@@ -138,14 +114,24 @@ class TestUserMentionNotifications:
         assert notifs[0].author_id == user1.id
         assert notifs[0].mention_type == MentionType.USER
 
-    def test_no_notification_for_self_mention(self, users_with_dm):
+    def test_no_notification_for_self_mention(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test no notification when user mentions themselves."""
-        user1, user2, dm, messaging, notifications = users_with_dm
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username="user1", email="user1@example.com", password="TestPass123!"
+            )
+            user2 = auth_manager.register(
+                username="user2", email="user2@example.com", password="TestPass123!"
+            )
+
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"I am <@{user1.id}>"
-        msg = messaging.send_message(user1.id, dm.id, content)
+        msg = messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notifications.create_notifications_for_message(
+        notifs = notification_manager.create_notifications_for_message(
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
@@ -154,14 +140,24 @@ class TestUserMentionNotifications:
 
         assert len(notifs) == 0
 
-    def test_notification_content_preview(self, users_with_dm):
+    def test_notification_content_preview(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test notification includes content preview."""
-        user1, user2, dm, messaging, notifications = users_with_dm
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username="user1", email="user1@example.com", password="TestPass123!"
+            )
+            user2 = auth_manager.register(
+                username="user2", email="user2@example.com", password="TestPass123!"
+            )
+
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"Hey <@{user2.id}> this is a test message"
-        msg = messaging.send_message(user1.id, dm.id, content)
+        msg = messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notifications.create_notifications_for_message(
+        notifs = notification_manager.create_notifications_for_message(
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
@@ -171,14 +167,24 @@ class TestUserMentionNotifications:
         assert len(notifs) == 1
         assert "test message" in notifs[0].content_preview
 
-    def test_multiple_mentions_same_user(self, users_with_dm):
+    def test_multiple_mentions_same_user(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test only one notification for multiple mentions of same user."""
-        user1, user2, dm, messaging, notifications = users_with_dm
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username="user1", email="user1@example.com", password="TestPass123!"
+            )
+            user2 = auth_manager.register(
+                username="user2", email="user2@example.com", password="TestPass123!"
+            )
+
+        dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}> hey <@{user2.id}> hello <@{user2.id}>"
-        msg = messaging.send_message(user1.id, dm.id, content)
+        msg = messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notifications.create_notifications_for_message(
+        notifs = notification_manager.create_notifications_for_message(
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
@@ -188,16 +194,31 @@ class TestUserMentionNotifications:
         assert len(notifs) == 1
         assert notifs[0].user_id == user2.id
 
-    def test_mention_multiple_users(self, group_conversation):
+    def test_mention_multiple_users(
+        self, auth_manager, messaging_manager, notification_manager
+    ):
         """Test notifications for multiple mentioned users."""
-        owner, member1, member2, group, messaging, notifications, relationships = (
-            group_conversation
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            owner = auth_manager.register(
+                username="groupowner",
+                email="owner@example.com",
+                password="TestPass123!",
+            )
+            member1 = auth_manager.register(
+                username="member1", email="member1@example.com", password="TestPass123!"
+            )
+            member2 = auth_manager.register(
+                username="member2", email="member2@example.com", password="TestPass123!"
+            )
+
+        group = messaging_manager.create_group(
+            owner.id, "Test Group", [member1.id, member2.id]
         )
 
         content = f"Hey <@{member1.id}> and <@{member2.id}>"
-        msg = messaging.send_message(owner.id, group.id, content)
+        msg = messaging_manager.send_message(owner.id, group.id, content)
 
-        notifs = notifications.create_notifications_for_message(
+        notifs = notification_manager.create_notifications_for_message(
             author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,

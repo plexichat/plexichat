@@ -43,6 +43,9 @@ class StickerManager:
         self._servers = servers_module
         self._media = media_module
         self._config = self._load_config()
+        self._encrypt_descriptions = config.get(
+            "encryption.encrypt_descriptions", False
+        )
         logger.info("Sticker module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
@@ -175,9 +178,27 @@ class StickerManager:
                 )
         now = self._get_timestamp()
         pack_id = self._generate_id()
+
+        # Encrypt description if enabled
+        description_encrypted = None
+        if description and self._encrypt_descriptions:
+            from src.utils.encryption import encrypt_data
+
+            description_encrypted = encrypt_data(description)
+
         self._db.execute(
-            "INSERT INTO sticker_packs (id, name, description, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (pack_id, name, description, pack_type.value, server_id, user_id, now, now),
+            "INSERT INTO sticker_packs (id, name, description, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                pack_id,
+                name,
+                description,
+                description_encrypted,
+                pack_type.value,
+                server_id,
+                user_id,
+                now,
+                now,
+            ),
         )
         result = self.get_pack(pack_id, user_id)
         assert result is not None  # Should exist since we just created it
@@ -412,10 +433,23 @@ class StickerManager:
             if hasattr(row, "get")
             else (row["sticker_count"] if "sticker_count" in row.keys() else 0)
         )
+        # Decrypt description if encryption is enabled and encrypted data exists
+        description = row["description"]
+        if self._encrypt_descriptions and row.get("description_encrypted"):
+            from src.utils.encryption import decrypt_data
+
+            try:
+                description = decrypt_data(row["description_encrypted"])
+            except Exception as e:
+                logger.warning(
+                    f"Failed to decrypt sticker pack description {row['id']}: {e}"
+                )
+                description = row["description"]  # Fallback to unencrypted
+
         return StickerPack(
             id=row["id"],
             name=row["name"],
-            description=row["description"],
+            description=description,
             pack_type=PackType(row["pack_type"]),
             server_id=row["server_id"],
             created_by=row["created_by"],

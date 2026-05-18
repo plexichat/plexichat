@@ -86,7 +86,7 @@ async def block_ip(request: Request, body: IPBlockRequest):
     from src.core import auth
 
     auth.block_ip(body.ip_address, body.reason, admin_id, body.duration_hours)
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.get("/security/access-tokens", response_model=List[AccessTokenResponse])
@@ -292,7 +292,7 @@ async def remove_access_token_scope(request: Request, token_id: int, scope_id: i
             status_code=404,
             detail={"error": {"code": 404, "message": "Access token scope not found"}},
         )
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.post(
@@ -312,7 +312,32 @@ async def revoke_access_token(request: Request, token_id: int):
             status_code=404,
             detail={"error": {"code": 404, "message": "Access token not found"}},
         )
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
+
+
+@router.post(
+    "/security/access-tokens/{token_id}/unrevoke", response_model=SuccessResponse
+)
+async def unrevoke_access_token(request: Request, token_id: int):
+    """
+    Unrevoke a previously revoked API access token.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import auth
+
+    success = auth.unrevoke_api_access_token(token_id, admin_id)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": {
+                    "code": 404,
+                    "message": "Access token not found or not revoked",
+                }
+            },
+        )
+    return SuccessResponse(success=True, message=None)
 
 
 @router.delete("/security/unblock-ip/{ip_address:path}", response_model=SuccessResponse)
@@ -325,7 +350,7 @@ async def unblock_ip(request: Request, ip_address: str):
     from src.core import auth
 
     auth.unblock_ip(ip_address)
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.get("/security/banned-usernames", response_model=List[BannedUsernameResponse])
@@ -353,7 +378,7 @@ async def add_banned_username(request: Request, body: BannedUsernameCreate):
     from src.core import admin
 
     admin.add_banned_username(body.pattern, body.reason, admin_id, body.is_regex)  # type: ignore
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.delete(
@@ -368,7 +393,7 @@ async def remove_banned_username(request: Request, pattern_id: int):
     from src.core import admin
 
     admin.remove_banned_username(pattern_id)
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.post("/security/force-logout", response_model=SuccessResponse)
@@ -397,7 +422,7 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
                 await get_dispatcher().dispatch_event(event, [uid])
         except Exception:
             pass
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -431,7 +456,7 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
                 await get_dispatcher().dispatch_event(event, [uid])
         except Exception:
             pass
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -451,7 +476,7 @@ async def admin_unlock_user(request: Request, body: ForceLogoutRequest):
         from src.core import admin
 
         admin.unlock_user(uid)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -478,4 +503,4 @@ async def logout_all_users(request: Request):
             )
     except Exception:
         pass
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)

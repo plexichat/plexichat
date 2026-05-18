@@ -59,7 +59,6 @@ from src.core.database import (
     redis_available,
     cached,
 )
-from src.core.database.collections import CappedDict
 
 
 class ServerManager(BaseManager):
@@ -101,20 +100,25 @@ class ServerManager(BaseManager):
         super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._config = self._load_config()
+        self._encrypt_descriptions = config.get(
+            "encryption.encrypt_descriptions", False
+        )
+        self._encrypt_thread_names = config.get(
+            "encryption.encrypt_thread_names", False
+        )
         self.instance_id = secrets.token_hex(4)
 
-        # Cache size limit from config
-        max_cache = config.get("redis.cache_max_items", 1000)
-
-        # In-memory caches with TTL (reduces DB queries significantly)
-        self._member_cache = CappedDict(max_size=max_cache)
-        self._permission_cache = CappedDict(max_size=max_cache)
-        self._channel_cache = CappedDict(max_size=max_cache)
-        self._server_owner_cache = CappedDict(max_size=max_cache)
-        self._member_roles_cache = CappedDict(max_size=max_cache)
+        # Cache TTL in seconds
         self._cache_ttl = (
-            60.0  # 60 second cache TTL for server data (longer = fewer DB queries)
+            60  # 60 second cache TTL for server data (longer = fewer DB queries)
         )
+
+        # Cache key prefixes for Redis
+        self._member_cache_prefix = "srv_member:"
+        self._permission_cache_prefix = "srv_permission:"
+        self._channel_cache_prefix = "srv_channel:"
+        self._server_owner_cache_prefix = "srv_owner:"
+        self._member_roles_cache_prefix = "srv_member_roles:"
 
         # Initialize sub-handlers for modularity
         from ..handlers.audit_handler import AuditHandler
@@ -127,25 +131,30 @@ class ServerManager(BaseManager):
         self.role_handler = RoleHandler(self)
         self.member_handler = MemberHandler(self)
 
-    def _cache_get(self, cache: dict, key, default=None) -> Any:
-        """Get value from cache if not expired."""
-        if key in cache:
-            value, expires = cache[key]
-            if (self._get_timestamp() / 1000.0) < expires:
-                return value
-            del cache[key]
-        return default
+    def _cache_get(self, prefix: str, key, default=None) -> Any:
+        """Get value from Redis cache."""
+        from src.core.database import cache_get
 
-    def _cache_set(self, cache: dict, key, value) -> None:
-        """Set value in cache with TTL."""
-        cache[key] = (value, (self._get_timestamp() / 1000.0) + self._cache_ttl)
+        cache_key = f"{prefix}{key}"
+        return cache_get(cache_key) or default
 
-    def _cache_invalidate(self, cache: dict, key=None) -> None:
-        """Invalidate cache entry or entire cache."""
+    def _cache_set(self, prefix: str, key, value) -> None:
+        """Set value in Redis cache with TTL."""
+        from src.core.database import cache_set
+
+        cache_key = f"{prefix}{key}"
+        cache_set(cache_key, value, ttl=self._cache_ttl)
+
+    def _cache_invalidate(self, prefix: str, key=None) -> None:
+        """Invalidate cache entry or entire cache by prefix."""
+        from src.core.database import cache_delete, invalidate_pattern
+
         if key is None:
-            cache.clear()
+            # Invalidate all entries with this prefix
+            invalidate_pattern(f"{prefix}*")
         else:
-            cache.pop(key, None)
+            cache_key = f"{prefix}{key}"
+            cache_delete(cache_key)
 
     def _load_config(self) -> Dict[str, Any]:
         """Load server configuration."""
@@ -280,12 +289,52 @@ class ServerManager(BaseManager):
         now = self._get_timestamp()
         server_id = self._generate_id()
 
-        self._db.execute(
-            """INSERT INTO srv_servers 
-               (id, name, owner_id, description, icon_url, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (server_id, name, owner_id, description, icon_url, now, now),
-        )
+        # Encrypt description if enabled
+        description_encrypted = None
+        if description and self._encrypt_descriptions:
+            from src.utils.encryption import encrypt_data
+
+            description_encrypted = encrypt_data(description)
+
+        # Check if description column exists (for backward compatibility with migration 028)
+        # Migration 028 drops the unencrypted description column
+        try:
+            self._db.execute("SELECT description FROM srv_servers LIMIT 1")
+            has_description_column = True
+        except Exception:
+            has_description_column = False
+
+        if has_description_column:
+            self._db.execute(
+                """INSERT INTO srv_servers 
+                   (id, name, owner_id, description, description_encrypted, icon_url, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    server_id,
+                    name,
+                    owner_id,
+                    description,
+                    description_encrypted,
+                    icon_url,
+                    now,
+                    now,
+                ),
+            )
+        else:
+            self._db.execute(
+                """INSERT INTO srv_servers 
+                   (id, name, owner_id, description_encrypted, icon_url, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    server_id,
+                    name,
+                    owner_id,
+                    description_encrypted,
+                    icon_url,
+                    now,
+                    now,
+                ),
+            )
 
         # Create default @everyone role
         role_id = self._generate_id()
@@ -337,9 +386,11 @@ class ServerManager(BaseManager):
         )
 
         # Invalidate membership and role caches for the owner
-        self._cache_invalidate(self._member_cache, (server_id, owner_id))
-        self._cache_invalidate(self._member_roles_cache, (server_id, owner_id))
-        self._cache_invalidate(self._permission_cache, (owner_id, server_id, None))
+        self._cache_invalidate(self._member_cache_prefix, (server_id, owner_id))
+        self._cache_invalidate(self._member_roles_cache_prefix, (server_id, owner_id))
+        self._cache_invalidate(
+            self._permission_cache_prefix, (owner_id, server_id, None)
+        )
 
         # Also invalidate server list for the user in Redis if available
         if redis_available():
@@ -466,6 +517,14 @@ class ServerManager(BaseManager):
 
         return [self._row_to_server(row) for row in rows]
 
+    def server_exists(self, server_id: SnowflakeID) -> bool:
+        """Check if a server exists by ID (without permission check)."""
+        row = self._db.fetch_one(
+            "SELECT 1 FROM srv_servers WHERE id = ? AND deleted = 0",
+            (server_id,),
+        )
+        return row is not None
+
     def update_server(
         self,
         user_id: SnowflakeID,
@@ -493,8 +552,24 @@ class ServerManager(BaseManager):
             changes["name"] = {"old": server.name, "new": name}
 
         if description is not None:
-            updates.append("description = ?")
-            params.append(description)
+            # Only encrypt if description has changed and encryption is enabled
+            if self._encrypt_descriptions and description != server.description:
+                from src.utils.encryption import encrypt_data
+
+                description_encrypted = encrypt_data(description)
+                updates.append("description_encrypted = ?")
+                params.append(description_encrypted)
+
+            # Check if description column exists (for backward compatibility with migration 028)
+            try:
+                self._db.execute("SELECT description FROM srv_servers LIMIT 1")
+                has_description_column = True
+            except Exception:
+                has_description_column = False
+
+            if has_description_column:
+                updates.append("description = ?")
+                params.append(description)
             changes["description"] = {"old": server.description, "new": description}
 
         if icon_url is not None:
@@ -827,25 +902,20 @@ class ServerManager(BaseManager):
         return self.channel_handler.delete_category(user_id, category_id)
 
     def get_channel(
-        self, channel_id: SnowflakeID, user_id: SnowflakeID
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
     ) -> Optional[Channel]:
-        """Get a channel by ID if user has access (cached)."""
+        """Get a channel by ID with caching."""
         cache_key = channel_id
-        cached_row = self._cache_get(self._channel_cache, cache_key)
+        cached_row = self._cache_get(self._channel_cache_prefix, cache_key)
 
         if cached_row is None:
             row = self._db.fetch_one(
-                "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
-                (channel_id,),
+                "SELECT * FROM srv_channels WHERE id = ?", (channel_id,)
             )
-            if not row:
-                logger.debug(
-                    f"get_channel: channel {channel_id} NOT FOUND in database (or deleted)"
-                )
+            if row is None:
                 return None
-            self._cache_set(self._channel_cache, cache_key, dict(row))
+            self._cache_set(self._channel_cache_prefix, cache_key, dict(row))
             cached_row = dict(row)
-
         server_id = cached_row["server_id"]
 
         if not self._is_member(server_id, user_id):
@@ -1006,11 +1076,11 @@ class ServerManager(BaseManager):
         # Avoid dynamic IN clause to satisfy bandit - use individual queries
         role_rows = []
         for member_id in member_ids:
-            rows = self._db.fetch_all(
+            role_result = self._db.fetch_all(
                 "SELECT member_id, role_id FROM srv_member_roles WHERE member_id = ?",
                 (member_id,),
             )
-            role_rows.extend(rows)
+            role_rows.extend(role_result)
 
         # Map roles to members
         roles_map = {}
@@ -1145,10 +1215,14 @@ class ServerManager(BaseManager):
                 )
 
         # Invalidate caches for the user leaving
-        self._cache_invalidate(self._member_cache, (server_id, user_id))
-        self._cache_invalidate(self._member_cache, f"is_member:{server_id}:{user_id}")
-        self._cache_invalidate(self._member_roles_cache, (server_id, user_id))
-        self._cache_invalidate(self._permission_cache, (user_id, server_id, None))
+        self._cache_invalidate(self._member_cache_prefix, (server_id, user_id))
+        self._cache_invalidate(
+            self._member_cache_prefix, f"is_member:{server_id}:{user_id}"
+        )
+        self._cache_invalidate(self._member_roles_cache_prefix, (server_id, user_id))
+        self._cache_invalidate(
+            self._permission_cache_prefix, (user_id, server_id, None)
+        )
 
         # Invalidate Redis
         from src.core.database import cache_delete, invalidate_pattern
@@ -1159,9 +1233,7 @@ class ServerManager(BaseManager):
         self.get_servers.invalidate(user_id)  # type: ignore
 
         # Also invalidate any channel-specific permission caches
-        for key in list(self._permission_cache.keys()):
-            if key[0] == user_id and key[1] == server_id:
-                self._cache_invalidate(self._permission_cache, key)
+        invalidate_pattern(f"srv_permission:{user_id}:{server_id}:*")
 
         self._log_audit(
             server_id, user_id, AuditLogAction.MEMBER_LEAVE, "member", user_id
@@ -1540,8 +1612,8 @@ class ServerManager(BaseManager):
 
         cache_key = f"is_member:{sid}:{uid}"
 
-        # 1. Try internal memory first (fastest)
-        mem_cached = self._cache_get(self._member_cache, cache_key)
+        # 1. Try Redis cache first (fastest)
+        mem_cached = self._cache_get(self._member_cache_prefix, cache_key)
         if mem_cached is not None:
             return mem_cached
 
@@ -1550,12 +1622,12 @@ class ServerManager(BaseManager):
             redis_cached = cache_get(cache_key)
             if redis_cached is not None:
                 is_member = bool(int(redis_cached))
-                self._cache_set(self._member_cache, cache_key, is_member)
+                self._cache_set(self._member_cache_prefix, cache_key, is_member)
                 return is_member
 
         # 3. Check if user is the owner (from server table)
-        # Check owner cache (internal memory)
-        owner_id = self._cache_get(self._server_owner_cache, sid)
+        # Check owner cache (Redis)
+        owner_id = self._cache_get(self._server_owner_cache_prefix, sid)
         if owner_id is None:
             # Check Redis for owner
             owner_cache_key = f"server_owner:{sid}"
@@ -1563,7 +1635,7 @@ class ServerManager(BaseManager):
                 owner_id_cached = cache_get(owner_cache_key)
                 if owner_id_cached:
                     owner_id = int(owner_id_cached)
-                    self._cache_set(self._server_owner_cache, sid, owner_id)
+                    self._cache_set(self._server_owner_cache_prefix, sid, owner_id)
 
             if owner_id is None:
                 row = self._db.fetch_one(
@@ -1572,12 +1644,12 @@ class ServerManager(BaseManager):
                 )
                 if row:
                     owner_id = int(row["owner_id"])
-                    self._cache_set(self._server_owner_cache, sid, owner_id)
+                    self._cache_set(self._server_owner_cache_prefix, sid, owner_id)
                     if redis_available():
                         cache_set(owner_cache_key, str(owner_id), ttl=3600)
 
         if owner_id == uid:
-            self._cache_set(self._member_cache, cache_key, True)
+            self._cache_set(self._member_cache_prefix, cache_key, True)
             if redis_available():
                 cache_set(cache_key, "1", ttl=300)
             return True
@@ -1591,7 +1663,7 @@ class ServerManager(BaseManager):
         is_member = row is not None
 
         # Cache result
-        self._cache_set(self._member_cache, cache_key, is_member)
+        self._cache_set(self._member_cache_prefix, cache_key, is_member)
         if redis_available():
             cache_set(cache_key, "1" if is_member else "0", ttl=300)
 
@@ -1654,11 +1726,29 @@ class ServerManager(BaseManager):
         except (KeyError, IndexError):
             pass
 
+        # Decrypt description if encryption is enabled and encrypted data exists
+        # Handle missing description column (migration 028 drops it)
+        description = None
+        try:
+            description = row["description"]
+        except (KeyError, IndexError):
+            # Column doesn't exist, use encrypted version only
+            pass
+
+        if self._encrypt_descriptions and row.get("description_encrypted"):
+            from src.utils.encryption import decrypt_data
+
+            try:
+                description = decrypt_data(row["description_encrypted"])
+            except Exception as e:
+                logger.warning(f"Failed to decrypt server description {sid}: {e}")
+                # Keep existing description or None
+
         return Server(
             id=row["id"],
             name=row["name"],
             owner_id=row["owner_id"],
-            description=row["description"],
+            description=description,
             icon_path=row["icon_url"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -1722,6 +1812,20 @@ class ServerManager(BaseManager):
 
     def _row_to_channel(self, row: Dict[str, Any]) -> Channel:
         """Convert database row to Channel model."""
+        # Decrypt topic if encryption is enabled and encrypted data exists
+        topic = None
+        if self._encrypt_descriptions and row.get("topic_encrypted"):
+            from src.utils.encryption import decrypt_data
+
+            try:
+                topic = decrypt_data(row["topic_encrypted"])
+            except Exception as e:
+                logger.warning(f"Failed to decrypt channel topic {row['id']}: {e}")
+                topic = None
+        elif row.get("topic"):
+            # Fallback to unencrypted topic for backward compatibility
+            topic = row["topic"]
+
         return Channel(
             id=row["id"],
             server_id=row["server_id"],
@@ -1729,7 +1833,7 @@ class ServerManager(BaseManager):
             channel_type=ChannelType(row["channel_type"]),
             category_id=row["category_id"],
             position=row["position"],
-            topic=row["topic"],
+            topic=topic,
             nsfw=bool(row["nsfw"]),
             slowmode_seconds=row.get("slowmode_seconds", 0),
             read_receipts_enabled=bool(row.get("read_receipts_enabled", True)),

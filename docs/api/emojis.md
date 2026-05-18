@@ -88,10 +88,8 @@ Content-Type: multipart/form-data
 Creates a new custom emoji. Requires `server.manage` permission.
 
 **Form Fields:**
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| name | string | Yes | Emoji name (2-32 lowercase alphanumeric + underscores) |
-| image | file | Yes | Image file (PNG, GIF, or WebP, max 256KB) |
+- `name` (string, required): Emoji name (2-32 lowercase alphanumeric + underscores)
+- `image` (file, required): Image file (PNG, GIF, or WebP, max 256KB)
 
 **Response:**
 ```json
@@ -108,11 +106,9 @@ Creates a new custom emoji. Requires `server.manage` permission.
 ```
 
 **Errors:**
-| Code | Description |
-|------|-------------|
-| 400 | Invalid name, file too large, or invalid format |
-| 403 | Missing `server.manage` permission |
-| 409 | Emoji with this name already exists |
+- 400: Invalid name, file too large, or invalid format
+- 403: Missing `server.manage` permission
+- 409: Emoji with this name already exists
 
 ### Update Emoji
 
@@ -183,20 +179,16 @@ The emoji identifier in the reaction endpoint URL must be URL-encoded to ensure 
 
 ## Limits
 
-| Limit | Default | Description |
-|-------|---------|-------------|
-| Static emojis per server | 50 | Maximum non-animated emojis |
-| Animated emojis per server | 50 | Maximum animated emojis |
-| File size | 256KB | Maximum image file size |
-| Name length | 2-32 | Emoji name character limits |
+- `Static emojis per server` (50): Maximum non-animated emojis
+- `Animated emojis per server` (50): Maximum animated emojis
+- `File size` (256KB): Maximum image file size
+- `Name length` (2-32): Emoji name character limits
 
 ## Supported Formats
 
-| Format | Extension | Animated |
-|--------|-----------|----------|
-| PNG | .png | No |
-| GIF | .gif | Yes |
-| WebP | .webp | Depends on content |
+- `PNG` (.png): No
+- `GIF` (.gif): Yes
+- `WebP` (.webp): Depends on content
 
 ## WebSocket Events
 

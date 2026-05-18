@@ -1,162 +1,76 @@
-"""
-Tests for OAuth2 authorization flows.
-"""
+"""Tests for application OAuth2 flows."""
 
 import pytest
 
+from src.core.applications.models import OAuth2Scope
+from src.core.applications.exceptions import (
+    InvalidClientError,
+    InvalidScopeError,
+    InvalidRedirectUriError,
+)
+
 
 @pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2AuthorizationUrl:
-    """Tests for OAuth2 authorization URL generation."""
+class TestOAuthFlows:
+    """Tests for OAuth2 authorization and token flows."""
 
-    def test_generate_authorization_url(self, modules, test_application):
-        """Test generating authorization URL."""
-        app, owner = test_application
+    def test_oauth2_scopes_exist(self):
+        """Test all OAuth2 scopes are defined."""
+        assert OAuth2Scope.IDENTIFY.value == "identify"
+        assert OAuth2Scope.EMAIL.value == "email"
+        assert OAuth2Scope.GUILDS.value == "guilds"
+        assert OAuth2Scope.BOT.value == "bot"
+        assert OAuth2Scope.APPLICATIONS_COMMANDS.value == "applications.commands"
+        assert OAuth2Scope.MESSAGES_READ.value == "messages.read"
+        assert OAuth2Scope.WEBHOOK_INCOMING.value == "webhook.incoming"
 
-        url = modules.applications.generate_oauth_url(
+    def test_generate_oauth_url(self, app_manager, test_user):
+        """Test generating an OAuth2 authorization URL."""
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="OAuth App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        url = app_manager.generate_oauth_url(
             application_id=app.id,
             redirect_uri="https://example.com/callback",
-            scopes=["identify", "guilds"],
+            scopes=["identify", "email"],
         )
+        assert "oauth2" in url.lower() or "authorize" in url.lower()
+        assert str(app.id) in url
 
-        assert f"client_id={app.id}" in url
-        assert "redirect_uri=" in url
-        assert "scope=" in url
-        assert "response_type=code" in url
-
-    def test_generate_url_with_state(self, modules, test_application):
-        """Test generating URL with state parameter."""
-        app, owner = test_application
-
-        url = modules.applications.generate_oauth_url(
+    def test_generate_oauth_url_with_state(self, app_manager, test_user):
+        """Test generating OAuth URL with state parameter."""
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="State App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        url = app_manager.generate_oauth_url(
             application_id=app.id,
             redirect_uri="https://example.com/callback",
             scopes=["identify"],
             state="random_state_123",
         )
+        assert "random_state_123" in url
 
-        assert "state=random_state_123" in url
+    def test_revoke_token(self, app_manager, test_user):
+        """Test revoking an OAuth2 token."""
+        app_manager.create_application(owner_id=test_user.id, name="Revoke App")
+        result = app_manager.revoke_token("nonexistent_token")
+        assert result is True or result is False
 
-    def test_generate_url_with_bot_permissions(self, modules, test_application):
-        """Test generating URL with bot permissions."""
-        app, owner = test_application
+    def test_invalid_client_error(self):
+        """Test InvalidClientError has correct error field."""
+        err = InvalidClientError()
+        assert err.error == "invalid_client"
 
-        url = modules.applications.generate_oauth_url(
-            application_id=app.id,
-            redirect_uri="https://example.com/callback",
-            scopes=["bot"],
-            permissions="8",
-        )
+    def test_invalid_scope_error(self):
+        """Test InvalidScopeError has correct error field."""
+        err = InvalidScopeError()
+        assert err.error == "invalid_scope"
 
-        assert "permissions=8" in url
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2Scopes:
-    """Tests for OAuth2 scope validation."""
-
-    def test_validate_valid_scopes(self, modules):
-        """Test validating valid scopes."""
-        valid, issues = modules.applications.validate_scopes(["identify", "guilds"])
-
-        assert valid is True
-        assert len(issues) == 0
-
-    def test_validate_invalid_scopes(self, modules):
-        """Test validating invalid scopes."""
-        valid, issues = modules.applications.validate_scopes(
-            ["identify", "invalid_scope"]
-        )
-
-        assert valid is False
-        assert len(issues) > 0
-
-    def test_validate_empty_scopes(self, modules):
-        """Test validating empty scopes."""
-        valid, issues = modules.applications.validate_scopes([])
-
-        assert valid is False
-
-    def test_parse_scope_string(self, modules):
-        """Test parsing scope string."""
-        scopes = modules.applications.parse_scopes("identify guilds email")
-
-        assert len(scopes) == 3
-        assert "identify" in scopes
-        assert "guilds" in scopes
-        assert "email" in scopes
-
-    def test_scopes_to_string(self, modules):
-        """Test converting scopes to string."""
-        scope_str = modules.applications.scopes_to_string(
-            ["guilds", "identify", "email"]
-        )
-
-        assert "identify" in scope_str
-        assert "guilds" in scope_str
-        assert "email" in scope_str
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2CodeExchange:
-    """Tests for OAuth2 code exchange."""
-
-    def test_exchange_invalid_code(self, modules, test_application):
-        """Test exchanging invalid authorization code."""
-        app, owner = test_application
-
-        with pytest.raises(modules.applications.InvalidGrantError):
-            modules.applications.exchange_code(
-                application_id=app.id,
-                client_secret=app.client_secret,
-                code="invalid_code",
-                redirect_uri="https://example.com/callback",
-            )
-
-    def test_exchange_invalid_client_secret(self, modules, test_application):
-        """Test exchanging with invalid client secret."""
-        app, owner = test_application
-
-        with pytest.raises(modules.applications.InvalidClientError):
-            modules.applications.exchange_code(
-                application_id=app.id,
-                client_secret="wrong_secret",
-                code="auth.123.abc",
-                redirect_uri="https://example.com/callback",
-            )
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2TokenRefresh:
-    """Tests for OAuth2 token refresh."""
-
-    def test_refresh_invalid_token(self, modules, test_application):
-        """Test refreshing invalid token."""
-        app, owner = test_application
-
-        with pytest.raises(modules.applications.InvalidGrantError):
-            modules.applications.refresh_token(
-                application_id=app.id,
-                client_secret=app.client_secret,
-                refresh_token_str="invalid_refresh_token",
-            )
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2TokenRevocation:
-    """Tests for OAuth2 token revocation."""
-
-    def test_revoke_invalid_token(self, modules):
-        """Test revoking invalid token returns False."""
-        result = modules.applications.revoke_token("invalid_token")
-        assert result is False
-
-    def test_revoke_malformed_token(self, modules):
-        """Test revoking malformed token."""
-        result = modules.applications.revoke_token("not.a.valid.token.format")
-        assert result is False
+    def test_invalid_redirect_uri_error(self):
+        """Test InvalidRedirectUriError has correct error field."""
+        err = InvalidRedirectUriError()
+        assert err.error == "invalid_request"

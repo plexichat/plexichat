@@ -109,9 +109,13 @@ class AccountReaper:
     def harvest(self):
         """
         Main purge logic. Identifies and erases users past their grace period.
+        Also cleans up expired passkey challenges.
         """
         now = int(time.time())
         batch_size = self._reaper_config.get("batch_size", 50)
+
+        # Clean up expired passkey challenges
+        self._cleanup_passkey_challenges()
 
         # Find users ready for purge
         purge_list = self._db.fetch_all(
@@ -126,6 +130,21 @@ class AccountReaper:
 
         for user in purge_list:
             self.purge_user(user["id"], user["username"])
+
+    def _cleanup_passkey_challenges(self):
+        """Clean up expired passkey challenges."""
+        try:
+            now = int(time.time() * 1000)  # milliseconds
+            result = self._db.execute(
+                "DELETE FROM auth_passkey_challenges WHERE expires_at < ?",
+                (now,),
+            )
+            if result.rowcount > 0:
+                logger.debug(
+                    f"Reaper: Cleaned up {result.rowcount} expired passkey challenges"
+                )
+        except Exception as e:
+            logger.error(f"Reaper: Failed to cleanup passkey challenges: {e}")
 
     def purge_user(self, user_id: int, username: str):
         """

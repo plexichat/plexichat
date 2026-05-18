@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-51"
+DEFAULT_VERSION = "a.1.0-56"
 
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
@@ -43,28 +43,33 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "type": "sqlite",
             "path": str(home_dir / "data" / "plexichat.db"),
             "postgres": {
-                "host": "localhost",
+                "host": "${POSTGRES_HOST:-localhost}",
                 "port": 5432,
-                "user": "postgres",
-                "password": "",
-                "dbname": "plexichat",
-                "sslmode": "prefer",
+                "user": "${POSTGRES_USER:-postgres}",
+                "password": "${POSTGRES_PASSWORD:-}",
+                "dbname": "${POSTGRES_DBNAME:-plexichat}",
+                "sslmode": "${POSTGRES_SSLMODE:-prefer}",
             },
             "connection_pool": {
-                "min_connections": 20,
+                "min_connections": 5,
                 "max_connections": 100,
                 "connect_timeout": 10,
-                "max_idle_time": 3600,
-                "validation_interval": 60,
-                "enable_validation": True,
-                "validation_query": "SELECT 1",
+            },
+            "monitoring": {
+                "slow_query_threshold_ms": 1000,
+                "alert_on_slow_queries": True,
+            },
+            "migrations": {
+                "auto_migrate": True,
+                "migration_dir": str(home_dir / "migrations"),
+                "irreversible_migration_delay_days": 7,
             },
         },
         "redis": {
             "enabled": False,
-            "host": "localhost",
+            "host": "${REDIS_HOST:-localhost}",
             "port": 6379,
-            "password": "",
+            "password": "${REDIS_PASSWORD:-}",
             "db": 0,
             "ssl": False,
             "key_prefix": "plexichat:",
@@ -76,6 +81,9 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "encryption": {
                 # SECURITY: Enforce TPM or Environment Variable key source for production
                 "require_secure_source": True,
+                # Media encryption key (Base64 encoded 32-byte key)
+                # If not set, media encryption will be disabled
+                "media_key": "${PLEXICHAT_MEDIA_KEY:-}",
             },
             "account_deletion": {
                 "enabled": True,
@@ -137,6 +145,15 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "require_lowercase": True,
                 "require_digit": True,
                 "require_special": True,
+                "guidance_url": "/docs/api/end-user/password-guidance.md",
+            },
+            "passkeys": {
+                "enabled": True,
+                "rp_name": "Plexichat",
+                "rp_id": "${PASSKEY_RP_ID:-localhost}",
+                "origin": "${PASSKEY_ORIGIN:-http://localhost}",
+                "challenge_ttl_seconds": 300,
+                "cleanup_interval_hours": 24,
             },
             "bots": {"token_bytes": 48, "require_owner_2fa": False},
         },
@@ -200,12 +217,12 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "encrypt_at_rest": True,
             "local_path": str(home_dir / "media"),
             "local_url": "/media",
-            "s3_bucket": "",
-            "s3_access_key": "",
-            "s3_secret_key": "",
-            "s3_region": "us-east-1",
-            "s3_endpoint": "",
-            "s3_public_url": "",
+            "s3_bucket": "${S3_BUCKET:-}",
+            "s3_access_key": "${S3_ACCESS_KEY:-}",
+            "s3_secret_key": "${S3_SECRET_KEY:-}",
+            "s3_region": "${S3_REGION:-us-east-1}",
+            "s3_endpoint": "${S3_ENDPOINT:-}",
+            "s3_public_url": "${S3_PUBLIC_URL:-}",
             "database_url": "/api/v1/media/blob",
             "database_max_size": 524288,  # 512KB
             "auto_route_to_database": {
@@ -453,6 +470,13 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "datacenter_id": None,
             },
             "key_rotation_days": 180,  # 6 months, configurable via encryption.key_rotation_days
+            "hsm": {
+                "enabled": False,
+                "library_path": "/usr/lib/softhsm/libsofthsm2.so",
+                "slot_id": 0,
+                "pin": "",
+                "key_label": "plexichat_kek",
+            },
         },
         "monitoring": {
             "enabled": True,
@@ -478,14 +502,17 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],
             "test_user": {
                 "username": "selftest_admin",
-                "email": "selftest@internal.local",
-                "password": "SelfTest_Password_123!",  # pragma: allowlist secret
+                "email": "selftest@plexichat.com",
+                "password": None,  # pragma: allowlist secret
             },
         },
         "admin_ui": {
             "enabled": True,
             "path": "/admin",
             "require_otp": True,
+            "force_password_change_first_login": True,
+            "session_timeout_minutes": 480,
+            "max_concurrent_sessions": 3,
             "host_restriction": {
                 "enabled": True,
                 "allowed_hosts": ["127.0.0.1", "localhost", "::1"],
@@ -496,6 +523,47 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "max_attempts": 5,
                 "window_seconds": 300,
                 "lockout_seconds": 900,
+            },
+            "rbac": {
+                "enabled": True,
+                "default_role": "super_admin",
+            },
+            "approval_workflows": {
+                "enabled": True,
+                "single_admin_bypass": True,
+                "require_approval_for": [
+                    "users.force_purge",
+                    "users.delete",
+                    "servers.delete",
+                ],
+                "approval_required_admins": 2,
+                "approval_timeout_hours": 48,
+                "auto_approve_after_hours": 72,
+            },
+            "audit": {
+                "log_to_file": True,
+                "log_to_database": True,
+                "sensitive_actions_always_db": True,
+                "retention_days": 365,
+            },
+            "notifications": {
+                "email_on_critical_actions": False,
+                "email_on_approval_required": False,
+                "webhook_url": "",
+            },
+            "security": {
+                "password_policy": {
+                    "min_length": 12,
+                    "require_uppercase": True,
+                    "require_lowercase": True,
+                    "require_numbers": True,
+                    "require_special_chars": True,
+                    "prevent_common_passwords": True,
+                },
+                "session": {
+                    "max_concurrent_sessions": 3,
+                    "timeout_idle_minutes": 30,
+                },
             },
         },
         "tls": {
@@ -584,6 +652,34 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "rate_limits": {
                 "requests_per_minute": 60,
             },
+        },
+        "bots": {
+            "enabled": True,
+            "max_per_server": 10,
+            "max_per_server_premium": 50,
+            "allow_custom_bots": False,
+            "allow_custom_bots_premium": True,
+            "manage_bots_role": "admin",
+            "request_bot_enabled": True,
+            "curated_bots_only": False,
+            "webhook_retention_days": 30,
+            "interaction_timeout": 900,
+            "slash_commands_enabled": True,
+            "oauth_consent_required": True,
+            "bot_avatar_max_size": 512,
+            "bot_avatar_max_file_size": 5242880,
+            "bot_avatar_allowed_types": [
+                "image/jpeg",
+                "image/png",
+                "image/gif",
+                "image/webp",
+            ],
+            "rate_limits": {
+                "requests_per_minute": 30,
+                "burst_limit": 10,
+            },
+            "approved_bots_page_size": 50,
+            "max_requests_pending_per_user": 10,
         },
         "versioning": {"min_supported_version": version, "update_url": None},
         "docs": {

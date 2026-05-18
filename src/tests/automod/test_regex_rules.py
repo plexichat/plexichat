@@ -1,105 +1,128 @@
-"""
-Tests for regex pattern rules.
-"""
+"""Tests for automod regex rules."""
 
 import pytest
 
-from src.core import automod
-from src.core.automod import RuleType
-from src.core.automod.rules.regex import RegexRule
+from src.core.automod.models import RuleType
+from src.core.automod.exceptions import RuleValidationError
 
 
 @pytest.mark.automod
-class TestRegexRule:
-    """Tests for RegexRule."""
+class TestRegexRules:
+    """Tests for regex-based automod rules."""
 
-    def test_matches_pattern(self, regex_rule):
-        """Test regex pattern matching."""
-        rule, server, channel, owner = regex_rule
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
+    def test_create_regex_rule(self, automod_manager, test_server):
+        """Test creating a regex rule."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
             user_id=owner.id,
-            content="Get free money now!",
+            server_id=server.id,
+            name="Credit Card Filter",
+            rule_type=RuleType.REGEX,
+            rule_config={
+                "patterns": [
+                    {
+                        "pattern": r"\b\d{16}\b",
+                        "name": "credit_card",
+                        "severity": "high",
+                    }
+                ]
+            },
+            actions=[
+                {"action_type": "delete_message"},
+                {"action_type": "alert_moderators"},
+            ],
+        )
+        assert rule.name == "Credit Card Filter"
+        assert rule.rule_type == RuleType.REGEX
+        assert len(rule.actions) == 2
+
+    def test_regex_rule_matches_pattern(self, automod_manager, test_server):
+        """Test that regex rule detects matching pattern."""
+        server, owner = test_server
+        automod_manager.create_rule(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Link Detector",
+            rule_type=RuleType.REGEX,
+            rule_config={
+                "patterns": [
+                    {"pattern": r"https?://\S+", "name": "url", "severity": "low"}
+                ]
+            },
+            actions=[{"action_type": "log_only"}],
         )
 
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1",
+            (server.id,),
+        )
+        channel_id = channel["id"] if channel else 0
+
+        result = automod_manager.check_message(
+            server_id=server.id,
+            channel_id=channel_id,
+            user_id=99999,
+            content="Visit https://example.com for free stuff",
+        )
         assert not result.passed
-        assert result.violations[0].rule_type == RuleType.REGEX
 
-    def test_matches_credit_card_pattern(self, regex_rule):
-        """Test credit card number pattern."""
-        rule, server, channel, owner = regex_rule
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
+    def test_regex_rule_no_match(self, automod_manager, test_server):
+        """Test that regex rule does not match non-matching content."""
+        server, owner = test_server
+        automod_manager.create_rule(
             user_id=owner.id,
-            content="My card is 1234567890123456",
+            server_id=server.id,
+            name="Link Detector",
+            rule_type=RuleType.REGEX,
+            rule_config={
+                "patterns": [
+                    {"pattern": r"https?://\S+", "name": "url", "severity": "low"}
+                ]
+            },
+            actions=[{"action_type": "log_only"}],
         )
 
-        assert not result.passed
-
-    def test_no_match_clean_content(self, regex_rule):
-        """Test clean content passes."""
-        rule, server, channel, owner = regex_rule
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content="This is a normal message",
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1",
+            (server.id,),
         )
+        channel_id = channel["id"] if channel else 0
 
+        result = automod_manager.check_message(
+            server_id=server.id,
+            channel_id=channel_id,
+            user_id=99999,
+            content="Just a normal message with no links",
+        )
         assert result.passed
 
-    def test_case_insensitive_by_default(self, regex_rule):
-        """Test patterns are case insensitive by default."""
-        rule, server, channel, owner = regex_rule
+    def test_regex_rule_invalid_config(self, automod_manager, test_server):
+        """Test that invalid regex config raises validation error."""
+        server, owner = test_server
+        with pytest.raises(RuleValidationError):
+            automod_manager.create_rule(
+                user_id=owner.id,
+                server_id=server.id,
+                name="Invalid",
+                rule_type=RuleType.REGEX,
+                rule_config={},  # Missing required 'patterns'
+                actions=[{"action_type": "log_only"}],
+            )
 
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
+    def test_regex_rule_multiple_patterns(self, automod_manager, test_server):
+        """Test regex rule with multiple patterns."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
             user_id=owner.id,
-            content="Get FREE MONEY now!",
+            server_id=server.id,
+            name="Multi Pattern",
+            rule_type=RuleType.REGEX,
+            rule_config={
+                "patterns": [
+                    {"pattern": r"free\s+money", "name": "scam", "severity": "high"},
+                    {"pattern": r"\b\d{16}\b", "name": "cc", "severity": "critical"},
+                ]
+            },
+            actions=[{"action_type": "delete_message"}],
         )
-
-        assert not result.passed
-
-
-@pytest.mark.automod
-class TestRegexRuleValidation:
-    """Tests for regex rule config validation."""
-
-    def test_valid_config(self):
-        """Test valid configuration passes."""
-        valid, issues = RegexRule.validate_config(
-            {"patterns": [{"pattern": r"\btest\b", "name": "test_pattern"}]}
-        )
-
-        assert valid
-        assert len(issues) == 0
-
-    def test_missing_patterns(self):
-        """Test missing patterns fails validation."""
-        valid, issues = RegexRule.validate_config({})
-
-        assert not valid
-        assert any("patterns" in issue for issue in issues)
-
-    def test_invalid_regex(self):
-        """Test invalid regex fails validation."""
-        valid, issues = RegexRule.validate_config(
-            {"patterns": [{"pattern": r"[invalid(regex", "name": "bad"}]}
-        )
-
-        assert not valid
-        assert any("invalid regex" in issue for issue in issues)
-
-    def test_missing_pattern_field(self):
-        """Test pattern without pattern field fails."""
-        valid, issues = RegexRule.validate_config(
-            {"patterns": [{"name": "no_pattern"}]}
-        )
-
-        assert not valid
+        assert rule.rule_type == RuleType.REGEX

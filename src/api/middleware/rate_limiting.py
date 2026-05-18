@@ -79,6 +79,15 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
                 or permissions.get("admin", False)
             )
 
+    # Also recognise admin dashboard sessions (admin_sessions table)
+    # which set request.state.admin_id but not request.state.user.
+    if not user_info["is_admin"]:
+        admin_id = getattr(request.state, "admin_id", None)
+        if admin_id is not None:
+            user_info["is_admin"] = True
+            if not user_info["user_id"]:
+                user_info["user_id"] = admin_id
+
     # Secure bypass check — requires non-empty bypass_secret.
     bypass_secret = config.get("rate_limiting.bypass_secret")
     if bypass_secret:
@@ -119,6 +128,9 @@ def create_rate_limit_middleware(
         "/redoc",
         "/openapi.json",
     ]
+    # Admin API paths are excluded from general rate limiting.
+    # Admin login has its own rate limiting (in authenticate_admin)
+    # that returns proper 429 status codes.
     all_excludes = list(set(default_excludes + (exclude_paths or [])))
     user_info_getter = custom_user_info_getter or get_user_info_from_request
 

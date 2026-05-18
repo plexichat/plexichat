@@ -314,7 +314,7 @@ async def delete_server(
         servers_mod.delete_server(current_user.user_id, sid)
         # Invalidate user's server list cache
         invalidate_user_servers(current_user.user_id)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -373,10 +373,7 @@ def get_server_channels(
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
-        exists_row = servers_mod._get_manager()._db.fetch_one(
-            "SELECT 1 FROM srv_servers WHERE id = ? AND deleted = 0", (sid,)
-        )
-        if not exists_row:
+        if not servers_mod.server_exists(sid):
             raise HTTPException(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Server not found"}},
@@ -622,7 +619,7 @@ async def kick_member(
 
         target_user_id = row["user_id"]
         servers_mod.kick_member(current_user.user_id, sid, target_user_id)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -707,7 +704,7 @@ async def assign_role_to_member(
         target_user_id = row["user_id"]
 
         servers_mod.assign_role(current_user.user_id, sid, target_user_id, rid)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -722,7 +719,9 @@ async def assign_role_to_member(
                 status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
         elif "Exists" in exc_name:
-            return SuccessResponse(success=True)  # Already has role, treat as success
+            return SuccessResponse(
+                success=True, message=None
+            )  # Already has role, treat as success
 
         logger.error(
             f"Failed to assign role {role_id} to member {member_id} in server {server_id}: {e}",
@@ -793,7 +792,7 @@ async def remove_role_from_member(
         target_user_id = row["user_id"]
 
         servers_mod.remove_role(current_user.user_id, sid, target_user_id, rid)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -1299,7 +1298,7 @@ async def delete_role(
 
         servers_mod.require_permission(current_user.user_id, sid, "roles.manage")
         servers_mod.delete_role(current_user.user_id, rid)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -1441,7 +1440,7 @@ async def ban_member(
             reason=reason,
             delete_message_days=delete_message_days,
         )
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -1502,7 +1501,7 @@ async def unban_member(
             )
 
         servers_mod.unban_member(current_user.user_id, sid, uid)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -1568,7 +1567,7 @@ async def leave_server(
         servers_mod.leave_server(current_user.user_id, sid)
         # Invalidate user's server list cache
         invalidate_user_servers(current_user.user_id)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -1972,7 +1971,7 @@ async def delete_server_automod_rule(
         if not automod.delete_rule(user_id=current_user.user_id, rule_id=rid):
             raise HTTPException(status_code=500, detail="Failed to delete rule")
 
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:

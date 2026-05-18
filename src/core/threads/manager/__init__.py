@@ -7,6 +7,7 @@ with proper validation, permission checks, and database interactions.
 
 from typing import Optional, List, Dict, Any
 
+import utils.config as config
 import utils.logger as logger
 from src.core.base import BaseManager
 
@@ -58,6 +59,9 @@ class ThreadManager(BaseManager):
         self._messaging = messaging_module
         self._servers = servers_module
         self._notifications = notifications_module
+        self._encrypt_thread_names = config.get(
+            "encryption.encrypt_thread_names", False
+        )
 
         logger.info("Threads module initialized")
 
@@ -116,12 +120,23 @@ class ThreadManager(BaseManager):
 
     def _row_to_thread(self, row: Dict[str, Any]) -> Thread:
         """Convert database row to Thread."""
+        # Decrypt thread name if encryption is enabled and encrypted data exists
+        name = row["name"]
+        if self._encrypt_thread_names and row.get("name_encrypted"):
+            from src.utils.encryption import decrypt_data
+
+            try:
+                name = decrypt_data(row["name_encrypted"])
+            except Exception as e:
+                logger.warning(f"Failed to decrypt thread name {row['id']}: {e}")
+                name = row["name"]  # Fallback to unencrypted
+
         return Thread(
             id=row["id"],
             channel_id=row["channel_id"],
             server_id=row["server_id"],
             owner_id=row["owner_id"],
-            name=row["name"],
+            name=name,
             thread_type=ThreadType(row["thread_type"]),
             state=ThreadState(row["state"]),
             parent_message_id=row["parent_message_id"],
@@ -219,6 +234,13 @@ class ThreadManager(BaseManager):
         now = self._get_timestamp()
         thread_id = self._generate_id()
 
+        # Encrypt thread name if enabled
+        name_encrypted = None
+        if self._encrypt_thread_names:
+            from src.utils.encryption import encrypt_data
+
+            name_encrypted = encrypt_data(name)
+
         # Create conversation for the thread
         conversation_id = None
         if self._messaging:
@@ -232,15 +254,16 @@ class ThreadManager(BaseManager):
 
         self._db.execute(
             """INSERT INTO thread_threads 
-               (id, channel_id, server_id, owner_id, name, thread_type, state, 
+               (id, channel_id, server_id, owner_id, name, name_encrypted, thread_type, state, 
                 auto_archive_duration, message_count, member_count, created_at, conversation_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 thread_id,
                 channel_id,
                 server_id,
                 user_id,
                 name,
+                name_encrypted,
                 thread_type.value,
                 ThreadState.ACTIVE.value,
                 auto_archive_duration.value,
@@ -323,6 +346,13 @@ class ThreadManager(BaseManager):
         now = self._get_timestamp()
         thread_id = self._generate_id()
 
+        # Encrypt thread name if enabled
+        name_encrypted = None
+        if self._encrypt_thread_names:
+            from src.utils.encryption import encrypt_data
+
+            name_encrypted = encrypt_data(name)
+
         # Create conversation for the thread
         conversation_id = None
         if self._messaging:
@@ -336,16 +366,17 @@ class ThreadManager(BaseManager):
 
         self._db.execute(
             """INSERT INTO thread_threads 
-               (id, channel_id, server_id, owner_id, name, thread_type, state,
+               (id, channel_id, server_id, owner_id, name, name_encrypted, thread_type, state,
                 parent_message_id, auto_archive_duration, message_count, member_count, 
                 created_at, conversation_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 thread_id,
                 channel_id,
                 server_id,
                 user_id,
                 name,
+                name_encrypted,
                 thread_type.value,
                 ThreadState.ACTIVE.value,
                 message_id,
@@ -1159,8 +1190,19 @@ class ThreadManager(BaseManager):
 
         if name is not None:
             name = self._validate_thread_name(name)
+            # Encrypt name if enabled
+            name_encrypted = None
+            if name and self._encrypt_thread_names:
+                from src.utils.encryption import encrypt_data
+
+                name_encrypted = encrypt_data(name)
+
             updates.append("name = ?")
             params.append(name)
+
+            if name_encrypted:
+                updates.append("name_encrypted = ?")
+                params.append(name_encrypted)
 
         if auto_archive_duration is not None:
             updates.append("auto_archive_duration = ?")

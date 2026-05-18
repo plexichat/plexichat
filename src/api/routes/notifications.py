@@ -108,7 +108,7 @@ async def mark_all_read(
 
     try:
         notif_mod.mark_all_read(current_user.user_id)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except Exception as e:
         logger.error(f"Failed to mark all notifications read: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -135,7 +135,7 @@ async def mark_read(
             raise HTTPException(status_code=400, detail="Invalid notification ID")
 
         notif_mod.mark_notification_read(current_user.user_id, nid)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except Exception as e:
         if "not found" in str(e).lower():
             raise HTTPException(status_code=404, detail="Notification not found")

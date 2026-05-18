@@ -63,11 +63,11 @@ Pre-created users with real Argon2 hashing are reused across tests:
 
 ```python
 @pytest.fixture(scope="session")
-def session_users(modules):
+def session_users(auth_manager):
     """Creates 20 users at session start (~5-10 seconds)"""
     users = []
     for i in range(20):
-        user = modules.auth.register(
+        user = auth_manager.register(
             username=f"pooluser_{i}_{uuid.uuid4().hex[:4]}",
             email=f"{username}@test.example.com",
             password=TEST_PASSWORD
@@ -281,9 +281,7 @@ pytest --collect-only
 
 ```python
 # Database and modules (created once per session)
-def test_example(modules, session_users):
-    auth = modules.auth
-    messaging = modules.messaging
+def test_example(auth_manager, messaging_manager, session_users):
     # Use pre-created session users
     user, username, password = session_users[0]
 ```
@@ -313,7 +311,7 @@ def test_with_users(two_users, three_users):
 
 ```python
 # User factory (for creating fresh users)
-def test_registration(modules, user_factory):
+def test_registration(auth_manager, user_factory):
     # Create fresh user (not from pool)
     user = user_factory.create(
         username="testuser",
@@ -322,9 +320,9 @@ def test_registration(modules, user_factory):
     )
 
 # Server factory
-def test_server_creation(server_factory, user_factory):
+def test_server_creation(server_manager, user_factory):
     owner = user_factory.create()
-    server = server_factory.create(owner=owner, name="Test Server")
+    server = server_manager.create(owner=owner, name="Test Server")
 
     # Server with members
     server, owner, members = server_factory.create_with_members(
@@ -373,12 +371,12 @@ def test_api_endpoint(test_client, auth_headers):
 ```python
 # Create a custom fixture for your test module
 @pytest.fixture
-def authenticated_users(user_pool, modules):
+def authenticated_users(user_pool, auth_manager):
     """Create multiple authenticated users"""
     users_with_tokens = []
     for _ in range(3):
         user, username, password = user_pool.get_user_with_credentials()
-        result = modules.auth.login(username, password)
+        result = auth_manager.login(username, password)
         users_with_tokens.append((user, result.token))
     return users_with_tokens
 
@@ -411,16 +409,16 @@ from src.tests.fixtures.security import (
 ### XSS Prevention Testing
 
 ```python
-def test_message_xss_prevention(modules, user_pool, xss_payloads, security_assert):
+def test_message_xss_prevention(messaging_manager, user_pool, xss_payloads, security_assert):
     """Test that messages are protected against XSS"""
     user1 = user_pool.get_user()
     user2 = user_pool.get_user()
-    dm = modules.messaging.create_dm(user1.id, user2.id)
+    dm = messaging_manager.create_dm(user1.id, user2.id)
 
     # Test all XSS payloads
     for payload in xss_payloads.all():
         try:
-            msg = modules.messaging.send_message(
+            msg = messaging_manager.send_message(
                 user_id=user1.id,
                 conversation_id=dm.id,
                 content=payload
@@ -435,11 +433,11 @@ def test_message_xss_prevention(modules, user_pool, xss_payloads, security_asser
 ### SQL Injection Testing
 
 ```python
-def test_login_sql_injection(modules, sql_payloads, security_assert):
+def test_login_sql_injection(auth_manager, sql_payloads, security_assert):
     """Test that login is protected against SQL injection"""
     for payload in sql_payloads.all():
         try:
-            modules.auth.login(payload, "password")
+            auth_manager.login(payload, "password")
         except Exception:
             # Should be rejected
             pass
@@ -448,11 +446,11 @@ def test_login_sql_injection(modules, sql_payloads, security_assert):
 ### Input Validation Testing
 
 ```python
-def test_username_validation(modules, malformed_inputs):
+def test_username_validation(auth_manager, malformed_inputs):
     """Test username validation handles malformed inputs"""
     for malformed in malformed_inputs.all():
         with pytest.raises(Exception):
-            modules.auth.register(
+            auth_manager.register(
                 username=malformed,
                 email="test@test.com",
                 password="Pass123!"
@@ -462,19 +460,19 @@ def test_username_validation(modules, malformed_inputs):
 ### Authorization Testing
 
 ```python
-def test_unauthorized_access(modules, user_pool):
+def test_unauthorized_access(server_manager, user_pool):
     """Test that users cannot access resources they don't own"""
     owner = user_pool.get_user()
     unauthorized = user_pool.get_user()
 
-    server = modules.servers.create_server(
+    server = server_manager.create_server(
         owner_id=owner.id,
         name="Private Server"
     )
 
     # Unauthorized user should not be able to delete
     with pytest.raises(Exception):
-        modules.servers.delete_server(
+        server_manager.delete_server(
             user_id=unauthorized.id,
             server_id=server.id
         )
@@ -483,13 +481,13 @@ def test_unauthorized_access(modules, user_pool):
 ### Security Test Helper
 
 ```python
-def test_field_security(modules, user_pool, security_helper, xss_payloads):
+def test_field_security(server_manager, user_pool, security_helper, xss_payloads):
     """Use security helper for common patterns"""
     owner = user_pool.get_user()
 
     # Test XSS in server name field
     security_helper.test_field_xss(
-        create_fn=lambda name: modules.servers.create_server(
+        create_fn=lambda name: server_manager.create_server(
             owner_id=owner.id,
             name=name
         ),
@@ -532,10 +530,10 @@ def test_field_security(modules, user_pool, security_helper, xss_payloads):
 ### Pattern 1: Testing Registration
 
 ```python
-def test_user_registration(modules):
+def test_user_registration(auth_manager):
     """Test user registration with fresh user"""
     # Always create fresh users for registration tests
-    user = modules.auth.register(
+    user = auth_manager.register(
         username=f"newuser_{uuid.uuid4().hex[:8]}",
         email=f"newuser_{uuid.uuid4().hex[:8]}@test.com",
         password="SecurePass123!"
@@ -548,13 +546,13 @@ def test_user_registration(modules):
 ### Pattern 2: Testing Message Sending
 
 ```python
-def test_message_sending(modules, user_pool):
+def test_message_sending(messaging_manager, user_pool):
     """Test message sending with pool users"""
     user1 = user_pool.get_user()
     user2 = user_pool.get_user()
 
-    dm = modules.messaging.create_dm(user1.id, user2.id)
-    msg = modules.messaging.send_message(
+    dm = messaging_manager.create_dm(user1.id, user2.id)
+    msg = messaging_manager.send_message(
         user_id=user1.id,
         conversation_id=dm.id,
         content="Hello!"
@@ -581,40 +579,40 @@ def test_server_creation(modules, user_factory, server_factory):
 ### Pattern 4: Testing Authentication
 
 ```python
-def test_login_logout_flow(modules, user_pool):
+def test_login_logout_flow(auth_manager, user_pool):
     """Test complete auth flow"""
     user, username, password = user_pool.get_user_with_credentials()
 
     # Login
-    result = modules.auth.login(username, password)
+    result = auth_manager.login(username, password)
     assert result.token is not None
 
     # Verify token
-    token_info = modules.auth.verify_token(result.token)
+    token_info = auth_manager.verify_token(result.token)
     assert token_info.user_id == user.id
 
     # Logout
-    modules.auth.logout(result.token)
+    auth_manager.logout(result.token)
 
     # Verify token is invalid
     with pytest.raises(Exception):
-        modules.auth.verify_token(result.token)
+        auth_manager.verify_token(result.token)
 ```
 
 ### Pattern 5: Testing Permissions
 
 ```python
-def test_channel_permissions(modules, server_factory, user_factory):
+def test_channel_permissions(server_manager, messaging_manager, server_factory, user_factory):
     """Test channel permission system"""
     server, owner, [member] = server_factory.create_with_members(
         member_count=1
     )
 
-    channels = modules.servers.get_channels(owner.id, server.id)
+    channels = server_manager.get_channels(owner.id, server.id)
     channel = channels[0]
 
     # Owner can send messages
-    msg = modules.messaging.send_message(
+    msg = messaging_manager.send_message(
         user_id=owner.id,
         conversation_id=channel.id,
         content="Owner message"
@@ -622,7 +620,7 @@ def test_channel_permissions(modules, server_factory, user_factory):
     assert msg is not None
 
     # Member can send messages (default permission)
-    msg = modules.messaging.send_message(
+    msg = messaging_manager.send_message(
         user_id=member.id,
         conversation_id=channel.id,
         content="Member message"
@@ -633,13 +631,13 @@ def test_channel_permissions(modules, server_factory, user_factory):
 ### Pattern 6: Testing Error Cases
 
 ```python
-def test_invalid_operations(modules, user_pool):
+def test_invalid_operations(messaging_manager, auth_manager, user_pool):
     """Test that invalid operations are properly rejected"""
     user = user_pool.get_user()
 
     # Test invalid conversation ID
     with pytest.raises(Exception):
-        modules.messaging.send_message(
+        messaging_manager.send_message(
             user_id=user.id,
             conversation_id=999999,
             content="Should fail"
@@ -647,7 +645,7 @@ def test_invalid_operations(modules, user_pool):
 
     # Test invalid user ID
     with pytest.raises(Exception):
-        modules.auth.get_user(999999)
+        auth_manager.get_user(999999)
 ```
 
 ### Pattern 7: Property-Based Testing
@@ -661,10 +659,10 @@ from hypothesis import given, strategies as st
         whitelist_characters='_-'
     ))
 )
-def test_username_validation_property(modules, username):
+def test_username_validation_property(auth_manager, username):
     """Property-based test for username validation"""
     try:
-        user = modules.auth.register(
+        user = auth_manager.register(
             username=username,
             email=f"{username}@test.com",
             password="Pass123!"
@@ -889,7 +887,7 @@ class TestSecurity:
 class TestIntegration:
     """Test integration with other modules."""
 
-    def test_cross_module_interaction(self, modules, user_pool):
+    def test_cross_module_interaction(self, auth_manager, user_pool):
         """Test interaction with other modules."""
         pass
 ```
@@ -913,16 +911,17 @@ Add module-specific fixtures in `conftest.py` files:
 import pytest
 
 @pytest.fixture
-def my_module_fixture(modules, user_pool):
+def my_module_fixture(auth_manager, user_pool):
     """Module-specific fixture."""
     # Setup
     user = user_pool.get_user()
-    resource = modules.mymodule.create_resource(user.id)
+    # Use appropriate manager instead of modules.mymodule
+    # resource = appropriate_manager.create_resource(user.id)
 
     yield resource
 
     # Cleanup (if needed)
-    # modules.mymodule.delete_resource(resource.id)
+    # appropriate_manager.delete_resource(resource.id)
 ```
 
 ### Running Tests During Development
@@ -942,10 +941,11 @@ pytest src/tests/mymodule/test_feature.py::test_specific -vv -s --pdb
 
 ```python
 # Add breakpoint
-def test_something(modules, user_pool):
+def test_something(auth_manager, user_pool):
     user = user_pool.get_user()
     breakpoint()  # Execution will pause here
-    result = modules.something.do_thing(user.id)
+    # Use appropriate manager instead of modules.something
+    # result = appropriate_manager.do_thing(user.id)
     assert result is not None
 
 # Run with pdb on failure

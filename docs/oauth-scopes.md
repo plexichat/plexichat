@@ -4,11 +4,9 @@ OAuth scopes define which user data or application capabilities an external clie
 
 ## Runtime Summary
 
-| Metric | Value |
-|--------|-------|
-| Total scopes | `{{OAUTH_SCOPE_COUNT}}` |
-| Privileged scopes | `{{OAUTH_PRIVILEGED_SCOPE_COUNT}}` |
-| Bot-required scopes | `{{OAUTH_BOT_SCOPE_COUNT}}` |
+- Total scopes: `{{OAUTH_SCOPE_COUNT}}`
+- Privileged scopes: `{{OAUTH_PRIVILEGED_SCOPE_COUNT}}`
+- Bot-required scopes: `{{OAUTH_BOT_SCOPE_COUNT}}`
 
 ## Scope Catalog
 

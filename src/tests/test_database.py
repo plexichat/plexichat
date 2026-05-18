@@ -6,10 +6,12 @@ logging integration, and the new helper methods.
 """
 
 import pytest
-import os
-import sys
-import shutil
-import sqlite3
+
+pytestmark = pytest.mark.database_integration
+import os  # noqa: E402
+import sys  # noqa: E402
+import shutil  # noqa: E402
+import sqlite3  # noqa: E402
 
 # Setup paths before any imports
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
@@ -27,23 +29,15 @@ from src.core.database.core import Database  # noqa: E402
 
 # Fixture for setup/teardown
 @pytest.fixture(scope="module")
-def setup_module():
-    # Setup temp environment
-    if not os.path.exists("temp_test"):
-        os.makedirs("temp_test")
+def setup_module(tmp_path_factory):
+    """Setup temp environment for module."""
+    temp_dir = tmp_path_factory.mktemp("test_db")
 
     # Setup Logger for tests (once)
-    log_dir = "temp_test/logs"
+    log_dir = str(temp_dir / "logs")
     logger.setup(log_dir=log_dir, level="DEBUG")
 
-    yield
-
-    # Teardown
-    if os.path.exists("temp_test"):
-        try:
-            shutil.rmtree("temp_test")
-        except OSError:
-            pass
+    yield temp_dir
 
 
 @pytest.fixture
@@ -52,8 +46,9 @@ def db_config(setup_module):
     import gc
     import time
 
-    config_path = "temp_test/config.yaml"
-    db_path = "temp_test/test.db"
+    temp_dir = setup_module
+    config_path = str(temp_dir / "config.yaml")
+    db_path = str(temp_dir / "test.db")
 
     # Force garbage collection to close any lingering connections
     gc.collect()
@@ -74,14 +69,14 @@ def db_config(setup_module):
     default_config = {"database": {"type": "sqlite", "path": db_path}}
     config.setup(config_path=config_path, default_config=default_config)
 
-    yield config_path
+    yield config_path, temp_dir
 
     # Force garbage collection before cleanup
     gc.collect()
     time.sleep(0.1)
 
     # Cleanup after test
-    for path in [db_path, "temp_test/other.db"]:
+    for path in [db_path, str(temp_dir / "other.db")]:
         if os.path.exists(path):
             try:
                 os.remove(path)
@@ -92,6 +87,8 @@ def db_config(setup_module):
 # SQLite Basic Tests
 def test_sqlite_connection(db_config):
     """Test basic SQLite connection."""
+    config_path, temp_dir = db_config
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     assert db.connection is not None
@@ -100,6 +97,8 @@ def test_sqlite_connection(db_config):
 
 def test_sqlite_create_table(db_config):
     """Test creating a table in SQLite."""
+    config_path, temp_dir = db_config
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)")
@@ -116,6 +115,8 @@ def test_sqlite_create_table(db_config):
 
 def test_sqlite_insert_single_row(db_config):
     """Test inserting a single row."""
+    config_path, temp_dir = db_config
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -129,6 +130,7 @@ def test_sqlite_insert_single_row(db_config):
 
 def test_sqlite_insert_multiple_rows(db_config):
     """Test inserting multiple rows."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -144,6 +146,7 @@ def test_sqlite_insert_multiple_rows(db_config):
 
 def test_sqlite_update_row(db_config):
     """Test updating a row."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -160,6 +163,7 @@ def test_sqlite_update_row(db_config):
 
 def test_sqlite_delete_row(db_config):
     """Test deleting a row."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -179,6 +183,7 @@ def test_sqlite_delete_row(db_config):
 
 def test_sqlite_select_with_where(db_config):
     """Test SELECT with WHERE clause."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute(
@@ -195,6 +200,7 @@ def test_sqlite_select_with_where(db_config):
 
 def test_sqlite_special_characters_in_data(db_config):
     """Test handling special characters in data."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -209,6 +215,7 @@ def test_sqlite_special_characters_in_data(db_config):
 
 def test_sqlite_empty_table(db_config):
     """Test querying an empty table."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -221,6 +228,7 @@ def test_sqlite_empty_table(db_config):
 
 def test_sqlite_large_text_data(db_config):
     """Test inserting large text data."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -236,7 +244,9 @@ def test_sqlite_large_text_data(db_config):
 # Configuration Tests
 def test_config_integration(db_config):
     """Test that database respects configuration changes."""
-    new_path = "temp_test/other.db"
+    config_path, temp_dir = db_config
+    config_path, temp_dir = db_config
+    new_path = str(temp_dir / "other.db")
     config.set("database", {"type": "sqlite", "path": new_path})
 
     db = Database()
@@ -247,6 +257,7 @@ def test_config_integration(db_config):
 
 def test_config_default_path(db_config):
     """Test default path fallback."""
+    config_path, temp_dir = db_config
     cfg = config.get("database")
     db = Database()
     db.connect()
@@ -256,6 +267,7 @@ def test_config_default_path(db_config):
 
 def test_config_type_detection(db_config):
     """Test database type detection from config."""
+    config_path, temp_dir = db_config
     db = Database()
     assert db.type == "sqlite"
 
@@ -263,6 +275,7 @@ def test_config_type_detection(db_config):
 # Error Handling Tests
 def test_invalid_db_type(db_config):
     """Test that invalid database type raises error."""
+    config_path, temp_dir = db_config
     config.set("database", {"type": "invalid"})
     db = Database()
     with pytest.raises(ValueError, match="Unsupported database type"):
@@ -271,6 +284,7 @@ def test_invalid_db_type(db_config):
 
 def test_invalid_sql_query(db_config):
     """Test that invalid SQL raises error."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     with pytest.raises(sqlite3.OperationalError):
@@ -280,6 +294,7 @@ def test_invalid_sql_query(db_config):
 
 def test_query_on_disconnected_db(db_config):
     """Test querying without connection raises error."""
+    config_path, temp_dir = db_config
     db = Database()
     with pytest.raises(ConnectionError):
         db.execute("SELECT 1")
@@ -287,6 +302,7 @@ def test_query_on_disconnected_db(db_config):
 
 def test_table_not_exists_error(db_config):
     """Test querying non-existent table raises error."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     with pytest.raises(sqlite3.OperationalError):
@@ -296,6 +312,7 @@ def test_table_not_exists_error(db_config):
 
 def test_duplicate_primary_key(db_config):
     """Test inserting duplicate primary key raises error."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -308,7 +325,8 @@ def test_duplicate_primary_key(db_config):
 # Logging Tests
 def test_logging_connection(db_config):
     """Test that connection is logged."""
-    log_file = "temp_test/logs/latest.log"
+    config_path, temp_dir = db_config
+    log_file = str(temp_dir / "logs" / "latest.log")
     db = Database()
     db.connect()
     db.close()
@@ -321,7 +339,8 @@ def test_logging_connection(db_config):
 
 def test_logging_query_execution(db_config):
     """Test that queries are logged."""
-    log_file = "temp_test/logs/latest.log"
+    config_path, temp_dir = db_config
+    log_file = str(temp_dir / "logs" / "latest.log")
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)")
@@ -334,7 +353,8 @@ def test_logging_query_execution(db_config):
 
 def test_logging_errors(db_config):
     """Test that errors are logged."""
-    log_file = "temp_test/logs/latest.log"
+    config_path, temp_dir = db_config
+    log_file = str(temp_dir / "logs" / "latest.log")
     db = Database()
     db.connect()
     try:
@@ -351,6 +371,7 @@ def test_logging_errors(db_config):
 # Integration Tests
 def test_full_crud_cycle(db_config):
     """Test complete CRUD cycle integration."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -381,6 +402,7 @@ def test_full_crud_cycle(db_config):
 
 def test_multiple_tables(db_config):
     """Test working with multiple tables."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -401,6 +423,7 @@ def test_multiple_tables(db_config):
 
 def test_database_reconnection(db_config):
     """Test closing and reconnecting to database."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -418,12 +441,13 @@ def test_database_reconnection(db_config):
 
 def test_config_logger_database_integration(db_config):
     """Test full integration of config, logger, and database."""
+    config_path, temp_dir = db_config
     # Config should be loaded
     db_cfg = config.get("database")
     assert db_cfg["type"] == "sqlite"
 
     # Logger should be active
-    log_file = "temp_test/logs/latest.log"
+    log_file = str(temp_dir / "logs" / "latest.log")
     assert os.path.exists(log_file)
 
     # Database should use both
@@ -441,6 +465,7 @@ def test_config_logger_database_integration(db_config):
 # PostgreSQL Tests
 def test_postgres_connection_real(db_config):
     """Test PostgreSQL connection with real driver."""
+    config_path, temp_dir = db_config
     pytest.importorskip("psycopg2")
 
     pg_config = {
@@ -465,6 +490,7 @@ def test_postgres_connection_real(db_config):
 
 def test_postgres_type_detection(db_config):
     """Test PostgreSQL type detection."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -483,6 +509,7 @@ def test_postgres_type_detection(db_config):
 
 def test_placeholder_conversion(db_config):
     """Test that ? placeholders are converted to %s for PostgreSQL."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -515,6 +542,7 @@ def test_placeholder_conversion(db_config):
 
 def test_placeholder_no_conversion_sqlite(db_config):
     """Test that SQLite queries are not modified."""
+    config_path, temp_dir = db_config
     db = Database()
 
     query = "SELECT * FROM users WHERE id = ?"
@@ -525,6 +553,7 @@ def test_placeholder_no_conversion_sqlite(db_config):
 # Edge Cases
 def test_null_values(db_config):
     """Test handling NULL values."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -538,6 +567,7 @@ def test_null_values(db_config):
 
 def test_numeric_data_types(db_config):
     """Test various numeric data types."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute(
@@ -554,6 +584,7 @@ def test_numeric_data_types(db_config):
 
 def test_boolean_values(db_config):
     """Test handling boolean values (stored as integers in SQLite)."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, flag INTEGER)")
@@ -575,6 +606,7 @@ def test_boolean_values(db_config):
 
 def test_fetch_one(db_config):
     """Test fetch_one helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -592,6 +624,7 @@ def test_fetch_one(db_config):
 
 def test_fetch_all(db_config):
     """Test fetch_all helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -609,6 +642,7 @@ def test_fetch_all(db_config):
 
 def test_fetch_all_empty(db_config):
     """Test fetch_all on empty table."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -620,6 +654,7 @@ def test_fetch_all_empty(db_config):
 
 def test_table_exists(db_config):
     """Test table_exists helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -633,6 +668,7 @@ def test_table_exists(db_config):
 
 def test_execute_many(db_config):
     """Test execute_many for batch inserts."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)")
@@ -653,6 +689,7 @@ def test_execute_many(db_config):
 
 def test_context_manager(db_config):
     """Test database as context manager."""
+    config_path, temp_dir = db_config
     with Database() as db:
         db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
         db.execute("INSERT INTO test (data) VALUES (?)", ("test_data",))
@@ -666,6 +703,7 @@ def test_context_manager(db_config):
 
 def test_transaction_commit(db_config):
     """Test transaction with commit."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
@@ -683,6 +721,7 @@ def test_transaction_commit(db_config):
 
 def test_transaction_rollback(db_config):
     """Test transaction with rollback."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
@@ -700,6 +739,7 @@ def test_transaction_rollback(db_config):
 
 def test_row_factory_dict_access(db_config):
     """Test that rows can be accessed like dictionaries."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)")
@@ -718,6 +758,7 @@ def test_row_factory_dict_access(db_config):
 
 def test_ensure_connected_error(db_config):
     """Test that operations fail gracefully when not connected."""
+    config_path, temp_dir = db_config
     db = Database()
 
     with pytest.raises(ConnectionError):
@@ -732,7 +773,8 @@ def test_ensure_connected_error(db_config):
 
 def test_auto_create_directory(db_config):
     """Test that database directory is created automatically."""
-    nested_path = "temp_test/nested/deep/test.db"
+    config_path, temp_dir = db_config
+    nested_path = str(temp_dir / "nested" / "deep" / "test.db")
     config.set("database", {"type": "sqlite", "path": nested_path})
 
     db = Database()
@@ -741,7 +783,7 @@ def test_auto_create_directory(db_config):
     db.close()
 
     # Cleanup
-    shutil.rmtree("temp_test/nested", ignore_errors=True)
+    shutil.rmtree(str(temp_dir / "nested"), ignore_errors=True)
 
 
 # Cross-database helper method tests
@@ -749,6 +791,7 @@ def test_auto_create_directory(db_config):
 
 def test_insert_or_ignore(db_config):
     """Test insert_or_ignore helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT UNIQUE)")
@@ -774,6 +817,7 @@ def test_insert_or_ignore(db_config):
 
 def test_upsert(db_config):
     """Test upsert helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
@@ -798,6 +842,7 @@ def test_upsert(db_config):
 
 def test_upsert_specific_columns(db_config):
     """Test upsert with specific update columns."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute(
@@ -833,6 +878,7 @@ def test_upsert_specific_columns(db_config):
 # Comprehensive Placeholder Conversion Tests
 def test_placeholder_conversion_edge_cases(db_config):
     """Test placeholder conversion handles complex queries with string literals."""
+    config_path, temp_dir = db_config
     from src.core.database.core import _PLACEHOLDER_PATTERN
 
     # Test 1: Question marks in single-quoted strings
@@ -888,6 +934,7 @@ def test_placeholder_conversion_edge_cases(db_config):
 
 def test_placeholder_conversion_in_execute_method(db_config):
     """Test that execute method uses regex pattern for placeholder conversion."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -914,6 +961,7 @@ def test_placeholder_conversion_in_execute_method(db_config):
 
 def test_placeholder_conversion_in_execute_many_method(db_config):
     """Test that execute_many method uses regex pattern for placeholder conversion."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -944,6 +992,7 @@ def test_placeholder_conversion_in_execute_many_method(db_config):
 
 def test_postgres_connection_pool_config(db_config):
     """Test that PostgreSQL connection pool respects configuration settings."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -971,6 +1020,7 @@ def test_postgres_connection_pool_config(db_config):
 
 def test_postgres_connection_pool_config_defaults(db_config):
     """Test that PostgreSQL connection pool uses default values when not configured."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -1000,6 +1050,7 @@ def test_postgres_connection_pool_config_defaults(db_config):
 
 def test_connection_reuse_validation(db_config):
     """Test that connections are properly reused and validated."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1030,6 +1081,7 @@ def test_connection_reuse_validation(db_config):
 
 def test_stale_connection_handling(db_config):
     """Test that stale/closed connections are properly handled and replaced."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1053,6 +1105,7 @@ def test_stale_connection_handling(db_config):
 
 def test_connection_replacement_in_connect(db_config):
     """Test that calling connect() again properly replaces old connection."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1078,6 +1131,7 @@ def test_connection_replacement_in_connect(db_config):
 
 def test_thread_local_state_clearing(db_config):
     """Test that thread-local state is properly cleared on close()."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1130,6 +1184,7 @@ def test_connection_lifecycle_logging(db_config, caplog):
 
 def test_sqlite_connection_reuse(db_config):
     """Test that SQLite connections are properly reused within same thread."""
+    config_path, temp_dir = db_config
     db = Database()
 
     # First connection
@@ -1149,6 +1204,7 @@ def test_sqlite_connection_reuse(db_config):
 
 def test_connection_acquire_release_cycle(db_config):
     """Test complete acquire-release cycle with proper state management."""
+    config_path, temp_dir = db_config
     db = Database()
 
     # Start fresh
@@ -1174,6 +1230,7 @@ def test_connection_acquire_release_cycle(db_config):
 
 def test_multiple_connection_cycles(db_config):
     """Test multiple acquire-release cycles work correctly."""
+    config_path, temp_dir = db_config
     db = Database()
 
     connections = []
@@ -1194,6 +1251,7 @@ def test_multiple_connection_cycles(db_config):
 
 def test_connection_validation_detects_closed(db_config):
     """Test that _get_conn properly detects and handles closed connections."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1216,6 +1274,7 @@ def test_connection_validation_detects_closed(db_config):
 
 def test_connection_timeout_config_exists(db_config):
     """Test that connect_timeout configuration is properly read."""
+    config_path, temp_dir = db_config
     # Create a config with connect_timeout
     test_config = {
         "database": {
@@ -1239,6 +1298,7 @@ def test_connection_timeout_config_exists(db_config):
 
 def test_connection_pool_state_consistency(db_config):
     """Test that connection pool state remains consistent across operations."""
+    config_path, temp_dir = db_config
     db = Database()
 
     # Multiple connections and operations
