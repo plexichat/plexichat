@@ -21,11 +21,7 @@ irm https://plexichat.com/deploy.ps1 | iex
 If you are a developer and wish to run the project from source:
 
 ```bash
-# Clone with submodules (required)
-git clone --recurse-submodules https://gitlab.plexichat.com/plexichat/plexichat.git
-
-# Or if already cloned without submodules:
-git submodule update --init --recursive
+git clone https://gitlab.plexichat.com/plexichat/plexichat.git
 ```
 
 ## Features

@@ -3,21 +3,10 @@ Media module test fixtures.
 """
 
 import os
-import sys
 import io
 import shutil
 import tempfile
 import pytest
-
-# Ensure paths are set up before any imports
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-src_path = os.path.join(project_root, "src")
-utils_path = os.path.join(project_root, "src", "utils")
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-
-for path in [project_root, src_path, utils_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
 
 
 @pytest.fixture(scope="session")
@@ -208,20 +197,7 @@ def mock_s3_client(mocker):
 
 
 def pytest_configure(config):
-    """Register media test markers and ensure paths are set."""
-    import sys
-    import os
-
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-    for p in [
-        project_root,
-        os.path.join(project_root, "src"),
-        os.path.join(project_root, "src", "utils"),
-        os.path.join(project_root, "src", "utils", "common-utils"),
-    ]:
-        if p not in sys.path:
-            sys.path.insert(0, p)
-
+    """Register media test markers."""
     config.addinivalue_line("markers", "media: Media module tests")
     config.addinivalue_line("markers", "pillow: Tests requiring Pillow")
     config.addinivalue_line("markers", "ffprobe: Tests requiring ffprobe")

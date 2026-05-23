@@ -64,7 +64,7 @@ sudo systemctl start redis-server
 ### Step 2: Clone the Repository
 
 ```bash
-git clone --recurse-submodules https://gitlab.plexichat.com/plexichat/plexichat.git
+git clone https://gitlab.plexichat.com/plexichat/plexichat.git
 cd plexichat
 ```
 

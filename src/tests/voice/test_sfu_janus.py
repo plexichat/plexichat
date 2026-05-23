@@ -9,11 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Setup paths
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.insert(0, common_utils_path)
-
-import utils.logger as logger  # noqa: E402
+# common_utils imported via standard src.utils.common_utils.utils path
+import src.utils.common_utils.utils.logger as logger
+# noqa: E402
 
 # Setup logger for tests
 try:

@@ -78,10 +78,7 @@ except ImportError:
 
 # Import config utility
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-for path in [project_root, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+# common_utils imported via standard src.utils.common_utils.utils path
 
 try:
     import utils.config as config_util
