@@ -7,6 +7,11 @@ Provides session-scoped database with transaction-based isolation.
 import os
 import shutil
 
+import utils.config as config
+import utils.logger as logger
+from src.core.database import Database
+from .config import get_test_config
+
 
 class DatabaseManager:
     """
@@ -39,40 +44,19 @@ class DatabaseManager:
         log_dir = os.path.join(self.test_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
 
-        # Import and setup dependencies
-        import sys
-
-        project_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../..")
-        )
-        src_path = os.path.join(project_root, "src")
-        utils_path = os.path.join(project_root, "src", "utils")
-        common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-
-        for path in [project_root, src_path, utils_path, common_utils_path]:
-            if path not in sys.path:
-                sys.path.insert(0, path)
-
         # Setup logger (suppress most output during tests)
-        import utils.logger as logger
-
         try:
             logger.setup(log_dir=log_dir, level="WARNING", zip_logs=False)
         except Exception:
             pass  # Logger may already be setup
 
         # Setup config
-        import utils.config as config
-        from .config import get_test_config
-
         config_path = os.path.join(self.test_dir, "config.yaml")
         default_config = get_test_config()
         default_config["database"] = {"type": "sqlite", "path": self.db_path}
         config.setup(config_path=config_path, default_config=default_config)
 
         # Create database
-        from src.core.database import Database
-
         self._db = Database()
         self._db.connect()
 

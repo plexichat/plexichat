@@ -57,7 +57,7 @@ def _create_otp_challenge(admin_id: int, is_setup: bool, ttl_seconds: int = 300)
     from src.core.database import cache_set
 
     token = secrets.token_urlsafe(32)
-    expires_at = int(time.time() * 1000) + (ttl_seconds * 1000)
+    expires_at = int(time.time()) + ttl_seconds
     payload = {
         "admin_id": admin_id,
         "is_setup": is_setup,
@@ -72,15 +72,24 @@ def _validate_otp_challenge(
 ) -> bool:
     """Validate OTP challenge token against admin and flow type."""
     from src.core.database import cache_get
+    import utils.logger as logger
 
-    now = int(time.time() * 1000)
-    payload = cache_get(f"admin_otp_challenge:{challenge_token}")
+    now = int(time.time())
+    key = f"admin_otp_challenge:{challenge_token}"
+    payload = cache_get(key)
+    
     if not payload:
+        logger.debug(f"OTP validation failed: No payload for key {key}")
         return False
+        
     if payload["expires_at"] < now:
+        logger.debug(f"OTP validation failed: Challenge expired")
         return False
+        
     if payload["admin_id"] != admin_id or payload["is_setup"] != is_setup:
+        logger.debug(f"OTP validation failed: Payload mismatch (Expected ID {admin_id}, got {payload['admin_id']}; Setup Expected {is_setup}, got {payload['is_setup']})")
         return False
+        
     return True
 
 
@@ -203,7 +212,7 @@ def ensure_admin_user(db: Any) -> None:
 
     password_hash = encryption.hash_password(password)
     admin_id = encryption.generate_snowflake_id()
-    now = int(time.time() * 1000)
+    now = int(time.time())
     db.execute(
         """INSERT INTO admin_users (id, username, password_hash, email, created_at, must_setup_otp)
            VALUES (?, ?, ?, ?, ?, ?)""",
@@ -640,7 +649,7 @@ def check_password_change_required(db: Any, admin_id: int) -> bool:
     change_interval_days = password_policy.get("change_interval_days", 90)
 
     if last_password_change and change_interval_days > 0:
-        now = int(time.time() * 1000)
+        now = int(time.time())
         days_since_change = (now - last_password_change) / (24 * 3600 * 1000)
         if days_since_change >= change_interval_days:
             return True
@@ -723,7 +732,7 @@ def change_admin_password(
     new_hash = encryption.hash_password(new_password)
 
     # Update password and clear force_password_change flag
-    now = int(time.time() * 1000)
+    now = int(time.time())
     db.execute(
         "UPDATE admin_users SET password_hash = ?, force_password_change = 0, last_password_change = ? WHERE id = ?",
         (new_hash, now, admin_id),
@@ -747,7 +756,7 @@ def create_session(db: Any, admin_id: int, expires_hours: int = 8) -> str:
     """Create admin session."""
     token = secrets.token_urlsafe(32)
     token_hash = _hash_admin_token(token)
-    now = int(time.time() * 1000)
+    now = int(time.time())
     expires = now + (expires_hours * 3600 * 1000)
     from src.utils.encryption import generate_snowflake_id
 
@@ -761,7 +770,7 @@ def create_session(db: Any, admin_id: int, expires_hours: int = 8) -> str:
 
 def validate_session(db: Any, token: str) -> Optional[int]:
     """Validate admin session token."""
-    now = int(time.time() * 1000)
+    now = int(time.time())
     token_hash = _hash_admin_token(token)
     row = db.fetch_one(
         "SELECT id, admin_id, token FROM admin_sessions WHERE token = ? AND expires_at > ?",
@@ -864,7 +873,7 @@ def change_password(
     import src.utils.encryption as encryption
 
     new_hash = encryption.hash_password(new_password)
-    now = int(time.time() * 1000)
+    now = int(time.time())
 
     # Update password with timestamp and clear force_password_change flag
     db.execute(

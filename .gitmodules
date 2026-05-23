@@ -1,6 +1,0 @@
-[submodule "src/utils/common-utils"]
-	path = src/utils/common-utils
-	url = https://gitlab.plexichat.com/plexichat/common-utils.git
-	branch = dev
-	update = checkout
-	fetchRecurseSubmodules = true

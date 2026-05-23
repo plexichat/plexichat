@@ -130,9 +130,6 @@ git stash
 # Pull latest code
 git pull origin main
 
-# Update submodules
-git submodule update --init --recursive
-
 # Update dependencies
 source .venv/bin/activate
 pip install --upgrade pip
@@ -245,9 +242,6 @@ sudo systemctl stop plexichat
 # Rollback to previous commit
 git log --oneline -10
 git checkout <previous-commit-hash>
-
-# Restore submodules
-git submodule update --init --recursive
 
 # Restore database if needed
 cp /backups/plexichat-pre-update-YYYYMMDD.db data/plexichat.db

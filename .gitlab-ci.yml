@@ -7,7 +7,6 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PYTHONUNBUFFERED: "1"
   PYTHONDONTWRITEBYTECODE: "1"
-  GIT_SUBMODULE_STRATEGY: recursive
 
 cache:
   key:
@@ -47,7 +46,7 @@ cache:
             pip-audit \
             safety
       fi
-    - git submodule update --init --recursive
+    # common-utils is bundled directly in the repository at src/utils/common-utils/
 
 # =========================================================
 # LINT STAGE (Consolidated via pre-commit)

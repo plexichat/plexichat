@@ -7,7 +7,6 @@ prevention, permission checks, and connection pooling under load.
 
 import pytest
 import os
-import sys
 import sqlite3
 import threading
 import time
@@ -21,17 +20,9 @@ try:
 except ImportError:
     HAS_POSTGRES = False
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-src_path = project_root
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-
-for path in [project_root, src_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
-
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
+import utils.config as config
+import utils.logger as logger
+from src.core.database.core import Database
 
 
 @pytest.fixture(scope="module")
