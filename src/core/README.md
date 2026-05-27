@@ -8,12 +8,12 @@ Each module is organized as a package with consistent structure:
 
 ```
 module/
-├── __init__.py      # Module initialization and exports
-├── manager.py       # Main business logic
-├── models.py        # Data models (dataclasses)
-├── schema.py        # Validation schemas
-├── exceptions.py    # Module-specific exceptions
-└── README.md        # Module documentation
++-- __init__.py      # Module initialization and exports
++-- manager.py       # Main business logic
++-- models.py        # Data models (dataclasses)
++-- schema.py        # Validation schemas
++-- exceptions.py    # Module-specific exceptions
++-- README.md        # Module documentation
 ```
 
 ## Modules

@@ -6,14 +6,14 @@ FastAPI application layer for the Plexichat server.
 
 ```
 api/
-├── __init__.py        # Module initialization, getter functions
-├── app.py             # FastAPI application setup
-├── config.py          # API configuration
-├── dependencies.py    # Dependency injection
-├── middleware/        # Request middleware
-├── routes/            # Endpoint handlers
-├── schemas/           # Request/response models
-└── websocket/         # WebSocket gateway
++-- __init__.py        # Module initialization, getter functions
++-- app.py             # FastAPI application setup
++-- config.py          # API configuration
++-- dependencies.py    # Dependency injection
++-- middleware/        # Request middleware
++-- routes/            # Endpoint handlers
++-- schemas/           # Request/response models
++-- websocket/         # WebSocket gateway
 ```
 
 ## Components

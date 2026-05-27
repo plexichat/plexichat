@@ -40,7 +40,7 @@ This guide covers installing, configuring, and running Plexichat in production. 
 - Reverse Proxy: nginx, Apache, Caddy, or Traefik (for TLS termination)
 - Optional: S3-compatible storage (MinIO, AWS S3, etc.) for media
 
-For detailed requirements, see [System Requirements](deployment/requirements.md).
+For detailed requirements, see [System Requirements](requirements.md).
 
 ---
 
@@ -88,7 +88,7 @@ pip install -r requirements.txt
 mkdir -p config
 ```
 
-Create `config/config.yaml` with the settings appropriate for your environment. The server auto-generates a working default config on first run if none is found. For a production config, use the [Default Configuration Reference](default-config.md) as your guide -- it lists every key, its default value, and what it controls.
+Create `config/config.yaml` with the settings appropriate for your environment. The server auto-generates a working default config on first run if none is found. For a production config, use the [Default Configuration Reference](../default-config.md) as your guide -- it lists every key, its default value, and what it controls.
 
 **Do not** copy `docs/default-config.md` as your config file -- it is a Markdown document with code fences, not valid YAML.
 
@@ -119,17 +119,17 @@ api:
 
 Then consult the dedicated config pages for each subsystem you need:
 
-- [Database Configuration](deployment/configuration/config-database.md) -- PostgreSQL setup, connection pooling, migrations
-- [Redis Configuration](deployment/configuration/config-redis.md) -- caching, sessions, connection pooling
-- [Authentication Configuration](deployment/configuration/config-authentication.md) -- password policies, 2FA, sessions, account deletion
-- [Media Configuration](deployment/configuration/config-media.md) -- storage backends, file limits, processing, security
-- [Voice Configuration](deployment/configuration/config-voice.md) -- SFU backends, STUN/TURN, NAT traversal
-- [WebSocket Configuration](deployment/configuration/config-websocket.md) -- gateway settings, compression, rate limits
-- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) -- global, user, IP, bot, webhook limits
-- [API and Server Configuration](deployment/configuration/config-api.md) -- CORS, trusted proxies, debug mode, TLS
-- [Search Configuration](deployment/configuration/config-search.md) -- search backends, indexing, result limits
-- [Email Configuration](deployment/configuration/config-email.md) -- SMTP for email verification and notifications
-- [Embeds Configuration](deployment/configuration/config-embeds.md) -- URL previews, link embeds
+- [Database Configuration](configuration/config-database.md) -- PostgreSQL setup, connection pooling, migrations
+- [Redis Configuration](configuration/config-redis.md) -- caching, sessions, connection pooling
+- [Authentication Configuration](configuration/config-authentication.md) -- password policies, 2FA, sessions, account deletion
+- [Media Configuration](configuration/config-media.md) -- storage backends, file limits, processing, security
+- [Voice Configuration](configuration/config-voice.md) -- SFU backends, STUN/TURN, NAT traversal
+- [WebSocket Configuration](configuration/config-websocket.md) -- gateway settings, compression, rate limits
+- [Rate Limiting Configuration](configuration/config-rate-limiting.md) -- global, user, IP, bot, webhook limits
+- [API and Server Configuration](configuration/config-api.md) -- CORS, trusted proxies, debug mode, TLS
+- [Search Configuration](configuration/config-search.md) -- search backends, indexing, result limits
+- [Email Configuration](configuration/config-email.md) -- SMTP for email verification and notifications
+- [Embeds Configuration](configuration/config-embeds.md) -- URL previews, link embeds
 
 ### Step 6: Set Environment Variables
 
@@ -179,11 +179,9 @@ docker run -d \
 
 ### Docker Compose (Recommended)
 
-Create a `docker-compose.yml` file:
+Create a `compose.yml` file:
 
 ```yaml
-version: '3.8'
-
 services:
   plexichat:
     build: .
@@ -264,12 +262,14 @@ REDIS_PASSWORD=$(openssl rand -base64 32)
 
 ### Database Migrations in Docker
 
+Plexichat automatically runs pending migrations on startup. To run them manually:
+
 ```bash
 # Run migrations
-docker-compose exec plexichat python -m alembic upgrade head
+docker compose exec plexichat python -m src.core.migrations.cli apply_migrations
 
 # Create a backup
-docker-compose exec postgres pg_dump -U plexichat plexichat > backup.sql
+docker compose exec postgres pg_dump -U plexichat plexichat > backup.sql
 ```
 
 ### Health Checks
@@ -342,7 +342,7 @@ server {
 
 **Important**: The `/gateway` WebSocket path is served by the same application on the same port. The `location /` block above already covers it. You do not need a separate location block unless you want different proxy settings for WebSocket traffic.
 
-For full security guidance, see [Security Best Practices](security.md).
+For full security guidance, see [Security Best Practices](../security.md).
 
 ---
 
@@ -482,7 +482,7 @@ sudo cat > /etc/logrotate.d/plexichat << EOF
     create 0640 plexichat plexichat
     sharedscripts
     postrotate
-        systemctl reload plexichat
+        systemctl reload-or-restart plexichat
     endscript
 }
 EOF
@@ -550,19 +550,19 @@ Verify reverse proxy WebSocket configuration (Upgrade headers), increase proxy t
 
 1. Collect relevant logs
 2. Document system configuration
-3. Check the [Configuration Overview](configuration.md) and per-subsystem config pages
+3. Check the [Configuration Overview](../configuration.md) and per-subsystem config pages
 4. Verify all dependencies are running
 
 ---
 
 ## Related Documentation
 
-- [Configuration Overview](configuration.md) -- config discovery and module-specific guides
-- [Default Configuration Reference](default-config.md) -- every key with defaults
-- [Authentication Configuration](deployment/configuration/config-authentication.md) -- password, 2FA, sessions, deletion
-- [Database Configuration](deployment/configuration/config-database.md) -- PostgreSQL/SQLite setup
-- [Redis Configuration](deployment/configuration/config-redis.md) -- caching and sessions
-- [Media Configuration](deployment/configuration/config-media.md) -- storage and processing
-- [Voice Configuration](deployment/configuration/config-voice.md) -- voice/video setup
-- [Security Best Practices](security.md) -- production security
-- [Performance Guide](performance.md) -- optimization
+- [Configuration Overview](../configuration.md) -- config discovery and module-specific guides
+- [Default Configuration Reference](../default-config.md) -- every key with defaults
+- [Authentication Configuration](configuration/config-authentication.md) -- password, 2FA, sessions, deletion
+- [Database Configuration](configuration/config-database.md) -- PostgreSQL/SQLite setup
+- [Redis Configuration](configuration/config-redis.md) -- caching and sessions
+- [Media Configuration](configuration/config-media.md) -- storage and processing
+- [Voice Configuration](configuration/config-voice.md) -- voice/video setup
+- [Security Best Practices](../security.md) -- production security
+- [Performance Guide](../performance.md) -- optimization
