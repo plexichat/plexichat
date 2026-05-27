@@ -9,15 +9,8 @@ This tests that our client code correctly:
 """
 
 import pytest
-import os
-import sys
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-src_path = os.path.join(project_root, "src")
-# common_utils imported via standard src.utils.common_utils.utils path
-for path in [project_root, src_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+# common-utils is now a native package.
 
 from src.core.search.indexer.meilisearch import MeilisearchIndexer  # noqa: E402
 from src.core.search.models import IndexedMessage  # noqa: E402

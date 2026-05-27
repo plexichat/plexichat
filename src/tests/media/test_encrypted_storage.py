@@ -2,8 +2,6 @@
 
 import pytest
 
-from src.core.media.models import StorageBackend
-
 
 MINI_PNG = (
     b"\x89PNG\r\n\x1a\n"

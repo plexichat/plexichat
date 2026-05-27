@@ -3,7 +3,7 @@
 import pytest
 
 from src.core.media.models import MediaType
-from src.core.media.exceptions import FileTypeError, FileUploadError
+from src.core.media.exceptions import FileSizeError, FileTypeError
 
 
 MINI_PNG = (

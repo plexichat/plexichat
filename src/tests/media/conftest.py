@@ -159,13 +159,6 @@ def media_module(modules, temp_upload_dir):
     media._setup_complete = False
     media.setup(modules._db, modules.messaging)
 
-    # Clear rate limit table for each test to ensure fresh state
-    try:
-        modules._db.execute("DELETE FROM media_rate_limits")
-    except Exception:
-        # Table might not exist yet if manager hasn't initialized it
-        pass
-
     yield media
 
     assert config._config_instance is not None
