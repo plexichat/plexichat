@@ -1,7 +1,9 @@
 [tool.bandit]
-skips = ["B101", "B601"]
+skips = ["B601"]
 confidence = "HIGH"
 severity = "MEDIUM"
 exclude = [".venv", "venv", ".pytest_cache", "cache", "temp", "uploads", "media", "logs", "src/tests", "tests", "**/__pycache__"]
-# Try to explicitly define targets to force ignore of excluded directories
+# Targets limited to src/; test dirs excluded above.
+# B101 (assert) is intentionally NOT globally skipped — assert in production
+# code is a security concern. Use `# nosec B101` for legitimate uses.
 targets = ["src"]

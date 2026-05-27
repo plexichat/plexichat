@@ -2,8 +2,6 @@
 Authentication routes - Register, login, logout endpoints.
 """
 
-import os
-import sys
 import httpx
 from urllib.parse import urlencode
 from typing import List
@@ -77,7 +75,6 @@ except ImportError:
     rate_limit = None
 
 # Import config utility
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 # common_utils imported via standard src.utils.common_utils.utils path
 
 try:
@@ -1227,13 +1224,11 @@ async def confirm_2fa_setup(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid code"}},
         )
-    except (UserNotFoundError, TwoFactorSetupError):
-        logger.warning(
-            f"2FA confirm failed for user {current_user.user_id}: Setup not started"
-        )
+    except (UserNotFoundError, TwoFactorSetupError, AuthError) as e:
+        logger.warning(f"2FA confirm failed for user {current_user.user_id}: {e}")
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "2FA setup not started"}},
+            detail={"error": {"code": 400, "message": str(e)}},
         )
     except Exception as e:
         logger.error(
@@ -1787,6 +1782,11 @@ async def passkey_authenticate(
         raise HTTPException(
             status_code=403,
             detail={"error": {"code": 403, "message": str(e)}},
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
         )
     except Exception as e:
         logger.error(f"Passkey authentication failed: {e}", exc_info=True)

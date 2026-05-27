@@ -15,9 +15,9 @@ def test_sanitize_data_masks_expanded_sensitive_keys():
 
     sanitized = sanitize_data(payload)
 
-    assert sanitized["api_secret"] == "su***ue"
-    assert sanitized["private_key"] == "pr***al"
-    assert sanitized["jwt"] == "he***re"
+    assert sanitized["api_secret"] == "su***ue"  # pragma: allowlist secret
+    assert sanitized["private_key"] == "pr***al"  # pragma: allowlist secret
+    assert sanitized["jwt"] == "he***re"  # pragma: allowlist secret
 
 
 def test_sanitize_log_message_masks_authorization_patterns():
