@@ -332,17 +332,18 @@ class GatewayDispatcher:
         tasks = []
 
         with self._lock:
-            for conn in self._session_manager._connections.values():
-                if not conn.is_authenticated:
-                    continue
-                # conn.user_id is guaranteed to be non-None by is_authenticated
-                if conn.user_id is not None and conn.user_id in exclude_set:
-                    continue
-                if not filter_event_by_intents(event, conn.intents):
-                    continue
+            all_connections = self._session_manager.get_all_connections()
+        for conn in all_connections:
+            if not conn.is_authenticated:
+                continue
+            # conn.user_id is guaranteed to be non-None by is_authenticated
+            if conn.user_id is not None and conn.user_id in exclude_set:
+                continue
+            if not filter_event_by_intents(event, conn.intents):
+                continue
 
-                payload = self._build_dispatch_payload(conn, event)
-                tasks.append(self._send_to_connection(conn, payload))
+            payload = self._build_dispatch_payload(conn, event)
+            tasks.append(self._send_to_connection(conn, payload))
 
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -353,6 +354,7 @@ class GatewayDispatcher:
     async def broadcast_server_status(
         self,
         status_data: Dict[str, Any],
+        connections: Optional[List[Connection]] = None,
     ) -> int:
         """
         Broadcast server status to all connected clients.
@@ -365,6 +367,7 @@ class GatewayDispatcher:
                 - message: Human-readable message
                 - estimated_downtime_seconds: Optional estimated downtime
                 - restart_at: Optional restart timestamp
+            connections: Optional pre-fetched connection list to avoid double-snapshot
 
         Returns:
             Number of connections notified
@@ -372,8 +375,9 @@ class GatewayDispatcher:
         sent_count = 0
         tasks = []
 
-        with self._lock:
-            connections = list(self._session_manager._connections.values())
+        if connections is None:
+            with self._lock:
+                connections = self._session_manager.get_all_connections()
 
         for conn in connections:
             if conn.is_authenticated:
@@ -412,19 +416,20 @@ class GatewayDispatcher:
             Number of connections closed
         """
         with self._lock:
-            connections = list(self._session_manager._connections.values())
+            connections = self._session_manager.get_all_connections()
 
         if not connections:
             return 0
 
-        # Notify clients first if requested
+        # Notify clients first if requested (reuse the same connection snapshot)
         if notify_first:
             await self.broadcast_server_status(
                 {
                     "state": "shutting_down",
                     "message": reason,
                     "closing_in_seconds": grace_period_seconds,
-                }
+                },
+                connections=connections,
             )
             # Give clients time to receive the notification
             await asyncio.sleep(grace_period_seconds)
