@@ -35,24 +35,20 @@ class HardwareVault:
 
     def _init_tpm(self):
         """Try to initialize TPM 2.0 connection."""
-        try:
-            # We don't import at top-level to avoid dependency hard-requirement
-            from tpm2_pytss import ESYS_Context  # type: ignore[import-not-found]
 
-            with ESYS_Context() as ctx:
-                # Check for TPM presence without deep interaction yet
-                cap = ctx.get_capability(0, 0x00000001, 1)  # TPM_CAP_PROPERTIES
-                if cap:
-                    self._tpm_available = True
-                    try:
-                        logger.info("TPM 2.0 hardware detected and available")
-                    except RuntimeError:
-                        pass  # Logger not configured yet
-        except (ImportError, Exception):
+        def _init_tpm(self):
+            """Try to initialize TPM 2.0."""
             try:
+                from tpm2_pytss import ESYS_Context  # type: ignore[import-not-found]
+
+                with ESYS_Context() as ctx:
+                    # Check for TPM presence without deep interaction yet
+                    cap = ctx.get_capability(0, 0x00000001, 1)  # TPM_CAP_PROPERTIES
+                    if cap:
+                        self._tpm_available = True
+                        logger.info("TPM 2.0 hardware detected and available")
+            except (ImportError, Exception):
                 logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
-            except RuntimeError:
-                pass  # Logger not configured yet
 
     def _init_hsm(self):
         """Try to initialize HSM (PKCS#11) connection."""
