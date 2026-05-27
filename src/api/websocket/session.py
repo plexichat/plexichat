@@ -138,12 +138,13 @@ class SessionManager:
         Args:
             connection: Connection to add
         """
+        user_id = connection.user_id
+        conn_id = connection.connection_id
         with self._lock:
-            self._connections[connection.connection_id] = connection
-            if connection.user_id:
-                self._redis_register_connection(
-                    connection.user_id, connection.connection_id
-                )
+            self._connections[conn_id] = connection
+        # Redis I/O outside lock to avoid blocking all connection operations
+        if user_id:
+            self._redis_register_connection(user_id, conn_id)
 
     def remove_connection(self, connection_id: str) -> Optional[Connection]:
         """
@@ -155,17 +156,20 @@ class SessionManager:
         Returns:
             Removed connection or None
         """
+        connection = None
+        user_id = None
         with self._lock:
             connection = self._connections.pop(connection_id, None)
             if connection and connection.user_id:
-                user_conns = self._user_connections.get(connection.user_id, set())
+                user_id = connection.user_id
+                user_conns = self._user_connections.get(user_id, set())
                 user_conns.discard(connection_id)
                 if not user_conns:
-                    self._user_connections.pop(connection.user_id, None)
-
-                # Unregister from Redis
-                self._redis_unregister_connection(connection.user_id, connection_id)
-            return connection
+                    self._user_connections.pop(user_id, None)
+        # Redis I/O outside lock
+        if user_id and connection:
+            self._redis_unregister_connection(user_id, connection_id)
+        return connection
 
     def get_connection(self, connection_id: str) -> Optional[Connection]:
         """Get a connection by ID."""
@@ -408,6 +412,16 @@ class SessionManager:
             logger.info(f"Cleared all Redis sessions for worker {self._worker_id}")
         except Exception as e:
             logger.debug(f"Redis global session cleanup failed: {e}")
+
+    def get_all_connections(self) -> List[Connection]:
+        """
+        Get all connections across all users.
+
+        Returns:
+            List of all connections (authenticated and unauthenticated)
+        """
+        with self._lock:
+            return list(self._connections.values())
 
     def get_stats(self) -> Dict[str, int]:
         """Get session manager statistics."""
