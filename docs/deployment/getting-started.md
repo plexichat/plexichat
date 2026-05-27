@@ -79,7 +79,7 @@ source .venv/bin/activate
 
 ```bash
 pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 ```
 
 ### Step 5: Create Configuration

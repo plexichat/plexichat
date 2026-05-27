@@ -321,7 +321,7 @@ pytest src/tests/unit/test_property_based_validation.py::TestAuthManagerProperty
 ## Integration
 
 ### Requirements
-Already included in `requirements-test.txt`:
+Already included in `requirements.txt`:
 ```
 hypothesis>=6.0.0
 ```

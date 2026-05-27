@@ -747,8 +747,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-test.txt
+        pip install --require-hashes -r requirements.txt
 
     - name: Run tests with coverage
       run: |
@@ -767,8 +766,7 @@ jobs:
 test:
   image: python:3.11
   before_script:
-    - pip install -r requirements.txt
-    - pip install -r requirements-test.txt
+    - pip install --require-hashes -r requirements.txt
   script:
     - pytest --cov=src --cov-report=term --cov-report=html
   coverage: '/TOTAL.*\s+(\d+%)$/'

@@ -5,7 +5,7 @@
 First, ensure you have the test dependencies installed:
 
 ```bash
-pip install -r requirements-test.txt
+pip install --require-hashes -r requirements.txt
 ```
 
 This includes:
@@ -202,7 +202,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install -r requirements-test.txt
+          pip install --require-hashes -r requirements.txt
       - name: Run performance tests
         run: pytest src/tests/performance/ --benchmark-json=output.json
       - name: Store benchmark result

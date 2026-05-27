@@ -215,7 +215,7 @@ pytest src/tests/api/test_middleware_authentication.py::TestConcurrency -v
 ## OK Checklist for Running Tests
 
 - [ ] Ensure test environment is set up (see AGENTS.md)
-- [ ] Install test dependencies: `pip install -r requirements-test.txt`
+- [ ] Install test dependencies: `pip install --require-hashes -r requirements.txt`
 - [ ] Run all tests: `pytest src/tests/api/test_middleware_*.py -v`
 - [ ] Check coverage: `pytest --cov=src/api/middleware --cov-report=html`
 - [ ] Review coverage report: Open `htmlcov/index.html`

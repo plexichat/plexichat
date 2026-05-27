@@ -162,7 +162,7 @@ def test_concurrent_operations(auth_manager):
 
 Install test dependencies:
 ```bash
-pip install -r requirements-test.txt
+pip install --require-hashes -r requirements.txt
 ```
 
 Required packages:
