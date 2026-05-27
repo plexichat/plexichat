@@ -289,52 +289,33 @@ class ServerManager(BaseManager):
         now = self._get_timestamp()
         server_id = self._generate_id()
 
-        # Encrypt description if enabled
+        # Store description in description_encrypted column
+        # If encryption is enabled, encrypt it; otherwise, store as plaintext
         description_encrypted = None
-        if description and self._encrypt_descriptions:
-            from src.utils.encryption import encrypt_data
+        if description:
+            if self._encrypt_descriptions:
+                from src.utils.encryption import encrypt_data
 
-            description_encrypted = encrypt_data(description)
+                description_encrypted = encrypt_data(description)
+            else:
+                description_encrypted = description
 
-        # Check if description column exists (for backward compatibility with migration 028)
-        # Migration 028 drops the unencrypted description column
-        try:
-            self._db.execute("SELECT description FROM srv_servers LIMIT 1")
-            has_description_column = True
-        except Exception:
-            has_description_column = False
-
-        if has_description_column:
-            self._db.execute(
-                """INSERT INTO srv_servers 
-                   (id, name, owner_id, description, description_encrypted, icon_url, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    server_id,
-                    name,
-                    owner_id,
-                    description,
-                    description_encrypted,
-                    icon_url,
-                    now,
-                    now,
-                ),
-            )
-        else:
-            self._db.execute(
-                """INSERT INTO srv_servers 
-                   (id, name, owner_id, description_encrypted, icon_url, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    server_id,
-                    name,
-                    owner_id,
-                    description_encrypted,
-                    icon_url,
-                    now,
-                    now,
-                ),
-            )
+        # After migration 029, unencrypted description column no longer exists.
+        # Always use description_encrypted (encrypted or plaintext based on config).
+        self._db.execute(
+            """INSERT INTO srv_servers 
+               (id, name, owner_id, description_encrypted, icon_url, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                server_id,
+                name,
+                owner_id,
+                description_encrypted,
+                icon_url,
+                now,
+                now,
+            ),
+        )
 
         # Create default @everyone role
         role_id = self._generate_id()
@@ -360,8 +341,8 @@ class ServerManager(BaseManager):
             (role_id, server_id),
         )
 
-        logger.info(
-            f"[Instance:{self.instance_id}] create_server: sid={server_id}, owner={owner_id}, role_id={role_id}"
+        logger.debug(
+            f"create_server: sid={server_id}, owner={owner_id}, role_id={role_id}"
         )
 
         # Add owner as member
@@ -381,7 +362,7 @@ class ServerManager(BaseManager):
             (mr_id, member_id, role_id, now),
         )
 
-        logger.info(
+        logger.debug(
             f"create_server: sid={server_id}, owner={owner_id}, member_id={member_id}"
         )
 
@@ -450,9 +431,7 @@ class ServerManager(BaseManager):
         self, server_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Server]:
         """Get a server by ID if user has access (cached for 5 minutes)."""
-        logger.info(
-            f"[Instance:{self.instance_id}] get_server: sid={server_id}, uid={user_id}"
-        )
+        logger.debug(f"get_server: sid={server_id}, uid={user_id}")
         is_member = self._is_member(server_id, user_id)
         if not is_member:
             logger.warning(
@@ -552,24 +531,15 @@ class ServerManager(BaseManager):
             changes["name"] = {"old": server.name, "new": name}
 
         if description is not None:
-            # Only encrypt if description has changed and encryption is enabled
-            if self._encrypt_descriptions and description != server.description:
+            # Always store description_encrypted (unencrypted description column was dropped in migration 029)
+            if self._encrypt_descriptions:
                 from src.utils.encryption import encrypt_data
 
                 description_encrypted = encrypt_data(description)
-                updates.append("description_encrypted = ?")
-                params.append(description_encrypted)
-
-            # Check if description column exists (for backward compatibility with migration 028)
-            try:
-                self._db.execute("SELECT description FROM srv_servers LIMIT 1")
-                has_description_column = True
-            except Exception:
-                has_description_column = False
-
-            if has_description_column:
-                updates.append("description = ?")
-                params.append(description)
+            else:
+                description_encrypted = description
+            updates.append("description_encrypted = ?")
+            params.append(description_encrypted)
             changes["description"] = {"old": server.description, "new": description}
 
         if icon_url is not None:
@@ -601,10 +571,12 @@ class ServerManager(BaseManager):
             params.append(server_id)
 
             # Whitelist of allowed column names for UPDATE
+            # Note: updated_at is handled automatically and excluded from validation
             allowed_columns = {
                 "name",
-                "description",
+                "description_encrypted",
                 "icon",
+                "icon_url",
                 "banner",
                 "owner_id",
                 "region",
@@ -627,10 +599,13 @@ class ServerManager(BaseManager):
                 "premium_subscription_count",
                 "widget_channel_id",
                 "widget_enabled",
+                "default_channel_id",
             }
-            # Validate all column names in updates
+            # Validate all column names in updates (skip auto-generated updated_at)
             for update in updates:
                 col_name = update.split(" = ")[0]
+                if col_name == "updated_at":
+                    continue
                 if col_name not in allowed_columns:
                     raise ValueError(f"Invalid column name: {col_name}")
 
@@ -643,10 +618,16 @@ class ServerManager(BaseManager):
                         "UPDATE srv_servers SET name = ?, updated_at = ? WHERE id = ?",
                         (params[idx], now, server_id),
                     )
-                elif "description = ?" in update:
+                elif "description_encrypted = ?" in update:
                     idx = updates.index(update)
                     self._db.execute(
-                        "UPDATE srv_servers SET description = ?, updated_at = ? WHERE id = ?",
+                        "UPDATE srv_servers SET description_encrypted = ?, updated_at = ? WHERE id = ?",
+                        (params[idx], now, server_id),
+                    )
+                elif "icon_url = ?" in update:
+                    idx = updates.index(update)
+                    self._db.execute(
+                        "UPDATE srv_servers SET icon_url = ?, updated_at = ? WHERE id = ?",
                         (params[idx], now, server_id),
                     )
                 elif "icon = ?" in update:
@@ -1726,23 +1707,20 @@ class ServerManager(BaseManager):
         except (KeyError, IndexError):
             pass
 
-        # Decrypt description if encryption is enabled and encrypted data exists
-        # Handle missing description column (migration 028 drops it)
+        # Read description from description_encrypted column.
+        # After migration 029, the unencrypted description column no longer exists.
+        # If encryption is enabled, decrypt it; otherwise, read as plaintext.
         description = None
-        try:
-            description = row["description"]
-        except (KeyError, IndexError):
-            # Column doesn't exist, use encrypted version only
-            pass
+        if row.get("description_encrypted"):
+            if self._encrypt_descriptions:
+                from src.utils.encryption import decrypt_data
 
-        if self._encrypt_descriptions and row.get("description_encrypted"):
-            from src.utils.encryption import decrypt_data
-
-            try:
-                description = decrypt_data(row["description_encrypted"])
-            except Exception as e:
-                logger.warning(f"Failed to decrypt server description {sid}: {e}")
-                # Keep existing description or None
+                try:
+                    description = decrypt_data(row["description_encrypted"])
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt server description {sid}: {e}")
+            else:
+                description = row["description_encrypted"]
 
         return Server(
             id=row["id"],
@@ -1812,19 +1790,20 @@ class ServerManager(BaseManager):
 
     def _row_to_channel(self, row: Dict[str, Any]) -> Channel:
         """Convert database row to Channel model."""
-        # Decrypt topic if encryption is enabled and encrypted data exists
+        # Read topic from topic_encrypted column.
+        # After migration 029, the unencrypted topic column no longer exists.
+        # If encryption is enabled, decrypt it; otherwise, read as plaintext.
         topic = None
-        if self._encrypt_descriptions and row.get("topic_encrypted"):
-            from src.utils.encryption import decrypt_data
+        if row.get("topic_encrypted"):
+            if self._encrypt_descriptions:
+                from src.utils.encryption import decrypt_data
 
-            try:
-                topic = decrypt_data(row["topic_encrypted"])
-            except Exception as e:
-                logger.warning(f"Failed to decrypt channel topic {row['id']}: {e}")
-                topic = None
-        elif row.get("topic"):
-            # Fallback to unencrypted topic for backward compatibility
-            topic = row["topic"]
+                try:
+                    topic = decrypt_data(row["topic_encrypted"])
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt channel topic {row['id']}: {e}")
+            else:
+                topic = row["topic_encrypted"]
 
         return Channel(
             id=row["id"],

@@ -10,7 +10,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS sticker_packs (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
-    description TEXT,
+    description_encrypted TEXT,
     pack_type TEXT NOT NULL DEFAULT 'server',
     server_id INTEGER,
     created_by INTEGER NOT NULL,

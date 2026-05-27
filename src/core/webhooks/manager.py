@@ -559,10 +559,21 @@ class WebhookManager(BaseManager):
         params.append(webhook_id)
 
         # Whitelist of allowed column names for UPDATE
-        allowed_columns = {"name", "url", "secret", "events", "enabled"}
+        # Note: updated_at is handled automatically and excluded from validation
+        allowed_columns = {
+            "name",
+            "url",
+            "secret",
+            "events",
+            "enabled",
+            "avatar_url",
+            "channel_id",
+        }
         # Validate all column names in updates
         for update in updates:
             col_name = update.split(" = ")[0]
+            if col_name == "updated_at":
+                continue
             if col_name not in allowed_columns:
                 raise ValueError(f"Invalid column name: {col_name}")
 

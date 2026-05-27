@@ -656,7 +656,7 @@ class AuthManager(BaseManager):
     ) -> TokenInfo:
         security_cfg = self._config.get("security", {})
         rate_limit = security_cfg.get("token_verify_rate_limit")
-        if rate_limit and ip_address:
+        if rate_limit and ip_address and not is_selftest:
             from src.core.database.cache import check_rate_limit
 
             allowed, _ = check_rate_limit(
@@ -758,7 +758,6 @@ class AuthManager(BaseManager):
 
         # Get rate limit tier (simplified for now)
         rate_limit_tier = row.get("rate_limit_tier", "standard")
-
         return TokenInfo(
             valid=True,
             token_type="user",
@@ -1372,9 +1371,6 @@ class AuthManager(BaseManager):
         if not valid:
             raise AuthError(f"Invalid permissions: {issues}")
 
-        # DEBUG
-        logger.debug(f"DEBUG_AUTH: create_bot requested_perms={requested_perms}")
-
         for permission, allowed in requested_perms.items():
             if allowed and not has_permission(owner_perms, permission):
                 raise PermissionDeniedError(
@@ -1383,24 +1379,47 @@ class AuthManager(BaseManager):
 
         # Bot should not have 'bots.create' permission
         if requested_perms.get("bots.create"):
-            logger.debug("DEBUG_AUTH: Raising PermissionDeniedError for bots.create")
             raise PermissionDeniedError("Bots cannot have the 'bots.create' permission")
 
         bot_id = self._generate_id()
         token, token_hash = create_bot_token(bot_id)
         perms = requested_perms
-        self._db.execute(
-            "INSERT INTO auth_bots (id, owner_id, username, display_name, token_hash, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                bot_id,
-                owner_id,
-                username,
-                display_name,
-                token_hash,
-                permissions_to_json(perms),
-                self._get_timestamp(),
-            ),
-        )
+        now = self._get_timestamp()
+
+        self._db.begin_transaction()
+        try:
+            # 1. Insert into auth_users first (to satisfy FKs)
+            self._db.execute(
+                "INSERT INTO auth_users (id, account_type, username, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    bot_id,
+                    "bot",
+                    username,
+                    "!",  # Invalid password hash
+                    permissions_to_json(perms),
+                    now,
+                    now,
+                ),
+            )
+
+            # 2. Insert into auth_bots
+            self._db.execute(
+                "INSERT INTO auth_bots (id, owner_id, username, display_name, token_hash, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    bot_id,
+                    owner_id,
+                    username,
+                    display_name,
+                    token_hash,
+                    permissions_to_json(perms),
+                    now,
+                ),
+            )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
+
         return Bot(
             id=bot_id,
             owner_id=owner_id,

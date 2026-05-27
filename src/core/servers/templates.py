@@ -147,6 +147,19 @@ class TemplateManager:
             (server_id, max_channels),
         )
         for row in ch_rows:
+            # Read topic from topic_encrypted column (unencrypted topic column dropped in migration 029)
+            topic = None
+            if row.get("topic_encrypted"):
+                if self._server_manager._encrypt_descriptions:
+                    from src.utils.encryption import decrypt_data
+
+                    try:
+                        topic = decrypt_data(row["topic_encrypted"])
+                    except Exception:
+                        logger.debug(f"Failed to decrypt topic for channel {row['id']}")
+                else:
+                    topic = row["topic_encrypted"]
+
             channels_data.append(
                 {
                     "name": row["name"],
@@ -155,7 +168,7 @@ class TemplateManager:
                         row["category_id"], cat_rows
                     ),
                     "position": row["position"],
-                    "topic": row["topic"],
+                    "topic": topic,
                     "nsfw": bool(row["nsfw"]),
                     "slowmode_seconds": row["slowmode_seconds"],
                 }
@@ -212,17 +225,16 @@ class TemplateManager:
         self, code: str, user_id: Optional[int] = None
     ) -> Optional[ServerTemplate]:
         """Get a template by code."""
-        print(f"Looking up template: {code}")
+        logger.debug(f"Looking up template: {code}")
         row = self._db.fetch_one(
             "SELECT * FROM srv_templates WHERE code = ?",
             (code,),
         )
-        print(f"Lookup result: {row}")
         if not row:
             return None
 
         if not row["is_public"] and user_id and row["creator_id"] != user_id:
-            print(
+            logger.debug(
                 f"Template access denied: creator {row['creator_id']} != user {user_id}"
             )
             return None

@@ -344,6 +344,57 @@ def get_2fa_status(user_id: int) -> TwoFactorStatus:
     return _get_manager().get_2fa_status(user_id)
 
 
+# === Passkey (WebAuthn/FIDO2) ===
+
+
+def generate_passkey_registration_options(
+    user_id: int, device_name: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    return _get_manager().generate_passkey_registration_options(user_id, device_name)
+
+
+def verify_passkey_registration(
+    user_id: int,
+    challenge_id: str,
+    credential_response: Dict[str, Any],
+    ip_address: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    return _get_manager().verify_passkey_registration(
+        user_id, challenge_id, credential_response, ip_address
+    )
+
+
+def generate_passkey_authentication_options(
+    username: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _get_manager().generate_passkey_authentication_options(username)
+
+
+def verify_passkey_authentication(
+    challenge_id: str,
+    credential_response: Dict[str, Any],
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> AuthResult:
+    return _get_manager().verify_passkey_authentication(
+        challenge_id, credential_response, ip_address, user_agent
+    )
+
+
+def list_passkeys(user_id: int) -> List[Dict[str, Any]]:
+    return _get_manager().list_passkeys(user_id)
+
+
+def revoke_passkey(
+    user_id: int, passkey_id: int, ip_address: Optional[str] = None
+) -> bool:
+    return _get_manager().revoke_passkey(user_id, passkey_id, ip_address)
+
+
+def rename_passkey(user_id: int, passkey_id: int, new_name: str) -> bool:
+    return _get_manager().rename_passkey(user_id, passkey_id, new_name)
+
+
 # === Password Management ===
 
 
@@ -736,6 +787,14 @@ __all__ = [
     "disable_2fa",
     "regenerate_backup_codes",
     "get_2fa_status",
+    # Passkeys
+    "generate_passkey_registration_options",
+    "verify_passkey_registration",
+    "generate_passkey_authentication_options",
+    "verify_passkey_authentication",
+    "list_passkeys",
+    "revoke_passkey",
+    "rename_passkey",
     # Password
     "change_password",
     "request_password_reset",

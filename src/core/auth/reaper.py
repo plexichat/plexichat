@@ -153,10 +153,10 @@ class AccountReaper:
         logger.info(f"Reaper: Purging user {user_id} ({username})")
 
         try:
-            # 1. Anonymize Messages
+            # 1. Anonymize Messages (author_id has NOT NULL constraint, keep it)
             if self._config.get("anonymize_content", True):
                 self._db.execute(
-                    "UPDATE msg_messages SET content = '[This message was sent by a deleted user]', author_id = NULL WHERE author_id = ?",
+                    "UPDATE msg_messages SET content = '[This message was sent by a deleted user]' WHERE author_id = ?",
                     (user_id,),
                 )
             else:
@@ -169,21 +169,90 @@ class AccountReaper:
                 from src.core import avatars
 
                 avatars.delete_user_avatar(user_id)
-                # Note: Add media.delete_all_user_media(user_id) if it exists
             except Exception as me:
                 logger.warning(
                     f"Reaper: Failed to scrub some media for {user_id}: {me}"
                 )
 
             # 3. Final Database Erasure
-            # Remove from all related tables (sessions, relationships, etc.)
+            # Order matters: child tables before parent tables to respect FK constraints
             self._db.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
             self._db.execute("DELETE FROM auth_devices WHERE user_id = ?", (user_id,))
             self._db.execute(
                 "DELETE FROM rel_friends WHERE user_id = ? OR friend_id = ?",
                 (user_id, user_id),
             )
+            self._db.execute(
+                "DELETE FROM rel_blocked WHERE blocker_id = ? OR blocked_id = ?",
+                (user_id, user_id),
+            )
+            self._db.execute(
+                "DELETE FROM rel_friend_requests WHERE sender_id = ? OR recipient_id = ?",
+                (user_id, user_id),
+            )
+            self._db.execute(
+                "DELETE FROM admin_role_assignments WHERE admin_id = ?",
+                (user_id,),
+            )
+            self._db.execute(
+                "DELETE FROM srv_member_roles WHERE member_id IN (SELECT id FROM srv_members WHERE user_id = ?)",
+                (user_id,),
+            )
             self._db.execute("DELETE FROM srv_members WHERE user_id = ?", (user_id,))
+            self._db.execute(
+                "DELETE FROM srv_onboarding_progress WHERE user_id = ?", (user_id,)
+            )
+            # Tables without ON DELETE CASCADE on auth_users FK must be deleted explicitly
+            # Delete admin_notes first (references feedback.ticket_id)
+            # Use a two-step approach to avoid foreign key constraint issues
+            try:
+                # First, get all feedback IDs for this user
+                feedback_ids = self._db.fetch_all(
+                    "SELECT id FROM feedback WHERE user_id = ?", (user_id,)
+                )
+                if feedback_ids:
+                    # Extract IDs from rows (handle both dict and tuple formats)
+                    ids_to_delete = []
+                    for row in feedback_ids:
+                        if isinstance(row, dict):
+                            ids_to_delete.append(row["id"])
+                        else:
+                            ids_to_delete.append(row[0])
+
+                    # Delete admin_notes for these feedback IDs
+                    if ids_to_delete:
+                        placeholders = ",".join("?" * len(ids_to_delete))
+                        self._db.execute(
+                            f"DELETE FROM admin_notes WHERE ticket_id IN ({placeholders})",
+                            tuple(ids_to_delete),
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"Reaper: Failed to delete admin_notes for user {user_id}: {e}"
+                )
+
+            # Now delete feedback entries
+            self._db.execute("DELETE FROM feedback WHERE user_id = ?", (user_id,))
+            self._db.execute(
+                "DELETE FROM message_reports WHERE reporter_id = ? OR reported_user_id = ?",
+                (user_id, user_id),
+            )
+            try:
+                if self._db.column_exists("admin_audit_log", "target_user_id"):
+                    self._db.execute(
+                        "DELETE FROM admin_audit_log WHERE admin_id = ? OR target_user_id = ?",
+                        (user_id, user_id),
+                    )
+                else:
+                    self._db.execute(
+                        "DELETE FROM admin_audit_log WHERE admin_id = ?",
+                        (user_id,),
+                    )
+            except Exception:
+                pass
+            self._db.execute(
+                "DELETE FROM media_hash_reports WHERE reporter_id = ?", (user_id,)
+            )
             self._db.execute("DELETE FROM auth_users WHERE id = ?", (user_id,))
             self._db.execute(
                 "DELETE FROM auth_deletion_records WHERE user_id = ?", (user_id,)
@@ -195,7 +264,9 @@ class AccountReaper:
             )
 
             logger.info(f"Reaper: Successfully purged user {user_id}")
-
         except Exception as e:
-            logger.error(f"Reaper: Failed to purge user {user_id}: {e}", exc_info=True)
-            # User will be picked up in the next harvest cycle as deletion_status is still 'frozen'
+            logger.error(
+                f"Reaper: Purge failed for user {user_id}: {e}. "
+                f"User will be picked up in next harvest cycle.",
+                exc_info=True,
+            )

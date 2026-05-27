@@ -36,7 +36,7 @@ profile = mgr.update_profile(
     user_id=123,
     bio="Hello, I'm a developer!",
     status="Working",
-    status_emoji="💻",
+    status_emoji="[pc]",
     social_links=[{"platform": "github", "url": "https://github.com/user"}],
 )
 ```

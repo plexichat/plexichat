@@ -20,13 +20,10 @@ import sys
 import os
 from pathlib import Path
 
-# Add project root to path for imports
-project_root = Path(__file__).parent.parent.parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 import argparse  # noqa: E402
 import logging  # noqa: E402
+
+# Import utilities from common_utils subpackage
 import utils.config as config  # noqa: E402
 import utils.logger as logger  # noqa: E402
 from src.core.database import Database  # noqa: E402

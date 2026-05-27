@@ -60,6 +60,7 @@ def up(db):
             action VARCHAR(100) NOT NULL,
             target_type VARCHAR(50),
             target_id INTEGER,
+            target_user_id INTEGER,
             details TEXT,
             ip_address VARCHAR(45),
             user_agent TEXT,

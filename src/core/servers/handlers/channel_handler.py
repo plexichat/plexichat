@@ -100,13 +100,19 @@ class ChannelHandler:
         now = self.manager._get_timestamp()
         channel_id = self.manager._generate_id()
 
-        # Encrypt topic if enabled
+        # Store topic in topic_encrypted column (or topic column for backward compat)
+        # If encryption is enabled, encrypt it; otherwise, store as plaintext
         topic_encrypted = None
-        if topic and self.manager._encrypt_descriptions:
-            from src.utils.encryption import encrypt_data
+        if topic:
+            if self.manager._encrypt_descriptions:
+                from src.utils.encryption import encrypt_data
 
-            topic_encrypted = encrypt_data(topic)
+                topic_encrypted = encrypt_data(topic)
+            else:
+                topic_encrypted = topic
 
+        # After migration 029, unencrypted topic column no longer exists.
+        # Always use topic_encrypted (encrypted or plaintext based on config).
         self.db.execute(
             """INSERT INTO srv_channels 
                (id, server_id, name, channel_type, category_id, position, topic_encrypted, nsfw, slowmode_seconds, read_receipts_enabled, created_at, updated_at)
@@ -170,7 +176,7 @@ class ChannelHandler:
             cache_delete(f"server_channels:{server_id}")
         invalidate_pattern(f"server_channels:*{server_id}*")
 
-        result = self.manager.get_channel(channel_id, user_id)
+        result = self.manager.get_channel(user_id, channel_id)
         # Channel might not be immediately retrievable due to permissions or caching
         # Return the channel object directly from the database instead
         row = self.db.fetch_one(
@@ -283,7 +289,7 @@ class ChannelHandler:
         category_id: Optional[SnowflakeID] = None,
     ) -> Channel:
         """Update channel settings."""
-        channel = self.manager.get_channel(channel_id, user_id)
+        channel = self.manager.get_channel(user_id, channel_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
@@ -301,12 +307,16 @@ class ChannelHandler:
             changes["name"] = {"old": channel.name, "new": name}
 
         if topic is not None:
-            # Encrypt topic if enabled
+            # After migration 029, unencrypted topic column no longer exists.
+            # Always use topic_encrypted (encrypted or plaintext based on config).
             topic_encrypted = None
-            if topic and self.manager._encrypt_descriptions:
-                from src.utils.encryption import encrypt_data
+            if topic:
+                if self.manager._encrypt_descriptions:
+                    from src.utils.encryption import encrypt_data
 
-                topic_encrypted = encrypt_data(topic)
+                    topic_encrypted = encrypt_data(topic)
+                else:
+                    topic_encrypted = topic
 
             updates.append("topic_encrypted = ?")
             params.append(topic_encrypted)
@@ -358,7 +368,9 @@ class ChannelHandler:
                 )
                 self.db.execute(query, (value, now, channel_id))
 
-            self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
+            self.manager._cache_invalidate(
+                self.manager._channel_cache_prefix, channel_id
+            )
             self.manager._log_audit(
                 channel.server_id,
                 user_id,
@@ -369,13 +381,13 @@ class ChannelHandler:
             )
 
         invalidate_pattern(f"server_channels:*{channel.server_id}*")
-        result = self.manager.get_channel(channel_id, user_id)
+        result = self.manager.get_channel(user_id, channel_id)
         assert result is not None
         return result
 
     def delete_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
         """Delete a channel."""
-        channel = self.manager.get_channel(channel_id, user_id)
+        channel = self.manager.get_channel(user_id, channel_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
@@ -388,7 +400,7 @@ class ChannelHandler:
             (now, channel_id),
         )
 
-        self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
+        self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
         if redis_available():
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
@@ -407,7 +419,7 @@ class ChannelHandler:
         self, user_id: SnowflakeID, channel_id: SnowflakeID, position: int
     ) -> Channel:
         """Move a channel to a new position."""
-        channel = self.manager.get_channel(channel_id, user_id)
+        channel = self.manager.get_channel(user_id, channel_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
@@ -419,15 +431,11 @@ class ChannelHandler:
             (position, self.manager._get_timestamp(), channel_id),
         )
 
-        self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
+        self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
         if redis_available():
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
 
-        result = self.manager.get_channel(channel_id, user_id)
-        assert result is not None
-        return result
-
-        result = self.manager.get_channel(channel_id, user_id)
+        result = self.manager.get_channel(user_id, channel_id)
         assert result is not None
         return result
