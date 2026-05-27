@@ -86,7 +86,8 @@ def _get_manager() -> EncryptionManager:
         _encryption_manager = EncryptionManager()
         _setup_called = True
 
-    assert _encryption_manager is not None
+    if _encryption_manager is None:
+        raise RuntimeError("Encryption manager could not be initialized.")
     return _encryption_manager
 
 
