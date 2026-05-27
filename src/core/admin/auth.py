@@ -77,19 +77,21 @@ def _validate_otp_challenge(
     now = int(time.time())
     key = f"admin_otp_challenge:{challenge_token}"
     payload = cache_get(key)
-    
+
     if not payload:
         logger.debug(f"OTP validation failed: No payload for key {key}")
         return False
-        
+
     if payload["expires_at"] < now:
-        logger.debug(f"OTP validation failed: Challenge expired")
+        logger.debug("OTP validation failed: Challenge expired")
         return False
-        
+
     if payload["admin_id"] != admin_id or payload["is_setup"] != is_setup:
-        logger.debug(f"OTP validation failed: Payload mismatch (Expected ID {admin_id}, got {payload['admin_id']}; Setup Expected {is_setup}, got {payload['is_setup']})")
+        logger.debug(
+            f"OTP validation failed: Payload mismatch (Expected ID {admin_id}, got {payload['admin_id']}; Setup Expected {is_setup}, got {payload['is_setup']})"
+        )
         return False
-        
+
     return True
 
 

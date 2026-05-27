@@ -122,7 +122,9 @@ LICENSE_ENV_VAR = "PLEXICHAT_LICENSE"
 
 # Hardcoded Ed25519 public key for Plexichat (base64 encoded, 32 bytes)
 # This is the official Plexichat licensing public key - DO NOT MODIFY
-_PLEXICHAT_PUBLIC_KEY_BASE64 = "gBS50oixMLyikqv4Q/W3ME0cK0p5p1p2XS8KV8OKfTk="
+_PLEXICHAT_PUBLIC_KEY_BASE64 = (
+    "gBS50oixMLyikqv4Q/W3ME0cK0p5p1p2XS8KV8OKfTk="  # pragma: allowlist secret
+)
 
 
 def setup(
@@ -198,8 +200,10 @@ def setup(
         if _license_manager.get_expiry_timestamp():
             from datetime import datetime
 
-            expiry = datetime.fromtimestamp(_license_manager.get_expiry_timestamp())
-            logger.info(f"License expires: {expiry.isoformat()}")
+            ts = _license_manager.get_expiry_timestamp()
+            if ts is not None:
+                expiry = datetime.fromtimestamp(float(ts))
+                logger.info(f"License expires: {expiry.isoformat()}")
         return True
     else:
         # License exists but is invalid - soft fail to free tier
@@ -223,10 +227,14 @@ def _try_load_license(explicit_path: Optional[str] = None) -> bool:
     """
     env_value = os.environ.get(LICENSE_ENV_VAR, "").strip()
 
+    lm = _license_manager
+    if lm is None:
+        return False
+
     # 1. Try explicit path first
     if explicit_path:
         try:
-            _license_manager.load_from_file(explicit_path)
+            lm.load_from_file(explicit_path)
             logger.debug(f"Loaded license from explicit path: {explicit_path}")
             return True
         except InvalidLicenseError:
@@ -240,7 +248,7 @@ def _try_load_license(explicit_path: Optional[str] = None) -> bool:
     ):
         try:
             if Path(env_value).exists():
-                _license_manager.load_from_file(env_value)
+                lm.load_from_file(env_value)
                 logger.debug(f"Loaded license from env var path: {env_value}")
                 return True
         except (InvalidLicenseError, OSError):
@@ -249,7 +257,7 @@ def _try_load_license(explicit_path: Optional[str] = None) -> bool:
     # 3. Try env var as base64
     if env_value and env_value.startswith("eyJ"):
         try:
-            _license_manager.load_from_base64(env_value)
+            lm.load_from_base64(env_value)
             logger.debug("Loaded license from env var (base64)")
             return True
         except InvalidLicenseError:
@@ -258,7 +266,7 @@ def _try_load_license(explicit_path: Optional[str] = None) -> bool:
     # 4. Try default location
     try:
         if DEFAULT_LICENSE_PATH.exists():
-            _license_manager.load_from_file(str(DEFAULT_LICENSE_PATH))
+            lm.load_from_file(str(DEFAULT_LICENSE_PATH))
             logger.debug(
                 f"Loaded license from default location: {DEFAULT_LICENSE_PATH}"
             )

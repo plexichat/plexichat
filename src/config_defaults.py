@@ -499,6 +499,11 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "exit_on_failure": False,
             "capture_stack_traces": True,
             "retry_on_failure": True,
+            # Controls whether admin-only endpoints are tested during self-test.
+            # When False, admin endpoints are skipped entirely and the test user
+            # is NOT granted admin permissions. Set to True to test admin routes
+            # (requires admin-level permissions on the test user).
+            "enable_admin_tests": True,
             "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],
             "test_user": {
                 "username": "selftest_admin",

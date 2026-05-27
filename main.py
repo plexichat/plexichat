@@ -25,9 +25,8 @@ if TYPE_CHECKING:
 # Setup paths
 project_root = os.path.abspath(os.path.dirname(__file__))
 src_path = os.path.join(project_root, "src")
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
 
-for path in [project_root, src_path, common_utils_path]:
+for path in [project_root, src_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
@@ -178,10 +177,15 @@ class PlexichatServer:
             postgres_port = os.getenv("POSTGRES_PORT")
             if postgres_port:
                 try:
-                    postgres_config["port"] = int(postgres_port)
-                except ValueError:
+                    port_val = int(postgres_port)
+                    if port_val < 1 or port_val > 65535:
+                        raise ValueError(
+                            f"Port must be between 1 and 65535, got {port_val}"
+                        )
+                    postgres_config["port"] = port_val
+                except ValueError as e:
                     logger.warning(
-                        f"Invalid POSTGRES_PORT value: {postgres_port}, using default"
+                        f"Invalid POSTGRES_PORT value: {postgres_port}, using default: {e}"
                     )
 
             postgres_user = os.getenv("POSTGRES_USER")
@@ -210,24 +214,37 @@ class PlexichatServer:
         db_pool_min = os.getenv("DB_POOL_MIN_CONNECTIONS")
         if db_pool_min:
             try:
-                pool_config["min_connections"] = int(db_pool_min)
-            except ValueError:
-                logger.warning(f"Invalid DB_POOL_MIN_CONNECTIONS value: {db_pool_min}")
+                val = int(db_pool_min)
+                if val < 0:
+                    raise ValueError(f"Value must be >= 0, got {val}")
+                pool_config["min_connections"] = val
+            except ValueError as e:
+                logger.warning(
+                    f"Invalid DB_POOL_MIN_CONNECTIONS value: {db_pool_min}: {e}"
+                )
 
         db_pool_max = os.getenv("DB_POOL_MAX_CONNECTIONS")
         if db_pool_max:
             try:
-                pool_config["max_connections"] = int(db_pool_max)
-            except ValueError:
-                logger.warning(f"Invalid DB_POOL_MAX_CONNECTIONS value: {db_pool_max}")
+                val = int(db_pool_max)
+                if val < 0:
+                    raise ValueError(f"Value must be >= 0, got {val}")
+                pool_config["max_connections"] = val
+            except ValueError as e:
+                logger.warning(
+                    f"Invalid DB_POOL_MAX_CONNECTIONS value: {db_pool_max}: {e}"
+                )
 
         db_pool_timeout = os.getenv("DB_POOL_CONNECT_TIMEOUT")
         if db_pool_timeout:
             try:
-                pool_config["connect_timeout"] = int(db_pool_timeout)
-            except ValueError:
+                val = int(db_pool_timeout)
+                if val < 0:
+                    raise ValueError(f"Value must be >= 0, got {val}")
+                pool_config["connect_timeout"] = val
+            except ValueError as e:
                 logger.warning(
-                    f"Invalid DB_POOL_CONNECT_TIMEOUT value: {db_pool_timeout}"
+                    f"Invalid DB_POOL_CONNECT_TIMEOUT value: {db_pool_timeout}: {e}"
                 )
 
         db_pool_idle = os.getenv("DB_POOL_MAX_IDLE_TIME")
@@ -493,6 +510,15 @@ class PlexichatServer:
             ),
         )
 
+        # Initialize licensing once at startup so routes can use it safely.
+        try:
+            import utils.licensing as licensing
+
+            licensing.setup()
+        except Exception as e:
+            logger.error(f"Failed to initialize licensing: {e}")
+            raise
+
         # Eagerly validate all keyrings at startup so the server fails fast
         # if any keyring file is corrupted or the KEK has changed.
         # system_keyring is already validated by EncryptionManager.__init__
@@ -619,27 +645,27 @@ class PlexichatServer:
             logger.error(f"Failed to check encryption key rotation: {e}")
 
         # Initialize core modules in parallel where possible
-        startup_times = {}
-        startup_lock = threading.Lock()
+        startup_times: Dict[str, float] = {}
 
         def timed_init(name: str, init_func):
             """Initialize a module and track how long it takes."""
-            # Use a lock to ensure thread-safe initialization of modules
-            # that might touch global state (ADR-005)
-            with startup_lock:
-                start = time.perf_counter()
-                logger.info(f"Initializing {name} module...")
-                try:
-                    result = init_func()
-                    elapsed = (time.perf_counter() - start) * 1000
-                    startup_times[name] = elapsed
-                    logger.info(f"  -> {name} initialized in {elapsed:.1f}ms")
-                    return result
-                except Exception as e:
-                    elapsed = (time.perf_counter() - start) * 1000
-                    startup_times[name] = elapsed
-                    logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
-                    raise
+            # NOTE: No lock is used here because:
+            # 1. Modules within each group are designed to be independent
+            # 2. CPython's GIL guarantees atomic dict key assignment
+            # 3. A single lock would serialize all threads, defeating parallelism
+            start = time.perf_counter()
+            logger.info(f"Initializing {name} module...")
+            try:
+                result = init_func()
+                elapsed = (time.perf_counter() - start) * 1000
+                startup_times[name] = elapsed
+                logger.info(f"  -> {name} initialized in {elapsed:.1f}ms")
+                return result
+            except Exception as e:
+                elapsed = (time.perf_counter() - start) * 1000
+                startup_times[name] = elapsed
+                logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
+                raise
 
         # Independent initialization group (Parallel)
         def init_independent():
@@ -853,7 +879,9 @@ class PlexichatServer:
         self._modules["webhooks"] = webhooks
 
         try:
-            timed_init("threads", lambda: threads.setup(self.db, messaging, servers))
+            timed_init(
+                "threads", lambda: threads.setup(self.db, auth, messaging, servers)
+            )
             self._modules["threads"] = threads
         except Exception as e:
             logger.warning(f"Failed to initialize threads module: {e}")
@@ -1100,6 +1128,7 @@ class PlexichatServer:
     ) -> Any:
         """Create and configure the FastAPI application."""
         from src.api import setup as api_setup, create_app
+        from src.core import applications
 
         start = time.perf_counter()
         logger.info("Initializing API module...")
@@ -1127,6 +1156,12 @@ class PlexichatServer:
             notifications_module=self._modules.get("notifications"),
             threads_module=self._modules.get("threads"),
             telemetry_module=self._modules.get("telemetry"),
+        )
+        applications.setup(
+            self.db,
+            auth_module=auth,
+            servers_module=servers,
+            events_module=self._modules.get("events"),
         )
 
         # Get rate limiting and docs settings from config
@@ -1403,6 +1438,12 @@ Examples:
         action="store_true",
         help="Run KEK migration tool instead of starting server",
     )
+    # Migration management
+    parser.add_argument(
+        "--migrate-db",
+        action="store_true",
+        help="Run database migrations and exit",
+    )
     parser.add_argument(
         "--kek-keyring", help="Specific keyring to migrate (e.g., message_keyring.json)"
     )
@@ -1444,6 +1485,46 @@ Examples:
     if args.version:
         print(f"Plexichat Server v{VERSION}")
         return
+
+    # Handle database migration
+    if args.migrate_db:
+        from src.core.database import Database
+        from src.core.migrations import run_migrations, get_status
+
+        # Minimal setup for migration
+        config.setup(config_path=os.path.join(project_root, "config", "config.yaml"))
+
+        # Setup logging using standard configuration
+        log_config = config.get("logging", {})
+        media_config = config.get("media", {})
+        log_dir = media_config.get("logs_dir", os.path.join(project_root, "logs"))
+        log_dir = os.path.expanduser(log_dir)
+
+        logger.setup(
+            log_dir=log_dir,
+            level=log_config.get("level", "INFO"),
+            max_bytes=log_config.get("max_bytes", 10485760),
+            backup_count=log_config.get("backup_count", 5),
+            zip_logs=log_config.get("zip_logs", True),
+            rotate=log_config.get("rotate", True),
+        )
+
+        db = Database()
+        db.connect()
+
+        # Display current status
+        status = get_status(db)
+        print(
+            f"Migration Status: {status['applied_count']} applied, {status['pending_count']} pending"
+        )
+
+        result = run_migrations(db)
+        if result["success"]:
+            print(f"Migrations applied successfully: {result['applied_count']} applied")
+            sys.exit(0)
+        else:
+            print(f"Migration process had failures: {result['failed_count']} failed")
+            sys.exit(1)
 
     # Handle KEK migration
     if args.migrate_kek:

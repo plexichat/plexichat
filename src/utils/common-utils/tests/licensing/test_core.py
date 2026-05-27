@@ -202,7 +202,7 @@ class TestLicenseValidation:
         assert not result.is_valid
         assert not result.is_expired
         assert not result.is_signature_valid
-        assert "No license loaded" in result.error_message
+        assert result.error_message and "No license loaded" in result.error_message
 
     def test_validate_valid_license_no_signature_check(self):
         """Test validation of license without signature verification."""
@@ -248,7 +248,7 @@ class TestLicenseValidation:
 
         assert result.is_expired is True
         assert not result.is_valid  # Expired licenses are invalid
-        assert "License has expired" in result.error_message
+        assert result.error_message and "License has expired" in result.error_message
 
     def test_validate_perpetual_license_not_expired(self):
         """Test that perpetual licenses (no expiry) are not expired."""

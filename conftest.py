@@ -12,8 +12,7 @@ import sys
 project_root = os.path.abspath(os.path.dirname(__file__))
 src_path = os.path.join(project_root, "src")
 utils_path = os.path.join(project_root, "src", "utils")
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
 
-for path in [project_root, src_path, utils_path, common_utils_path]:
+for path in [project_root, src_path, utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
