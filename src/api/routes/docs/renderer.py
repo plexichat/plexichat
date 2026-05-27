@@ -216,6 +216,7 @@ def markdown_to_html(
     markdown_content = _replace_dynamic_placeholders(markdown_content, conf)
 
     if MISTUNE_AVAILABLE:
+        assert mistune is not None
         # Use mistune with plugins for better rendering
         renderer = mistune.HTMLRenderer()
         markdown = mistune.Markdown(

@@ -153,6 +153,13 @@ class SelfTestRunner:
         excluded.add("POST:/api/v1/bots/servers/{server_id}/approve")
         excluded.add("POST:/api/v1/bots/servers/{server_id}/request")
 
+        # Poll close must run AFTER vote, so exclude it from auto-discovery.
+        # The vote is tested during auto-discovery; close is tested in _api_cleanup.
+        excluded.add("POST:/api/v1/polls/{poll_id}/close")
+
+        # Invite creation via discovery would collide with setup-created invite (409)
+        excluded.add("POST:/api/v1/channels/invites/{code}")
+
         # Admin 2FA endpoints
         for fa_path in [
             "/api/v1/admin/auth/2fa/begin-setup",
@@ -244,12 +251,24 @@ class SelfTestRunner:
             ):
                 use_other = True
 
+            # Admin approval approve: must use a different admin (not the requester)
+            if (
+                not use_other
+                and self.other_token
+                and "/admin/approvals/" in path
+                and "/approve" in path
+            ):
+                use_other = True
+
             # Skip voice endpoints if not connected
             if "/voice/" in path and method == "GET":
                 logger.debug(
                     f"Skipping voice endpoint (no connection): {method} {path}"
                 )
                 continue
+
+            # delay-deletion requires account to already be scheduled for deletion
+            excluded.add("POST:/api/v1/admin/users/{user_id}/delay-deletion")
 
             # Skip endpoints that still have un-substituted path parameters
             if "{" in path or "}" in path:
@@ -352,35 +371,52 @@ class SelfTestRunner:
                 except Exception:
                     pass
 
-            # Truncate all test resource tables to prevent UNIQUE constraint failures
-            # This ensures a clean slate for each test run
+            # Truncate test resource tables to prevent UNIQUE constraint failures.
+            # CAUTION: Never truncate admin_* tables here — they contain real
+            # production admin accounts that MUST survive across restarts.
+            # Only truncate tables that hold selftest-generated data.
             truncate_tables = [
-                "admin_approvals",
                 "notif_notifications",
                 "user_reports",
                 "media_hash_reports",
                 "message_reports",
-                "admin_notes",
-                "admin_role_assignments",
-                "admin_roles",
-                "admin_users",
                 "feedback",
                 "media_blocked_hashes",
                 "media_blocked_users",
                 "app_bot_requests",
                 "auth_api_access_tokens",
                 "auth_api_access_token_scopes",
-                "automod_rules",
                 "poll_polls",
                 "poll_options",
                 "poll_votes",
                 "thread_threads",
+                "sticker_stickers",
+                "sticker_packs",
             ]
             for tbl in truncate_tables:
                 try:
                     db.execute(f"DELETE FROM {tbl}")
                 except Exception:
                     pass
+
+            # Clean up orphaned servers from previous failed selftest runs.
+            # These are servers owned by selftest_* users that were not cleaned
+            # up because a previous run crashed/aborted before _cleanup_test_data.
+            try:
+                orphan_srv_rows = db.fetch_all(
+                    "SELECT s.id, s.owner_id FROM srv_servers s "
+                    "JOIN auth_users u ON s.owner_id = u.id "
+                    "WHERE u.username LIKE 'selftest_%' AND s.deleted = 0"
+                )
+                for os_row in orphan_srv_rows:
+                    osid = os_row["id"] if isinstance(os_row, dict) else os_row[0]
+                    self._delete_server_recursive(db, osid)
+                if orphan_srv_rows:
+                    logger.debug(
+                        f"Pre-test cleanup: removed {len(orphan_srv_rows)} orphaned servers"
+                    )
+            except Exception:
+                pass
 
             # Find all users that look like test users and unlock them
             rows = db.fetch_all(
@@ -679,12 +715,16 @@ class SelfTestRunner:
                             (user.id,),
                         )
                         if not existing:
+                            # Hash the actual test password so change-password tests work
+                            import src.utils.encryption as _selftest_enc
+
+                            _actual_hash = _selftest_enc.hash_password(password)
                             db.execute(
                                 "INSERT OR IGNORE INTO admin_users (id, username, password_hash, email, created_at, must_setup_otp) VALUES (?, ?, ?, ?, ?, 0)",
                                 (
                                     user.id,
                                     username,
-                                    "selftest_placeholder",
+                                    _actual_hash,
                                     email,
                                     int(time.time()),
                                 ),
@@ -883,12 +923,15 @@ class SelfTestRunner:
                             "SELECT id FROM admin_users WHERE id = ?", (other_user.id,)
                         )
                         if not existing_other:
+                            import src.utils.encryption as _selftest_enc2
+
+                            _actual_hash2 = _selftest_enc2.hash_password(password)
                             db.execute(
                                 "INSERT OR IGNORE INTO admin_users (id, username, password_hash, email, created_at, must_setup_otp) VALUES (?, ?, ?, ?, ?, 0)",
                                 (
                                     other_user.id,
                                     other_username,
-                                    "selftest_placeholder",
+                                    _actual_hash2,
                                     other_email,
                                     int(time.time()),
                                 ),
@@ -1023,10 +1066,10 @@ class SelfTestRunner:
                 except Exception as e:
                     logger.warning(f"Failed to create test message: {e}")
 
-            # 6. Setup Test Role
+            # 6. Setup Test Role (random suffix avoids name collisions across runs)
             logger.debug("Creating test role...")
             role = servers_mod.create_role(
-                user.id, server.id, "Test Role", color="#ff0000"
+                user.id, server.id, f"Test Role {secrets.token_hex(4)}", color="#ff0000"
             )
             self.test_role_id = role.id
             logger.debug(f"Test role ID: {self.test_role_id}")
@@ -1066,11 +1109,12 @@ class SelfTestRunner:
                         if not existing:
                             member_id = self._generate_snowflake()
                             db_m.execute(
-                                "INSERT INTO srv_members (id, user_id, server_id, joined_at) VALUES (?, ?, ?, ?)",
+                                "INSERT INTO srv_members (id, user_id, server_id, joined_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                                 (
                                     member_id,
                                     self.test_other_user_id,
                                     self.test_server_id,
+                                    int(time.time()),
                                     int(time.time()),
                                 ),
                             )
@@ -1345,7 +1389,7 @@ class SelfTestRunner:
                         question="Self-test poll question?",
                         options=["Option A", "Option B", "Option C"],
                         duration_hours=24,
-                        allow_multiple_choice=False,
+                        allow_multiple_choice=True,
                         results_visibility=PollResultsVisibility.ALWAYS,
                     )
                     self.test_poll_id = poll.id
@@ -1366,7 +1410,7 @@ class SelfTestRunner:
                         if not existing_emoji:
                             emoji_id = self._generate_snowflake()
                             db_e.execute(
-                                "INSERT INTO react_custom_emoji (id, name, server_id, uploader_id, animated, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                "INSERT INTO react_custom_emoji (id, name, server_id, created_by, animated, url, size, width, height, available, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                 (
                                     emoji_id,
                                     "selftest_emoji",
@@ -1374,6 +1418,10 @@ class SelfTestRunner:
                                     user.id,
                                     0,
                                     "https://example.com/emoji.png",
+                                    2048,
+                                    128,
+                                    128,
+                                    1,
                                     int(time.time()),
                                 ),
                             )
@@ -1406,12 +1454,15 @@ class SelfTestRunner:
                         else:
                             pack_id = self._generate_snowflake()
                             db_s.execute(
-                                "INSERT INTO sticker_packs (id, name, description, server_id, cover_sticker_id, created_at) VALUES (?, ?, ?, ?, NULL, ?)",
+                                "INSERT INTO sticker_packs (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                 (
                                     pack_id,
                                     "selftest_pack",
                                     "Self-test pack",
+                                    "server",
                                     self.test_server_id,
+                                    user.id,
+                                    int(time.time()),
                                     int(time.time()),
                                 ),
                             )
@@ -1421,19 +1472,34 @@ class SelfTestRunner:
                         )
                         if not existing_sticker:
                             sticker_id = self._generate_snowflake()
-                            db_s.execute(
-                                "INSERT INTO sticker_stickers (id, name, pack_id, format, description, tags, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                (
-                                    sticker_id,
-                                    "selftest_sticker",
-                                    pack_id,
-                                    "png",
-                                    "Self-test sticker",
-                                    "test",
-                                    "https://example.com/sticker.png",
-                                    int(time.time()),
-                                ),
-                            )
+                            # Try with description column first; fall back for older DBs
+                            try:
+                                db_s.execute(
+                                    "INSERT INTO sticker_stickers (id, name, pack_id, format, description, tags, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                    (
+                                        sticker_id,
+                                        "selftest_sticker",
+                                        pack_id,
+                                        "png",
+                                        "Self-test sticker",
+                                        "test",
+                                        "https://example.com/sticker.png",
+                                        int(time.time()),
+                                    ),
+                                )
+                            except Exception:
+                                db_s.execute(
+                                    "INSERT INTO sticker_stickers (id, name, pack_id, format, tags, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                    (
+                                        sticker_id,
+                                        "selftest_sticker",
+                                        pack_id,
+                                        "png",
+                                        "test",
+                                        "https://example.com/sticker.png",
+                                        int(time.time()),
+                                    ),
+                                )
                             self.test_sticker_id = sticker_id
                             logger.debug(
                                 f"Created test sticker ID: {self.test_sticker_id}"
@@ -1515,6 +1581,17 @@ class SelfTestRunner:
         resources = []
 
         # Order matters: delete children before parents
+        # Poll vote/close first, then poll itself
+        if self.test_poll_id:
+            try:
+                close_resp = self.session.post(
+                    f"{self.base_url}/api/v1/polls/{self.test_poll_id}/close",
+                    timeout=5,
+                )
+                logger.debug(f"API cleanup poll close: {close_resp.status_code}")
+            except Exception as e:
+                logger.debug(f"API cleanup poll close exception: {e}")
+
         if self.test_message_id and self.test_conversation_id:
             resources.append(
                 (
@@ -1525,6 +1602,39 @@ class SelfTestRunner:
 
         if self.test_webhook_id:
             resources.append(("DELETE", f"/api/v1/webhooks/{self.test_webhook_id}"))
+
+        if self.test_emoji_id and self.test_server_id:
+            resources.append(
+                (
+                    "DELETE",
+                    f"/api/v1/servers/{self.test_server_id}/emojis/{self.test_emoji_id}",
+                )
+            )
+
+        if self.test_sticker_id:
+            resources.append(("DELETE", f"/api/v1/stickers/{self.test_sticker_id}"))
+
+        if self.test_poll_id:
+            resources.append(("DELETE", f"/api/v1/polls/{self.test_poll_id}"))
+
+        if self.test_automod_rule_id:
+            resources.append(
+                (
+                    "DELETE",
+                    f"/api/v1/automod/rules/{self.test_automod_rule_id}",
+                )
+            )
+
+        if self.test_access_token_id:
+            resources.append(
+                (
+                    "DELETE",
+                    f"/api/v1/admin/access-tokens/{self.test_access_token_id}",
+                )
+            )
+
+        if self.test_thread_id:
+            resources.append(("DELETE", f"/api/v1/threads/{self.test_thread_id}"))
 
         if self.test_channel_id:
             resources.append(("DELETE", f"/api/v1/channels/{self.test_channel_id}"))
@@ -1549,6 +1659,31 @@ class SelfTestRunner:
             resources.append(
                 ("DELETE", f"/api/v1/applications/{self.test_application_id}")
             )
+
+        # Friend request: POST to cancel/decline rather than DELETE
+        if self.test_friend_request_id:
+            try:
+                fr_resp = self.session.post(
+                    f"{self.base_url}/api/v1/relationships/{self.test_friend_request_id}/cancel",
+                    timeout=5,
+                )
+                logger.debug(
+                    f"API cleanup friend request cancel: {fr_resp.status_code}"
+                )
+            except Exception as e:
+                logger.debug(f"API cleanup friend request exception: {e}")
+
+        # Report: resolve via API
+        if self.test_report_id:
+            try:
+                rpt_resp = self.session.patch(
+                    f"{self.base_url}/api/v1/reports/users/{self.test_report_id}",
+                    json={"status": "resolved"},
+                    timeout=5,
+                )
+                logger.debug(f"API cleanup user report resolve: {rpt_resp.status_code}")
+            except Exception as e:
+                logger.debug(f"API cleanup user report exception: {e}")
 
         all_ok = True
         for method, path in resources:
@@ -2036,6 +2171,10 @@ class SelfTestRunner:
                 else:
                     body["user_id"] = "1"
 
+                    # Admin roles: use random name to avoid collisions across runs
+                if "admin/roles" in path and method == "POST":
+                    body["name"] = "selftest_admin_role_" + secrets.token_hex(4)
+
             # Automod rules: schema uses rule_type/config, not trigger_type/trigger
             if "automod/rules" in path and method == "POST":
                 body["rule_type"] = "keyword"
@@ -2109,18 +2248,25 @@ class SelfTestRunner:
                 body["size"] = 4096
                 body["url"] = "https://example.com/voice_test.ogg"
 
-            # Emoji/Sticker creation: need name and image
+            # Emoji/Sticker creation/update: need valid lowercase name
             if (
                 ("/emojis" in path or "/stickers" in path)
-                and method == "POST"
+                and method in ("POST", "PATCH")
                 and "search" not in path
             ):
                 if "name" not in body or body["name"] == "Self-Test Value":
                     body["name"] = "test_asset_" + secrets.token_hex(4)
+                # Ensure name is lowercase alphanumeric + underscores only
+                if isinstance(body.get("name"), str):
+                    body["name"] = re.sub(r"[^a-z0-9_]", "_", body["name"].lower())
                 # Small valid base64 PNG
-                body["image"] = (
-                    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhAFGAbKm4AAAAABJRU5ErkJggg=="
-                )
+                # Only set image for creation (POST), not update (PATCH)
+                if method == "POST":
+                    body["image"] = (
+                        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhAFGAbKm4AAAAABJRU5ErkJggg=="
+                    )
+                else:
+                    body.pop("image", None)
                 if "server_id" in body and self.test_server_id:
                     body["server_id"] = str(self.test_server_id)
 

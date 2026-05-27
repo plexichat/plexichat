@@ -487,6 +487,97 @@ def to_dict() -> Dict[str, Any]:
     return _get_manager().to_dict()
 
 
+def apply_license_from_base64(license_payload: str) -> Dict[str, Any]:
+    """
+    Apply a new license from a base64-encoded payload string.
+
+    This is used by the admin licensing routes to hot-swap the license.
+
+    Args:
+        license_payload: Base64-encoded license JSON
+
+    Returns:
+        Dict with "success" (bool) and optional "error" (str)
+    """
+    global _free_tier_mode, _license_manager, _setup_called, _public_key_configured
+
+    if _license_manager is None:
+        _license_manager = LicenseManager()
+        LicenseManager.set_public_key(_PLEXICHAT_PUBLIC_KEY_BASE64)
+        _setup_called = True
+        _public_key_configured = True
+
+    try:
+        _license_manager.load_from_base64(license_payload)
+        validation = _license_manager.validate()
+
+        if validation.is_valid:
+            _free_tier_mode = False
+            logger.info(
+                f"License applied and validated for instance: {validation.instance_id}"
+            )
+            return {"success": True}
+        else:
+            _free_tier_mode = True
+            logger.warning(f"License validation failed: {validation.error_message}")
+            return {"success": False, "error": validation.error_message}
+    except Exception as e:
+        _free_tier_mode = True
+        logger.error(f"License apply failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def reload_license() -> bool:
+    """
+    Reload the license from the original source (env var or file).
+
+    Returns:
+        True if a valid license was reloaded
+    """
+    global _free_tier_mode
+    loaded = _try_load_license()
+
+    if loaded and _license_manager:
+        validation = _license_manager.validate()
+        _free_tier_mode = not validation.is_valid
+        logger.info(f"License reloaded: valid={validation.is_valid}")
+        return validation.is_valid
+    else:
+        _free_tier_mode = True
+        return False
+
+
+def validate_license_payload(decoded_bytes: bytes) -> Dict[str, Any]:
+    """
+    Validate a decoded license payload without applying it.
+
+    Args:
+        decoded_bytes: Decoded license JSON bytes
+
+    Returns:
+        Dict with "valid" (bool) and optional "error" (str), "instance_id" (str)
+    """
+    try:
+        import json
+
+        data = json.loads(decoded_bytes.decode("utf-8"))
+
+        temp_mgr = LicenseManager()
+        temp_mgr.set_public_key(_PLEXICHAT_PUBLIC_KEY_BASE64)
+        temp_mgr.load_from_dict(data)
+        result = temp_mgr.validate()
+
+        return {
+            "valid": result.is_valid,
+            "error": result.error_message,
+            "instance_id": result.instance_id,
+            "is_expired": result.is_expired,
+            "is_signature_valid": result.is_signature_valid,
+        }
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
 # Expose core classes and functions
 __all__ = [
     # Setup
@@ -515,6 +606,10 @@ __all__ = [
     "SignatureVerificationError",
     "ExpiredLicenseError",
     "FeatureNotFoundError",
+    # License management
+    "apply_license_from_base64",
+    "reload_license",
+    "validate_license_payload",
     # Constants
     "DEFAULT_LICENSE_PATH",
     "LICENSE_ENV_VAR",

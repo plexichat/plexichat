@@ -474,9 +474,10 @@ selftest:
 
 ### Security Considerations
 
-- **Never enable in production**: `selftest.enabled: true` creates a test user with known credentials (`selftest_admin` / `SelfTest_Password_123!`). This is a severe security risk.
+- **Production-safe**: Selftest uses long, randomly-generated passwords by default (via `secrets.token_urlsafe(16)`). Set `selftest.test_user.password` to a specific strong password in config if you prefer.
+- **Safe for production**: Selftest only creates and deletes its own test users (`selftest_admin` / `selftest_admin_other`). It never touches real admin accounts, admin roles, or admin data. All test resources are cleaned up via API calls before shutdown.
 - `exit_on_failure: false` prevents the server from shutting down if a self-test fails, which could be exploited for denial-of-service.
-- `capture_stack_traces: true` in development is fine, but stack traces in production can reveal implementation details.
+- `capture_stack_traces: true` in development is fine, but stack traces in production can reveal implementation details. Set to false in production for defense-in-depth.
 
 ---
 
@@ -510,7 +511,7 @@ Use environment variable interpolation (`${VAR_NAME}`) in config files to keep s
 - Rate limiting: `rate_limiting.enabled: true`
 - Message encryption: `messaging.encrypt_messages: true`
 - Media signing key: `media.signing_key` -- changed from default
-- Self-test: `selftest.enabled: false`
+- Self-test: `selftest.enabled: true` is safe for production (random passwords, API cleanup, no admin data loss). See Selftest Infrastructure above.
 - Trusted proxies: `api.trusted_proxies` -- configured if behind proxy
 - OAuth PKCE: `oauth.pkce_enabled: true`
 
