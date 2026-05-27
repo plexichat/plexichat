@@ -71,7 +71,7 @@ class TestAccessControl:
         )
         # Create DM and send message with attachment
         dm = messaging_manager.create_dm(user1.id, user2.id)
-        msg = messaging_manager.send_message(
+        _msg = messaging_manager.send_message(
             user_id=user1.id,
             conversation_id=dm.id,
             content="Check this out",

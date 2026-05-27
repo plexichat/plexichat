@@ -36,15 +36,15 @@ Cryptographic algorithm compliance tests including:
 ## Test Coverage
 
 The test suite covers:
-- ✓ Password hashing with Argon2id (salt uniqueness, parameter verification)
-- ✓ Timing attack resistance in password and token verification
-- ✓ AES-256-GCM encryption with nonce uniqueness and authentication
-- ✓ Ed25519 digital signatures (deterministic, unique per message/key)
-- ✓ Key rotation with backward compatibility
-- ✓ Message encryption with additional authenticated data (AAD)
-- ✓ Secure token generation (high entropy, URL-safe encoding)
-- ✓ Cryptographic edge cases (empty data, binary data, concurrent operations)
-- ✓ Algorithm compliance with industry standards (NIST, OWASP, RFC 8032)
+- OK Password hashing with Argon2id (salt uniqueness, parameter verification)
+- OK Timing attack resistance in password and token verification
+- OK AES-256-GCM encryption with nonce uniqueness and authentication
+- OK Ed25519 digital signatures (deterministic, unique per message/key)
+- OK Key rotation with backward compatibility
+- OK Message encryption with additional authenticated data (AAD)
+- OK Secure token generation (high entropy, URL-safe encoding)
+- OK Cryptographic edge cases (empty data, binary data, concurrent operations)
+- OK Algorithm compliance with industry standards (NIST, OWASP, RFC 8032)
 
 ## Running Tests
 

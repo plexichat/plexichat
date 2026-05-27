@@ -2,12 +2,7 @@
 
 import pytest
 
-from src.core.media.models import MediaType, StorageBackend, ScanStatus
 from src.core.media.exceptions import (
-    MediaError,
-    FileSizeError,
-    FileTypeError,
-    FileUploadError,
     PermissionDeniedError,
 )
 

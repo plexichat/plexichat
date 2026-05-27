@@ -3,12 +3,8 @@ Tests for Janus SFU adapter.
 """
 
 import pytest
-import os
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# Setup paths
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 # common_utils imported via standard src.utils.common_utils.utils path
 import src.utils.common_utils.utils.logger as logger
 # noqa: E402

@@ -1,5 +1,3 @@
-import pytest
-from src.core.auth.models import AuditEventType
 from src.utils.encryption import blind_index
 
 

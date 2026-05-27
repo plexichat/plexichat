@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.core.media.models import StorageBackend, MediaType
+from src.core.media.models import StorageBackend
 
 
 MINI_PNG = (

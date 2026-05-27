@@ -7,7 +7,6 @@ safe operational limits for production deployments.
 
 import pytest
 import os
-import sys
 import threading
 import time
 import concurrent.futures
@@ -16,13 +15,7 @@ import utils.config as config  # noqa: E402
 import utils.logger as logger  # noqa: E402
 from src.core.database.core import Database  # noqa: E402
 
-# Setup paths before any imports
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-src_path = project_root
-# common_utils imported via standard src.utils.common_utils.utils path
-for path in [project_root, src_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+# common-utils is now a native package.
 
 
 @pytest.fixture(scope="module")
