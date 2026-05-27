@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS sticker_stickers (
     pack_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     format TEXT NOT NULL DEFAULT 'png',
+    description TEXT,
     tags TEXT,
     related_emoji TEXT,
     url TEXT NOT NULL,

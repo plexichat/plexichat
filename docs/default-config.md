@@ -439,7 +439,7 @@ selftest:
   test_user:
     username: "selftest_admin"
     email: "selftest@internal.local"
-    password: "SelfTest_Password_123!"
+    password: ""  # Empty = auto-generate a long random password (safe for production)
 
 admin_ui:
   enabled: true

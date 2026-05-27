@@ -434,6 +434,7 @@ class AutoModManager(BaseManager):
         exempt_channels: Optional[List[SnowflakeID]] = None,
         priority: int = 0,
         check_all: bool = False,
+        _silent: bool = False,
     ) -> Rule:
         """
         Create a new automod rule.
@@ -518,7 +519,8 @@ class AutoModManager(BaseManager):
             ),
         )
 
-        logger.debug(f"Created automod rule {rule_id} for server {server_id}")
+        if not _silent:
+            logger.debug(f"Created automod rule {rule_id} for server {server_id}")
 
         result = self.get_rule(rule_id)
         assert result is not None  # Should exist since we just created it
@@ -1193,6 +1195,8 @@ class AutoModManager(BaseManager):
         if existing:
             return
 
+        rules_created = 0
+
         # 1. Anti-Spam Rule
         self.create_rule(
             user_id=user_id,
@@ -1210,7 +1214,9 @@ class AutoModManager(BaseManager):
                 {"type": "alert_moderators", "reason": "Automated spam detection"},
             ],
             priority=100,
+            _silent=True,
         )
+        rules_created += 1
 
         # 2. Hate Speech Filter (Keyword based)
         self.create_rule(
@@ -1232,7 +1238,9 @@ class AutoModManager(BaseManager):
                 },
             ],
             priority=200,
+            _silent=True,
         )
+        rules_created += 1
 
         # 3. Hate Speech Filter (Regex for obfuscation)
         self.create_rule(
@@ -1259,6 +1267,14 @@ class AutoModManager(BaseManager):
                 },
             ],
             priority=210,
+            _silent=True,
+        )
+        rules_created += 1
+
+        logger.debug(
+            "Created %d default automod rules for server %d",
+            rules_created,
+            server_id,
         )
 
     def _row_to_rule(self, row) -> Rule:

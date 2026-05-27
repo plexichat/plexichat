@@ -847,16 +847,20 @@ class PlexichatServer:
         )
         self._modules["automod"] = automod
 
-        # Ensure default rules for all servers
+        # Ensure default rules for all servers (summary log only)
         try:
             all_servers = self.db.fetch_all(
                 "SELECT id, owner_id FROM srv_servers WHERE deleted = 0"
             )
+            server_count = 0
             for srv in all_servers:
+                # ensure_default_rules returns quickly if rules already exist
                 automod.ensure_default_rules(srv["id"], srv["owner_id"])
-            if all_servers:
+                server_count += 1
+            if server_count:
                 logger.info(
-                    f"Ensured default automod rules for {len(all_servers)} servers"
+                    "Verified automod rules across %d server(s)",
+                    server_count,
                 )
         except Exception as e:
             logger.warning(f"Failed to ensure default rules for servers: {e}")
