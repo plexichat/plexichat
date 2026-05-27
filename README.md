@@ -73,12 +73,31 @@ python -m venv .venv
 # Activate (Linux/Mac)
 source .venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies with hash verification
+pip install --require-hashes -r requirements.txt
 
 # Run server
 python main.py
 ```
+
+### Dependency Management
+
+Direct dependencies are listed in `requirements.in`. The `requirements.txt` file is auto-generated with pinned transitive dependencies and integrity hashes.
+
+To update dependencies:
+
+```bash
+# Install uv (if not already installed)
+pip install uv
+
+# Edit requirements.in, then regenerate
+uv pip compile requirements.in --generate-hashes -o requirements.txt
+
+# Install with hash verification
+pip install --require-hashes -r requirements.txt
+```
+
+Commit both `requirements.in` and `requirements.txt`.
 
 The server will:
 
@@ -124,7 +143,8 @@ See `docs/` and `config/` for repository-backed configuration details.
 ```
 plexichat/
 +-- main.py              # Server entry point
-+-- requirements.txt     # Production dependencies
++-- requirements.in      # Direct dependency spec (source of truth)
++-- requirements.txt     # Pinned dependencies with integrity hashes (auto-generated)
 +-- config/              # Default configuration templates
 +-- docs/                # API and system documentation
 +-- src/
@@ -225,8 +245,8 @@ See [SECURITY.md](SECURITY.md) for full details.
 ### Quick Start
 
 ```bash
-# Install dependencies (includes test dependencies)
-pip install -r requirements.txt
+# Install dependencies with hash verification (includes test deps)
+pip install --require-hashes -r requirements.txt
 
 # Run the server test suite
 pytest src/tests

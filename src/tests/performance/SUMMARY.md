@@ -257,7 +257,7 @@ Tests are designed for automated pipelines:
 
 ## Dependencies
 
-Required packages (already in `requirements-test.txt`):
+Required packages (already in `requirements.txt`):
 - `pytest-benchmark>=4.0.0` - Performance benchmarking
 - `psutil` - Memory and CPU monitoring (via existing dependencies)
 - `httpx>=0.24.0` - API testing (already included)

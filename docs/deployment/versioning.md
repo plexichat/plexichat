@@ -133,7 +133,7 @@ git pull origin main
 # Update dependencies
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 
 # Run database migrations
 python -m src.core.migrations.cli apply_migrations
@@ -186,7 +186,7 @@ cp /opt/plexichat/data/plexichat.db data/
 # Install dependencies
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 
 # Run migrations
 python -m src.core.migrations.cli apply_migrations
