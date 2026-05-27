@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, Callable, Type
 
 from fastapi import Request
 
+import src.api as api
 import utils.config as config
 from src.core.ratelimit import RateLimitMiddlewareASGI as RateLimitMiddleware
 from src.core.ratelimit.middleware import extract_route_info
@@ -63,6 +64,16 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
         "is_webhook": False,
         "webhook_id": None,
     }
+
+    # Self-test traffic carries the internal secret header but may reach the
+    # limiter before AuthenticationMiddleware marks request.state.is_internal.
+    # Detect it directly so the self-test bypass remains effective.
+    try:
+        if api.is_self_test_request(request):
+            user_info["is_internal"] = True
+            return user_info
+    except Exception:
+        pass
 
     if hasattr(request.state, "user") and request.state.user:
         user = request.state.user

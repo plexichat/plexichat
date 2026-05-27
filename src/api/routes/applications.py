@@ -16,6 +16,10 @@ from src.core.applications import InteractionResponse, InteractionResponseType
 from src.core.applications.exceptions import (
     ApplicationNotFoundError,
     ApplicationAccessDeniedError,
+    InteractionNotFoundError,
+    InteractionExpiredError,
+    InteractionAlreadyRespondedError,
+    InteractionValidationError,
 )
 
 
@@ -414,6 +418,26 @@ async def respond_to_interaction(
         applications.create_interaction_response(
             interaction_token=interaction_token,
             response=response,
+        )
+    except InteractionNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": 404, "message": str(e)}},
+        )
+    except InteractionExpiredError as e:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={"error": {"code": 410, "message": str(e)}},
+        )
+    except InteractionAlreadyRespondedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": {"code": 409, "message": str(e)}},
+        )
+    except InteractionValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": str(e)}},
         )
     except (TypeError, ValueError) as e:
         raise HTTPException(

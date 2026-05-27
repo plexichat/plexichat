@@ -198,6 +198,16 @@ async def create_role(request: Request, role_data: RoleCreate):
             detail={"error": {"code": 400, "message": "Invalid permissions format"}},
         )
 
+    # Check duplicate name
+    existing = db.fetch_one(
+        "SELECT id FROM admin_roles WHERE name = ?", (role_data.name,)
+    )
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Role name already exists"}},
+        )
+
     db.execute(
         """
         INSERT INTO admin_roles (id, name, description, permissions, created_at, created_by, is_system)

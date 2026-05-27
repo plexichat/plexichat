@@ -2,6 +2,7 @@
 Admin log management routes.
 """
 
+import os
 from fastapi import APIRouter, Request, HTTPException
 from typing import List, Optional
 from src.api.schemas.admin import LogFileInfo, LogViewResponse
@@ -40,10 +41,19 @@ async def read_admin_log(
     """
     check_host_restriction(request)
     get_admin_from_token(request)
+
+    # Prevent path traversal
+    sanitized = os.path.basename(filename)
+    if sanitized != filename or ".." in filename or "/" in filename:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid filename"}},
+        )
+
     from src.core.admin import logs
 
     try:
-        data = logs.read_log_lines(filename, limit, offset, search, level)
+        data = logs.read_log_lines(sanitized, limit, offset, search, level)
         return LogViewResponse(**data)
     except FileNotFoundError:
         raise HTTPException(

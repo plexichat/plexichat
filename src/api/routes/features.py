@@ -19,10 +19,8 @@ from .admin.utils import get_admin_from_token
 from src.api.schemas.features import (
     UserFeaturesResponse,
     UpdateFeaturesRequest,
-    SetTierRequest,
     BadgeInfo,
     PublicFeaturesResponse,
-    UserBadgeUpdateResponse,
     TiersResponse,
     BadgesResponse,
     TierLimitsResponse,
@@ -102,8 +100,12 @@ def _get_auth_module():
 
 def _check_admin(token_info: TokenInfo) -> None:
     """Check if user is admin."""
-    # Check for admin permission
-    if not token_info.permissions.get("administrator", False):
+    has_admin = (
+        token_info.permissions.get("administrator", False)
+        or token_info.permissions.get("admin.*", False)
+        or token_info.permissions.get("*", False)
+    )
+    if not has_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": {"code": 403, "message": "Admin access required"}},
@@ -189,7 +191,7 @@ async def get_user_features(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to fetch features: {str(e)}",
+                        "message": "Failed to fetch user features",
                     }
                 },
             )
@@ -202,7 +204,7 @@ async def get_user_features(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -282,14 +284,16 @@ async def update_user_features(
             if "InvalidTier" in exc_name:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}},
+                    detail={"error": {"code": 400, "message": f"Invalid tier: {e}"}},
                 )
             logger.error(
                 f"Failed to update features for user {user_id}: {e}", exc_info=True
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": f"Update failed: {str(e)}"}},
+                detail={
+                    "error": {"code": 500, "message": "Failed to update user features"}
+                },
             )
     except HTTPException:
         raise
@@ -300,257 +304,7 @@ async def update_user_features(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
-        )
-
-
-@router.put(
-    "/admin/users/{user_id}/tier",
-    response_model=UserFeaturesResponse,
-    summary="Set user tier (Admin)",
-    responses={
-        400: {"model": ErrorResponse, "description": "Invalid user ID or tier"},
-        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
-        403: {"model": ErrorResponse, "description": "Admin access required"},
-        404: {"model": ErrorResponse, "description": "User not found"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
-async def set_user_tier(
-    user_id: str,
-    body: SetTierRequest,
-    current_user: TokenInfo = Depends(get_admin_access),
-) -> UserFeaturesResponse:
-    """
-    Set rate limit tier for a user (admin only).
-    """
-    _check_admin(current_user)
-
-    features = _get_features_module()
-    if not features:
-        logger.error("Features module not available")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Features module not available"}},
-        )
-
-    try:
-        try:
-            uid = int(user_id)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid user ID format for tier update: {user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid user ID"}},
-            )
-
-        if not _user_exists(uid):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": {"code": 404, "message": "User not found"}},
-            )
-
-        try:
-            features.set_user_tier(
-                uid, current_user.user_id, body.tier, body.expires_at
-            )
-
-            logger.info(
-                f"Admin {current_user.user_id} set tier '{body.tier}' for user {uid}"
-            )
-
-            # Return updated features
-            user_features = features.get_user_features(uid)
-            tier = features.get_user_tier(uid)
-            tier_limits = features.get_tier_limits(tier)
-
-            return UserFeaturesResponse(
-                user_id=user_id,
-                rate_limit_tier=tier,
-                badges=user_features.badges if user_features else [],
-                tier_limits=TierLimitsResponse(**tier_limits.to_dict()),
-                expires_at=user_features.expires_at if user_features else None,
-            )
-        except Exception as e:
-            exc_name = type(e).__name__
-            if "InvalidTier" in exc_name:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}},
-                )
-            logger.error(f"Failed to set tier for user {user_id}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "error": {"code": 500, "message": f"Failed to set tier: {str(e)}"}
-                },
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Unexpected error in set_user_tier for user {user_id}: {e}", exc_info=True
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
-        )
-
-
-@router.post(
-    "/admin/users/{user_id}/badges/{badge}",
-    response_model=UserBadgeUpdateResponse,
-    summary="Add user badge (Admin)",
-    responses={
-        400: {"model": ErrorResponse, "description": "Invalid user ID or badge"},
-        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
-        403: {"model": ErrorResponse, "description": "Admin access required"},
-        404: {"model": ErrorResponse, "description": "User not found"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
-async def add_feature_badge(
-    user_id: str, badge: str, current_user: TokenInfo = Depends(get_admin_access)
-) -> UserBadgeUpdateResponse:
-    """
-    Add a badge to a user (admin only).
-    """
-    _check_admin(current_user)
-
-    features = _get_features_module()
-    if not features:
-        logger.error("Features module not available")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Features module not available"}},
-        )
-
-    try:
-        try:
-            uid = int(user_id)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid user ID format for badge add: {user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid user ID"}},
-            )
-
-        if not _user_exists(uid):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": {"code": 404, "message": "User not found"}},
-            )
-
-        try:
-            badges = features.add_badge(uid, current_user.user_id, badge)
-
-            logger.info(
-                f"Admin {current_user.user_id} added badge '{badge}' to user {uid}"
-            )
-
-            return UserBadgeUpdateResponse(success=True, badges=badges)
-        except Exception as e:
-            exc_name = type(e).__name__
-            if "InvalidBadge" in exc_name:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}},
-                )
-            logger.error(f"Failed to add badge to user {user_id}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "error": {"code": 500, "message": f"Failed to add badge: {str(e)}"}
-                },
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Unexpected error in add_feature_badge for user {user_id}: {e}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
-        )
-
-
-@router.delete(
-    "/admin/users/{user_id}/badges/{badge}",
-    response_model=UserBadgeUpdateResponse,
-    summary="Remove user badge (Admin)",
-    responses={
-        400: {"model": ErrorResponse, "description": "Invalid user ID or badge"},
-        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
-        403: {"model": ErrorResponse, "description": "Admin access required"},
-        404: {"model": ErrorResponse, "description": "User not found"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
-async def remove_feature_badge(
-    user_id: str, badge: str, current_user: TokenInfo = Depends(get_admin_access)
-) -> UserBadgeUpdateResponse:
-    """
-    Remove a badge from a user (admin only).
-    """
-    _check_admin(current_user)
-
-    features = _get_features_module()
-    if not features:
-        logger.error("Features module not available")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Features module not available"}},
-        )
-
-    try:
-        try:
-            uid = int(user_id)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid user ID format for badge removal: {user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid user ID"}},
-            )
-
-        if not _user_exists(uid):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": {"code": 404, "message": "User not found"}},
-            )
-
-        try:
-            badges = features.remove_badge(uid, current_user.user_id, badge)
-
-            logger.info(
-                f"Admin {current_user.user_id} removed badge '{badge}' from user {uid}"
-            )
-
-            return UserBadgeUpdateResponse(success=True, badges=badges)
-        except Exception as e:
-            logger.error(
-                f"Failed to remove badge from user {user_id}: {e}", exc_info=True
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "error": {
-                        "code": 500,
-                        "message": f"Failed to remove badge: {str(e)}",
-                    }
-                },
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Unexpected error in remove_feature_badge for user {user_id}: {e}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -593,7 +347,7 @@ async def get_available_tiers(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
-                "error": {"code": 500, "message": f"Failed to fetch tiers: {str(e)}"}
+                "error": {"code": 500, "message": "Failed to fetch tier configuration"}
             },
         )
 
@@ -646,7 +400,7 @@ async def get_available_badges(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
-                "error": {"code": 500, "message": f"Failed to fetch badges: {str(e)}"}
+                "error": {"code": 500, "message": "Failed to fetch badge configuration"}
             },
         )
 
@@ -712,7 +466,5 @@ async def get_my_features(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": {"code": 500, "message": f"Failed to fetch features: {str(e)}"}
-            },
+            detail={"error": {"code": 500, "message": "Failed to fetch features"}},
         )

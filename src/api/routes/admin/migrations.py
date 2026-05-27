@@ -203,6 +203,30 @@ async def list_migrations(
         )
 
 
+@router.get("/migrations/status")
+async def get_migration_system_status(
+    request: Request,
+    manager: MigrationManager = Depends(get_migration_manager),
+    admin_user: int = Depends(get_admin_user),
+) -> Dict[str, Any]:
+    check_host_restriction(request)
+    try:
+        status = manager.get_migration_status()
+        integrity = manager.validate_migration_integrity()
+        manager.tracker.update_uptime()
+        return {
+            **status,
+            "integrity": integrity,
+            "uptime_tracked": True,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get migration system status: {e}")
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get migration system status: {str(e)}",
+        )
+
+
 @router.get("/migrations/{version}", response_model=MigrationDetailResponse)
 async def get_migration_details(
     request: Request,
@@ -443,36 +467,4 @@ async def generate_emergency_override(
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate emergency override: {str(e)}",
-        )
-
-
-@router.get("/migrations/status")
-async def get_migration_system_status(
-    request: Request,
-    manager: MigrationManager = Depends(get_migration_manager),
-    admin_user: int = Depends(get_admin_user),
-) -> Dict[str, Any]:
-    """
-    Get overall migration system status.
-
-    Includes counts, integrity check results, and uptime information.
-    """
-    check_host_restriction(request)
-    try:
-        status = manager.get_migration_status()
-        integrity = manager.validate_migration_integrity()
-
-        # Get current uptime
-        manager.tracker.update_uptime()
-
-        return {
-            **status,
-            "integrity": integrity,
-            "uptime_tracked": True,
-        }
-    except Exception as e:
-        logger.error(f"Failed to get migration system status: {e}")
-        raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get migration system status: {str(e)}",
         )

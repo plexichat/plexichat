@@ -18,6 +18,9 @@ from .migrations import router as migrations_router
 from .roles import router as roles_router
 from .approvals import router as approvals_router
 from .bots import router as admin_bots_router
+from .audit import router as audit_router
+from .licensing import router as licensing_router
+from .plexijoin import router as plexijoin_router
 
 router = APIRouter()
 
@@ -31,9 +34,12 @@ router.include_router(moderation_router)
 router.include_router(telemetry_router)
 router.include_router(logs_router)
 router.include_router(database_router)
+router.include_router(roles_router)
+router.include_router(approvals_router)
 router.include_router(ui_router)
 router.include_router(reindex_router)
 router.include_router(migrations_router)
-router.include_router(roles_router)
-router.include_router(approvals_router)
 router.include_router(admin_bots_router)
+router.include_router(audit_router)
+router.include_router(licensing_router)
+router.include_router(plexijoin_router)

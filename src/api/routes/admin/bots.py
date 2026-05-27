@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from .utils import check_host_restriction, get_admin_from_token
 from src.api.schemas.common import ErrorResponse
 from src.core import applications
+import utils.logger as logger
 
 router = APIRouter(prefix="/bots", tags=["Admin Bots"])
 
@@ -76,60 +77,12 @@ async def admin_bot_stats(
     """Get bot statistics for the admin dashboard."""
     try:
         _require_admin(request)
-        stats = BotStatsResponse()
-
-        # Count total applications
-        rows = applications._get_manager()._db.fetch_all(
-            "SELECT COUNT(*) as count FROM app_applications"
-        )
-        stats.total_applications = rows[0]["count"] if rows else 0
-
-        # Count applications with bots
-        rows = applications._get_manager()._db.fetch_all(
-            "SELECT COUNT(*) as count FROM app_applications WHERE bot_id IS NOT NULL"
-        )
-        stats.total_bots = rows[0]["count"] if rows else 0
-
-        # Count approved bots
-        rows = applications._get_manager()._db.fetch_all(
-            "SELECT COUNT(*) as count FROM app_approved_bots WHERE status = 'approved'"
-        )
-        stats.total_approved = rows[0]["count"] if rows else 0
-
-        # Count pending requests
-        rows = applications._get_manager()._db.fetch_all(
-            "SELECT COUNT(*) as count FROM app_bot_requests WHERE status = 'pending'"
-        )
-        stats.total_pending_requests = rows[0]["count"] if rows else 0
-
-        # Count total installations
-        rows = applications._get_manager()._db.fetch_all(
-            "SELECT COUNT(*) as count FROM app_installations"
-        )
-        stats.total_installations = rows[0]["count"] if rows else 0
-
-        # Count servers with bots
-        rows = applications._get_manager()._db.fetch_all(
-            "SELECT COUNT(DISTINCT server_id) as count FROM app_approved_bots WHERE status = 'approved'"
-        )
-        stats.servers_with_bots = rows[0]["count"] if rows else 0
-
-        # Recent activity (last 7 days)
-        week_ago = applications._get_manager()._get_timestamp() - 604800
-        rows = applications._get_manager()._db.fetch_all(
-            "SELECT COUNT(*) as count FROM app_approved_bots WHERE installed_at >= ?",
-            (week_ago,),
-        )
-        stats.recent_approvals = rows[0]["count"] if rows else 0
-
-        rows = applications._get_manager()._db.fetch_all(
-            "SELECT COUNT(*) as count FROM app_bot_requests WHERE created_at >= ?",
-            (week_ago,),
-        )
-        stats.recent_requests = rows[0]["count"] if rows else 0
-
-        return stats
+        stats = applications.get_admin_bot_stats()
+        return BotStatsResponse(**stats)
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Admin bot stats error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": str(e)}},
@@ -153,33 +106,12 @@ async def admin_list_applications(
     """List all applications with bot stats for the admin panel."""
     try:
         _require_admin(request)
-        if limit > 100:
-            limit = 100
-
-        rows = applications._get_manager()._db.fetch_all(
-            """SELECT a.id, a.name, a.owner_id, a.bot_id, a.icon_url, a.created_at,
-                      (SELECT COUNT(*) FROM app_approved_bots ab WHERE ab.application_id = a.id AND ab.status = 'approved') as approved_count,
-                      (SELECT COUNT(*) FROM app_bot_requests br WHERE br.application_id = a.id AND br.status = 'pending') as pending_count
-               FROM app_applications a
-               ORDER BY a.created_at DESC
-               LIMIT ? OFFSET ?""",
-            (limit, offset),
-        )
-
-        return [
-            AdminBotEntry(
-                id=row["id"],
-                name=row["name"],
-                owner_id=row["owner_id"],
-                bot_id=row["bot_id"],
-                icon_url=row["icon_url"],
-                approved_servers=row["approved_count"] or 0,
-                pending_requests=row["pending_count"] or 0,
-                created_at=row["created_at"],
-            )
-            for row in rows
-        ]
+        rows = applications.get_admin_bot_applications(limit=limit, offset=offset)
+        return [AdminBotEntry(**row) for row in rows]
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Admin bot applications error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": str(e)}},
@@ -204,42 +136,14 @@ async def admin_list_requests(
     """List bot requests for the admin panel."""
     try:
         _require_admin(request)
-        if limit > 100:
-            limit = 100
-
-        conditions = []
-        params = []
-        if status_filter:
-            conditions.append("br.status = ?")
-            params.append(status_filter)
-
-        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
-        params.extend([limit, offset])
-
-        rows = applications._get_manager()._db.fetch_all(
-            f"""SELECT br.id, br.application_id, a.name as app_name, br.server_id,
-                      br.requester_id, br.reason, br.status, br.created_at
-               FROM app_bot_requests br
-               JOIN app_applications a ON br.application_id = a.id{where_clause}
-               ORDER BY br.created_at DESC
-               LIMIT ? OFFSET ?""",
-            tuple(params),
+        rows = applications.get_admin_bot_requests(
+            status_filter=status_filter, limit=limit, offset=offset
         )
-
-        return [
-            AdminBotRequestEntry(
-                id=row["id"],
-                application_id=row["application_id"],
-                application_name=row["app_name"],
-                server_id=row["server_id"],
-                requester_id=row["requester_id"],
-                reason=row["reason"],
-                status=row["status"],
-                created_at=row["created_at"],
-            )
-            for row in rows
-        ]
+        return [AdminBotRequestEntry(**row) for row in rows]
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Admin bot requests error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": str(e)}},
