@@ -187,11 +187,10 @@ class StickerManager:
             description_encrypted = encrypt_data(description)
 
         self._db.execute(
-            "INSERT INTO sticker_packs (id, name, description, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sticker_packs (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 pack_id,
                 name,
-                description,
                 description_encrypted,
                 pack_type.value,
                 server_id,
@@ -433,18 +432,22 @@ class StickerManager:
             if hasattr(row, "get")
             else (row["sticker_count"] if "sticker_count" in row.keys() else 0)
         )
-        # Decrypt description if encryption is enabled and encrypted data exists
-        description = row["description"]
-        if self._encrypt_descriptions and row.get("description_encrypted"):
-            from src.utils.encryption import decrypt_data
+        # Read description from description_encrypted column
+        # If encryption is enabled, decrypt it; otherwise, read as plaintext
+        description = None
+        if row.get("description_encrypted"):
+            if self._encrypt_descriptions:
+                from src.utils.encryption import decrypt_data
 
-            try:
-                description = decrypt_data(row["description_encrypted"])
-            except Exception as e:
-                logger.warning(
-                    f"Failed to decrypt sticker pack description {row['id']}: {e}"
-                )
-                description = row["description"]  # Fallback to unencrypted
+                try:
+                    description = decrypt_data(row["description_encrypted"])
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to decrypt sticker pack description {row['id']}: {e}"
+                    )
+            else:
+                # Not encrypted — stored as plaintext
+                description = row["description_encrypted"]
 
         return StickerPack(
             id=row["id"],

@@ -82,6 +82,26 @@ class Database(
         if self.type == "postgres":
             self.start_pool_monitoring()
 
+    def fetch_last_insert_id(self) -> Optional[int]:
+        """Get the last insert ID (compatibility shim for migration tracker).
+
+        Returns the rowid of the last successful INSERT.
+        For SQLite, uses last_insert_rowid(). For PostgreSQL, uses LASTVAL().
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if self.type == "postgres":
+                cursor.execute("SELECT LASTVAL()")
+            else:
+                cursor.execute("SELECT last_insert_rowid()")
+            result = cursor.fetchone()
+            if result:
+                return result[0] if not hasattr(result, "keys") else result[0]
+            return None
+        finally:
+            cursor.close()
+
     @property
     def transaction_depth(self) -> int:
         if not hasattr(self._local, "transaction_depth"):

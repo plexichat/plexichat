@@ -182,13 +182,19 @@ class RateLimitMiddlewareASGI:
                     "admin.*", False
                 ) or permissions.get("*", False)
 
-            # Bypass check
+            # Bypass check (constant-time comparison to prevent timing attacks)
             bypass_secret = config.get("rate_limiting.bypass_secret")
             bypass_header = request.headers.get("X-RateLimit-Bypass")
 
-            if bypass_secret and bypass_header == bypass_secret:
+            import hmac
+
+            if (
+                bypass_secret
+                and bypass_header
+                and hmac.compare_digest(bypass_header, bypass_secret)
+            ):
                 user_info["is_internal"] = True
-            elif getattr(request.state, "is_selftest", False):
+            elif getattr(request.state, "is_internal", False):
                 user_info["is_internal"] = True
 
         route, resource_id, webhook_id = extract_route_info(path, method)

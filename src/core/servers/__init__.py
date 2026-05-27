@@ -170,6 +170,7 @@ __all__ = [
     "get_all_shared_member_ids",
     "update_member",
     "remove_member",
+    "leave_server",
     "kick_member",
     "ban_member",
     "unban_member",
@@ -404,7 +405,11 @@ def create_category(
 
 def get_channel(channel_id: int, user_id: int) -> Optional[Channel]:
     """Get a channel by ID if user has access."""
-    return _get_manager().get_channel(channel_id, user_id)
+    # NOTE: Args are deliberately swapped when passing to the manager.
+    # The public API uses (channel_id, user_id) order, but the manager
+    # expects (user_id, channel_id). This preserves backward compatibility
+    # for all 59+ callers without changing the public signature.
+    return _get_manager().get_channel(user_id, channel_id)
 
 
 def get_channels(
@@ -565,6 +570,11 @@ def update_member(
 
 def remove_member(user_id: int, server_id: int) -> bool:
     """Remove yourself from a server (leave)."""
+    return _get_manager().remove_member(user_id, server_id)
+
+
+def leave_server(user_id: int, server_id: int) -> bool:
+    """Alias for remove_member - leave a server."""
     return _get_manager().remove_member(user_id, server_id)
 
 

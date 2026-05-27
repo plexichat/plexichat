@@ -1951,7 +1951,7 @@ class MediaManager(BaseManager):
         if row["metadata"]:
             try:
                 metadata = json.loads(row["metadata"])
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Failed to parse media metadata for {row['id']}: {e}")
 
         # Get the correct storage for this file's backend

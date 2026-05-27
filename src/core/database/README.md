@@ -674,12 +674,12 @@ In-memory caching for small, frequently-read reference tables that rarely change
 
 | Use Case | RAM Cache | Redis |
 |----------|-----------|-------|
-| Static reference data (categories, config) | ✓ | |
-| User-specific data (settings, presence) | | ✓ |
-| Session data | | ✓ |
-| Data shared across server instances | | ✓ |
-| Data that changes frequently | | ✓ |
-| Tiny tables (< 100 rows) read 1000x/sec | ✓ | |
+| Static reference data (categories, config) | OK | |
+| User-specific data (settings, presence) | | OK |
+| Session data | | OK |
+| Data shared across server instances | | OK |
+| Data that changes frequently | | OK |
+| Tiny tables (< 100 rows) read 1000x/sec | OK | |
 
 ## Usage
 
@@ -751,9 +751,9 @@ Plexichat uses a multi-tier caching strategy:
 ## Cache Invalidation
 
 Caches are invalidated on writes:
-- User update → invalidate `user:*{user_id}*`
-- Server update → invalidate `server:{server_id}`
-- Settings update → invalidate `notif_settings:{user_id}:*`
+- User update -> invalidate `user:*{user_id}*`
+- Server update -> invalidate `server:{server_id}`
+- Settings update -> invalidate `notif_settings:{user_id}:*`
 
 ## Graceful Degradation
 

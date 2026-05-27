@@ -7,22 +7,22 @@ Secure messaging system for Plexichat API supporting direct messages, group conv
 The messaging module uses a layered architecture for maintainability and testability:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    MessagingManager                          │
-│                    (Facade Layer)                            │
-├─────────────────────────────────────────────────────────────┤
-│  ConversationService  │  MessageService  │  ParticipantService│
-│  MessageStatusService │  AttachmentService│  PinService       │
-│  UserSettingsService  │  ContentFilterService                │
-│                    (Service Layer)                           │
-├─────────────────────────────────────────────────────────────┤
-│  ConversationRepository │ MessageRepository │ ParticipantRepo │
-│  MessageStatusRepository│ AttachmentRepository│ PinRepository │
-│  UserSettingsRepository                                      │
-│                    (Repository Layer)                        │
-├─────────────────────────────────────────────────────────────┤
-│                    Database (SQLite/PostgreSQL)              │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+|                    MessagingManager                          |
+|                    (Facade Layer)                            |
++-------------------------------------------------------------+
+|  ConversationService  |  MessageService  |  ParticipantService|
+|  MessageStatusService |  AttachmentService|  PinService       |
+|  UserSettingsService  |  ContentFilterService                |
+|                    (Service Layer)                           |
++-------------------------------------------------------------+
+|  ConversationRepository | MessageRepository | ParticipantRepo |
+|  MessageStatusRepository| AttachmentRepository| PinRepository |
+|  UserSettingsRepository                                      |
+|                    (Repository Layer)                        |
++-------------------------------------------------------------+
+|                    Database (SQLite/PostgreSQL)              |
++-------------------------------------------------------------+
 ```
 
 ### Key Design Principles
@@ -447,30 +447,30 @@ async def send_with_retry():
 
 ```
 messaging/
-├── __init__.py          # Public API exports
-├── manager.py           # Facade coordinating services
-├── models.py            # Data models (dataclasses)
-├── exceptions.py        # Custom exceptions
-├── schema.py            # Database schema
-├── content.py           # Content validation utilities
-├── events.py            # Event bus implementation
-├── repositories/        # Data access layer
-│   ├── base.py
-│   ├── conversation.py
-│   ├── message.py
-│   ├── participant.py
-│   ├── message_status.py
-│   ├── attachment.py
-│   ├── pin.py
-│   └── user_settings.py
-└── services/            # Business logic layer
-    ├── base.py
-    ├── conversation.py
-    ├── message.py
-    ├── participant.py
-    ├── message_status.py
-    ├── attachment.py
-    ├── pin.py
-    ├── user_settings.py
-    └── content_filter.py
++-- __init__.py          # Public API exports
++-- manager.py           # Facade coordinating services
++-- models.py            # Data models (dataclasses)
++-- exceptions.py        # Custom exceptions
++-- schema.py            # Database schema
++-- content.py           # Content validation utilities
++-- events.py            # Event bus implementation
++-- repositories/        # Data access layer
+|   +-- base.py
+|   +-- conversation.py
+|   +-- message.py
+|   +-- participant.py
+|   +-- message_status.py
+|   +-- attachment.py
+|   +-- pin.py
+|   +-- user_settings.py
++-- services/            # Business logic layer
+    +-- base.py
+    +-- conversation.py
+    +-- message.py
+    +-- participant.py
+    +-- message_status.py
+    +-- attachment.py
+    +-- pin.py
+    +-- user_settings.py
+    +-- content_filter.py
 ```

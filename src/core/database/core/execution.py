@@ -164,7 +164,25 @@ class DatabaseExecutionMixin:
                     "OperationalError" in type(e).__name__ or "closed" in str(e).lower()
                 )
 
-                if attempt < 2 and is_conn_error and not self.in_transaction:
+                # Do NOT retry schema errors (e.g. "no such column", "no such table", "duplicate column")
+                # Retrying is pointless since the schema won't change between attempts.
+                err_str = str(e).lower()
+                is_schema_error = any(
+                    phrase in err_str
+                    for phrase in [
+                        "no such column",
+                        "no such table",
+                        "duplicate column",
+                        "already exists",
+                    ]
+                )
+
+                if (
+                    attempt < 2
+                    and is_conn_error
+                    and not self.in_transaction
+                    and not is_schema_error
+                ):
                     logger.warning(
                         f"Database connection error (attempt {attempt + 1}), retrying: {e}"
                     )
@@ -218,7 +236,25 @@ class DatabaseExecutionMixin:
                     "OperationalError" in type(e).__name__ or "closed" in str(e).lower()
                 )
 
-                if attempt < 2 and is_conn_error and not self.in_transaction:
+                # Do NOT retry schema errors (e.g. "no such column", "no such table", "duplicate column")
+                # Retrying is pointless since the schema won't change between attempts.
+                err_str = str(e).lower()
+                is_schema_error = any(
+                    phrase in err_str
+                    for phrase in [
+                        "no such column",
+                        "no such table",
+                        "duplicate column",
+                        "already exists",
+                    ]
+                )
+
+                if (
+                    attempt < 2
+                    and is_conn_error
+                    and not self.in_transaction
+                    and not is_schema_error
+                ):
                     logger.warning(
                         f"Database connection error during execute_many (attempt {attempt + 1}), retrying: {e}"
                     )

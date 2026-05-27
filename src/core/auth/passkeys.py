@@ -13,17 +13,27 @@ Security features:
 """
 
 import base64
+import dataclasses
 import json
 import os
 import secrets
 import time
+import utils.config as config
+import utils.logger as logger
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import utils.config as config
-import utils.logger as logger
-
 from src.utils.encryption import EncryptionManager
+
+
+class _WebAuthnJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles webauthn-specific types like bytes."""
+
+    def default(self, o: Any) -> Any:
+        if isinstance(o, bytes):
+            return base64.urlsafe_b64encode(o).rstrip(b"=").decode("ascii")
+        return super().default(o)
+
 
 # WebAuthn components (defined as Any to satisfy pyright)
 generate_authentication_options: Any = None
@@ -340,8 +350,10 @@ class PasskeyManager:
             attestation=AttestationConveyancePreference.DIRECT,
         )
 
-        # Convert to dict for JSON serialization
-        options_dict = json.loads(options.json())
+        # Convert to dict for JSON serialization with proper bytes handling
+        options_dict = json.loads(
+            json.dumps(dataclasses.asdict(options), cls=_WebAuthnJSONEncoder)
+        )
 
         return RegistrationOptions(
             challenge_id=challenge_id,
@@ -558,8 +570,10 @@ class PasskeyManager:
             user_verification=UserVerificationRequirement.PREFERRED,
         )
 
-        # Convert to dict
-        options_dict = json.loads(options.json())
+        # Convert to dict with proper bytes handling
+        options_dict = json.loads(
+            json.dumps(dataclasses.asdict(options), cls=_WebAuthnJSONEncoder)
+        )
 
         return AuthenticationOptions(
             challenge_id=challenge_id,

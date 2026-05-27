@@ -132,7 +132,7 @@ class MessagingManager(BaseManager):
         # Event bus for reliable event delivery
         self._event_bus = get_event_bus()
 
-        logger.info("Messaging module initialized (refactored)")
+        logger.info("Messaging module initialized")
 
     def _is_participant(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID

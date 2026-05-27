@@ -15,57 +15,57 @@ logger = logging.getLogger(__name__)
 
 def up(db):
     """Apply migration to add encrypted columns."""
-    logger.info("Migration 026: Starting description encrypted column addition")
+    logger.info("Migration 027: Starting description encrypted column addition")
 
     # Server descriptions
     if db.table_exists("srv_servers"):
         if not db.column_exists("srv_servers", "description_encrypted"):
-            logger.info("Migration 026: Adding description_encrypted to srv_servers")
+            logger.info("Migration 027: Adding description_encrypted to srv_servers")
             db.execute("ALTER TABLE srv_servers ADD COLUMN description_encrypted TEXT")
         else:
             logger.info(
-                "Migration 026: Column description_encrypted already exists in srv_servers"
+                "Migration 027: Column description_encrypted already exists in srv_servers"
             )
     else:
-        logger.warning("Migration 026: Table srv_servers does not exist, skipping")
+        logger.warning("Migration 027: Table srv_servers does not exist, skipping")
 
     # Channel topics
     if db.table_exists("srv_channels"):
         if not db.column_exists("srv_channels", "topic_encrypted"):
-            logger.info("Migration 026: Adding topic_encrypted to srv_channels")
+            logger.info("Migration 027: Adding topic_encrypted to srv_channels")
             db.execute("ALTER TABLE srv_channels ADD COLUMN topic_encrypted TEXT")
         else:
             logger.info(
-                "Migration 026: Column topic_encrypted already exists in srv_channels"
+                "Migration 027: Column topic_encrypted already exists in srv_channels"
             )
     else:
-        logger.warning("Migration 026: Table srv_channels does not exist, skipping")
+        logger.warning("Migration 027: Table srv_channels does not exist, skipping")
 
     # Thread names
     if db.table_exists("thread_threads"):
         if not db.column_exists("thread_threads", "name_encrypted"):
-            logger.info("Migration 026: Adding name_encrypted to thread_threads")
+            logger.info("Migration 027: Adding name_encrypted to thread_threads")
             db.execute("ALTER TABLE thread_threads ADD COLUMN name_encrypted TEXT")
         else:
             logger.info(
-                "Migration 026: Column name_encrypted already exists in thread_threads"
+                "Migration 027: Column name_encrypted already exists in thread_threads"
             )
     else:
-        logger.warning("Migration 026: Table thread_threads does not exist, skipping")
+        logger.warning("Migration 027: Table thread_threads does not exist, skipping")
 
     # Sticker pack descriptions
     if db.table_exists("sticker_packs"):
         if not db.column_exists("sticker_packs", "description_encrypted"):
-            logger.info("Migration 026: Adding description_encrypted to sticker_packs")
+            logger.info("Migration 027: Adding description_encrypted to sticker_packs")
             db.execute(
                 "ALTER TABLE sticker_packs ADD COLUMN description_encrypted TEXT"
             )
         else:
             logger.info(
-                "Migration 026: Column description_encrypted already exists in sticker_packs"
+                "Migration 027: Column description_encrypted already exists in sticker_packs"
             )
     else:
-        logger.warning("Migration 026: Table sticker_packs does not exist, skipping")
+        logger.warning("Migration 027: Table sticker_packs does not exist, skipping")
 
 
 def down(db):

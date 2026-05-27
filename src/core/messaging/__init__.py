@@ -254,6 +254,17 @@ def add_participant(
     )
 
 
+def add_participant_to_conversations(
+    user_id: int,
+    conversation_ids: list,
+    role: ParticipantRole = ParticipantRole.MEMBER,
+) -> None:
+    """Add a participant to multiple conversations (for server joins)."""
+    return _get_manager().add_participant_to_conversations(
+        user_id, conversation_ids, role
+    )
+
+
 def remove_participant(user_id: int, conversation_id: int, participant_id: int) -> bool:
     """Remove a participant from a group conversation."""
     return _get_manager().remove_participant(user_id, conversation_id, participant_id)
@@ -619,6 +630,7 @@ __all__ = [
     "leave_conversation",
     # Participants
     "add_participant",
+    "add_participant_to_conversations",
     "remove_participant",
     "update_participant_role",
     "get_participants",

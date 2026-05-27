@@ -323,16 +323,38 @@ class ThreadManager(BaseManager):
             raise ThreadError("A thread already exists for this message")
 
         conversation_id = message["conversation_id"]
+        # Get channel_id from conversation metadata or msg_participants
+        channel_id = None
+        # Try to get channel_id from conversation metadata
         conv_row = self._db.fetch_one(
-            "SELECT server_id, channel_id FROM msg_conversations WHERE id = ?",
+            "SELECT metadata FROM msg_conversations WHERE id = ?",
             (conversation_id,),
         )
+        if conv_row and conv_row.get("metadata"):
+            try:
+                import json
 
-        if not conv_row or not conv_row["server_id"]:
+                metadata = json.loads(conv_row["metadata"])
+                channel_id = metadata.get("channel_id")
+            except Exception:
+                pass
+
+        # If not in metadata, try to get from msg_messages (which might have channel_id)
+        if not channel_id:
+            channel_id = message.get("channel_id")
+
+        if not channel_id:
+            raise ThreadError("Cannot determine channel_id for thread creation")
+
+        channel_row = self._db.fetch_one(
+            "SELECT server_id FROM srv_channels WHERE id = ?",
+            (channel_id,),
+        )
+
+        if not channel_row or not channel_row["server_id"]:
             raise ThreadError("Threads can only be created in server channels")
 
-        server_id = conv_row["server_id"]
-        channel_id = conv_row["channel_id"]
+        server_id = channel_row["server_id"]
 
         if thread_type == ThreadType.PRIVATE:
             self._require_permission(
