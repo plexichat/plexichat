@@ -12,16 +12,9 @@ import src.api as api
 
 def check_host_restriction(request: Request) -> None:
     """Check if client IP is allowed to access admin UI."""
-    is_selftest = request.scope.get("state", {}).get("is_selftest", False)
-    if not is_selftest:
-        is_selftest = getattr(request.state, "is_selftest", False)
-
-    if not is_selftest:
-        internal_secret = api.get_internal_secret()
-        provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
-        is_selftest = internal_secret and provided_secret == internal_secret
-
-    if is_selftest:
+    # Self-test/internal requests bypass host restrictions
+    # (validated via is_local + hmac.compare_digest in centralized function)
+    if api.is_self_test_request(request):
         return
 
     admin_config = config.get("admin_ui", {})
@@ -34,7 +27,7 @@ def check_host_restriction(request: Request) -> None:
 
     client_ip = get_client_ip(request) or "unknown"
 
-    localhost_variants = ["127.0.0.1", "localhost", "::1"]
+    localhost_variants = ["127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1"]
     if client_ip in localhost_variants:
         direct_ip = request.client.host if request.client else "unknown"
         api_config = config.get("api", {})
@@ -73,26 +66,19 @@ def get_admin_from_token(request: Request) -> int:
 
     token = auth_header[7:]
 
-    # Internal bypass check
-    is_selftest = request.scope.get("state", {}).get("is_selftest", False) or getattr(
-        request.state, "is_selftest", False
-    )
-    if not is_selftest:
-        internal_secret = api.get_internal_secret()
-        is_selftest = (
-            internal_secret
-            and request.headers.get("X-Plexichat-Internal-Secret") == internal_secret
-        )
-
-    user = request.scope.get("state", {}).get("user") or getattr(
-        request.state, "user", None
-    )
-    if is_selftest and user:
+    # Self-test/internal requests bypass token validation
+    # (validated via is_local + hmac.compare_digest in centralized function)
+    state_user = request.scope.get("state", {}).get("user")
+    state_attr = getattr(request.state, "user", None)
+    user = state_user or state_attr
+    is_self_test = api.is_self_test_request(request)
+    if is_self_test and user:
         from src.core.auth.permissions import has_permission
 
-        if has_permission(user.permissions, "admin.*") or has_permission(
+        has_admin_perm = has_permission(user.permissions, "admin.*") or has_permission(
             user.permissions, "*"
-        ):
+        )
+        if has_admin_perm:
             return user.user_id
 
     from src.core import admin

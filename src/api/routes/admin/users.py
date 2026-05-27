@@ -100,21 +100,7 @@ async def admin_list_scheduled_deletions(request: Request):
             detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
-    import src.api as api
     import time
-
-    db = api.get_db()
-    if db is None:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if db is None:
-        logger.error("Database not available in scheduled deletions endpoint")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
-        )
 
     grace_days = 30  # Default grace period
 
@@ -480,7 +466,11 @@ async def admin_cancel_account_deletion(request: Request, user_id: str):
     import src.api as api
 
     auth = api.get_auth()
-    assert auth is not None
+    if not auth:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
+        )
     try:
         uid = int(user_id)
         auth.cancel_account_deletion(uid, admin_id=int(admin_id))
@@ -489,7 +479,10 @@ async def admin_cancel_account_deletion(request: Request, user_id: str):
         )
     except Exception as e:
         logger.error(f"Admin failed to cancel deletion for {user_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}},
+        )
 
 
 @router.post("/users/{user_id}/delay-deletion", response_model=SuccessResponse)
@@ -521,22 +514,56 @@ async def admin_delay_account_deletion(
     import src.api as api
 
     auth = api.get_auth()
-    assert auth is not None
+    if not auth:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
+        )
     try:
         uid = int(user_id)
         now = int(time.time())
         if deletion_at < now:
             raise HTTPException(
                 status_code=400,
-                detail="deletion_at must be in the future",
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "deletion_at must be in the future",
+                    }
+                },
             )
         auth.delay_account_deletion(uid, deletion_at, admin_id=int(admin_id))
+        logger.info(f"Admin {admin_id} delayed deletion for user {uid}")
         return SuccessResponse(
             success=True, message="Account deletion delayed successfully"
         )
-    except Exception as e:
+    except (ValueError, Exception) as e:
+        # Check if it's a "not scheduled for deletion" error
+        error_msg = str(e)
+        if "not scheduled for deletion" in error_msg.lower():
+            logger.warning(f"Admin failed to delay deletion for {user_id}: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Account is not scheduled for deletion",
+                    }
+                },
+            )
+
+        if isinstance(e, ValueError):
+            logger.warning(f"Admin failed to delay deletion for {user_id}: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": str(e)}},
+            )
+
         logger.error(f"Admin failed to delay deletion for {user_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}},
+        )
 
 
 @router.post("/users/{user_id}/force-purge", response_model=SuccessResponse)
@@ -567,14 +594,22 @@ async def admin_force_purge_account(request: Request, user_id: str):
     import src.api as api
 
     auth = api.get_auth()
-    assert auth is not None
+    if not auth:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
+        )
     try:
         uid = int(user_id)
         auth.force_purge_account(uid, admin_id=int(admin_id))
-        return SuccessResponse(success=True, message="User tier updated successfully")
+        logger.warning(f"Admin {admin_id} force-purged user {uid}")
+        return SuccessResponse(success=True, message="Account purged successfully")
     except Exception as e:
         logger.error(f"Admin failed to force purge {user_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}},
+        )
 
 
 # Admin User Management Endpoints
@@ -634,8 +669,10 @@ async def list_admin_users(request: Request):
 
     try:
         # Query admin users from database
+        # Note: email is stored encrypted (email_index + email_encrypted),
+        # so we use email_index to confirm existence and show a placeholder.
         rows = db.fetch_all(  # type: ignore
-            "SELECT id, username, email, is_admin, is_active, created_at, last_login FROM auth_users WHERE is_admin = 1 ORDER BY created_at DESC"
+            "SELECT id, username, email_index, created_at, last_login_at, account_locked FROM auth_users WHERE (permissions LIKE '%\"*\": true%' OR permissions LIKE '%\"admin.*\": true%') ORDER BY created_at DESC"
         )
 
         users = []
@@ -644,11 +681,11 @@ async def list_admin_users(request: Request):
                 AdminUserResponse(
                     id=str(row["id"]),
                     username=row["username"],
-                    email=row["email"] or "",
+                    email="[Encrypted]",  # Email is stored encrypted, cannot be decrypted at API layer
                     role="admin",  # Default role for now
-                    is_active=row["is_active"] == 1,
+                    is_active=not row.get("account_locked", 0),
                     created_at=row["created_at"],
-                    last_login_at=row["last_login"],
+                    last_login_at=row["last_login_at"],
                 )
             )
 
@@ -687,7 +724,7 @@ async def get_admin_user(request: Request, user_id: str):
     try:
         uid = int(user_id)
         row = db.fetch_one(  # type: ignore
-            "SELECT id, username, email, is_admin, is_active, created_at, last_login FROM auth_users WHERE id = ? AND is_admin = 1",
+            "SELECT id, username, email_index, created_at, last_login_at, account_locked FROM auth_users WHERE id = ? AND (permissions LIKE '%\"*\": true%' OR permissions LIKE '%\"admin.*\": true%')",
             (uid,),
         )
 
@@ -700,11 +737,11 @@ async def get_admin_user(request: Request, user_id: str):
         return AdminUserResponse(
             id=str(row["id"]),
             username=row["username"],
-            email=row["email"] or "",
+            email="[Encrypted]",  # Email is stored encrypted, cannot be decrypted at API layer
             role="admin",
-            is_active=row["is_active"] == 1,
+            is_active=not row.get("account_locked", 0),
             created_at=row["created_at"],
-            last_login_at=row["last_login"],
+            last_login_at=row["last_login_at"],
         )
     except ValueError:
         raise HTTPException(
@@ -760,23 +797,16 @@ async def create_admin_user(request: Request, user_data: AdminUserCreate):
                 detail={"error": {"code": 400, "message": "Username already exists"}},
             )
 
-        # Check if email already exists
-        existing = db.fetch_one(  # type: ignore
-            "SELECT id FROM auth_users WHERE email = ?", (user_data.email,)
-        )
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Email already exists"}},
-            )
-
-        # Create user with admin flag
-        _ = auth.register_user(
+        # Create the user first via the auth module
+        user = auth.register(
             username=user_data.username,
             email=user_data.email,
             password=user_data.password,
-            is_admin=True,
         )
+
+        # Grant admin permissions
+        auth.grant_permission(user.id, "admin.*")
+        auth.grant_permission(user.id, "*")
 
         logger.info(f"Admin user created: {user_data.username} by admin {admin_id}")
         return SuccessResponse(success=True, message="Admin user created successfully")
@@ -818,7 +848,7 @@ async def update_admin_user(request: Request, user_id: str, user_data: AdminUser
 
         # Check if user exists and is admin
         user = db.fetch_one(  # type: ignore
-            "SELECT id, username, email FROM auth_users WHERE id = ? AND is_admin = 1",
+            "SELECT id, username, email_index FROM auth_users WHERE id = ? AND (permissions LIKE '%\"*\": true%' OR permissions LIKE '%\"admin.*\": true%')",
             (uid,),
         )
         if not user:
@@ -848,25 +878,19 @@ async def update_admin_user(request: Request, user_id: str, user_data: AdminUser
             params.append(user_data.username)
 
         if user_data.email:
-            # Check if email already exists
-            existing = db.fetch_one(  # type: ignore
-                "SELECT id FROM auth_users WHERE email = ? AND id != ?",
-                (user_data.email, uid),
-            )
-            if existing:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Email already exists"}},
-                )
-            updates.append("email = ?")
-            params.append(user_data.email)
-
-        if user_data.password:
+            # Email updates must go through the auth module's update_user flow
+            # which handles re-encryption and verification. Direct SQL updates
+            # to the encrypted email columns are not supported from this endpoint.
             import src.api as api
 
             auth = api.get_auth()
-            assert auth is not None
-            password_hash = auth.hash_password(user_data.password)
+            if auth:
+                auth.update_user(uid, email=user_data.email)
+
+        if user_data.password:
+            from src.utils.encryption import hash_password
+
+            password_hash = hash_password(user_data.password)
             updates.append("password_hash = ?")
             params.append(password_hash)
 
@@ -929,7 +953,8 @@ async def delete_admin_user(request: Request, user_id: str):
 
         # Check if user exists and is admin
         user = db.fetch_one(  # type: ignore
-            "SELECT id FROM auth_users WHERE id = ? AND is_admin = 1", (uid,)
+            "SELECT id FROM auth_users WHERE id = ? AND (permissions LIKE '%\"*\": true%' OR permissions LIKE '%\"admin.*\": true%')",
+            (uid,),
         )
         if not user:
             raise HTTPException(
@@ -994,7 +1019,8 @@ async def toggle_admin_user_status(request: Request, user_id: str):
 
         # Check if user exists and is admin
         user = db.fetch_one(  # type: ignore
-            "SELECT id, is_active FROM auth_users WHERE id = ? AND is_admin = 1", (uid,)
+            "SELECT id, account_locked FROM auth_users WHERE id = ? AND (permissions LIKE '%\"*\": true%' OR permissions LIKE '%\"admin.*\": true%')",
+            (uid,),
         )
         if not user:
             raise HTTPException(
@@ -1002,10 +1028,10 @@ async def toggle_admin_user_status(request: Request, user_id: str):
                 detail={"error": {"code": 404, "message": "Admin user not found"}},
             )
 
-        # Toggle status
-        new_status = 0 if user["is_active"] == 1 else 1
+        # Toggle account lock status
+        new_status = 0 if user["account_locked"] == 1 else 1
         db.execute(  # type: ignore
-            "UPDATE auth_users SET is_active = ? WHERE id = ?", (new_status, uid)
+            "UPDATE auth_users SET account_locked = ? WHERE id = ?", (new_status, uid)
         )
         logger.info(
             f"Admin user status toggled: {user_id} to {new_status} by admin {admin_id}"

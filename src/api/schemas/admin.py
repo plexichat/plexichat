@@ -382,7 +382,7 @@ class UserTierUpdate(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    tier: str = Field(..., pattern="^(free|alpha|beta|premium|staff)$")
+    tier: str = Field(..., pattern="^(standard|alpha|premium|staff)$")
 
 
 class UserSearchResponse(BaseModel):

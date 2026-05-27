@@ -378,16 +378,35 @@ async def send_voice_message(
             participant_svc=participant_svc,
         )
 
+        attachment_data = getattr(result, "attachment_data", None)
+        if attachment_data is None:
+            attachment_data = {
+                "filename": result.get("filename")
+                if isinstance(result, dict)
+                else result.filename,
+                "content_type": result.get("content_type")
+                if isinstance(result, dict)
+                else result.content_type,
+                "size": result.get("size") if isinstance(result, dict) else result.size,
+                "url": result.get("url") if isinstance(result, dict) else result.url,
+                "metadata": result.get("metadata")
+                if isinstance(result, dict)
+                else result.metadata,
+            }
+
         # Send the actual message via messaging module if available
-        if messaging and result.get("attachment_data"):
+        if messaging:
             try:
                 msg = messaging.send_message(
                     user_id=current_user.user_id,
                     conversation_id=int(body.conversation_id),
-                    content="🎤 Voice message",
-                    attachments=[result["attachment_data"]],
+                    content="Voice message",
+                    attachments=[attachment_data],
                 )
-                result["message_id"] = msg.id
+                if isinstance(result, dict):
+                    result["message_id"] = msg.id
+                else:
+                    setattr(result, "message_id", msg.id)
             except Exception as e:
                 logger.error(f"Failed to send voice message via messaging: {e}")
 
@@ -497,20 +516,29 @@ async def upload_voice_message(
         filename = f"voice_{current_user.user_id}_{int(__import__('time').time() * 1000)}.{ext}"
 
         if media:
-            from io import BytesIO
-
-            file_obj = BytesIO(content)
-
             result = media.upload_file(
-                file_obj=file_obj,
+                file_data=content,
                 filename=filename,
                 content_type=audio.content_type,
                 user_id=current_user.user_id,
-                conversation_id=conv_id,
-                metadata={"voice_duration_ms": duration_ms},
             )
-            storage_url = result.get("url", "")
-            file_size = result.get("size", len(content))
+            attachment_data = {
+                "filename": result.get("filename")
+                if isinstance(result, dict)
+                else result.filename,
+                "content_type": result.get("content_type")
+                if isinstance(result, dict)
+                else result.content_type,
+                "size": result.get("size") if isinstance(result, dict) else result.size,
+                "url": result.get("url") if isinstance(result, dict) else result.url,
+                "metadata": result.get("metadata")
+                if isinstance(result, dict)
+                else result.metadata,
+            }
+            storage_url = attachment_data["url"] if attachment_data["url"] else ""
+            file_size = (
+                attachment_data["size"] if attachment_data["size"] else len(content)
+            )
         else:
             # No media module - store as base64 in message metadata (fallback)
             import base64
@@ -549,18 +577,25 @@ async def upload_voice_message(
         )
 
         # Send the actual message via messaging module
-        if messaging and result.get("attachment_data"):
+        attachment_data = (
+            result.get("attachment_data")
+            if isinstance(result, dict)
+            else getattr(result, "attachment_data", None)
+        )
+        if messaging and attachment_data:
             try:
                 msg = messaging.send_message(
                     user_id=current_user.user_id,
                     conversation_id=conv_id,
-                    content="🎤 Voice message",
-                    attachments=[result["attachment_data"]],
+                    content="Voice message",
+                    attachments=[attachment_data],
                 )
-                result["message_id"] = msg.id
+                if isinstance(result, dict):
+                    result["message_id"] = msg.id
+                else:
+                    setattr(result, "message_id", msg.id)
             except Exception as e:
                 logger.error(f"Failed to send voice message via messaging: {e}")
-
         return {"success": True, "voice_message": result}
     except ValueError as e:
         raise HTTPException(
@@ -1315,6 +1350,12 @@ async def update_report_status(
     updates = ["status = ?", "updated_at = ?"]
     params: list = [body.status, now]
 
+    def _has_column(name: str) -> bool:
+        try:
+            return bool(db.column_exists("reports", name))
+        except Exception:
+            return True
+
     # Whitelist of allowed column names for UPDATE (prevents SQL injection)
     ALLOWED_UPDATE_COLUMNS = {
         "status",
@@ -1343,20 +1384,24 @@ async def update_report_status(
     if body.resolution:
         updates.append("resolution = ?")
         params.append(body.resolution)
-        updates.append("resolved_at = ?")
-        params.append(now)
-        updates.append("resolved_by = ?")
-        params.append(current_user.user_id)
-    if body.status == "escalated":
+        if _has_column("resolved_at"):
+            updates.append("resolved_at = ?")
+            params.append(now)
+        if _has_column("resolved_by"):
+            updates.append("resolved_by = ?")
+            params.append(current_user.user_id)
+    if body.status == "escalated" and _has_column("escalated_at"):
         updates.append("escalated_at = ?")
         params.append(now)
 
     # Set reviewed_at/reviewed_by when status changes from 'open' to a reviewed status
     if body.status in ("investigating", "resolved", "dismissed", "escalated"):
-        updates.append("reviewed_at = ?")
-        params.append(now)
-        updates.append("reviewed_by = ?")
-        params.append(current_user.user_id)
+        if _has_column("reviewed_at"):
+            updates.append("reviewed_at = ?")
+            params.append(now)
+        if _has_column("reviewed_by"):
+            updates.append("reviewed_by = ?")
+            params.append(current_user.user_id)
 
     # Validate all column names before building query
     for u in updates:

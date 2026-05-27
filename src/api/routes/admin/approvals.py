@@ -352,11 +352,11 @@ async def approve_request(request: Request, approval_id: int):
         requested_by = approval["requested_by"]
         approved_by_str = approval["approved_by"] or ""
     else:
-        status = approval[6]
-        current_approvals = approval[8]
-        required_approvals = approval[7]
+        status = approval[2]
+        current_approvals = approval[3]
+        required_approvals = approval[4]
         requested_by = approval[1]
-        approved_by_str = approval[9] or ""
+        approved_by_str = approval[5] or ""
 
     # Check if already approved by this admin
     if str(admin_id) in approved_by_str:
@@ -482,7 +482,7 @@ async def reject_request(
     if isinstance(approval, dict):
         status = approval["status"]
     else:
-        status = approval[6]
+        status = approval[1]
 
     # Check if approval is still pending
     if status != "pending":

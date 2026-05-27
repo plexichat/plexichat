@@ -27,11 +27,11 @@ from .messages import get_msg_id
 router = APIRouter(tags=["Messages"])
 
 # Include all routers - this maintains the exact same public API
+router.include_router(search_router)
+router.include_router(read_receipts_router)
 router.include_router(crud_router)
 router.include_router(list_router)
 router.include_router(pins_router)
-router.include_router(search_router)
-router.include_router(read_receipts_router)
 router.include_router(typing_router)
 
 __all__ = ["router", "get_msg_id"]

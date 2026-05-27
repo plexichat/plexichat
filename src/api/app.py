@@ -70,12 +70,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     from .middleware import (
         AuthenticationMiddleware,
         setup_exception_handlers,
-        ErrorHandlingMiddleware,
-        LoggingMiddleware,
-        SecurityHeadersMiddleware,
         create_rate_limit_middleware,
-        IPBlockingMiddleware,
-        DatabaseMiddleware,
     )
 
     config = get_api_config()
@@ -117,19 +112,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         async def redoc_html(request: Request) -> HTMLResponse:
             return render_redoc_page(request, config.title, openapi_url)
 
+    app.add_middleware(AuthenticationMiddleware)
+
     if enable_rate_limiting:
         from src.core import ratelimit
 
         if ratelimit.is_setup():
             RateLimitMiddleware = create_rate_limit_middleware()
             app.add_middleware(RateLimitMiddleware)
-
-    app.add_middleware(AuthenticationMiddleware)
-    app.add_middleware(IPBlockingMiddleware)
-    app.add_middleware(ErrorHandlingMiddleware)
-    app.add_middleware(LoggingMiddleware)
-    app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(DatabaseMiddleware)
 
     # CORS handles OPTIONS preflight - MUST be outermost
     # (In ASGI, last added is outermost)

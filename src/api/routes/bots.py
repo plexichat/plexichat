@@ -212,66 +212,42 @@ async def list_approved_bots(
 
 
 @router.post(
-    "/servers/{server_id}/approve",
-    response_model=ApprovedBotResponse,
+    "/servers/{server_id}/request",
+    response_model=BotRequestResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Approve a bot for a server",
+    summary="Request a bot for a server",
     responses={
         400: {
             "model": ErrorResponse,
-            "description": "Bot already approved or limit reached",
+            "description": "Request already exists or bot already approved",
         },
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
-        403: {"model": ErrorResponse, "description": "Permission denied"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def approve_bot(
+async def request_bot(
     server_id: int,
-    body: ApproveBotRequest,
+    body: RequestBotRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
-    """Approve a bot for installation on a server."""
+    """Request approval for a bot on a server."""
     try:
-        bot = applications.approve_bot(
+        req = applications.request_bot(
             server_id=server_id,
             application_id=body.application_id,
-            approved_by=current_user.user_id,
-            permissions=body.permissions,
-            bot_name=body.bot_name,
+            requester_id=current_user.user_id,
+            reason=body.reason,
         )
-        return _approved_bot_to_response(bot)
-    except PermissionDeniedError as e:
+        return _bot_request_to_response(req)
+    except BotRequestExistsError as e:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": str(e)}},
         )
     except BotAlreadyApprovedError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": str(e)}},
-        )
-    except BotLimitError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": {
-                    "code": 400,
-                    "message": str(e),
-                    "max_allowed": e.max_allowed,
-                    "current": e.current,
-                }
-            },
-        )
-    except LicenseFeatureError as e:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail={"error": {"code": 402, "message": str(e), "feature": e.feature}},
-        )
-    except ApplicationNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
         )
     except Exception as e:
         raise HTTPException(
@@ -348,42 +324,66 @@ async def list_bot_requests(
 
 
 @router.post(
-    "/servers/{server_id}/request",
-    response_model=BotRequestResponse,
+    "/servers/{server_id}/approve",
+    response_model=ApprovedBotResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Request a bot for a server",
+    summary="Approve a bot for a server",
     responses={
         400: {
             "model": ErrorResponse,
-            "description": "Request already exists or bot already approved",
+            "description": "Bot already approved or limit reached",
         },
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def request_bot(
+async def approve_bot(
     server_id: int,
-    body: RequestBotRequest,
+    body: ApproveBotRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
-    """Request approval for a bot on a server."""
+    """Approve a bot for installation on a server."""
     try:
-        req = applications.request_bot(
+        bot = applications.approve_bot(
             server_id=server_id,
             application_id=body.application_id,
-            requester_id=current_user.user_id,
-            reason=body.reason,
+            approved_by=current_user.user_id,
+            permissions=body.permissions,
+            bot_name=body.bot_name,
         )
-        return _bot_request_to_response(req)
-    except BotRequestExistsError as e:
+        return _approved_bot_to_response(bot)
+    except PermissionDeniedError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": str(e)}},
         )
     except BotAlreadyApprovedError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": str(e)}},
+        )
+    except BotLimitError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": str(e),
+                    "max_allowed": e.max_allowed,
+                    "current": e.current,
+                }
+            },
+        )
+    except LicenseFeatureError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={"error": {"code": 402, "message": str(e), "feature": e.feature}},
+        )
+    except ApplicationNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": 404, "message": str(e)}},
         )
     except Exception as e:
         raise HTTPException(

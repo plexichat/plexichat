@@ -30,6 +30,18 @@ class SecurityHeadersMiddleware:
                     (b"X-XSS-Protection", b"1; mode=block"),
                     (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
                     (b"X-Permitted-Cross-Domain-Policies", b"none"),
+                    (
+                        b"Content-Security-Policy",
+                        b"default-src 'self'; "
+                        b"script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+                        b"style-src 'self' 'unsafe-inline'; "
+                        b"img-src 'self' data: blob:; "
+                        b"font-src 'self' data:; "
+                        b"connect-src 'self' ws: wss:; "
+                        b"frame-ancestors 'self'; "
+                        b"base-uri 'self'; "
+                        b"form-action 'self'",
+                    ),
                 ]
 
                 # Only add if not already present (to avoid duplication)
@@ -46,6 +58,18 @@ class SecurityHeadersMiddleware:
                 # Add X-Frame-Options: SAMEORIGIN only if not a media request and not present
                 if not is_media and b"x-frame-options" not in present_names:
                     final_headers.append((b"X-Frame-Options", b"SAMEORIGIN"))
+
+                # Relax CSP for media to allow embedding
+                if is_media and b"content-security-policy" not in present_names:
+                    final_headers.append(
+                        (
+                            b"Content-Security-Policy",
+                            b"default-src 'self'; "
+                            b"img-src 'self' data: blob: *; "
+                            b"media-src 'self' *; "
+                            b"frame-ancestors *",
+                        )
+                    )
 
                 message["headers"] = final_headers
 

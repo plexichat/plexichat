@@ -269,6 +269,11 @@ async def add_access_token_scope(
             admin_id,
         )
     except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": str(exc)}},
+            )
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": str(exc)}},
