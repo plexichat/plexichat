@@ -57,7 +57,7 @@ The database engine choice determines your deployment's scalability, performance
 
 - Production deployments of any scale
 - Multi-worker deployments (multiple server processes sharing the same database)
-- For high-availability requirements (with PostgreSQL replication). See [Deployment Guide](deployment.md#horizontal-scaling) for horizontal scaling strategies.
+- For high-availability requirements (with PostgreSQL replication). See [Deployment Guide](../getting-started.md#horizontal-scaling) for horizontal scaling strategies.
 - Large user bases (hundreds to thousands of concurrent users)
 - Deployments requiring advanced database features
 
@@ -71,7 +71,7 @@ The database engine choice determines your deployment's scalability, performance
 
 **Operational Notes**
 
-- Requires separate PostgreSQL server installation and maintenance. PostgreSQL connection pooling is essential for performance. See [Redis Configuration](deployment/configuration/config-redis.md) for caching configuration that can reduce database load.
+- Requires separate PostgreSQL server installation and maintenance. PostgreSQL connection pooling is essential for performance. See [Redis Configuration](config-redis.md) for caching configuration that can reduce database load.
 - Requires monitoring of connection counts and query performance
 - Backup and restore procedures differ from SQLite
 
@@ -499,6 +499,6 @@ psql -h localhost -U plexichat -d plexichat < backup.sql
 ## Related Documentation
 
 - [Default Configuration Reference](../../default-config.md) - Complete configuration reference
-- [Authentication Configuration](deployment/configuration/config-authentication.md) - Session storage and user data
-- [Redis Configuration](deployment/configuration/config-redis.md) - Caching to reduce database load
+- [Authentication Configuration](config-authentication.md) - Session storage and user data
+- [Redis Configuration](config-redis.md) - Caching to reduce database load
 - [Deployment Guide](../getting-started.md) - Production deployment and scaling

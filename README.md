@@ -4,7 +4,7 @@ A real-time messaging platform server with REST API and WebSocket gateway.
 
 ## Installation
 
-The recommended way to deploy Plexichat is via our standalone deployment scripts. These scripts automate version selection, network configuration, secret generation, and Docker Compose orchestration—without requiring a git clone.
+The recommended way to deploy Plexichat is via our standalone deployment scripts. These scripts automate version selection, network configuration, secret generation, and Docker Compose orchestration--without requiring a git clone.
 
 **Linux / macOS:**
 ```bash
@@ -123,29 +123,29 @@ See `docs/` and `config/` for repository-backed configuration details.
 
 ```
 plexichat/
-├── main.py              # Server entry point
-├── requirements.txt     # Production dependencies
-├── config/              # Default configuration templates
-├── docs/                # API and system documentation
-├── src/
-│   ├── api/             # FastAPI application layer
-│   │   ├── routes/      # REST API endpoints
-│   │   ├── schemas/     # Pydantic data models
-│   │   ├── middleware/  # Security, rate limiting, logging
-│   │   └── websocket/   # Gateway event handlers
-│   ├── core/            # Business logic (domain layer)
-│   │   ├── auth/        # Identity and sessions
-│   │   ├── messaging/   # Conversations and messages
-│   │   ├── threads/     # Threaded conversations
-│   │   ├── servers/     # Guild management and roles
-│   │   ├── voice/       # WebRTC signaling and states
-│   │   ├── automod/     # Content moderation engine
-│   │   ├── notifications/ # Mention parsing and alerts
-│   │   ├── events/      # Internal event dispatcher
-│   │   ├── selftest/    # Self-test validation suite
-│   │   └── ...          # Additional core modules
-│   ├── tests/           # Comprehensive test suite
-│   └── utils/           # Low-level utilities and submodules
++-- main.py              # Server entry point
++-- requirements.txt     # Production dependencies
++-- config/              # Default configuration templates
++-- docs/                # API and system documentation
++-- src/
+|   +-- api/             # FastAPI application layer
+|   |   +-- routes/      # REST API endpoints
+|   |   +-- schemas/     # Pydantic data models
+|   |   +-- middleware/  # Security, rate limiting, logging
+|   |   +-- websocket/   # Gateway event handlers
+|   +-- core/            # Business logic (domain layer)
+|   |   +-- auth/        # Identity and sessions
+|   |   +-- messaging/   # Conversations and messages
+|   |   +-- threads/     # Threaded conversations
+|   |   +-- servers/     # Guild management and roles
+|   |   +-- voice/       # WebRTC signaling and states
+|   |   +-- automod/     # Content moderation engine
+|   |   +-- notifications/ # Mention parsing and alerts
+|   |   +-- events/      # Internal event dispatcher
+|   |   +-- selftest/    # Self-test validation suite
+|   |   +-- ...          # Additional core modules
+|   +-- tests/           # Comprehensive test suite
+|   +-- utils/           # Low-level utilities and submodules
 ```
 
 ## API Overview
@@ -202,7 +202,7 @@ Built-in admin panel for managing feedback, telemetry, admin account security, A
 
 See root README.md for full configuration options.
 
-## ⚠️ Critical Backup Requirements
+## [!] Critical Backup Requirements
 
 **Losing the encryption key files will make ALL encrypted data permanently unrecoverable.** The server will refuse to start if keyring decryption fails.
 
@@ -210,7 +210,7 @@ You **must** regularly back up these files from `~/.plexichat/data/`:
 
 | File | What it protects |
 |------|-----------------|
-| `.machine_key` | Root KEK — decrypts all keyrings. **Lose this = lose everything.** |
+| `.machine_key` | Root KEK -- decrypts all keyrings. **Lose this = lose everything.** |
 | `system_keyring.json` | Admin TOTP, API tokens, encrypted user fields |
 | `file_keyring.json` | Media files at rest (avatars, attachments) |
 | `message_keyring.json` | Message content (when `encrypt_messages: true`) |
