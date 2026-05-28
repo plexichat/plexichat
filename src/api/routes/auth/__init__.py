@@ -115,6 +115,7 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
         )
 
     ip_address = request.client.host if request.client else None
+    device_info = {"user_agent": request.headers.get("User-Agent", "unknown")}
 
     # Handle age_verified boolean as an alternative to explicit age
     age = body.age
@@ -125,14 +126,19 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
             min_age = config_util.get("authentication.accounts.minimum_age", 13)
         age = min_age
 
+    # Check if this is an internal/self-test request (bypasses rate limits and username blacklist)
+    is_internal = getattr(request.state, "is_internal", False)
+
     try:
         user = auth.register(
             username=body.username,
             email=body.email,
             password=body.password,
+            device_info=device_info,
             ip_address=ip_address,
             age=age,
             dob=body.dob,
+            is_internal=is_internal,
         )
     except UserExistsError:
         masked_username = mask_string(body.username)
