@@ -440,6 +440,74 @@ class DeduplicationManager:
 
         return DeduplicationResult(is_duplicate=False, hash_value=hash_value)
 
+    def _check_exact_hash(self, hash_value: str) -> Optional[DeduplicationResult]:
+        """Fast exact-hash duplicate check (no pHash scan). 1 DB query."""
+        row = self._db.fetch_one(
+            """SELECT id, storage_path, storage_backend
+               FROM media_file_hashes WHERE hash_value = ?""",
+            (hash_value,),
+        )
+        if row:
+            if isinstance(row, dict):
+                file_id = row["id"]
+                storage_path = row["storage_path"]
+            else:
+                file_id, storage_path, _ = row
+            return DeduplicationResult(
+                is_duplicate=True,
+                hash_value=hash_value,
+                existing_file_id=file_id,
+                existing_url=storage_path,
+            )
+        return None
+
+    def register_or_update_phash(
+        self,
+        hash_value: str,
+        phash_value: str,
+        file_size: int,
+        content_type: str,
+        timestamp: int,
+    ) -> None:
+        """Register a new hash record or update pHash on an existing one.
+
+        Used by background tasks to store pHash after upload response is sent.
+        Unlike register_file, this always updates the pHash column.
+        """
+        if not self._config["enabled"]:
+            return
+
+        row = self._db.fetch_one(
+            "SELECT id, reference_count FROM media_file_hashes WHERE hash_value = ?",
+            (hash_value,),
+        )
+
+        if row:
+            hash_id = row["id"] if isinstance(row, dict) else row[0]
+            self._db.execute(
+                "UPDATE media_file_hashes SET phash_value = ?, reference_count = reference_count + 1 WHERE id = ?",
+                (phash_value, hash_id),
+            )
+        else:
+            from src.utils.encryption import generate_snowflake_id
+
+            hash_id = generate_snowflake_id()
+            self._db.execute(
+                """INSERT INTO media_file_hashes
+                   (id, hash_value, phash_value, algorithm, file_size, content_type,
+                    reference_count, first_seen, storage_path, storage_backend)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, ?, '', '')""",
+                (
+                    hash_id,
+                    hash_value,
+                    phash_value,
+                    self._config["hash_algorithm"],
+                    file_size,
+                    content_type,
+                    timestamp,
+                ),
+            )
+
     def _find_similar_by_phash(self, phash_value: str) -> Optional[Dict[str, Any]]:
         """Find existing file with similar pHash."""
         if not self._config.get("phash_enabled", True):
