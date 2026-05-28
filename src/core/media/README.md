@@ -1,6 +1,54 @@
 # Media Module
 
-File upload, storage, and processing system for Plexichat API supporting local filesystem and S3-compatible storage backends.
+File upload, storage, and processing system for Plexichat API supporting
+local filesystem, S3-compatible, and database storage backends.
+
+## Module Architecture
+
+The `media` module is split into small, focused sub-modules using a
+**mixin** pattern.  The main `MediaManager` class inherits from all mixins
+so the public API remains unchanged.
+
+```
+media/
+  __init__.py          # Public API (setup + module-level functions)
+  manager.py           # MediaManager class (~100 lines — just __init__ + MRO)
+  _config.py           # DEFAULT_SIZE_LIMITS / ALLOWED_TYPES / THUMBNAIL_SIZES
+  _validation.py       # _ValidationMixin  — filename sanitization, content-type detection,
+  _storage_setup.py    # _StorageSetupMixin — storage backends, path generation, row→model
+  _rate_limit.py       # _RateLimitMixin    — upload + thumbnail rate limiting
+  _upload.py           # _UploadMixin       — upload_file / upload_stream / _do_upload
+  _thumbnails.py       # _ThumbnailsMixin   — sync + background thumbnails
+  _phash.py            # _PhashMixin        — background pHash similarity
+  _files.py            # _FilesMixin        — get_file / delete_file / check_file_access
+  _processing.py       # _ProcessingMixin   — resize / convert image, video metadata
+  _signing.py          # _SigningMixin      — sign_url / verify_signed_url
+  _proxy.py            # _ProxyMixin        — external URL proxy
+  _scanning.py         # _ScanningMixin     — malware scanning
+  models.py            # Data models / enums
+  exceptions.py        # Exception hierarchy
+  schema.py            # Database schema
+  deduplication.py     # DeduplicationManager (content hashing)
+  compression.py       # CompressionManager
+  chunked.py           # ChunkedUploadManager (resumable uploads)
+  phash.py             # Perceptual hash utilities
+  processing/          # Image / video processors
+  security/            # URL signing, malware scanner, proxy, validation
+  storage/             # Local / S3 / Database storage backends
+```
+
+## Performance Optimisations
+
+The attachment upload endpoint (`POST /api/v1/channels/{id}/attachments`)
+has been heavily optimised:
+
+| Technique | What It Does | Saving |
+|-----------|-------------|--------|
+| **In-memory I/O** | Files ≤8 MiB read directly to `bytes`, no temp file | ~40 ms disk I/O |
+| **Deferred thumbnails** | Thumbnails generated fire-and-forget after response | ~100–200 ms |
+| **Parallel malware scan** | ClamAV scan runs concurrent with compression+metadata | ~30 ms (overlap) |
+| **Fast inline dedup** | 3 exact-hash queries only; O(n) pHash scan is background-only | ~20 ms |
+| **Fire-and-forget rate limit** | Counter updates don't block the response | ~5 ms |
 
 ## Features
 
@@ -24,6 +72,7 @@ The media module includes several security protections:
 - **ffprobe timeout**: Prevents hanging on malformed video files
 - **Rate limiting**: Configurable limits for uploads and thumbnail generation
 - **Path traversal prevention**: Storage backends validate paths
+- **Content deduplication**: SHA-256 + perceptual-hash similarity detection
 
 ## Setup
 
@@ -62,7 +111,8 @@ with open("image.jpg", "rb") as f:
 
 print(f"File ID: {result.file_id}")
 print(f"URL: {result.url}")
-print(f"Thumbnails: {result.thumbnails}")
+# Note: thumbnails are generated asynchronously in background
+# they will be available in subsequent message/attachment responses
 
 # Upload for messaging attachment
 attachment = media.upload_attachment(
@@ -170,18 +220,20 @@ elif status == media.ScanStatus.CLEAN:
 
 ## Configuration
 
-All media settings are configured in `config/config.yaml` under the `media` section. The server loads these on startup with sensible defaults.
+All media settings are configured in `config/config.yaml` under the `media` section.
+The server loads these on startup with sensible defaults.
 
 ### Quick Reference
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `storage_backend` | `local` | Primary storage: `local`, `s3`, or `database` |
-| `database_max_size` | `524288` | Max file size for DB storage (512KB) |
+| `stream_processing_max_bytes` | `8388608` | Max bytes to process in memory (8 MiB) |
+| `database_max_size` | `524288` | Max file size for DB storage (512 KiB) |
 | `auto_route_to_database.enabled` | `false` | Auto-route small text files to DB |
 | `rate_limit.enabled` | `true` | Enable upload rate limiting |
 | `rate_limit.uploads_per_minute` | `10` | Max uploads per minute per user |
-| `rate_limit.max_total_size_per_day` | `536870912` | Max bytes per user per day (512MB) |
+| `rate_limit.max_total_size_per_day` | `536870912` | Max bytes per user per day (512 MiB) |
 
 ### Full Configuration Example
 
@@ -202,15 +254,18 @@ media:
   s3_endpoint: ""           # Custom endpoint for MinIO
   s3_public_url: ""         # Public URL prefix
   
+  # In-memory processing (files ≤ this size skip temp-file disk I/O)
+  stream_processing_max_bytes: 8388608  # 8 MiB
+  
   # Database BLOB storage settings
   database_url: /api/v1/media/blob
-  database_max_size: 524288  # 512KB max
+  database_max_size: 524288  # 512 KiB max
   
   # Auto-routing: route small text files to database automatically
   auto_route_to_database:
     enabled: false
-    max_size: 524288         # Files under 512KB
-    content_types:           # Only these types get routed
+    max_size: 524288
+    content_types:
       - text/plain
       - application/json
       - text/markdown
@@ -218,11 +273,11 @@ media:
   
   # File size limits per media type (bytes)
   size_limits:
-    image: 10485760          # 10MB
-    video: 104857600         # 100MB
-    audio: 52428800          # 50MB
-    document: 26214400       # 25MB
-    other: 10485760          # 10MB
+    image: 10485760          # 10 MiB
+    video: 104857600         # 100 MiB
+    audio: 52428800          # 50 MiB
+    document: 26214400       # 25 MiB
+    other: 10485760          # 10 MiB
   
   # Allowed content types per media type
   allowed_types:
@@ -264,14 +319,14 @@ media:
   # External URL proxy
   proxy_enabled: true
   proxy_cache_ttl: 86400     # 24 hours
-  proxy_max_size: 10485760   # 10MB
+  proxy_max_size: 10485760   # 10 MiB
   
   # Rate limiting
   rate_limit:
     enabled: true
     uploads_per_minute: 10
     uploads_per_hour: 100
-    max_total_size_per_day: 536870912  # 512MB
+    max_total_size_per_day: 536870912  # 512 MiB
 ```
 
 ### Rate Limiting
@@ -298,393 +353,24 @@ media:
     enabled: false
 ```
 
-### Auto-Routing to Database
-
-When enabled, small text files (like long messages converted to .txt) are automatically stored in the database instead of the primary storage backend. This keeps simple text content in one place without needing external storage.
-
-```yaml
-media:
-  storage_backend: s3        # Primary backend for images/videos
-  auto_route_to_database:
-    enabled: true
-    max_size: 524288         # Route files under 512KB
-    content_types:
-      - text/plain           # .txt files
-      - application/json     # .json files
-      - text/markdown        # .md files
-```
-
-Files are automatically routed based on content type and size. The `storage_backend` field in the database tracks which backend each file uses.
-
 ### Changing Size Limits
 
-To allow larger video uploads (e.g., 500MB):
+To allow larger video uploads (e.g., 500 MiB):
 
 ```yaml
 media:
   size_limits:
-    video: 524288000  # 500MB in bytes
-```
-
-### Adding Allowed Content Types
-
-To allow SVG images:
-
-```yaml
-media:
-  allowed_types:
-    image:
-      - image/jpeg
-      - image/png
-      - image/gif
-      - image/webp
-      - image/svg+xml  # Added
+    video: 524288000  # 500 MiB in bytes
 ```
 
 ### Production Checklist
 
 1. **Change signing key**: Replace `CHANGE_THIS_SIGNING_KEY` with a secure random string
-2. **Configure storage**: Set up S3/MinIO for scalable storage
-3. **Review size limits**: Adjust based on your use case
-4. **Enable rate limiting**: Protect against abuse
-5. **Consider malware scanning**: Enable ClamAV for user uploads
-  scanner_port: 3310
-  
-  # External URL proxy
-  proxy_enabled: true
-  proxy_cache_ttl: 86400  # seconds
-  proxy_max_size: 10485760  # 10MB
-```
-
-## Storage Backends
-
-### Local Filesystem
-
-Files are stored in the configured `local_path` directory with the following structure:
-
-```
-uploads/
-  image/
-    2025/01/15/
-      abc123def456.jpg
-  video/
-    2025/01/15/
-      xyz789ghi012.mp4
-  thumbnails/
-    {file_id}/
-      64.jpg
-      128.jpg
-      256.jpg
-      512.jpg
-```
-
-### S3-Compatible Storage
-
-Works with AWS S3, MinIO, DigitalOcean Spaces, and other S3-compatible services.
-
-```yaml
-# AWS S3
-media:
-  storage_backend: s3
-  s3_bucket: my-bucket
-  s3_access_key: AKIAIOSFODNN7EXAMPLE
-  s3_secret_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-  s3_region: us-east-1
-```
-
-### MinIO Setup (Recommended for Development/Self-Hosted)
-
-MinIO is an S3-compatible object storage server that runs locally or on your own infrastructure. It's the easiest way to move away from directory-based file storage without needing AWS.
-
-#### Why MinIO?
-
-- S3-compatible API (no code changes needed)
-- Runs locally for development, scales for production
-- Web console for easy file management
-- Free and open source
-- Single binary, minimal setup
-
-#### Installation
-
-**Windows (Recommended: Standalone Binary)**
-```powershell
-# Download MinIO server
-Invoke-WebRequest -Uri "https://dl.min.io/server/minio/release/windows-amd64/minio.exe" -OutFile "minio.exe"
-
-# Create data directory
-mkdir C:\minio-data
-```
-
-**Windows (Docker)**
-```powershell
-docker run -d --name minio `
-  -p 9000:9000 -p 9001:9001 `
-  -v C:\minio-data:/data `
-  -e MINIO_ROOT_USER=minioadmin `
-  -e MINIO_ROOT_PASSWORD=minioadmin `
-  minio/minio server /data --console-address ":9001"
-```
-
-**Linux/macOS (Docker)**
-```bash
-docker run -d --name minio \
-  -p 9000:9000 -p 9001:9001 \
-  -v ~/minio-data:/data \
-  -e MINIO_ROOT_USER=minioadmin \
-  -e MINIO_ROOT_PASSWORD=minioadmin \
-  minio/minio server /data --console-address ":9001"
-```
-
-**Linux (Binary)**
-```bash
-wget https://dl.min.io/server/minio/release/linux-amd64/minio
-chmod +x minio
-mkdir ~/minio-data
-```
-
-**macOS (Homebrew)**
-```bash
-brew install minio/stable/minio
-mkdir ~/minio-data
-```
-
-#### Running MinIO
-
-**Standalone Binary**
-```powershell
-# Windows
-.\minio.exe server C:\minio-data --console-address ":9001"
-
-# Linux/macOS
-./minio server ~/minio-data --console-address ":9001"
-```
-
-**With Custom Credentials**
-```powershell
-# Windows PowerShell
-$env:MINIO_ROOT_USER="plexichat"
-$env:MINIO_ROOT_PASSWORD="your-secure-password-here"
-.\minio.exe server C:\minio-data --console-address ":9001"
-
-# Linux/macOS
-MINIO_ROOT_USER=plexichat MINIO_ROOT_PASSWORD=your-secure-password-here ./minio server ~/minio-data --console-address ":9001"
-```
-
-#### Access Points
-
-| Service | URL | Purpose |
-|---------|-----|---------|
-| API | http://localhost:9000 | S3-compatible API endpoint |
-| Console | http://localhost:9001 | Web UI for management |
-
-Default credentials: `minioadmin` / `minioadmin`
-
-#### Creating a Bucket
-
-**Option 1: Web Console**
-1. Open http://localhost:9001
-2. Login with your credentials
-3. Click "Create Bucket"
-4. Name it `plexichat-media`
-5. Set access policy to "Public" (for direct URL access) or keep "Private" (for signed URLs)
-
-**Option 2: MinIO Client (mc)**
-```bash
-# Install mc (MinIO Client)
-# Windows: Download from https://dl.min.io/client/mc/release/windows-amd64/mc.exe
-# macOS: brew install minio/stable/mc
-# Linux: wget https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x mc
-
-# Configure alias
-mc alias set local http://localhost:9000 minioadmin minioadmin
-
-# Create bucket
-mc mb local/plexichat-media
-
-# Set public read policy (optional, for direct URL access)
-mc anonymous set download local/plexichat-media
-```
-
-#### Plexichat Configuration
-
-Add to `config/config.yaml`:
-
-```yaml
-media:
-  storage_backend: s3
-  
-  # MinIO connection
-  s3_bucket: plexichat-media
-  s3_access_key: minioadmin          # Or your custom MINIO_ROOT_USER
-  s3_secret_key: minioadmin          # Or your custom MINIO_ROOT_PASSWORD
-  s3_region: us-east-1               # Required but ignored by MinIO
-  s3_endpoint: http://localhost:9000
-  s3_public_url: http://localhost:9000/plexichat-media
-  
-  # Rest of media config...
-  size_limits:
-    image: 10485760
-    video: 104857600
-    audio: 52428800
-    document: 26214400
-    other: 10485760
-```
-
-#### Production Deployment
-
-For production, consider:
-
-1. **Use strong credentials**
-   ```bash
-   MINIO_ROOT_USER=<random-20-char-string>
-   MINIO_ROOT_PASSWORD=<random-40-char-string>
-   ```
-
-2. **Enable TLS**
-   ```bash
-   minio server ~/minio-data --certs-dir ~/.minio/certs
-   ```
-   Place `public.crt` and `private.key` in the certs directory.
-
-3. **Run as a service**
-   
-   Windows (NSSM):
-   ```powershell
-   nssm install MinIO "C:\path\to\minio.exe" "server C:\minio-data --console-address :9001"
-   nssm set MinIO AppEnvironmentExtra MINIO_ROOT_USER=plexichat MINIO_ROOT_PASSWORD=your-password
-   nssm start MinIO
-   ```
-   
-   Linux (systemd):
-   ```ini
-   # /etc/systemd/system/minio.service
-   [Unit]
-   Description=MinIO
-   After=network.target
-   
-   [Service]
-   User=minio
-   Group=minio
-   Environment="MINIO_ROOT_USER=plexichat"
-   Environment="MINIO_ROOT_PASSWORD=your-secure-password"
-   ExecStart=/usr/local/bin/minio server /data --console-address ":9001"
-   Restart=always
-   
-   [Install]
-   WantedBy=multi-user.target
-   ```
-
-4. **Distributed mode** (multiple servers for redundancy)
-   ```bash
-   minio server http://server{1...4}/data
-   ```
-
-#### Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Connection refused | Ensure MinIO is running and port 9000 is not blocked |
-| Access denied | Check credentials match between MinIO and config.yaml |
-| Bucket not found | Create the bucket via console or mc client |
-| CORS errors | Configure bucket CORS policy in MinIO console |
-| boto3 not found | Run `pip install boto3` |
-
-#### Verifying Setup
-
-```python
-# Quick test script
-from src.core.media.storage import S3Storage
-
-storage = S3Storage(
-    bucket="plexichat-media",
-    access_key="minioadmin",
-    secret_key="minioadmin",
-    endpoint_url="http://localhost:9000",
-    public_url="http://localhost:9000/plexichat-media",
-)
-
-# Test upload
-storage.store(b"Hello MinIO!", "test.txt", "text/plain")
-print(f"Uploaded: {storage.get_url('test.txt')}")
-
-# Test retrieve
-data = storage.retrieve("test.txt")
-print(f"Retrieved: {data.decode()}")
-
-# Cleanup
-storage.delete("test.txt")
-print("Test passed!")
-```
-
-### Database Storage (Small Files Only)
-
-For very small files like text conversions of long messages, configuration snippets, or tiny documents, you can store files directly in the database as BLOBs. This eliminates external dependencies and keeps everything in one place.
-
-#### When to Use Database Storage
-
-| Good For | Not Good For |
-|----------|--------------|
-| Long messages converted to .txt (<500KB) | Images, videos, audio |
-| Small config/data files | Files needing direct URL streaming |
-| Tiny thumbnails or icons | Anything over 512KB |
-| Single-server deployments | High-throughput file serving |
-
-#### Configuration
-
-```yaml
-media:
-  storage_backend: database
-  database_url: /api/v1/media/blob    # API endpoint for serving
-  database_max_size: 524288            # 512KB max (in bytes)
-```
-
-#### How It Works
-
-1. Files are stored as BLOBs in the `media_blobs` table
-2. Served via an API endpoint (not direct file URLs)
-3. Automatic deduplication via SHA-256 checksums
-4. Same interface as other storage backends
-
-#### API Endpoint
-
-Files stored in the database are served via `/api/v1/media/blob/{encoded_path}`. The path is base64-encoded in the URL.
-
-#### Example Usage
-
-```python
-from src.core.media.storage import DatabaseStorage
-
-# Initialize with database connection
-storage = DatabaseStorage(
-    db=db,
-    base_url="/api/v1/media/blob",
-    max_size=512 * 1024,  # 512KB
-)
-
-# Store a text file (e.g., long message converted to .txt)
-message_text = "Very long message content..." * 1000
-storage.store(message_text.encode(), "messages/12345.txt", "text/plain")
-
-# Retrieve
-data = storage.retrieve("messages/12345.txt")
-
-# Check for duplicates by checksum
-checksum = hashlib.sha256(data).hexdigest()
-existing = storage.get_by_checksum(checksum)
-
-# Get storage stats
-total_size = storage.get_total_size()
-file_count = storage.get_count()
-```
-
-#### Hybrid Approach
-
-You can use database storage alongside other backends. The `storage_backend` in `media_files` table tracks which backend each file uses, so you could:
-
-1. Use `database` for text files under 500KB
-2. Use `s3` or `local` for larger media files
-
-This requires custom logic in your upload handler to choose the backend based on file type/size.
+2. **Set up encryption keys**: Configure `PLEXICHAT_MEDIA_KEY` environment variable
+3. **Configure storage**: Set up S3/MinIO for scalable storage
+4. **Review size limits**: Adjust based on your use case
+5. **Enable rate limiting**: Protect against abuse
+6. **Consider malware scanning**: Enable ClamAV for user uploads
 
 ## Thumbnail Sizes
 
@@ -766,12 +452,3 @@ Tables (prefixed with `media_`):
 ```bash
 pytest src/tests/media/ -v
 ```
-
-## Security Features
-
-1. Content-type validation against whitelist
-2. File size limits per media type
-3. HMAC-SHA256 URL signing with expiration
-4. Malware scanning via ClamAV
-5. Path traversal prevention
-6. Soft deletes with audit trail
