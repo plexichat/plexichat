@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 import time
+from pathlib import Path
 from typing import Optional, Dict, Tuple
 
 # Conditional import for fcntl (Linux/Unix only)
@@ -23,7 +24,7 @@ class DeletionLog:
     def __init__(self, file_path: Optional[str] = None):
         cfg = config.get("authentication.account_deletion.audit_log", {})
         self.file_path = file_path or cfg.get(
-            "file_path", "/var/lib/plexichat/audit/deletion_log.jsonl"
+            "file_path", str(Path.home() / ".plexichat" / "data" / "deletion_log.jsonl")
         )
         self.hash_chain_enabled = cfg.get("hash_chain_enabled", True)
         self._ensure_dir()

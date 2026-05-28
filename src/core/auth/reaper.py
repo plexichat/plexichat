@@ -31,8 +31,14 @@ class AccountReaper:
 
         # Integrity Check: Verify the hash chain before doing anything
         is_valid, count, error = self._log.verify_chain()
+        audit_config = self._config.get("audit_log", {})
+        halt_on_invalid = audit_config.get("halt_on_invalid_audit", True)
         if not is_valid:
-            logger.critical(f"REAPER HALTED: Audit log integrity check failed! {error}")
+            msg = f"REAPER HALTED: Audit log integrity check failed! {error}"
+            if halt_on_invalid:
+                logger.critical(msg)
+                raise SystemExit(1)
+            logger.error(msg)
             return
 
         if count > 0:

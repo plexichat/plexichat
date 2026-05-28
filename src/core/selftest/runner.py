@@ -86,7 +86,10 @@ class SelfTestRunner:
         # 3. WebSocket Test
         self.ws.test_websocket()
 
-        # 4. Execute API Tests
+        # 4. Rate Limit Test (early, while auth creds are fresh)
+        self.ratelimit.test_rate_limits()
+
+        # 5. Execute API Tests
         excluded = set(self.ctx.config.get("excluded_endpoints", []))
         # Auth endpoints that would invalidate the main session if tested in the main loop.
         # These are tested via dedicated standalone methods instead.
@@ -217,22 +220,44 @@ class SelfTestRunner:
                         use_other = True
                         break
 
-            if "/leave" in path and "/servers/" in path:
-                if self.ctx.other_token and self.ctx.test_invite_code:
-                    try:
-                        rejoin_url = f"{self.ctx.base_url}/api/v1/channels/invites/{self.ctx.test_invite_code}"
-                        self.ctx.other_session.post(rejoin_url, timeout=5)
-                    except Exception:
-                        pass
-                use_other = True
-
+            # Approvals created by main admin — must use other_session to approve
             if (
-                not use_other
-                and self.ctx.other_token
-                and "/admin/approvals/" in path
-                and "/approve" in path
+                self.ctx.other_token
+                and "/approvals/" in path
+                and ("/approve" in path or "/reject" in path)
             ):
                 use_other = True
+
+            if "/leave" in path and "/servers/" in path:
+                if (
+                    self.ctx.other_token
+                    and self.ctx.test_channel_id
+                    and self.ctx.test_server_id
+                ):
+                    try:
+                        unban_url = f"{self.ctx.base_url}/api/v1/servers/{self.ctx.test_server_id}/bans/{self.ctx.test_other_user_id}"
+                        self.ctx.session.delete(unban_url, timeout=5)
+                    except Exception:
+                        pass
+                    try:
+                        invite_create_url = f"{self.ctx.base_url}/api/v1/channels/{self.ctx.test_channel_id}/invites"
+                        invite_resp = self.ctx.session.post(
+                            invite_create_url, json={"max_uses": 10}, timeout=5
+                        )
+                        if (
+                            invite_resp.status_code in (200, 201)
+                            and self.ctx.test_other_user_id
+                        ):
+                            invite_code = invite_resp.json().get("code")
+                            if invite_code:
+                                rejoin_url = f"{self.ctx.base_url}/api/v1/channels/invites/{invite_code}"
+                                rejoin_resp = self.ctx.other_session.post(
+                                    rejoin_url, timeout=5
+                                )
+                                if rejoin_resp.status_code in (200, 201, 204):
+                                    use_other = True
+                    except Exception:
+                        pass
 
             # Relationship accept is tested with the MAIN session (admin user
             # accepts the request sent by other_user during setup).
@@ -240,6 +265,12 @@ class SelfTestRunner:
             if "/voice/" in path and method == "GET":
                 logger.debug(
                     f"Skipping voice endpoint (no connection): {method} {path}"
+                )
+                continue
+
+            if "/media/upload/chunk" in path:
+                logger.debug(
+                    f"Skipping chunk upload endpoint (requires real session): {method} {path}"
                 )
                 continue
 
@@ -263,7 +294,8 @@ class SelfTestRunner:
 
             time.sleep(0.01)
 
-        # 5. Standalone-specific endpoint tests (after setup, before destructive)
+        # 6. Standalone-specific endpoint tests (before destructive, so delay-deletion
+        #    and password-reset can use the other_user before they are force-purged)
         if self.ctx.standalone_mode:
             self.endpoints.test_auth_endpoints()
             self.endpoints.test_migration_endpoints()
@@ -274,16 +306,13 @@ class SelfTestRunner:
             # Poll vote must run before poll close
             self.endpoints.test_poll_vote()
             self.endpoints.test_poll_close()
-            self.ratelimit.test_rate_limits()
         else:
             logger.info(
                 "Skipping standalone-specific endpoint tests (not in standalone mode)"
             )
 
-        # 6. Explicit bot server flow
-        self.endpoints.test_bot_server_integration()
-
-        # 7. Deferred destructive endpoints
+        # 7. Deferred destructive endpoints (after standalone tests, so other_user
+        #    still exists for lock/unlock/force-purge)
         if deferred_destructive:
             logger.info(
                 "Executing deferred destructive endpoints (targeting other user)..."
@@ -299,13 +328,16 @@ class SelfTestRunner:
                 self.endpoints.test_endpoint(method, test_path, route)
                 time.sleep(0.01)
 
-        # 8. DELETE endpoint testing
+        # 8. Explicit bot server flow
+        self.endpoints.test_bot_server_integration()
+
+        # 9. DELETE endpoint testing
         self.endpoints.test_delete_resources()
 
-        # 9. Cleanup
+        # 10. Cleanup
         self.cleanup.cleanup_test_data()
 
-        # 10. Summary
+        # 11. Summary
         success = self.report.report_summary()
 
         return success
