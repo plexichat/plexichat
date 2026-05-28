@@ -105,19 +105,9 @@ class RateLimitMiddlewareASGI:
         """Initialize ASGI rate limit middleware."""
         self.app = app
         self._get_user_info = get_user_info
-        self._exclude_paths = set(
-            exclude_paths or ["/", "/health", "/docs", "/redoc", "/openapi.json"]
-        )
+        self._exclude_paths = set(exclude_paths or [])
         self._include_headers_on_success = include_headers_on_success
-        self._exclude_patterns = [
-            re.compile(r"^/api/v\d+/health$"),
-            re.compile(r"^/docs"),
-            re.compile(r"^/redoc"),
-            re.compile(r"^/openapi\.json$"),
-            # Admin API has its own login rate limiting in authenticate_admin()
-            # and all other admin endpoints require a valid session token.
-            re.compile(r"^/api/v\d+/admin"),
-        ]
+        self._exclude_patterns = []
 
     def _should_exclude(self, path: str) -> bool:
         """Check if path should be excluded from rate limiting."""

@@ -65,16 +65,16 @@ class PlexichatServer:
         """Setup configuration from file or defaults, with environment variable overrides.
 
         Config file search order:
-        1. Project config: ./config/config.yaml
-        2. Home folder config: ~/.plexichat/config/config.yaml
+        1. Home folder config: ~/.plexichat/config/config.yaml
+        2. Project config: ./config/config.yaml
         """
-        # Try project config first, then home folder config
+        # Try home folder config first, then project config
         config_paths = [
-            (os.path.join(project_root, "config", "config.yaml"), "project directory"),
             (
                 str(Path.home() / ".plexichat" / "config" / "config.yaml"),
                 "home directory",
             ),
+            (os.path.join(project_root, "config", "config.yaml"), "project directory"),
         ]
 
         config_path = None
@@ -84,7 +84,7 @@ class PlexichatServer:
                 break
 
         if not config_path:
-            # Use project config as default (will be created)
+            # Use home config as default (will be created)
             config_path = str(config_paths[0][0])
 
         config.setup(config_path=config_path, default_config=self.get_default_config())
