@@ -71,7 +71,10 @@ async def get_audit_logs(
 
         query += " ORDER BY created_at DESC"
 
-        count_query = f"SELECT COUNT(*) as total FROM ({query})"
+        # Build a separate count query with the same WHERE conditions
+        count_query = "SELECT COUNT(*) as total FROM admin_audit_log"
+        if conditions:
+            count_query += " WHERE " + " AND ".join(conditions)
         total = db.fetch_one(count_query, params)["total"]
 
         query += " LIMIT ? OFFSET ?"

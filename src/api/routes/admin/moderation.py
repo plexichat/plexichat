@@ -605,7 +605,7 @@ async def update_automod_config(body: AutomodConfigUpdateRequest, request: Reque
 
         automod.reload_config()
     except Exception:
-        pass
+        logger.warning("Failed to reload automod config after update", exc_info=True)
     return AutomodConfigResponse(
         enabled=current.get("enabled", True),
         ai=current.get("ai", {}),

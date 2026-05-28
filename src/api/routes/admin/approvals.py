@@ -4,9 +4,14 @@ Admin approval workflow routes.
 
 from fastapi import APIRouter, Request, HTTPException
 from src.api.schemas.common import SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 from typing import Optional
 from pydantic import BaseModel, Field
+import time
 
 router = APIRouter()
 
@@ -27,6 +32,12 @@ class ApprovalDecision(BaseModel):
     reason: Optional[str] = Field(None, max_length=500)
 
 
+class ApprovalComment(BaseModel):
+    """Add a comment to an approval request."""
+
+    comment: str = Field(..., min_length=1, max_length=1000)
+
+
 @router.get("/approvals")
 async def list_approvals(
     request: Request, status: Optional[str] = None, action_type: Optional[str] = None
@@ -35,10 +46,8 @@ async def list_approvals(
     List approval requests with optional filtering.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    require_admin_permission(request, "admin.approvals")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -46,11 +55,6 @@ async def list_approvals(
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(admin_id, "admin.approvals", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
     # Build query with filters
@@ -127,10 +131,8 @@ async def get_approval(request: Request, approval_id: int):
     Get details of a specific approval request.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    require_admin_permission(request, "admin.approvals")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -138,11 +140,6 @@ async def get_approval(request: Request, approval_id: int):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(admin_id, "admin.approvals", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
     row = db.fetch_one(
@@ -226,7 +223,6 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
     # Check for single admin bypass
     single_admin_bypass = approval_config.get("single_admin_bypass", True)
     if single_admin_bypass:
-        # Check if there's only one admin
         import src.api as api
 
         db = api.get_db()
@@ -241,7 +237,6 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
         )
 
         if count == 1:
-            # Only one admin, bypass approval
             return SuccessResponse(success=True, message="Single admin bypass")
 
     # Create approval request
@@ -254,7 +249,6 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    import time
     from src.utils.encryption import generate_snowflake_id
 
     now = int(time.time() * 1000)
@@ -287,7 +281,6 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
         ),
     )
 
-    # Log the action
     from src.core.admin.permissions import log_admin_action
 
     log_admin_action(
@@ -311,10 +304,8 @@ async def approve_request(request: Request, approval_id: int):
     Approve an approval request.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.approvals")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -322,11 +313,6 @@ async def approve_request(request: Request, approval_id: int):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(admin_id, "admin.approvals", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
     # Get approval request
@@ -388,8 +374,6 @@ async def approve_request(request: Request, approval_id: int):
             },
         )
 
-    import time
-
     now = int(time.time() * 1000)
 
     # Add admin to approved_by list
@@ -412,7 +396,6 @@ async def approve_request(request: Request, approval_id: int):
         (new_current_approvals, new_approved_by, new_status, now, approval_id),
     )
 
-    # Log the action
     from src.core.admin.permissions import log_admin_action
 
     log_admin_action(
@@ -429,11 +412,6 @@ async def approve_request(request: Request, approval_id: int):
         request.client.host if request.client else "unknown",
     )
 
-    # If approved, execute the action (this would be implemented in the action-specific endpoints)
-    if new_status == "approved":
-        # The action would be executed by the calling endpoint
-        pass
-
     return SuccessResponse(success=True, message="Approval recorded")
 
 
@@ -445,10 +423,8 @@ async def reject_request(
     Reject an approval request.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.approvals")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -456,11 +432,6 @@ async def reject_request(
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(admin_id, "admin.approvals", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
     # Get approval request
@@ -496,8 +467,6 @@ async def reject_request(
             },
         )
 
-    import time
-
     now = int(time.time() * 1000)
 
     db.execute(
@@ -509,7 +478,6 @@ async def reject_request(
         (admin_id, decision.reason, now, approval_id),
     )
 
-    # Log the action
     from src.core.admin.permissions import log_admin_action
 
     log_admin_action(
@@ -523,3 +491,199 @@ async def reject_request(
     )
 
     return SuccessResponse(success=True, message="Approval request rejected")
+
+
+@router.delete("/approvals/{approval_id}", response_model=SuccessResponse)
+async def cancel_approval(request: Request, approval_id: int):
+    """
+    Cancel a pending approval request. Only the requester or a super admin can cancel.
+    """
+    check_host_restriction(request)
+    admin_id = require_admin_permission(request, "admin.approvals")
+
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+
+    approval = db.fetch_one(
+        """
+        SELECT id, status, requested_by
+        FROM admin_approvals
+        WHERE id = ?
+    """,
+        (approval_id,),
+    )
+
+    if not approval:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Approval request not found"}},
+        )
+
+    if isinstance(approval, dict):
+        status = approval["status"]
+        requested_by = approval["requested_by"]
+    else:
+        status = approval[1]
+        requested_by = approval[2]
+
+    if status != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": f"Approval request is {status}, cannot cancel",
+                }
+            },
+        )
+
+    # Only the requester or super admin can cancel
+    if admin_id != requested_by:
+        from src.core.admin.permissions import check_permission
+
+        perm = check_permission(admin_id, "*", db)
+        if not perm.has_permission:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Only the requester or a super admin can cancel this request",
+                    }
+                },
+            )
+
+    now = int(time.time() * 1000)
+
+    db.execute(
+        """
+        UPDATE admin_approvals
+        SET status = 'cancelled', updated_at = ?
+        WHERE id = ?
+    """,
+        (now, approval_id),
+    )
+
+    from src.core.admin.permissions import log_admin_action
+
+    log_admin_action(
+        db,
+        admin_id,
+        "approval.cancel",
+        "approval",
+        approval_id,
+        {"action": "cancel", "approval_id": str(approval_id)},
+        request.client.host if request.client else "unknown",
+    )
+
+    return SuccessResponse(success=True, message="Approval request cancelled")
+
+
+class ApprovalCommentModel(BaseModel):
+    """Comment content for an approval request."""
+
+    comment: str = Field(..., min_length=1, max_length=1000)
+
+
+@router.post("/approvals/{approval_id}/comments", response_model=SuccessResponse)
+async def add_approval_comment(
+    request: Request, approval_id: int, body: ApprovalCommentModel
+):
+    """
+    Add a comment to an approval request for discussion.
+    """
+    check_host_restriction(request)
+    admin_id = require_admin_permission(request, "admin.approvals")
+
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+
+    # Verify approval exists
+    approval = db.fetch_one(
+        "SELECT id FROM admin_approvals WHERE id = ?", (approval_id,)
+    )
+    if not approval:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Approval request not found"}},
+        )
+
+    from src.utils.encryption import generate_snowflake_id
+
+    now = int(time.time() * 1000)
+    comment_id = generate_snowflake_id()
+
+    db.execute(
+        """
+        INSERT INTO admin_approval_comments (id, approval_id, admin_id, comment, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """,
+        (comment_id, approval_id, admin_id, body.comment, now),
+    )
+
+    from src.core.admin.permissions import log_admin_action
+
+    log_admin_action(
+        db,
+        admin_id,
+        "approval.comment",
+        "approval",
+        approval_id,
+        {"comment": body.comment[:100], "approval_id": str(approval_id)},
+        request.client.host if request.client else "unknown",
+    )
+
+    return SuccessResponse(success=True, message="Comment added")
+
+
+@router.get("/approvals/{approval_id}/comments")
+async def get_approval_comments(request: Request, approval_id: int):
+    """
+    Get all comments for an approval request.
+    """
+    check_host_restriction(request)
+    require_admin_permission(request, "admin.approvals")
+
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+
+    comments = db.fetch_all(
+        """
+        SELECT id, approval_id, admin_id, comment, created_at
+        FROM admin_approval_comments
+        WHERE approval_id = ?
+        ORDER BY created_at ASC
+    """,
+        (approval_id,),
+    )
+
+    return {
+        "approval_id": approval_id,
+        "comments": [
+            {
+                "id": c["id"],
+                "admin_id": c["admin_id"],
+                "comment": c["comment"],
+                "created_at": c["created_at"],
+            }
+            for c in comments
+        ],
+    }

@@ -4,7 +4,7 @@ Admin role management routes.
 
 from fastapi import APIRouter, Request, HTTPException
 from src.api.schemas.common import SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import check_host_restriction, require_admin_permission
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -39,10 +39,8 @@ async def list_roles(request: Request):
     List all available admin roles.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    require_admin_permission(request, "admin.roles")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -50,11 +48,6 @@ async def list_roles(request: Request):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(admin_id, "admin.roles", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
     rows = db.fetch_all("""
@@ -101,10 +94,8 @@ async def get_role(request: Request, role_id: int):
     Get details of a specific role.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    require_admin_permission(request, "admin.roles")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -112,11 +103,6 @@ async def get_role(request: Request, role_id: int):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(admin_id, "admin.roles", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
     row = db.fetch_one(
@@ -164,10 +150,8 @@ async def create_role(request: Request, role_data: RoleCreate):
     Create a new admin role.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.roles")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -175,11 +159,6 @@ async def create_role(request: Request, role_data: RoleCreate):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(admin_id, "admin.roles", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
     import time
@@ -245,10 +224,8 @@ async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
     Update an existing admin role.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.roles")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -257,14 +234,11 @@ async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
-    if not check_admin_permission(admin_id, "admin.roles", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
-        )
 
     # Check if role exists and is not a system role
-    role = db.fetch_one("SELECT is_system FROM admin_roles WHERE id = ?", (role_id,))
+    role = db.fetch_one(
+        "SELECT is_system, position FROM admin_roles WHERE id = ?", (role_id,)
+    )
     if not role:
         raise HTTPException(
             status_code=404,
@@ -276,6 +250,20 @@ async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
         raise HTTPException(
             status_code=403,
             detail={"error": {"code": 403, "message": "Cannot modify system roles"}},
+        )
+
+    # Enforce role hierarchy: can only modify roles at a lower position
+    from src.core.admin.permissions import can_manage_role
+
+    if not can_manage_role(db, admin_id, role_id):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Cannot manage roles at or above your own position",
+                }
+            },
         )
 
     import time
@@ -304,14 +292,10 @@ async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
 
     params.append(int(role_id))
 
-    db.execute(
-        f"""
-        UPDATE admin_roles
-        SET {", ".join(updates)}
-        WHERE id = ?
-    """,
-        params,
-    )
+    # updates list contains only hardcoded column assignments (safe from injection)
+    column_updates = ", ".join(updates)
+    query = f"UPDATE admin_roles SET {column_updates} WHERE id = ?"  # nosec - hardcoded column names
+    db.execute(query, params)
 
     # Log the action
     from src.core.admin.permissions import log_admin_action
@@ -338,10 +322,8 @@ async def delete_role(request: Request, role_id: int):
     Delete an admin role.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.roles")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -350,14 +332,11 @@ async def delete_role(request: Request, role_id: int):
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
-    if not check_admin_permission(admin_id, "admin.roles", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
-        )
 
     # Check if role exists and is not a system role
-    role = db.fetch_one("SELECT is_system FROM admin_roles WHERE id = ?", (role_id,))
+    role = db.fetch_one(
+        "SELECT is_system, position FROM admin_roles WHERE id = ?", (role_id,)
+    )
     if not role:
         raise HTTPException(
             status_code=404,
@@ -369,6 +348,20 @@ async def delete_role(request: Request, role_id: int):
         raise HTTPException(
             status_code=403,
             detail={"error": {"code": 403, "message": "Cannot delete system roles"}},
+        )
+
+    # Enforce role hierarchy: can only delete roles at a lower position
+    from src.core.admin.permissions import can_manage_role
+
+    if not can_manage_role(db, admin_id, role_id):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Cannot manage roles at or above your own position",
+                }
+            },
         )
 
     # Check if role is assigned to any admins
@@ -415,10 +408,8 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     Assign a role to an admin.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.roles")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -426,11 +417,6 @@ async def assign_role(request: Request, assignment: RoleAssignment):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(admin_id, "admin.roles", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
     import time
@@ -455,6 +441,30 @@ async def assign_role(request: Request, assignment: RoleAssignment):
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Admin not found"}},
+        )
+
+    # Enforce hierarchy: can only assign roles if you can manage the target admin AND the role
+    from src.core.admin.permissions import can_manage_admin, can_manage_role
+
+    if not can_manage_admin(db, admin_id, assignment.admin_id):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Cannot assign roles to admins at or above your own position",
+                }
+            },
+        )
+    if not can_manage_role(db, admin_id, assignment.role_id):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Cannot assign roles at or above your own position",
+                }
+            },
         )
 
     # Check if assignment already exists
@@ -500,10 +510,8 @@ async def revoke_role(request: Request, admin_id: int, role_id: int):
     Revoke a role from an admin.
     """
     check_host_restriction(request)
-    current_admin_id = get_admin_from_token(request)
+    current_admin_id = require_admin_permission(request, "admin.roles.assign")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -512,10 +520,29 @@ async def revoke_role(request: Request, admin_id: int, role_id: int):
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
-    if not check_admin_permission(current_admin_id, "admin.roles.assign", db):
+
+    # Enforce hierarchy: can only revoke roles if you can manage the target admin AND the role
+    from src.core.admin.permissions import can_manage_admin, can_manage_role
+
+    if not can_manage_admin(db, current_admin_id, admin_id):
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Cannot revoke roles from admins at or above your own position",
+                }
+            },
+        )
+    if not can_manage_role(db, current_admin_id, role_id):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Cannot revoke roles at or above your own position",
+                }
+            },
         )
 
     # Check if assignment exists
@@ -556,10 +583,8 @@ async def get_admin_roles(request: Request, admin_id: int):
     Get all roles assigned to a specific admin.
     """
     check_host_restriction(request)
-    current_admin_id = get_admin_from_token(request)
+    require_admin_permission(request, "admin.roles.read")
 
-    # Check permission
-    from src.core.admin.permissions import check_admin_permission
     import src.api as api
 
     db = api.get_db()
@@ -567,11 +592,6 @@ async def get_admin_roles(request: Request, admin_id: int):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(current_admin_id, "admin.roles.read", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
         )
 
     rows = db.fetch_all(
