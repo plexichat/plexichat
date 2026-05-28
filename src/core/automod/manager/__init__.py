@@ -1277,9 +1277,19 @@ class AutoModManager(BaseManager):
             server_id,
         )
 
+    def _safe_json_loads(self, value: Any, default: Any = None) -> Any:
+        """Safely parse a JSON string, returning default on failure."""
+        if value is None:
+            return default
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(f"Invalid JSON value: {value!r}")
+            return default
+
     def _row_to_rule(self, row) -> Rule:
         """Convert database row to Rule."""
-        actions_data = json.loads(row["actions"])
+        actions_data = self._safe_json_loads(row["actions"], []) or []
         actions = [
             RuleAction(
                 action_type=ActionType(a["action_type"]),
@@ -1289,6 +1299,7 @@ class AutoModManager(BaseManager):
                 metadata=a.get("metadata", {}),
             )
             for a in actions_data
+            if isinstance(a, dict) and "action_type" in a
         ]
 
         return Rule(
@@ -1297,13 +1308,11 @@ class AutoModManager(BaseManager):
             name=row["name"],
             rule_type=RuleType(row["rule_type"]),
             enabled=bool(row["enabled"]),
-            config=json.loads(row["config"]),
+            config=self._safe_json_loads(row["config"], {}),
             actions=actions,
-            applied_roles=json.loads(row["applied_roles"])
-            if "applied_roles" in row
-            else [],
-            exempt_roles=json.loads(row["exempt_roles"]),
-            exempt_channels=json.loads(row["exempt_channels"]),
+            applied_roles=self._safe_json_loads(row.get("applied_roles"), []),
+            exempt_roles=self._safe_json_loads(row["exempt_roles"], []),
+            exempt_channels=self._safe_json_loads(row["exempt_channels"], []),
             priority=row["priority"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -1313,6 +1322,7 @@ class AutoModManager(BaseManager):
 
     def _row_to_violation(self, row) -> Violation:
         """Convert database row to Violation."""
+        actions_taken_raw = self._safe_json_loads(row.get("actions_taken"), []) or []
         return Violation(
             id=row["id"],
             server_id=row["server_id"],
@@ -1322,10 +1332,12 @@ class AutoModManager(BaseManager):
             rule_id=row["rule_id"],
             rule_type=RuleType(row["rule_type"]),
             matched_content=row["matched_content"],
-            actions_taken=[ActionType(a) for a in json.loads(row["actions_taken"])],
+            actions_taken=[
+                ActionType(a) for a in actions_taken_raw if isinstance(a, str)
+            ],
             severity=ViolationSeverity(row["severity"]),
             created_at=row["created_at"],
-            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
+            metadata=self._safe_json_loads(row.get("metadata"), {}),
         )
 
     def _row_to_reputation(self, row) -> UserReputation:
@@ -1351,6 +1363,6 @@ class AutoModManager(BaseManager):
             moderator_id=row["moderator_id"],
             rule_id=row["rule_id"],
             reason=row["reason"],
-            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
+            metadata=self._safe_json_loads(row.get("metadata"), {}),
             created_at=row["created_at"],
         )
