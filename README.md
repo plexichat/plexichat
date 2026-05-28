@@ -138,6 +138,31 @@ docs:
 
 See `docs/` and `config/` for repository-backed configuration details.
 
+## Licensing
+
+Plexichat requires a valid license for commercial use. Without one, the server runs in free tier mode (all base features work, premium features disabled).
+
+**License File Location (in priority order):**
+1. `PLEXICHAT_LICENSE` env var pointing to a file path
+2. `PLEXICHAT_LICENSE` env var as a base64-encoded license JSON
+3. `~/.plexichat/config/license` (default)
+4. `~/.plexichat/config/license.json` (fallback)
+
+License files are plain JSON with an Ed25519 signature. Example:
+```json
+{
+  "version": "1.0",
+  "instance_id": "my-instance",
+  "issued_at": 1700000000,
+  "features": { "bond": true, "join": true },
+  "signature": "..."
+}
+```
+
+**Hot-swapping:** The admin API (`POST /api/v1/admin/license/apply`) applies a license **in-memory only** — it does NOT persist to disk. On restart the original file is re-read. For permanent changes, update the license file on disk and call `POST /api/v1/admin/license/check` to reload it.
+
+To obtain a license, contact sales@plexichat.com or visit https://plexichat.com.
+
 ## Project Structure
 
 ```
