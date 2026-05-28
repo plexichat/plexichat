@@ -68,6 +68,7 @@ __all__ = [
     "remove_sticker",
     "send_sticker",
     "get_sticker_suggestions",
+    "create_sticker_from_file",
 ]
 
 _manager = None
@@ -173,3 +174,18 @@ def get_sticker_suggestions(
 ) -> List[StickerSuggestion]:
     """Get sticker suggestions based on message content."""
     return _get_manager().get_sticker_suggestions(user_id, content, server_id, limit)
+
+
+def create_sticker_from_file(
+    user_id: int,
+    pack_id: int,
+    name: str,
+    image_data: bytes,
+    content_type: str,
+    tags: Optional[List[str]] = None,
+    related_emoji: Optional[str] = None,
+) -> Sticker:
+    """Create a sticker from an uploaded file."""
+    return _get_manager().create_sticker_from_file(
+        user_id, pack_id, name, image_data, content_type, tags, related_emoji
+    )
