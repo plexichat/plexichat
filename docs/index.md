@@ -34,6 +34,10 @@ This portal documents the Plexichat backend: the REST API, the WebSocket gateway
 - [Email](deployment/configuration/config-email.md) -- SMTP setup for email verification and password reset
 - [Embeds & URL Preview](deployment/configuration/config-embeds.md) -- embed limits and URL preview configuration
 
+### Licensing
+
+- [Licensing](deployment/licensing.md) -- license file setup, env var configuration, hot-swapping, feature gating
+
 ### Deployment & Operations
 
 - [Deployment](deployment/index.md) -- installation, security hardening, scaling, monitoring, backup
