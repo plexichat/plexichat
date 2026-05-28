@@ -463,7 +463,12 @@ class StickerManager:
         )
 
     def _row_to_sticker(self, row) -> Sticker:
-        tags = json.loads(row["tags"]) if row["tags"] else []
+        tags = []
+        if row.get("tags"):
+            try:
+                tags = json.loads(row["tags"])
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(f"Invalid tags JSON for sticker {row.get('id')}")
         usage_count = (
             row.get("usage_count", 0)
             if hasattr(row, "get")
