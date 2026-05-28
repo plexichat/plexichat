@@ -2,33 +2,37 @@
 Admin licensing routes for managing instance license state.
 """
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, status
+from pydantic import BaseModel
 from datetime import datetime
-
 from .utils import check_host_restriction, get_admin_from_token
 import utils.logger as logger
+import utils.licensing as licensing_module
 
-router = APIRouter()
+router = APIRouter(prefix="/license", tags=["Admin", "Licensing"])
 
 
-@router.get("/license/status")
+class LicenseKey(BaseModel):
+    license_key: str
+
+
+@router.get("/status")
 async def get_license_status(request: Request):
     """
     Retrieve current license status and validation state.
     """
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin_id = get_admin_from_token(request)
 
     try:
-        import importlib
+        status_data = licensing_module.to_dict()
 
-        _licensing = importlib.import_module("src.utils.common-utils.utils.licensing")
+        # Add extra details as seen in backup
+        instance_id = licensing_module.get_instance_id()
+        valid = licensing_module.is_valid()
+        free_tier = licensing_module.is_free_tier()
 
-        instance_id = _licensing.get_instance_id()
-        valid = _licensing.is_valid()
-        free_tier = _licensing.is_free_tier()
-
-        expiry_ts = _licensing.get_expiry_timestamp()
+        expiry_ts = licensing_module.get_expiry_timestamp()
         expiry_date = None
         days_remaining = None
         if expiry_ts:
@@ -37,9 +41,11 @@ async def get_license_status(request: Request):
                 0, int((expiry_ts - datetime.now().timestamp()) / 86400)
             )
 
-        validation_result = _licensing.get_validation_result()
+        validation_result = licensing_module.get_validation_result()
 
+        # Merge status_data with extra details
         return {
+            **status_data,
             "valid": valid,
             "free_tier": free_tier,
             "tier": "free" if free_tier else "enterprise",
@@ -54,19 +60,15 @@ async def get_license_status(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/license/features")
+@router.get("/features")
 async def get_license_features(request: Request):
     """
     Retrieve feature matrix showing all licensed features and their state.
     """
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin_id = get_admin_from_token(request)
 
     try:
-        import importlib
-
-        _licensing = importlib.import_module("src.utils.common-utils.utils.licensing")
-
         features = [
             {"key": "bots", "label": "Bot Platform"},
             {"key": "premium", "label": "Premium Bot Limits"},
@@ -80,9 +82,9 @@ async def get_license_features(request: Request):
 
         feature_matrix = []
         for feature in features:
-            enabled = _licensing.has_feature(feature["key"])
-            config = _licensing.get_feature_config(feature["key"])
-            limit = _licensing.get_feature_limit(feature["key"])
+            enabled = licensing_module.has_feature(feature["key"])
+            config = licensing_module.get_feature_config(feature["key"])
+            limit = licensing_module.get_feature_limit(feature["key"])
 
             feature_matrix.append(
                 {
@@ -100,17 +102,16 @@ async def get_license_features(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/license/validate")
-async def validate_license(request: Request):
+@router.post("/validate")
+async def validate_license_key(request: Request, body: LicenseKey):
     """
     Validate a proposed license payload without applying it.
     """
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin_id = get_admin_from_token(request)
 
     try:
-        body = await request.json()
-        license_payload = body.get("license_key")
+        license_payload = body.license_key
 
         if not license_payload:
             raise HTTPException(status_code=400, detail="license_key is required")
@@ -122,10 +123,7 @@ async def validate_license(request: Request):
         except Exception:
             return {"valid": False, "error": "Invalid base64 encoding"}
 
-        import importlib
-
-        _licensing = importlib.import_module("src.utils.common-utils.utils.licensing")
-        result = _licensing.validate_license_payload(decoded)
+        result = licensing_module.validate_license_payload(decoded)
 
         return {"valid": result.get("valid", False), "details": result}
     except HTTPException:
@@ -135,105 +133,40 @@ async def validate_license(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/license/apply")
-async def apply_license(request: Request):
+@router.post("/apply")
+async def apply_license(request: Request, body: LicenseKey):
     """
-    Apply a new license from base64-encoded payload.
-    """
-    check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    Apply a new license key.
 
-    try:
-        body = await request.json()
-        license_payload = body.get("license_key")
-
-        if not license_payload:
-            raise HTTPException(status_code=400, detail="license_key is required")
-
-        import importlib
-
-        _licensing = importlib.import_module("src.utils.common-utils.utils.licensing")
-
-        current_valid = _licensing.is_valid()
-
-        result = _licensing.apply_license_from_base64(license_payload)
-
-        if not result.get("success"):
-            return {
-                "success": False,
-                "error": result.get("error", "Failed to apply license"),
-            }
-
-        new_valid = _licensing.is_valid()
-
-        if _admin:
-            try:
-                import src.api as api_mod
-
-                db = api_mod.get_db()
-                from src.core.admin.logging import AdminLogEntry, get_admin_logger
-
-                admin_logger = get_admin_logger()
-                entry = AdminLogEntry(
-                    admin_id=_admin,
-                    action="license.apply",
-                    target_type="license",
-                    details=f"License applied (was valid: {current_valid}, now valid: {new_valid})",
-                    ip_address=request.client.host if request.client else None,
-                    user_agent=request.headers.get("user-agent"),
-                )
-                admin_logger.log_action(db, entry)
-            except Exception as le:
-                logger.warning(f"Failed to log license change: {le}")
-
-        return {"success": True, "valid": new_valid}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"License apply error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/license/reload")
-async def reload_license(request: Request):
-    """
-    Reload license from environment variable or file without restart.
+    The license is applied in-memory only and is NOT persisted to disk.
+    On server restart the original license file on disk is re-read.
+    For permanent changes, update the license file at ~/.plexichat/config/license
+    (or license.json) and call POST /api/v1/admin/license/check to reload it.
     """
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin_id = get_admin_from_token(request)
 
-    try:
-        import importlib
+    result = licensing_module.apply_license_from_base64(body.license_key)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("error") or "Failed to apply license",
+        )
+    return {"message": "License applied successfully"}
 
-        _licensing = importlib.import_module("src.utils.common-utils.utils.licensing")
 
-        current_valid = _licensing.is_valid()
+@router.post("/check")
+async def force_validate_license(request: Request):
+    """
+    Force a license validation check of the current license.
+    """
+    check_host_restriction(request)
+    _admin_id = get_admin_from_token(request)
 
-        result = _licensing.reload_license()
-
-        new_valid = _licensing.is_valid()
-
-        if _admin:
-            try:
-                import src.api as api_mod
-
-                db = api_mod.get_db()
-                from src.core.admin.logging import AdminLogEntry, get_admin_logger
-
-                admin_logger = get_admin_logger()
-                entry = AdminLogEntry(
-                    admin_id=_admin,
-                    action="license.reload",
-                    target_type="license",
-                    details=f"License reloaded (was valid: {current_valid}, now valid: {new_valid})",
-                    ip_address=request.client.host if request.client else None,
-                    user_agent=request.headers.get("user-agent"),
-                )
-                admin_logger.log_action(db, entry)
-            except Exception as le:
-                logger.warning(f"Failed to log license reload: {le}")
-
-        return {"success": result, "valid": new_valid}
-    except Exception as e:
-        logger.error(f"License reload error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    success = licensing_module.reload_license()
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="License validation failed",
+        )
+    return {"message": "License validated successfully"}
