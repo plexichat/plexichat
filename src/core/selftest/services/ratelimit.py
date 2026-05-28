@@ -1,7 +1,9 @@
 """
 Rate limit test service for SelfTestRunner.
 
-Negative test: sends rapid requests without bypass header to verify 429.
+Negative test: sends rapid requests to verify 429 when rate limiting is active.
+Uses a public endpoint (/api/v1/status) that doesn't require auth tokens or
+API access tokens, so requests go through rate-limit middleware unobstructed.
 """
 
 import utils.logger as logger
@@ -19,12 +21,15 @@ class RateLimitTester:
         logger.info("Testing rate limit enforcement...")
 
         rate_session = self.ctx.requests_module.Session()
-        if self.ctx.token:
-            rate_session.headers.update({"Authorization": f"Bearer {self.ctx.token}"})
+        # No auth headers, no internal-secret header — this session makes
+        # unauthenticated requests that still go through rate-limit middleware.
 
-        target = f"{self.ctx.base_url}/api/v1/users/@me"
+        # Use a public endpoint that doesn't require any auth or API access token.
+        # The rate-limit middleware runs for ALL paths (no public-endpoint bypass),
+        # so a burst to /api/v1/status will trigger 429 regardless of auth state.
+        target = f"{self.ctx.base_url}/api/v1/status"
 
-        burst_count = 15
+        burst_count = 70
         rate_limited = False
         status_codes = []
 
@@ -62,5 +67,6 @@ class RateLimitTester:
         else:
             logger.warning(
                 f"Rate limit NEGATIVE TEST WARNING: no 429 received after {burst_count} requests "
-                f"(statuses: {status_codes}). Rate limiting may be disabled or burst too small."
+                f"(statuses: {status_codes}). Rate limiting may be disabled, or the effective "
+                f"limit ({30 + 5}) wasn't exhausted."
             )

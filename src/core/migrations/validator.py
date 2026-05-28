@@ -18,12 +18,12 @@ def validate_migration_order(
     pending_versions: List[str], applied_versions: List[str]
 ) -> bool:
     """
-    Validate that pending migration versions are sequential.
+    Validate that pending migration versions form a valid sequence.
 
-    Only checks for gaps *within the pending versions themselves* and that
-    the first pending version follows the highest applied version. Existing
-    gaps in already-applied migrations are logged as warnings but do NOT
-    block new migrations from being applied.
+    Handles complex migration states where versions may have been applied
+    non-sequentially (e.g., 038 applied while 037 is still pending).
+    A gap in pending versions is only treated as an error if the missing
+    version is NEITHER pending NOR already applied.
 
     Args:
         pending_versions: List of pending migration versions to apply
@@ -33,7 +33,8 @@ def validate_migration_order(
         True if order is valid
 
     Raises:
-        ValueError: If there are gaps within the pending version sequence
+        ValueError: If there is a genuine gap (a version is neither
+                    pending nor applied)
     """
     if not pending_versions:
         return True
@@ -48,6 +49,7 @@ def validate_migration_order(
     applied_nums = sorted(
         n for n in (_extract_numeric(v) for v in applied_versions) if n is not None
     )
+    applied_set = set(applied_nums)
     pending_nums = sorted(
         n for n in (_extract_numeric(v) for v in pending_versions) if n is not None
     )
@@ -56,7 +58,7 @@ def validate_migration_order(
         return True
 
     # Log (but do not block) gaps in already-applied migrations
-    if applied_nums:
+    if len(applied_nums) > 1:
         for i in range(1, len(applied_nums)):
             if applied_nums[i] != applied_nums[i - 1] + 1:
                 logger.warning(
@@ -67,29 +69,58 @@ def validate_migration_order(
                     applied_nums[i],
                 )
 
-    # Check that pending versions are sequential with no gaps
+    # Check pending versions for gaps. A gap is only an error if the missing
+    # version(s) are NEITHER pending NOR already applied.
+    #
+    # Examples of VALID states:
+    #   - pending=[037, 039], applied={038}  -> 038 fills the gap
+    #   - pending=[039],     applied={035}    -> nothing missing between
+    #   - pending=[037, 038, 039]             -> fully sequential, no gap
+    #
+    # Examples of INVALID states:
+    #   - pending=[037, 039], applied={}      -> 038 is truly missing
+    #   - pending=[035, 040], applied={}      -> 036-039 are truly missing
     for i in range(1, len(pending_nums)):
         if pending_nums[i] != pending_nums[i - 1] + 1:
-            msg = (
-                "Gap in pending migration version sequence: missing version between "
-                f"{pending_nums[i - 1]:03d} and {pending_nums[i]:03d}"
-            )
-            logger.error(msg)
-            raise ValueError(msg)
+            missing = set(range(pending_nums[i - 1] + 1, pending_nums[i]))
+            truly_missing = missing - applied_set
+            if truly_missing:
+                msg = (
+                    "Gap in pending migration version sequence: missing version between "
+                    f"{pending_nums[i - 1]:03d} and {pending_nums[i]:03d}. "
+                    f"Neither pending nor applied: {sorted(truly_missing)}"
+                )
+                logger.error(msg)
+                raise ValueError(msg)
+            else:
+                logger.info(
+                    "Gap between pending migrations %03d and %03d is filled by "
+                    "already-applied version(s): %s. Continuing.",
+                    pending_nums[i - 1],
+                    pending_nums[i],
+                    sorted(missing),
+                )
 
-    # If there are applied migrations, warn (but don't block) if the first
-    # pending version doesn't immediately follow the last applied version.
+    # Log when first pending version is behind highest applied (common in
+    # skip-and-catch-up scenarios), but don't treat it as a warning.
     if applied_nums:
         highest_applied = max(applied_nums)
         first_pending = pending_nums[0]
         if first_pending != highest_applied + 1:
-            logger.warning(
-                "First pending migration (%03d) does not immediately follow "
-                "highest applied migration (%03d). This may indicate a gap, "
-                "but will not block the migration.",
-                first_pending,
-                highest_applied,
-            )
+            if first_pending < highest_applied:
+                logger.info(
+                    "First pending migration (%03d) is behind highest applied (%03d). "
+                    "This is expected when migrations were applied non-sequentially.",
+                    first_pending,
+                    highest_applied,
+                )
+            else:
+                logger.info(
+                    "First pending migration (%03d) does not immediately follow "
+                    "highest applied (%03d). Continuing.",
+                    first_pending,
+                    highest_applied,
+                )
 
     return True
 

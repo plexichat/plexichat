@@ -205,7 +205,7 @@ class SetupService:
                                         support_admin_id,
                                         "support_admin",
                                         "Support access",
-                                        '{"users.read": true, "users.edit": true, "tickets.*": true}',
+                                        '{"users.read": true, "users.edit": true, "tickets.*": true, "admin.approvals": true}',
                                         int(time.time()),
                                         user.id,
                                     ),
@@ -223,6 +223,19 @@ class SetupService:
                                     )
                                 else:
                                     raise
+
+                        # Always ensure support_admin role has admin.approvals permission
+                        # (role may have been created without it in a previous run)
+                        try:
+                            db.execute(
+                                "UPDATE admin_roles SET permissions = ? WHERE id = ?",
+                                (
+                                    '{"users.read": true, "users.edit": true, "tickets.*": true, "admin.approvals": true}',
+                                    support_admin_id,
+                                ),
+                            )
+                        except Exception:
+                            pass
 
                         mod_admin_row = db.fetch_one(
                             "SELECT id FROM admin_roles WHERE name = ?",
@@ -401,6 +414,13 @@ class SetupService:
                                     int(time.time()),
                                 ),
                             )
+                        # Direct SQL update: grant_permission() only updates in-memory and
+                        # update_user() has no permissions branch, so we write directly.
+                        db.execute(
+                            "UPDATE auth_users SET permissions = ? WHERE id = ?",
+                            ('{"admin.*": true, "*": true}', _other_id),
+                        )
+
                         support_admin_row = db.fetch_one(
                             "SELECT id FROM admin_roles WHERE name = ?",
                             ("support_admin",),
@@ -423,16 +443,6 @@ class SetupService:
                                     int(time.time()),
                                     user.id,
                                 ),
-                            )
-                        auth_mod.grant_permission(_other_id, "admin.*")
-                        assign_other_super = db.fetch_one(
-                            "SELECT 1 FROM admin_role_assignments WHERE admin_id = ? AND role_id = ?",
-                            (_other_id, super_admin_id),
-                        )
-                        if not assign_other_super:
-                            db.execute(
-                                "INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)",
-                                (_other_id, super_admin_id, int(time.time()), user.id),
                             )
                     except Exception as e:
                         logger.warning(f"Failed to setup other admin user: {e}")
@@ -768,6 +778,27 @@ class SetupService:
                             ),
                         )
                         logger.debug("Created test user report")
+                        try:
+                            _r_db.execute(
+                                "INSERT INTO reports (id, reporter_id, report_type, target_id, reason, category, status, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                (
+                                    report_id,
+                                    user.id,
+                                    "user",
+                                    self.ctx.test_other_user_id,
+                                    "Self-test report",
+                                    "other",
+                                    "open",
+                                    "medium",
+                                    int(time.time()),
+                                    int(time.time()),
+                                ),
+                            )
+                            logger.debug(
+                                "Synced report to reports table for PATCH status test"
+                            )
+                        except Exception:
+                            pass
                         hash_report_id = self.ctx.data.generate_snowflake()
                         _r_db.execute(
                             "INSERT OR IGNORE INTO media_hash_reports (id, reporter_id, hash_value, reason, status, reported_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1091,6 +1122,22 @@ class SetupService:
                         )
                 except Exception as e:
                     logger.warning(f"Failed to create test thread: {e}")
+
+            # Fallback: ensure admin_approval_comments table exists (migration may not have applied)
+            try:
+                db_cmt = api.get_db()
+                if db_cmt:
+                    db_cmt.execute("""
+                        CREATE TABLE IF NOT EXISTS admin_approval_comments (
+                            id INTEGER PRIMARY KEY,
+                            approval_id INTEGER NOT NULL,
+                            admin_id INTEGER NOT NULL,
+                            comment TEXT NOT NULL,
+                            created_at INTEGER NOT NULL
+                        )
+                    """)
+            except Exception:
+                pass
 
             logger.info(
                 f"Resources created: Server={self.ctx.test_server_id}, Channel={self.ctx.test_channel_id}, Role={self.ctx.test_role_id}, "

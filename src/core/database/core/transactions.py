@@ -78,6 +78,8 @@ class DatabaseTransactionMixin:
                 conn.commit()
             self.transaction_depth = 0
             self.in_transaction = False
+        elif self.transaction_depth == 0:
+            pass
         else:
             conn.commit()
 

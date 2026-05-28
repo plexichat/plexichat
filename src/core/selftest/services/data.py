@@ -51,6 +51,13 @@ class DataGenerator:
                     if self.ctx.test_other_user_id
                     else _gen_snowflake()
                 )
+            elif "/admin-users" in path:
+                # Use other_user_id for managing a DIFFERENT admin (avoids self-management 403)
+                val = (
+                    str(self.ctx.test_other_user_id)
+                    if self.ctx.test_other_user_id
+                    else str(self.ctx.test_user_id)
+                )
             elif "/bans/" in path or "/kick" in path:
                 val = (
                     str(self.ctx.test_other_user_id)
@@ -516,8 +523,10 @@ class DataGenerator:
                 body["interval_ms"] = 5000
 
             if "admin-users" in path and "/toggle-status" in path and method == "POST":
-                if self.ctx.test_other_user_id and "user_id" in body:
-                    body["user_id"] = str(self.ctx.test_other_user_id)
+                if self.ctx.test_other_user_id:
+                    if "user_id" in body:
+                        body["user_id"] = str(self.ctx.test_other_user_id)
+                # The path param itself is already resolved via get_param_value above
 
             if "security/lock-user" in path and method == "POST":
                 body["user_id"] = (

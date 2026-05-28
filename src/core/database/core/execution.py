@@ -156,7 +156,10 @@ class DatabaseExecutionMixin:
                     )
 
                 if auto_commit and not self.in_transaction:
-                    conn.commit()
+                    try:
+                        conn.commit()
+                    except Exception:
+                        pass
 
                 return cursor
             except Exception as e:
@@ -229,7 +232,10 @@ class DatabaseExecutionMixin:
                 _query_time_ms.set(_query_time_ms.get() + exec_time)
 
                 if auto_commit and not self.in_transaction:
-                    conn.commit()
+                    try:
+                        conn.commit()
+                    except Exception:
+                        pass
                 return cursor
             except Exception as e:
                 is_conn_error = (

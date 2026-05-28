@@ -56,6 +56,7 @@ class CleanupService:
                 "sticker_packs",
                 "admin_role_assignments",
                 "admin_approvals",
+                "username_blacklist",
             ]
             for tbl in truncate_tables:
                 try:
@@ -94,6 +95,11 @@ class CleanupService:
                     pass
                 self.delete_all_for_user(db, uid)
                 logger.debug(f"Pre-test cleanup: Deleted user {uname}")
+
+            try:
+                db.execute("DELETE FROM admin_users WHERE username LIKE 'selftest_%'")
+            except Exception:
+                pass
 
             db.commit()
         except Exception as e:

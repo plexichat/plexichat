@@ -23,7 +23,7 @@ class ParticipantRepository(BaseRepository[Participant]):
     ) -> None:
         """Create a new participant."""
         self._execute(
-            """INSERT INTO msg_participants 
+            """INSERT OR IGNORE INTO msg_participants 
                (id, conversation_id, user_id, role, joined_at)
                VALUES (?, ?, ?, ?, ?)""",
             (part_id, conversation_id, user_id, role.value, joined_at),
@@ -43,7 +43,7 @@ class ParticipantRepository(BaseRepository[Participant]):
         try:
             for p in participants:
                 self._execute(
-                    """INSERT INTO msg_participants 
+                    """INSERT OR IGNORE INTO msg_participants 
                        (id, conversation_id, user_id, role, joined_at)
                        VALUES (?, ?, ?, ?, ?)""",
                     (
