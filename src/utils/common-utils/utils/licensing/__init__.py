@@ -187,7 +187,15 @@ def setup(
         logger.warning("=" * 60)
         logger.warning("Plexichat is operating in free tier mode.")
         logger.warning("All premium features are disabled.")
-        logger.warning("For commercial use, please obtain a license.")
+        logger.warning("")
+        logger.warning(
+            "To obtain a license, contact sales@plexichat.com or visit https://plexichat.com"
+        )
+        logger.warning("")
+        logger.warning("License search locations (in priority order):")
+        logger.warning(f"  - Env var {LICENSE_ENV_VAR} (file path or base64)")
+        logger.warning(f"  - {DEFAULT_LICENSE_PATH}")
+        logger.warning(f"  - {DEFAULT_LICENSE_PATH}.json")
         logger.warning("=" * 60)
         return False
 
@@ -214,6 +222,10 @@ def setup(
         logger.warning(f"License validation failed: {validation.error_message}")
         logger.warning("Falling back to free tier mode.")
         logger.warning("All premium features are disabled.")
+        logger.warning("")
+        logger.warning(
+            "To obtain a license, contact sales@plexichat.com or visit https://plexichat.com"
+        )
         logger.warning("=" * 60)
         return False
 
@@ -263,16 +275,15 @@ def _try_load_license(explicit_path: Optional[str] = None) -> bool:
         except InvalidLicenseError:
             pass  # Try next source
 
-    # 4. Try default location
-    try:
-        if DEFAULT_LICENSE_PATH.exists():
-            lm.load_from_file(str(DEFAULT_LICENSE_PATH))
-            logger.debug(
-                f"Loaded license from default location: {DEFAULT_LICENSE_PATH}"
-            )
-            return True
-    except InvalidLicenseError:
-        pass
+    # 4. Try default location (both "license" and "license.json")
+    for _candidate in [DEFAULT_LICENSE_PATH, DEFAULT_LICENSE_PATH.with_suffix(".json")]:
+        try:
+            if _candidate.exists():
+                lm.load_from_file(str(_candidate))
+                logger.debug(f"Loaded license from default location: {_candidate}")
+                return True
+        except InvalidLicenseError:
+            pass
 
     # No license found - will enter free tier mode
     logger.debug("No license file found, entering free tier mode")
@@ -492,6 +503,11 @@ def apply_license_from_base64(license_payload: str) -> Dict[str, Any]:
     Apply a new license from a base64-encoded payload string.
 
     This is used by the admin licensing routes to hot-swap the license.
+
+    IMPORTANT: This function applies the license in-memory only — it does
+    NOT write to the license file on disk. The change is transient and will
+    be lost on restart. To make a permanent change, update the license file
+    directly and call reload_license().
 
     Args:
         license_payload: Base64-encoded license JSON
