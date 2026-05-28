@@ -129,20 +129,7 @@ def create_rate_limit_middleware(
     Returns:
         Configured RateLimitMiddleware (requires app to be passed separately).
     """
-    default_excludes = [
-        "/",
-        "/health",
-        "/status",
-        "/api/v1/status",
-        "/api/v1/health",
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-    ]
-    # Admin API paths are excluded from general rate limiting.
-    # Admin login has its own rate limiting (in authenticate_admin)
-    # that returns proper 429 status codes.
-    all_excludes = list(set(default_excludes + (exclude_paths or [])))
+    all_excludes = list(exclude_paths or [])
     user_info_getter = custom_user_info_getter or get_user_info_from_request
 
     class ConfiguredRateLimitMiddleware(RateLimitMiddleware):

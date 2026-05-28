@@ -92,10 +92,16 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "hard_freeze": True,
                 "anonymize_content": True,
                 "audit_log": {
-                    "file_path": str(home_dir / "audit" / "deletion_log.jsonl"),
+                    # Path to the deletion audit log (JSONL file with hash chain)
+                    "file_path": str(home_dir / "data" / "deletion_log.jsonl"),
+                    # Enable SHA256 hash chaining for tamper-evidence
                     "hash_chain_enabled": True,
+                    # Backup audit log to S3 for disaster recovery
                     "backup_to_s3": True,
                     "s3_backup_path": "audit/deletions/log_backup.jsonl",
+                    # If True, server refuses to start when audit log integrity check fails.
+                    # Disable only if you need to recover from a backup or rebuild the chain.
+                    "halt_on_invalid_audit": True,
                 },
                 "reaper": {
                     "interval_hours": 24,
