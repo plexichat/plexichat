@@ -100,7 +100,12 @@ class AuthManager(BaseManager):
     def __init__(self, db, email_sender=None):
         super().__init__(db)
         self.email_sender = email_sender
-        self.crypto = EncryptionManager()
+        encryption_cfg = config.get("encryption", {}).get("argon2", {})
+        self.crypto = EncryptionManager(
+            argon2_time_cost=encryption_cfg.get("time_cost", 2),
+            argon2_memory_cost=encryption_cfg.get("memory_cost", 65536),
+            argon2_parallelism=encryption_cfg.get("parallelism", 2),
+        )
         self._config = config.get("authentication", {})
         logger.info("Initializing authentication module")
         self.blacklist = BlacklistManager(db)
@@ -231,6 +236,7 @@ class AuthManager(BaseManager):
         ip_address: Optional[str] = None,
         age: Optional[int] = None,
         dob: Optional[str] = None,
+        is_internal: bool = False,
     ) -> User:
         # Generate ID first to use as encryption context
         user_id = self._generate_id()
@@ -286,12 +292,13 @@ class AuthManager(BaseManager):
         if not valid:
             raise InvalidUsernameError(f"Invalid: {issues}", issues)
 
-        # Check blacklist
-        blocked, reason = self.blacklist.is_blocked(username)
-        if blocked:
-            raise InvalidUsernameError(
-                f"Username is blocked: {reason}", [reason or "Blocked"]
-            )
+        # Check blacklist (skip for internal callers like selftest)
+        if not is_internal:
+            blocked, reason = self.blacklist.is_blocked(username)
+            if blocked:
+                raise InvalidUsernameError(
+                    f"Username is blocked: {reason}", [reason or "Blocked"]
+                )
 
         if not validate_email(email):
             raise InvalidEmailError("Invalid email")
@@ -427,7 +434,6 @@ class AuthManager(BaseManager):
             "SELECT * FROM auth_users WHERE username = ? OR email_index = ?",
             (username, email_index),
         )
-
         if not row:
             self._log_audit(AuditEventType.LOGIN_FAILED, None, False, ip_address)
             raise InvalidCredentialsError("Invalid credentials")
