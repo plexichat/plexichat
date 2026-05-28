@@ -10,6 +10,31 @@ The RBAC system allows you to:
 - Control access to sensitive operations
 - Implement the principle of least privilege
 
+## Permission Model
+
+Permissions are checked via **wildcard-hierarchy matching**. A permission scope like `users.*` grants access to all sub-permissions (`users.read`, `users.edit`, `users.delete`). The wildcard `*` alone grants full super-admin access.
+
+Permission checking follows this order:
+1. If a role has `"*": true`, all checks pass immediately (super admin)
+2. Exact match is checked first (e.g., `users.read`)
+3. Parent wildcard match is checked (e.g., `users.*` grants `users.read`, `users.edit`)
+4. Top-level wildcard `*` grants everything
+5. Explicit `false` values deny only that specific scope (not its sub-scopes)
+
+## Admin Role Hierarchy
+
+Admin roles have a **position** value that enforces hierarchy. Admins can only manage roles and admins at a **lower position** than their own highest role position.
+
+| Position | Implied Authority |
+|----------|-------------------|
+| 100      | Super Admin (highest) |
+| 80       | Senior Admin |
+| 60       | Standard Admin |
+| 40       | Junior Admin |
+| 10       | Support / Read-Only (lowest) |
+
+System roles (created by the system) have fixed high positions and cannot be deleted or demoted.
+
 ## Default Roles
 
 ### Super Admin
@@ -18,13 +43,14 @@ The RBAC system allows you to:
 - Can modify system configuration
 - Can approve/reject sensitive actions
 - **Permission**: `{"*": true}`
+- **Position**: 100
 
 ### Support Admin
 - User management and support access
 - Can view and edit user profiles
 - Can manage user tiers and badges
 - Can view and add internal notes
-- **Permissions**: 
+- **Permissions**:
   ```json
   {
     "users.read": true,
@@ -34,6 +60,7 @@ The RBAC system allows you to:
     "users.notes": true
   }
   ```
+- **Position**: 60
 
 ### Moderation Admin
 - Content moderation and user blocking
@@ -49,6 +76,7 @@ The RBAC system allows you to:
     "blocked_hashes.*": true
   }
   ```
+- **Position**: 60
 
 ### Read-Only Admin
 - Read-only access to dashboard and metrics
@@ -64,52 +92,63 @@ The RBAC system allows you to:
     "tickets.read": true
   }
   ```
+- **Position**: 10
 
 ## Permission Scopes
 
 ### User Management
-- `users.read` - View user information
-- `users.edit` - Edit user profiles
-- `users.delete` - Delete user accounts
-- `users.force_purge` - Immediately purge accounts (dangerous)
-- `users.tier` - Modify user account tiers
-- `users.badges` - Manage user badges
-- `users.notes` - View/edit internal admin notes
-- `users.lock` - Lock/unlock user accounts
-- `users.force_username_change` - Force username changes
-- `users.force_password_change` - Force password changes
+| Scope | Description |
+|-------|-------------|
+| `users.read` | View user information |
+| `users.edit` | Edit user profiles |
+| `users.delete` | Delete user accounts |
+| `users.force_purge` | Immediately purge accounts (dangerous) |
+| `users.tier` | Modify user account tiers |
+| `users.badges` | Manage user badges |
+| `users.notes` | View/edit internal admin notes |
+| `users.lock` | Lock/unlock user accounts |
+| `users.force_username_change` | Force username changes |
+| `users.force_password_change` | Force password changes |
+
+
 
 ### Server Management
-- `servers.read` - View server information
-- `servers.edit` - Edit server settings
-- `servers.delete` - Delete servers
-- `servers.ban` - Ban users from servers
+| Scope | Description |
+|-------|-------------|
+| `servers.read` | View server information |
+| `servers.edit` | Edit server settings |
+| `servers.delete` | Delete servers |
 
 ### Moderation
-- `automod.*` - Full automod access
-- `automod.read` - View automod rules
-- `automod.edit` - Edit automod rules
-- `reports.*` - Full report access
-- `reports.read` - View reports
-- `reports.resolve` - Resolve reports
-- `blocked_users.*` - Full blocked user access
-- `blocked_hashes.*` - Full blocked hash access
+| Scope | Description |
+|-------|-------------|
+| `automod.*` | Full automod access |
+| `automod.read` | View automod rules |
+| `automod.edit` | Edit automod rules |
+| `reports.*` | Full report access |
+| `reports.read` | View reports |
+| `reports.resolve` | Resolve reports |
+| `blocked_users.*` | Full blocked user access |
+| `blocked_hashes.*` | Full blocked hash access |
 
-### System
-- `config.read` - View system configuration
-- `config.edit` - Edit system configuration
-- `metrics.read` - View system metrics
-- `logs.read` - View system logs
-- `migrations.run` - Run database migrations
+### System & Dashboard
+| Scope | Description |
+|-------|-------------|
+| `config.read` | View system configuration |
+| `config.edit` | Edit system configuration |
+| `metrics.read` | View system metrics |
+| `logs.read` | View system logs |
 
 ### Admin Management
-- `admin.read` - View admin accounts
-- `admin.edit` - Edit admin accounts
-- `admin.delete` - Delete admin accounts
-- `admin.roles.*` - Full role management
-- `admin.roles.read` - View roles
-- `admin.roles.edit` - Edit roles
-- `admin.roles.assign` - Assign roles to admins
+| Scope | Description |
+|-------|-------------|
+| `admin.users` | Manage admin user accounts (create/delete/toggle) |
+| `admin.read` | View admin accounts |
+| `admin.edit` | Edit admin accounts |
+| `admin.roles` | Full role management (list, create, update, delete, assign) |
+| `admin.roles.read` | View roles |
+| `admin.roles.assign` | Assign/revoke roles to/from admins |
+| `admin.approvals` | Manage approval workflows |
 
 ## Configuration
 
@@ -134,36 +173,27 @@ Roles are assigned through the admin panel or API:
 
 ### Via API
 ```bash
+# Assign a role to an admin
 POST /api/v1/admin/roles/assign
 {
   "admin_id": 123,
   "role_id": 2
 }
+
+# Revoke a role from an admin
+DELETE /api/v1/admin/roles/{admin_id}/{role_id}
 ```
 
 ## Custom Roles
 
-You can create custom roles with specific permission sets:
+Custom roles can be created with specific permission sets:
 
-### Via Database
-```sql
-INSERT INTO admin_roles (name, description, permissions, created_at, created_by, is_system)
-VALUES (
-  'custom_role',
-  'Custom role description',
-  '{"users.read": true, "servers.read": true}',
-  1234567890,
-  1,
-  0
-);
-```
-
-### Via API (when endpoints are implemented)
+### Via API
 ```bash
 POST /api/v1/admin/roles
 {
   "name": "custom_role",
-  "description": "Custom role description",
+  "description": "Custom role with specific permissions",
   "permissions": {
     "users.read": true,
     "servers.read": true
@@ -176,9 +206,21 @@ POST /api/v1/admin/roles
 Permissions are checked automatically when admins perform actions. The system:
 
 1. Retrieves all roles assigned to the admin
-2. Combines permissions from all roles
+2. Combines permissions from all roles (using wildcard-hierarchy matching)
 3. Checks if the required permission is granted
 4. Returns authorization result
+
+## Admin Role Hierarchy Enforcement
+
+When managing other admins or editing roles:
+
+1. An admin can only **assign roles** at or below their own highest role position
+2. An admin can only **modify or delete roles** at a lower position than their own
+3. An admin can only **toggle status or delete** an admin user if their highest role position is lower
+4. Super admins (position 100) can manage all roles and admins
+5. Admins cannot modify themselves (self-deletion prevention is enforced at the API level)
+
+Hierarchy checks use the admin's **maximum role position** across all assigned roles. An admin with multiple roles uses the highest position for hierarchy enforcement.
 
 ## Best Practices
 
@@ -187,6 +229,7 @@ Permissions are checked automatically when admins perform actions. The system:
 3. **Regular Audits**: Review role assignments regularly
 4. **Separation of Duties**: Use different roles for different functions
 5. **Temporary Access**: Use temporary role assignments for special tasks
+6. **Hierarchy Awareness**: Be mindful of role positions when assigning management capabilities
 
 ## Troubleshooting
 
@@ -198,9 +241,15 @@ Permissions are checked automatically when admins perform actions. The system:
 ### Permission Not Working
 - Check permission spelling matches exactly
 - Verify the permission scope exists
-- Check for conflicting permissions (deny vs allow)
+- Check for wildcard precedence (specific grants override general denies)
 
 ### Role Assignment Issues
 - Ensure the role exists in the database
 - Check that the admin ID is valid
 - Verify the assigning admin has permission to assign roles
+- Check role hierarchy: the assigning admin must have a position higher than the target
+
+### Hierarchy Enforcement
+- Ensure target admin's highest role position is lower than the current admin's highest position
+- System roles (is_system = 1) have fixed positions and cannot be modified or deleted
+- Check the `position` column in `admin_roles` for current values

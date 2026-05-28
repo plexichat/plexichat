@@ -92,6 +92,43 @@ def get_admin_from_token(request: Request) -> int:
     return admin_id
 
 
+def require_admin_permission(request: Request, permission: str) -> int:
+    """
+    Validate admin authentication AND check a specific permission in one call.
+
+    A convenience wrapper that combines get_admin_from_token + check_admin_permission
+    to eliminate repetitive boilerplate across admin route files.
+
+    Args:
+        request: FastAPI request object
+        permission: Permission scope to check (e.g. "users.read", "admin.roles")
+
+    Returns:
+        admin_id if authenticated and authorized
+
+    Raises:
+        HTTPException 401 if not authenticated
+        HTTPException 403 if permission denied
+        HTTPException 500 if database unavailable
+    """
+    admin_id = get_admin_from_token(request)
+
+    from src.core.admin.permissions import check_admin_permission
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(admin_id, permission, db):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+    return admin_id
+
+
 def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> str:
     """Load an admin UI template."""
     allowed_templates = ["login.html", "dashboard.html"]

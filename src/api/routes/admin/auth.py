@@ -14,7 +14,11 @@ from src.api.schemas.admin import (
     AdminBackupCodesResponse,
 )
 from src.api.schemas.common import SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 import utils.logger as logger
 
 router = APIRouter()
@@ -156,29 +160,21 @@ async def admin_force_password_change(request: Request, target_admin_id: str):
     """
     Force a specific admin to change their password on next login.
 
-    Requires super_admin permissions.
+    Requires admin.edit permission.
     """
     check_host_restriction(request)
-    current_admin_id = get_admin_from_token(request)
-
-    # Check if current admin has permission to force password changes
-    from src.core.admin.permissions import check_admin_permission
-    import src.api as api
-
-    db = api.get_db()
-    if db is None:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(current_admin_id, "admin.edit", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
-        )
+    current_admin_id = require_admin_permission(request, "admin.edit")
 
     try:
         target_id = int(target_admin_id)
+        import src.api as api
+
+        db = api.get_db()
+        if db is None:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database not available"}},
+            )
         db.execute(
             "UPDATE admin_users SET force_password_change = 1 WHERE id = ?",
             (target_id,),

@@ -25,6 +25,7 @@ from src.api.schemas.admin import (
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
+import utils.logger as logger
 
 router = APIRouter()
 
@@ -426,7 +427,9 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
                 )
                 await get_dispatcher().dispatch_event(event, [uid])
         except Exception:
-            pass
+            logger.warning(
+                "Failed to broadcast force-logout WebSocket event", exc_info=True
+            )
         return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
@@ -460,7 +463,9 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
                 )
                 await get_dispatcher().dispatch_event(event, [uid])
         except Exception:
-            pass
+            logger.warning(
+                "Failed to broadcast lock-user WebSocket event", exc_info=True
+            )
         return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
@@ -507,5 +512,7 @@ async def logout_all_users(request: Request):
                 close_code=4004, reason="Security reset"
             )
     except Exception:
-        pass
+        logger.warning(
+            "Failed to close WebSocket connections on logout-all", exc_info=True
+        )
     return SuccessResponse(success=True, message=None)
