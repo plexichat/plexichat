@@ -33,7 +33,7 @@ from .docs import (
 )
 from .telemetry import router as telemetry_router
 from .admin import router as admin_router
-from .features import router as features_router
+from .features import features_router, feature_expansion_router
 from .voice import router as voice_router
 from .avatars import router as avatars_router
 from .media import router as media_router
@@ -41,7 +41,6 @@ from .reports import router as reports_router
 from .qr import router as qr_router
 from .help import router as help_router, robots_router
 from .config import router as config_router
-from .feature_routes import router as feature_expansion_router
 
 import utils.config as config
 import utils.logger as logger

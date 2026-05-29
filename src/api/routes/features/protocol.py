@@ -1,0 +1,9 @@
+from typing import Any, Protocol, Sequence
+
+
+class DatabaseProtocol(Protocol):
+    """Protocol for database operations used in feature routes."""
+
+    def fetch_one(self, query: str, params: Sequence = ()) -> Any | None: ...
+    def execute(self, query: str, params: Sequence = ()) -> Any: ...
+    def column_exists(self, table: str, column: str) -> bool: ...
