@@ -122,19 +122,23 @@ class AuthenticationOptions:
 class PasskeyManager:
     """Manages WebAuthn/FIDO2 passkey operations."""
 
-    def __init__(self, db):
+    def __init__(self, db, crypto=None):
         """Initialize the passkey manager.
 
         Args:
             db: Database instance
+            crypto: Optional EncryptionManager instance (reuses existing one)
         """
         self._db = db
-        encryption_cfg = config.get("encryption", {}).get("argon2", {})
-        self._crypto = EncryptionManager(
-            argon2_time_cost=encryption_cfg.get("time_cost", 2),
-            argon2_memory_cost=encryption_cfg.get("memory_cost", 65536),
-            argon2_parallelism=encryption_cfg.get("parallelism", 2),
-        )
+        if crypto is not None:
+            self._crypto = crypto
+        else:
+            encryption_cfg = config.get("encryption", {}).get("argon2", {})
+            self._crypto = EncryptionManager(
+                argon2_time_cost=encryption_cfg.get("time_cost", 2),
+                argon2_memory_cost=encryption_cfg.get("memory_cost", 65536),
+                argon2_parallelism=encryption_cfg.get("parallelism", 2),
+            )
         self._config = config.get("authentication", {}).get("passkeys", {})
         self._challenge_ttl = self._config.get("challenge_ttl_seconds", 300)
 
