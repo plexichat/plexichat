@@ -34,11 +34,11 @@ class DatabaseTransactionMixin:
         except Exception:
             return
 
-    def begin_transaction(self: _DatabaseTransactionProtocol) -> None:
+    def begin_transaction(self) -> None:
         self._invalidate_query_cache()
-        conn = self._get_conn()
+        conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
         if self.transaction_depth == 0:
-            if self.type == "sqlite":
+            if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
                 conn.execute("BEGIN")
             self.in_transaction = True
             self.transaction_depth = 1
@@ -50,9 +50,9 @@ class DatabaseTransactionMixin:
         cursor.execute(f"SAVEPOINT sp_{self.transaction_depth}")
         cursor.close()
 
-    def commit(self: _DatabaseTransactionProtocol) -> None:
+    def commit(self) -> None:
         self._invalidate_query_cache()
-        conn = self._get_conn()
+        conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
         if self.transaction_depth > 1:
             cursor = conn.cursor()
             try:
@@ -72,7 +72,7 @@ class DatabaseTransactionMixin:
             return
 
         if self.transaction_depth == 1:
-            if self.type == "sqlite":
+            if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
                 conn.execute("COMMIT")
             else:
                 conn.commit()
@@ -83,9 +83,9 @@ class DatabaseTransactionMixin:
         else:
             conn.commit()
 
-    def rollback(self: _DatabaseTransactionProtocol) -> None:
+    def rollback(self) -> None:
         self._invalidate_query_cache()
-        conn = self._get_conn()
+        conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
         if self.transaction_depth > 0:
             # If we're inside a nested transaction, our test-suite expects a rollback
             # to abort the *entire* transaction chain.
@@ -95,7 +95,7 @@ class DatabaseTransactionMixin:
                 self.in_transaction = False
                 return
 
-            if self.type == "sqlite":
+            if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
                 conn.execute("ROLLBACK")
             else:
                 conn.rollback()

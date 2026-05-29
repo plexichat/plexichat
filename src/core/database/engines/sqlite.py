@@ -38,6 +38,24 @@ class SqliteEngine(BaseEngine):
         # Enforce foreign keys (disabled by default in SQLite)
         conn.execute("PRAGMA foreign_keys=ON;")
 
+        # --- Performance PRAGMAs ---
+
+        # Increase page cache to ~32 MB (negative = KB, default is 2000 pages /
+        # ~2-8 MB depending on page size).  A larger cache means fewer disk reads.
+        conn.execute("PRAGMA cache_size=-32000;")
+
+        # Memory-mapped I/O up to 256 MB.  Lets SQLite treat the DB file as if it
+        # were in memory, avoiding read() / write() syscalls entirely for hot pages.
+        conn.execute("PRAGMA mmap_size=268435456;")
+
+        # Store temporary tables, indices, and sort results in memory instead of
+        # in on-disk temp files.  Falls back to disk automatically if needed.
+        conn.execute("PRAGMA temp_store=MEMORY;")
+
+        # Cap the WAL file at ~64 MB so it doesn't grow unbounded between
+        # checkpoints on a long-running server.
+        conn.execute("PRAGMA journal_size_limit=67108864;")
+
         return conn
 
     def get_pool_stats(self, pool: Any) -> Dict[str, Any]:

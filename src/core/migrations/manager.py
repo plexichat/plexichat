@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+from src.core.database import cached
+
 from . import validator
 from .tracker import MigrationTracker
 from .runner import MigrationRunner
@@ -298,6 +300,12 @@ class MigrationManager:
                     # Continue with next migration or stop based on configuration
                     break
 
+            # Invalidate cached migration status after applying all
+            if not dry_run and results["applied_count"] > 0:
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern("migration_status:*")
+
             return results
         finally:
             # Always release the lock
@@ -351,6 +359,11 @@ class MigrationManager:
             # Mark as rolled back in tracker
             self.tracker.record_rollback(version)
 
+            # Invalidate cached migration status
+            from src.core.database import invalidate_pattern
+
+            invalidate_pattern("migration_status:*")
+
             return {
                 "success": True,
                 "version": version,
@@ -361,9 +374,10 @@ class MigrationManager:
             logger.error(f"Rollback of migration {version} failed: {str(e)}")
             raise
 
+    @cached(ttl=15, prefix="migration_status")
     def get_migration_status(self) -> Dict[str, Any]:
         """
-        Get current migration status.
+        Get current migration status (cached for 15s to reduce admin dashboard DB load).
 
         Returns:
             Dictionary with applied, pending, failed counts and lists
@@ -501,6 +515,12 @@ class MigrationManager:
                     migration.version, result["execution_time_ms"], rollback_sql
                 )
 
+                # Invalidate cached migration status so the admin dashboard
+                # reflects the change immediately.
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern("migration_status:*")
+
             return {
                 "success": True,
                 "version": migration.version,
@@ -514,4 +534,9 @@ class MigrationManager:
             # Record failure only on real runs
             if not dry_run:
                 self.tracker.record_migration_failure(migration.version, str(e))
+                # Invalidate cached migration status even on failure
+                # (failed_count may have changed).
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern("migration_status:*")
             raise
