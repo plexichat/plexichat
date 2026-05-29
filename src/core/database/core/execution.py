@@ -33,12 +33,6 @@ class _DatabaseExecutionProtocol(Protocol):
 
     def _get_conn(self, auto_connect: bool = True) -> DbConnection: ...
 
-    def _handle_execution_error(
-        self, conn: DbConnection, cursor: DbCursor, e: Exception, query: str
-    ) -> None: ...
-
-    def _validate_transaction_state(self) -> None: ...
-
     def execute(
         self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True
     ) -> DbCursor: ...
@@ -112,7 +106,7 @@ class DatabaseExecutionMixin:
         auto_commit: bool = True,
     ) -> DbCursor:
         if self.transaction_depth > 0:
-            self._validate_transaction_state()
+            self._validate_transaction_state()  # pyright: ignore[reportAttributeAccessIssue]
 
         upper_query = query.strip().upper()
         if any(
@@ -201,7 +195,7 @@ class DatabaseExecutionMixin:
 
                 self.monitor.record_error(type(e).__name__)
                 temp_conn = getattr(self._local, "connection", None)
-                self._handle_execution_error(
+                self._handle_execution_error(  # pyright: ignore[reportAttributeAccessIssue]
                     temp_conn, locals().get("cursor"), e, query
                 )
                 raise
@@ -213,7 +207,7 @@ class DatabaseExecutionMixin:
         auto_commit: bool = True,
     ) -> DbCursor:
         if self.transaction_depth > 0:
-            self._validate_transaction_state()
+            self._validate_transaction_state()  # pyright: ignore[reportAttributeAccessIssue]
 
         query_sanitized = self._sanitize_sqlite_query(query)
         query_conv = dialect.convert_placeholders(query_sanitized, self.type)
@@ -276,7 +270,7 @@ class DatabaseExecutionMixin:
 
                 self.monitor.record_error(type(e).__name__)
                 temp_conn = getattr(self._local, "connection", None)
-                self._handle_execution_error(
+                self._handle_execution_error(  # pyright: ignore[reportAttributeAccessIssue]
                     temp_conn, locals().get("cursor"), e, query
                 )
                 raise

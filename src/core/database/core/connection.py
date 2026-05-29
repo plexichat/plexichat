@@ -67,7 +67,7 @@ class DatabaseConnectionMixin:
 
             now = time.time()
             last_valid_check = getattr(self._local, "last_valid_check", 0)
-            if now - last_valid_check < 5.0:
+            if now - last_valid_check < 30.0:
                 return conn
 
             if self.type == "postgres":
@@ -220,6 +220,15 @@ class DatabaseConnectionMixin:
             ):
                 try:
                     conn.rollback()
+                except Exception:
+                    pass
+
+            # Run PRAGMA optimize before closing (SQLite only).  This is a
+            # lightweight no-op if nothing needs re-analyzing; if the query
+            # planner's statistics are stale, SQLite does a quick ANALYZE.
+            if self.type == "sqlite" and not is_closed:
+                try:
+                    conn.execute("PRAGMA optimize;")
                 except Exception:
                     pass
 
