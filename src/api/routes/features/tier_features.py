@@ -15,7 +15,7 @@ import utils.logger as logger
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.core.auth.models import AccountType
-from .admin.utils import get_admin_from_token
+from ..admin.utils import get_admin_from_token
 from src.api.schemas.features import (
     UserFeaturesResponse,
     UpdateFeaturesRequest,
