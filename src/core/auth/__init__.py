@@ -281,6 +281,18 @@ def refresh_session(token: str) -> Optional[str]:
     return _get_manager().refresh_session(token)
 
 
+def create_session_for_user(
+    user_id: int,
+    device_info: Optional[Dict[str, str]] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> AuthResult:
+    """Create a session for an already-authenticated user (bypasses password re-verify)."""
+    return _get_manager().create_session_for_user(
+        user_id, device_info, ip_address, user_agent
+    )
+
+
 def logout(token: str) -> bool:
     """Logout and invalidate a session token."""
     return _get_manager().logout(token)
@@ -815,6 +827,7 @@ __all__ = [
     # Sessions
     "verify_token",
     "refresh_session",
+    "create_session_for_user",
     "logout",
     "logout_all",
     "get_sessions",
