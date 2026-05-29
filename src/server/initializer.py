@@ -1,4 +1,3 @@
-# pyright: reportAttributeAccessIssue=false
 import os
 import secrets
 import threading

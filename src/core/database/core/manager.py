@@ -48,7 +48,7 @@ class Database(
         self._lock = threading.RLock()
 
         self._query_cache: Dict[str, Tuple[float, Any]] = {}
-        self._query_cache_ttl = 0.0
+        self._query_cache_ttl = 1.0
         self._query_cache_lock = threading.RLock()
 
         self._in_transaction = False
