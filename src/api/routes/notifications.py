@@ -4,8 +4,11 @@ Notifications API routes.
 Handles user notifications.
 """
 
+import asyncio
+
 import utils.logger as logger
 from fastapi import APIRouter, Depends, HTTPException
+from starlette.concurrency import run_in_threadpool
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -72,11 +75,15 @@ async def get_notifications(
         raise HTTPException(status_code=500, detail="Notification module not available")
 
     try:
-        notifications = notif_mod.get_notifications(
-            current_user.user_id, limit=limit, unread_only=unread_only
+        notifications, unread_count = await asyncio.gather(
+            run_in_threadpool(
+                notif_mod.get_notifications,
+                current_user.user_id,
+                limit=limit,
+                unread_only=unread_only,
+            ),
+            run_in_threadpool(notif_mod.get_mention_count, current_user.user_id),
         )
-
-        unread_count = notif_mod.get_mention_count(current_user.user_id)
 
         return NotificationsResponse(
             notifications=[_notif_to_response(n) for n in notifications],

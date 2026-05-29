@@ -2,6 +2,7 @@
 Relationship routes - Friend and block management endpoints.
 """
 
+import asyncio
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 
@@ -375,31 +376,31 @@ async def create_relationship(
             except Exception as e:
                 logger.debug(f"Failed to get usernames for relationship event: {e}")
 
-        # Dispatch event to recipient (incoming request)
-        await _dispatch_relationship_event(
-            "add",
-            target_id,
-            current_user.user_id,
-            {
-                "user_id": str(current_user.user_id),
-                "username": sender_username,
-                "status": "pending_incoming",
-                "message": body.message,
-                "created_at": getattr(request, "created_at", None),
-            },
-        )
-
-        # Dispatch event to sender (outgoing request)
-        await _dispatch_relationship_event(
-            "add",
-            current_user.user_id,
-            target_id,
-            {
-                "user_id": str(target_id),
-                "username": target_username,
-                "status": "pending_outgoing",
-                "created_at": getattr(request, "created_at", None),
-            },
+        # Dispatch events to both users in parallel
+        await asyncio.gather(
+            _dispatch_relationship_event(
+                "add",
+                target_id,
+                current_user.user_id,
+                {
+                    "user_id": str(current_user.user_id),
+                    "username": sender_username,
+                    "status": "pending_incoming",
+                    "message": body.message,
+                    "created_at": getattr(request, "created_at", None),
+                },
+            ),
+            _dispatch_relationship_event(
+                "add",
+                current_user.user_id,
+                target_id,
+                {
+                    "user_id": str(target_id),
+                    "username": target_username,
+                    "status": "pending_outgoing",
+                    "created_at": getattr(request, "created_at", None),
+                },
+            ),
         )
 
         # Invalidate cache for both users
@@ -564,32 +565,32 @@ async def accept_friend_request(
             result, "created_at", None
         )
 
-        # Dispatch event to the original sender (they now have a friend)
-        await _dispatch_relationship_event(
-            "add",
-            sender_id,
-            current_user.user_id,
-            {
-                "user_id": str(current_user.user_id),
-                "username": accepter_username,
-                "status": "friend",
-                "presence": accepter_presence,
-                "created_at": created_at,
-            },
-        )
-
-        # Dispatch event to the accepter (they now have a friend)
-        await _dispatch_relationship_event(
-            "add",
-            current_user.user_id,
-            sender_id,
-            {
-                "user_id": str(sender_id),
-                "username": sender_username,
-                "status": "friend",
-                "presence": sender_presence,
-                "created_at": created_at,
-            },
+        # Dispatch events to both users in parallel
+        await asyncio.gather(
+            _dispatch_relationship_event(
+                "add",
+                sender_id,
+                current_user.user_id,
+                {
+                    "user_id": str(current_user.user_id),
+                    "username": accepter_username,
+                    "status": "friend",
+                    "presence": accepter_presence,
+                    "created_at": created_at,
+                },
+            ),
+            _dispatch_relationship_event(
+                "add",
+                current_user.user_id,
+                sender_id,
+                {
+                    "user_id": str(sender_id),
+                    "username": sender_username,
+                    "status": "friend",
+                    "presence": sender_presence,
+                    "created_at": created_at,
+                },
+            ),
         )
 
         # Invalidate cache for both users
