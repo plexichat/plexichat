@@ -277,6 +277,19 @@ Tables (prefixed with `react_`):
 | available | INTEGER | 1 if available for use |
 | created_at | INTEGER | Creation timestamp |
 
+## Module Structure
+
+The reaction manager implementation is split across multiple files in the `manager/` directory using the mixin pattern:
+
+| File | Class | Responsibility |
+|------|-------|---------------|
+| `manager/__init__.py` | — | Re-exports `ReactionManager` |
+| `manager/base.py` | `ReactionBase` + `ReactionManager` | Core setup, config, DB helpers, composition |
+| `manager/permissions.py` | `ReactionPermissionsMixin` | Participant checks, server permissions, block filtering |
+| `manager/validation.py` | `ReactionValidationMixin` | Emoji validation, unicode checks, name validation |
+| `manager/reactions.py` | `ReactionOpsMixin` | Add/remove/query reactions, batch operations |
+| `manager/emojis.py` | `EmojiOpsMixin` | Custom emoji CRUD, upload, migration |
+
 ## Testing
 
 ```bash
