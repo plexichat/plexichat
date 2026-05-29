@@ -4,7 +4,10 @@ import utils.logger as logger
 from src.core.database import cached, invalidate_pattern
 
 
-class IpBlacklistMixin:
+from .protocol import AuthManagerProtocol
+
+
+class IpBlacklistMixin(AuthManagerProtocol):
     def block_ip(
         self,
         ip_address: str,
@@ -14,13 +17,13 @@ class IpBlacklistMixin:
     ) -> bool:
         invalidate_pattern("ip_blocked:*")
 
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
+        now = self._get_timestamp()
         expires_at = now + (duration_hours * 3600 * 1000) if duration_hours else None
 
-        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")  # pyright: ignore[reportAttributeAccessIssue]
-        ip_encrypted = self.crypto.encrypt_data(ip_address, context="ip_blacklist")  # pyright: ignore[reportAttributeAccessIssue]
+        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        ip_encrypted = self.crypto.encrypt_data(ip_address, context="ip_blacklist")
 
-        self._db.upsert(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.upsert(
             "auth_ip_blacklist",
             [
                 "ip_index",
@@ -39,10 +42,10 @@ class IpBlacklistMixin:
     def unblock_ip(self, ip_address: str) -> bool:
         invalidate_pattern("ip_blocked:*")
 
-        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")  # pyright: ignore[reportAttributeAccessIssue]
-        legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")  # pyright: ignore[reportAttributeAccessIssue]
+        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
 
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             "DELETE FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
             (ip_index, legacy_index, legacy_index),
         )
@@ -52,10 +55,10 @@ class IpBlacklistMixin:
     @cached(ttl=300, prefix="ip_blocked")
     def is_ip_blocked(self, ip_address: str) -> bool:
         try:
-            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")  # pyright: ignore[reportAttributeAccessIssue]
-            legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")  # pyright: ignore[reportAttributeAccessIssue]
+            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+            legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
 
-            row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+            row = self._db.fetch_one(
                 "SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
                 (ip_index, legacy_index, legacy_index),
             )
@@ -63,7 +66,7 @@ class IpBlacklistMixin:
                 return False
 
             expires_at = row["expires_at"]
-            if expires_at and expires_at < self._get_timestamp():  # pyright: ignore[reportAttributeAccessIssue]
+            if expires_at and expires_at < self._get_timestamp():
                 self.unblock_ip(ip_address)
                 return False
 
@@ -72,12 +75,12 @@ class IpBlacklistMixin:
             return False
 
     def get_blocked_ips(self) -> List[Dict[str, Any]]:
-        rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+        rows = self._db.fetch_all(
             "SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC"
         )
         for r in rows:
             try:
-                r["ip_address"] = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                r["ip_address"] = self.crypto.decrypt_data(
                     r["ip_encrypted"], context="ip_blacklist"
                 )
             except Exception:

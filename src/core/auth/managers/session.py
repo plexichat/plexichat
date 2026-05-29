@@ -25,7 +25,10 @@ from ..permissions import permissions_from_json
 from ..tokens import create_session_token, parse_token, verify_token_hash
 
 
-class SessionMixin:
+from .protocol import AuthManagerProtocol
+
+
+class SessionMixin(AuthManagerProtocol):
     def create_session_for_user(
         self,
         user_id: int,
@@ -33,7 +36,7 @@ class SessionMixin:
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> AuthResult:
-        row = self._db.fetch_one("SELECT * FROM auth_users WHERE id = ?", (user_id,))  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one("SELECT * FROM auth_users WHERE id = ?", (user_id,))
         if not row:
             raise UserNotFoundError("User not found")
 
@@ -43,21 +46,21 @@ class SessionMixin:
             )
 
         if row["account_locked"]:
-            if not row["locked_until"] or row["locked_until"] > self._get_timestamp():  # pyright: ignore[reportAttributeAccessIssue]
+            if not row["locked_until"] or row["locked_until"] > self._get_timestamp():
                 raise AccountLockedError("Account locked", row["locked_until"])
 
-        accounts_config = self._config.get("accounts", {})  # pyright: ignore[reportAttributeAccessIssue]
+        accounts_config = self._config.get("accounts", {})
         if accounts_config.get("require_email_verification", False) and not bool(
             row.get("email_verified", 0)
         ):
             raise EmailNotVerifiedError("Email not verified")
 
-        device_id = self._track_device(user_id, device_info) if device_info else None  # pyright: ignore[reportAttributeAccessIssue]
+        device_id = self._track_device(user_id, device_info) if device_info else None
         if ip_address:
-            self._track_ip(user_id, ip_address)  # pyright: ignore[reportAttributeAccessIssue]
+            self._track_ip(user_id, ip_address)
 
         if row["totp_enabled"]:
-            challenge = self._create_2fa_challenge(  # pyright: ignore[reportAttributeAccessIssue]
+            challenge = self._create_2fa_challenge(
                 user_id, device_id, ip_address, user_agent
             )
             return AuthResult(
@@ -68,13 +71,13 @@ class SessionMixin:
             )
 
         session = self._create_session(user_id, device_id, ip_address, user_agent)
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             "UPDATE auth_users SET failed_login_attempts = 0, last_login_at = ? WHERE id = ?",
-            (self._get_timestamp(), user_id),  # pyright: ignore[reportAttributeAccessIssue]
+            (self._get_timestamp(), user_id),
         )
 
-        user = self.get_user(user_id)  # pyright: ignore[reportAttributeAccessIssue]
-        self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+        user = self.get_user(user_id)
+        self._log_audit(
             AuditEventType.LOGIN_SUCCESS, user_id, True, ip_address, device_id
         )
         return AuthResult(
@@ -89,13 +92,13 @@ class SessionMixin:
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> AuthResult:
-        email_index = self.crypto.blind_index(username, "user_email")  # pyright: ignore[reportAttributeAccessIssue]
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        email_index = self.crypto.blind_index(username, "user_email")
+        row = self._db.fetch_one(
             "SELECT * FROM auth_users WHERE username = ? OR email_index = ?",
             (username, email_index),
         )
         if not row:
-            self._log_audit(AuditEventType.LOGIN_FAILED, None, False, ip_address)  # pyright: ignore[reportAttributeAccessIssue]
+            self._log_audit(AuditEventType.LOGIN_FAILED, None, False, ip_address)
             raise InvalidCredentialsError("Invalid credentials")
 
         user_id = row["id"]
@@ -118,31 +121,31 @@ class SessionMixin:
             )
 
         if row["account_locked"]:
-            if not row["locked_until"] or row["locked_until"] > self._get_timestamp():  # pyright: ignore[reportAttributeAccessIssue]
+            if not row["locked_until"] or row["locked_until"] > self._get_timestamp():
                 raise AccountLockedError("Account locked", row["locked_until"])
 
-            self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+            self._db.execute(
                 "UPDATE auth_users SET account_locked = 0, failed_login_attempts = 0 WHERE id = ?",
                 (user_id,),
             )
 
-        if not self.crypto.verify_password(password, row["password_hash"]):  # pyright: ignore[reportAttributeAccessIssue]
-            self._log_audit(AuditEventType.LOGIN_FAILED, user_id, False, ip_address)  # pyright: ignore[reportAttributeAccessIssue]
+        if not self.crypto.verify_password(password, row["password_hash"]):
+            self._log_audit(AuditEventType.LOGIN_FAILED, user_id, False, ip_address)
             self._handle_failed_login(user_id, ip_address)
             raise InvalidCredentialsError("Invalid credentials")
 
-        accounts_config = self._config.get("accounts", {})  # pyright: ignore[reportAttributeAccessIssue]
+        accounts_config = self._config.get("accounts", {})
         if accounts_config.get("require_email_verification", False) and not bool(
             row.get("email_verified", 0)
         ):
             raise EmailNotVerifiedError("Email not verified")
 
-        device_id = self._track_device(user_id, device_info) if device_info else None  # pyright: ignore[reportAttributeAccessIssue]
+        device_id = self._track_device(user_id, device_info) if device_info else None
         if ip_address:
-            self._track_ip(user_id, ip_address)  # pyright: ignore[reportAttributeAccessIssue]
+            self._track_ip(user_id, ip_address)
 
         if row["totp_enabled"]:
-            challenge = self._create_2fa_challenge(  # pyright: ignore[reportAttributeAccessIssue]
+            challenge = self._create_2fa_challenge(
                 user_id, device_id, ip_address, user_agent
             )
             return AuthResult(
@@ -153,15 +156,15 @@ class SessionMixin:
             )
 
         session = self._create_session(user_id, device_id, ip_address, user_agent)
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             "UPDATE auth_users SET failed_login_attempts = 0, last_login_at = ? WHERE id = ?",
-            (self._get_timestamp(), user_id),  # pyright: ignore[reportAttributeAccessIssue]
+            (self._get_timestamp(), user_id),
         )
 
         email = None
         if row["email_encrypted"]:
             try:
-                email = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                email = self.crypto.decrypt_data(
                     row["email_encrypted"], context=str(user_id)
                 )
             except Exception:
@@ -170,7 +173,7 @@ class SessionMixin:
         dob = None
         if row["date_of_birth"]:
             try:
-                dob = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                dob = self.crypto.decrypt_data(
                     row["date_of_birth"], context=str(user_id)
                 )
             except Exception:
@@ -194,7 +197,7 @@ class SessionMixin:
             age_verified=bool(row.get("age_verified", 0)),
             date_of_birth=dob,
         )
-        self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+        self._log_audit(
             AuditEventType.LOGIN_SUCCESS, user_id, True, ip_address, device_id
         )
         return AuthResult(
@@ -202,26 +205,26 @@ class SessionMixin:
         )
 
     def _handle_failed_login(self, user_id: int, ip_address: Optional[str]):
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             "UPDATE auth_users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
             (user_id,),
         )
 
-        security_config = self._config.get("security", {})  # pyright: ignore[reportAttributeAccessIssue]
+        security_config = self._config.get("security", {})
         threshold = security_config.get("max_failed_attempts", 5)
 
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             "SELECT failed_login_attempts FROM auth_users WHERE id = ?", (user_id,)
         )
 
         if row and row["failed_login_attempts"] >= threshold:
             lock_duration_min = security_config.get("lockout_duration_minutes", 15)
-            lock_until = self._get_timestamp() + (lock_duration_min * 60 * 1000)  # pyright: ignore[reportAttributeAccessIssue]
-            self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+            lock_until = self._get_timestamp() + (lock_duration_min * 60 * 1000)
+            self._db.execute(
                 "UPDATE auth_users SET account_locked = 1, locked_until = ? WHERE id = ?",
                 (lock_until, user_id),
             )
-            self._log_audit(AuditEventType.ACCOUNT_LOCKED, user_id, True, ip_address)  # pyright: ignore[reportAttributeAccessIssue]
+            self._log_audit(AuditEventType.ACCOUNT_LOCKED, user_id, True, ip_address)
 
         invalidate_pattern("user_data:*")
 
@@ -232,9 +235,9 @@ class SessionMixin:
         ip: Optional[str],
         ua: Optional[str],
     ) -> Session:
-        sid = self._generate_id()  # pyright: ignore[reportAttributeAccessIssue]
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
-        sessions_config = self._config.get("sessions", {})  # pyright: ignore[reportAttributeAccessIssue]
+        sid = self._generate_id()
+        now = self._get_timestamp()
+        sessions_config = self._config.get("sessions", {})
         expire_hours = sessions_config.get("expire_hours", 720)
         expires = now + (expire_hours * 3600 * 1000)
         token, token_hash = create_session_token(sid)
@@ -242,11 +245,11 @@ class SessionMixin:
         ip_index = None
         ip_encrypted = None
         if ip:
-            ip_index = self.crypto.blind_index(ip, "ip_address")  # pyright: ignore[reportAttributeAccessIssue]
-            ip_encrypted = self.crypto.encrypt_data(ip, context=str(sid))  # pyright: ignore[reportAttributeAccessIssue]
+            ip_index = self.crypto.blind_index(ip, "ip_address")
+            ip_encrypted = self.crypto.encrypt_data(ip, context=str(sid))
 
-        ua_index = self._ua_index(ua)  # pyright: ignore[reportAttributeAccessIssue]
-        ua_encrypted = self._encrypt_ua(ua, str(sid))  # pyright: ignore[reportAttributeAccessIssue]
+        ua_index = self._ua_index(ua)
+        ua_encrypted = self._encrypt_ua(ua, str(sid))
 
         max_sessions = sessions_config.get("max_per_user", 10)
         sessions = self.get_sessions(user_id)
@@ -254,12 +257,12 @@ class SessionMixin:
             sessions.sort(key=lambda x: x.last_activity)
             to_revoke = len(sessions) - max_sessions + 1
             for i in range(to_revoke):
-                self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+                self._db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE id = ?",
                     (sessions[i].id,),
                 )
 
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             "INSERT INTO auth_sessions (id, user_id, token_hash, device_id, ip_index, ip_encrypted, ua_index, ua_encrypted, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 sid,
@@ -304,7 +307,7 @@ class SessionMixin:
         user_agent: Optional[str] = None,
         is_selftest: bool = False,
     ) -> TokenInfo:
-        security_cfg = self._config.get("security", {})  # pyright: ignore[reportAttributeAccessIssue]
+        security_cfg = self._config.get("security", {})
         rate_limit = security_cfg.get("token_verify_rate_limit")
         if rate_limit and ip_address and not is_selftest:
             from src.core.database.cache import check_rate_limit
@@ -329,7 +332,7 @@ class SessionMixin:
     def _verify_session_token(
         self, parsed: Dict, ip_address: Optional[str], user_agent: Optional[str] = None
     ) -> TokenInfo:
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             "SELECT s.*, u.username, u.permissions, u.account_type, u.account_locked, u.force_username_change, u.deletion_status FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?",
             (parsed["id"],),
         )
@@ -344,29 +347,29 @@ class SessionMixin:
             logger.warning(f"Attempted use of token for frozen user {row['user_id']}")
             raise TokenInvalidError("Account is scheduled for deletion")
 
-        if row["expires_at"] < self._get_timestamp():  # pyright: ignore[reportAttributeAccessIssue]
+        if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
 
-        if self._config.get("security", {}).get("token_binding", False):  # pyright: ignore[reportAttributeAccessIssue]
+        if self._config.get("security", {}).get("token_binding", False):
             if not ip_address:
                 raise TokenInvalidError("IP Binding Required")
 
-            current_ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")  # pyright: ignore[reportAttributeAccessIssue]
+            current_ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
             if row.get("ip_index") and row["ip_index"] != current_ip_index:
                 raise TokenInvalidError("IP Binding Mismatch")
 
             if not user_agent:
                 raise TokenInvalidError("User-Agent Binding Required")
 
-            current_ua_index = self._ua_index(user_agent)  # pyright: ignore[reportAttributeAccessIssue]
+            current_ua_index = self._ua_index(user_agent)
             if row.get("ua_index") and row["ua_index"] != current_ua_index:
                 raise TokenInvalidError("User-Agent Binding Mismatch")
 
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
+        now = self._get_timestamp()
 
         last_activity = row.get("last_activity", 0)
         should_update = (now - last_activity) > 60000
-        sessions_config = self._config.get("sessions", {})  # pyright: ignore[reportAttributeAccessIssue]
+        sessions_config = self._config.get("sessions", {})
         if sessions_config.get("extend_on_activity", True):
             extend_threshold_hours = sessions_config.get("extend_threshold_hours", 24)
             extend_threshold = extend_threshold_hours * 3600 * 1000
@@ -395,7 +398,7 @@ class SessionMixin:
                     params.append(new_expires)
 
             params.append(row["id"])
-            self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+            self._db.execute(
                 f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
@@ -418,7 +421,7 @@ class SessionMixin:
         )
 
     def _verify_bot_token(self, parsed: Dict, ip_address: Optional[str]) -> TokenInfo:
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             "SELECT * FROM auth_bots WHERE id = ?", (parsed["id"],)
         )
         if (
@@ -445,17 +448,17 @@ class SessionMixin:
         parsed = parse_token(token)
         if not parsed or parsed["token_type"] != "session":
             return None
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             "SELECT * FROM auth_sessions WHERE id = ?", (parsed["id"],)
         )
         if not row or row["revoked"]:
             return None
-        if row["expires_at"] < self._get_timestamp():  # pyright: ignore[reportAttributeAccessIssue]
+        if row["expires_at"] < self._get_timestamp():
             return None
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
-        expire_hours = self._config.get("sessions", {}).get("expire_hours", 720)  # pyright: ignore[reportAttributeAccessIssue]
+        now = self._get_timestamp()
+        expire_hours = self._config.get("sessions", {}).get("expire_hours", 720)
         new_expires = now + (expire_hours * 3600 * 1000)
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             "UPDATE auth_sessions SET expires_at = ?, last_activity = ? WHERE id = ?",
             (new_expires, now, parsed["id"]),
         )
@@ -465,15 +468,15 @@ class SessionMixin:
     def logout(self, token: str) -> bool:
         parsed = parse_token(token)
         if parsed and parsed["token_type"] == "session":
-            row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+            row = self._db.fetch_one(
                 "SELECT user_id FROM auth_sessions WHERE id = ?", (parsed["id"],)
             )
             if row:
                 invalidate_pattern("token_verify:*")
-                self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+                self._db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
                 )
-                self._log_audit(AuditEventType.LOGOUT, row["user_id"], True)  # pyright: ignore[reportAttributeAccessIssue]
+                self._log_audit(AuditEventType.LOGOUT, row["user_id"], True)
                 return True
         return False
 
@@ -483,32 +486,32 @@ class SessionMixin:
         if except_token:
             parsed = parse_token(except_token)
             if parsed and parsed["token_type"] == "session":
-                count_row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+                count_row = self._db.fetch_one(
                     "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND id != ? AND revoked = 0",
                     (user_id, parsed["id"]),
                 )
-                self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+                self._db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND id != ?",
                     (user_id, parsed["id"]),
                 )
                 return count_row["cnt"] if count_row else 0
-        count_row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        count_row = self._db.fetch_one(
             "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND revoked = 0",
             (user_id,),
         )
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
         )
         return count_row["cnt"] if count_row else 0
 
     def logout_all_users(self) -> int:
         invalidate_pattern("token_verify:*")
-        self._db.execute("UPDATE auth_sessions SET revoked = 1 WHERE revoked = 0")  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute("UPDATE auth_sessions SET revoked = 1 WHERE revoked = 0")
         logger.info("Site-wide session purge: all users logged out")
         return 1
 
     def get_sessions(self, user_id: int) -> List[Session]:
-        rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+        rows = self._db.fetch_all(
             "SELECT * FROM auth_sessions WHERE user_id = ? AND revoked = 0", (user_id,)
         )
         sessions = []
@@ -516,7 +519,7 @@ class SessionMixin:
             ip_address = None
             if r.get("ip_encrypted"):
                 try:
-                    ip_address = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                    ip_address = self.crypto.decrypt_data(
                         r["ip_encrypted"], context=str(r["id"])
                     )
                 except Exception:
@@ -525,7 +528,7 @@ class SessionMixin:
             ua = None
             if r.get("ua_encrypted"):
                 try:
-                    ua = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                    ua = self.crypto.decrypt_data(
                         r["ua_encrypted"], context=str(r["id"])
                     )
                 except Exception:
@@ -548,11 +551,11 @@ class SessionMixin:
 
     def revoke_session(self, user_id: int, session_id: int) -> bool:
         invalidate_pattern("token_verify:*")
-        cursor = self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        cursor = self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE id = ? AND user_id = ?",
             (session_id, user_id),
         )
         if cursor.rowcount > 0:
-            self._log_audit(AuditEventType.SESSION_REVOKED, user_id, True)  # pyright: ignore[reportAttributeAccessIssue]
+            self._log_audit(AuditEventType.SESSION_REVOKED, user_id, True)
             return True
         return False

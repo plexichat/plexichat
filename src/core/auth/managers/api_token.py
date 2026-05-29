@@ -8,7 +8,10 @@ from ..models import AccessToken, AuditEventType
 from ..exceptions import UserNotFoundError
 
 
-class ApiTokenMixin:
+from .protocol import AuthManagerProtocol
+
+
+class ApiTokenMixin(AuthManagerProtocol):
     def create_api_access_token(
         self,
         name: Optional[str],
@@ -19,20 +22,20 @@ class ApiTokenMixin:
         scope_mode: str = "none",
     ) -> AccessToken:
         scope_mode = self._normalize_access_token_scope_mode(scope_mode)
-        token_id = self._generate_id()  # pyright: ignore[reportAttributeAccessIssue]
+        token_id = self._generate_id()
         token = token_value.strip() if token_value else None
         if not token:
             token = secrets.token_urlsafe(24)
-        token_index = self.crypto.fast_blind_index(token, "api_access_token")  # pyright: ignore[reportAttributeAccessIssue]
-        existing = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        token_index = self.crypto.fast_blind_index(token, "api_access_token")
+        existing = self._db.fetch_one(
             "SELECT id FROM auth_api_access_tokens WHERE token_index = ?",
             (token_index,),
         )
         if existing:
             raise ValueError("API access token already exists")
-        token_encrypted = self.crypto.encrypt_data(token, context=str(token_id))  # pyright: ignore[reportAttributeAccessIssue]
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        token_encrypted = self.crypto.encrypt_data(token, context=str(token_id))
+        now = self._get_timestamp()
+        self._db.execute(
             """INSERT INTO auth_api_access_tokens
                (id, name, description, token_index, token_encrypted, created_by, created_at, expires_at, scope_mode)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -49,7 +52,7 @@ class ApiTokenMixin:
             ),
         )
         invalidate_pattern("access_token_required*")
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             "SELECT * FROM auth_api_access_tokens WHERE id = ?", (token_id,)
         )
         access_token = self._row_to_access_token(row)
@@ -57,13 +60,13 @@ class ApiTokenMixin:
         return access_token
 
     def list_api_access_tokens(self, include_revoked: bool = True) -> List[AccessToken]:
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
+        now = self._get_timestamp()
         if include_revoked:
-            rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+            rows = self._db.fetch_all(
                 "SELECT * FROM auth_api_access_tokens ORDER BY created_at DESC"
             )
         else:
-            rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+            rows = self._db.fetch_all(
                 """SELECT * FROM auth_api_access_tokens
                    WHERE revoked = 0 AND (expires_at IS NULL OR expires_at > ?)
                    ORDER BY created_at DESC""",
@@ -72,7 +75,7 @@ class ApiTokenMixin:
         return [self._row_to_access_token(row) for row in rows]
 
     def get_api_access_token(self, token_id: int) -> Optional[AccessToken]:
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             "SELECT * FROM auth_api_access_tokens WHERE id = ?", (token_id,)
         )
         if not row:
@@ -91,7 +94,7 @@ class ApiTokenMixin:
     ) -> Optional[AccessToken]:
         # Fetch full row upfront so we can construct the result from memory
         # instead of doing a second SELECT after the UPDATE.
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             "SELECT * FROM auth_api_access_tokens WHERE id = ?", (token_id,)
         )
         if not row:
@@ -124,12 +127,12 @@ class ApiTokenMixin:
             return self._row_to_access_token(row)
 
         params.append(token_id)
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             f"UPDATE auth_api_access_tokens SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
         )
         invalidate_pattern("access_token_required*")
-        self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+        self._log_audit(
             AuditEventType.SECURITY_SETTINGS_UPDATED,
             None,
             True,
@@ -143,14 +146,14 @@ class ApiTokenMixin:
         return self._row_to_access_token(row)
 
     def revoke_api_access_token(self, token_id: int, revoked_by: Optional[int]) -> bool:
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
-        cursor = self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        now = self._get_timestamp()
+        cursor = self._db.execute(
             "UPDATE auth_api_access_tokens SET revoked = 1, revoked_at = ?, revoked_by = ? WHERE id = ? AND revoked = 0",
             (now, revoked_by, token_id),
         )
         if cursor.rowcount > 0:
             invalidate_pattern("access_token_required*")
-            self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+            self._log_audit(
                 AuditEventType.SECURITY_SETTINGS_UPDATED,
                 None,
                 True,
@@ -165,13 +168,13 @@ class ApiTokenMixin:
     def unrevoke_api_access_token(
         self, token_id: int, unrevoked_by: Optional[int]
     ) -> bool:
-        cursor = self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        cursor = self._db.execute(
             "UPDATE auth_api_access_tokens SET revoked = 0, revoked_at = NULL, revoked_by = NULL WHERE id = ? AND revoked = 1",
             (token_id,),
         )
         if cursor.rowcount > 0:
             invalidate_pattern("access_token_required*")
-            self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+            self._log_audit(
                 AuditEventType.SECURITY_SETTINGS_UPDATED,
                 None,
                 True,
@@ -189,7 +192,7 @@ class ApiTokenMixin:
         rotated_by: Optional[int],
         token_value: Optional[str] = None,
     ) -> Optional[AccessToken]:
-        existing = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        existing = self._db.fetch_one(
             "SELECT * FROM auth_api_access_tokens WHERE id = ? AND revoked = 0",
             (token_id,),
         )
@@ -212,7 +215,7 @@ class ApiTokenMixin:
                 rotated_by,
             )
         self.revoke_api_access_token(token_id, rotated_by)
-        self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+        self._log_audit(
             AuditEventType.SECURITY_SETTINGS_UPDATED,
             None,
             True,
@@ -235,15 +238,15 @@ class ApiTokenMixin:
         normalized_type, normalized_value = self._normalize_access_token_scope(
             scope_type, value
         )
-        token_exists = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        token_exists = self._db.fetch_one(
             "SELECT id FROM auth_api_access_tokens WHERE id = ?",
             (token_id,),
         )
         if not token_exists:
             raise ValueError("Access token not found")
-        scope_id = self._generate_id()  # pyright: ignore[reportAttributeAccessIssue]
-        created_at = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
-        self._db.insert_or_ignore(  # pyright: ignore[reportAttributeAccessIssue]
+        scope_id = self._generate_id()
+        created_at = self._get_timestamp()
+        self._db.insert_or_ignore(
             "auth_api_access_token_scopes",
             ["id", "token_id", "scope_type", "value", "created_by", "created_at"],
             (
@@ -255,7 +258,7 @@ class ApiTokenMixin:
                 created_at,
             ),
         )
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             """SELECT * FROM auth_api_access_token_scopes
                WHERE token_id = ? AND scope_type = ? AND value = ?""",
             (token_id, normalized_type, normalized_value),
@@ -265,14 +268,14 @@ class ApiTokenMixin:
         return dict(row)
 
     def remove_api_access_token_scope(self, token_id: int, scope_id: int) -> bool:
-        cursor = self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        cursor = self._db.execute(
             "DELETE FROM auth_api_access_token_scopes WHERE id = ? AND token_id = ?",
             (scope_id, token_id),
         )
         return cursor.rowcount > 0
 
     def list_api_access_token_scopes(self, token_id: int) -> List[Dict[str, Any]]:
-        rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+        rows = self._db.fetch_all(
             """SELECT * FROM auth_api_access_token_scopes
                WHERE token_id = ? ORDER BY created_at ASC""",
             (token_id,),
@@ -288,14 +291,14 @@ class ApiTokenMixin:
         if not token:
             raise UserNotFoundError("Access token not found")
 
-        recent_rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+        recent_rows = self._db.fetch_all(
             """SELECT * FROM auth_api_access_token_events
                WHERE token_id = ? ORDER BY used_at DESC LIMIT ?""",
             (token_id, recent_limit),
         )
         recent_events = [self._row_to_access_token_event(row) for row in recent_rows]
 
-        ip_rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+        ip_rows = self._db.fetch_all(
             """SELECT ip_index, MAX(ip_encrypted) AS ip_encrypted, COUNT(*) AS request_count,
                       MAX(used_at) AS last_seen_at,
                       SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count
@@ -311,7 +314,7 @@ class ApiTokenMixin:
             ip_address = None
             if row.get("ip_encrypted"):
                 try:
-                    ip_address = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                    ip_address = self.crypto.decrypt_data(
                         row["ip_encrypted"], context="api_access_token_event"
                     )
                 except Exception:
@@ -325,7 +328,7 @@ class ApiTokenMixin:
                 }
             )
 
-        path_rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+        path_rows = self._db.fetch_all(
             """SELECT method, path, COUNT(*) AS request_count, MAX(used_at) AS last_seen_at
                FROM auth_api_access_token_events
                WHERE token_id = ? AND path IS NOT NULL
@@ -345,7 +348,7 @@ class ApiTokenMixin:
         ]
 
         summary = (
-            self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+            self._db.fetch_one(
                 """SELECT COUNT(*) AS total_events,
                       COUNT(DISTINCT ip_index) AS distinct_ip_count,
                       SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count_total
@@ -377,17 +380,17 @@ class ApiTokenMixin:
     ) -> bool:
         if not token:
             return False
-        token_index = self.crypto.fast_blind_index(token, "api_access_token")  # pyright: ignore[reportAttributeAccessIssue]
-        legacy_index = self.crypto.legacy_fast_blind_index(token, "api_access_token")  # pyright: ignore[reportAttributeAccessIssue]
+        token_index = self.crypto.fast_blind_index(token, "api_access_token")
+        legacy_index = self.crypto.legacy_fast_blind_index(token, "api_access_token")
 
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             "SELECT * FROM auth_api_access_tokens WHERE token_index = ? OR (token_index = ? AND ? != '')",
             (token_index, legacy_index, legacy_index),
         )
         if not row or row["revoked"]:
             return False
         row = dict(row)
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
+        now = self._get_timestamp()
         if row.get("expires_at") and int(row["expires_at"]) <= now:
             self._record_api_access_token_event(
                 token_id=int(row["id"]),
@@ -419,7 +422,7 @@ class ApiTokenMixin:
             )
             return False
 
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
+        now = self._get_timestamp()
         last_used = row.get("last_used_at") or 0
         updates = [
             "last_used_at = ?",
@@ -430,8 +433,8 @@ class ApiTokenMixin:
         ]
         params: List[Any] = [
             now,
-            self._ua_index(user_agent),  # pyright: ignore[reportAttributeAccessIssue]
-            self._encrypt_ua(user_agent, str(row["id"])),  # pyright: ignore[reportAttributeAccessIssue]
+            self._ua_index(user_agent),
+            self._encrypt_ua(user_agent, str(row["id"])),
             path,
         ]
         if not row.get("first_used_at"):
@@ -442,17 +445,17 @@ class ApiTokenMixin:
             updates.append("last_used_ip_encrypted = ?")
             params.extend(
                 [
-                    self.crypto.fast_blind_index(ip_address, "ip_address"),  # pyright: ignore[reportAttributeAccessIssue]
-                    self.crypto.encrypt_data(ip_address, context=str(row["id"])),  # pyright: ignore[reportAttributeAccessIssue]
+                    self.crypto.fast_blind_index(ip_address, "ip_address"),
+                    self.crypto.encrypt_data(ip_address, context=str(row["id"])),
                 ]
             )
         params.append(row["id"])
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             f"UPDATE auth_api_access_tokens SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
         )
         if now - int(last_used) > 60000:
-            self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+            self._db.execute(
                 "UPDATE auth_api_access_tokens SET last_used_at = ? WHERE id = ?",
                 (now, row["id"]),
             )
@@ -471,8 +474,8 @@ class ApiTokenMixin:
     @cached(ttl=30, prefix="access_token_required")
     def is_api_access_token_required(self) -> bool:
         try:
-            now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
-            row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+            now = self._get_timestamp()
+            row = self._db.fetch_one(
                 """SELECT id FROM auth_api_access_tokens
                    WHERE revoked = 0 AND (expires_at IS NULL OR expires_at > ?)
                    LIMIT 1""",
@@ -548,24 +551,24 @@ class ApiTokenMixin:
         scope_match: Optional[bool],
         reject_reason: Optional[str],
     ) -> None:
-        event_id = self._generate_id()  # pyright: ignore[reportAttributeAccessIssue]
+        event_id = self._generate_id()
         ip_index = None
         ip_encrypted = None
         if ip_address:
-            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")  # pyright: ignore[reportAttributeAccessIssue]
-            ip_encrypted = self.crypto.encrypt_data(ip_address, context=str(event_id))  # pyright: ignore[reportAttributeAccessIssue]
+            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+            ip_encrypted = self.crypto.encrypt_data(ip_address, context=str(event_id))
 
-        ua_index = self._ua_index(user_agent)  # pyright: ignore[reportAttributeAccessIssue]
-        ua_encrypted = self._encrypt_ua(user_agent, str(event_id))  # pyright: ignore[reportAttributeAccessIssue]
+        ua_index = self._ua_index(user_agent)
+        ua_encrypted = self._encrypt_ua(user_agent, str(event_id))
 
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             """INSERT INTO auth_api_access_token_events
                (id, token_id, used_at, ip_index, ip_encrypted, method, path, ua_index, ua_encrypted, allowed, scope_match, reject_reason)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 event_id,
                 token_id,
-                self._get_timestamp(),  # pyright: ignore[reportAttributeAccessIssue]
+                self._get_timestamp(),
                 ip_index,
                 ip_encrypted,
                 method,
@@ -583,7 +586,7 @@ class ApiTokenMixin:
         ua = None
         if row.get("ua_encrypted"):
             try:
-                ua = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                ua = self.crypto.decrypt_data(
                     row["ua_encrypted"], context=str(row["id"])
                 )
             except Exception:
@@ -592,7 +595,7 @@ class ApiTokenMixin:
         ip_address = None
         if row.get("ip_encrypted"):
             try:
-                ip_address = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                ip_address = self.crypto.decrypt_data(
                     row["ip_encrypted"], context=str(row["id"])
                 )
             except Exception:
@@ -617,7 +620,7 @@ class ApiTokenMixin:
         use_count = int(row.get("use_count_total") or 0)
         if use_count > 0:
             distinct_summary = (
-                self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+                self._db.fetch_one(
                     """SELECT COUNT(DISTINCT ip_index) AS distinct_ip_count,
                           SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count_total
                    FROM auth_api_access_token_events
@@ -631,7 +634,7 @@ class ApiTokenMixin:
         last_ip = None
         if row.get("last_used_ip_encrypted"):
             try:
-                last_ip = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                last_ip = self.crypto.decrypt_data(
                     row["last_used_ip_encrypted"], context=str(row["id"])
                 )
             except Exception:
@@ -645,7 +648,7 @@ class ApiTokenMixin:
             first_used_at=row.get("first_used_at"),
             last_used_at=row.get("last_used_at"),
             last_used_ip_address=last_ip,
-            last_used_user_agent=self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+            last_used_user_agent=self.crypto.decrypt_data(
                 row["ua_encrypted"], context=str(row["id"])
             )
             if row.get("ua_encrypted")
