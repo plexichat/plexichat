@@ -11,7 +11,10 @@ from ..passwords import validate_username
 from src.core.database import cached, invalidate_pattern
 
 
-class ProfileMixin:
+from .protocol import AuthManagerProtocol
+
+
+class ProfileMixin(AuthManagerProtocol):
     def update_user(
         self,
         user_id: int,
@@ -35,7 +38,7 @@ class ProfileMixin:
                 if getattr(current_user, "force_username_change", False)
                 else None
             )
-            blocked, reason = self.blacklist.is_blocked(  # pyright: ignore[reportAttributeAccessIssue]
+            blocked, reason = self.blacklist.is_blocked(
                 username, old_username=old_username
             )
             if blocked:
@@ -50,8 +53,8 @@ class ProfileMixin:
             params.append(0)
 
         if email:
-            email_index = self.crypto.blind_index(email, "user_email")  # pyright: ignore[reportAttributeAccessIssue]
-            email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))  # pyright: ignore[reportAttributeAccessIssue]
+            email_index = self.crypto.blind_index(email, "user_email")
+            email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
             updates.append("email_index = ?, email_encrypted = ?")
             params.extend([email_index, email_encrypted])
         if permissions is not None:
@@ -60,9 +63,9 @@ class ProfileMixin:
 
         if updates:
             updates.append("updated_at = ?")
-            params.append(self._get_timestamp())  # pyright: ignore[reportAttributeAccessIssue]
+            params.append(self._get_timestamp())
             params.append(user_id)
-            self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+            self._db.execute(
                 f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
@@ -84,14 +87,14 @@ class ProfileMixin:
         user_dict = dict(data)
         if user_dict.get("email_encrypted"):
             try:
-                user_dict["email"] = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                user_dict["email"] = self.crypto.decrypt_data(
                     user_dict["email_encrypted"], context=str(user_id)
                 )
             except Exception:
                 user_dict["email"] = None
         if user_dict.get("date_of_birth"):
             try:
-                user_dict["dob_decrypted"] = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                user_dict["dob_decrypted"] = self.crypto.decrypt_data(
                     user_dict["date_of_birth"], context=str(user_id)
                 )
             except Exception:
@@ -106,7 +109,7 @@ class ProfileMixin:
             LEFT JOIN user_features f ON u.id = f.user_id
             WHERE u.id = ?
         """
-        row = self._db.fetch_one(query, (user_id,))  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(query, (user_id,))
         if not row:
             return None
 
@@ -152,7 +155,7 @@ class ProfileMixin:
 
     @cached(ttl=300, prefix="user_by_username")
     def get_user_by_username(self, username: str) -> Optional[User]:
-        row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one(
             "SELECT id FROM auth_users WHERE username = ?", (username,)
         )
         if not row:
@@ -193,7 +196,7 @@ class ProfileMixin:
                 LEFT JOIN user_features f ON u.id = f.user_id
                 WHERE u.id IN ({placeholders})
             """
-            rows = self._db.fetch_all(query, tuple(missing_ids))  # pyright: ignore[reportAttributeAccessIssue]
+            rows = self._db.fetch_all(query, tuple(missing_ids))
 
             for row in rows:
                 user_id = row["id"]
@@ -212,7 +215,7 @@ class ProfileMixin:
                     "id": user_id,
                     "username": row["username"],
                     "created_at": row["created_at"],
-                    "permissions": self._json_loads(row["permissions"])  # pyright: ignore[reportAttributeAccessIssue]
+                    "permissions": self._json_loads(row["permissions"])
                     if isinstance(row["permissions"], str)
                     else row["permissions"],
                     "account_type": row["account_type"],
@@ -241,7 +244,7 @@ class ProfileMixin:
             LEFT JOIN user_features f ON u.id = f.user_id
             WHERE u.id IN ({placeholders})
         """
-        rows = self._db.fetch_all(query, tuple(user_ids))  # pyright: ignore[reportAttributeAccessIssue]
+        rows = self._db.fetch_all(query, tuple(user_ids))
 
         result = {}
         for row in rows:
@@ -262,7 +265,7 @@ class ProfileMixin:
 
             if user_dict.get("email_encrypted"):
                 try:
-                    user_dict["email"] = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                    user_dict["email"] = self.crypto.decrypt_data(
                         user_dict["email_encrypted"], context=str(user_id)
                     )
                 except Exception:
@@ -270,7 +273,7 @@ class ProfileMixin:
 
             if user_dict.get("date_of_birth"):
                 try:
-                    user_dict["dob_decrypted"] = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                    user_dict["dob_decrypted"] = self.crypto.decrypt_data(
                         user_dict["date_of_birth"], context=str(user_id)
                     )
                 except Exception:

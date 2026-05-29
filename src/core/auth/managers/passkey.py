@@ -6,20 +6,23 @@ from ..models import AuthStatus, User, AccountType, AuthResult
 from ..permissions import permissions_from_json
 
 
-class PasskeyMixin:
+from .protocol import AuthManagerProtocol
+
+
+class PasskeyMixin(AuthManagerProtocol):
     def generate_passkey_registration_options(
         self,
         user_id: int,
         device_name: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if not self.passkeys.is_available():  # pyright: ignore[reportAttributeAccessIssue]
+        if not self.passkeys.is_available():
             raise RuntimeError("Passkey support not available")
 
-        user = self.get_user(user_id)  # pyright: ignore[reportAttributeAccessIssue]
+        user = self.get_user(user_id)
         if not user:
             raise UserNotFoundError("User not found")
 
-        options = self.passkeys.generate_registration_options(  # pyright: ignore[reportAttributeAccessIssue]
+        options = self.passkeys.generate_registration_options(
             user_id=user_id,
             username=user.username,
             device_name=device_name,
@@ -40,10 +43,10 @@ class PasskeyMixin:
         credential_response: Dict[str, Any],
         ip_address: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if not self.passkeys.is_available():  # pyright: ignore[reportAttributeAccessIssue]
+        if not self.passkeys.is_available():
             raise RuntimeError("Passkey support not available")
 
-        credential = self.passkeys.verify_registration(  # pyright: ignore[reportAttributeAccessIssue]
+        credential = self.passkeys.verify_registration(
             user_id=user_id,
             challenge_id=challenge_id,
             credential_response=credential_response,
@@ -52,7 +55,7 @@ class PasskeyMixin:
         if not credential:
             return None
 
-        self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+        self._log_audit(
             AuditEventType.PASSKEY_REGISTERED,
             user_id,
             True,
@@ -72,10 +75,10 @@ class PasskeyMixin:
         self,
         username: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if not self.passkeys.is_available():  # pyright: ignore[reportAttributeAccessIssue]
+        if not self.passkeys.is_available():
             raise RuntimeError("Passkey support not available")
 
-        options = self.passkeys.generate_authentication_options(username=username)  # pyright: ignore[reportAttributeAccessIssue]
+        options = self.passkeys.generate_authentication_options(username=username)
 
         return {
             "challenge_id": options.challenge_id,
@@ -89,10 +92,10 @@ class PasskeyMixin:
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> AuthResult:
-        if not self.passkeys.is_available():  # pyright: ignore[reportAttributeAccessIssue]
+        if not self.passkeys.is_available():
             raise RuntimeError("Passkey support not available")
 
-        result = self.passkeys.verify_authentication(  # pyright: ignore[reportAttributeAccessIssue]
+        result = self.passkeys.verify_authentication(
             challenge_id=challenge_id,
             credential_response=credential_response,
         )
@@ -102,7 +105,7 @@ class PasskeyMixin:
 
         user_id = result["user_id"]
 
-        user_row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        user_row = self._db.fetch_one(
             """SELECT * FROM auth_users WHERE id = ?""",
             (user_id,),
         )
@@ -113,19 +116,19 @@ class PasskeyMixin:
             raise AccountLockedError("Account locked")
 
         device_id = (
-            self._track_device(user_id, {"type": "passkey"}) if user_id else None  # pyright: ignore[reportAttributeAccessIssue]
+            self._track_device(user_id, {"type": "passkey"}) if user_id else None
         )
         if ip_address:
-            self._track_ip(user_id, ip_address)  # pyright: ignore[reportAttributeAccessIssue]
+            self._track_ip(user_id, ip_address)
 
-        session = self._create_session(user_id, device_id, ip_address, user_agent)  # pyright: ignore[reportAttributeAccessIssue]
+        session = self._create_session(user_id, device_id, ip_address, user_agent)
 
-        self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.execute(
             "UPDATE auth_users SET last_login_at = ? WHERE id = ?",
-            (self._get_timestamp(), user_id),  # pyright: ignore[reportAttributeAccessIssue]
+            (self._get_timestamp(), user_id),
         )
 
-        self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+        self._log_audit(
             AuditEventType.PASSKEY_AUTHENTICATED,
             user_id,
             True,
@@ -137,7 +140,7 @@ class PasskeyMixin:
         email = None
         if user_row["email_encrypted"]:
             try:
-                email = self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                email = self.crypto.decrypt_data(
                     user_row["email_encrypted"], context=str(user_id)
                 )
             except Exception:
@@ -156,7 +159,7 @@ class PasskeyMixin:
             force_username_change=bool(user_row.get("force_username_change", 0)),
             failed_login_attempts=user_row.get("failed_login_attempts", 0),
             locked_until=user_row.get("locked_until"),
-            last_login_at=self._get_timestamp(),  # pyright: ignore[reportAttributeAccessIssue]
+            last_login_at=self._get_timestamp(),
             totp_enabled=bool(user_row.get("totp_enabled", 0)),
             age_verified=bool(user_row.get("age_verified", 0)),
         )
@@ -169,10 +172,10 @@ class PasskeyMixin:
         )
 
     def list_passkeys(self, user_id: int) -> List[Dict[str, Any]]:
-        if not self.passkeys.is_available():  # pyright: ignore[reportAttributeAccessIssue]
+        if not self.passkeys.is_available():
             return []
 
-        passkeys = self.passkeys.list_passkeys(user_id)  # pyright: ignore[reportAttributeAccessIssue]
+        passkeys = self.passkeys.list_passkeys(user_id)
         return [
             {
                 "id": p.id,
@@ -190,13 +193,13 @@ class PasskeyMixin:
     def revoke_passkey(
         self, user_id: int, passkey_id: int, ip_address: Optional[str] = None
     ) -> bool:
-        if not self.passkeys.is_available():  # pyright: ignore[reportAttributeAccessIssue]
+        if not self.passkeys.is_available():
             return False
 
-        result = self.passkeys.revoke_passkey(user_id, passkey_id)  # pyright: ignore[reportAttributeAccessIssue]
+        result = self.passkeys.revoke_passkey(user_id, passkey_id)
 
         if result:
-            self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+            self._log_audit(
                 AuditEventType.PASSKEY_REVOKED,
                 user_id,
                 True,
@@ -207,13 +210,13 @@ class PasskeyMixin:
         return result
 
     def rename_passkey(self, user_id: int, passkey_id: int, new_name: str) -> bool:
-        if not self.passkeys.is_available():  # pyright: ignore[reportAttributeAccessIssue]
+        if not self.passkeys.is_available():
             return False
 
-        result = self.passkeys.rename_passkey(user_id, passkey_id, new_name)  # pyright: ignore[reportAttributeAccessIssue]
+        result = self.passkeys.rename_passkey(user_id, passkey_id, new_name)
 
         if result:
-            self._log_audit(  # pyright: ignore[reportAttributeAccessIssue]
+            self._log_audit(
                 AuditEventType.PASSKEY_RENAMED,
                 user_id,
                 True,

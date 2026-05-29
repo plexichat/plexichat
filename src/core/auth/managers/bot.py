@@ -18,7 +18,10 @@ from ..permissions import (
 from ..tokens import create_bot_token
 
 
-class BotMixin:
+from .protocol import AuthManagerProtocol
+
+
+class BotMixin(AuthManagerProtocol):
     def create_bot(
         self,
         owner_id: int,
@@ -26,7 +29,7 @@ class BotMixin:
         display_name: str,
         permissions: Optional[Dict[str, bool]] = None,
     ) -> Bot:
-        owner_row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        owner_row = self._db.fetch_one(
             "SELECT permissions FROM auth_users WHERE id = ?", (owner_id,)
         )
         if not owner_row:
@@ -35,16 +38,16 @@ class BotMixin:
         if not has_permission(owner_perms, "bots.create"):
             raise PermissionDeniedError("Missing required permission: bots.create")
 
-        if self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        if self._db.fetch_one(
             "SELECT 1 FROM auth_users WHERE username = ?", (username,)
         ):
             raise UserExistsError("Bot creation failed")
-        if self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        if self._db.fetch_one(
             "SELECT 1 FROM auth_bots WHERE username = ?", (username,)
         ):
             raise UserExistsError("Bot creation failed")
 
-        bot_config = self._config.get("accounts", {})  # pyright: ignore[reportAttributeAccessIssue]
+        bot_config = self._config.get("accounts", {})
         max_bots = bot_config.get("max_bots_per_user", 5)
         current_bots = self.get_user_bots(owner_id)
         if len(current_bots) >= max_bots:
@@ -66,14 +69,14 @@ class BotMixin:
         if requested_perms.get("bots.create"):
             raise PermissionDeniedError("Bots cannot have the 'bots.create' permission")
 
-        bot_id = self._generate_id()  # pyright: ignore[reportAttributeAccessIssue]
+        bot_id = self._generate_id()
         token, token_hash = create_bot_token(bot_id)
         perms = requested_perms
-        now = self._get_timestamp()  # pyright: ignore[reportAttributeAccessIssue]
+        now = self._get_timestamp()
 
-        self._db.begin_transaction()  # pyright: ignore[reportAttributeAccessIssue]
+        self._db.begin_transaction()
         try:
-            self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+            self._db.execute(
                 "INSERT INTO auth_users (id, account_type, username, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     bot_id,
@@ -86,7 +89,7 @@ class BotMixin:
                 ),
             )
 
-            self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+            self._db.execute(
                 "INSERT INTO auth_bots (id, owner_id, username, display_name, token_hash, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     bot_id,
@@ -98,9 +101,9 @@ class BotMixin:
                     now,
                 ),
             )
-            self._db.commit()  # pyright: ignore[reportAttributeAccessIssue]
+            self._db.commit()
         except Exception:
-            self._db.rollback()  # pyright: ignore[reportAttributeAccessIssue]
+            self._db.rollback()
             raise
 
         return Bot(
@@ -109,12 +112,12 @@ class BotMixin:
             username=username,
             display_name=display_name,
             permissions=perms.copy(),
-            created_at=self._get_timestamp(),  # pyright: ignore[reportAttributeAccessIssue]
+            created_at=self._get_timestamp(),
             token=token,
         )
 
     def get_bot(self, bot_id: int) -> Optional[Bot]:
-        row = self._db.fetch_one("SELECT * FROM auth_bots WHERE id = ?", (bot_id,))  # pyright: ignore[reportAttributeAccessIssue]
+        row = self._db.fetch_one("SELECT * FROM auth_bots WHERE id = ?", (bot_id,))
         if not row:
             return None
         return Bot(
@@ -128,7 +131,7 @@ class BotMixin:
         )
 
     def get_user_bots(self, owner_id: int) -> List[Bot]:
-        rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+        rows = self._db.fetch_all(
             "SELECT * FROM auth_bots WHERE owner_id = ?", (owner_id,)
         )
         return [
@@ -145,7 +148,7 @@ class BotMixin:
         ]
 
     def regenerate_bot_token(self, owner_id: int, bot_id: int) -> str:
-        bot_row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        bot_row = self._db.fetch_one(
             "SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,)
         )
         if not bot_row:
@@ -153,7 +156,7 @@ class BotMixin:
         if int(bot_row["owner_id"]) != int(owner_id):
             raise PermissionDeniedError("Bot not found or not owned by you")
         token, token_hash = create_bot_token(bot_id)
-        cursor = self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        cursor = self._db.execute(
             "UPDATE auth_bots SET token_hash = ? WHERE id = ? AND owner_id = ?",
             (token_hash, bot_id, owner_id),
         )
@@ -164,7 +167,7 @@ class BotMixin:
     def update_bot_permissions(
         self, owner_id: int, bot_id: int, permissions: Dict[str, bool]
     ) -> Bot:
-        bot_row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        bot_row = self._db.fetch_one(
             "SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,)
         )
         if not bot_row:
@@ -174,7 +177,7 @@ class BotMixin:
         valid, issues = validate_permissions(permissions, is_bot=True)
         if not valid:
             raise AuthError(f"Invalid permissions: {issues}")
-        cursor = self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        cursor = self._db.execute(
             "UPDATE auth_bots SET permissions = ? WHERE id = ? AND owner_id = ?",
             (permissions_to_json(permissions), bot_id, owner_id),
         )
@@ -186,7 +189,7 @@ class BotMixin:
         return bot
 
     def disable_bot(self, owner_id: int, bot_id: int) -> bool:
-        cursor = self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        cursor = self._db.execute(
             "UPDATE auth_bots SET disabled = 1 WHERE id = ? AND owner_id = ?",
             (bot_id, owner_id),
         )
@@ -195,7 +198,7 @@ class BotMixin:
         return True
 
     def enable_bot(self, owner_id: int, bot_id: int) -> bool:
-        cursor = self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        cursor = self._db.execute(
             "UPDATE auth_bots SET disabled = 0 WHERE id = ? AND owner_id = ?",
             (bot_id, owner_id),
         )
@@ -204,14 +207,14 @@ class BotMixin:
         return True
 
     def delete_bot(self, owner_id: int, bot_id: int) -> bool:
-        bot_row = self._db.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        bot_row = self._db.fetch_one(
             "SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,)
         )
         if not bot_row:
             raise UserNotFoundError("Bot not found")
         if int(bot_row["owner_id"]) != int(owner_id):
             raise PermissionDeniedError("Bot not found or not owned by you")
-        cursor = self._db.execute(  # pyright: ignore[reportAttributeAccessIssue]
+        cursor = self._db.execute(
             "DELETE FROM auth_bots WHERE id = ? AND owner_id = ?", (bot_id, owner_id)
         )
         if cursor.rowcount == 0:

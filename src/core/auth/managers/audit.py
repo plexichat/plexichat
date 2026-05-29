@@ -3,9 +3,12 @@ from typing import List
 from ..models import AuditEntry, AuditEventType
 
 
-class AuditMixin:
+from .protocol import AuthManagerProtocol
+
+
+class AuditMixin(AuthManagerProtocol):
     def get_login_history(self, user_id: int, limit: int = 50) -> List[AuditEntry]:
-        rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+        rows = self._db.fetch_all(
             "SELECT * FROM auth_audit_log WHERE user_id = ? AND event_type IN (?, ?, ?) ORDER BY timestamp DESC LIMIT ?",
             (
                 user_id,
@@ -20,7 +23,7 @@ class AuditMixin:
                 id=r["id"],
                 user_id=r["user_id"],
                 event_type=AuditEventType(r["event_type"]),
-                ip_address=self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                ip_address=self.crypto.decrypt_data(
                     r["ip_encrypted"], context=str(r["id"])
                 )
                 if r.get("ip_encrypted")
@@ -34,7 +37,7 @@ class AuditMixin:
         ]
 
     def get_security_events(self, user_id: int, limit: int = 50) -> List[AuditEntry]:
-        rows = self._db.fetch_all(  # pyright: ignore[reportAttributeAccessIssue]
+        rows = self._db.fetch_all(
             "SELECT * FROM auth_audit_log WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
             (user_id, limit),
         )
@@ -43,7 +46,7 @@ class AuditMixin:
                 id=r["id"],
                 user_id=r["user_id"],
                 event_type=AuditEventType(r["event_type"]),
-                ip_address=self.crypto.decrypt_data(  # pyright: ignore[reportAttributeAccessIssue]
+                ip_address=self.crypto.decrypt_data(
                     r["ip_encrypted"], context=str(r["id"])
                 )
                 if r.get("ip_encrypted")
