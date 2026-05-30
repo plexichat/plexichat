@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request, HTTPException
+from starlette.concurrency import run_in_threadpool
 from .utils import check_host_restriction, get_admin_from_token
 import src.core.search as search_module
 import utils.logger as logger
@@ -28,7 +29,7 @@ async def reindex_search(request: Request):
         )
 
     try:
-        indexed = search_module._manager.reindex_all()
+        indexed = await run_in_threadpool(search_module._manager.reindex_all)
         return {"success": True, "indexed": indexed}
     except Exception as e:
         logger.error(f"Reindex failed: {e}", exc_info=True)
