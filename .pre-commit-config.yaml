@@ -26,6 +26,7 @@ repos:
           (?x)^(
               src/core/migrations/cloner\.py|
               src/utils/encryption/kek_migration\.py|
+              src/core/media/deduplication/.*\.py|
               src/api/routes/docs/.*\.py
           )$
         additional_dependencies:
