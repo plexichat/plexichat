@@ -1,6 +1,6 @@
 # Integration Tests
 
-This directory contains integration tests that demonstrate the zero-friction usage pattern of the common-utils modules.
+This directory contains integration tests that demonstrate the zero-friction usage pattern of the common_utils modules.
 
 ## Files
 

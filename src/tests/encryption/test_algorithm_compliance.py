@@ -13,7 +13,7 @@ import os
 import base64
 import hashlib
 
-# common-utils is now a native package.
+# common_utils is now a native package.
 
 from src.utils.encryption import (  # noqa: E402
     hash_password,

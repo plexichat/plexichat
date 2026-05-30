@@ -22,7 +22,7 @@ A database connectivity module supporting SQLite and PostgreSQL with a clean, co
 ## Requirements
 
 ```bash
-pip install PyYAML  # For config (via common-utils)
+pip install PyYAML  # For config (via common_utils)
 pip install psycopg2-binary  # Only if using PostgreSQL
 ```
 

@@ -10,7 +10,7 @@ import os
 import time
 import threading
 
-# common-utils is now a native package.
+# common_utils is now a native package.
 
 from src.utils.encryption.core import (  # noqa: E402
     EncryptionManager,

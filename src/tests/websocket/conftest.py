@@ -5,7 +5,7 @@ WebSocket test fixtures.
 import pytest
 from unittest.mock import Mock
 
-# common-utils is now a native package.
+# common_utils is now a native package.
 
 
 # Config is already setup in the main conftest.py at import time

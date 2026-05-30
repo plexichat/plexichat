@@ -1,6 +1,6 @@
 # Utils
 
-Core utility modules for the common-utils library.
+Core utility modules for the common_utils library.
 
 ## Modules
 

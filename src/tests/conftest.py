@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 # Import encryption at module level for fixtures
 from src.utils import encryption
 
-# common-utils is now a native package.
+# common_utils is now a native package.
 
 
 import utils.config as config  # noqa: E402
