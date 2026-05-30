@@ -294,6 +294,18 @@ class SelfTestRunner:
 
             time.sleep(0.01)
 
+        # Safety net: unblock admin user if still blocked from auto-loop
+        if self.ctx.test_user_id:
+            try:
+                resp = self.ctx.session.delete(
+                    f"{self.ctx.base_url}/api/v1/admin/blocked-users/{self.ctx.test_user_id}",
+                    timeout=5,
+                )
+                if resp.status_code in (200, 204):
+                    logger.info("Safety unblocked test user from uploads")
+            except Exception:
+                pass
+
         # 6. Standalone-specific endpoint tests (before destructive, so delay-deletion
         #    and password-reset can use the other_user before they are force-purged)
         if self.ctx.standalone_mode:

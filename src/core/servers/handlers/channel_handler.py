@@ -15,6 +15,7 @@ from ..exceptions import (
     ServerNotFoundError,
 )
 from ..permissions import has_permission as check_permission
+from ..manager.converters import _row_to_channel, _row_to_category
 from src.core.database import cache_delete, redis_available
 from src.core.database.cache import cached, invalidate_pattern
 
@@ -183,7 +184,7 @@ class ChannelHandler:
             "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0", (channel_id,)
         )
         if row:
-            return self.manager._row_to_channel(row)
+            return _row_to_channel(row, self.manager._encrypt_descriptions)
         return result
 
     def create_category(
@@ -214,7 +215,7 @@ class ChannelHandler:
         )
 
         row = self.db.fetch_one("SELECT * FROM srv_categories WHERE id = ?", (cat_id,))
-        return self.manager._row_to_category(row)
+        return _row_to_category(row)
 
     def delete_category(self, user_id: SnowflakeID, category_id: SnowflakeID) -> bool:
         """Delete a channel category."""
@@ -273,7 +274,9 @@ class ChannelHandler:
             # If batch fails or returns empty for some reason, we default to denied (safe)
             # unless administrator (handled in get_permissions_batch)
             if check_permission(perms, "channels.view"):
-                channels.append(self.manager._row_to_channel(row))
+                channels.append(
+                    _row_to_channel(row, self.manager._encrypt_descriptions)
+                )
 
         return channels
 

@@ -429,9 +429,9 @@ class CleanupService:
                     logger.debug(
                         f"API cleanup OK: {method} {path} -> {resp.status_code}"
                     )
-                elif resp.status_code == 404:
+                elif resp.status_code in (404, 403):
                     logger.debug(
-                        f"API cleanup skipped (already deleted): {method} {path} -> {resp.status_code}"
+                        f"API cleanup skipped (already deleted/no access): {method} {path} -> {resp.status_code}"
                     )
                 else:
                     logger.warning(

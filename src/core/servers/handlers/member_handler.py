@@ -24,6 +24,7 @@ from ..exceptions import (
 from ..permissions import can_manage_member
 from src.core.database import cache_delete
 from src.core.database.cache import cached, invalidate_pattern
+from ..manager.converters import _row_to_member, _row_to_ban, _row_to_invite
 import utils.logger as logger
 
 
@@ -226,7 +227,14 @@ class MemberHandler:
             "SELECT * FROM srv_members WHERE server_id = ? AND user_id = ?",
             (server_id, user_id),
         )
-        return self.manager._row_to_member(row) if row else None
+        if not row:
+            return None
+        role_rows = self.db.fetch_all(
+            "SELECT role_id FROM srv_member_roles WHERE member_id = ?",
+            (row["id"],),
+        )
+        role_ids = [r["role_id"] for r in role_rows]
+        return _row_to_member(row, roles=role_ids)
 
     def update_member(
         self,
@@ -428,7 +436,7 @@ class MemberHandler:
         rows = self.db.fetch_all(
             "SELECT * FROM srv_bans WHERE server_id = ?", (server_id,)
         )
-        return [self.manager._row_to_ban(row) for row in rows]
+        return [_row_to_ban(row) for row in rows]
 
     def use_invite(self, user_id: SnowflakeID, code: str) -> Member:
         """Get and use an invite."""
@@ -438,7 +446,7 @@ class MemberHandler:
         if not row:
             raise InviteNotFoundError("Invite not found")
 
-        invite = self.manager._row_to_invite(row)
+        invite = _row_to_invite(row)
 
         now = self.manager._get_timestamp()
         if invite.expires_at is not None and invite.expires_at <= now:
@@ -647,4 +655,4 @@ class MemberHandler:
         row = self.db.fetch_one(
             "SELECT * FROM srv_invites WHERE code = ? AND revoked = 0", (code,)
         )
-        return self.manager._row_to_invite(row) if row else None
+        return _row_to_invite(row) if row else None
