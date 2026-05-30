@@ -24,6 +24,8 @@ class SelfTestContext:
         self.standalone_mode = standalone_mode
 
         self._test_password: Optional[str] = None
+        self._setup_other_username: Optional[str] = None
+        self._setup_other_email: Optional[str] = None
         self.token: Optional[str] = None
         self.other_token: Optional[str] = None
         self.test_user_id: Optional[int] = None
