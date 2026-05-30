@@ -232,6 +232,27 @@ class EndpointTester:
             }
             self.ctx.results.append(result)
 
+            # If the auto-loop just tested POST /admin/blocked-users and
+            # blocked the admin user, immediately unblock so subsequent
+            # upload tests in the same loop don't fail.
+            if (
+                success
+                and method == "POST"
+                and "/blocked-users" in path
+                and "/admin/" in path
+                and self.ctx.test_user_id
+            ):
+                try:
+                    unblock_url = f"{self.ctx.base_url}/api/v1/admin/blocked-users/{self.ctx.test_user_id}"
+                    uresp = active_session.delete(unblock_url, timeout=5)
+                    if uresp.status_code in (200, 204):
+                        logger.info(
+                            "Auto-unblocked test user from uploads after "
+                            "POST /admin/blocked-users"
+                        )
+                except Exception as exc:
+                    logger.debug(f"Auto-unblock failed (non-fatal): {exc}")
+
             # Capture webhook ID from auto-loop POST /webhooks so subsequent
             # PATCH /webhooks/{id} and POST execute tests use the right ID.
             # Always capture (even if setup left a stale value) so the latest
@@ -475,7 +496,6 @@ class EndpointTester:
                 {"X-Plexichat-Internal-Secret": internal_secret}
             )
 
-        time.sleep(1.5)
         logger.info(
             f"Testing POST /api/v1/auth/login (fresh session) with username='{username}', "
             f"password_len={len(password)}, internal_secret={'set' if internal_secret else 'not set'}"
@@ -519,7 +539,6 @@ class EndpointTester:
             register_session.headers.update(
                 {"X-Plexichat-Internal-Secret": internal_secret}
             )
-        time.sleep(2.0)
         logger.info("Testing POST /api/v1/auth/register (fresh user via API)...")
         register_start = time.time()
         resp = register_session.post(
@@ -546,7 +565,6 @@ class EndpointTester:
 
         # --- Sessions list (requires auth) ---
         if login_session.headers.get("Authorization"):
-            time.sleep(0.3)
             logger.info("Testing GET /api/v1/auth/sessions...")
             sessions_start = time.time()
             resp = login_session.get(
@@ -572,7 +590,6 @@ class EndpointTester:
                 )
 
             # --- Logout ---
-            time.sleep(0.3)
             logger.info("Testing POST /api/v1/auth/logout...")
             logout_start = time.time()
             resp = login_session.post(
@@ -623,7 +640,6 @@ class EndpointTester:
             # Use except_current=True so the current login_session is preserved.
             # This avoids invalidating the main self-test session (self.ctx.session)
             # which would cause all subsequent tests to fail with 401.
-            time.sleep(0.3)
             logger.info("Testing POST /api/v1/auth/sessions/revoke-all...")
             revoke_start = time.time()
             resp = login_session.post(

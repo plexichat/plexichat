@@ -6,6 +6,7 @@ import json
 from typing import Optional, List, Dict, Any
 from src.core.base import SnowflakeID
 from ..models import AuditLogEntry, AuditLogAction
+from ..manager.converters import _row_to_audit_entry
 
 
 class AuditHandler:
@@ -70,4 +71,4 @@ class AuditHandler:
 
         rows = self.db.fetch_all(query, tuple(params))
 
-        return [self.manager._row_to_audit_entry(row) for row in rows]
+        return [_row_to_audit_entry(row) for row in rows]
