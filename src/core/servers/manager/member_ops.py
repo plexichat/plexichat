@@ -16,6 +16,13 @@ from .protocol import ServerProtocol
 class MemberOpsMixin(ServerProtocol):
     """Mixin for member operations."""
 
+    def _is_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> bool:
+        row = self._db.fetch_one(
+            "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
+            (server_id, user_id),
+        )
+        return row is not None
+
     @cached(ttl=30, prefix="server_members")
     def get_members(
         self,
