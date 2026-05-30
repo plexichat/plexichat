@@ -12,7 +12,7 @@ explicitly through `self.ctx`, avoiding MRO conflicts.
 | `RouteDiscovery` | `discovery.py` | OpenAPI spec fetch, route list extraction, feature gating |
 | `SetupService` | `setup.py` | Test users, roles, server, channel, resources |
 | `CleanupService` | `cleanup.py` | SQL truncation, recursive deletion, API + SQL cleanup |
-| `EndpointTester` | `endpoints.py` | Single-endpoint execution, DELETE suite, bot integration |
+| `EndpointTester` | `endpoints/` | Single-endpoint execution, DELETE suite, bot integration (mixin-based) |
 | `WebSocketTester` | `websocket.py` | Gateway HELLO/IDENTIFY/READY/heartbeat validation |
 | `RateLimitTester` | `ratelimit.py` | Burst test for 429 rate-limit enforcement |
 | `ReportGenerator` | `report.py` | Pass/fail aggregation and summary |
