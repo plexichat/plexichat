@@ -1,6 +1,7 @@
 stages:
   - lint
   - security
+  - test
   - docker
 
 variables:
@@ -131,6 +132,17 @@ security:dependency_scanning:
       - safety-report.json
     expire_in: 30 days
   resource_group: plexichat-ci
+
+# =========================================================
+# TEST STAGE (API Self-Test)
+# =========================================================
+
+test:self_test:
+  extends: .python_base
+  stage: test
+  script:
+    - mkdir -p .plexichat
+    - python main.py --self-test
 
 docker:build_and_push:
   stage: docker
