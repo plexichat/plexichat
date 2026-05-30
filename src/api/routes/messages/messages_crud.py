@@ -506,7 +506,8 @@ async def edit_message(
                 },
             )
 
-        # Check for server timeout if this is a server channel
+        # Fetch channel once for timeout check + server_id lookup (avoid double fetch)
+        server_id = None
         if servers_mod:
             try:
                 channel = servers_mod.get_channel(cid, current_user.user_id)
@@ -531,17 +532,9 @@ async def edit_message(
                     and getattr(e, "status_code", None) == 403
                 ):
                     raise
+                server_id = None
 
         msg = messaging.edit_message(current_user.user_id, mid, body.content)
-
-        server_id = None
-        if servers_mod:
-            try:
-                channel = servers_mod.get_channel(cid, current_user.user_id)
-                if channel:
-                    server_id = getattr(channel, "server_id", None)
-            except Exception:
-                server_id = None
 
         if server_id:
             try:

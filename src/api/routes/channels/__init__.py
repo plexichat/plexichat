@@ -722,11 +722,27 @@ async def join_server_via_invite(
                     auth = api.get_auth()
 
                     # 1. Dispatch GUILD_CREATE to the joining user
-                    server = servers_mod.get_server(current_user.user_id, sid)
-                    if server:
-                        channels = servers_mod.get_channels(current_user.user_id, sid)
-                        roles = servers_mod.get_roles(sid)
+                    # Fetch server, channels, and roles in parallel via threadpool.
+                    # Use return_exceptions=True so a roles.fetch failure (which
+                    # requires roles.manage permission that a new member lacks) doesn't
+                    # discard the successfully-fetched server and channels.
+                    async def _fetch_sync(fn, *args):
+                        return await run_in_threadpool(fn, *args)
 
+                    results = await asyncio.gather(
+                        _fetch_sync(servers_mod.get_server, sid, current_user.user_id),
+                        _fetch_sync(
+                            servers_mod.get_channels, current_user.user_id, sid
+                        ),
+                        _fetch_sync(servers_mod.get_roles, current_user.user_id, sid),
+                        return_exceptions=True,
+                    )
+                    server, channels, roles = results
+                    if isinstance(roles, BaseException):
+                        roles = []
+                    if isinstance(channels, BaseException):
+                        channels = []
+                    if server and not isinstance(server, BaseException):
                         event = events_mod.create_guild_create(
                             server_id=int(sid or 0),
                             name=server.name,
