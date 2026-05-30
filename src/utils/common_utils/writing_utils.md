@@ -1,6 +1,6 @@
 # Writing New Utilities
 
-This document outlines the guidelines for adding new utilities to the `common-utils` repository.
+This document outlines the guidelines for adding new utilities to the `common_utils` repository.
 
 ## Directory Structure
 

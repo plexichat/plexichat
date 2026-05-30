@@ -1,7 +1,7 @@
 """
 Database module - Provides database connectivity for SQLite and PostgreSQL.
 
-This module follows the zero-friction pattern established by common-utils.
+This module follows the zero-friction pattern established by common_utils.
 It acts as a facade, delegating to engine-specific, monitoring, and dialect components.
 """
 

@@ -1,6 +1,6 @@
 # Tests
 
-Unit and integration tests for the common-utils library.
+Unit and integration tests for the common_utils library.
 
 ## Structure
 

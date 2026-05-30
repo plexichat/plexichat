@@ -1,7 +1,7 @@
 """
 Redis client module - Provides Redis connectivity for caching, sessions, and pub/sub.
 
-This module follows the zero-friction pattern established by common-utils.
+This module follows the zero-friction pattern established by common_utils.
 It requires config and logger to be set up before use.
 
 Features:

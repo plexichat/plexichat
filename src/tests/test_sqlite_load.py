@@ -15,7 +15,7 @@ import utils.config as config  # noqa: E402
 import utils.logger as logger  # noqa: E402
 from src.core.database.core import Database  # noqa: E402
 
-# common-utils is now a native package.
+# common_utils is now a native package.
 
 
 @pytest.fixture(scope="module")

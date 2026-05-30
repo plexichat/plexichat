@@ -7,7 +7,7 @@ import os
 import time
 from unittest.mock import MagicMock
 
-# common-utils is now a native package.
+# common_utils is now a native package.
 
 
 import src.utils.config as config  # noqa: E402

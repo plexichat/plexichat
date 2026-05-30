@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 import os
 
-# common-utils is now a native package.
+# common_utils is now a native package.
 
 from src.utils.email import SMTPEmailSender
 import src.utils.config as config

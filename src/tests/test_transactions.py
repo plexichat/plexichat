@@ -12,7 +12,7 @@ Tests cover:
 import pytest
 import os
 
-# common-utils is now a native package.
+# common_utils is now a native package.
 
 
 import utils.config as config  # noqa: E402

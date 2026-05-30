@@ -15,7 +15,7 @@ Plexichat supports multiple deployment strategies:
 
 1. **Backend Server** (`plexichat`): Python/FastAPI application providing REST API and WebSocket gateway
 2. **Client Interface** (`plexichat-client`): Modern Vite web application served via Nginx
-3. **Shared Utilities** (`common-utils`): Common functionality used by both server and client
+3. **Shared Utilities** (`common_utils`): Common functionality used by both server and client
 4. **Database**: PostgreSQL (recommended) or SQLite (development only)
 5. **Cache**: Redis (recommended for production)
 6. **Storage**: Local filesystem or S3-compatible (MinIO, AWS S3, etc.) for media attachments

@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "common-utils"
+name = "common_utils"
 version = "0.1.0"
 description = "Common utilities for Python projects"
 authors = [{name = "User", email = "user@example.com"}]

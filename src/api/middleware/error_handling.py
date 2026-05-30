@@ -18,7 +18,7 @@ import utils.logger as logger
 try:
     from utils.logger import sanitize_log_message
 except ImportError:
-    # Fallback if common-utils utilities are not available
+    # Fallback if common_utils utilities are not available
     def sanitize_log_message(message: str) -> str:
         return message
 

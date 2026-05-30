@@ -47,7 +47,7 @@ cache:
             pip-audit \
             safety
       fi
-    # common-utils is bundled directly in the repository at src/utils/common-utils/
+    # common_utils is bundled directly in the repository at src/utils/common_utils/
 
 # =========================================================
 # LINT STAGE (Consolidated via pre-commit)
