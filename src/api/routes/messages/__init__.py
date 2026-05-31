@@ -2,7 +2,8 @@
 Message routes - Message CRUD endpoints.
 
 This module aggregates message-related routes from sub-modules:
-- messages_crud.py: Core message CRUD operations (create, read, update, delete)
+- messages_crud/: Core message CRUD operations (create, read, update, delete)
+  - Sub-package with send, retrieve, edit, delete, broadcast mixins
 - messages_list.py: List operations (get channel messages, get pinned messages)
 - pins.py: Pin/unpin operations
 - search.py: Message search functionality
