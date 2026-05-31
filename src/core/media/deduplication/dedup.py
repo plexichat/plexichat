@@ -5,9 +5,10 @@ Deduplication operations mixin for DeduplicationManager.
 from typing import Any, Dict, Optional
 
 from .constants import DeduplicationResult
+from .protocol import DeduplicationProtocol
 
 
-class DeduplicationMixin:
+class DeduplicationMixin(DeduplicationProtocol):
     _db: Any
     _config: Dict[str, Any]
 
