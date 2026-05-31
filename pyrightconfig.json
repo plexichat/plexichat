@@ -11,7 +11,7 @@
   ],
   "extraPaths": [
     "src",
-    "src/utils/common-utils",
+    "src/utils/common_utils",
     "src/utils"
   ],
   "pythonVersion": "3.12",

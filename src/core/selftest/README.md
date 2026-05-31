@@ -8,7 +8,7 @@ The self-test system allows the server to verify its own API endpoints on startu
 
 ## Usage
 
-Run self-tests using the `--self-test` argument:
+Run self-tests using the `self-test` subcommand:
 ```bash
-python main.py --self-test
+python main.py self-test
 ```

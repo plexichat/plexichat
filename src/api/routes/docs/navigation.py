@@ -24,6 +24,7 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         "Reference": [
             NavItem("API Routes", "/reference"),
             NavItem("WebSocket Gateway", "/websocket"),
+            NavItem("CLI Reference", "/cli/overview"),
             NavItem("Rate Limits", "/rate-limits"),
             NavItem("Error Codes", "/errors"),
             NavItem("Data Types", "/data-types"),

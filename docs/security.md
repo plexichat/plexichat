@@ -229,21 +229,21 @@ When changing KEKs (e.g., migrating from a single system key to dedicated keys),
 
 ```bash
 # Validate current keyrings
-python main.py --migrate-kek --kek-validate --kek-all
+python main.py migrate-kek --kek-validate --kek-all
 
 # Migrate a specific keyring from the old shared system KEK to the new dedicated KEK
-python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
+python main.py migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
 
 # Migrate all keyrings to their dedicated KEKs
-python main.py --migrate-kek --kek-keyring system_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_SYSTEM_KEY
-python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
-python main.py --migrate-kek --kek-keyring file_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MEDIA_KEY
+python main.py migrate-kek --kek-keyring system_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_SYSTEM_KEY
+python main.py migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
+python main.py migrate-kek --kek-keyring file_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MEDIA_KEY
 
 # Dry run (validate only)
-python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
+python main.py migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
 
 # Rollback a migration
-python main.py --migrate-kek --kek-rollback --kek-keyring message_keyring.json
+python main.py migrate-kek --kek-rollback --kek-keyring message_keyring.json
 ```
 
 The migration tool:
@@ -274,7 +274,7 @@ If keyrings are corrupted or KEKs are lost:
 
 1. Restore keyring files from backup
 2. Ensure KEK environment variables are set correctly
-3. Run validation: `python main.py --migrate-kek --kek-validate --all`
+3. Run validation: `python main.py migrate-kek --kek-validate --kek-all`
 4. If validation fails, use the migration tool to re-encrypt with current KEKs
 
 **Security Best Practices for KEKs**
