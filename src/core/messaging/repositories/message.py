@@ -2,6 +2,7 @@
 Message repository - Data access for messages.
 """
 
+import time
 from typing import Any, Dict, List, Optional
 
 from src.core.database import cached, invalidate_pattern
@@ -30,6 +31,13 @@ class MessageRepository(BaseRepository[Message]):
         auto_commit: bool = True,
     ) -> None:
         """Create a new message."""
+        if created_at is None:
+            created_at = int(time.time() * 1000)
+        message_type_value = (
+            message_type.value
+            if isinstance(message_type, MessageType)
+            else str(message_type)
+        )
         self._execute(
             """INSERT INTO msg_messages 
                (id, conversation_id, author_id, content, content_encrypted, content_index, message_type, 
@@ -42,7 +50,7 @@ class MessageRepository(BaseRepository[Message]):
                 content,
                 content_encrypted,
                 content_index,
-                message_type.value,
+                message_type_value,
                 created_at,
                 created_at,
                 reply_to_id,

@@ -110,7 +110,7 @@ def setup(
     """
     global _manager, _setup_complete
 
-    from .manager import RelationshipManager
+    from .manager.composer import RelationshipManager
 
     _manager = RelationshipManager(db, auth_module, servers_module)
     _setup_complete = True
