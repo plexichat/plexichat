@@ -97,7 +97,7 @@ docker compose logs -f <service>
 
 Execute commands in a container:
 ```bash
-docker compose exec backend python main.py --self-test
+docker compose exec backend python main.py self-test
 ```
 
 Stop all services:

@@ -5,7 +5,7 @@ import utils.logger as logger
 import utils.config as config
 
 
-def handle_migrate_db(project_root: str) -> None:
+def handle_migrate_db(project_root: str, dry_run: bool = False) -> None:
     from src.core.database import Database
     from src.core.migrations import run_migrations, get_status
 
@@ -33,9 +33,18 @@ def handle_migrate_db(project_root: str) -> None:
         f"Migration Status: {status['applied_count']} applied, {status['pending_count']} pending"
     )
 
-    result = run_migrations(db)
+    if dry_run:
+        print("\nDRY RUN — no changes will be made.\n")
+
+    result = run_migrations(db, dry_run=dry_run)
     if result["success"]:
-        print(f"Migrations applied successfully: {result['applied_count']} applied")
+        if result.get("dry_run"):
+            print(
+                f"\nDry run complete — {result['applied_count']} migrations "
+                f"would be applied (no changes made)."
+            )
+        else:
+            print(f"Migrations applied successfully: {result['applied_count']} applied")
         sys.exit(0)
     else:
         print(f"Migration process had failures: {result['failed_count']} failed")

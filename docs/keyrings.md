@@ -48,12 +48,12 @@ For compatibility with pre-migration keyrings, non-system keyrings may retry `PL
 Use the built-in migration mode in `main.py` when changing KEKs or moving from a shared KEK to dedicated keyring KEKs:
 
 ```bash
-python main.py --migrate-kek --kek-validate --kek-all
-python main.py --migrate-kek --kek-keyring system_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_SYSTEM_KEY
-python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
-python main.py --migrate-kek --kek-keyring file_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MEDIA_KEY
-python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
-python main.py --migrate-kek --kek-rollback --kek-keyring message_keyring.json
+python main.py migrate-kek --kek-validate --kek-all
+python main.py migrate-kek --kek-keyring system_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_SYSTEM_KEY
+python main.py migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
+python main.py migrate-kek --kek-keyring file_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MEDIA_KEY
+python main.py migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
+python main.py migrate-kek --kek-rollback --kek-keyring message_keyring.json
 ```
 
 The migration path is:
@@ -61,7 +61,7 @@ The migration path is:
 1. Back up the keyring files
 2. Validate the current KEK and the target KEK
 3. Re-encrypt the keyring under the new KEK
-4. Run `python main.py --migrate-kek --kek-validate --kek-all`
+4. Run `python main.py migrate-kek --kek-validate --kek-all`
 5. Re-open the application and confirm the new keyring loads cleanly
 
 If validation fails, restore the backup before retrying. Do not overwrite a working keyring just to "see if it works."

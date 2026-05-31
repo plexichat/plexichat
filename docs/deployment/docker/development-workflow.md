@@ -97,7 +97,7 @@ docker compose exec backend pytest-watch
 
 Comprehensive API and connectivity check:
 ```bash
-docker compose exec backend python main.py --self-test
+docker compose exec backend python main.py self-test
 ```
 
 Tests authentication, messaging, servers, media, WebSocket, and more.

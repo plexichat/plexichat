@@ -142,7 +142,7 @@ test:self_test:
   stage: test
   script:
     - mkdir -p .plexichat
-    - python main.py --self-test
+    - python main.py self-test
 
 docker:build_and_push:
   stage: docker

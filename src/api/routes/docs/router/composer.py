@@ -17,6 +17,7 @@ from .reference_pages import ReferencePagesMixin
 from .websocket_pages import WebSocketPagesMixin
 from .user_pages import UserPagesMixin
 from .env_generator import EnvGeneratorMixin
+from .cli_pages import CliPagesMixin
 
 
 class DocsRouter(
@@ -29,6 +30,7 @@ class DocsRouter(
     WebSocketPagesMixin,
     UserPagesMixin,
     EnvGeneratorMixin,
+    CliPagesMixin,
     DocsRouterBase,
 ):
     def register_routes(self, router: APIRouter) -> None:
@@ -117,3 +119,5 @@ class DocsRouter(
         router.get("/reference/admin")(self.docs_api_admin)
 
         router.get("/deployment/env-generator")(self.docs_env_generator)
+
+        router.get("/cli/overview")(self.docs_cli_overview)

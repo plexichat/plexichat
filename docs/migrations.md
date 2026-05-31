@@ -7,7 +7,7 @@ The Plexichat server includes a built-in migration management tool accessible vi
 To apply all pending database migrations, run the following command from the project root:
 
 ```bash
-python main.py --migrate-db
+python main.py migrate-db
 ```
 
 This command will:
@@ -46,7 +46,7 @@ The migration system supports a dry-run mode for validation before making change
 
 ```bash
 # Check migration status only (no changes applied)
-python main.py --migrate-db --dry-run
+python main.py migrate-db --dry-run
 ```
 
 In dry-run mode:
@@ -69,7 +69,7 @@ This prevents automatic application of destructive changes on a freshly restarte
 
 If you encounter issues during migration:
 - **Check the logs**: Detailed output is available in the `logs/` directory.
-- **Resume after failure**: Run `python main.py --migrate-db` again -- already-applied migrations are skipped, and pending migrations resume from where they left off.
+- **Resume after failure**: Run `python main.py migrate-db` again -- already-applied migrations are skipped, and pending migrations resume from where they left off.
 - **Missing columns/Indexes**: If a migration fails because a column or index already exists (or doesn't exist), the migration scripts use `IF EXISTS` / `IF NOT EXISTS` clauses where possible. If you encounter an unhandled case, check whether the migration was partially applied.
 - **Manual intervention**: For SQLite databases, column drops require table recreation. If a migration fails mid-recreation, you may need to manually recover the `_new` table or restore from backup.
 - **PostgreSQL specifics**: Column drops use `ALTER TABLE ... DROP COLUMN IF EXISTS`. Index recreation is automatic (indexes are not dropped by column drops).

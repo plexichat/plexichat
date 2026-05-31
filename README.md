@@ -78,7 +78,15 @@ pip install --require-hashes -r requirements.txt
 
 # Run server
 python main.py
+
+# Validate config without starting (pre-flight check)
+python main.py pre-flight
+
+# See all CLI options
+python main.py --help
 ```
+
+For full CLI reference, see [docs/cli/overview.md](docs/cli/overview.md).
 
 ### Dependency Management
 
