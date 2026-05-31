@@ -12,8 +12,8 @@ from .reporting import ReportingMixin
 class DeduplicationManager(
     DeduplicationManagerBase,
     HashOperationsMixin,
-    DeduplicationMixin,
     BlockingMixin,
+    DeduplicationMixin,
     ReportingMixin,
 ):
     """Manages file deduplication and content reporting.
@@ -21,8 +21,8 @@ class DeduplicationManager(
     Composed from:
     - DeduplicationManagerBase: core initialization and configuration
     - HashOperationsMixin: SHA-256 and perceptual hashing
-    - DeduplicationMixin: duplicate detection and reference counting
     - BlockingMixin: hash and user blocking
+    - DeduplicationMixin: duplicate detection and reference counting
     - ReportingMixin: content reporting and moderation
     """
 
