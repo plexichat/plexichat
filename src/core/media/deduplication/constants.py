@@ -7,7 +7,6 @@ from enum import Enum
 from typing import Optional
 
 import utils.logger as logger
-import utils.config as config
 
 
 class HashAlgorithm(Enum):
