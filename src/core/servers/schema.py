@@ -51,7 +51,6 @@ CREATE TABLE IF NOT EXISTS srv_channels (
     channel_type TEXT NOT NULL DEFAULT 'text',
     category_id INTEGER,
     position INTEGER DEFAULT 0,
-    topic TEXT,
     topic_encrypted TEXT,
     nsfw INTEGER DEFAULT 0,
     slowmode_seconds INTEGER DEFAULT 0,
@@ -177,6 +176,7 @@ CREATE TABLE IF NOT EXISTS srv_bans (
     user_id INTEGER NOT NULL,
     banned_by INTEGER NOT NULL,
     reason TEXT,
+    reason_encrypted TEXT,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id),
     UNIQUE(server_id, user_id)
@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS srv_audit_log (
     target_type TEXT,
     target_id INTEGER,
     changes TEXT,
+    changes_encrypted TEXT,
     reason TEXT,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id)

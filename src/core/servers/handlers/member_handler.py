@@ -26,6 +26,7 @@ from src.core.database import cache_delete
 from src.core.database.cache import cached, invalidate_pattern
 from ..manager.converters import _row_to_member, _row_to_ban, _row_to_invite
 import utils.logger as logger
+from src.utils.encryption import encrypt_data
 
 
 class MemberHandler:
@@ -582,8 +583,16 @@ class MemberHandler:
         now = self.manager._get_timestamp()
         ban_id = self.manager._generate_id()
         self.db.execute(
-            "INSERT INTO srv_bans (id, server_id, user_id, banned_by, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (ban_id, server_id, member_user_id, user_id, reason, now),
+            "INSERT INTO srv_bans (id, server_id, user_id, banned_by, reason, reason_encrypted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                ban_id,
+                server_id,
+                member_user_id,
+                user_id,
+                reason,
+                encrypt_data(reason, context=f"ban:{ban_id}") if reason else None,
+                now,
+            ),
         )
         self.manager._log_audit(
             server_id,
