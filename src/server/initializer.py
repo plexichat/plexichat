@@ -169,11 +169,46 @@ def initialize_modules(
             "Email sender not initialized (SMTP host or PLEXICHAT_SMTP_PASSWORD missing)"
         )
 
-    timed_init("auth", lambda: auth.setup(db, email_sender=email_sender))
-    modules_store["auth"] = auth
+    def init_auth_and_messaging_parallel():
+        """Initialize auth and messaging concurrently.
 
-    timed_init("messaging", lambda: messaging.setup(db, auth))
-    modules_store["messaging"] = messaging
+        ``messaging.setup`` only stores the auth reference on its manager
+        (via ``BaseManager.__init__``) and never calls into auth at
+        construction time, so we can build both managers in parallel and
+        attach the real auth reference to messaging once auth has
+        finished initializing.
+        """
+        threads_list = []
+
+        def init_auth():
+            timed_init("auth", lambda: auth.setup(db, email_sender=email_sender))
+            modules_store["auth"] = auth
+
+        threads_list.append(threading.Thread(target=init_auth, name="InitAuth"))
+
+        def init_messaging():
+            timed_init("messaging", lambda: messaging.setup(db, None))
+            modules_store["messaging"] = messaging
+
+        threads_list.append(
+            threading.Thread(target=init_messaging, name="InitMessaging")
+        )
+
+        for t in threads_list:
+            t.start()
+        for t in threads_list:
+            t.join()
+
+        # Re-attach the real auth module to the messaging manager. This
+        # is the only post-init step required because auth was deferred
+        # while messaging was being constructed in parallel.
+        if (
+            modules_store.get("messaging") is not None
+            and modules_store["messaging"]._manager is not None
+        ):
+            modules_store["messaging"]._manager._auth = auth
+
+    init_auth_and_messaging_parallel()
 
     init_independent()
 
