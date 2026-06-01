@@ -87,7 +87,7 @@ class AuthManager(
         self.email_sender = email_sender
         encryption_cfg = config.get("encryption", {}).get("argon2", {})
         self.crypto = EncryptionManager(
-            argon2_time_cost=encryption_cfg.get("time_cost", 2),
+            argon2_time_cost=encryption_cfg.get("time_cost", 3),
             argon2_memory_cost=encryption_cfg.get("memory_cost", 65536),
             argon2_parallelism=encryption_cfg.get("parallelism", 2),
         )
@@ -249,8 +249,46 @@ class AuthManager(
             )
             return row["id"]
         did = self._generate_id()
+        name = info.get("name")
+        device_type = info.get("type")
+        try:
+            name_encrypted = (
+                self.crypto.encrypt_data(name, context=f"device:{did}")
+                if name
+                else None
+            )
+        except Exception as e:
+            logger.warning(f"Failed to encrypt device name: {e}")
+            name_encrypted = None
+        try:
+            device_type_encrypted = (
+                self.crypto.encrypt_data(device_type, context=f"device:{did}")
+                if device_type
+                else None
+            )
+        except Exception as e:
+            logger.warning(f"Failed to encrypt device type: {e}")
+            device_type_encrypted = None
+        try:
+            fingerprint_encrypted = self.crypto.encrypt_data(
+                fp, context=f"device:{did}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to encrypt device fingerprint: {e}")
+            fingerprint_encrypted = None
         self._db.execute(
-            "INSERT INTO auth_devices (id, user_id, fingerprint, name, device_type, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (did, user_id, fp, info.get("name"), info.get("type"), now, now),
+            "INSERT INTO auth_devices (id, user_id, fingerprint, name, device_type, name_encrypted, device_type_encrypted, fingerprint_encrypted, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                did,
+                user_id,
+                fp,
+                name,
+                device_type,
+                name_encrypted,
+                device_type_encrypted,
+                fingerprint_encrypted,
+                now,
+                now,
+            ),
         )
         return did

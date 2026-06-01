@@ -135,7 +135,7 @@ class PasskeyManager:
         else:
             encryption_cfg = config.get("encryption", {}).get("argon2", {})
             self._crypto = EncryptionManager(
-                argon2_time_cost=encryption_cfg.get("time_cost", 2),
+                argon2_time_cost=encryption_cfg.get("time_cost", 3),
                 argon2_memory_cost=encryption_cfg.get("memory_cost", 65536),
                 argon2_parallelism=encryption_cfg.get("parallelism", 2),
             )
