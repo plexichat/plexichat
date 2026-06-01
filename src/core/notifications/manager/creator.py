@@ -3,6 +3,7 @@ from typing import Optional, List, Dict
 import utils.logger as logger
 from src.core.base import SnowflakeID
 from src.core.events.types import EventType
+from src.utils.encryption import encrypt_data
 from ..models import (
     MentionType,
     Notification,
@@ -20,6 +21,18 @@ from .helpers import (
 
 
 from .protocol import NotificationProtocol
+
+
+def _encrypt_content_preview(preview: Optional[str], notif_id: int) -> Optional[str]:
+    if not preview:
+        return None
+    try:
+        return encrypt_data(preview, context=f"notification:{notif_id}")
+    except Exception as e:
+        logger.warning(
+            f"Failed to encrypt content_preview for notification {notif_id}: {e}"
+        )
+        return None
 
 
 class NotificationCreatorMixin(NotificationProtocol):
@@ -257,12 +270,13 @@ class NotificationCreatorMixin(NotificationProtocol):
         created_at: int,
     ) -> Optional[Notification]:
         notif_id = self._generate_id()
+        content_preview_encrypted = _encrypt_content_preview(content_preview, notif_id)
 
         self._db.execute(
             """INSERT INTO notif_notifications
                (id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id,
-                mention_type, content_preview, read, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+                mention_type, content_preview, content_preview_encrypted, read, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
             (
                 notif_id,
                 user_id,
@@ -274,6 +288,7 @@ class NotificationCreatorMixin(NotificationProtocol):
                 thread_id,
                 mention_type.value,
                 content_preview,
+                content_preview_encrypted,
                 created_at,
             ),
         )
@@ -307,9 +322,14 @@ class NotificationCreatorMixin(NotificationProtocol):
             return []
 
         notifications_to_insert = []
+        notif_ids: List[SnowflakeID] = []
         for uid in user_ids:
             notif_id = self._generate_id()
+            notif_ids.append(notif_id)
             mention_type = mention_types.get(uid, MentionType.USER)
+            content_preview_encrypted = _encrypt_content_preview(
+                content_preview, notif_id
+            )
             notifications_to_insert.append(
                 (
                     notif_id,
@@ -322,6 +342,7 @@ class NotificationCreatorMixin(NotificationProtocol):
                     thread_id,
                     mention_type.value,
                     content_preview,
+                    content_preview_encrypted,
                     0,
                     created_at,
                 )
@@ -330,8 +351,8 @@ class NotificationCreatorMixin(NotificationProtocol):
         self._db.execute_many(
             """INSERT INTO notif_notifications
                (id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id,
-                mention_type, content_preview, read, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                mention_type, content_preview, content_preview_encrypted, read, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             notifications_to_insert,
         )
 
@@ -356,7 +377,7 @@ class NotificationCreatorMixin(NotificationProtocol):
                 mention_type=MentionType(data[8]),
                 content_preview=data[9],
                 read=False,
-                created_at=data[11],
+                created_at=data[12],
             )
             results.append(notif)
 
