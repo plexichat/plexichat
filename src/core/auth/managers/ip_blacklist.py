@@ -29,11 +29,22 @@ class IpBlacklistMixin(AuthManagerProtocol):
                 "ip_index",
                 "ip_encrypted",
                 "reason",
+                "reason_encrypted",
                 "blocked_at",
                 "blocked_by",
                 "expires_at",
             ],
-            (ip_index, ip_encrypted, reason, now, blocked_by, expires_at),
+            (
+                ip_index,
+                ip_encrypted,
+                reason,
+                self.crypto.encrypt_data(reason, context=f"ip_block:{ip_index}")
+                if reason
+                else None,
+                now,
+                blocked_by,
+                expires_at,
+            ),
             conflict_columns=["ip_index"],
         )
         logger.info(f"IP blocked by {blocked_by}: {reason}")
@@ -85,4 +96,12 @@ class IpBlacklistMixin(AuthManagerProtocol):
                 )
             except Exception:
                 r["ip_address"] = "UNKNOWN"
+            if r.get("reason_encrypted"):
+                try:
+                    r["reason"] = self.crypto.decrypt_data(
+                        r["reason_encrypted"],
+                        context=f"ip_block:{r.get('ip_index', '')}",
+                    )
+                except Exception:
+                    pass
         return rows

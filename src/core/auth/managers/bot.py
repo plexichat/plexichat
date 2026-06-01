@@ -90,12 +90,13 @@ class BotMixin(AuthManagerProtocol):
             )
 
             self._db.execute(
-                "INSERT INTO auth_bots (id, owner_id, username, display_name, token_hash, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO auth_bots (id, owner_id, username, display_name, display_name_encrypted, token_hash, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     bot_id,
                     owner_id,
                     username,
                     display_name,
+                    self.crypto.encrypt_data(display_name, context=f"bot:{bot_id}"),
                     token_hash,
                     permissions_to_json(perms),
                     now,
@@ -120,11 +121,12 @@ class BotMixin(AuthManagerProtocol):
         row = self._db.fetch_one("SELECT * FROM auth_bots WHERE id = ?", (bot_id,))
         if not row:
             return None
+        display_name = self._read_bot_display_name(row)
         return Bot(
             id=row["id"],
             owner_id=row["owner_id"],
             username=row["username"],
-            display_name=row["display_name"],
+            display_name=display_name,
             permissions=permissions_from_json(row["permissions"]),
             created_at=row["created_at"],
             disabled=bool(row["disabled"]),
@@ -137,9 +139,9 @@ class BotMixin(AuthManagerProtocol):
         return [
             Bot(
                 id=r["id"],
+                display_name=self._read_bot_display_name(r),
                 owner_id=r["owner_id"],
                 username=r["username"],
-                display_name=r["display_name"],
                 permissions=permissions_from_json(r["permissions"]),
                 created_at=r["created_at"],
                 disabled=bool(r["disabled"]),
@@ -220,3 +222,13 @@ class BotMixin(AuthManagerProtocol):
         if cursor.rowcount == 0:
             raise PermissionDeniedError("Bot not found or not owned by you")
         return True
+
+    def _read_bot_display_name(self, row: Dict) -> str:
+        if row.get("display_name_encrypted"):
+            try:
+                return self.crypto.decrypt_data(
+                    row["display_name_encrypted"], context=f"bot:{row['id']}"
+                )
+            except Exception:
+                pass
+        return row.get("display_name", "")
