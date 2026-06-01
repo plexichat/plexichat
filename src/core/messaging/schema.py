@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS msg_participants (
 );
 
 -- Messages table
+-- content: always populated, may be plain text OR an ENC:v1:... blob; content_encrypted
+-- is a legacy optional mirror, prefer content. content_index is a blind index for search.
 CREATE TABLE IF NOT EXISTS msg_messages (
     id INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL,
