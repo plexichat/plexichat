@@ -36,6 +36,7 @@ class MessageIndexingMixin(SearchManagerBase):
         self._indexer.index_message(indexed)
 
         now = self._get_timestamp()
+        source_updated_at = metadata.get("source_updated_at", 0) or 0
         self._db.upsert(
             "search_message_index",
             [
@@ -46,6 +47,7 @@ class MessageIndexingMixin(SearchManagerBase):
                 "author_id",
                 "indexed_at",
                 "updated_at",
+                "source_updated_at",
             ],
             (
                 message_id,
@@ -55,9 +57,17 @@ class MessageIndexingMixin(SearchManagerBase):
                 indexed.author_id,
                 now,
                 now,
+                source_updated_at,
             ),
             ["message_id"],
-            ["conversation_id", "server_id", "channel_id", "author_id", "updated_at"],
+            [
+                "conversation_id",
+                "server_id",
+                "channel_id",
+                "author_id",
+                "updated_at",
+                "source_updated_at",
+            ],
         )
 
     def remove_from_index(self, message_id: int) -> None:
@@ -66,10 +76,25 @@ class MessageIndexingMixin(SearchManagerBase):
             "DELETE FROM search_message_index WHERE message_id = ?", (message_id,)
         )
 
-    def reindex_all(self) -> int:
-        messages = self._db.fetch_all(
-            "SELECT id, content, content_encrypted, author_id, conversation_id, created_at FROM msg_messages WHERE deleted = 0"
-        )
+    def reindex_all(self, force: bool = False) -> int:
+        if force:
+            messages = self._db.fetch_all(
+                """SELECT m.id, m.content, m.content_encrypted, m.author_id,
+                          m.conversation_id, m.created_at, m.updated_at
+                   FROM msg_messages m
+                   WHERE m.deleted = 0"""
+            )
+        else:
+            messages = self._db.fetch_all(
+                """SELECT m.id, m.content, m.content_encrypted, m.author_id,
+                          m.conversation_id, m.created_at, m.updated_at
+                   FROM msg_messages m
+                   LEFT JOIN search_message_index i ON m.id = i.message_id
+                   WHERE m.deleted = 0
+                     AND (i.message_id IS NULL
+                          OR m.updated_at > COALESCE(i.source_updated_at, 0))"""
+            )
+
         indexed = 0
         for msg in messages:
             plaintext = self._decrypt_message_content(
@@ -82,22 +107,48 @@ class MessageIndexingMixin(SearchManagerBase):
                     "author_id": msg["author_id"],
                     "conversation_id": msg["conversation_id"],
                     "created_at": msg["created_at"],
+                    "source_updated_at": msg.get("updated_at", 0) or 0,
                 },
             )
             indexed += 1
+
+        if not force:
+            stale = self._db.fetch_all(
+                """SELECT i.message_id
+                   FROM search_message_index i
+                   LEFT JOIN msg_messages m ON i.message_id = m.id
+                   WHERE m.id IS NULL OR m.deleted = 1"""
+            )
+            for row in stale:
+                self.remove_from_index(row["message_id"])
+
         return indexed
 
-    def reindex_conversation(self, conversation_id: int) -> None:
+    def reindex_conversation(self, conversation_id: int, force: bool = False) -> int:
         if not self._messaging:
-            return
+            return 0
 
-        messages = self._db.fetch_all(
-            """SELECT id, content, content_encrypted, author_id, created_at 
-               FROM msg_messages 
-               WHERE conversation_id = ? AND deleted = 0""",
-            (conversation_id,),
-        )
+        if force:
+            messages = self._db.fetch_all(
+                """SELECT id, content, content_encrypted, author_id,
+                          conversation_id, created_at, updated_at
+                   FROM msg_messages
+                   WHERE conversation_id = ? AND deleted = 0""",
+                (conversation_id,),
+            )
+        else:
+            messages = self._db.fetch_all(
+                """SELECT m.id, m.content, m.content_encrypted, m.author_id,
+                          m.conversation_id, m.created_at, m.updated_at
+                   FROM msg_messages m
+                   LEFT JOIN search_message_index i ON m.id = i.message_id
+                   WHERE m.conversation_id = ? AND m.deleted = 0
+                     AND (i.message_id IS NULL
+                          OR m.updated_at > COALESCE(i.source_updated_at, 0))""",
+                (conversation_id,),
+            )
 
+        indexed = 0
         for msg in messages:
             plaintext = self._decrypt_message_content(
                 msg["content"], msg.get("content_encrypted"), msg["id"]
@@ -109,8 +160,12 @@ class MessageIndexingMixin(SearchManagerBase):
                     "author_id": msg["author_id"],
                     "conversation_id": conversation_id,
                     "created_at": msg["created_at"],
+                    "source_updated_at": msg.get("updated_at", 0) or 0,
                 },
             )
+            indexed += 1
+
+        return indexed
 
     def _decrypt_message_content(
         self, content: Optional[str], content_encrypted: Optional[str], message_id: int
