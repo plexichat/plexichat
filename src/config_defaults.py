@@ -463,7 +463,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "encryption": {
             "argon2": {
-                "time_cost": 2,
+                "time_cost": 3,
                 "memory_cost": 65536,
                 "parallelism": 2,
                 "hash_length": 32,
