@@ -7,7 +7,7 @@ import json
 from typing import Optional, Dict, Any
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.utils.encryption import generate_snowflake_id, encrypt_data, decrypt_data
 
 from ..models import (
     Interaction,
@@ -89,7 +89,17 @@ class InteractionHandler:
 
         full_token, token_hash = generate_interaction_token(interaction_id)
 
-        data_json = json.dumps(data) if data else None
+        if data:
+            plaintext = json.dumps(data)
+            try:
+                data_json = encrypt_data(
+                    plaintext, context=f"interaction:{interaction_id}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to encrypt interaction data: {e}")
+                data_json = plaintext
+        else:
+            data_json = None
 
         self._db.execute(
             """INSERT INTO app_interactions
@@ -459,8 +469,18 @@ class InteractionHandler:
     def _row_to_interaction(self, row) -> Interaction:
         """Convert database row to Interaction."""
         data = None
-        if row["data"]:
-            data = self._parse_interaction_data(json.loads(row["data"]))
+        raw_data = row["data"]
+        if raw_data:
+            decoded: Any = None
+            try:
+                decoded = decrypt_data(raw_data, context=f"interaction:{row['id']}")
+            except Exception:
+                try:
+                    decoded = json.loads(raw_data)
+                except (json.JSONDecodeError, TypeError):
+                    decoded = None
+            if decoded is not None:
+                data = self._parse_interaction_data(decoded)
 
         return Interaction(
             id=row["id"],
