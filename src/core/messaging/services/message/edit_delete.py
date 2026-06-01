@@ -73,6 +73,7 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                     "author_id": user_id,
                     "conversation_id": msg_row["conversation_id"],
                     "created_at": msg_row["created_at"],
+                    "source_updated_at": now,
                 },
             )
         except Exception as e:
