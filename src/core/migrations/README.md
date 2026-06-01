@@ -20,3 +20,11 @@ This utility automates the migration of a Plexichat SQLite database to PostgreSQ
 Set your POSTGRES environment variables (HOST, USER, PASSWORD, DBNAME) then run:
 python -m src.core.migrations.cli migrate_to_postgres --sqlite-path data/plexichat.db
 """
+
+## Migration Gap Notice
+
+If you see a log line like:
+```
+Gap in applied migration versions: missing version between 036 and 038
+```
+this is **informational only** and does not block new migrations. Version 037 exists in the `migrations/` directory and is intentionally a no-op used by the self-test system to validate apply/rollback endpoints. The warning is emitted because the migration tracker detects non-contiguous version numbers; 037 is part of the release train and is applied normally.
