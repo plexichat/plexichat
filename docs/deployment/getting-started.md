@@ -153,6 +153,15 @@ export S3_SECRET_KEY="your_secret_key"
 
 Create a `.env` file (add to `.gitignore`) and `chmod 600 .env`.
 
+### First Run
+
+On the very first startup, Plexichat inspects the active `config/config.yaml` and back-fills any per-installation secrets that are still set to their placeholder defaults. This currently covers:
+
+- `media.signing_key` — if still `CHANGE_THIS_SIGNING_KEY` (or empty), a 32-byte secret is generated with `secrets.token_hex(32)`, written to the `media:` section of your config file, and reused on every subsequent startup. Treat the generated value as production-secret material; rotate it via `python main.py rotate-secrets --secret media-signing-key` (or the dedicated keyring tool) if it is ever disclosed.
+- `rate_limiting.bypass_secret` and `applications.webhook_signature_secret` follow the same auto-generation pattern during `initializer.initialize_modules`.
+
+You can rotate the media signing key later through the normal key-rotation flow. If you want to supply your own value, set `media.signing_key` in `config/config.yaml` *before* the first run and the auto-generation step will skip it.
+
 ----
 
 ## Docker Deployment

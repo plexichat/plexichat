@@ -300,6 +300,16 @@ tls:
 - If Plexichat serves TLS directly, set `enabled: true` and provide certificate paths.
 - Never run production traffic over unencrypted HTTP.
 
+### Encryption at-Rest Defaults
+
+The default encryption posture is tuned for the OWASP 2024 guidance and the medium-sensitivity data Plexichat stores:
+
+- **Argon2id password hashing** uses `time_cost: 3` (OWASP 2024 minimum), `memory_cost: 65536` (64 MiB), `parallelism: 2`, `hash_length: 32`, and `salt_length: 16`. Do not lower `time_cost` or `memory_cost` in production. See `authentication.password` and `encryption.argon2` in the [Default Configuration Reference](default-config.md).
+- **`*_encrypted` columns** for medium-sensitivity user data (email, phone, display name, bio, and similar fields) are written as AES-256-GCM ciphertext using the system keyring, and are the source of truth at rest. Legacy plaintext columns are kept for backward compatibility with older clients and migration tooling.
+- **`media.signing_key`** is auto-generated with `secrets.token_hex(32)` and persisted to `config/config.yaml` on first startup if it is still `CHANGE_THIS_SIGNING_KEY`. The generated value is the per-installation default; rotate it through the key-rotation flow if it is ever disclosed.
+- **Message content** is encrypted at rest whenever `messaging.encrypt_messages: true` (the default), using the dedicated `message_keyring.json` and its `PLEXICHAT_MESSAGE_KEY` KEK.
+- **Media files** are encrypted at rest when `media.encrypt_at_rest: true` (the default), and media URLs are signed with the auto-generated `media.signing_key` and expire after `media.signing_expiry` seconds.
+
 **CORS Enforcement**
 
 ```yaml
