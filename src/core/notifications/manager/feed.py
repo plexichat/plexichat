@@ -29,7 +29,7 @@ class FeedMixin(NotificationProtocol):
         max_per_page = self._config.get("max_notifications_per_page", 100)
         limit = min(limit, max_per_page)
 
-        cols = "id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id, mention_type, content_preview, read, created_at"
+        cols = "id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id, mention_type, content_preview, content_preview_encrypted, read, created_at"
         query = f"SELECT {cols} FROM notif_notifications WHERE user_id = ?"
         params = [user_id]
 

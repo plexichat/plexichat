@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS notif_notifications (
     thread_id INTEGER,
     mention_type TEXT NOT NULL DEFAULT 'user',
     content_preview TEXT NOT NULL DEFAULT '',
+    content_preview_encrypted TEXT,
     read INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );

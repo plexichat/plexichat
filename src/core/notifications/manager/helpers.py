@@ -1,5 +1,7 @@
 from typing import Optional, List, Dict, Any
 
+import utils.logger as logger
+
 from ..models import (
     Notification,
     NotificationSettings,
@@ -11,6 +13,19 @@ from src.core.base import SnowflakeID
 
 
 def row_to_notification(row: Dict[str, Any]) -> Notification:
+    content_preview = row.get("content_preview") or ""
+    if row.get("content_preview_encrypted"):
+        try:
+            from src.utils.encryption import decrypt_data
+
+            content_preview = decrypt_data(
+                row["content_preview_encrypted"],
+                context=f"notification:{row['id']}",
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to decrypt notification content_preview for {row['id']}: {e}"
+            )
     return Notification(
         id=row["id"],
         user_id=row["user_id"],
@@ -21,7 +36,7 @@ def row_to_notification(row: Dict[str, Any]) -> Notification:
         channel_id=row["channel_id"],
         thread_id=row.get("thread_id"),
         mention_type=MentionType(row["mention_type"]),
-        content_preview=row["content_preview"],
+        content_preview=content_preview,
         read=bool(row["read"]),
         created_at=row["created_at"],
     )
