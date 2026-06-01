@@ -234,6 +234,11 @@ def _try_load_license(explicit_path: Optional[str] = None) -> bool:
     """
     Try to load license from various sources.
 
+    Each source is tried in priority order; the first one that successfully
+    loads wins, and subsequent sources are not consulted. This avoids
+    unnecessary file I/O on the common case (license present at the first
+    applicable source).
+
     Returns:
         True if license was loaded (not necessarily valid)
     """
@@ -243,50 +248,71 @@ def _try_load_license(explicit_path: Optional[str] = None) -> bool:
     if lm is None:
         return False
 
-    # 1. Try explicit path first
-    if explicit_path:
-        try:
-            lm.load_from_file(explicit_path)
-            logger.debug(f"Loaded license from explicit path: {explicit_path}")
-            return True
-        except InvalidLicenseError:
-            pass  # Try next source
-
-    # 2. Try env var as file path (if it looks like a path)
-    if (
-        env_value
-        and not env_value.startswith("eyJ")
-        and ("/" in env_value or "\\" in env_value or "." in env_value)
-    ):
-        try:
-            if Path(env_value).exists():
-                lm.load_from_file(env_value)
-                logger.debug(f"Loaded license from env var path: {env_value}")
-                return True
-        except (InvalidLicenseError, OSError):
-            pass  # Not a valid file path, try as base64
-
-    # 3. Try env var as base64
-    if env_value and env_value.startswith("eyJ"):
-        try:
-            lm.load_from_base64(env_value)
-            logger.debug("Loaded license from env var (base64)")
-            return True
-        except InvalidLicenseError:
-            pass  # Try next source
-
-    # 4. Try default location (both "license" and "license.json")
-    for _candidate in [DEFAULT_LICENSE_PATH, DEFAULT_LICENSE_PATH.with_suffix(".json")]:
-        try:
-            if _candidate.exists():
-                lm.load_from_file(str(_candidate))
-                logger.debug(f"Loaded license from default location: {_candidate}")
-                return True
-        except InvalidLicenseError:
-            pass
+    if _load_license_from_explicit_path(lm, explicit_path):
+        return True
+    if _load_license_from_env_path(lm, env_value):
+        return True
+    if _load_license_from_env_base64(lm, env_value):
+        return True
+    if _load_license_from_default_location(lm):
+        return True
 
     # No license found - will enter free tier mode
     logger.debug("No license file found, entering free tier mode")
+    return False
+
+
+def _load_license_from_explicit_path(lm: "LicenseManager", path: Optional[str]) -> bool:
+    """Attempt to load a license from an explicit ``license_path`` argument."""
+    if not path:
+        return False
+    try:
+        lm.load_from_file(path)
+        logger.debug(f"Loaded license from explicit path: {path}")
+        return True
+    except InvalidLicenseError:
+        return False
+
+
+def _load_license_from_env_path(lm: "LicenseManager", env_value: str) -> bool:
+    """Attempt to load a license from ``PLEXICHAT_LICENSE`` treated as a path."""
+    if not env_value or env_value.startswith("eyJ"):
+        return False
+    if not ("/" in env_value or "\\" in env_value or "." in env_value):
+        return False
+    try:
+        if not Path(env_value).exists():
+            return False
+        lm.load_from_file(env_value)
+        logger.debug(f"Loaded license from env var path: {env_value}")
+        return True
+    except (InvalidLicenseError, OSError):
+        return False
+
+
+def _load_license_from_env_base64(lm: "LicenseManager", env_value: str) -> bool:
+    """Attempt to load a license from ``PLEXICHAT_LICENSE`` treated as base64."""
+    if not env_value or not env_value.startswith("eyJ"):
+        return False
+    try:
+        lm.load_from_base64(env_value)
+        logger.debug("Loaded license from env var (base64)")
+        return True
+    except InvalidLicenseError:
+        return False
+
+
+def _load_license_from_default_location(lm: "LicenseManager") -> bool:
+    """Attempt to load a license from the default on-disk locations."""
+    for _candidate in (DEFAULT_LICENSE_PATH, DEFAULT_LICENSE_PATH.with_suffix(".json")):
+        try:
+            if not _candidate.exists():
+                continue
+            lm.load_from_file(str(_candidate))
+            logger.debug(f"Loaded license from default location: {_candidate}")
+            return True
+        except InvalidLicenseError:
+            continue
     return False
 
 

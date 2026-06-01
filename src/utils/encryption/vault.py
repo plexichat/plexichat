@@ -4,9 +4,11 @@ Supports TPM 2.0 (via tpm2-pytss), HSM (via PKCS#11), and environment-derived KE
 """
 
 import os
-import utils.logger as logger
+from functools import lru_cache
 from typing import Optional, Dict, Any
 from pathlib import Path
+
+import utils.logger as logger
 
 
 class HardwareVault:
@@ -164,60 +166,12 @@ class HardwareVault:
             except Exception as e:
                 logger.error(f"TPM key retrieval failed: {e}")
 
-        # 4. Single-machine mode: auto-generate and persist a machine-local key
+        # 4. Single-machine mode: load (or generate) a machine-local key.
+        # The actual disk read is cached at module level so the three keyrings
+        # (system, file, message) share a single load.
         key_file = self._get_machine_key_path()
-        if key_file.exists():
-            try:
-                self._master_key = key_file.read_bytes()
-                if len(self._master_key) == 32:
-                    self._source = "local"
-                    logger.debug("Loaded machine-local encryption key from file")
-                    return self._master_key
-            except Exception as e:
-                logger.error(f"Failed to read machine key: {e}")
-
-        # Generate new machine-local key
-        logger.warning(
-            "CRITICAL SECURITY WARNING: Generating machine-local encryption key. "
-            "This key is NOT hardware-bound and is less secure than HSM, TPM, or Environment Variable. "
-            f"For production deployments, set {self._kek_env_var} environment variable or configure HSM/TPM."
-        )
-        self._master_key = os.urandom(32)
+        self._master_key = _load_machine_key_cached(str(key_file))
         self._source = "local"
-        try:
-            key_file.parent.mkdir(parents=True, exist_ok=True)
-            key_file.write_bytes(self._master_key)
-            # Restrict permissions
-            if os.name == "nt":
-                # On Windows, use icacls to restrict access to current user only
-                try:
-                    import subprocess
-
-                    # Remove inheritance and all permissions, then grant full to current user
-                    subprocess.run(
-                        [
-                            "icacls",
-                            str(key_file),
-                            "/inheritance:r",
-                            "/grant:r",
-                            "*S-1-5-32-544:F",
-                            "/grant:r",
-                            "%USERNAME%:F",
-                        ],
-                        capture_output=True,
-                        check=False,
-                    )
-                except Exception:
-                    pass
-            else:
-                try:
-                    os.chmod(key_file, 0o600)
-                except (OSError, AttributeError):
-                    pass
-            logger.info(f"Machine-local key saved to {key_file}")
-        except Exception as e:
-            logger.error(f"Failed to persist machine key: {e}")
-
         return self._master_key
 
     def _get_machine_key_path(self) -> Path:
@@ -398,6 +352,87 @@ class HardwareVault:
         if not self._master_key:
             self.get_kek()
         return self._source
+
+
+def _load_machine_key_impl(key_path: str) -> bytes:
+    """Load (or generate) the machine-local encryption key from disk.
+
+    This is the actual disk-reading implementation; it is wrapped by
+    :func:`_load_machine_key_cached` so that all three keyrings (system,
+    file, message) share a single load per process.
+    """
+    key_file = Path(key_path)
+    if key_file.exists():
+        try:
+            data = key_file.read_bytes()
+            if len(data) == 32:
+                logger.debug("Loaded machine-local encryption key from file")
+                logger.debug(
+                    f"Machine key loaded ({len(data)} bytes) from {key_file} - "
+                    "this should appear only once per process per key file"
+                )
+                return data
+        except Exception as e:
+            logger.error(f"Failed to read machine key: {e}")
+
+    # Generate new machine-local key
+    logger.warning(
+        "CRITICAL SECURITY WARNING: Generating machine-local encryption key. "
+        "This key is NOT hardware-bound and is less secure than HSM, TPM, or "
+        "Environment Variable. For production deployments, set the appropriate "
+        "PLEXICHAT_*_KEY environment variable or configure HSM/TPM."
+    )
+    new_key = os.urandom(32)
+    try:
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_bytes(new_key)
+        # Restrict permissions
+        if os.name == "nt":
+            # On Windows, use icacls to restrict access to current user only
+            try:
+                import subprocess
+
+                # Remove inheritance and all permissions, then grant full to current user
+                subprocess.run(
+                    [
+                        "icacls",
+                        str(key_file),
+                        "/inheritance:r",
+                        "/grant:r",
+                        "*S-1-5-32-544:F",
+                        "/grant:r",
+                        "%USERNAME%:F",
+                    ],
+                    capture_output=True,
+                    check=False,
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                os.chmod(key_file, 0o600)
+            except (OSError, AttributeError):
+                pass
+        logger.info(f"Machine-local key saved to {key_file}")
+    except Exception as e:
+        logger.error(f"Failed to persist machine key: {e}")
+
+    logger.debug(
+        f"Machine key loaded ({len(new_key)} bytes) from {key_file} - "
+        "this should appear only once per process per key file"
+    )
+    return new_key
+
+
+@lru_cache(maxsize=4)
+def _load_machine_key_cached(key_path: str) -> bytes:
+    """Cached wrapper around :func:`_load_machine_key_impl`.
+
+    Caches up to 4 key paths (system, file, message, and a safety margin).
+    Multiple :class:`HardwareVault` instances — one per keyring — share
+    the resulting bytes so the key file is read from disk only once.
+    """
+    return _load_machine_key_impl(key_path)
 
 
 # Global vault instance for backward compatibility

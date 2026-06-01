@@ -229,51 +229,66 @@ class Keyring:
         self._with_file_lock(_load_impl)
 
     def save(self):
-        """Save keyring to disk, encrypted with KEK."""
+        """Save keyring to disk, encrypted with KEK (acquires file lock)."""
+        self._with_file_lock(
+            lambda: self._write_atomic(include_blind_index_root_key=True)
+        )
 
-        def _save_impl():
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+    def _write_atomic(self, include_blind_index_root_key: bool = False) -> None:
+        """Build, encrypt, and atomically write the keyring payload.
 
-            raw_data = {
-                "current_version": self.current_version,
-                "current_key_source": self.current_key_source,
-                "rotated_at": self.rotated_at,
-                "keys": {
-                    str(v): base64.b64encode(k).decode("utf-8")
-                    for v, k in self.keys.items()
-                },
-                "blind_index_root_key": (
-                    base64.b64encode(self.blind_index_root_key).decode("utf-8")
-                    if self.blind_index_root_key
-                    else None
-                ),
-            }
+        Caller is responsible for holding the appropriate lock (file+thread
+        for ``save()``, just thread for ``_save_without_lock()``).
 
-            # Encrypt the keyring with current KEK
-            kek = self._get_kek(fallback=False)
-            aesgcm = AESGCM(kek)
-            nonce = os.urandom(12)
-            payload = aesgcm.encrypt(nonce, json.dumps(raw_data).encode(), None)
+        Args:
+            include_blind_index_root_key: When True, persist the
+                ``blind_index_root_key`` field. This is required for
+                full keyring saves (e.g. from ``__init__``) but skipped
+                by the locked helper used by ``get_key()``/``rotate()``
+                which only mutate the key/version metadata.
+        """
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
-            final_data = {
-                "nonce": base64.b64encode(nonce).decode(),
-                "payload": base64.b64encode(payload).decode(),
-            }
+        raw_data = {
+            "current_version": self.current_version,
+            "current_key_source": self.current_key_source,
+            "rotated_at": self.rotated_at,
+            "keys": {
+                str(v): base64.b64encode(k).decode("utf-8")
+                for v, k in self.keys.items()
+            },
+        }
 
-            temp_path = self.path.with_suffix(".tmp")
-            with open(temp_path, "w") as f:
-                json.dump(final_data, f)
+        if include_blind_index_root_key:
+            raw_data["blind_index_root_key"] = (
+                base64.b64encode(self.blind_index_root_key).decode("utf-8")
+                if self.blind_index_root_key
+                else None
+            )
 
-            # Restrict permissions (Unix only, Windows ignores)
-            try:
-                os.chmod(temp_path, 0o600)
-            except (OSError, AttributeError):
-                pass
+        # Encrypt the keyring with current KEK
+        kek = self._get_kek(fallback=False)
+        aesgcm = AESGCM(kek)
+        nonce = os.urandom(12)
+        payload = aesgcm.encrypt(nonce, json.dumps(raw_data).encode(), None)
 
-            # Atomic swap
-            os.replace(temp_path, self.path)
+        final_data = {
+            "nonce": base64.b64encode(nonce).decode(),
+            "payload": base64.b64encode(payload).decode(),
+        }
 
-        self._with_file_lock(_save_impl)
+        temp_path = self.path.with_suffix(".tmp")
+        with open(temp_path, "w") as f:
+            json.dump(final_data, f)
+
+        # Restrict permissions (Unix only, Windows ignores)
+        try:
+            os.chmod(temp_path, 0o600)
+        except (OSError, AttributeError):
+            pass
+
+        # Atomic swap
+        os.replace(temp_path, self.path)
 
     def get_key(self, version: Optional[int] = None) -> Tuple[int, bytes]:
         """Get a specific key version or the current one."""
@@ -303,38 +318,7 @@ class Keyring:
 
     def _save_without_lock(self):
         """Internal save without acquiring lock (caller must hold lock)."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-
-        raw_data = {
-            "current_version": self.current_version,
-            "current_key_source": self.current_key_source,
-            "rotated_at": self.rotated_at,
-            "keys": {
-                str(v): base64.b64encode(k).decode("utf-8")
-                for v, k in self.keys.items()
-            },
-        }
-
-        kek = self._get_kek(fallback=False)
-        aesgcm = AESGCM(kek)
-        nonce = os.urandom(12)
-        payload = aesgcm.encrypt(nonce, json.dumps(raw_data).encode(), None)
-
-        final_data = {
-            "nonce": base64.b64encode(nonce).decode(),
-            "payload": base64.b64encode(payload).decode(),
-        }
-
-        temp_path = self.path.with_suffix(".tmp")
-        with open(temp_path, "w") as f:
-            json.dump(final_data, f)
-
-        try:
-            os.chmod(temp_path, 0o600)
-        except (OSError, AttributeError):
-            pass
-
-        os.replace(temp_path, self.path)
+        self._write_atomic(include_blind_index_root_key=False)
 
     def rotate(self) -> int:
         """Generate a new key version and make it current."""

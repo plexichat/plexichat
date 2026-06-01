@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 # Regex for environment variable interpolation: ${VAR} or ${VAR:-default}
 INTERPOLATION_RE = re.compile(r"\$\{([^}:]+)(?::-(.*?))?\}")
 
+# Sentinel used to distinguish a cached None from a cache miss in get().
+_CACHE_SENTINEL = object()
+
 
 class MalformedConfigAction(Enum):
     CRASH_ON_SINGLE = "crash_on_single"
@@ -44,6 +47,9 @@ class ConfigLoader:
         self.malformed_action = malformed_action
         self.config: Dict[str, Any] = {}
 
+        # Hot-path cache for get(). Invalidated on set() / reload.
+        self._get_cache: Dict[Any, Any] = {}
+
         self._load_config()
 
     def _resolve_value(self, value: str) -> str:
@@ -64,6 +70,12 @@ class ConfigLoader:
             ValueError: If required environment variable is not set
         """
         if not isinstance(value, str):
+            return value
+
+        # Fast path: no interpolation possible, skip the regex entirely.
+        # This is a common case (most config strings are plain) and the
+        # regex sub + replacer closure add measurable overhead.
+        if "$" not in value:
             return value
 
         def replacer(match):
@@ -155,6 +167,11 @@ class ConfigLoader:
                 for i, item in enumerate(node)
             ]
         else:
+            # Fast path: plain string with no interpolation tokens — no
+            # regex, no coercion, no recursion. _resolve_value would also
+            # short-circuit, but we save the call entirely.
+            if isinstance(node, str) and "$" not in node:
+                return node
             resolved_value = self._resolve_value(node)
             # Only apply type coercion to values that were actually interpolated
             # AND have a typed default to infer the correct type from.
@@ -218,6 +235,9 @@ class ConfigLoader:
                 f"Please create a config file at {self.config_path} for production use."
             )
 
+        # The config dict was just (re)built — any cached get() result is stale.
+        self._invalidate_cache()
+
     def _deep_merge(
         self, base: Dict[str, Any], override: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -273,18 +293,66 @@ class ConfigLoader:
             self.config = self.default_config
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Retrieves a value from the config."""
-        return self.config.get(key, default)
+        """Retrieves a value from the config. Cached for hot-path performance.
+
+        The cache is invalidated whenever the config is reloaded or a value
+        is set, so callers can treat the result as authoritative for the
+        current snapshot of the file.
+        """
+        # Cache key includes repr(default) so that the same key with
+        # different defaults gets separate entries. We fall back to the
+        # direct dict lookup if either the key or the default is unhashable.
+        try:
+            cache_key = (key, repr(default))
+            cached = self._get_cache.get(cache_key, _CACHE_SENTINEL)
+            if cached is not _CACHE_SENTINEL:
+                return cached
+        except TypeError:
+            return self.config.get(key, default)
+
+        result = self.config.get(key, default)
+        try:
+            self._get_cache[cache_key] = result
+        except TypeError:
+            pass
+        return result
 
     def set(self, key: str, value: Any) -> None:
         """Sets a value in the config and saves it."""
         self.config[key] = value
         self._save_config()
+        self._invalidate_cache()
+
+    def _invalidate_cache(self) -> None:
+        """Invalidate the get() cache. Called after reload/set."""
+        self._get_cache.clear()
 
     def _save_config(self) -> None:
-        """Saves the current config to the file."""
-        with open(self.config_path, "w") as f:
-            if self.config_path.endswith(".yaml") or self.config_path.endswith(".yml"):
-                yaml.dump(self.config, f, default_flow_style=False)
-            elif self.config_path.endswith(".json"):
-                json.dump(self.config, f, indent=4)
+        """Saves the current config to the file atomically (write-then-rename).
+
+        Writes the new contents to ``<config_path>.tmp`` and only then
+        renames over the real path. A crash mid-write therefore leaves the
+        previous config intact instead of producing a half-written file.
+        """
+        parent = os.path.dirname(self.config_path) or "."
+        os.makedirs(parent, exist_ok=True)
+        temp_path = self.config_path + ".tmp"
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                if self.config_path.endswith(".yaml") or self.config_path.endswith(
+                    ".yml"
+                ):
+                    yaml.dump(self.config, f, default_flow_style=False)
+                elif self.config_path.endswith(".json"):
+                    json.dump(self.config, f, indent=4)
+                else:
+                    raise ValueError(
+                        "Unsupported config format. Use .yaml, .yml, or .json"
+                    )
+            os.replace(temp_path, self.config_path)
+        except Exception:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            raise
