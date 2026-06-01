@@ -46,6 +46,38 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 
 
 # ──────────────────────────────────────────────
+#  Helpers
+# ──────────────────────────────────────────────
+
+
+_MEDIA_SIGNING_KEY_PLACEHOLDERS = {
+    "",
+    "CHANGE_THIS_SIGNING_KEY",
+    "change-me",
+    "changeme",
+}
+
+
+def _ensure_media_signing_key() -> None:
+    """Auto-generate ``media.signing_key`` if it is still a placeholder.
+
+    Mirrors the per-installation pattern used for
+    ``rate_limiting.bypass_secret`` and ``applications.webhook_signature_secret``
+    in ``initializer.initialize_modules``. Runs before
+    ``_check_security_keys()`` so the placeholder warning does not fire on
+    a fresh install.
+    """
+    media_config = config.get("media", {})
+    current = media_config.get("signing_key", "")
+    if current not in _MEDIA_SIGNING_KEY_PLACEHOLDERS:
+        return
+
+    media_config["signing_key"] = secrets.token_hex(32)
+    config.set("media", media_config)
+    logger.info("Auto-generated and persisted media.signing_key")
+
+
+# ──────────────────────────────────────────────
 #  Argument parsing
 # ──────────────────────────────────────────────
 
@@ -130,7 +162,7 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     argv = _inject_default_subcommand(argv)
 
     parser = _SuggestionParser(
-        description="Plexichat API Server — real-time messaging platform",
+        description="Plexichat API Server - real-time messaging platform",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_build_epilog(),
     )
@@ -384,6 +416,7 @@ def _run_startup(args: argparse.Namespace, project_root: str) -> tuple:
     logger.info(f"Environment: {app_cfg.get('environment', 'development')}")
     logger.info(f"Config file: {config_path}")
 
+    _ensure_media_signing_key()
     _check_security_keys()
 
     try:
