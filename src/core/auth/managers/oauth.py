@@ -2,6 +2,8 @@ from typing import Optional
 
 import secrets
 
+import utils.logger as logger
+
 from ..exceptions import (
     PermissionDeniedError,
     AuthError,
@@ -25,6 +27,15 @@ class OAuthMixin(AuthManagerProtocol):
     def require_capability(self, token_info: TokenInfo, capability: str) -> None:
         if not self.has_capability(token_info, capability):
             raise PermissionDeniedError(f"Missing required permission: {capability}")
+
+    def _encrypt_external_id(self, external_id: str) -> Optional[str]:
+        try:
+            return self.crypto.encrypt_data(
+                external_id, context="external_account:oauth"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to encrypt external_id: {e}")
+            return None
 
     def oauth_login(
         self,
@@ -53,6 +64,7 @@ class OAuthMixin(AuthManagerProtocol):
                 )
                 if user_row:
                     user_id = user_row["id"]
+                    external_id_encrypted = self._encrypt_external_id(external_id)
                     self._db.insert_or_ignore(
                         "auth_external_accounts",
                         [
@@ -60,6 +72,7 @@ class OAuthMixin(AuthManagerProtocol):
                             "user_id",
                             "provider",
                             "external_id",
+                            "external_id_encrypted",
                             "email_index",
                             "created_at",
                         ],
@@ -68,6 +81,7 @@ class OAuthMixin(AuthManagerProtocol):
                             user_id,
                             provider,
                             external_id,
+                            external_id_encrypted,
                             email_index,
                             self._get_timestamp(),
                         ),
@@ -109,6 +123,7 @@ class OAuthMixin(AuthManagerProtocol):
                 email_index = self.crypto.blind_index(
                     email or f"{external_id}@{provider}.internal", "user_email"
                 )
+                external_id_encrypted = self._encrypt_external_id(external_id)
                 self._db.insert_or_ignore(
                     "auth_external_accounts",
                     [
@@ -116,6 +131,7 @@ class OAuthMixin(AuthManagerProtocol):
                         "user_id",
                         "provider",
                         "external_id",
+                        "external_id_encrypted",
                         "email_index",
                         "created_at",
                     ],
@@ -124,6 +140,7 @@ class OAuthMixin(AuthManagerProtocol):
                         user_id,
                         provider,
                         external_id,
+                        external_id_encrypted,
                         email_index,
                         self._get_timestamp(),
                     ),
