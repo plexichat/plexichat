@@ -43,7 +43,7 @@ def setup_utilities() -> None:
         worker_id=encryption_config.get("snowflake", {}).get("worker_id", 1) or 1,
         datacenter_id=encryption_config.get("snowflake", {}).get("datacenter_id", 1)
         or 1,
-        argon2_time_cost=encryption_config.get("argon2", {}).get("time_cost", 2),
+        argon2_time_cost=encryption_config.get("argon2", {}).get("time_cost", 3),
         argon2_memory_cost=encryption_config.get("argon2", {}).get(
             "memory_cost", 65536
         ),

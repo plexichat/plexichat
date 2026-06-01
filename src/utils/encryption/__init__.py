@@ -46,7 +46,7 @@ def setup(
     worker_id: int = 1,
     datacenter_id: int = 1,
     epoch_timestamp: Optional[int] = None,
-    argon2_time_cost: int = 2,
+    argon2_time_cost: int = 3,
     argon2_memory_cost: int = 65536,
     argon2_parallelism: int = 2,
 ):
