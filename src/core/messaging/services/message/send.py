@@ -216,6 +216,7 @@ class SendMixin(BaseService, MessageServiceProtocol):
                     "created_at": now,
                     "has_attachments": bool(attachments),
                     "has_embeds": bool(embeds),
+                    "source_updated_at": now,
                 },
             )
         except Exception as e:
