@@ -8,7 +8,7 @@ import time
 from typing import Dict, Any, Optional
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.utils.encryption import generate_snowflake_id, encrypt_data
 
 from .base import BaseAction
 from ..models import ActionType, RuleAction, Violation
@@ -56,9 +56,19 @@ class BanUserAction(BaseAction):
                 now = int(time.time() * 1000)
                 ban_id = generate_snowflake_id()
                 self._db.execute(
-                    """INSERT INTO srv_bans (id, server_id, user_id, banned_by, reason, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (ban_id, violation.server_id, violation.user_id, 0, reason, now),
+                    """INSERT INTO srv_bans (id, server_id, user_id, banned_by, reason, reason_encrypted, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        ban_id,
+                        violation.server_id,
+                        violation.user_id,
+                        0,
+                        reason,
+                        encrypt_data(reason, context=f"ban:{ban_id}")
+                        if reason
+                        else None,
+                        now,
+                    ),
                 )
 
             logger.debug(
