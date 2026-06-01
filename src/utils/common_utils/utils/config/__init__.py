@@ -12,6 +12,7 @@ Usage:
     config.set("db_port", 5432)
 """
 
+import copy as _copy
 from typing import Any, Optional, Dict
 from .core import ConfigLoader, MalformedConfigAction
 
@@ -90,14 +91,18 @@ def set(key: str, value: Any) -> None:
 
 def get_all() -> Dict[str, Any]:
     """
-    Get all configuration values.
+    Get all configuration values as a deep copy.
+
+    A deep copy is returned so callers can safely mutate the result
+    (e.g. before passing it to a templating engine) without affecting
+    the live config dict held by :class:`ConfigLoader`.
 
     Returns:
         Dictionary of all configuration values.
     """
     _ensure_setup()
     assert _config_instance is not None
-    return _config_instance.config.copy()
+    return _copy.deepcopy(_config_instance.config)
 
 
 # For backward compatibility, also expose the ConfigLoader class and enum
