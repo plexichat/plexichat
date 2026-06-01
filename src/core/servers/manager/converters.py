@@ -270,12 +270,26 @@ def _row_to_ban(row: Dict[str, Any]) -> Ban:
 
 def _row_to_audit_entry(row: Dict[str, Any]) -> AuditLogEntry:
     """Convert database row to AuditLogEntry model."""
-    changes = row.get("changes")
-    if isinstance(changes, str):
+    changes = None
+    if row.get("changes_encrypted"):
         try:
-            changes = json.loads(changes) if changes else None
-        except json.JSONDecodeError:
-            changes = None
+            from src.utils.encryption import decrypt_data
+
+            decrypted = decrypt_data(
+                row["changes_encrypted"], context=f"audit:{row['id']}"
+            )
+            changes = json.loads(decrypted) if decrypted else None
+        except Exception as e:
+            logger.warning(f"Failed to decrypt audit log changes for {row['id']}: {e}")
+    if changes is None:
+        raw_changes = row.get("changes")
+        if isinstance(raw_changes, str):
+            try:
+                changes = json.loads(raw_changes) if raw_changes else None
+            except json.JSONDecodeError:
+                changes = None
+        else:
+            changes = raw_changes
 
     action_val = row.get("action_type") or row.get("action")
     action_type = AuditLogAction.SERVER_UPDATE

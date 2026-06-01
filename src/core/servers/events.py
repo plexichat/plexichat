@@ -546,10 +546,22 @@ class ScheduledEventManager:
         entry_id = self._generate_id()
         now = self._get_timestamp()
 
+        changes_json = json.dumps(changes) if changes else None
+        changes_encrypted = None
+        if changes_json:
+            try:
+                from src.utils.encryption import encrypt_data
+
+                changes_encrypted = encrypt_data(
+                    changes_json, context=f"audit:{entry_id}"
+                )
+            except Exception as e:
+                logger.debug(f"Failed to encrypt audit log changes for {entry_id}: {e}")
+
         self._db.execute(
-            """INSERT INTO srv_audit_log 
-               (id, server_id, user_id, action, target_type, target_id, changes, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO srv_audit_log
+               (id, server_id, user_id, action, target_type, target_id, changes, changes_encrypted, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entry_id,
                 server_id,
@@ -557,7 +569,8 @@ class ScheduledEventManager:
                 action.value,
                 target_type,
                 target_id,
-                json.dumps(changes) if changes else None,
+                changes_json,
+                changes_encrypted,
                 now,
             ),
         )
