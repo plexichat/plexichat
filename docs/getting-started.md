@@ -235,7 +235,11 @@ Use this portal for conceptual guidance. Use Swagger/ReDoc for specific endpoint
 ## 8. Next Steps
 
 - **[API Reference](api/index.md)** - Route-group overviews for every API module
-- **[WebSocket Events](websocket/events.md)** - All gateway event types and payloads
+- **[WebSocket Events](websocket/events.md)** - All gateway event payloads and types
 - **[Configuration Overview](configuration.md)** - Setting up and customizing your server
 - **[Security Best Practices](security.md)** - Authentication, encryption, and production security
 - **[Performance Tuning](performance.md)** - Optimizing for your deployment scale
+
+## Encrypted Columns at Rest
+
+Medium-sensitivity user data fields are stored as AES-256-GCM ciphertext via the Plexichat system keyring. You will see paired `*_encrypted` columns alongside legacy plaintext columns in the user-related schemas (for example, alongside `email`, `phone`, `display_name`, and `bio`). The `*_encrypted` columns are the source of truth; the plaintext columns are kept for backward compatibility with older clients and migration tooling and are populated transparently on read. Message content is encrypted at rest when `messaging.encrypt_messages: true` (the default), using the dedicated message keyring. See [Keyrings](keyrings.md) and [Security Best Practices](security.md) for the keyring layout, KEK precedence, and rotation procedures.
