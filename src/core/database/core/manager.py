@@ -6,6 +6,7 @@ It acts as a facade, delegating to engine-specific, monitoring, and dialect comp
 """
 
 import threading
+from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 
 import utils.config as config
@@ -47,7 +48,7 @@ class Database(
         self._local = DatabaseLocal()
         self._lock = threading.RLock()
 
-        self._query_cache: Dict[str, Tuple[float, Any]] = {}
+        self._query_cache: "OrderedDict[str, Tuple[float, Any]]" = OrderedDict()
         self._query_cache_ttl = 1.0
         self._query_cache_lock = threading.RLock()
 
