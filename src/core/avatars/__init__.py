@@ -25,6 +25,7 @@ Usage:
 from typing import Optional, Tuple, Dict, Any
 
 from .manager import AvatarManager
+from .schema import create_tables as _create_tables_impl
 
 __all__ = [
     "setup",
@@ -70,8 +71,22 @@ def is_setup() -> bool:
 
 
 def create_tables(db: Any) -> None:
-    """Create avatar tables."""
-    _get_manager().create_tables(db)
+    """Create avatar tables. Safe to call before module setup.
+
+    The DDL lives in :mod:`src.core.avatars.schema` and is invoked directly
+    here so migration 000 (which runs before ``avatars.setup``) can populate
+    the tables. Once the manager is set up, we still delegate to the manager
+    for consistency with hot-reload paths.
+    """
+    if _manager is not None and _manager.is_setup():
+        try:
+            _manager.create_tables(db)
+            return
+        except Exception:
+            # Manager path failed (e.g. test environment) - fall back to
+            # the standalone DDL.
+            pass
+    _create_tables_impl(db)
 
 
 # === User Avatars ===
