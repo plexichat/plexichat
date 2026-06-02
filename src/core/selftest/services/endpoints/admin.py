@@ -219,7 +219,7 @@ class AdminMixin(EndpointTesterBase):
         if other_session and other_session.headers.get("Authorization"):
             resp = other_session.delete(
                 f"{self.ctx.base_url}/api/v1/users/@me",
-                json={"password": self.ctx._test_password or "SelfTest_Generated_123!"},
+                json={"password": self.ctx._test_password},
                 timeout=5,
             )
             success = resp.status_code in (200, 204)
