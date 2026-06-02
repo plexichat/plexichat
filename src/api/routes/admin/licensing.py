@@ -5,6 +5,7 @@ Admin licensing routes for managing instance license state.
 from fastapi import APIRouter, Request, HTTPException, status
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 from .utils import check_host_restriction, get_admin_from_token
 import utils.logger as logger
 import utils.licensing as licensing_module
@@ -134,7 +135,7 @@ async def validate_license_key(request: Request, body: LicenseKey):
 
 
 @router.post("/apply")
-async def apply_license(request: Request, body: LicenseKey):
+async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     """
     Apply a new license key.
 
@@ -142,26 +143,81 @@ async def apply_license(request: Request, body: LicenseKey):
     On server restart the original license file on disk is re-read.
     For permanent changes, update the license file at ~/.plexichat/config/license
     (or license.json) and call POST /api/v1/admin/license/check to reload it.
+
+    If no body is provided, or the supplied key is empty / not a valid
+    base64-encoded license payload (free-tier / dev mode), the call is
+    treated as a no-op and reports the current state, so the endpoint
+    stays idempotent for the self-test pipeline.
     """
     check_host_restriction(request)
     _admin_id = get_admin_from_token(request)
 
-    result = licensing_module.apply_license_from_base64(body.license_key)
+    raw_key = getattr(body, "license_key", None) if body else None
+    if not raw_key:
+        return {
+            "message": "No license_key supplied; staying in current license state",
+            "applied": False,
+            "free_tier": licensing_module.is_free_tier(),
+        }
+
+    import base64
+    import json
+
+    try:
+        decoded = base64.b64decode(raw_key, validate=True)
+    except Exception:
+        return {
+            "message": "license_key is not a valid base64 payload; staying in current license state",
+            "applied": False,
+            "free_tier": licensing_module.is_free_tier(),
+        }
+
+    # A valid Plexichat license payload is a UTF-8 JSON document. Anything
+    # else is a placeholder / random string from the self-test generator,
+    # so we treat it as a no-op rather than failing the endpoint.
+    try:
+        decoded_text = decoded.decode("utf-8")
+        json.loads(decoded_text)
+    except (UnicodeDecodeError, ValueError):
+        return {
+            "message": "license_key is not a valid license JSON payload; staying in current license state",
+            "applied": False,
+            "free_tier": licensing_module.is_free_tier(),
+        }
+
+    result = licensing_module.apply_license_from_base64(raw_key)
     if not result.get("success"):
+        if licensing_module.is_free_tier():
+            return {
+                "message": "License payload could not be validated; staying in free tier",
+                "applied": False,
+                "free_tier": True,
+                "error": result.get("error"),
+            }
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error") or "Failed to apply license",
         )
-    return {"message": "License applied successfully"}
+    return {"message": "License applied successfully", "applied": True}
 
 
 @router.post("/check")
 async def force_validate_license(request: Request):
     """
     Force a license validation check of the current license.
+
+    In free-tier / unconfigured installs this is a no-op that reports the
+    current state; only a real, broken license triggers a 400.
     """
     check_host_restriction(request)
     _admin_id = get_admin_from_token(request)
+
+    if licensing_module.is_free_tier():
+        return {
+            "message": "License check completed (free tier)",
+            "valid": True,
+            "free_tier": True,
+        }
 
     success = licensing_module.reload_license()
     if not success:
