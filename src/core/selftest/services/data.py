@@ -281,7 +281,8 @@ class DataGenerator:
             body = {}
 
         if isinstance(body, dict):
-            test_pass = self.ctx._test_password or "SelfTest_Generated_123!"
+            test_pass = self.ctx._test_password
+            assert test_pass, "self-test password must be set up before requests"
             user_config = self.ctx.config.get("test_user", {})
 
             if "auth/login" in path:
@@ -506,7 +507,8 @@ class DataGenerator:
                     body["format"] = "001"
 
             if "auth/change-password" in path and method == "POST":
-                test_pass = self.ctx._test_password or "SelfTest_Generated_123!"
+                test_pass = self.ctx._test_password
+                assert test_pass, "self-test password must be set up before requests"
                 body["current_password"] = test_pass
                 body["new_password"] = test_pass
 
@@ -690,9 +692,9 @@ class DataGenerator:
                 if pn == "email":
                     return f"test_{random.randint(1000, 9999)}@example.com"
                 if pn == "password":
-                    return self.ctx._test_password or "SelfTest_Generated_123!"
+                    return self.ctx._test_password
                 if pn == "current_password":
-                    return self.ctx._test_password or "SelfTest_Generated_123!"
+                    return self.ctx._test_password
                 if "id" in pn:
                     if "server" in pn:
                         return str(self.ctx.test_server_id or self.generate_snowflake())
@@ -750,7 +752,7 @@ class DataGenerator:
             if fmt == "email":
                 return f"test_{random.randint(1000, 9999)}@example.com"
             if fmt == "password":
-                return self.ctx._test_password or "SelfTest_Generated_123!"
+                return self.ctx._test_password
             if fmt == "date-time":
                 return "2024-01-01T00:00:00Z"
 

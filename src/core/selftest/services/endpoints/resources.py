@@ -224,7 +224,7 @@ class ResourceMixin(EndpointTesterBase):
             return
 
         # --- Password reset confirm ---
-        new_password = self.ctx._test_password or "SelfTest_Generated_123!"
+        new_password = self.ctx._test_password
         logger.info("Testing POST /api/v1/auth/password-reset/confirm...")
         password_reset_start = time.time()
         resp = session.post(
