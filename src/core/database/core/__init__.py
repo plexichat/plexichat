@@ -10,6 +10,7 @@ from .types import DatabaseLocal, DbConnection, DbCursor
 from .compat import _CompatibilityRegex, _PLACEHOLDER_PATTERN
 from .metrics import _query_count, _query_time_ms
 from .worker import with_db_worker
+from .schema_splitter import split_sql_statements
 
 __all__ = [
     "Database",
@@ -21,6 +22,7 @@ __all__ = [
     "_query_count",
     "_query_time_ms",
     "with_db_worker",
+    "split_sql_statements",
 ]
 
 # The Database class is composed of multiple mixins that provide:
