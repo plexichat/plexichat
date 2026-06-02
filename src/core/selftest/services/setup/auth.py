@@ -27,16 +27,36 @@ class AuthSetupMixin(SetupServiceBase):
             )
             logger.debug("Internal security secret added to test session")
 
+    def _generate_strong_password(self, length: int = 20) -> str:
+        """Generate a random password guaranteed to satisfy the policy
+        (uppercase, lowercase, digit, and at least one non-word special char).
+        """
+        upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+        lower = "abcdefghijkmnopqrstuvwxyz"
+        digits = "23456789"
+        specials = "!@#$%^&*()-_=+[]{};:,.?/"
+        required = [
+            secrets.choice(upper),
+            secrets.choice(lower),
+            secrets.choice(digits),
+            secrets.choice(specials),
+        ]
+        alphabet = upper + lower + digits + specials
+        remaining = [secrets.choice(alphabet) for _ in range(length - len(required))]
+        chars = required + remaining
+        secrets.SystemRandom().shuffle(chars)
+        return "".join(chars)
+
     def _ensure_password(self) -> str:
-        user_config = self.ctx.config.get("test_user", {})
-        pwd = user_config.get("password")
-        if not pwd:
-            pwd = secrets.token_urlsafe(16)
-            self.ctx._test_password = pwd
-            logger.info("No self-test password configured; generated random password.")
-        else:
-            self.ctx._test_password = pwd
-        return pwd
+        # Always generate a fresh random password. Hard-coded test passwords
+        # in config are no longer honored to prevent shipping weak / known
+        # credentials and to keep the self-test flow self-contained.
+        self.ctx._test_password = self._generate_strong_password()
+        logger.info(
+            "Generated fresh random self-test password (length=%d).",
+            len(self.ctx._test_password),
+        )
+        return self.ctx._test_password
 
     def create_main_user(self) -> bool:
         user_config = self.ctx.config.get("test_user", {})
