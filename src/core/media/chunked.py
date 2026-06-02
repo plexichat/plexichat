@@ -13,6 +13,8 @@ import time
 import hashlib
 import tempfile
 from typing import Optional, List
+
+from src.core.database.core.schema_splitter import split_sql_statements
 from dataclasses import dataclass
 from enum import Enum
 
@@ -95,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_upload_sessions_expires ON media_upload_sessions(
 
 def create_tables(db) -> None:
     """Create chunked upload tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
     for statement in statements:
         if statement:
             try:

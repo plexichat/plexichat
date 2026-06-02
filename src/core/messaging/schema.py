@@ -5,6 +5,8 @@ Tables are auto-created on messaging.setup() if they don't exist.
 All IDs use Snowflake format for distributed generation.
 """
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 SCHEMA_SQLITE = """
 -- Conversations table
 CREATE TABLE IF NOT EXISTS msg_conversations (
@@ -53,6 +55,12 @@ CREATE TABLE IF NOT EXISTS msg_messages (
     content_encrypted TEXT,
     content_index TEXT,
     message_type TEXT NOT NULL DEFAULT 'text',
+    -- Voice message metadata (019)
+    voice_duration_ms INTEGER,
+    voice_waveform TEXT,
+    -- Compact mode + integrity (005)
+    compact_messages_enabled INTEGER DEFAULT 1,
+    checksum TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     edited INTEGER DEFAULT 0,
@@ -64,6 +72,61 @@ CREATE TABLE IF NOT EXISTS msg_messages (
     FOREIGN KEY (conversation_id) REFERENCES msg_conversations(id) ON DELETE CASCADE,
     FOREIGN KEY (author_id) REFERENCES auth_users(id) ON DELETE CASCADE,
     FOREIGN KEY (reply_to_id) REFERENCES msg_messages(id) ON DELETE SET NULL
+);
+
+-- Forwarded messages (019)
+CREATE TABLE IF NOT EXISTS msg_forwarded (
+    id INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL,
+    original_message_id INTEGER NOT NULL,
+    original_conversation_id INTEGER,
+    original_author_id INTEGER,
+    forwarded_by INTEGER NOT NULL,
+    original_content TEXT,
+    original_created_at INTEGER,
+    created_at INTEGER NOT NULL
+);
+
+-- Scheduled messages (019)
+CREATE TABLE IF NOT EXISTS msg_scheduled (
+    id INTEGER PRIMARY KEY,
+    conversation_id INTEGER NOT NULL,
+    author_id INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    scheduled_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    message_id INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    attachments TEXT
+);
+
+-- User bookmarks (019)
+CREATE TABLE IF NOT EXISTS user_bookmarks (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    conversation_id INTEGER NOT NULL,
+    label TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE(user_id, message_id)
+);
+
+-- User profiles (019)
+CREATE TABLE IF NOT EXISTS user_profiles (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL UNIQUE,
+    bio TEXT,
+    banner_url TEXT,
+    social_links TEXT,
+    custom_status_text TEXT,
+    custom_status_emoji TEXT,
+    custom_status_expires_at INTEGER,
+    pronouns TEXT,
+    location TEXT,
+    timezone TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
 );
 
 -- Message status (delivery/read receipts)
@@ -186,9 +249,22 @@ CREATE INDEX IF NOT EXISTS idx_msg_messages_conv_author ON msg_messages(conversa
 CREATE INDEX IF NOT EXISTS idx_msg_messages_conv_id_deleted ON msg_messages(conversation_id, id, deleted);
 CREATE INDEX IF NOT EXISTS idx_msg_messages_content_index ON msg_messages(content_index);
 CREATE INDEX IF NOT EXISTS idx_msg_participants_last_read ON msg_participants(conversation_id, user_id, last_read_message_id);
+
+-- Indexes for msg_forwarded, msg_scheduled, user_bookmarks, user_profiles (019)
+CREATE INDEX IF NOT EXISTS idx_msg_fwd_message ON msg_forwarded(message_id);
+CREATE INDEX IF NOT EXISTS idx_msg_fwd_original ON msg_forwarded(original_message_id);
+CREATE INDEX IF NOT EXISTS idx_msg_fwd_by ON msg_forwarded(forwarded_by);
+CREATE INDEX IF NOT EXISTS idx_msg_sched_conv ON msg_scheduled(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_msg_sched_author ON msg_scheduled(author_id);
+CREATE INDEX IF NOT EXISTS idx_msg_sched_at ON msg_scheduled(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_msg_sched_status ON msg_scheduled(status);
+CREATE INDEX IF NOT EXISTS idx_bookmark_user ON user_bookmarks(user_id);
+CREATE INDEX IF NOT EXISTS idx_bookmark_message ON user_bookmarks(message_id);
+CREATE INDEX IF NOT EXISTS idx_bookmark_conv ON user_bookmarks(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_profile_user ON user_profiles(user_id);
 """
 
-SCHEMA_STATEMENTS = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]
+SCHEMA_STATEMENTS = split_sql_statements(SCHEMA_SQLITE)
 
 
 def create_tables(db) -> None:

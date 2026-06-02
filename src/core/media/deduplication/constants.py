@@ -8,6 +8,8 @@ from typing import Optional
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 class HashAlgorithm(Enum):
     """Supported hash algorithms."""
@@ -144,7 +146,7 @@ def setup(db):
 
 def create_tables(db):
     """Create deduplication tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
     for statement in statements:
         if statement:
             try:

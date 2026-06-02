@@ -4,6 +4,8 @@ Voice database schema - Table definitions for voice module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Voice states table (users currently in voice channels)
@@ -71,7 +73,7 @@ CREATE TABLE IF NOT EXISTS voice_server_settings (
 
 def create_tables(db):
     """Create all voice tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

@@ -4,6 +4,8 @@ Sticker database schema - Table definitions for stickers module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Sticker packs table
@@ -65,7 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_sticker_usage_message ON sticker_usage(message_id
 
 def create_tables(db):
     """Create all sticker tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

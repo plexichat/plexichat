@@ -4,6 +4,8 @@ Notification database schema - Table definitions for notifications module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Notifications table
@@ -89,7 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_notif_unread_conv ON notif_unread(conversation_id
 
 def create_tables(db):
     """Create all notification tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

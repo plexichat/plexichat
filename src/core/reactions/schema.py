@@ -4,6 +4,8 @@ Reaction database schema - Table definitions for reactions module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Reactions table
@@ -47,7 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_react_custom_available ON react_custom_emoji(serv
 
 def create_tables(db):
     """Create all reaction tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

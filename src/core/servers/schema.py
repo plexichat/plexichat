@@ -4,6 +4,8 @@ Server database schema - Table definitions for server module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Servers table
@@ -104,6 +106,9 @@ CREATE TABLE IF NOT EXISTS srv_members (
     muted INTEGER DEFAULT 0,
     deafened INTEGER DEFAULT 0,
     inviter_id INTEGER,
+    -- Timeout (013)
+    timeout_until BIGINT,
+    timeout_reason TEXT,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id),
     UNIQUE(server_id, user_id)
 );
@@ -343,7 +348,7 @@ CREATE INDEX IF NOT EXISTS idx_srv_progress_user ON srv_onboarding_progress(user
 
 def create_tables(db):
     """Create all server tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:
