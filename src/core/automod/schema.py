@@ -23,6 +23,8 @@ def create_tables(db):
             exempt_channels TEXT DEFAULT '[]',
             priority INTEGER DEFAULT 0,
             check_all INTEGER DEFAULT 0,
+            -- Encrypted reason for automod bans (commit aaf523b7)
+            reason_encrypted TEXT,
             created_at BIGINT NOT NULL,
             updated_at BIGINT NOT NULL,
             created_by BIGINT NOT NULL

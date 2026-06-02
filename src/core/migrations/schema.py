@@ -5,6 +5,8 @@ This module defines the database schema for tracking applied migrations,
 including the migrations_history table and associated functions.
 """
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS migrations_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,7 +133,7 @@ def create_tables(db):
     schema = SCHEMA_SQLITE if db.type == "sqlite" else SCHEMA_POSTGRESQL
 
     # Split statements and execute each one
-    statements = [stmt.strip() for stmt in schema.split(";") if stmt.strip()]
+    statements = split_sql_statements(schema)
 
     for statement in statements:
         db.execute(statement)

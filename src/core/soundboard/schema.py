@@ -4,6 +4,8 @@ Soundboard database schema - Table definitions for soundboard module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Soundboard sounds table
@@ -59,7 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_soundboard_usage_channel ON soundboard_usage(chan
 
 def create_tables(db):
     """Create all soundboard tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:
