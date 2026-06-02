@@ -34,7 +34,7 @@ def handle_migrate_db(project_root: str, dry_run: bool = False) -> None:
     )
 
     if dry_run:
-        print("\nDRY RUN — no changes will be made.\n")
+        print("\nDRY RUN: no changes will be made.\n")
 
     result = run_migrations(db, dry_run=dry_run)
     if result["success"]:
