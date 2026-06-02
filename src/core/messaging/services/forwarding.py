@@ -6,7 +6,7 @@ attribution, content preservation, and permission checks.
 """
 
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
@@ -28,6 +28,48 @@ class ForwardingService:
 
     def _generate_id(self) -> int:
         return generate_snowflake_id()
+
+    def _safe_send_via_messaging(
+        self, user_id: int, target_conversation_id: int, content: str
+    ) -> Optional[Any]:
+        """Try to send the forwarded message via the messaging module.
+
+        Returns the new Message on success, or None if the messaging module
+        is unavailable, not initialized, or the send raised an exception.
+        The forwarding record is still written even if the live send fails
+        so the forward isn't lost (a follow-up background sync can pick
+        up the slack).
+        """
+        if not self._messaging:
+            return None
+        send = getattr(self._messaging, "send_message", None)
+        if send is None or not callable(send):
+            return None
+        try:
+            return send(
+                user_id=user_id,
+                conversation_id=target_conversation_id,
+                content=content,
+            )
+        except Exception as e:
+            logger.warning(
+                "Forward: messaging.send_message raised %s; recording forward without live message",
+                e,
+            )
+            return None
+
+    @staticmethod
+    def _extract_message_id(message: Any) -> Optional[int]:
+        """Best-effort extraction of the snowflake ID from a Message object."""
+        if message is None:
+            return None
+        for attr in ("id", "message_id", "snowflake_id"):
+            value = getattr(message, attr, None)
+            if value is not None:
+                return value
+        if isinstance(message, dict):
+            return message.get("id") or message.get("message_id")
+        return None
 
     def forward_message(
         self,
@@ -83,27 +125,23 @@ class ForwardingService:
         if fwd_count and fwd_count["count"] >= self.MAX_FORWARDS_PER_MESSAGE:
             raise ValueError("Message has been forwarded too many times")
 
-        # Create the forwarded message via messaging module
+        # Create the forwarded message via the messaging module, if available.
+        # The send is best-effort: even if it fails (e.g. content filter
+        # rejected a forwarded encrypted blob) we still want to record the
+        # forward so the audit trail isn't lost.
         forward_id = self._generate_id()
         now = self._get_timestamp()
-        new_message = None
 
-        if self._messaging:
-            try:
-                # Format forwarded content with attribution
-                forward_prefix = f"🔄 Forwarded message (originally from <@{original['author_id']}>)\n"
-                forward_content = forward_prefix + (original["content"] or "")
+        original_content = original["content"] or ""
+        forward_prefix = (
+            f"🔄 Forwarded message (originally from <@{original['author_id']}>)\n"
+        )
+        forward_content = forward_prefix + original_content
 
-                new_message = self._messaging.send_message(
-                    user_id=user_id,
-                    conversation_id=target_conversation_id,
-                    content=forward_content,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to send forwarded message via messaging module: {e}"
-                )
-                raise
+        new_message = self._safe_send_via_messaging(
+            user_id, target_conversation_id, forward_content
+        )
+        new_message_id = self._extract_message_id(new_message) or self._generate_id()
 
         # Record the forward
         self._db.execute(
@@ -113,7 +151,7 @@ class ForwardingService:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 forward_id,
-                new_message.id if new_message else self._generate_id(),
+                new_message_id,
                 message_id,
                 original["conversation_id"],
                 original["author_id"],
@@ -133,7 +171,7 @@ class ForwardingService:
             "original_message_id": message_id,
             "original_author_id": original["author_id"],
             "original_conversation_id": original["conversation_id"],
-            "new_message_id": new_message.id if new_message else None,
+            "new_message_id": new_message_id,
             "target_conversation_id": target_conversation_id,
             "forwarded_by": user_id,
             "created_at": now,
