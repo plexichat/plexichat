@@ -619,7 +619,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "max_sticker_name_length": 32,
             "max_pack_name_length": 64,
             "max_pack_description_length": 256,
-            "allowed_formats": ["image/png", "image/webp", "image/gif"],
+            "allowed_formats": ["png", "apng", "json"],
             "max_suggestions": 10,
         },
         "soundboard": {
