@@ -6,6 +6,8 @@ Includes FTS5 virtual tables for full-text search and discovery tables.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Message search FTS5 virtual table
@@ -171,7 +173,7 @@ DEFAULT_CATEGORIES = [
 
 def create_tables(db):
     """Create all search tables including FTS5 virtual tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
     db_type = getattr(db, "type", "sqlite")
 
     for statement in statements:

@@ -4,6 +4,8 @@ Presence database schema - Table definitions for presence module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Presence table (user status and last seen)
@@ -62,7 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_pres_typing_expires ON pres_typing(expires_at);
 
 def create_tables(db):
     """Create all presence tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

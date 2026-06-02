@@ -4,6 +4,8 @@ Media database schema - Table definitions for media module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Media files table
@@ -66,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_media_proxy_cache_expires ON media_proxy_cache(ex
 
 def create_tables(db):
     """Create all media tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:
