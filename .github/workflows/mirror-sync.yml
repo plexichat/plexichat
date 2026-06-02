@@ -1,0 +1,91 @@
+# ============================================================================
+# Plexichat Mirror Sync — GitLab → GitHub
+# ============================================================================
+#
+# Keeps the GitHub mirror in sync with the GitLab source of truth.
+# Runs on a cron schedule and can also be triggered manually.
+#
+# Flow:
+#   1. Fetch dev and master from GitLab
+#   2. Force-push to GitHub (mirror is read-only, no commits on GitHub)
+#   3. Also sync all tags
+#
+# This ensures the GitHub mirror always reflects the current state of
+# dev/master on GitLab.
+# ============================================================================
+
+name: Mirror Sync (GitLab → GitHub)
+
+on:
+  schedule:
+    # Every hour (reduced from 30 min to avoid rate limits on free plans)
+    - cron: "0 * * * *"
+  workflow_dispatch:  # Manual trigger
+
+# ── Required Secrets ──────────────────────────────────────────
+# GITLAB_MIRROR_TOKEN — GitLab PAT with: read_repository scope on
+#                        both plexichat/plexichat and plexichat/plexichat-client.
+#                        Only needs read access — never writes to GitLab.
+
+permissions:
+  contents: write  # Need write access to push branches and tags
+
+concurrency:
+  group: mirror-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: "Sync GitLab → GitHub"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitHub repository (full history, all branches)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "Mirror Bot"
+          git config user.email "mirror@plexichat.com"
+
+      - name: Add GitLab as remote
+        run: |
+          # Primary server repo (plexichat/plexichat on GitLab)
+          git remote add gitlab "https://oauth2:${{ secrets.GITLAB_MIRROR_TOKEN }}@gitlab.plexichat.com/plexichat/plexichat.git"
+          # To also mirror the client repo (plexichat/plexichat-client on GitLab),
+          # add a second job or a separate workflow that clones it into the
+          # plexichat-client/ subdirectory. Currently the client content on the
+          # GitHub mirror is manually maintained.
+
+      - name: Fetch from GitLab
+        run: |
+          echo "Fetching dev and master from GitLab (server)..."
+          git fetch gitlab dev master --tags --force
+
+      - name: Sync server branches
+        run: |
+          # Push GitLab's dev/master to GitHub (force, since GitHub is read-only mirror)
+          if git rev-parse --verify gitlab/dev >/dev/null 2>&1; then
+            echo "Syncing dev from GitLab → GitHub"
+            git push origin "gitlab/dev:refs/heads/dev" --force
+          fi
+          if git rev-parse --verify gitlab/master >/dev/null 2>&1; then
+            echo "Syncing master from GitLab → GitHub"
+            git push origin "gitlab/master:refs/heads/master" --force
+          fi
+
+      - name: Sync tags
+        run: |
+          echo "Syncing tags from GitLab → GitHub"
+          git push origin --tags --force
+
+      - name: Report sync status
+        run: |
+          echo "## Mirror Sync Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **dev**: $(git rev-parse --short gitlab/dev 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "- **master**: $(git rev-parse --short gitlab/master 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tags**: $(git tag -l 'a.*' | wc -l) version tags" >> $GITHUB_STEP_SUMMARY

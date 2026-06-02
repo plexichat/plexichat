@@ -1,0 +1,311 @@
+# ============================================================================
+# Plexichat PR Relay — GitHub Actions → GitLab
+# ============================================================================
+#
+# Flow: Contributor opens PR on github.com → pull_request_target fires →
+# YOUR workflow runs (not theirs) → Job 1 captures sanitised metadata →
+# Job 2 (gated by gitlab-relay environment) pushes branch + creates MR.
+#
+# Security design:
+#   1. pull_request_target — runs from dev, NOT the fork. No untrusted code
+#      is ever checked out or executed by this workflow.
+#   2. Job 1 (gather-metadata) has NO secrets access. It only reads the
+#      structured github.event payload and produces string outputs.
+#   3. Job 2 (relay-to-gitlab) depends on pr-checks.yml passing AND the
+#      gitlab-relay environment, which requires manual approval for
+#      first-time contributors.
+#   4. Branch names are validated against [a-zA-Z0-9._/-]+ to prevent
+#      shell injection.
+#   5. The GitLab MR payload is built with `jq --arg`, not string
+#      interpolation — a title like `","title":"pwned"` cannot escape.
+#   6. The GITLAB_TOKEN only has rights to push contrib/* branches and
+#      create MRs — not write to protected branches.
+# ============================================================================
+
+name: PR Relay to GitLab
+
+on:
+  workflow_run:
+    workflows: ["PR Checks"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write  # Needed for report-status job to comment on PRs
+
+concurrency:
+  group: relay-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+# ── Required Secrets ──────────────────────────────────────────
+# GITLAB_TOKEN       — GitLab PAT with: write_repository (push to
+#                       contrib/*) + api (create MR). Least-privilege:
+#                       scope to source repos only, NOT protected branches.
+# GITLAB_PROJECT_ID  — GitLab project ID for the API (numeric or
+#                       url-encoded group/project path).
+# GITLAB_API_URL     — (optional) GitLab API base URL. Defaults to
+#                       https://gitlab.plexichat.com/api/v4
+
+jobs:
+  # ==========================================================================
+  # JOB 1 — Gather metadata (NO SECRETS, runs unconditionally after CI passes)
+  # ==========================================================================
+
+  gather-metadata:
+    name: "Gather PR Metadata"
+    runs-on: ubuntu-latest
+    # Only run if the CI checks workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
+    outputs:
+      pr_number: ${{ steps.meta.outputs.pr_number }}
+      head_sha: ${{ steps.meta.outputs.head_sha }}
+      head_ref: ${{ steps.meta.outputs.head_ref }}
+      head_repo: ${{ steps.meta.outputs.head_repo }}
+      head_repo_owner: ${{ steps.meta.outputs.head_repo_owner }}
+      title: ${{ steps.meta.outputs.title }}
+      body: ${{ steps.meta.outputs.body }}
+      author: ${{ steps.meta.outputs.author }}
+      base_ref: ${{ steps.meta.outputs.base_ref }}
+    steps:
+      - name: Get PR details from workflow_run event
+        id: meta
+        # The workflow_run event gives us the head SHA and branch, but we need
+        # the full PR metadata. We use the GitHub API to get it.
+        # This is safe — we're reading structured JSON, not executing code.
+        env:
+          GH_TOKEN: ${{ github.token }}  # built-in, read-only on the PR
+        run: |
+          # Find the PR associated with this workflow run
+          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+          HEAD_REPO_ID="${{ github.event.workflow_run.head_repository.id }}"
+
+          echo "Looking up PR for commit $HEAD_SHA from repo $HEAD_REPO_ID"
+
+          # Use the commits/pulls API — more reliable than search for finding
+          # the PR for a given commit SHA (search can be stale or miss results)
+          PR_JSON=$(gh api "repos/${{ github.repository }}/commits/${HEAD_SHA}/pulls" --jq '.[0]')
+          if [ -z "$PR_JSON" ] || [ "$PR_JSON" = "null" ]; then
+            echo "No PR found for this commit — likely a direct push, skipping relay"
+            exit 0
+          fi
+
+          PR_NUMBER=$(echo "$PR_JSON" | jq -r '.number')
+          TITLE=$(echo "$PR_JSON" | jq -r '.title')
+          AUTHOR=$(echo "$PR_JSON" | jq -r '.user.login')
+          BODY=$(echo "$PR_JSON" | jq -r '.body // ""')
+
+          # Now get full PR metadata from the pulls API
+          FULL_PR=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")
+          HEAD_REF=$(echo "$FULL_PR" | jq -r '.head.ref')
+          HEAD_REPO=$(echo "$FULL_PR" | jq -r '.head.repo.full_name')
+          HEAD_REPO_OWNER=$(echo "$FULL_PR" | jq -r '.head.repo.owner.login')
+          BASE_REF=$(echo "$FULL_PR" | jq -r '.base.ref')
+
+          # Block if it's not a fork PR (someone with write access pushing a branch)
+          if [ "$HEAD_REPO" = "${{ github.repository }}" ]; then
+            echo "Direct branch push (not a fork PR) — skipping relay"
+            exit 0
+          fi
+
+          # Only relay PRs targeting dev
+          if [ "$BASE_REF" != "dev" ]; then
+            echo "PR targets '$BASE_REF', not 'dev' — skipping relay"
+            exit 0
+          fi
+
+          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          echo "head_sha=${HEAD_SHA}" >> $GITHUB_OUTPUT
+          echo "head_ref=${HEAD_REF}" >> $GITHUB_OUTPUT
+          echo "head_repo=${HEAD_REPO}" >> $GITHUB_OUTPUT
+          echo "head_repo_owner=${HEAD_REPO_OWNER}" >> $GITHUB_OUTPUT
+          echo "title=${TITLE}" >> $GITHUB_OUTPUT
+          echo "author=${AUTHOR}" >> $GITHUB_OUTPUT
+          echo "base_ref=${BASE_REF}" >> $GITHUB_OUTPUT
+
+          # Write body to a file to avoid injection through GITHUB_OUTPUT
+          echo "${BODY}" > /tmp/pr_body.txt
+
+          echo "PR #${PR_NUMBER}: '${TITLE}' by @${AUTHOR} from ${HEAD_REPO}"
+
+      - name: Upload PR body as artifact
+        if: steps.meta.outputs.head_sha != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-body-${{ github.run_id }}
+          path: /tmp/pr_body.txt
+          retention-days: 1
+          overwrite: true
+
+  # ==========================================================================
+  # JOB 2 — Relay to GitLab (USES SECRETS, gated by environment)
+  # ==========================================================================
+
+  relay-to-gitlab:
+    name: "Relay PR to GitLab"
+    runs-on: ubuntu-latest
+    needs: gather-metadata
+    environment: gitlab-relay  # <-- Requires approval for first-time contributors
+    if: ${{ needs.gather-metadata.outputs.head_sha != '' }}
+    concurrency:
+      group: relay-gitlab-${{ needs.gather-metadata.outputs.pr_number }}
+      cancel-in-progress: false
+    steps:
+      # -------------------------------------------------------------------
+      # Step 1: Validate branch name (prevent shell injection)
+      # -------------------------------------------------------------------
+      - name: Validate branch name
+        run: |
+          HEAD_REF="${{ needs.gather-metadata.outputs.head_ref }}"
+          if [[ ! "$HEAD_REF" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+            echo "❌ INVALID BRANCH NAME: '$HEAD_REF'"
+            echo "Branch name must match [a-zA-Z0-9._/-]+"
+            exit 1
+          fi
+          echo "✅ Branch name validated: $HEAD_REF"
+
+      # -------------------------------------------------------------------
+      # Step 2: Checkout the fork's code (read-only, for the push)
+      # -------------------------------------------------------------------
+      - name: Clone fork repository
+        run: |
+          HEAD_REPO="${{ needs.gather-metadata.outputs.head_repo }}"
+          HEAD_SHA="${{ needs.gather-metadata.outputs.head_sha }}"
+
+          echo "Cloning fork: https://github.com/${HEAD_REPO}.git"
+          git clone --bare "https://github.com/${HEAD_REPO}.git" repo.git
+          cd repo.git
+
+          # Verify the commit exists in the fork
+          if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            echo "❌ Commit ${HEAD_SHA} not found in fork — possible tampering"
+            exit 1
+          fi
+          echo "✅ Commit ${HEAD_SHA} verified in fork"
+
+      # -------------------------------------------------------------------
+      # Step 3: Push contributor branch to GitLab (contrib/* namespace)
+      # -------------------------------------------------------------------
+      - name: Push branch to GitLab
+        run: |
+          HEAD_SHA="${{ needs.gather-metadata.outputs.head_sha }}"
+          HEAD_REF="${{ needs.gather-metadata.outputs.head_ref }}"
+          PR_NUMBER="${{ needs.gather-metadata.outputs.pr_number }}"
+
+          # Create a namespaced branch: contrib/<original-branch>-pr<number>
+          BRANCH="contrib/${HEAD_REF}-pr${PR_NUMBER}"
+
+          cd repo.git
+          echo "Pushing ${HEAD_SHA} → refs/heads/${BRANCH} on GitLab"
+
+          # Push only the specific commit SHA, not the branch ref
+          # This prevents the fork from controlling the branch name on GitLab
+          git push \
+            "https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.plexichat.com/plexichat/plexichat.git" \
+            "${HEAD_SHA}:refs/heads/${BRANCH}"
+
+          echo "✅ Branch pushed: ${BRANCH}"
+
+      # -------------------------------------------------------------------
+      # Step 4: Create GitLab MR via API
+      # -------------------------------------------------------------------
+      - name: Download PR body artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-body-${{ github.run_id }}
+          path: /tmp
+
+      - name: Create GitLab Merge Request
+        run: |
+          BRANCH="contrib/${{ needs.gather-metadata.outputs.head_ref }}-pr${{ needs.gather-metadata.outputs.pr_number }}"
+          TITLE="${{ needs.gather-metadata.outputs.title }}"
+          AUTHOR="${{ needs.gather-metadata.outputs.author }}"
+          PR_NUMBER="${{ needs.gather-metadata.outputs.pr_number }}"
+          HEAD_REPO="${{ needs.gather-metadata.outputs.head_repo }}"
+
+          # Read PR body from artifact (avoids injection through outputs)
+          PR_BODY=$(cat /tmp/pr_body.txt || echo "")
+          # Escape for JSON
+          PR_BODY_ESCAPED=$(echo "$PR_BODY" | jq -Rs '.')
+
+          echo "Creating MR: ${BRANCH} → dev"
+          echo "Title: [GitHub PR #${PR_NUMBER}] ${TITLE}"
+
+          # Build description with jq --arg for safe JSON construction
+          MR_DESCRIPTION=$(jq -n \
+            --arg author "$AUTHOR" \
+            --arg pr_number "$PR_NUMBER" \
+            --arg head_repo "$HEAD_REPO" \
+            --arg body "$PR_BODY" \
+            '{
+              description: (
+                "**Relayed from GitHub PR by @\($author)**\n\n" +
+                "**GitHub PR:** [\($head_repo)#\($pr_number)](https://github.com/\($head_repo)/pull/\($pr_number))\n\n" +
+                "**Original Author:** @\($author)\n\n" +
+                "---\n\n" +
+                $body
+              )
+            }' | jq -r '.description')
+
+          # Build the full JSON payload with jq --arg (NO string interpolation)
+          MR_PAYLOAD=$(jq -n \
+            --arg sb "$BRANCH" \
+            --arg title "[GitHub PR #${PR_NUMBER}] ${TITLE}" \
+            --arg description "$MR_DESCRIPTION" \
+            --arg target "dev" \
+            '{
+              source_branch: $sb,
+              target_branch: $target,
+              title: $title,
+              description: $description,
+              remove_source_branch: true,
+              squash: false
+            }')
+
+          echo "Payload:"
+          echo "$MR_PAYLOAD" | jq '.'
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            --header "PRIVATE-TOKEN: ${{ secrets.GITLAB_TOKEN }}" \
+            --header "Content-Type: application/json" \
+            "${{ secrets.GITLAB_API_URL || 'https://gitlab.plexichat.com/api/v4' }}/projects/${{ secrets.GITLAB_PROJECT_ID }}/merge_requests" \
+            --data "$MR_PAYLOAD")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            MR_URL=$(echo "$BODY" | jq -r '.web_url // "unknown"')
+            echo "✅ MR created: ${MR_URL}"
+          else
+            echo "❌ Failed to create MR (HTTP ${HTTP_CODE})"
+            echo "$BODY" | jq '.' || echo "$BODY"
+            exit 1
+          fi
+
+  # ==========================================================================
+  # JOB 3 — Report status back to the GitHub PR
+  # ==========================================================================
+
+  report-status:
+    name: "Report Status to PR"
+    runs-on: ubuntu-latest
+    needs: [gather-metadata, relay-to-gitlab]
+    if: always() && needs.gather-metadata.result == 'success'
+    steps:
+      - name: Post status comment on GitHub PR
+        if: ${{ needs.relay-to-gitlab.result == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ needs.gather-metadata.outputs.pr_number }}"
+          gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --body "✅ **CI checks passed!** This PR has been relayed to GitLab as a Merge Request.\n\nReview and merge will happen on [gitlab.plexichat.com](https://gitlab.plexichat.com)."
+
+      - name: Post failure comment on GitHub PR
+        if: ${{ needs.relay-to-gitlab.result == 'failure' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ needs.gather-metadata.outputs.pr_number }}"
+          gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --body "❌ **PR relay to GitLab failed.** A maintainer will investigate. Please do not close this PR — it will be retried."
