@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS app_webhook_deliveries (
     application_id INTEGER NOT NULL,
     interaction_id INTEGER NOT NULL,
     endpoint_url TEXT NOT NULL,
-    -- request_body/response_body are legacy plaintext columns kept for backward compatibility;
+    -- request_body/response_body are legacy plaintext columns kept for backward compatibility
     -- new writes go to request_body_encrypted / response_body_encrypted.
     request_body TEXT NOT NULL,
     response_status INTEGER,
