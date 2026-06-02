@@ -62,13 +62,29 @@ def initialize_modules(
             logger.info(
                 f"Migrations applied successfully: "
                 f"{migration_result['applied_count']} applied, "
-                f"{migration_result['failed_count']} failed"
+                f"{migration_result['failed_count']} failed "
+                f"in {migration_result.get('total_elapsed_ms', 0)}ms"
             )
         else:
+            failed = next(
+                (
+                    m
+                    for m in migration_result.get("migrations", [])
+                    if not m.get("success")
+                ),
+                None,
+            )
+            detail = ""
+            if failed:
+                detail = f" (version={failed.get('version', '?')}, error={failed.get('error', '?')})"
             logger.error(
                 f"Migration process had failures: "
                 f"{migration_result['applied_count']} applied, "
-                f"{migration_result['failed_count']} failed"
+                f"{migration_result['failed_count']} failed{detail}"
+            )
+            raise RuntimeError(
+                f"Database migrations failed{detail}. "
+                "Server cannot start with an inconsistent schema."
             )
     except Exception as e:
         logger.error(f"Critical error during migrations: {e}")

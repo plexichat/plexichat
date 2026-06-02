@@ -41,25 +41,24 @@ def up(db):
     )
 
     # === Add markdown support columns ===
-    try:
-        from src.core.database import dialect
+    from src.core.database import dialect
 
-        safe_table = dialect.sanitize_identifier("auth_users", db.type)
-        db.execute(
-            f"ALTER TABLE {safe_table} ADD COLUMN internal_notes_format VARCHAR(20) DEFAULT 'plain'"
-        )
-    except Exception:
-        pass
-
-    try:
-        from src.core.database import dialect
-
-        safe_table = dialect.sanitize_identifier("feedback", db.type)
-        db.execute(
-            f"ALTER TABLE {safe_table} ADD COLUMN internal_notes_format VARCHAR(20) DEFAULT 'plain'"
-        )
-    except Exception:
-        pass
+    for table_name in ("auth_users", "feedback"):
+        if not db.table_exists(table_name):
+            continue
+        if db.column_exists(table_name, "internal_notes_format"):
+            continue
+        safe_table = dialect.sanitize_identifier(table_name, db.type)
+        try:
+            db.execute(
+                f"ALTER TABLE {safe_table} ADD COLUMN internal_notes_format VARCHAR(20) DEFAULT 'plain'"
+            )
+        except Exception as e:
+            logger.debug(
+                "Migration 034: %s.internal_notes_format already present (%s)",
+                table_name,
+                e,
+            )
 
     logger.info("Migration 033: Admin Notes Versioning completed successfully")
 
