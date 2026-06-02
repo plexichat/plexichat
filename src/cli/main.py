@@ -522,7 +522,7 @@ def _cmd_pre_flight(args: argparse.Namespace) -> None:
     """Run full startup then exit without binding to a port."""
     _run_startup(args, project_root)
     logger.info("=" * 60)
-    logger.info("Pre-flight checks passed — configuration is valid.")
+    logger.info("Pre-flight checks passed: configuration is valid.")
     logger.info("=" * 60)
     logger.info("All modules initialized successfully. No port was bound.")
     logger.info("The server is ready to start. Run 'python main.py start' to serve.")
