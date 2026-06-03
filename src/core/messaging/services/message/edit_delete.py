@@ -26,6 +26,8 @@ from .search_helpers import search_index_message, search_remove_from_index
 class EditDeleteMixin(BaseService, MessageServiceProtocol):
     """Mixin providing edit and delete operations."""
 
+    _ratchet_manager: Any = None
+
     def edit_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
     ) -> Message:
@@ -59,7 +61,19 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         content_idx = blind_index(final_content, "message_content")
 
         if self._get_config("encrypt_messages", True):
-            final_content = encrypt_message(final_content, message_id)
+            if self._ratchet_manager is not None and msg_row.get("conversation_id"):
+                try:
+                    ratchet_result = self._ratchet_manager.encrypt(
+                        conversation_id=msg_row["conversation_id"],
+                        message_id=message_id,
+                        plaintext=final_content.encode("utf-8"),
+                        now=now,
+                    )
+                    final_content = ratchet_result.envelope
+                except Exception:
+                    final_content = encrypt_message(final_content, message_id)
+            else:
+                final_content = encrypt_message(final_content, message_id)
 
         self._repo.update_content(
             message_id, final_content, now, content_index=content_idx
@@ -147,6 +161,35 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         now = self._get_timestamp()
         if hard_delete:
             self._repo.hard_delete(message_id)
+            if self._ratchet_manager is not None:
+                try:
+                    new_interval = self._ratchet_manager.split_on_delete(
+                        conversation_id=msg_row["conversation_id"],
+                        deleted_message_id=message_id,
+                        now_ms=now,
+                    )
+                    if new_interval is not None:
+                        try:
+                            from src.utils.encryption.channel_ratchet import (
+                                notify_ratchet_update,
+                            )
+
+                            notify_ratchet_update(
+                                conversation_id=int(msg_row["conversation_id"]),
+                                update_data={
+                                    "reason": "split",
+                                    "new_interval_id": int(new_interval.interval_id),
+                                    "at_message_id": int(new_interval.start_message_id),
+                                    "deleted_message_id": int(message_id),
+                                    "at": int(now),
+                                },
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                f"Ratchet split broadcast scheduling failed: {e}"
+                            )
+                except Exception as e:
+                    logger.debug(f"Ratchet split-on-delete failed: {e}")
         else:
             self._repo.soft_delete(message_id, now)
 
