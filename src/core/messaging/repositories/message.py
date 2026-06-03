@@ -28,6 +28,7 @@ class MessageRepository(BaseRepository[Message]):
         content_index: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         webhook_id: Optional[SnowflakeID] = None,
+        ratchet_interval_id: Optional[SnowflakeID] = None,
         auto_commit: bool = True,
     ) -> None:
         """Create a new message."""
@@ -41,8 +42,8 @@ class MessageRepository(BaseRepository[Message]):
         self._execute(
             """INSERT INTO msg_messages 
                (id, conversation_id, author_id, content, content_encrypted, content_index, message_type, 
-                created_at, updated_at, reply_to_id, metadata, webhook_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_at, updated_at, reply_to_id, metadata, webhook_id, ratchet_interval_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 msg_id,
                 conversation_id,
@@ -56,6 +57,7 @@ class MessageRepository(BaseRepository[Message]):
                 reply_to_id,
                 self._json_dumps(metadata),
                 webhook_id,
+                ratchet_interval_id,
             ),
             auto_commit=auto_commit,
         )
@@ -265,7 +267,14 @@ class MessageRepository(BaseRepository[Message]):
         # Decrypt if encrypted (new format with ENC: prefix)
         if is_message_encrypted(content):
             try:
-                content = decrypt_message(content, row["id"])
+                if content.startswith("ENC:3:"):
+                    content = decrypt_message(
+                        content,
+                        row["id"],
+                        conversation_id=row.get("conversation_id"),
+                    )
+                else:
+                    content = decrypt_message(content, row["id"])
             except Exception:
                 content = "[decryption failed]"
         # Legacy: decrypt from content_encrypted field
