@@ -310,3 +310,20 @@ pytest src/tests/encryption/test_encryption.py -v
 ```
 
 The test suite includes 53 tests covering all features and edge cases.
+
+## Channel Ratchet (v3)
+
+The encryption module also ships a per-channel key ratchet for
+at-rest message encryption. See
+[`channel_ratchet/README.md`](channel_ratchet/README.md) for the
+threat model, wire format, rotation rules, and split-on-delete
+semantics. The ratchet is gated by the license feature
+`channel_ratchet_encryption` and exposes a small public surface:
+
+* `ChannelRatchetManager.encrypt(conversation_id, message_id, plaintext)`
+* `ChannelRatchetManager.decrypt(conversation_id, message_id, envelope)`
+* `ChannelRatchetManager.snapshot(conversation_id)`
+
+The wire format is `ENC:3:{interval_id}:{base64(nonce||ct||tag)}`,
+distinct from the legacy per-keyring `ENC:1:...` and `ENC:2:...`
+envelopes, so the decrypt path can dispatch by prefix.
