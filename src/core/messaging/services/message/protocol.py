@@ -25,6 +25,7 @@ class MessageServiceProtocol(Protocol):
     _participant_svc: Any
     _user_settings_svc: Any
     _content_filter_svc: Any
+    _ratchet_manager: Any
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """

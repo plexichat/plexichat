@@ -5,6 +5,7 @@ from .crud import ChannelCRUDMixin
 from .invites import ChannelInvitesMixin
 from .webhooks import ChannelWebhooksMixin
 from .attachments import ChannelAttachmentsMixin
+from .ratchet import register_ratchet_routes
 
 
 class ChannelsComposer(
@@ -20,6 +21,7 @@ class ChannelsComposer(
         ChannelInvitesMixin._register_routes(self)
         ChannelWebhooksMixin._register_routes(self)
         ChannelAttachmentsMixin._register_routes(self)
+        register_ratchet_routes(self.router)
 
 
 channels_router = ChannelsComposer().router
