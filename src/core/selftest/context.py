@@ -61,6 +61,7 @@ class SelfTestContext:
         self.test_admin_role_request_id: Optional[int] = None
         self.test_interaction_response_id: Optional[int] = None
         self.test_thread_id: Optional[int] = None
+        self.test_dsar_id: Optional[int] = None
         self.test_log_filename: Optional[str] = None
 
         self.results: List[Dict[str, Any]] = []
