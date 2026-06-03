@@ -166,6 +166,12 @@ class SelfTestRunner:
             "POST:/api/v1/media/upload/complete/{session_id}",
             "POST:/api/v1/polls/{poll_id}/vote",
             "POST:/api/v1/polls/{poll_id}/close",
+            # DSAR endpoints are tested via test_dsar() standalone method
+            "POST:/api/v1/users/@me/data-export",
+            "GET:/api/v1/users/@me/data-export",
+            "GET:/api/v1/users/@me/data-export/{request_id}",
+            "DELETE:/api/v1/users/@me/data-export/{request_id}",
+            "GET:/api/v1/users/@me/data-export/{request_id}/download",
         ]:
             excluded.add(_ep)
 
@@ -315,6 +321,7 @@ class SelfTestRunner:
             self.endpoints.test_delay_deletion()
             self.endpoints.test_password_reset_confirm()
             self.endpoints.test_media_upload_complete()
+            self.endpoints.test_dsar()
             # Poll vote must run before poll close
             self.endpoints.test_poll_vote()
             self.endpoints.test_poll_close()

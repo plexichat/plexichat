@@ -172,6 +172,8 @@ class DataGenerator:
             )
         elif "approval" in name_low:
             val = str(self.ctx.test_approval_id or _gen_snowflake())
+        elif "request_id" in name_low and "data-export" in path:
+            val = str(self.ctx.test_dsar_id or _gen_snowflake())
         elif "report" in name_low:
             if "id" in name_low:
                 if "hash-report" in path or "hash_report" in path:

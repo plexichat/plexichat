@@ -119,6 +119,40 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "minimum_age": 13,
                 "age_verification_type": "boolean",  # "boolean" or "dob"
             },
+            "dsar": {
+                # Data Subject Access Request (GDPR Article 20 - Right to Portability)
+                "enabled": True,
+                # Require admin review before generating exports (vs auto-approve)
+                "require_admin_review": True,
+                # Default export format
+                "default_format": "json",
+                # Supported export formats
+                "export_formats": ["json", "zip"],
+                # Maximum export size in MB (approximate limit, collection is unconstrained)
+                "max_export_size_mb": 500,
+                # How long download links remain valid after export is ready (days)
+                "retention_days": 7,
+                # How long pending requests survive without admin action (days)
+                "pending_expiry_days": 30,
+                # Local directory for export files when using the local storage
+                # backend. The backend itself, S3 credentials, and database
+                # storage settings are all inherited from the `media` block to
+                # avoid duplicating configuration.
+                "local_path": str(home_dir / "data" / "exports" / "dsar"),
+                # Audit log settings (mirrors account_deletion audit_log structure)
+                "audit_log": {
+                    "file_path": str(home_dir / "data" / "dsar_audit_log.jsonl"),
+                    "hash_chain_enabled": True,
+                    "backup_to_s3": True,
+                    "s3_backup_path": "audit/dsar/log_backup.jsonl",
+                    "halt_on_invalid_audit": True,
+                },
+                "harvester": {
+                    "interval_hours": 24,
+                    "boot_check_enabled": True,
+                    "batch_size": 20,
+                },
+            },
             "email_validation": {
                 "strict": True,
                 "allow_custom_tlds": False,
