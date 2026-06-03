@@ -27,6 +27,7 @@ __all__ = [
     "get_dispatcher",
     "is_setup",
     "broadcast_server_status",
+    "broadcast_ratchet_update",
     "close_all_connections",
     "GatewayOpcode",
     "GatewayCloseCode",
@@ -165,6 +166,37 @@ async def broadcast_server_status(status_data: dict) -> int:
     if not _setup_complete or _dispatcher is None:
         return 0
     return await _dispatcher.broadcast_server_status(status_data)
+
+
+async def broadcast_ratchet_update(
+    conversation_id: int,
+    update_data: dict,
+) -> int:
+    """
+    Broadcast a RATCHET_UPDATE to all connected clients.
+
+    Convenience function that delegates to the dispatcher. Safe to
+    call even if the websocket module is not initialized (returns 0
+    in that case). Use this from places that don't have a reference
+    to the dispatcher (e.g. background ratchet split-on-delete).
+
+    Args:
+        conversation_id: Conversation that experienced the change.
+        update_data: Payload describing the change. Recommended keys:
+            - reason: "rotation" | "split" | "re_anchor" | ...
+            - new_interval_id: Optional[int]
+            - at_message_id: Optional[int]
+            - at: Optional[int] ms timestamp
+
+    Returns:
+        Number of connections notified.
+    """
+    if not _setup_complete or _dispatcher is None:
+        return 0
+    return await _dispatcher.broadcast_ratchet_update(
+        conversation_id=conversation_id,
+        update_data=update_data,
+    )
 
 
 async def close_all_connections(
