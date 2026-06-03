@@ -11,6 +11,7 @@ including invites, attachments, and channel updates.
 - `invites.py` - `ChannelInvitesMixin`: create_channel_invite, get_invite_info, join_server_via_invite, delete_invite
 - `webhooks.py` - `ChannelWebhooksMixin`: get_channel_webhooks
 - `attachments.py` - `ChannelAttachmentsMixin`: upload_attachment
+- `ratchet.py` - `register_ratchet_routes`: GET /channels/{id}/ratchet (gated by the `channel_ratchet_encryption` license feature)
 - `composer.py` - `ChannelsComposer`: Combines all mixins and exports `channels_router`
 - `helpers.py` - `_channel_to_response`, `_get_upload_limit` utility functions
 
