@@ -36,6 +36,8 @@ class GatewayOpcode(IntEnum):
     # Plexichat typing indicator opcodes
     TYPING_START = 40
     TYPING_STOP = 41
+    # Plexichat channel ratchet opcodes
+    RATCHET_UPDATE = 50
 
 
 class GatewayCloseCode(IntEnum):

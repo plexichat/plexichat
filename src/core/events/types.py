@@ -66,6 +66,8 @@ class EventType(Enum):
     NOTIFICATION_UPDATE = "NOTIFICATION_UPDATE"
     NOTIFICATION_DELETE = "NOTIFICATION_DELETE"
 
+    RATCHET_UPDATE = "RATCHET_UPDATE"
+
 
 class GatewayIntent(IntFlag):
     """Gateway intents for filtering events."""
