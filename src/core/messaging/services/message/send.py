@@ -30,6 +30,8 @@ from .search_helpers import search_index_message
 class SendMixin(BaseService, MessageServiceProtocol):
     """Mixin providing send-related message operations."""
 
+    _ratchet_manager: Any = None
+
     def send_message(
         self,
         user_id: SnowflakeID,
@@ -92,8 +94,19 @@ class SendMixin(BaseService, MessageServiceProtocol):
         final_content = content_result.sanitized_content
         content_idx = blind_index(final_content, "message_content")
 
+        ratchet_interval_id = None
         if self._get_config("encrypt_messages", True):
-            final_content = encrypt_message(final_content, msg_id)
+            if self._ratchet_manager is not None:
+                ratchet_result = self._ratchet_manager.encrypt(
+                    conversation_id=conversation_id,
+                    message_id=msg_id,
+                    plaintext=final_content.encode("utf-8"),
+                    now=now,
+                )
+                final_content = ratchet_result.envelope
+                ratchet_interval_id = ratchet_result.interval_id
+            else:
+                final_content = encrypt_message(final_content, msg_id)
 
         metadata: Dict[str, Any] = {}
         if content_result.has_spoilers:
@@ -118,6 +131,7 @@ class SendMixin(BaseService, MessageServiceProtocol):
                 content_index=content_idx,
                 metadata=metadata if metadata else None,
                 webhook_id=webhook_id,
+                ratchet_interval_id=ratchet_interval_id,
                 auto_commit=False,
             )
 
@@ -189,6 +203,35 @@ class SendMixin(BaseService, MessageServiceProtocol):
             raise
 
         logger.debug(f"Message {msg_id} sent to conversation {conversation_id}")
+
+        if self._ratchet_manager is not None and ratchet_interval_id is not None:
+            try:
+                new_interval = self._ratchet_manager.rotate_if_due(
+                    conversation_id=conversation_id,
+                    last_message_id=msg_id,
+                    now_ms=now,
+                )
+                if new_interval is not None:
+                    try:
+                        from src.utils.encryption.channel_ratchet import (
+                            notify_ratchet_update,
+                        )
+
+                        notify_ratchet_update(
+                            conversation_id=int(conversation_id),
+                            update_data={
+                                "reason": "rotation",
+                                "new_interval_id": int(new_interval.interval_id),
+                                "at_message_id": int(new_interval.start_message_id),
+                                "at": int(now),
+                            },
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            f"Ratchet rotation broadcast scheduling failed: {e}"
+                        )
+            except Exception as e:
+                logger.debug(f"Ratchet rotation check failed: {e}")
 
         msg = Message(
             id=msg_id,

@@ -405,3 +405,30 @@ class Keyring:
             return self.current_version
 
         return self._with_file_lock(_rotate_impl)
+
+    def wrap(self, raw: bytes) -> str:
+        """Encrypt ``raw`` with the current key and return a v2 envelope.
+
+        Used by callers that need to wrap small key blobs (for example,
+        channel-ratchet ``start_key`` material) at rest. The output is
+        in the standard ``ENC:{version}:{base64(nonce||ct||tag)}``
+        format and can be unwrapped with :meth:`unwrap`.
+        """
+        version, key = self.get_key()
+        nonce = os.urandom(12)
+        ciphertext = AESGCM(key).encrypt(nonce, raw, None)
+        return f"ENC:{version}:{base64.b64encode(nonce + ciphertext).decode('utf-8')}"
+
+    def unwrap(self, wrapped: str) -> bytes:
+        """Reverse of :meth:`wrap`."""
+        if not wrapped.startswith("ENC:"):
+            raise KeyringDecryptionError("wrapped value is missing the ENC: prefix")
+        try:
+            parts = wrapped.split(":", 2)
+            version = int(parts[1])
+            _, key = self.get_key(version)
+            blob = base64.b64decode(parts[2])
+            nonce, ciphertext = blob[:12], blob[12:]
+            return AESGCM(key).decrypt(nonce, ciphertext, None)
+        except Exception as exc:
+            raise KeyringDecryptionError(f"failed to unwrap value: {exc}") from exc
