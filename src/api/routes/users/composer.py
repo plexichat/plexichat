@@ -14,6 +14,10 @@ from src.api.schemas.users import UserPublicResponse, UserAvatarResponse
 from src.api.schemas.channels import DMChannelResponse, NotesChannelResponse
 from src.api.schemas.messages import MessagingSettingsResponse
 from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.dsar import (
+    DSARRequestResponse,
+    DSARRequestListResponse,
+)
 
 from .base import UsersRouterBase
 from .profile import ProfileMixin
@@ -21,6 +25,7 @@ from .avatar import AvatarMixin
 from .channel import ChannelMixin
 from .discovery import DiscoveryMixin
 from .settings import SettingsMixin
+from .dsar import DataExportMixin
 
 
 class UsersRouter(
@@ -29,6 +34,7 @@ class UsersRouter(
     ChannelMixin,
     DiscoveryMixin,
     SettingsMixin,
+    DataExportMixin,
     UsersRouterBase,
 ):
     def register_routes(self, router: APIRouter) -> None:
@@ -172,3 +178,77 @@ class UsersRouter(
                 500: {"model": ErrorResponse, "description": "Internal server error"},
             },
         )(self.schedule_account_deletion)
+
+        # Data export (DSAR - GDPR Article 20 Right to Portability)
+        router.post(
+            "/@me/data-export",
+            response_model=SuccessResponse,
+            summary="Request a data export",
+            responses={
+                400: {"model": ErrorResponse, "description": "Invalid request"},
+                401: {"model": ErrorResponse, "description": "Not authenticated"},
+                403: {"model": ErrorResponse, "description": "Incorrect password"},
+                429: {
+                    "model": ErrorResponse,
+                    "description": "Rate limit exceeded (1 request per 24h)",
+                },
+                500: {"model": ErrorResponse, "description": "Internal server error"},
+            },
+        )(self.request_data_export)
+
+        router.get(
+            "/@me/data-export",
+            response_model=DSARRequestListResponse,
+            summary="List your data export requests",
+            responses={
+                401: {"model": ErrorResponse, "description": "Not authenticated"},
+                500: {"model": ErrorResponse, "description": "Internal server error"},
+            },
+        )(self.get_data_export_requests)
+
+        router.get(
+            "/@me/data-export/{request_id}",
+            response_model=DSARRequestResponse,
+            summary="Get a specific data export request",
+            responses={
+                400: {"model": ErrorResponse, "description": "Invalid request ID"},
+                401: {"model": ErrorResponse, "description": "Not authenticated"},
+                404: {"model": ErrorResponse, "description": "Request not found"},
+                500: {"model": ErrorResponse, "description": "Internal server error"},
+            },
+        )(self.get_data_export_status)
+
+        router.delete(
+            "/@me/data-export/{request_id}",
+            response_model=SuccessResponse,
+            summary="Cancel a data export request",
+            responses={
+                400: {
+                    "model": ErrorResponse,
+                    "description": "Cannot cancel this request",
+                },
+                401: {"model": ErrorResponse, "description": "Not authenticated"},
+                404: {"model": ErrorResponse, "description": "Request not found"},
+                500: {"model": ErrorResponse, "description": "Internal server error"},
+            },
+        )(self.cancel_data_export_request)
+
+        # The download endpoint streams the file directly via StreamingResponse,
+        # so no response_model is declared (return type is implicit).
+        router.get(
+            "/@me/data-export/{request_id}/download",
+            summary="Download a ready data export",
+            responses={
+                400: {
+                    "model": ErrorResponse,
+                    "description": "Export is not ready for download",
+                },
+                401: {"model": ErrorResponse, "description": "Not authenticated"},
+                404: {
+                    "model": ErrorResponse,
+                    "description": "Request or export file not found",
+                },
+                410: {"model": ErrorResponse, "description": "Download link expired"},
+                500: {"model": ErrorResponse, "description": "Internal server error"},
+            },
+        )(self.download_data_export)

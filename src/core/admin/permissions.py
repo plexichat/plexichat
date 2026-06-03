@@ -85,6 +85,9 @@ PERMISSION_SCOPES = {
     "admin.edit": "Edit admin accounts",
     "admin.roles": "Manage admin roles and permissions",
     "admin.approvals": "Handle approval workflows",
+    # Data export (DSAR)
+    "data_export.read": "View and manage data export requests",
+    "data_export.process": "Approve, deny, and generate data exports",
     # Wildcard permissions
     "*": "Full system access (super admin only)",
 }

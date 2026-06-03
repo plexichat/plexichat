@@ -243,6 +243,22 @@ def initialize_modules(
         except Exception as e:
             logger.error(f"Failed to start Account Reaper: {e}")
 
+        # DSAR Harvester (GDPR data export worker)
+        try:
+            from src.core.dsar import setup as dsar_setup, is_setup
+            from src.core.dsar.harvester import DSARHarvester
+
+            dsar_setup(db)
+            if is_setup():
+                harvester_config = config.get("dsar", {})
+                if harvester_config.get("enabled", True):
+                    harvester = DSARHarvester(db, harvester_config)
+                    harvester.start()
+                    modules_store["dsar_harvester"] = harvester
+                    logger.info("DSAR Harvester background worker started")
+        except Exception as e:
+            logger.error(f"Failed to start DSAR Harvester: {e}")
+
         def init_presence():
             timed_init(
                 "presence",
