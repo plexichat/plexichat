@@ -2,6 +2,8 @@
 DSAR (Data Subject Access Request) mixin - Data export route handlers.
 """
 
+from typing import Optional
+
 from fastapi import HTTPException, Depends
 from fastapi.responses import StreamingResponse
 
@@ -40,7 +42,23 @@ class DataExportMixin:
                 detail={"error": {"code": 404, "message": "User not found"}},
             )
 
-        password_hash = getattr(user, "password_hash", None)
+        # The User model's password_hash is not populated by get_user()
+        # (it is only set on specific operations like login). Query the
+        # hash directly from the database so DSAR verification works
+        # without requiring a prior login in the same process.
+        password_hash: Optional[str] = getattr(user, "password_hash", None)
+        if not password_hash:
+            db = api.get_db()
+            if db:
+                row = db.fetch_one(
+                    "SELECT password_hash FROM auth_users WHERE id = ?",
+                    (user_id,),
+                )
+                if row:
+                    password_hash = (
+                        row["password_hash"] if isinstance(row, dict) else row[0]
+                    )
+
         if not password_hash:
             raise HTTPException(
                 status_code=400,
