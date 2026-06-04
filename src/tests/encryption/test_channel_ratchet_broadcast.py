@@ -186,30 +186,51 @@ class TestLegacyEnvelopeConfigGate:
             mock_config.get = MagicMock(side_effect=RuntimeError("no config"))
             assert manager_mod._legacy_envelope_allowed() is True
 
-    def test_decrypt_message_rejects_legacy_when_disabled(self):
+    def test_decrypt_message_v1_not_gated_by_legacy_flag(self):
+        """v1/v2 envelopes must always be decryptable by the legacy
+        per-message keyring path, regardless of the ratchet-legacy
+        config flag. The flag is an operator migration policy, not a
+        read-path gate. This is a regression guard for the pre-ratchet
+        byte-for-byte preservation of the v2 path.
+        """
         from src.utils.encryption import decrypt_message
 
-        with patch("src.utils.encryption._legacy_envelope_allowed", return_value=False):
-            with pytest.raises(ValueError, match="legacy v1/v2 envelopes are disabled"):
-                decrypt_message("ENC:1:somepayload", conversation_id=1, message_id=1)
+        with patch("src.utils.encryption._get_message_encryptor") as mock_get_enc:
+            mock_enc = MagicMock()
+            mock_enc.decrypt_message = MagicMock(return_value="decrypted")
+            mock_get_enc.return_value = mock_enc
+            result = decrypt_message(
+                "ENC:1:somepayload", conversation_id=1, message_id=1
+            )
+            assert result == "decrypted"
+            mock_enc.decrypt_message.assert_called_once_with("ENC:1:somepayload", 1)
 
-    def test_decrypt_message_rejects_legacy_v2_when_disabled(self):
+    def test_decrypt_message_v2_not_gated_by_legacy_flag(self):
         from src.utils.encryption import decrypt_message
 
-        with patch("src.utils.encryption._legacy_envelope_allowed", return_value=False):
-            with pytest.raises(ValueError, match="legacy v1/v2 envelopes are disabled"):
-                decrypt_message("ENC:2:somepayload", conversation_id=1, message_id=1)
+        with patch("src.utils.encryption._get_message_encryptor") as mock_get_enc:
+            mock_enc = MagicMock()
+            mock_enc.decrypt_message = MagicMock(return_value="decrypted")
+            mock_get_enc.return_value = mock_enc
+            result = decrypt_message(
+                "ENC:2:somepayload", conversation_id=1, message_id=1
+            )
+            assert result == "decrypted"
+            mock_enc.decrypt_message.assert_called_once_with("ENC:2:somepayload", 1)
 
-    def test_decrypt_message_allows_legacy_when_enabled(self):
+    def test_decrypt_message_v1_does_not_consult_legacy_envelope_allowed(self):
+        """The legacy_envelope_allowed() gate must not be called from
+        the hot read path. The call count should be zero on a normal
+        decrypt of a v1 envelope.
+        """
         from src.utils.encryption import decrypt_message
 
-        with patch("src.utils.encryption._legacy_envelope_allowed", return_value=True):
+        with patch(
+            "src.utils.encryption.channel_ratchet.manager._legacy_envelope_allowed"
+        ) as mock_gate:
             with patch("src.utils.encryption._get_message_encryptor") as mock_get_enc:
                 mock_enc = MagicMock()
-                mock_enc.decrypt_message = MagicMock(return_value="decrypted")
+                mock_enc.decrypt_message = MagicMock(return_value="x")
                 mock_get_enc.return_value = mock_enc
-                result = decrypt_message(
-                    "ENC:1:somepayload", conversation_id=1, message_id=1
-                )
-                assert result == "decrypted"
-                mock_enc.decrypt_message.assert_called_once_with("ENC:1:somepayload", 1)
+                decrypt_message("ENC:1:blob", conversation_id=1, message_id=1)
+                mock_gate.assert_not_called()

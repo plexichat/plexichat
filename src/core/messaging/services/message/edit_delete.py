@@ -61,7 +61,15 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         content_idx = blind_index(final_content, "message_content")
 
         if self._get_config("encrypt_messages", True):
-            if self._ratchet_manager is not None and msg_row.get("conversation_id"):
+            from src.utils.encryption.channel_ratchet import (
+                ratchet_encryption_licensed,
+            )
+
+            if (
+                self._ratchet_manager is not None
+                and ratchet_encryption_licensed()
+                and msg_row.get("conversation_id")
+            ):
                 try:
                     ratchet_result = self._ratchet_manager.encrypt(
                         conversation_id=msg_row["conversation_id"],
@@ -161,7 +169,11 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         now = self._get_timestamp()
         if hard_delete:
             self._repo.hard_delete(message_id)
-            if self._ratchet_manager is not None:
+            from src.utils.encryption.channel_ratchet import (
+                ratchet_encryption_licensed,
+            )
+
+            if self._ratchet_manager is not None and ratchet_encryption_licensed():
                 try:
                     new_interval = self._ratchet_manager.split_on_delete(
                         conversation_id=msg_row["conversation_id"],

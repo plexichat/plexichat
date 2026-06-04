@@ -268,11 +268,30 @@ class MessageRepository(BaseRepository[Message]):
         if is_message_encrypted(content):
             try:
                 if content.startswith("ENC:3:"):
-                    content = decrypt_message(
-                        content,
-                        row["id"],
-                        conversation_id=row.get("conversation_id"),
+                    from src.utils.encryption.channel_ratchet import (
+                        ratchet_encryption_licensed,
                     )
+
+                    if not ratchet_encryption_licensed():
+                        from utils.logger import warning
+
+                        warning(
+                            "MessageRepository._row_to_message: encountered "
+                            "ENC:3: ratchet envelope for message %s but the "
+                            "v3 channel ratchet is not licensed on this "
+                            "instance (free tier or licence lacks "
+                            "'channel_ratchet_encryption'). Returning a "
+                            "sentinel; this is a licence-downgrade condition, "
+                            "not a key corruption error.",
+                            row.get("id"),
+                        )
+                        content = "[unsupported encryption version]"
+                    else:
+                        content = decrypt_message(
+                            content,
+                            row["id"],
+                            conversation_id=row.get("conversation_id"),
+                        )
                 else:
                     content = decrypt_message(content, row["id"])
             except Exception:
