@@ -5,9 +5,13 @@ Returns the active ratchet interval for a channel, including the
 wrapped start key, so that an authenticated client can decrypt
 historical channel content offline.
 
-The endpoint is gated by the license feature
-``channel_ratchet_encryption``. Callers without the feature receive
-``404``.
+The endpoint is a read-only state query and always returns ``200``
+with the current ratchet state for the channel. The ``enabled`` field
+in the response reflects whether the server is licensed for the
+premium ``channel_ratchet_encryption`` feature; on an unlicensed
+server the field is ``false`` and ``interval`` is ``None``. The
+encryption write path (``send``/``edit``) is what the licence gates,
+not this read.
 """
 
 from __future__ import annotations
@@ -24,18 +28,7 @@ from src.utils.encryption.channel_ratchet import (
     ChannelRatchetManager,
     RatchetInterval,
 )
-from src.utils.common_utils.utils.licensing import has_feature
-
-
-LICENSE_FEATURE = "channel_ratchet_encryption"
-
-
-def _feature_enabled() -> bool:
-    try:
-        return bool(has_feature(LICENSE_FEATURE))
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug(f"License check for {LICENSE_FEATURE} failed: {exc}")
-        return False
+from src.utils.encryption.channel_ratchet.gate import ratchet_encryption_licensed
 
 
 def _resolve_manager(db: Any) -> Optional[ChannelRatchetManager]:
@@ -68,19 +61,12 @@ async def get_channel_ratchet(
 
     The response is a JSON-safe dict with the interval id, the
     start/end message ids, the base64-wrapped ``start_key``, and
-    the context tag used for HKDF info construction.
+    the context tag used for HKDF info construction. When the
+    server is not licensed for ``channel_ratchet_encryption`` the
+    response is still ``200`` with ``enabled: false`` and
+    ``interval: None`` so clients can detect the feature flag
+    without a separate config call.
     """
-    if not _feature_enabled():
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": {
-                    "code": 404,
-                    "message": "Channel ratchet is not enabled on this server",
-                }
-            },
-        )
-
     try:
         cid = int(channel_id)
     except (TypeError, ValueError):
@@ -104,10 +90,10 @@ async def get_channel_ratchet(
 
     has_access = False
     try:
-        if servers_mod is not None and hasattr(servers_mod, "user_can_access_channel"):
-            has_access = bool(
-                servers_mod.user_can_access_channel(cid, current_user.user_id)
-            )
+        if servers_mod is not None and hasattr(servers_mod, "get_channel"):
+            channel = servers_mod.get_channel(cid, current_user.user_id)
+            if channel is not None:
+                has_access = True
     except Exception as exc:
         logger.debug(f"channel access probe failed: {exc}")
 
@@ -121,8 +107,8 @@ async def get_channel_ratchet(
 
     if not has_access:
         raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Access denied"}},
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Channel not found"}},
         )
 
     try:
@@ -130,29 +116,19 @@ async def get_channel_ratchet(
     except Exception:
         db = None
 
+    enabled = ratchet_encryption_licensed()
     manager = _resolve_manager(db)
-    if manager is None:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "error": {
-                    "code": 503,
-                    "message": "Channel ratchet is not yet initialised",
-                }
-            },
-        )
-
-    snapshot = manager.snapshot(cid)
+    snapshot = manager.snapshot(cid) if manager is not None else None
     if snapshot is None:
         return {
             "channel_id": cid,
             "interval": None,
-            "enabled": True,
+            "enabled": enabled,
         }
     return {
         "channel_id": cid,
         "interval": snapshot,
-        "enabled": True,
+        "enabled": enabled,
     }
 
 
