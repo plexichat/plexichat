@@ -95,8 +95,12 @@ class SendMixin(BaseService, MessageServiceProtocol):
         content_idx = blind_index(final_content, "message_content")
 
         ratchet_interval_id = None
+        from src.utils.encryption.channel_ratchet import (
+            ratchet_encryption_licensed,
+        )
+
         if self._get_config("encrypt_messages", True):
-            if self._ratchet_manager is not None:
+            if self._ratchet_manager is not None and ratchet_encryption_licensed():
                 ratchet_result = self._ratchet_manager.encrypt(
                     conversation_id=conversation_id,
                     message_id=msg_id,
@@ -204,7 +208,11 @@ class SendMixin(BaseService, MessageServiceProtocol):
 
         logger.debug(f"Message {msg_id} sent to conversation {conversation_id}")
 
-        if self._ratchet_manager is not None and ratchet_interval_id is not None:
+        if (
+            self._ratchet_manager is not None
+            and ratchet_interval_id is not None
+            and ratchet_encryption_licensed()
+        ):
             try:
                 new_interval = self._ratchet_manager.rotate_if_due(
                     conversation_id=conversation_id,

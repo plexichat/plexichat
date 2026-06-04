@@ -38,9 +38,7 @@ from .core import (
 from .hkdf import derive_key as _derive_key
 from .channel_ratchet import (
     ChannelRatchetManager as _ChannelRatchetManager,
-    LEGACY_WIRE_PREFIXES as _LEGACY_WIRE_PREFIXES,
     WIRE_PREFIX as _RATCHET_WIRE_PREFIX,
-    legacy_envelope_allowed as _legacy_envelope_allowed,
 )
 
 _encryption_manager: Optional[EncryptionManager] = None
@@ -429,13 +427,6 @@ def decrypt_message(
             envelope=encrypted_content,
         )
         return plaintext.decode("utf-8")
-    if encrypted_content.startswith(_LEGACY_WIRE_PREFIXES):
-        if not _legacy_envelope_allowed():
-            raise ValueError(
-                "legacy v1/v2 envelopes are disabled by configuration "
-                "(messaging.ratchet_allow_legacy_envelopes=false); "
-                "re-encrypt this message with the v3 channel ratchet"
-            )
     return _get_message_encryptor().decrypt_message(encrypted_content, message_id)
 
 
@@ -449,9 +440,7 @@ def is_message_encrypted(content: str) -> bool:
     Returns:
         bool: True if content has encryption prefix, False otherwise.
     """
-    if not content:
-        return False
-    return content.startswith("ENC:")
+    return _get_message_encryptor().is_encrypted(content)
 
 
 def is_message_key_auto_generated() -> bool:

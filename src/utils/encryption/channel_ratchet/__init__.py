@@ -69,6 +69,10 @@ from .manager import (
     EncryptedMessageV3,
     _legacy_envelope_allowed as legacy_envelope_allowed,
 )
+from .gate import (
+    LICENCE_FEATURE_NAME,
+    ratchet_encryption_licensed,
+)
 from .notify import (
     notify_ratchet_update,
     notify_ratchet_update_async,
@@ -95,5 +99,7 @@ __all__ = [
     "DEFAULT_MAX_INTERVAL_AGE_SECONDS",
     "notify_ratchet_update",
     "notify_ratchet_update_async",
+    "LICENCE_FEATURE_NAME",
+    "ratchet_encryption_licensed",
     "legacy_envelope_allowed",
 ]
