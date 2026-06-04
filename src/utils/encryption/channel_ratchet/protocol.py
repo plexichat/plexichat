@@ -10,6 +10,8 @@ intended to be instantiated on its own. The actual implementation
 lives in :class:`ChannelRatchetManager`.
 """
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol
 
 if TYPE_CHECKING:
