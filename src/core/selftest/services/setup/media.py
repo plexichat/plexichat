@@ -13,53 +13,67 @@ import utils.logger as logger
 
 from .base import SetupServiceBase
 
+_DUMMY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00"
+    b"\x01\x00\x00\x05\x00\x01\r\n\x2e\xe4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+_DUMMY_FILENAME = "test_file.png"
+_DUMMY_STORAGE_KEY = "selftest/test_file.png"
+
 
 class MediaSetupMixin(SetupServiceBase):
     """Sets up media-related test resources."""
 
     def create_dummy_test_file(self) -> None:
         try:
-            media_dir = Path.home() / ".plexichat" / "media" / "attachments"
-            media_dir.mkdir(parents=True, exist_ok=True)
-            test_file = media_dir / "test_file.png"
-            png_data = (
-                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-                b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00"
-                b"\x01\x00\x00\x05\x00\x01\r\n\x2e\xe4\x00\x00\x00\x00IEND\xaeB`\x82"
+            media_mod = api.get_media()
+            if not media_mod:
+                logger.warning(
+                    "Media module unavailable; cannot seed test_file.png for self-test"
+                )
+                return
+
+            media_mod._get_manager()._storage.store(
+                _DUMMY_PNG, _DUMMY_STORAGE_KEY, "image/png"
             )
-            test_file.write_bytes(png_data)
-            logger.debug("Created dummy test file at %s", test_file)
+            logger.debug("Stored dummy test file at storage key %s", _DUMMY_STORAGE_KEY)
 
             db_mf = api.get_db()
-            if db_mf:
-                existing_mf = db_mf.fetch_one(
-                    "SELECT id FROM media_files WHERE filename = ? AND deleted = 0",
-                    ("test_file.png",),
-                )
-                if not existing_mf:
-                    mf_id = self.ctx.data.generate_snowflake()
-                    db_mf.execute(
-                        "INSERT INTO media_files (id, filename, original_filename, content_type, size, media_type, storage_backend, storage_path, checksum, uploaded_by, uploaded_at, metadata, scan_status, scan_result, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                        (
-                            mf_id,
-                            "test_file.png",
-                            "test_file.png",
-                            "image/png",
-                            len(png_data),
-                            "image",
-                            "local",
-                            str(test_file),
-                            "test_checksum_for_selftest",
-                            self.ctx.test_user_id,
-                            int(time.time()),
-                            "{}",
-                            "clean",
-                            "{}",
-                        ),
-                    )
-                    logger.debug(
-                        f"Inserted media_files DB record for test_file.png (id={mf_id})"
-                    )
+            if not db_mf:
+                return
+
+            existing_mf = db_mf.fetch_one(
+                "SELECT id FROM media_files WHERE filename = ? AND deleted = 0",
+                (_DUMMY_FILENAME,),
+            )
+            if existing_mf:
+                return
+
+            mf_id = self.ctx.data.generate_snowflake()
+            db_mf.execute(
+                "INSERT INTO media_files (id, filename, original_filename, content_type, size, media_type, storage_backend, storage_path, checksum, uploaded_by, uploaded_at, metadata, scan_status, scan_result, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                (
+                    mf_id,
+                    _DUMMY_FILENAME,
+                    _DUMMY_FILENAME,
+                    "image/png",
+                    len(_DUMMY_PNG),
+                    "image",
+                    "local",
+                    _DUMMY_STORAGE_KEY,
+                    "test_checksum_for_selftest",
+                    self.ctx.test_user_id,
+                    int(time.time()),
+                    "{}",
+                    "clean",
+                    "{}",
+                ),
+            )
+            logger.debug(
+                f"Inserted media_files DB record for {_DUMMY_FILENAME} (id={mf_id})"
+            )
         except Exception as e:
             logger.warning(f"Failed to create dummy test file: {e}")
 
