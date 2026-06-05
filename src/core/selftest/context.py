@@ -82,4 +82,5 @@ class SelfTestContext:
         self.endpoints: Any = None
         self.ws: Any = None
         self.ratelimit: Any = None
+        self.static_client: Any = None
         self.report: Any = None
