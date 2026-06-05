@@ -24,6 +24,7 @@ from .services.discovery import RouteDiscovery
 from .services.endpoints import EndpointTester
 from .services.websocket import WebSocketTester
 from .services.ratelimit import RateLimitTester
+from .services.static_client import StaticClientTester
 from .services.report import ReportGenerator
 
 
@@ -50,6 +51,7 @@ class SelfTestRunner:
         self.endpoints = EndpointTester(self.ctx)
         self.ws = WebSocketTester(self.ctx)
         self.ratelimit = RateLimitTester(self.ctx)
+        self.static_client = StaticClientTester(self.ctx)
         self.report = ReportGenerator(self.ctx)
 
         # Expose services on context so they can call each other
@@ -60,6 +62,7 @@ class SelfTestRunner:
         self.ctx.endpoints = self.endpoints
         self.ctx.ws = self.ws
         self.ctx.ratelimit = self.ratelimit
+        self.ctx.static_client = self.static_client
         self.ctx.report = self.report
 
     def run_all(self) -> bool:
@@ -88,6 +91,9 @@ class SelfTestRunner:
 
         # 4. Rate Limit Test (early, while auth creds are fresh)
         self.ratelimit.test_rate_limits()
+
+        # 4b. Static client smoke tests (no-op when feature is disabled)
+        self.static_client.test_static_client()
 
         # 5. Execute API Tests
         excluded = set(self.ctx.config.get("excluded_endpoints", []))
