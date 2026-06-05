@@ -455,10 +455,36 @@ def _cmd_version(args: argparse.Namespace) -> None:
 
 
 def _cmd_create_config(args: argparse.Namespace) -> None:
-    config_dir = os.path.join(project_root, "config")
-    os.makedirs(config_dir, exist_ok=True)
-    config_path = os.path.join(config_dir, "config.yaml")
+    """Generate a default ``config.yaml``.
 
+    Writes to the first writable location in Plexichat's config search order:
+    ``~/.plexichat/config/config.yaml`` (preferred) and falls back to
+    ``<project_root>/config/config.yaml`` only if the home directory is
+    unavailable. If a config file already exists at the chosen location,
+    the command is a no-op and reports the existing path.
+    """
+    candidates = [
+        (str(Path.home() / ".plexichat" / "config"), "home directory"),
+        (os.path.join(project_root, "config"), "project directory"),
+    ]
+
+    target_dir: Optional[str] = None
+    target_source: Optional[str] = None
+    for candidate_dir, source in candidates:
+        try:
+            os.makedirs(candidate_dir, exist_ok=True)
+            target_dir = candidate_dir
+            target_source = source
+            break
+        except (OSError, PermissionError) as exc:
+            print(f"Cannot use {source} ({candidate_dir}): {exc}")
+            continue
+
+    if target_dir is None:
+        print("No writable config directory found. Aborting.")
+        return
+
+    config_path = os.path.join(target_dir, "config.yaml")
     if os.path.exists(config_path):
         print(f"Config file already exists at {config_path}")
         return
@@ -466,7 +492,7 @@ def _cmd_create_config(args: argparse.Namespace) -> None:
     server = PlexichatServer()
     with open(config_path, "w") as f:
         yaml.dump(server.get_default_config(), f, default_flow_style=False)
-    print(f"Created default configuration at {config_path}")
+    print(f"Created default configuration at {config_path} ({target_source})")
 
 
 def _cmd_rotate_secrets(args: argparse.Namespace) -> None:
