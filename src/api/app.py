@@ -67,6 +67,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     Returns:
         Configured FastAPI application instance.
     """
+    from contextlib import asynccontextmanager
+
     from .middleware import (
         AuthenticationMiddleware,
         setup_exception_handlers,
@@ -79,6 +81,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         logger.debug(f"CORS Origins: {config.cors_origins}")
         logger.debug(f"CORS Headers: {config.cors_allow_headers}")
 
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        from src.static_client import (
+            run_static_client_initial_install,
+            start_static_client_service,
+            stop_static_client_service,
+        )
+
+        run_static_client_initial_install()
+        await start_static_client_service()
+        try:
+            yield
+        finally:
+            await stop_static_client_service()
+
     app = FastAPI(
         title=config.title,
         description=config.description,
@@ -86,6 +103,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         docs_url=None,
         redoc_url=None,
         openapi_url=config.openapi_url,
+        lifespan=_lifespan,
     )
 
     if config.docs_url and config.openapi_url:
@@ -158,6 +176,13 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         allow_headers=config.cors_allow_headers,
         expose_headers=config.cors_expose_headers,
     )
+
+    try:
+        from src.static_client import install_static_client_middleware
+
+        install_static_client_middleware(app)
+    except Exception as e:
+        logger.warning(f"Static client middleware not installed: {e}")
 
     setup_exception_handlers(app)
 
