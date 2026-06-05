@@ -38,13 +38,13 @@ limit headers.
 ```
 ~/.plexichat/client/
 ├── current_version          # single-line file with the active version string
-├── a.1.0-57/                # unpacked dist (one directory per version)
+├── a.1.0-59/                # unpacked dist (one directory per version)
 │   ├── index.html
 │   ├── app.html
 │   ├── config.js            # written by the backend
 │   ├── favicon.svg
 │   └── ...
-└── a.1.0-58/                # newest, marked current_version
+└── a.1.0-59/                # newest, marked current_version
     └── ...
 ```
 

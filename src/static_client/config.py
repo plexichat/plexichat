@@ -98,8 +98,8 @@ class StaticClientConfig:
     serve: bool = True
     install_dir: str = ""
     source: str = "gitlab_release"
-    version_pin: str = "match_server"
-    auto_update: bool = False
+    version_pin: str = "latest"
+    auto_update: bool = True
     auto_update_min_age_seconds: int = 3600
     auto_update_check_interval_seconds: int = 3600
     git_lab: GitLabConfig = field(default_factory=GitLabConfig)
@@ -196,8 +196,8 @@ def get_static_client_config() -> StaticClientConfig:
         serve=_coerce_bool(raw.get("serve"), True),
         install_dir=_coerce_str(raw.get("install_dir"), default_install),
         source=_coerce_str(raw.get("source"), "gitlab_release"),
-        version_pin=_coerce_str(raw.get("version_pin"), "match_server"),
-        auto_update=_coerce_bool(raw.get("auto_update"), False),
+        version_pin=_coerce_str(raw.get("version_pin"), "latest"),
+        auto_update=_coerce_bool(raw.get("auto_update"), True),
         auto_update_min_age_seconds=_coerce_int(
             raw.get("auto_update_min_age_seconds"), 3600
         ),

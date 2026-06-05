@@ -37,7 +37,7 @@ If you have the repository cloned locally, you can start the stack directly:
 # using the deploy script, or create them manually.
 
 # Start the stack
-VERSION=a.1.0-57 docker compose up -d
+VERSION=a.1.0-59 docker compose up -d
 ```
 
 ## Verify
