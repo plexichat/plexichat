@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-57"
+DEFAULT_VERSION = "a.1.0-58"
 
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
@@ -353,6 +353,20 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "burst": 10,
                 "hourly_limit": 1800,
                 "daily_limit": 10000,
+            },
+            "routes": {
+                "static_client_html": {
+                    "requests": 30,
+                    "window_seconds": 60.0,
+                    "burst": 10,
+                    "hourly_limit": 600,
+                },
+                "static_client_assets": {
+                    "requests": 600,
+                    "window_seconds": 60.0,
+                    "burst": 100,
+                    "hourly_limit": 18000,
+                },
             },
             "bot_multiplier": 1.5,
             "webhook_multiplier": 1.0,
@@ -795,5 +809,57 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "enabled": True,
             "rate_limit": {"max_per_minute": 10},
             "retention_days": 30,
+        },
+        "static_client": {
+            "enabled": False,
+            "serve": True,
+            "install_dir": str(home_dir / "client"),
+            "source": "gitlab_release",
+            "version_pin": "match_server",
+            "auto_update": False,
+            "auto_update_min_age_seconds": 3600,
+            "auto_update_check_interval_seconds": 3600,
+            "git_lab": {
+                "project_id": 2,
+                "api_url": "https://gitlab.plexichat.com/api/v4",
+                "private_token_env": "PLEXICHAT_GITLAB_TOKEN",
+                "verify_tls": True,
+                "request_timeout_seconds": 30,
+            },
+            "cache_control": {
+                "hashed_assets": "public, max-age=31536000, immutable",
+                "html": "no-store, max-age=0",
+                "other": "public, max-age=300",
+            },
+            "security_headers": {
+                "x_content_type_options": "nosniff",
+                "x_frame_options": "SAMEORIGIN",
+                "referrer_policy": "strict-origin-when-cross-origin",
+                "permissions_policy": "geolocation=(), microphone=(self), camera=()",
+                "content_security_policy": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src blob:; connect-src 'self' wss:; manifest-src 'self'; frame-ancestors 'none';",
+            },
+            "rate_limit": {
+                "enabled": True,
+                "html": {"requests": 300, "window_seconds": 60, "burst": 60},
+                "assets": {"requests": 1200, "window_seconds": 60, "burst": 120},
+            },
+            "max_zip_size_bytes": 104857600,
+            "spa_routes": {
+                "/app": "app.html",
+                "/settings": "settings.html",
+                "/register": "register.html",
+                "/forgot-password": "forgot-password.html",  # pragma: allowlist secret
+                "/reset-password": "reset-password.html",  # pragma: allowlist secret
+                "/oauth-callback": "oauth-callback.html",
+                "/error": "error.html",
+                "/invite": "app.html",
+            },
+            "log_downloads": False,
+            "config_injection": {
+                "enabled": True,
+                "filename": "config.js",
+                "content": 'window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", hideServerField: true, defaultTheme: "ocean", version: "{version}" };\n',
+            },
+            "invite_redirect": True,
         },
     }

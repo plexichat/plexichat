@@ -373,6 +373,32 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
         scope=BucketType.USER,
     ),
+    "static_client:html": RateLimitConfig(
+        requests=app_config.get("rate_limiting.routes.static_client_html.requests", 30),
+        window_seconds=app_config.get(
+            "rate_limiting.routes.static_client_html.window_seconds", 60.0
+        ),
+        burst=app_config.get("rate_limiting.routes.static_client_html.burst", 10),
+        algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+        scope=BucketType.IP,
+        hourly_limit=app_config.get(
+            "rate_limiting.routes.static_client_html.hourly_limit", 600
+        ),
+    ),
+    "static_client:assets": RateLimitConfig(
+        requests=app_config.get(
+            "rate_limiting.routes.static_client_assets.requests", 600
+        ),
+        window_seconds=app_config.get(
+            "rate_limiting.routes.static_client_assets.window_seconds", 60.0
+        ),
+        burst=app_config.get("rate_limiting.routes.static_client_assets.burst", 100),
+        algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
+        scope=BucketType.IP,
+        hourly_limit=app_config.get(
+            "rate_limiting.routes.static_client_assets.hourly_limit", 18000
+        ),
+    ),
 }
 
 
