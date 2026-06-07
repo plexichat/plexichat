@@ -166,6 +166,13 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
     app.add_middleware(MaxBodySizeMiddleware)
 
+    try:
+        from src.static_client import install_static_client_middleware
+
+        install_static_client_middleware(app)
+    except Exception as e:
+        logger.warning(f"Static client middleware not installed: {e}")
+
     # CORS handles OPTIONS preflight - MUST be outermost
     # (In ASGI, last added is outermost)
     app.add_middleware(
@@ -176,13 +183,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         allow_headers=config.cors_allow_headers,
         expose_headers=config.cors_expose_headers,
     )
-
-    try:
-        from src.static_client import install_static_client_middleware
-
-        install_static_client_middleware(app)
-    except Exception as e:
-        logger.warning(f"Static client middleware not installed: {e}")
 
     setup_exception_handlers(app)
 
