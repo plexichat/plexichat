@@ -46,6 +46,11 @@ class StaticClientTester:
             ("/__nope_does_not_exist__.html", [404]),
         ]
 
+        # Initialize to satisfy type checker
+        ok = False
+        path = ""
+        resp = None
+
         for path, expected in checks:
             url = f"{self.ctx.base_url}{path}"
             try:
@@ -93,3 +98,73 @@ class StaticClientTester:
                     f"static_client GET {path} -> {resp.status_code} "
                     f"(expected one of {expected})"
                 )
+
+        # If static_client is enabled and serving, do a more thorough check:
+        # verify config.js contains valid config and fetch a few asset files
+        if ok and path == "/config.js" and resp is not None and resp.status_code == 200:
+            try:
+                self._verify_config_js(session, resp.text)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"static_client config.js verification failed: {exc}")
+
+        # Fetch a few asset files to verify the client bundle is complete
+        asset_checks = [
+            "/favicon.svg",
+        ]
+        for path in asset_checks:
+            url = f"{self.ctx.base_url}{path}"
+            try:
+                resp = session.get(url, timeout=3, allow_redirects=False)
+                ok = resp.status_code in [200, 503]
+                self.ctx.results.append(
+                    {
+                        "method": "GET",
+                        "path": path,
+                        "status_code": resp.status_code,
+                        "duration_ms": 0,
+                        "success": ok,
+                        "label": "static_client",
+                        "warning": not ok,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"static_client GET {path} failed: {exc}")
+
+    def _verify_config_js(self, session, config_js_text: str) -> None:
+        """Verify config.js contains the expected runtime configuration."""
+
+        # Check for required fields in config.js
+        required_fields = ["serverUrl", "hideServerField", "defaultTheme", "version"]
+        missing = []
+        for field in required_fields:
+            if field not in config_js_text:
+                missing.append(field)
+
+        if missing:
+            logger.warning(f"static_client config.js missing fields: {missing}")
+            self.ctx.results.append(
+                {
+                    "method": "GET",
+                    "path": "/config.js",
+                    "status_code": 200,
+                    "duration_ms": 0,
+                    "success": False,
+                    "label": "static_client",
+                    "warning": True,
+                    "error": f"config.js missing fields: {missing}",
+                }
+            )
+        else:
+            logger.info("static_client config.js verification passed")
+            self.ctx.results.append(
+                {
+                    "method": "GET",
+                    "path": "/config.js",
+                    "status_code": 200,
+                    "duration_ms": 0,
+                    "success": True,
+                    "label": "static_client",
+                    "warning": False,
+                    "detail": "config.js contains all required fields",
+                }
+            )
