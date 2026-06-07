@@ -184,6 +184,31 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         expose_headers=config.cors_expose_headers,
     )
 
+    # Explicit OPTIONS handler for local dev - catches any preflight
+    # requests that might slip through CORS middleware
+    @app.options("/{path:path}")
+    async def cors_preflight(request: Request):
+        origin = request.headers.get("origin")
+        if origin and origin in config.cors_origins:
+            return Response(
+                status_code=200,
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": ", ".join(
+                        config.cors_allow_methods
+                    ),
+                    "Access-Control-Allow-Headers": ", ".join(
+                        config.cors_allow_headers
+                    ),
+                    "Access-Control-Expose-Headers": ", ".join(
+                        config.cors_expose_headers
+                    ),
+                    "Access-Control-Max-Age": "86400",
+                },
+            )
+        return Response(status_code=400)
+
     setup_exception_handlers(app)
 
     api_router = create_api_router()
