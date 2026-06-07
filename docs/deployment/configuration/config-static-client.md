@@ -244,7 +244,7 @@ static_client:
     x_frame_options: "SAMEORIGIN"
     referrer_policy: "strict-origin-when-cross-origin"
     permissions_policy: "geolocation=(), microphone=(self), camera=()"
-    content_security_policy: "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src blob:; connect-src 'self' wss:; manifest-src 'self'; frame-ancestors 'none';"
+    content_security_policy: "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-hashes' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';"
   rate_limit:
     enabled: true
     html:   { requests: 30,  window_seconds: 60, burst: 10 }
