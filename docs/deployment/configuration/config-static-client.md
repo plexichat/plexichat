@@ -170,9 +170,19 @@ static_client:
   config_injection:
     enabled: true
     filename: "config.js"
+    public_server_url: "http://localhost:8000"
     content: |
       window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", hideServerField: true, defaultTheme: "ocean", version: "{version}" };
 ```
+
+`public_server_url` is the public-facing URL the browser should use to
+reach the API. If left empty, the server falls back to
+`http://localhost:<server.port>`. The router also overrides this on a
+per-request basis using the request's `Host` / `Origin` header, so a
+deployed instance is always reachable even if `public_server_url` was
+left at the default. In Docker, set the env var `PLEXICHAT_PUBLIC_SERVER_URL`
+(e.g. `https://chat.example.com`) and the docker-compose file will pass
+it through to the container.
 
 Disable `config_injection` if you ship your own `config.js` and don't want
 it overwritten.
@@ -253,6 +263,7 @@ static_client:
   config_injection:
     enabled: true
     filename: "config.js"
+    public_server_url: "http://localhost:8000"
     content: |
       window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", hideServerField: true, defaultTheme: "ocean", version: "{version}" };
   invite_redirect: true

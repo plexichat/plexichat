@@ -858,7 +858,8 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "config_injection": {
                 "enabled": True,
                 "filename": "config.js",
-                "content": 'window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", hideServerField: true, defaultTheme: "ocean", version: "{version}" };\n',
+                "public_server_url": "http://localhost:8000",
+                "content": 'window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", hideServerField: true, defaultTheme: "ocean", version: "{version}" };',
             },
             "invite_redirect": True,
         },

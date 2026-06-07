@@ -84,6 +84,7 @@ services:
     environment:
       PLEXICHAT_CONFIG: /app/config/docker-config.yaml
       PLEXICHAT_SMTP_PASSWORD: ${PLEXICHAT_SMTP_PASSWORD:-}
+      PLEXICHAT_PUBLIC_SERVER_URL: ${PLEXICHAT_PUBLIC_SERVER_URL:-http://localhost:8000}
       NO_STRICT_CONFIG: "false"
     volumes:
       - ./config/docker-config.yaml:/app/config/docker-config.yaml:ro

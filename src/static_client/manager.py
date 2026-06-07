@@ -8,6 +8,7 @@ runtime config.js, and exposes the on-disk install path to the router.
 
 from __future__ import annotations
 
+import re as _re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,34 @@ from .fetcher import (
 
 # Re-export InstallResult to keep callers stable
 from . import fetcher as _fetcher  # noqa: F401  (kept for back-compat)
+
+
+def _render_config_js(template: str, origin: str, version: str) -> str:
+    """Render the config.js template into a clean JS statement.
+
+    Uses ``str.format`` so the canonical ``{{origin}}`` / ``{{version}}``
+    placeholders expand to ``{origin}`` / ``{version}`` in the output
+    JS object literal. After formatting, any trailing literal backslash
+    artifacts (``\\n``, ``\\t``, trailing ``\\``) that would produce
+    "invalid escape sequence" in the browser are stripped.
+    """
+    try:
+        rendered = template.format(origin=origin, version=version)
+    except (KeyError, IndexError):
+        # Fall back to simple replacement if the template has stray braces
+        rendered = (
+            template.replace("{origin}", origin)
+            .replace("{version}", version)
+            .replace("{{", "{")
+            .replace("}}", "}")
+        )
+    # Strip trailing artifacts left over from hand-edited YAML single-
+    # quoted strings (e.g. ``;\\n`` or ``;\\t``). The literal backslash
+    # escape sequence is a 2-char trailing pair, e.g. ``\n`` is the
+    # two-character sequence backslash+n, NOT an actual newline. Strip
+    # both real whitespace and these literal escape pairs.
+    rendered = _re.sub(r"(\\[nrt0\\\'\"]|\s)+\Z", "", rendered)
+    return rendered
 
 
 @dataclass(frozen=True)
@@ -295,9 +324,26 @@ class StaticClientManager:
         """Write the runtime config.js into the freshly installed dist."""
         cfg = self._cfg.config_injection
         origin = self._detect_origin()
-        content = cfg.content.format(origin=origin, version=version)
+        content = _render_config_js(cfg.content, origin, version)
         out = target_dir / cfg.filename
         out.write_text(content, encoding="utf-8")
+
+    def render_runtime_config(self, origin: str = "") -> Optional[bytes]:
+        """Return the runtime config.js bytes for the current install.
+
+        Used by the router to serve /config.js per-request with the actual
+        request Host, so serverUrl is always correct even when the user
+        accesses the server from a different origin than the one listed in
+        cors_origins. Returns None if there is no active install.
+        """
+        if not self._cfg.enabled or not self._cfg.config_injection.enabled:
+            return None
+        version = self.current_version()
+        if not version:
+            return None
+        return _render_config_js(
+            self._cfg.config_injection.content, origin, version
+        ).encode("utf-8")
 
     def reissue_runtime_config(self) -> bool:
         """Rewrite the active install's config.js from the current template.
@@ -324,18 +370,23 @@ class StaticClientManager:
         return True
 
     def _detect_origin(self) -> str:
-        """Return a sensible ``serverUrl`` value (same-origin by default)."""
+        """Return the ``serverUrl`` value to inject into config.js.
+
+        Honours ``static_client.config_injection.public_server_url`` if it
+        is set and non-empty. Otherwise falls back to
+        ``http://localhost:<server.port>`` so the value is never empty.
+        """
         try:
-            api_cfg = _config.get("api", {}) or {}
-            origins = api_cfg.get("cors_origins", []) or []
-            if isinstance(origins, list):
-                for o in origins:
-                    if isinstance(o, str) and o.startswith(("http://", "https://")):
-                        return o
-        except RuntimeError:
+            override = (self._cfg.config_injection.public_server_url or "").strip()
+            if override:
+                return override
+        except (AttributeError, RuntimeError):
             pass
-        # Fall back to same-origin (empty string means use current page origin)
-        return ""
+        try:
+            port = int(_config.get("server.port", 8000) or 8000)
+        except (TypeError, ValueError, RuntimeError):
+            port = 8000
+        return f"http://localhost:{port}"
 
     def maybe_check(self) -> InstallResult:
         """Run :meth:`ensure_active` only if the auto-update interval has elapsed."""
