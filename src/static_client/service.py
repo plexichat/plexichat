@@ -27,6 +27,7 @@ _stop_event: Optional[asyncio.Event] = None
 async def _run_loop(manager: StaticClientManager, stop_event: asyncio.Event) -> None:
     """Run the periodic auto-update loop until *stop_event* is set."""
     interval = max(15, int(manager.config.auto_update_check_interval_seconds or 0))
+    logger.info(f"static_client: background loop interval={interval}s")
     while not stop_event.is_set():
         try:
             result = await asyncio.to_thread(manager.maybe_check)
@@ -85,6 +86,8 @@ def run_static_client_initial_install() -> None:
     """Run a synchronous ``ensure_active`` so the first request is servable.
 
     Safe to call from the startup hook. Logs and swallows all errors.
+    Also re-issues the runtime config.js so template overrides in
+    ``config.yaml`` take effect even when no new install is needed.
     """
     mgr = get_static_client_manager()
     if mgr is None or not mgr.config.enabled:
@@ -96,6 +99,11 @@ def run_static_client_initial_install() -> None:
         return
     if result.error and not result.already_current:
         logger.warning(f"static_client: initial install error: {result.error}")
+    try:
+        if mgr.reissue_runtime_config():
+            logger.info("static_client: re-issued runtime config.js for active install")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"static_client: reissue config raised: {exc}")
 
 
 __all__ = [

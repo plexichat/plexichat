@@ -27,7 +27,6 @@ import utils.logger as logger
 from src.utils.common_utils.utils.version.core import (
     Version,
     VersionStage,
-    compare_version_objects,
     format_version,
     parse_version,
 )
@@ -219,16 +218,18 @@ class GitLabReleaseClient:
                 return results
         return results
 
-    def find_release_for_version(
+    def list_release_assets_for_version(
         self, stage: VersionStage, major: int, minor: int
-    ) -> Optional[ReleaseAsset]:
-        """Find the release with the highest build for (stage, major, minor).
+    ) -> List[Tuple[Version, ReleaseAsset]]:
+        """Return all matching (version, asset) pairs sorted newest-first.
 
-        Returns ``None`` if no matching release exists.
+        The list is sorted by :func:`compare_version_objects` in descending
+        order so callers can iterate newest-to-oldest. The full list is
+        returned (not just the newest) so the manager can fall back to an
+        older release when the newest one fails the ``min_age`` check.
         """
         pattern = re.compile(_release_version_tag(stage, major, minor))
-        best: Optional[Version] = None
-        best_asset: Optional[ReleaseAsset] = None
+        results: List[Tuple[Version, ReleaseAsset]] = []
         for release in self.list_releases():
             tag = release.get("tag_name") if isinstance(release, dict) else None
             if not isinstance(tag, str) or not pattern.match(tag):
@@ -255,16 +256,39 @@ class GitLabReleaseClient:
                         sha_url = url
             if not zip_url:
                 continue
-            asset = ReleaseAsset(
-                tag_name=tag,
-                released_at=str(release.get("released_at", "") or ""),
-                zip_url=zip_url,
-                sha256_url=sha_url or "",
+            results.append(
+                (
+                    ver,
+                    ReleaseAsset(
+                        tag_name=tag,
+                        released_at=str(release.get("released_at", "") or ""),
+                        zip_url=zip_url,
+                        sha256_url=sha_url or "",
+                    ),
+                )
             )
-            if best is None or compare_version_objects(ver, best) > 0:
-                best = ver
-                best_asset = asset
-        return best_asset
+        results.sort(
+            key=lambda pair: (
+                pair[0].stage.value,
+                pair[0].major,
+                pair[0].minor,
+                pair[0].build,
+            ),
+            reverse=True,
+        )
+        return results
+
+    def find_release_for_version(
+        self, stage: VersionStage, major: int, minor: int
+    ) -> Optional[ReleaseAsset]:
+        """Find the release with the highest build for (stage, major, minor).
+
+        Returns ``None`` if no matching release exists. This is a thin
+        wrapper around :meth:`list_release_assets_for_version` kept for
+        back-compat with existing callers.
+        """
+        matches = self.list_release_assets_for_version(stage, major, minor)
+        return matches[0][1] if matches else None
 
 
 def verify_zip_with_sha256(
@@ -283,7 +307,8 @@ def download_and_verify_release(
     """Download a release zip + sha256 file and verify integrity.
 
     Returns ``(zip_path, sha256_hex)``. Files are written to a temporary
-    directory; the caller is responsible for cleanup.
+    directory; the caller is responsible for cleanup. Progress is logged
+    at start/finish for the sha, the zip, and the verification step.
     """
     tmp = Path(tempfile.mkdtemp(prefix="plexichat-client-"))
     try:
@@ -291,6 +316,7 @@ def download_and_verify_release(
         zip_path = tmp / _ZIP_NAME
 
         if asset.sha256_url:
+            logger.info(f"static_client: downloading sha256 from {asset.sha256_url}")
             with open(sha_path, "wb") as out:
                 _download_to_stream(
                     asset.sha256_url,
@@ -300,24 +326,36 @@ def download_and_verify_release(
                     max_bytes=4096,
                 )
             expected = sha_path.read_text(encoding="utf-8").strip().split()[0]
+            logger.info(
+                f"static_client: expected sha256={expected[:16]}… ({asset.tag_name})"
+            )
         else:
             expected = ""
+            logger.info("static_client: no sha256 file in release, skipping hash check")
 
+        logger.info(
+            f"static_client: downloading zip from {asset.zip_url} "
+            f"(max={max_bytes} bytes)"
+        )
         with open(zip_path, "wb") as out:
-            _download_to_stream(
+            written = _download_to_stream(
                 asset.zip_url,
                 out,
                 timeout=git_lab.request_timeout_seconds,
                 verify=git_lab.verify_tls,
                 max_bytes=max_bytes,
             )
+        logger.info(f"static_client: downloaded {written} bytes to {zip_path.name}")
 
         if expected:
+            logger.info("static_client: verifying sha256…")
             verify_zip_with_sha256(zip_path, expected)
+            logger.info(f"static_client: sha256 OK ({asset.tag_name})")
 
         actual = _hash_file(zip_path)
         return zip_path, actual
     except Exception:
+        logger.warning(f"static_client: download/verify failed; cleaning up {tmp}")
         shutil.rmtree(tmp, ignore_errors=True)
         raise
 
@@ -325,6 +363,7 @@ def download_and_verify_release(
 def install_zip_at(zip_path: Path, target: Path) -> None:
     """Safely extract *zip_path* into *target*."""
     target.mkdir(parents=True, exist_ok=True)
+    logger.info(f"static_client: extracting {zip_path.name} -> {target}")
     # Wipe existing contents to avoid stale files (e.g. removed hashed assets)
     for entry in target.iterdir():
         if entry.is_dir() and not entry.is_symlink():

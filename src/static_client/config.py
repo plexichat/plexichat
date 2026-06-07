@@ -84,9 +84,9 @@ class ConfigInjectionConfig:
     enabled: bool = True
     filename: str = "config.js"
     content: str = (
-        'window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", '
+        'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", '
         'hideServerField: true, defaultTheme: "ocean", '
-        'version: "{version}" };\n'
+        'version: "{version}" }};'
     )
 
 
@@ -271,9 +271,9 @@ def get_static_client_config() -> StaticClientConfig:
             content=_coerce_str(
                 cfg_raw.get("content"),
                 (
-                    'window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", '
+                    'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", '
                     'hideServerField: true, defaultTheme: "ocean", '
-                    'version: "{version}" };\n'
+                    'version: "{version}" }};'
                 ),
             ),
         ),

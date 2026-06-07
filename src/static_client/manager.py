@@ -94,37 +94,42 @@ class StaticClientManager:
         except (RuntimeError, ValueError):
             return None
 
+    def _candidate_releases(
+        self,
+    ) -> List[Tuple[Version, ReleaseAsset]]:
+        """Return all matching (version, asset) pairs newest-first.
+
+        Returns an empty list if the source/project is not configured or no
+        release matching the server's stage/major/minor exists yet.
+        """
+        if self._cfg.source != "gitlab_release":
+            return []
+        if self._cfg.git_lab.project_id is None:
+            logger.debug("static_client: git_lab.project_id not configured")
+            return []
+
+        server_ver = self.server_version()
+        if server_ver is None:
+            return []
+
+        client = GitLabReleaseClient(self._cfg.git_lab)
+        return client.list_release_assets_for_version(
+            server_ver.stage, server_ver.major, server_ver.minor
+        )
+
     def desired_release_target(
         self, now: Optional[float] = None
     ) -> Optional[Tuple[Version, ReleaseAsset]]:
         """Return the (version, asset) that should be served right now.
 
-        Returns ``None`` if no matching release exists yet.
+        Returns ``None`` if no matching release exists yet. Kept for
+        back-compat with callers that want the single best release; the
+        manager itself iterates the full list to honour ``min_age``.
         """
-        if self._cfg.source != "gitlab_release":
+        candidates = self._candidate_releases()
+        if not candidates:
             return None
-        if self._cfg.git_lab.project_id is None:
-            logger.debug("static_client: git_lab.project_id not configured")
-            return None
-
-        server_ver = self.server_version()
-        if server_ver is None:
-            return None
-
-        client = GitLabReleaseClient(self._cfg.git_lab)
-        asset = client.find_release_for_version(
-            server_ver.stage, server_ver.major, server_ver.minor
-        )
-        if asset is None:
-            return None
-        try:
-            parsed = parse_version(asset.tag_name)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                f"static_client: skipping release with unparsable tag {asset.tag_name!r}: {exc}"
-            )
-            return None
-        return parsed, asset
+        return candidates[0]
 
     def _should_fetch(self, asset: ReleaseAsset, parsed: Version, now: float) -> bool:
         """Return True if the release passes the min-age check."""
@@ -148,6 +153,13 @@ class StaticClientManager:
 
         Idempotent: returns ``already_current=True`` if nothing to do.
         Does nothing if ``enabled`` is False.
+
+        When ``auto_update_min_age_seconds`` is set and the newest matching
+        release is younger than that window, the manager walks down the
+        list of matching releases and picks the newest one that BOTH is
+        newer than the currently installed version AND passes min_age.
+        Only if every newer release fails min_age does it return
+        ``error="below_min_age"`` and keep the current install.
         """
         if not self._cfg.enabled:
             return InstallResult(
@@ -157,7 +169,7 @@ class StaticClientManager:
             )
 
         try:
-            target = self.desired_release_target()
+            candidates = self._candidate_releases()
         except FetchError as exc:
             return InstallResult(
                 installed_version=self.current_version(),
@@ -165,46 +177,77 @@ class StaticClientManager:
                 error=f"resolve: {exc}",
             )
 
-        if target is None:
+        if not candidates:
             return InstallResult(
                 installed_version=self.current_version(),
                 already_current=True,
                 error="no_matching_release",
             )
 
-        parsed, asset = target
         current = self.current_version()
-
+        current_parsed: Optional[Version] = None
         if current is not None:
             try:
-                if compare_version_objects(parsed, parse_version(current)) <= 0:
+                current_parsed = parse_version(current)
+            except Exception:  # noqa: BLE001
+                current_parsed = None
+
+        logger.info(
+            f"static_client: ensure_active: current={current or '(none)'} "
+            f"candidates={[format_release_tag(p) for p, _ in candidates[:5]]}"
+            f"{'…' if len(candidates) > 5 else ''}"
+        )
+
+        now = time.time()
+        for parsed, asset in candidates:
+            if current_parsed is not None:
+                try:
+                    cmp = compare_version_objects(parsed, current_parsed)
+                except Exception:  # noqa: BLE001
+                    cmp = 1
+                if cmp < 0:
+                    continue
+                if cmp == 0:
+                    logger.info(
+                        f"static_client: already on {format_release_tag(parsed)}; no action"
+                    )
                     return InstallResult(
                         installed_version=current,
                         already_current=True,
                     )
-            except Exception:  # noqa: BLE001
-                pass  # fall through and reinstall
 
-        if not self._should_fetch(asset, parsed, time.time()):
-            return InstallResult(
-                installed_version=current,
-                already_current=True,
-                error="below_min_age",
+            if self._should_fetch(asset, parsed, now):
+                logger.info(
+                    f"static_client: selecting {format_release_tag(parsed)} "
+                    f"for install (current={current or '(none)'})"
+                )
+                return self._fetch_and_install(parsed, asset)
+
+            logger.info(
+                f"static_client: release {format_release_tag(parsed)} below "
+                f"min_age; trying next-older release"
             )
 
-        return self._fetch_and_install(parsed, asset)
+        return InstallResult(
+            installed_version=current,
+            already_current=True,
+            error="below_min_age",
+        )
 
     def _fetch_and_install(self, parsed: Version, asset: ReleaseAsset) -> InstallResult:
         target_dir = self._install_dir / format_release_tag(parsed)
+        tag = format_release_tag(parsed)
+        logger.info(
+            f"static_client: starting install of {tag} "
+            f"(released={asset.released_at or 'unknown'}) into {target_dir}"
+        )
         try:
             zip_path, _sha = download_and_verify_release(
                 asset, self._cfg.git_lab, self._cfg.max_zip_size_bytes
             )
             install_zip_at(zip_path, target_dir)
         except FetchError as exc:
-            logger.warning(
-                f"static_client: failed to install {format_release_tag(parsed)}: {exc}"
-            )
+            logger.warning(f"static_client: failed to install {tag}: {exc}")
             return InstallResult(
                 installed_version=self.current_version(),
                 already_current=True,
@@ -212,7 +255,7 @@ class StaticClientManager:
             )
         except Exception as exc:  # noqa: BLE001
             logger.error(
-                f"static_client: unexpected error installing {format_release_tag(parsed)}: {exc}",
+                f"static_client: unexpected error installing {tag}: {exc}",
                 exc_info=True,
             )
             return InstallResult(
@@ -223,21 +266,28 @@ class StaticClientManager:
 
         if self._cfg.config_injection.enabled:
             try:
-                self._write_runtime_config(target_dir, format_release_tag(parsed))
+                logger.info(
+                    f"static_client: writing runtime config.js ({self._cfg.config_injection.filename})"
+                )
+                self._write_runtime_config(target_dir, tag)
             except OSError as exc:
                 logger.warning(f"static_client: failed to write config.js: {exc}")
 
-        write_current_version(self._install_dir, format_release_tag(parsed))
-        prune_old_versions(self._install_dir, keep=[format_release_tag(parsed)])
-        self._last_installed = format_release_tag(parsed)
+        write_current_version(self._install_dir, tag)
+        pruned = prune_old_versions(self._install_dir, keep=[tag])
+        if pruned:
+            logger.info(
+                f"static_client: pruned {len(pruned)} old version(s): {', '.join(pruned)}"
+            )
+        self._last_installed = tag
         self._last_check = time.time()
 
-        if self._cfg.log_downloads:
-            logger.info(
-                f"static_client: installed {format_release_tag(parsed)} -> {target_dir}"
-            )
+        logger.info(
+            f"static_client: installed {tag} -> {target_dir} "
+            f"({sum(1 for _ in target_dir.rglob('*') if _.is_file())} files)"
+        )
         return InstallResult(
-            installed_version=format_release_tag(parsed),
+            installed_version=tag,
             already_current=False,
         )
 
@@ -248,6 +298,30 @@ class StaticClientManager:
         content = cfg.content.format(origin=origin, version=version)
         out = target_dir / cfg.filename
         out.write_text(content, encoding="utf-8")
+
+    def reissue_runtime_config(self) -> bool:
+        """Rewrite the active install's config.js from the current template.
+
+        Idempotent and safe to call on every server startup so runtime
+        config changes (e.g. ``static_client.config_injection.content``
+        overrides) take effect even when the installed version is
+        already current and no new install is triggered. Returns True
+        on a successful write, False otherwise.
+        """
+        if not self._cfg.enabled or not self._cfg.config_injection.enabled:
+            return False
+        version = self.current_version()
+        if not version:
+            return False
+        target_dir = self._install_dir / version
+        if not target_dir.is_dir():
+            return False
+        try:
+            self._write_runtime_config(target_dir, version)
+        except OSError as exc:
+            logger.warning(f"static_client: reissue config.js failed: {exc}")
+            return False
+        return True
 
     def _detect_origin(self) -> str:
         """Return a sensible ``serverUrl`` value (same-origin by default)."""
