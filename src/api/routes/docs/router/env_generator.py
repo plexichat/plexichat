@@ -111,6 +111,11 @@ S3_SECRET_KEY=${generateSecureHex(24)}
 S3_ENDPOINT=http://minio:9000
 S3_PUBLIC_URL=
 
+# Public URL the web client should use to reach the API. If left empty
+# the server falls back to http://localhost:<server.port>. Set this in
+# any non-local deployment, e.g. https://chat.example.com
+PLEXICHAT_PUBLIC_SERVER_URL=http://localhost:8000
+
 PLEXICHAT_SYSTEM_KEY=${generateSecureHex(32)}
 PLEXICHAT_MESSAGE_KEY=${generateSecureHex(32)}
 PLEXICHAT_MEDIA_KEY=${generateSecureHex(32)}

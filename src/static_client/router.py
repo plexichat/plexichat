@@ -458,6 +458,13 @@ class StaticClientMiddleware:
             await self._send_placeholder(send, outcome)
             return
 
+        # /config.js is generated per-request so serverUrl reflects the
+        # request's actual origin (Host / Origin header) rather than the
+        # value baked into the on-disk file at install time.
+        if Path(decoded).name == self._cfg.config_injection.filename:
+            await self._send_runtime_config(send, scope, outcome)
+            return
+
         resolved = self._resolve(install_path, decoded)
         if resolved is None:
             await self._send_not_found(send)
@@ -585,6 +592,86 @@ class StaticClientMiddleware:
                     return v.decode("latin-1", errors="replace")
                 return str(v)
         return None
+
+    @staticmethod
+    def _request_origin(scope: Scope) -> str:
+        """Return a public origin for this request, e.g. ``http://chat.example.com``.
+
+        Uses the ``Origin`` header if present, then falls back to the
+        ``Host`` header combined with the scheme. Returns ``""`` if no
+        host info is available.
+        """
+        # 1) Origin header (most reliable for cross-origin requests)
+        origin = StaticClientMiddleware._extract_origin_header(scope)
+        if origin:
+            return origin
+        # 2) Host header (typical for same-origin browser requests)
+        for k, v in scope.get("headers", []):
+            if isinstance(k, (bytes, bytearray)) and k.lower() == b"host":
+                if isinstance(v, bytes):
+                    host_value = v.decode("latin-1", errors="replace")
+                else:
+                    host_value = str(v)
+                if host_value:
+                    scheme = scope.get("scheme", "http")
+                    return f"{scheme}://{host_value}"
+        return ""
+
+    async def _send_runtime_config(
+        self,
+        send: Send,
+        scope: Scope,
+        rate_limit_outcome: Optional["_RateLimitOutcome"] = None,
+    ) -> None:
+        """Send /config.js with the request's actual origin.
+
+        Generated dynamically so ``serverUrl`` reflects the Host/Origin
+        the user actually came in from, not a value baked into the
+        on-disk install at config-time.
+        """
+        try:
+            version = self._mgr.current_version() or ""
+        except Exception:
+            version = ""
+        if not version:
+            await self._send_not_found(send)
+            return
+        from .manager import _render_config_js
+
+        request_origin = self._request_origin(scope)
+        # Honour the explicit public_server_url override; only fall back
+        # to the request origin if it is non-empty.
+        configured = (self._cfg.config_injection.public_server_url or "").strip()
+        if configured:
+            origin = configured
+        elif request_origin:
+            origin = request_origin
+        else:
+            origin = self._mgr._detect_origin()
+        body = _render_config_js(
+            self._cfg.config_injection.content, origin, version
+        ).encode("utf-8")
+        rl_headers = (
+            rate_limit_outcome.headers if rate_limit_outcome is not None else ()
+        )
+        sec = self._cfg.security_headers
+        headers: List[Tuple[bytes, bytes]] = [
+            (b"content-type", b"application/javascript; charset=utf-8"),
+            (b"content-length", str(len(body)).encode()),
+            (
+                b"cache-control",
+                self._cfg.cache_control.html.encode(),
+            ),
+            (b"x-content-type-options", sec.x_content_type_options.encode()),
+            (b"x-frame-options", sec.x_frame_options.encode()),
+            (b"referrer-policy", sec.referrer_policy.encode()),
+            (b"permissions-policy", sec.permissions_policy.encode()),
+            (b"content-security-policy", sec.content_security_policy.encode()),
+        ]
+        for hk, hv in rl_headers:
+            headers.append((hk, hv))
+        await send({"type": "http.response.start", "status": 200, "headers": headers})
+        await send({"type": "http.response.body", "body": body, "more_body": False})
 
     async def _send_file(
         self,

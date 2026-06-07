@@ -83,6 +83,7 @@ class ConfigInjectionConfig:
 
     enabled: bool = True
     filename: str = "config.js"
+    public_server_url: str = "http://localhost:8000"
     content: str = (
         'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", '
         'hideServerField: true, defaultTheme: "ocean", '
@@ -191,6 +192,12 @@ def get_static_client_config() -> StaticClientConfig:
                 prefix = k if k.startswith("/") else f"/{k}"
                 spa_routes[prefix] = v
 
+    # Env-var override for the public server URL injected into config.js.
+    # PLEXICHAT_PUBLIC_SERVER_URL=http://chat.example.com  -> use that
+    # PLEXICHAT_PUBLIC_SERVER_URL= (empty)                -> fall back to
+    #                                                        the default
+    env_public = os.environ.get("PLEXICHAT_PUBLIC_SERVER_URL")
+
     return StaticClientConfig(
         enabled=_coerce_bool(raw.get("enabled"), False),
         serve=_coerce_bool(raw.get("serve"), True),
@@ -268,6 +275,12 @@ def get_static_client_config() -> StaticClientConfig:
         config_injection=ConfigInjectionConfig(
             enabled=_coerce_bool(cfg_raw.get("enabled"), True),
             filename=_coerce_str(cfg_raw.get("filename"), "config.js"),
+            public_server_url=_coerce_str(
+                env_public
+                if env_public is not None
+                else cfg_raw.get("public_server_url"),
+                "http://localhost:8000",
+            ),
             content=_coerce_str(
                 cfg_raw.get("content"),
                 (
