@@ -58,6 +58,7 @@ class APIConfig:
             "ETag",
         ]
     )
+    access_token_required: bool = False
     docs_url: Optional[str] = "/docs"
     redoc_url: Optional[str] = "/redoc"
     openapi_url: Optional[str] = "/openapi.json"
@@ -161,6 +162,7 @@ def get_api_config() -> APIConfig:
         cors_allow_methods=cors_methods,
         cors_allow_headers=cors_headers,
         cors_expose_headers=cors_expose_headers,
+        access_token_required=api_conf.get("access_token_required", False),
         docs_url=api_conf.get("docs_url", "/docs"),
         redoc_url=api_conf.get("redoc_url", "/redoc"),
         openapi_url=api_conf.get("openapi_url", "/openapi.json"),

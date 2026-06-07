@@ -474,6 +474,14 @@ class ApiTokenMixin(AuthManagerProtocol):
     @cached(ttl=30, prefix="access_token_required")
     def is_api_access_token_required(self) -> bool:
         try:
+            from src.api.config import get_api_config
+
+            api_cfg = get_api_config()
+            if not api_cfg.access_token_required:
+                return False
+        except Exception:
+            pass
+        try:
             now = self._get_timestamp()
             row = self._db.fetch_one(
                 """SELECT id FROM auth_api_access_tokens
