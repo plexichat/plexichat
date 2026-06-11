@@ -198,6 +198,12 @@ class DataGenerator:
             val = "csv"
         elif "deletion_at" in name_low:
             val = str(int(time.time()) + 86400)
+        elif "connection" in name_low and "plexijoin" in path:
+            val = str(self.ctx.test_plexijoin_connection_id or _gen_snowflake())
+        elif "request" in name_low and "plexijoin" in path and "deny" in path:
+            val = str(self.ctx.test_plexijoin_deny_request_id or _gen_snowflake())
+        elif "request" in name_low and "plexijoin" in path:
+            val = str(self.ctx.test_plexijoin_request_id or _gen_snowflake())
         elif (
             "id" in name_low
             or name_low.endswith("_id")
@@ -304,13 +310,9 @@ class DataGenerator:
                 body.pop("email", None)
                 body.pop("password", None)
 
-            if "auth/2fa" in path:
+            if "auth/2fa/enable" in path:
                 if "password" in body:
                     body["password"] = test_pass
-                if "code" in body:
-                    body["code"] = "123456"
-                if "challenge_token" in body:
-                    body["challenge_token"] = "test_challenge"
 
             if "users/@me/channels" in path and method == "POST":
                 if self.ctx.test_other_user_id:
@@ -561,8 +563,9 @@ class DataGenerator:
                 body["forced"] = True
 
             if "plexijoin/connections" in path and method == "POST":
+                uniq = secrets.token_hex(4)
                 body = {
-                    "remote_instance_id": "test-instance",
+                    "remote_instance_id": f"test-instance-{uniq}",
                     "remote_url": "https://test.example.com",
                     "shared_key": "test_shared_key_32_chars_long_here!",
                 }

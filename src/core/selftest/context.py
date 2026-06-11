@@ -63,6 +63,9 @@ class SelfTestContext:
         self.test_thread_id: Optional[int] = None
         self.test_dsar_id: Optional[int] = None
         self.test_log_filename: Optional[str] = None
+        self.test_plexijoin_connection_id: Optional[int] = None
+        self.test_plexijoin_request_id: Optional[int] = None
+        self.test_plexijoin_deny_request_id: Optional[int] = None
 
         self.results: List[Dict[str, Any]] = []
         self.start_time = 0.0
@@ -83,4 +86,5 @@ class SelfTestContext:
         self.ws: Any = None
         self.ratelimit: Any = None
         self.static_client: Any = None
+        self.docs: Any = None
         self.report: Any = None

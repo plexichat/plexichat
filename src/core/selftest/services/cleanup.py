@@ -31,7 +31,7 @@ class CleanupService:
 
             db.begin_transaction()
 
-            for tbl in ["media_upload_sessions"]:
+            for tbl in ["media_upload_sessions", "plexijoin_traffic_log"]:
                 try:
                     db.execute(f"DELETE FROM {tbl}")
                 except Exception:
@@ -57,6 +57,9 @@ class CleanupService:
                 "admin_role_assignments",
                 "admin_approvals",
                 "username_blacklist",
+                "plexijoin_connections",
+                "plexijoin_inbound_requests",
+                "plexijoin_traffic_log",
             ]
             for tbl in truncate_tables:
                 try:
@@ -353,11 +356,11 @@ class CleanupService:
         if self.ctx.test_poll_id:
             resources.append(("DELETE", f"/api/v1/polls/{self.ctx.test_poll_id}"))
 
-        if self.ctx.test_automod_rule_id:
+        if self.ctx.test_automod_rule_id and self.ctx.test_server_id:
             resources.append(
                 (
                     "DELETE",
-                    f"/api/v1/automod/rules/{self.ctx.test_automod_rule_id}",
+                    f"/api/v1/servers/{self.ctx.test_server_id}/automod/rules/{self.ctx.test_automod_rule_id}",
                 )
             )
 
@@ -369,8 +372,9 @@ class CleanupService:
                 )
             )
 
-        if self.ctx.test_thread_id:
-            resources.append(("DELETE", f"/api/v1/threads/{self.ctx.test_thread_id}"))
+        # No DELETE endpoint for threads in API; core has delete_thread() but not exposed
+        # if self.ctx.test_thread_id:
+        #     resources.append(("DELETE", f"/api/v1/threads/{self.ctx.test_thread_id}"))
 
         if self.ctx.test_channel_id:
             resources.append(("DELETE", f"/api/v1/channels/{self.ctx.test_channel_id}"))
