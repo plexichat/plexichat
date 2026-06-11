@@ -1417,6 +1417,7 @@ async function loadLicense() {
         const info = document.getElementById('license-info');
         info.classList.remove('hidden');
         const valid = status.valid || false;
+        const fg = features.features || features;
         info.innerHTML = `
             <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
                 <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Status</span></div><div class="stat-card-value" style="font-size:16px;"><span class="badge ${valid ? 'badge-success' : 'badge-danger'}">${valid ? 'Valid' : 'Invalid'}</span></div></div>
@@ -1427,12 +1428,25 @@ async function loadLicense() {
                 <div class="card-header"><span class="card-title">Features</span></div>
                 <div class="card-content">
                     <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
-                        ${Object.entries(features||{}).map(([k,v]) => `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px;background:var(--secondary);border-radius:6px;"><span>${esc(k)}</span><span class="badge ${v ? 'badge-success' : 'badge-danger'}">${v ? 'Enabled' : 'Disabled'}</span></div>`).join('')}
+                        ${Object.entries(fg||{}).map(([k,v]) => {
+                            const val = v?.enabled ?? v;
+                            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px;background:var(--secondary);border-radius:6px;"><span>'+esc(k)+'</span><span class="badge '+(val ? 'badge-success' : 'badge-danger')+'">'+(val ? 'Enabled' : 'Disabled')+'</span></div>';
+                        }).join('')}
                     </div>
                 </div>
             </div>
-            <div style="margin-top:16px;display:flex;gap:8px;">
-                <button class="btn btn-primary btn-sm" data-click="reloadLicense">Reload License</button>
+            <div class="card" style="margin-top:16px;">
+                <div class="card-header"><span class="card-title">Apply New License</span></div>
+                <div class="card-content">
+                    <div style="margin-bottom:8px;">
+                        <textarea id="license-apply-input" placeholder="Paste base64-encoded license key here..." style="width:100%;min-height:80px;font-family:monospace;font-size:13px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--secondary);color:var(--text);resize:vertical;"></textarea>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn btn-primary btn-sm" data-click="applyLicense">Apply License</button>
+                        <button class="btn btn-outline btn-sm" data-click="reloadLicense">Reload from Disk</button>
+                    </div>
+                    <div id="license-diff" class="hidden" style="margin-top:12px;"></div>
+                </div>
             </div>`;
     } catch(e) { document.getElementById('license-loading').textContent = 'Failed to load license info'; }
 }
@@ -1440,6 +1454,58 @@ async function loadLicense() {
 async function reloadLicense() {
     try { await api('/api/v1/admin/license/reload', {method:'POST'}); alert('License reloaded'); loadLicense(); } catch(e) { alert('Failed'); }
 }
+
+async function applyLicense() {
+    const input = document.getElementById('license-apply-input');
+    const key = input?.value?.trim();
+    if (!key) { alert('Paste a license key first'); return; }
+    const diffEl = document.getElementById('license-diff');
+    try {
+        const resp = await api('/api/v1/admin/license/apply', {
+            method:'POST',
+            body:JSON.stringify({license_key: key})
+        });
+        if (resp.applied && resp.before && resp.after) {
+            let html = '<div class="card" style="border:1px solid var(--success);"><div class="card-header"><span class="card-title" style="color:var(--success);">License Applied — Changes</span></div><div class="card-content"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+            html += '<tr style="border-bottom:1px solid var(--border);"><th style="padding:6px 8px;text-align:left;">Field</th><th style="padding:6px 8px;text-align:left;">Before</th><th style="padding:6px 8px;text-align:left;">After</th></tr>';
+            const rows = [
+                ['Instance ID', resp.before.instance_id || '(none)', resp.after.instance_id],
+                ['Valid', String(resp.before.valid), String(resp.after.valid)],
+                ['Free Tier', String(resp.before.free_tier), String(resp.after.free_tier)],
+                ['Expiry', 'N/A', resp.after.expiry ? new Date(resp.after.expiry*1000).toISOString().slice(0,10) : 'Perpetual'],
+            ];
+            if (resp.after.features) {
+                Object.entries(resp.after.features).forEach(([k,v]) => {
+                    rows.push(['Feature: '+esc(k), '?', typeof v === 'object' ? JSON.stringify(v) : String(v)]);
+                });
+            }
+            if (resp.after.limits) {
+                Object.entries(resp.after.limits).forEach(([k,v]) => {
+                    rows.push(['Limit: '+esc(k), 'N/A', String(v)]);
+                });
+            }
+            rows.forEach(([label, beforeVal, afterVal]) => {
+                html += '<tr style="border-bottom:1px solid var(--border);">';
+                html += '<td style="padding:6px 8px;font-weight:600;">'+esc(label)+'</td>';
+                html += '<td style="padding:6px 8px;">'+esc(beforeVal)+'</td>';
+                const changed = afterVal !== beforeVal && !(beforeVal === '(none)' && afterVal);
+                html += '<td style="padding:6px 8px;'+ (changed ? 'color:var(--success);font-weight:600;' : '') +'">'+esc(afterVal)+'</td>';
+                html += '</tr>';
+            });
+            html += '</table></div></div>';
+            diffEl.innerHTML = html;
+            diffEl.classList.remove('hidden');
+            input.value = '';
+            loadLicense();
+        } else {
+            diffEl.innerHTML = '<div class="text-muted">'+esc(resp.message||'License not applied')+'</div>';
+            diffEl.classList.remove('hidden');
+        }
+    } catch(e) {
+        alert('Failed to apply license: '+(e.message||e));
+    }
+}
+
 
 // === ACCOUNT ===
 async function loadAccount() {

@@ -100,7 +100,8 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
                 user_info["user_id"] = admin_id
 
     # Secure bypass check — requires non-empty bypass_secret.
-    bypass_secret = config.get("rate_limiting.bypass_secret")
+    rl_config = config.get("rate_limiting", {})
+    bypass_secret = rl_config.get("bypass_secret")
     if bypass_secret:
         bypass_header = request.headers.get("X-RateLimit-Bypass")
         if bypass_header and hmac.compare_digest(bypass_header, bypass_secret):
