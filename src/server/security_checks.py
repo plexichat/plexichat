@@ -54,3 +54,18 @@ def _check_security_keys() -> None:
             "Please update these values in your config file for production use."
         )
         logger.warning("=" * 60)
+
+        import os
+
+        env_type = config.get("application.environment", "development")
+        is_pipeline = (
+            os.getenv("CI") is not None
+            or os.getenv("GITLAB_CI") is not None
+            or config.get("selftest.enabled", False)
+            or os.getenv("PLEXICHAT_SELF_TEST") is not None
+        )
+
+        if env_type == "production" and not is_pipeline:
+            raise ValueError(
+                f"Production boot aborted due to insecure security keys/passwords: {', '.join(warnings)}"
+            )

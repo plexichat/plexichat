@@ -17,7 +17,6 @@ split on hard-delete with broadcast).
 import base64
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from src.utils.encryption.channel_ratchet.gate import (
     LICENCE_FEATURE_NAME,
@@ -291,7 +290,6 @@ class TestReadLicenceGate:
         """
         from src.core.messaging.repositories.message import MessageRepository
 
-        repo = MessageRepository.__new__(MessageRepository)
         row = {
             "id": 1,
             "conversation_id": 7,
@@ -307,8 +305,6 @@ class TestReadLicenceGate:
             with patch(
                 "src.core.messaging.repositories.message.decrypt_message"
             ) as mock_dm:
-                # We don't have a real Message instance to return;
-                # patch the model factory used by the repo.
                 with patch.object(MessageRepository, "row_to_model") as m:
                     m.return_value = MagicMock(
                         content="[unsupported encryption version]"
@@ -322,9 +318,6 @@ class TestReadLicenceGate:
         """A v3 envelope read on a licensed install must call the
         ratchet decrypt path with the right kwargs.
         """
-        from src.core.messaging.repositories.message import MessageRepository
-
-        repo = MessageRepository.__new__(MessageRepository)
         row = {
             "id": 1,
             "conversation_id": 7,
