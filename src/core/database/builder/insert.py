@@ -55,3 +55,51 @@ class InsertQuery(TableQuery):
             raise ValidationModelError(f"Validation failed: {str(e)}")
 
         return self
+
+    def execute(self) -> int:
+        """Execute the INSERT query and return the last inserted row ID.
+
+        For SQLite, returns cursor.lastrowid. For PostgreSQL, returns 1 (row count)
+        since lastrowid is not directly available without RETURNING clause.
+        """
+        sql, params = self.build()
+
+        sanitized_params = [p.value if isinstance(p, Parameter) else p for p in params]
+        logger.debug(f"Executing INSERT: {sql} with params: {sanitized_params}")
+
+        try:
+            if self.db_type == "sqlite":
+                cursor = self.connection.cursor()
+                param_values = [
+                    p.value if isinstance(p, Parameter) else p for p in params
+                ]
+                cursor.execute(sql, param_values)
+                self.connection.commit()
+                lastrowid = cursor.lastrowid
+                cursor.close()
+                logger.debug(f"INSERT returned lastrowid: {lastrowid}")
+                return lastrowid
+            else:  # postgres
+                cursor = self.connection.cursor()
+                try:
+                    param_values = [
+                        p.value if isinstance(p, Parameter) else p for p in params
+                    ]
+                    from .. import dialect
+
+                    pg_sql = dialect.convert_placeholders(sql, self.db_type)
+                    cursor.execute(pg_sql, param_values)
+                    self.connection.commit()
+                    row_count = cursor.rowcount
+                    cursor.close()
+                    logger.debug(f"INSERT affected {row_count} rows")
+                    return row_count
+                finally:
+                    cursor.close()
+        except Exception as e:
+            logger.error(f"INSERT execution failed: {str(e)}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            raise

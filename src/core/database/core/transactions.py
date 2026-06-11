@@ -50,6 +50,14 @@ class DatabaseTransactionMixin:
         cursor.execute(f"SAVEPOINT sp_{self.transaction_depth}")
         cursor.close()
 
+    def _is_no_transaction(self, e: Exception) -> bool:
+        err_str = str(e).lower()
+        return (
+            "cannot commit" in err_str
+            or "cannot rollback" in err_str
+            or "no transaction" in err_str
+        )
+
     def commit(self) -> None:
         self._invalidate_query_cache()
         conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
@@ -73,7 +81,14 @@ class DatabaseTransactionMixin:
 
         if self.transaction_depth == 1:
             if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
-                conn.execute("COMMIT")
+                try:
+                    conn.execute("COMMIT")
+                except Exception as e:
+                    if self._is_no_transaction(e):
+                        self.transaction_depth = 0
+                        self.in_transaction = False
+                        return
+                    raise
             else:
                 conn.commit()
             self.transaction_depth = 0
@@ -96,7 +111,14 @@ class DatabaseTransactionMixin:
                 return
 
             if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
-                conn.execute("ROLLBACK")
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception as e:
+                    if self._is_no_transaction(e):
+                        self.transaction_depth = 0
+                        self.in_transaction = False
+                        return
+                    raise
             else:
                 conn.rollback()
             self.transaction_depth = 0

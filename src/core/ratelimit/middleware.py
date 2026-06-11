@@ -173,7 +173,8 @@ class RateLimitMiddlewareASGI:
                 ) or permissions.get("*", False)
 
             # Bypass check (constant-time comparison to prevent timing attacks)
-            bypass_secret = config.get("rate_limiting.bypass_secret")
+            rl_config = config.get("rate_limiting", {})
+            bypass_secret = rl_config.get("bypass_secret")
             bypass_header = request.headers.get("X-RateLimit-Bypass")
 
             import hmac

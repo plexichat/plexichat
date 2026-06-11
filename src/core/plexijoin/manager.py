@@ -8,6 +8,8 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from src.core.admin.logging import AdminLogEntry
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,32 +96,39 @@ class PlexiJoinManager:
         now_ms = int(time.time() * 1000)
         encrypted_key = self._encrypt_key(shared_key)
 
-        result = self.db.table("plexijoin_connections").insert(
-            {
-                "remote_instance_id": remote_instance_id,
-                "remote_url": remote_url,
-                "shared_key_encrypted": encrypted_key,
-                "status": "pending",
-                "note": note,
-                "created_at": now_ms,
-                "created_by": admin_id,
-            }
+        row_id = (
+            self.db.table("plexijoin_connections")
+            .insert(
+                {
+                    "remote_instance_id": remote_instance_id,
+                    "remote_url": remote_url,
+                    "shared_key_encrypted": encrypted_key,
+                    "status": "pending",
+                    "note": note,
+                    "created_at": now_ms,
+                    "created_by": admin_id,
+                }
+            )
+            .execute()
         )
 
         connection = self.db.fetch_one(
             "SELECT * FROM plexijoin_connections WHERE id = ?",
-            (result.lastrowid,),
+            (row_id,),
         )
 
         if self.admin_logger:
-            self.admin_logger.log(
-                admin_id=admin_id,
-                action="plexijoin.create",
-                target_type="connection",
-                target_id=result.lastrowid,
-                details=f"Created connection to {remote_instance_id}",
-                ip_address=ip_address,
-                user_agent=user_agent,
+            self.admin_logger.log_action(
+                self.db,
+                AdminLogEntry(
+                    admin_id=admin_id,
+                    action="plexijoin.create",
+                    target_type="connection",
+                    target_id=row_id,
+                    details=f"Created connection to {remote_instance_id}",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                ),
             )
 
         return connection
@@ -142,14 +151,17 @@ class PlexiJoinManager:
         )
 
         if self.admin_logger:
-            self.admin_logger.log(
-                admin_id=admin_id,
-                action="plexijoin.delete",
-                target_type="connection",
-                target_id=connection_id,
-                details=f"Deleted connection to {connection['remote_instance_id']}",
-                ip_address=ip_address,
-                user_agent=user_agent,
+            self.admin_logger.log_action(
+                self.db,
+                AdminLogEntry(
+                    admin_id=admin_id,
+                    action="plexijoin.delete",
+                    target_type="connection",
+                    target_id=connection_id,
+                    details=f"Deleted connection to {connection['remote_instance_id']}",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                ),
             )
 
         return True
@@ -248,14 +260,17 @@ class PlexiJoinManager:
         )
 
         if self.admin_logger:
-            self.admin_logger.log(
-                admin_id=admin_id,
-                action="plexijoin.approve_request",
-                target_type="inbound_request",
-                target_id=request_id,
-                details=f"Approved request from {request['remote_instance_id']}",
-                ip_address=ip_address,
-                user_agent=user_agent,
+            self.admin_logger.log_action(
+                self.db,
+                AdminLogEntry(
+                    admin_id=admin_id,
+                    action="plexijoin.approve_request",
+                    target_type="inbound_request",
+                    target_id=request_id,
+                    details=f"Approved request from {request['remote_instance_id']}",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                ),
             )
 
         return request
@@ -287,14 +302,17 @@ class PlexiJoinManager:
         )
 
         if self.admin_logger:
-            self.admin_logger.log(
-                admin_id=admin_id,
-                action="plexijoin.deny_request",
-                target_type="inbound_request",
-                target_id=request_id,
-                details=f"Denied request from {request['remote_instance_id']}",
-                ip_address=ip_address,
-                user_agent=user_agent,
+            self.admin_logger.log_action(
+                self.db,
+                AdminLogEntry(
+                    admin_id=admin_id,
+                    action="plexijoin.deny_request",
+                    target_type="inbound_request",
+                    target_id=request_id,
+                    details=f"Denied request from {request['remote_instance_id']}",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                ),
             )
 
         return request
