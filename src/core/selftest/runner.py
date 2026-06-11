@@ -25,6 +25,7 @@ from .services.endpoints import EndpointTester
 from .services.websocket import WebSocketTester
 from .services.ratelimit import RateLimitTester
 from .services.static_client import StaticClientTester
+from .services.docs import DocsTester
 from .services.report import ReportGenerator
 
 
@@ -52,6 +53,7 @@ class SelfTestRunner:
         self.ws = WebSocketTester(self.ctx)
         self.ratelimit = RateLimitTester(self.ctx)
         self.static_client = StaticClientTester(self.ctx)
+        self.docs = DocsTester(self.ctx)
         self.report = ReportGenerator(self.ctx)
 
         # Expose services on context so they can call each other
@@ -63,6 +65,7 @@ class SelfTestRunner:
         self.ctx.ws = self.ws
         self.ctx.ratelimit = self.ratelimit
         self.ctx.static_client = self.static_client
+        self.ctx.docs = self.docs
         self.ctx.report = self.report
 
     def run_all(self) -> bool:
@@ -89,30 +92,40 @@ class SelfTestRunner:
         # 3. WebSocket Test
         self.ws.test_websocket()
 
-        # 4. Rate Limit Test (early, while auth creds are fresh)
-        self.ratelimit.test_rate_limits()
-
-        # 4b. Static client smoke tests (no-op when feature is disabled)
+        # 4. Static client smoke tests (no-op when feature is disabled)
         self.static_client.test_static_client()
+
+        # 4b. Documentation server smoke tests
+        self.docs.test_docs()
+
+        # 5. Rate Limit Test (early, while auth creds are fresh)
+        self.ratelimit.test_rate_limits()
 
         # 5. Execute API Tests
         excluded = set(self.ctx.config.get("excluded_endpoints", []))
         # Auth endpoints that would invalidate the main session if tested in the main loop.
         # These are tested via dedicated standalone methods instead.
+        # --- Endpoints excluded from auto-loop but tested via standalone tests ---
         excluded.add("POST:/api/v1/auth/login")
         excluded.add("POST:/api/v1/auth/logout")
         excluded.add("POST:/api/v1/auth/register")
         excluded.add("POST:/api/v1/auth/sessions/revoke-all")
-        excluded.add("POST:/api/v1/auth/2fa")
         excluded.add("POST:/api/v1/admin/logout")
         excluded.add("POST:/api/v1/admin/login")
+
         # logout-all logs out EVERY user on the platform and cannot be scoped.
         excluded.add("POST:/api/v1/admin/security/logout-all")
-        excluded.add(
-            "POST:/api/v1/applications/interactions/{interaction_token}/callback"
-        )
-        excluded.add("POST:/api/v1/features/onboarding/apply-preset")
-        excluded.add("GET:/api/v1/users/search")
+
+        # Bot creation is done during setup via create_bot_for_application
+        excluded.add("POST:/api/v1/applications/{application_id}/bot")
+
+        # Bot server membership endpoints — tested via test_bot_server_integration()
+        # which uses other_session (other_user is the server member who interacts with bot)
+        excluded.add("POST:/api/v1/bots/servers/{server_id}/request")
+        excluded.add("POST:/api/v1/bots/servers/{server_id}/approve")
+        excluded.add("PUT:/api/v1/bots/servers/{server_id}/requests/{request_id}")
+        excluded.add("POST:/api/v1/bots/servers/{server_id}/requests/{request_id}")
+
         # These are exercised during setup (other_user joins via invite,
         # other_user sends friend request) so we avoid double-testing
         # and spurious 409/404 failures in the auto-loop.
@@ -125,15 +138,12 @@ class SelfTestRunner:
                 if "/admin/" in route["path"]:
                     excluded.add(f"{route['method']}:{route['path']}")
 
+        # --- Browser-required endpoints (cannot be tested via HTTP API) ---
+        # OAuth requires browser redirect flow
         excluded.add("GET:/api/v1/auth/oauth/{provider}/login")
         excluded.add("POST:/api/v1/auth/oauth/{provider}/callback")
 
-        for fa in ["enable", "disable", "confirm", "verify"]:
-            excluded.add(f"POST:/api/v1/auth/2fa/{fa}")
-
-        # Bot creation is done during setup via create_bot_for_application
-        excluded.add("POST:/api/v1/applications/{application_id}/bot")
-
+        # Passkeys require WebAuthn browser API (navigator.credentials.create/get)
         excluded.add("POST:/api/v1/auth/passkeys/options/register")
         excluded.add("POST:/api/v1/auth/passkeys/register")
         excluded.add("POST:/api/v1/auth/passkeys/options/authenticate")
@@ -142,24 +152,11 @@ class SelfTestRunner:
         excluded.add("DELETE:/api/v1/auth/passkeys/{passkey_id}")
         excluded.add("PATCH:/api/v1/auth/passkeys/{passkey_id}")
 
-        # Bot server membership endpoints — tested via test_bot_server_integration()
-        # which uses other_session (other_user is the server member who interacts with bot)
-        excluded.add("POST:/api/v1/bots/servers/{server_id}/request")
-        excluded.add("POST:/api/v1/bots/servers/{server_id}/approve")
-        excluded.add("PUT:/api/v1/bots/servers/{server_id}/requests/{request_id}")
-        excluded.add("POST:/api/v1/bots/servers/{server_id}/requests/{request_id}")
+        # Public license export requires cryptographic challenge-response flow
+        # (Ed25519 signature of challenge nonce)
+        excluded.add("GET:/public/license/export")
 
-        for fa_path in [
-            "/api/v1/admin/auth/2fa/begin-setup",
-            "/api/v1/admin/auth/2fa/disable",
-            "/api/v1/admin/auth/2fa/regenerate-backup-codes",
-            "/api/v1/admin/verify-otp",
-        ]:
-            excluded.add(fa_path)
-
-        # Exclude endpoints tested in standalone methods or with known issues
-        # (wrong params, need specific state, etc.) to avoid double-testing
-        # and spurious failures in the main loop.
+        # --- Endpoints tested via dedicated standalone methods ---
         for _ep in [
             "POST:/api/v1/admin/database/migrations/apply/{version}",
             "POST:/api/v1/admin/database/migrations/rollback/{version}",
@@ -178,6 +175,21 @@ class SelfTestRunner:
             "GET:/api/v1/users/@me/data-export/{request_id}",
             "DELETE:/api/v1/users/@me/data-export/{request_id}",
             "GET:/api/v1/users/@me/data-export/{request_id}/download",
+            # 2FA endpoints would leave session state broken if run in auto-loop
+            "POST:/api/v1/auth/2fa",
+            "POST:/api/v1/auth/2fa/enable",
+            "POST:/api/v1/auth/2fa/confirm",
+            "POST:/api/v1/auth/2fa/disable",
+            "GET:/api/v1/auth/2fa/status",
+            # Admin 2FA — same state-leak concern
+            "/api/v1/admin/auth/2fa/begin-setup",
+            "/api/v1/admin/auth/2fa/disable",
+            "/api/v1/admin/auth/2fa/regenerate-backup-codes",
+            "/api/v1/admin/verify-otp",
+            # Interaction callback needs a seeded DB interaction (not available generically)
+            "POST:/api/v1/applications/interactions/{interaction_token}/callback",
+            # Onboarding preset needs valid server+perms (tested in standalone)
+            "POST:/api/v1/features/onboarding/apply-preset",
         ]:
             excluded.add(_ep)
 
@@ -331,6 +343,11 @@ class SelfTestRunner:
             # Poll vote must run before poll close
             self.endpoints.test_poll_vote()
             self.endpoints.test_poll_close()
+            # New standalone tests for previously-excluded endpoints
+            self.endpoints.test_onboarding_preset()
+            self.endpoints.test_user_2fa_flow()
+            self.endpoints.test_admin_2fa_flow()
+            self.endpoints.test_interaction_callback()
         else:
             logger.info(
                 "Skipping standalone-specific endpoint tests (not in standalone mode)"

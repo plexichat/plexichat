@@ -194,10 +194,6 @@ class CoreMixin(EndpointTesterBase):
             duration = (time.time() - start) * 1000
 
             success = 200 <= resp.status_code < 300
-            if not success and "/api/v1/admin/plexijoin/" in path:
-                expected = self.ctx.discovery.plexijoin_expected_statuses()
-                if resp.status_code in expected:
-                    success = True
 
             traceback_data = None
             if not success and self.ctx.config.get("retry_on_failure", True):

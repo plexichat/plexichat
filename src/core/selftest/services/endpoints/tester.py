@@ -11,6 +11,9 @@ from .resources import ResourceMixin
 from .media import MediaMixin
 from .polls import PollMixin
 from .bots import BotMixin
+from .features import FeatureMixin
+from .twofa import TwoFAMixin
+from .interactions import InteractionMixin
 
 
 class EndpointTester(
@@ -21,6 +24,9 @@ class EndpointTester(
     MediaMixin,
     PollMixin,
     BotMixin,
+    FeatureMixin,
+    TwoFAMixin,
+    InteractionMixin,
     EndpointTesterBase,
 ):
     """Endpoint test execution service for SelfTestRunner.
