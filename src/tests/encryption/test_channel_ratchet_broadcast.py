@@ -4,9 +4,7 @@ messaging.ratchet_allow_legacy_envelopes config gate.
 """
 
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
-from types import SimpleNamespace
 
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.dispatcher import GatewayDispatcher

@@ -176,8 +176,11 @@ class HardwareVault:
 
     def _get_machine_key_path(self) -> Path:
         """Get path for machine-local key file."""
-        # Use keyring-specific machine key file if not using SYSTEM_KEY
-        if self._kek_env_var != "PLEXICHAT_SYSTEM_KEY":
+        # Use dedicated key file ONLY if the dedicated env var is explicitly set
+        # Otherwise all keyrings share the single .machine_key fallback
+        if self._kek_env_var != "PLEXICHAT_SYSTEM_KEY" and os.environ.get(
+            self._kek_env_var
+        ):
             key_name = self._kek_env_var.lower().replace("_key", "") + "_key"
             return Path.home() / ".plexichat" / "data" / f".{key_name}"
         return Path.home() / ".plexichat" / "data" / ".machine_key"
