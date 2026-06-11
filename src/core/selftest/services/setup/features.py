@@ -457,6 +457,68 @@ class FeatureSetupMixin(SetupServiceBase):
         except Exception as e:
             logger.warning(f"Failed to create test sticker: {e}")
 
+    def create_test_plexijoin_resources(self) -> None:
+        """Create PlexiJoin test connection and inbound request."""
+        plexijoin_url = f"{self.ctx.base_url}/api/v1/admin/plexijoin/connections"
+        uniq = secrets.token_hex(4)
+        plexijoin_payload = {
+            "remote_instance_id": f"test-instance-{uniq}",
+            "remote_url": "https://test.example.com",
+            "shared_key": "test_shared_key_32_chars_long_here!",
+        }
+        try:
+            plexijoin_resp = self.ctx.session.post(
+                plexijoin_url, json=plexijoin_payload, timeout=10
+            )
+            logger.info(
+                f"PlexiJoin connection POST {plexijoin_url} -> {plexijoin_resp.status_code} {plexijoin_resp.text[:300]}"
+            )
+            if plexijoin_resp.status_code in (200, 201):
+                data = plexijoin_resp.json()
+                self.ctx.test_plexijoin_connection_id = data.get("connection_id")
+                logger.info(
+                    f"PlexiJoin connection created (id={self.ctx.test_plexijoin_connection_id})"
+                )
+            else:
+                logger.warning(
+                    f"PlexiJoin connection failed: {plexijoin_resp.status_code} {plexijoin_resp.text[:300]}"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to create PlexiJoin connection: {e}")
+
+        try:
+            plexijoin_db = api.get_db()
+            if plexijoin_db:
+                req_id = self.ctx.data.generate_snowflake()
+                plexijoin_db.execute(
+                    "INSERT INTO plexijoin_inbound_requests (id, remote_instance_id, remote_url, status, requested_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        req_id,
+                        f"test-remote-{secrets.token_hex(4)}",
+                        "https://remote.example.com",
+                        "pending",
+                        int(time.time() * 1000),
+                    ),
+                )
+                self.ctx.test_plexijoin_request_id = req_id
+                logger.debug(f"Created PlexiJoin inbound request ID: {req_id}")
+
+                deny_req_id = self.ctx.data.generate_snowflake()
+                plexijoin_db.execute(
+                    "INSERT INTO plexijoin_inbound_requests (id, remote_instance_id, remote_url, status, requested_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        deny_req_id,
+                        f"test-remote-{secrets.token_hex(4)}",
+                        "https://remote.example.com",
+                        "pending",
+                        int(time.time() * 1000),
+                    ),
+                )
+                self.ctx.test_plexijoin_deny_request_id = deny_req_id
+                logger.debug(f"Created PlexiJoin deny request ID: {deny_req_id}")
+        except Exception as e:
+            logger.warning(f"Failed to create PlexiJoin inbound requests: {e}")
+
     def create_test_thread(self) -> None:
         if not self.ctx.test_channel_id or not self.ctx.test_message_id:
             return

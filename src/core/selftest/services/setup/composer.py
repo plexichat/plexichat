@@ -83,6 +83,7 @@ class SetupService(
             self.create_test_emoji()
             self.create_test_sticker()
             self.create_test_thread()
+            self.create_test_plexijoin_resources()
             self.ensure_approval_comments_table()
 
             logger.info(
