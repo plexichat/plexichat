@@ -544,10 +544,9 @@ def apply_license_from_base64(license_payload: str) -> Dict[str, Any]:
     global _free_tier_mode, _license_manager, _setup_called, _public_key_configured
 
     if _license_manager is None:
-        _license_manager = LicenseManager()
-        LicenseManager.set_public_key(_PLEXICHAT_PUBLIC_KEY_BASE64)
-        _setup_called = True
-        _public_key_configured = True
+        raise RuntimeError(
+            "Licensing not initialized. Call license.setup() before apply_license_from_base64."
+        )
 
     try:
         _license_manager.load_from_base64(license_payload)

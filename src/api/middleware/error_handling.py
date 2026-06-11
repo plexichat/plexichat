@@ -41,6 +41,7 @@ ERROR_MAPPINGS = {
     "LimitError": 400,
     "AttachmentLimitError": 400,
     "ChannelFullError": 507,
+    "LicenseFeatureError": 403,
     "UserNotInChannelError": 404,
     "UserAlreadyInChannelError": 409,
     "ChannelTypeError": 400,
