@@ -9,12 +9,55 @@ from typing import Optional
 from .utils import check_host_restriction, get_admin_from_token
 import utils.logger as logger
 import utils.licensing as licensing_module
+from src.core.admin.logging import AdminLogEntry, get_admin_logger
 
 router = APIRouter(prefix="/license", tags=["Admin", "Licensing"])
 
 
 class LicenseKey(BaseModel):
     license_key: str
+
+
+def _audit_license_action(
+    request: Request,
+    admin_id: int,
+    action: str,
+    status: str,
+    details: Optional[str] = None,
+    current_state: Optional[str] = None,
+    new_state: Optional[str] = None,
+) -> None:
+    """Write a license action to the admin audit log."""
+    try:
+        import src.api as api_mod
+
+        db = api_mod.get_db()
+        if db is None:
+            return
+        ip = request.client.host if request.client else "unknown"
+        ua = request.headers.get("user-agent", "")
+        entry = AdminLogEntry(
+            admin_id=admin_id,
+            action=action,
+            status=status,
+            details=details,
+            ip_address=ip,
+            user_agent=ua,
+        )
+        if current_state or new_state:
+            extra = {}
+            if current_state:
+                extra["current_license"] = current_state
+            if new_state:
+                extra["new_license"] = new_state
+            import json
+
+            entry.details = (
+                (details or "") + (" | " if details else "") + json.dumps(extra)
+            )
+        get_admin_logger().log_action(db, entry)
+    except Exception as exc:
+        logger.debug(f"Failed to audit license action: {exc}")
 
 
 @router.get("/status")
@@ -152,12 +195,25 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     check_host_restriction(request)
     _admin_id = get_admin_from_token(request)
 
+    # Capture current state before applying
+    before_instance = licensing_module.get_instance_id()
+    before_valid = licensing_module.is_valid()
+    before_free = licensing_module.is_free_tier()
+
     raw_key = getattr(body, "license_key", None) if body else None
     if not raw_key:
+        _audit_license_action(
+            request,
+            _admin_id,
+            "license.apply",
+            "noop",
+            details="Empty license_key; no change",
+            current_state=before_instance,
+        )
         return {
             "message": "No license_key supplied; staying in current license state",
             "applied": False,
-            "free_tier": licensing_module.is_free_tier(),
+            "free_tier": before_free,
         }
 
     import base64
@@ -188,17 +244,65 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     result = licensing_module.apply_license_from_base64(raw_key)
     if not result.get("success"):
         if licensing_module.is_free_tier():
+            _audit_license_action(
+                request,
+                _admin_id,
+                "license.apply",
+                "failed",
+                details="License validation failed; staying in free tier",
+                current_state=before_instance,
+            )
             return {
                 "message": "License payload could not be validated; staying in free tier",
                 "applied": False,
                 "free_tier": True,
                 "error": result.get("error"),
             }
+        _audit_license_action(
+            request,
+            _admin_id,
+            "license.apply",
+            "failed",
+            details=result.get("error") or "License apply failed",
+            current_state=before_instance,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error") or "Failed to apply license",
         )
-    return {"message": "License applied successfully", "applied": True}
+    after_state = licensing_module.to_dict()
+    after_valid = licensing_module.is_valid()
+    after_free = licensing_module.is_free_tier()
+    after_instance = licensing_module.get_instance_id()
+    after_expiry = licensing_module.get_expiry_timestamp()
+    after_features = after_state.get("features", {})
+    after_limits = after_state.get("limits", {})
+    _audit_license_action(
+        request,
+        _admin_id,
+        "license.apply",
+        "success",
+        details=f"Applied license for instance: {after_instance}",
+        current_state=before_instance,
+        new_state=after_instance,
+    )
+    return {
+        "message": "License applied successfully",
+        "applied": True,
+        "before": {
+            "instance_id": before_instance,
+            "valid": before_valid,
+            "free_tier": before_free,
+        },
+        "after": {
+            "instance_id": after_instance,
+            "valid": after_valid,
+            "free_tier": after_free,
+            "expiry": after_expiry,
+            "features": after_features,
+            "limits": after_limits,
+        },
+    }
 
 
 @router.post("/check")
@@ -213,16 +317,42 @@ async def force_validate_license(request: Request):
     _admin_id = get_admin_from_token(request)
 
     if licensing_module.is_free_tier():
+        _audit_license_action(
+            request,
+            _admin_id,
+            "license.check",
+            "noop",
+            details="License check (free tier)",
+        )
         return {
             "message": "License check completed (free tier)",
             "valid": True,
             "free_tier": True,
         }
 
+    _ = licensing_module.is_valid()
     success = licensing_module.reload_license()
     if not success:
+        _audit_license_action(
+            request,
+            _admin_id,
+            "license.check",
+            "failed",
+            details="License reload failed validation",
+            current_state=licensing_module.get_instance_id(),
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="License validation failed",
         )
+    after_instance = licensing_module.get_instance_id()
+    _audit_license_action(
+        request,
+        _admin_id,
+        "license.check",
+        "success",
+        details=f"Reloaded license for instance: {after_instance}",
+        current_state=licensing_module.get_instance_id(),
+        new_state=after_instance,
+    )
     return {"message": "License validated successfully"}

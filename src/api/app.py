@@ -252,6 +252,16 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     except Exception as e:
         logger.warning(f"WebSocket gateway not available: {e}")
 
+    # Mount public license endpoints (challenge-response for remote
+    # license export; see public_license module for the protocol).
+    try:
+        from .routes.public_license import router as public_license_router
+
+        app.include_router(public_license_router)
+        logger.info("Public license endpoints enabled at /public/license/*")
+    except Exception as e:
+        logger.warning(f"Public license endpoints not available: {e}")
+
     # Mount documentation router if enabled
     # Path is configurable via config.yaml docs.path
     docs_path = "/docs/api"  # Default
