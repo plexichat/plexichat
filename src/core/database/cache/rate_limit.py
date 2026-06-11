@@ -6,7 +6,7 @@ with Redis primary and in-memory fallback.
 """
 
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import utils.logger as logger
 from ..redis_client import (

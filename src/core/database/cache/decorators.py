@@ -4,7 +4,6 @@ Decorator-based caching with Redis and in-memory fallback.
 Provides the @cached decorator that supports both sync and async functions.
 """
 
-import time
 import inspect
 from typing import (
     Any,

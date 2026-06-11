@@ -101,7 +101,8 @@ class _StorageSetupMixin:
                     ).decode()
                     logger.info(
                         "Derived media encryption key from signing key "
-                        "(no PLEXICHAT_MEDIA_KEY env var set)"
+                        "(no PLEXICHAT_MEDIA_KEY env var set externally, "
+                        "injected into process environment)"
                     )
                 storage = wrap_storage_with_encryption(storage, enabled=True)
                 logger.info(f"File encryption at rest enabled for {backend} storage")

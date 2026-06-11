@@ -514,18 +514,16 @@ class BotManagementMixin(ApplicationManagerProtocol):
             import importlib
 
             license_module = importlib.import_module("utils.licensing")
-            if hasattr(license_module, "setup"):
-                if not license_module.has_feature("bots", default=False):
-                    raise LicenseFeatureError(
-                        "Bots feature requires a valid license", "bots"
-                    )
+            if not license_module.has_feature("bots", default=False):
+                raise LicenseFeatureError(
+                    "Bots feature requires a valid license", "bots"
+                )
             return True
         except ImportError:
             logger.warning("Licensing module not available, bots feature allowed")
             return True
-        except Exception as e:
-            logger.warning(f"License check failed for bots feature: {e}")
-            return True
+        except LicenseFeatureError:
+            raise
 
     def _check_premium_license(self) -> bool:
         try:

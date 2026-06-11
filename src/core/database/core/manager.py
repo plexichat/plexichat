@@ -16,6 +16,7 @@ from ..engines.base import BaseEngine
 from ..engines.sqlite import SqliteEngine
 from ..engines.postgres import PostgresEngine
 from ..monitoring import DatabaseMonitor
+from ..builder.composer import QueryBuilder
 from .connection import DatabaseConnectionMixin
 from .execution import DatabaseExecutionMixin
 from .maintenance import DatabaseMaintenanceMixin
@@ -102,6 +103,19 @@ class Database(
             return None
         finally:
             cursor.close()
+
+    def table(self, table_name: str):
+        """Get a TableQuery builder for the given table.
+
+        Args:
+            table_name: Name of the table
+
+        Returns:
+            TableQuery instance for method chaining (insert, select, update, delete)
+        """
+        conn = self._get_conn()
+        qb = QueryBuilder(conn, self.type)
+        return qb.table(table_name)
 
     @property
     def transaction_depth(self) -> int:

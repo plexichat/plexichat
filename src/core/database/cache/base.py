@@ -40,6 +40,15 @@ def mem_cache_set(key: str, value: Any, ttl: int) -> None:
     _mem_cache[key] = (time.time() + ttl, value)
 
 
+def mem_cache_delete(key: str) -> bool:
+    """Delete a key from the in-memory cache."""
+    global _mem_cache
+    if key in _mem_cache:
+        del _mem_cache[key]
+        return True
+    return False
+
+
 def mem_cache_clear_pattern(pattern: str) -> int:
     """Clear in-memory cache entries matching a pattern."""
     import fnmatch
