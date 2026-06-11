@@ -39,7 +39,10 @@ class ParticipantRepository(BaseRepository[Participant]):
         if not participants:
             return
 
-        self.begin_transaction()
+        in_trans = getattr(self._db, "in_transaction", False)
+        if not in_trans:
+            self.begin_transaction()
+
         try:
             for p in participants:
                 self._execute(
@@ -55,10 +58,11 @@ class ParticipantRepository(BaseRepository[Participant]):
                     ),
                     auto_commit=False,
                 )
-            if auto_commit:
+            if auto_commit and not in_trans:
                 self.commit()
         except Exception:
-            self.rollback()
+            if not in_trans:
+                self.rollback()
             raise
 
     def get_by_conversation_and_user(

@@ -29,7 +29,7 @@ from src.core.soundboard.schema import create_tables as create_soundboard_tables
 from src.core.media.schema import create_tables as create_media_tables  # noqa: E402
 from src.core.media.deduplication import create_tables as create_media_dedup_tables  # noqa: E402
 from src.core.media.chunked import create_tables as create_media_chunked_tables  # noqa: E402
-from src.core.reports import create_tables as create_reports_tables  # noqa: E402
+from src.core.reports.schema import create_tables as create_reports_tables  # noqa: E402
 from src.core.feedback import create_tables as create_feedback_tables  # noqa: E402
 from src.core.avatars import create_tables as create_avatars_tables  # noqa: E402
 from src.core.telemetry import create_tables as create_telemetry_tables  # noqa: E402
