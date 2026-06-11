@@ -78,7 +78,7 @@ services:
     restart: "no"
 
   backend:
-    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${VERSION}
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${VERSION:-latest}
     env_file:
       - .env
     environment:
@@ -103,7 +103,7 @@ services:
       - "30000-30100:30000-30100/udp"
 
   client:
-    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${VERSION}
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${VERSION:-latest}
     env_file:
       - .env
     depends_on:
