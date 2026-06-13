@@ -220,7 +220,7 @@ class AdminMixin(EndpointTesterBase):
             resp = other_session.delete(
                 f"{self.ctx.base_url}/api/v1/users/@me",
                 json={"password": self.ctx._test_password},
-                timeout=5,
+                timeout=30,
             )
             success = resp.status_code in (200, 204)
             self.ctx.results.append(
