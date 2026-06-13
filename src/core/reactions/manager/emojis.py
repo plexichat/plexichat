@@ -113,20 +113,13 @@ class EmojiOpsMixin(ReactionProtocol):
         self._check_emoji_limits(server_id, animated)
 
         try:
-            try:
-                self._db.execute("BEGIN")
-            except Exception:
-                pass
+            self._db.begin_transaction()
 
             existing = self._db.fetch_one(
                 "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
                 (server_id, name),
             )
             if existing:
-                try:
-                    self._db.execute("ROLLBACK")
-                except Exception:
-                    pass
                 raise EmojiNameExistsError(
                     f"Emoji with name '{name}' already exists in this server"
                 )
@@ -154,10 +147,6 @@ class EmojiOpsMixin(ReactionProtocol):
                             pass
                         else:
                             logger.error(f"Media module returned unsafe URL: {url}")
-                            try:
-                                self._db.execute("ROLLBACK")
-                            except Exception:
-                                pass
                             raise InvalidEmojiFileError(
                                 "Media module returned an unsafe URL"
                             )
@@ -165,10 +154,6 @@ class EmojiOpsMixin(ReactionProtocol):
                     raise
                 except Exception as e:
                     logger.error(f"Failed to upload emoji image: {e}")
-                    try:
-                        self._db.execute("ROLLBACK")
-                    except Exception:
-                        pass
                     raise InvalidEmojiFileError(f"Failed to upload emoji: {str(e)}")
 
             now = self._get_timestamp()
@@ -192,28 +177,16 @@ class EmojiOpsMixin(ReactionProtocol):
                 ),
             )
 
-            try:
-                self._db.execute("COMMIT")
-            except Exception:
-                pass
+            self._db.commit()
 
         except EmojiNameExistsError:
-            try:
-                self._db.execute("ROLLBACK")
-            except Exception:
-                pass
+            self._db.rollback()
             raise
         except InvalidEmojiFileError:
-            try:
-                self._db.execute("ROLLBACK")
-            except Exception:
-                pass
+            self._db.rollback()
             raise
         except Exception as e:
-            try:
-                self._db.execute("ROLLBACK")
-            except Exception:
-                pass
+            self._db.rollback()
             if "UNIQUE" in str(e) or "unique" in str(e).lower():
                 raise EmojiNameExistsError(
                     f"Emoji with name '{name}' already exists in this server"
@@ -247,18 +220,27 @@ class EmojiOpsMixin(ReactionProtocol):
         if name is not None:
             name = self._validate_emoji_name(name)
 
-            existing = self._db.fetch_one(
-                "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ? AND id != ?",
-                (emoji.server_id, name, emoji_id),
-            )
-            if existing:
-                raise EmojiNameExistsError(
-                    f"Emoji with name '{name}' already exists in this server"
+            try:
+                self._db.begin_transaction()
+
+                existing = self._db.fetch_one(
+                    "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ? AND id != ?",
+                    (emoji.server_id, name, emoji_id),
+                )
+                if existing:
+                    raise EmojiNameExistsError(
+                        f"Emoji with name '{name}' already exists in this server"
+                    )
+
+                self._db.execute(
+                    "UPDATE react_custom_emoji SET name = ? WHERE id = ?",
+                    (name, emoji_id),
                 )
 
-            self._db.execute(
-                "UPDATE react_custom_emoji SET name = ? WHERE id = ?", (name, emoji_id)
-            )
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
 
         logger.debug(f"Custom emoji {emoji_id} updated")
 
@@ -279,11 +261,19 @@ class EmojiOpsMixin(ReactionProtocol):
                     "Missing permission to manage server", "server.manage"
                 )
 
-        self._db.execute(
-            "DELETE FROM react_reactions WHERE custom_emoji_id = ?", (emoji_id,)
-        )
+        try:
+            self._db.begin_transaction()
 
-        self._db.execute("DELETE FROM react_custom_emoji WHERE id = ?", (emoji_id,))
+            self._db.execute(
+                "DELETE FROM react_reactions WHERE custom_emoji_id = ?", (emoji_id,)
+            )
+
+            self._db.execute("DELETE FROM react_custom_emoji WHERE id = ?", (emoji_id,))
+
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
         logger.debug(f"Custom emoji {emoji_id} deleted")
 
