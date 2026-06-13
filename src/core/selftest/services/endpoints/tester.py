@@ -7,6 +7,7 @@ from .base import EndpointTesterBase
 from .core import CoreMixin
 from .auth import AuthMixin
 from .admin import AdminMixin
+from .applications import ApplicationMixin
 from .resources import ResourceMixin
 from .media import MediaMixin
 from .polls import PollMixin
@@ -20,6 +21,7 @@ class EndpointTester(
     CoreMixin,
     AuthMixin,
     AdminMixin,
+    ApplicationMixin,
     ResourceMixin,
     MediaMixin,
     PollMixin,
