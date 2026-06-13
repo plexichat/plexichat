@@ -1,7 +1,7 @@
 """Admin endpoint tester mixin.
 
-Tests migration apply/rollback, access token rotate/revoke,
-and delay-deletion in standalone mode.
+Tests migration apply/rollback (legacy + new endpoints), access token
+rotate/revoke, and delay-deletion in standalone mode.
 """
 
 import time
@@ -422,3 +422,75 @@ class AdminMixin(EndpointTesterBase):
             self.ctx.test_dsar_id = None
         else:
             logger.warning(f"DSAR cancel -> {resp.status_code}: {resp.text[:200]}")
+
+    def test_new_migration_endpoints(self) -> None:
+        """Test the new migration run/rollback endpoints (admin/migrations.py).
+
+        Unlike the legacy /admin/database/migrations/* endpoints tested in
+        test_migration_endpoints(), these use the richer MigrationRunRequest
+        body with dry_run support and irreversible-migration checks.
+        """
+        if not self.ctx.standalone_mode:
+            return
+        if not self.ctx.session.headers.get("Authorization"):
+            logger.debug("Skipping new migration tests (no auth token)")
+            return
+
+        session = self.ctx.session
+        mig_run = "/api/v1/admin/migrations/037/run"
+        mig_rollback = "/api/v1/admin/migrations/037/rollback"
+
+        # --- Run (apply) migration 037 via new endpoint ---
+        logger.info("Testing POST /api/v1/admin/migrations/037/run (apply)...")
+        run_start = time.time()
+        resp = session.post(
+            f"{self.ctx.base_url}{mig_run}",
+            json={},
+            timeout=10,
+        )
+        duration = (time.time() - run_start) * 1000
+        success = 200 <= resp.status_code < 300
+        self.ctx.results.append(
+            {
+                "method": "POST",
+                "path": mig_run,
+                "status_code": resp.status_code,
+                "duration_ms": duration,
+                "success": success,
+                "label": "new_migration_apply",
+            }
+        )
+        if success:
+            logger.info(f"Migration apply 037 PASSED -> {resp.status_code}")
+        else:
+            logger.warning(
+                f"Migration apply 037 -> {resp.status_code}: {resp.text[:200]}"
+            )
+
+        time.sleep(0.05)
+
+        # --- Rollback 037 via new endpoint ---
+        logger.info("Testing POST /api/v1/admin/migrations/037/rollback...")
+        rb_start = time.time()
+        resp = session.post(
+            f"{self.ctx.base_url}{mig_rollback}",
+            timeout=10,
+        )
+        duration = (time.time() - rb_start) * 1000
+        success = 200 <= resp.status_code < 300
+        self.ctx.results.append(
+            {
+                "method": "POST",
+                "path": mig_rollback,
+                "status_code": resp.status_code,
+                "duration_ms": duration,
+                "success": success,
+                "label": "new_migration_rollback",
+            }
+        )
+        if success:
+            logger.info(f"Migration rollback 037 PASSED -> {resp.status_code}")
+        else:
+            logger.warning(
+                f"Migration rollback 037 -> {resp.status_code}: {resp.text[:200]}"
+            )

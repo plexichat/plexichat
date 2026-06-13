@@ -345,6 +345,8 @@ class SelfTestRunner:
             self.endpoints.test_poll_close()
             # New standalone tests for previously-excluded endpoints
             self.endpoints.test_onboarding_preset()
+            self.endpoints.test_new_migration_endpoints()
+            self.endpoints.test_bot_creation_via_api()
             self.endpoints.test_user_2fa_flow()
             self.endpoints.test_admin_2fa_flow()
             self.endpoints.test_interaction_callback()
