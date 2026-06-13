@@ -182,7 +182,7 @@ class ScheduledEventManager:
         if not row:
             return None
 
-        if not self._server_manager._is_member(row["server_id"], user_id):
+        if self._server_manager.get_member(row["server_id"], user_id) is None:
             return None
 
         return self._row_to_event(row)
@@ -195,7 +195,7 @@ class ScheduledEventManager:
         limit: int = 50,
     ) -> List[ScheduledEvent]:
         """Get scheduled events for a server."""
-        if not self._server_manager._is_member(server_id, user_id):
+        if self._server_manager.get_member(server_id, user_id) is None:
             raise ServerNotFoundError("Server not found")
 
         query = "SELECT * FROM srv_scheduled_events WHERE server_id = ?"
