@@ -132,7 +132,7 @@ class OnboardingManager:
         self, server_id: int, user_id: int
     ) -> Optional[WelcomeScreen]:
         """Get the welcome screen for a server."""
-        if not self._server_manager._is_member(server_id, user_id):
+        if self._server_manager.get_member(server_id, user_id) is None:
             raise ServerNotFoundError("Server not found")
 
         row = self._db.fetch_one(
@@ -261,8 +261,7 @@ class OnboardingManager:
         )
         if not row:
             return None
-
-        if not self._server_manager._is_member(row["server_id"], user_id):
+        if self._server_manager.get_member(row["server_id"], user_id) is None:
             return None
 
         return self._row_to_step(row)
@@ -271,7 +270,7 @@ class OnboardingManager:
         self, user_id: int, server_id: int
     ) -> List[OnboardingStep]:
         """Get all onboarding steps for a server."""
-        if not self._server_manager._is_member(server_id, user_id):
+        if self._server_manager.get_member(server_id, user_id) is None:
             raise ServerNotFoundError("Server not found")
 
         rows = self._db.fetch_all(
@@ -408,7 +407,7 @@ class OnboardingManager:
 
     def start_onboarding(self, user_id: int, server_id: int) -> OnboardingProgress:
         """Start onboarding for a user."""
-        if not self._server_manager._is_member(server_id, user_id):
+        if self._server_manager.get_member(server_id, user_id) is None:
             raise ServerNotFoundError("Server not found")
 
         existing = self._db.fetch_one(
