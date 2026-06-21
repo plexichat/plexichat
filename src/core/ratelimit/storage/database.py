@@ -222,6 +222,42 @@ class DatabaseStorage(RateLimitStorage):
             reset_after = (cost - tokens) / refill_rate if not allowed else 0.0
             return allowed, remaining, max(0.0, reset_after)
 
-        except Exception:
-            self._db.rollback()  # type: ignore[attr-defined]
-            return True, capacity, 0.0
+        except Exception as exc:
+            try:
+                self._db.rollback()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            # SECURITY: the previous ``except Exception: return
+            # (True, capacity, 0.0)`` FAIL-OPENED the bucket on any
+            # DB error. A buggy or under-attack database turned into
+            # an unlimited-rate bypass. We now FAIL-CLOSED: deny the
+            # request and surface the error. Operators can opt-in to
+            # fail-open via configuration for dev/test environments.
+            import os as _os
+            import utils.config as _cfg
+
+            try:
+                fail_open = bool(
+                    _cfg.get("rate_limiting", {}).get(
+                        "fail_open_on_backend_error", False
+                    )
+                )
+            except Exception:
+                fail_open = False
+
+            if fail_open and not _os.environ.get("PLEXICHAT_REQUIRE_FAIL_CLOSED", ""):
+                from utils import logger as _log
+
+                _log.error(
+                    "rate-limit DB backend error, FAIL-OPEN (insecure): %s",
+                    exc,
+                )
+                return True, capacity, 0.0
+
+            from utils import logger as _log
+
+            _log.critical(
+                "rate-limit DB backend error, FAIL-CLOSED (denying request): %s",
+                exc,
+            )
+            return False, 0, 60.0

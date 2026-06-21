@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def up(db):
     """Apply the migration."""
-    logger.info("Migration 032: Starting Admin RBAC System")
+    logger.info("Migration 033: Starting Admin RBAC System")
 
     # === Admin Roles Table ===
     db.execute("""
@@ -228,19 +228,19 @@ def up(db):
         )
 
         logger.info(
-            f"Migration 032: Created default admin roles and assigned super_admin to admin {admin_id}"
+            f"Migration 033: Created default admin roles and assigned super_admin to admin {admin_id}"
         )
     else:
         logger.info(
-            "Migration 032: Admin roles already exist, skipping default role creation"
+            "Migration 033: Admin roles already exist, skipping default role creation"
         )
 
-    logger.info("Migration 032: Admin RBAC System completed successfully")
+    logger.info("Migration 033: Admin RBAC System completed successfully")
 
 
 def down(db):
     """Rollback the migration."""
-    logger.info("Migration 032 rollback: Starting rollback")
+    logger.info("Migration 033 rollback: Starting rollback")
 
     # Drop new tables
     tables = [
@@ -277,10 +277,10 @@ def down(db):
                 db.execute(f"ALTER TABLE {safe_table} DROP COLUMN last_password_change")
 
             logger.info(
-                "Migration 032 rollback: Dropped tables and columns (PostgreSQL)"
+                "Migration 033 rollback: Dropped tables and columns (PostgreSQL)"
             )
         except Exception as e:
-            logger.warning(f"Migration 032 rollback error: {e}")
+            logger.warning(f"Migration 033 rollback error: {e}")
     else:
         # SQLite: Clear column values but leave columns
         try:
@@ -292,9 +292,9 @@ def down(db):
                 db.execute("UPDATE admin_users SET max_concurrent_sessions = 3")
 
             logger.info(
-                "Migration 032 rollback: Dropped tables, cleared column values (SQLite)"
+                "Migration 033 rollback: Dropped tables, cleared column values (SQLite)"
             )
         except Exception as e:
-            logger.warning(f"Migration 032 rollback error: {e}")
+            logger.warning(f"Migration 033 rollback error: {e}")
 
-    logger.info("Migration 032 rollback completed")
+    logger.info("Migration 033 rollback completed")

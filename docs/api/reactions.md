@@ -74,12 +74,12 @@ Authorization: Bearer <token>
 ```json
 [
   {
-    "emoji": ":thumbsup:",
+    "emoji": "👍",
     "count": 5,
     "me": true
   },
   {
-    "emoji": ":heart:",
+    "emoji": "❤️",
     "count": 3,
     "me": false
   }
@@ -130,7 +130,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "emoji": ":thumbsup:",
+  "emoji": "👍",
   "count": 5,
   "me": true
 }
@@ -155,5 +155,7 @@ Authorization: Bearer <token>
 ## Emoji Format
 
 Reactions support:
-- Unicode emoji: `:thumbsup:`, `:heart:`, `:tada:`
-- Custom emoji: `emoji_id` (snowflake ID)
+- Unicode emoji: `👍`, `❤️`, `🎉`
+- Custom emoji: `<a:name:id>` (e.g., `<:custom_emoji:123456789>`)
+
+Note: Leading colons (`:name:`) are rejected. Use raw Unicode characters for standard emoji and the `<:name:id>` format for custom emoji.

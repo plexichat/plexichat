@@ -95,6 +95,38 @@ class VoiceManager(
         )
         return row["count"] if row else 0
 
+    def _get_channel_user_counts_bulk(
+        self, channel_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, int]:
+        """Bulk variant of ``_get_channel_user_count`` for list queries.
+
+        Single SQL with ``GROUP BY`` — emits ONE query for N channels
+        instead of N round trips. Empty input short-circuits to an
+        empty dict so a list query against an empty server doesn't
+        issue a no-op. ``channel_ids`` is deduped via ``dict.fromkeys``
+        so a malformed caller passing the same id twice doesn't skew
+        the COUNT.
+
+        Channel ids that have zero members do NOT appear in the
+        ``GROUP BY`` result set, so we pre-zero the dict for every
+        unique id before walking rows to preserve a stable contract
+        (``VoiceChannel.user_count == 0`` for empty channels).
+        """
+        if not channel_ids:
+            return {}
+        unique = list(dict.fromkeys(channel_ids))
+        placeholders = ",".join("?" for _ in unique)
+        rows = self._db.fetch_all(
+            f"SELECT channel_id, COUNT(*) AS count "
+            f"FROM voice_states WHERE channel_id IN ({placeholders}) "
+            f"GROUP BY channel_id",
+            tuple(unique),
+        )
+        counts: Dict[SnowflakeID, int] = {cid: 0 for cid in unique}
+        for row in rows:
+            counts[row["channel_id"]] = int(row.get("count", 0) or 0)
+        return counts
+
     def _get_channel_settings(self, channel_id: SnowflakeID) -> Dict[str, Any]:
         row = self._db.fetch_one(
             "SELECT * FROM voice_channel_settings WHERE channel_id = ?", (channel_id,)
@@ -130,14 +162,31 @@ class VoiceManager(
         )
 
     def _row_to_voice_channel(
-        self, channel_row: Dict[str, Any], settings: Dict[str, Any]
+        self,
+        channel_row: Dict[str, Any],
+        settings: Dict[str, Any],
+        prefetched_counts: Optional[Dict[SnowflakeID, int]] = None,
     ) -> VoiceChannel:
+        """Materialise a ``srv_channels`` row into a ``VoiceChannel``.
+
+        When ``prefetched_counts`` is supplied (built by
+        ``_get_channel_user_counts_bulk`` once at the top of a list
+        query), the per-channel COUNT is read from the dict instead
+        of issuing an extra query per row. Net: a list of N voice
+        channels becomes 1 SELECT-listing + 1 SELECT-COUNT instead
+        of N+1. Callers that don't have a prefetched map (e.g.
+        ``get_voice_channel`` for a single id) fall back to the
+        single-id helper, preserving the existing behaviour.
+        """
         channel_type = (
             VoiceChannelType.STAGE
             if channel_row["channel_type"] == "stage"
             else VoiceChannelType.VOICE
         )
-        user_count = self._get_channel_user_count(channel_row["id"])
+        if prefetched_counts is not None and channel_row["id"] in prefetched_counts:
+            user_count = int(prefetched_counts[channel_row["id"]] or 0)
+        else:
+            user_count = self._get_channel_user_count(channel_row["id"])
 
         return VoiceChannel(
             id=channel_row["id"],

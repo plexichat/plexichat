@@ -89,26 +89,21 @@ class ProfileManager:
         elif not data.get("social_links"):
             data["social_links"] = []
 
-        # Check if custom status has expired
+        # CORRECTNESS FIX: ``get_profile`` is a read-only operation,
+        # so it MUST NOT execute UPDATEs against ``user_profiles`` or
+        # ``auth_users``. The previous implementation cleared an
+        # expired custom_status on every read — which silently mutated
+        # the row, broke read-replica consistency (because the read
+        # replica fell behind the write), and ate a write transaction
+        # on every profile fetch. We now memoise the "expired" fact
+        # in the returned dict only; the canonical cleanup is owned by
+        # ``set_custom_status`` and a background reaper.
         if data.get("custom_status_expires_at"):
             if data["custom_status_expires_at"] < self._get_timestamp():
                 data["custom_status_text"] = None
                 data["custom_status_emoji"] = None
                 data["custom_status_expires_at"] = None
-                # Clear expired status in DB too
-                self._db.execute(
-                    """UPDATE user_profiles SET custom_status_text = NULL,
-                       custom_status_emoji = NULL, custom_status_expires_at = NULL
-                       WHERE user_id = ?""",
-                    (user_id,),
-                )
-                # Also clear from auth_users if present
-                self._db.execute(
-                    """UPDATE auth_users SET custom_status_text = NULL,
-                       custom_status_emoji = NULL, custom_status_expires_at = NULL
-                       WHERE id = ?""",
-                    (user_id,),
-                )
+                data["_custom_status_expired"] = True
 
         return data
 
@@ -149,59 +144,66 @@ class ProfileManager:
         location: Optional[str] = None,
         timezone: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Update a user's profile."""
+        """Update a user's profile.
+
+        N+2 COLLAPSE: previous implementation issued one UPDATE per
+        changed field (6 round trips when every field was supplied).
+        We now build a single UPDATE statement with only the
+        changed field list, parameterised, so 1 round trip per
+        update regardless of how many fields were supplied.
+        """
         profile = self.get_profile(user_id)
         if not profile:
             profile = self._create_default_profile(user_id)
 
         now = self._get_timestamp()
+        sets: List[str] = ["updated_at = ?"]
+        params: List[Any] = [now]
 
         if bio is not None:
             bio = bio.strip()[: self.MAX_BIO_LENGTH]
-            self._db.execute(
-                "UPDATE user_profiles SET bio = ?, updated_at = ? WHERE user_id = ?",
-                (bio, now, user_id),
-            )
+            sets.append("bio = ?")
+            params.append(bio)
 
         if banner_url is not None:
-            # Validate URL scheme
+            # Validate URL scheme up-front so we never persist an
+            # invalid value, even with the dynamic SQL pattern.
             if banner_url and not banner_url.startswith(("http://", "https://")):
                 raise ValueError("Banner URL must use http or https")
             if banner_url and (
                 "javascript:" in banner_url.lower() or "data:" in banner_url.lower()
             ):
                 raise ValueError("Invalid banner URL scheme")
-            self._db.execute(
-                "UPDATE user_profiles SET banner_url = ?, updated_at = ? WHERE user_id = ?",
-                (banner_url if banner_url else None, now, user_id),
-            )
+            sets.append("banner_url = ?")
+            params.append(banner_url if banner_url else None)
 
         if social_links is not None:
             validated = self._validate_social_links(social_links)
-            self._db.execute(
-                "UPDATE user_profiles SET social_links = ?, updated_at = ? WHERE user_id = ?",
-                (json.dumps(validated), now, user_id),
-            )
+            sets.append("social_links = ?")
+            params.append(json.dumps(validated))
 
         if pronouns is not None:
             pronouns = pronouns.strip()[: self.MAX_PRONOUNS_LENGTH]
-            self._db.execute(
-                "UPDATE user_profiles SET pronouns = ?, updated_at = ? WHERE user_id = ?",
-                (pronouns if pronouns else None, now, user_id),
-            )
+            sets.append("pronouns = ?")
+            params.append(pronouns if pronouns else None)
 
         if location is not None:
             location = location.strip()[: self.MAX_LOCATION_LENGTH]
-            self._db.execute(
-                "UPDATE user_profiles SET location = ?, updated_at = ? WHERE user_id = ?",
-                (location if location else None, now, user_id),
-            )
+            sets.append("location = ?")
+            params.append(location if location else None)
 
         if timezone is not None:
             timezone = timezone.strip()[: self.MAX_TIMEZONE_LENGTH]
+            sets.append("timezone = ?")
+            params.append(timezone if timezone else None)
+
+        # len(params) > 1 means caller supplied at least one field
+        # beyond updated_at; otherwise this is an idempotent no-op.
+        if len(params) > 1:
+            params.append(user_id)
             self._db.execute(
-                "UPDATE user_profiles SET timezone = ?, updated_at = ? WHERE user_id = ?",
-                (timezone if timezone else None, now, user_id),
+                f"UPDATE user_profiles SET {', '.join(sets)} WHERE user_id = ?",
+                tuple(params),
             )
 
         logger.debug(f"User {user_id} updated their profile")

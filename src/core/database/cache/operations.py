@@ -87,6 +87,43 @@ def invalidate_cached(key: str) -> bool:
     return cache_delete(key)
 
 
+def cache_get_many(keys):
+    """Bulk-fetch many cache keys in a single round-trip when possible.
+
+    ``N+1 FIX``: callers that previously did ``for k in keys: cache_get(k)``
+    can use this to issue a single Redis MGET (cheap), or fall back to
+    looping through ``cache_get`` (the in-memory cache path also returns
+    directly without a per-key round-trip to Redis, so the loop is
+    cheap on the fallback path). Returns ``{key: value}``; missing
+    keys are absent (callers should use ``.get(k)`` semantics).
+
+    Empty input -> ``{}`` (no round-trip).
+    """
+    if not keys:
+        return {}
+    out = {}
+    client = get_client()
+    if client and is_available() and hasattr(client, "mget_json"):
+        try:
+            bulk = client.mget_json(list(keys)) or {}  # type: ignore[attr-defined]  # mget_json is duck-typed on the underlying client
+            for k in keys:
+                v = bulk.get(k)
+                if v is not None:
+                    out[k] = reconstruct_object(v)
+            return out
+        except RedisOperationError as exc:  # noqa: BLE001
+            logger.warning(f"Cache GET_MANY failed (falling back): {exc}")
+    # Fallback path: loop through cache_get (uses mem tier or
+    # individual Redis GETs).  Acceptable because callers using
+    # this helper have already collapsed an N+1 pattern in their
+    # own code; the upstream speedup is what we care about.
+    for k in keys:
+        v = cache_get(k)
+        if v is not None:
+            out[k] = v
+    return out
+
+
 def invalidate_pattern(pattern: str) -> int:
     """Invalidate all cache keys matching a pattern."""
     mem_count = mem_cache_clear_pattern(pattern)

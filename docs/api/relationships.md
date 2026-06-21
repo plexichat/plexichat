@@ -24,12 +24,19 @@ Authorization: Bearer <token>
 [
   {
     "user_id": "123456789012345678",
+    "username": "Alice",
+    "avatar_url": "https://cdn.example.com/avatars/123.png",
     "status": "friend",
+    "presence": {"status": "online"},
     "created_at": 1704067200
   },
   {
     "user_id": "234567890123456789",
+    "username": "Bob",
+    "avatar_url": null,
     "status": "pending_incoming",
+    "presence": {"status": "offline"},
+    "message": "Hey, want to be friends?",
     "created_at": 1704067300
   }
 ]
@@ -180,11 +187,19 @@ Authorization: Bearer <token>
 ```json
 {
   "user_id": "123456789012345678",
+  "username": "Alice",
+  "avatar_url": "https://cdn.example.com/avatars/123.png",
   "status": "friend",
+  "presence": {"status": "online"},
+  "message": "Hey, let's be friends!",
   "created_at": 1704067200
 }
 ```
 
 - `user_id` (string): Related user's ID
+- `username` (string): Related user's username
+- `avatar_url` (string?): User avatar URL
 - `status` (string): Relationship status
+- `presence` (PresenceInfo?): User's current presence status
+- `message` (string?): Optional message (for pending requests)
 - `created_at` (int?): Unix timestamp of creation

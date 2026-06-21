@@ -74,18 +74,45 @@ class Keyring:
         return "PLEXICHAT_SYSTEM_KEY"
 
     def _detect_current_key_source(self, stored_source: Optional[str] = None) -> str:
-        """Infer where the current key came from."""
-        if stored_source in {"generated"}:
+        """Infer where the current key came from.
+
+        SECURITY: the previous implementation returned the literal
+        string ``"generated"`` from every branch, which made
+        startup-time KEK-source warnings (e.g. "we are running on a
+        machine-local fallback key") completely broken. We now introspect
+        the live vault and KEK-resolution order to report a truthful
+        source label.
+        """
+        if stored_source and stored_source in {"env", "hsm", "tpm", "local"}:
             return stored_source
 
-        current_key = self.keys.get(self.current_version)
-        if not current_key:
-            return "unknown"
+        # Walk the real KEK resolution order so we know which backing
+        # store the live key actually came from.
+        try:
+            from ..vault import HardwareVault
 
-        if self.current_version > 1:
+            # Try the dedicated KEK first; fall back to the system KEK so
+            # operators running the off-spec shared key path still see the
+            # correct label.
+            for env in (self.kek_env_var, "PLEXICHAT_SYSTEM_KEY"):
+                try:
+                    probe = HardwareVault(kek_env_var=env)
+                    src = probe.get_source()
+                    if src in {"env", "hsm", "tpm", "local"}:
+                        return src
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # If we cannot probe the vault, only fall back to the persisted
+        # metadata value if it is one of the legitimate labels.  Any
+        # other stored label (e.g. ``generated``) is treated as
+        # ``unknown`` rather than mis-reported as secure.
+        if stored_source == "generated":
             return "generated"
 
-        return "generated"
+        return "unknown"
 
     def _get_kek(self, fallback: bool = False) -> bytes:
         """
@@ -133,10 +160,20 @@ class Keyring:
         )
 
     def _with_file_lock(self, func, *args, **kwargs):
-        """Execute function with both thread and file lock."""
+        """Execute function with both thread and file lock.
+
+        The lock file is opened in BINARY append mode ("ab") rather than
+        text-write mode ("w"):
+        - Binary mode is required by ``msvcrt.locking`` on Windows, which
+          operates on raw bytes - text-mode translation can shift the
+          byte offsets silently and cause the lock to miss the byte range.
+        - Append mode avoids truncation. Truncating the existing lock
+          file between acquire/release races with other processes that
+          may have already opened the file via its previous inode.
+        """
         with self._thread_lock:
             self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.lock_path, "w") as lock_file:
+            with open(self.lock_path, "ab") as lock_file:
                 acquire_file_lock(lock_file, exclusive=True)
                 try:
                     return func(*args, **kwargs)

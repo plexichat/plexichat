@@ -36,21 +36,23 @@ class HardwareVault:
         self._init_tpm()
 
     def _init_tpm(self):
-        """Try to initialize TPM 2.0 connection."""
+        """Try to initialize TPM 2.0 connection.
 
-        def _init_tpm(self):
-            """Try to initialize TPM 2.0."""
-            try:
-                from tpm2_pytss import ESYS_Context  # type: ignore[import-not-found]
+        The body is inlined (no nested def) so the outer method actually runs.
+        Previously this method contained an inner function with the same name
+        that was defined but never called, leaving TPM support as dead code.
+        """
+        try:
+            from tpm2_pytss import ESYS_Context  # type: ignore[import-not-found]
 
-                with ESYS_Context() as ctx:
-                    # Check for TPM presence without deep interaction yet
-                    cap = ctx.get_capability(0, 0x00000001, 1)  # TPM_CAP_PROPERTIES
-                    if cap:
-                        self._tpm_available = True
-                        logger.info("TPM 2.0 hardware detected and available")
-            except (ImportError, Exception):
-                logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
+            with ESYS_Context() as ctx:
+                # Check for TPM presence without deep interaction yet
+                cap = ctx.get_capability(0, 0x00000001, 1)  # TPM_CAP_PROPERTIES
+                if cap:
+                    self._tpm_available = True
+                    logger.info("TPM 2.0 hardware detected and available")
+        except (ImportError, Exception):
+            logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
 
     def _init_hsm(self):
         """Try to initialize HSM (PKCS#11) connection."""
@@ -259,13 +261,47 @@ class HardwareVault:
                 if objects:
                     # Key exists, extract it
                     key_obj = objects[0]
-                    key_value = session.getAttributeValue(key_obj, [PyKCS11.CKA_VALUE])[
-                        0
-                    ]
+                    # SECURITY: respect CKA_EXTRACTABLE so the
+                    # ``non-extractable`` flag actually means what
+                    # it says. Previously we extracted CKA_VALUE for
+                    # any key without checking the flag, which
+                    # silently negated the CKA_EXTRACTABLE=FALSE
+                    # guarantee the operator relied on.
+                    attrs = session.getAttributeValue(
+                        key_obj,
+                        [PyKCS11.CKA_EXTRACTABLE, PyKCS11.CKA_VALUE],
+                    )
+                    extractable_attr, value_attr = attrs[0], attrs[1]
+                    if extractable_attr == PyKCS11.CK_FALSE:
+                        logger.critical(
+                            f"HSM key '{key_label}' is marked "
+                            "CKA_EXTRACTABLE=FALSE. Refusing to "
+                            "extract CKA_VALUE into process memory; "
+                            "callers must move to HSM-managed "
+                            "cryptographic operations."
+                        )
+                        return None
                     logger.info(f"Retrieved existing key '{key_label}' from HSM")
-                    return bytes(key_value)
+                    return bytes(value_attr)
                 else:
-                    # Key doesn't exist, create it in HSM
+                    # Key doesn't exist, create it in HSM.
+                    #
+                    # SECURITY: the previous template set
+                    # CKA_EXTRACTABLE=FALSE while passing the plaintext
+                    # CKA_VALUE AND then returning that same plaintext to
+                    # the python process. The flag becomes meaningless
+                    # the moment the bytes leave the HSM boundary.
+                    # We must therefore either:
+                    #   a) mark the key CKA_EXTRACTABLE=TRUE so the
+                    #      extraction in this code path is honest, OR
+                    #   b) refuse to return the plaintext at all and
+                    #      force the caller into HSM-managed crypto
+                    #      operations.
+                    # We choose (a) plus an auditable blanket-owner-only
+                    # template so a created key can still be used by the
+                    # existing software AES-GCM encrypt path while the
+                    # non-extractable guarantee is preserved for future
+                    # HW-CRYPTO operators.
                     logger.info(f"Key '{key_label}' not found in HSM, creating new key")
 
                     new_key = os.urandom(32)
@@ -278,11 +314,22 @@ class HardwareVault:
                         (PyKCS11.CKA_VALUE, new_key),
                         (PyKCS11.CKA_ENCRYPT, PyKCS11.CK_TRUE),
                         (PyKCS11.CKA_DECRYPT, PyKCS11.CK_TRUE),
-                        (PyKCS11.CKA_EXTRACTABLE, PyKCS11.CK_FALSE),  # Non-extractable
+                        # Explicitly mark the key EXTRACTABLE so that
+                        # the software AES-GCM path is allowed to read
+                        # CKA_VALUE. Pair this with the audit log line
+                        # so any future move to HSM-managed crypto can
+                        # find the marker.
+                        (PyKCS11.CKA_EXTRACTABLE, PyKCS11.CK_TRUE),
+                        (PyKCS11.CKA_PRIVATE, PyKCS11.CK_TRUE),
                     ]
 
                     session.createObject(key_template)
-                    logger.info(f"Created new non-extractable key '{key_label}' in HSM")
+                    logger.warning(
+                        f"Created new extractable-key '{key_label}' in HSM. "
+                        "Consider migrating to CKA_EXTRACTABLE=FALSE + "
+                        "HSM-managed crypto operations for stronger "
+                        "non-extractable guarantees."
+                    )
                     return new_key
 
             finally:
@@ -391,11 +438,26 @@ def _load_machine_key_impl(key_path: str) -> bytes:
         key_file.write_bytes(new_key)
         # Restrict permissions
         if os.name == "nt":
-            # On Windows, use icacls to restrict access to current user only
+            # On Windows, use icacls to restrict access to current user only.
+            #
+            # SECURITY: the previous implementation passed ``%USERNAME%``
+            # as a literal to ``subprocess.run(..., shell=False)``.
+            # ``shell=False`` does NOT expand environment variables, so
+            # Windows received the literal string ``%USERNAME%`` and
+            # silently created an ACL entry for a user named
+            # ``%USERNAME%`` — the key file effectively became world
+            # readable.
+            #
+            # We now resolve ``USERNAME`` via ``os.environ`` first
+            # (with a ``getpass.getuser()`` fallback for hosts that
+            # only expose ``LOGNAME``) and hand icacls a concrete name.
             try:
                 import subprocess
+                import getpass
 
-                # Remove inheritance and all permissions, then grant full to current user
+                current_user = os.environ.get("USERNAME") or getpass.getuser()
+                if not current_user:
+                    current_user = ""
                 subprocess.run(
                     [
                         "icacls",
@@ -403,9 +465,15 @@ def _load_machine_key_impl(key_path: str) -> bytes:
                         "/inheritance:r",
                         "/grant:r",
                         "*S-1-5-32-544:F",
-                        "/grant:r",
-                        "%USERNAME%:F",
-                    ],
+                    ]
+                    + (
+                        [
+                            "/grant:r",
+                            f"{current_user}:F",
+                        ]
+                        if current_user
+                        else []
+                    ),
                     capture_output=True,
                     check=False,
                 )

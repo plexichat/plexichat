@@ -157,14 +157,30 @@ def dispatch(
     )
 
 
-def subscribe(callback: Callable[[Event, List[int]], None]) -> None:
+def subscribe(
+    callback: Callable[[Event, List[int]], None],
+    *,
+    critical: bool = False,
+) -> None:
     """
     Subscribe to event dispatches.
 
     Args:
-        callback: Function called with (event, user_ids) when events dispatch
+        callback: Function called with (event, user_ids) when events dispatch.
+        critical: When True, register on the NON-LOSSY delivery lane:
+            critical callbacks are invoked SYNCHRONOUSLY by the
+            dispatcher, BEFORE the regular asynchronous queue, so a
+            saturated QueueFull path cannot drop their events. Use
+            this for any subscriber whose intent is real-time,
+            user-facing delivery (e.g. the WebSocket gateway). The
+            contract is documented on :meth:`EventManager.subscribe`
+            -- critical callbacks MUST be fast and non-blocking
+            because their invocation is in-line on the dispatching
+            thread; re-entering ``events.dispatch()`` synchronously
+            from inside a critical callback will deadlock the
+            threading lock.
     """
-    _get_manager().subscribe(callback)
+    _get_manager().subscribe(callback, critical=critical)
 
 
 def unsubscribe(callback: Callable[[Event, List[int]], None]) -> None:

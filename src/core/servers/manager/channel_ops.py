@@ -31,7 +31,7 @@ class ChannelOpsMixin(ServerProtocol):
         reply_to_id: Optional[SnowflakeID] = None,
     ) -> Any:
         """Send a message to a text channel."""
-        channel = self.get_channel(user_id, channel_id)
+        channel = self.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
 
@@ -118,7 +118,7 @@ class ChannelOpsMixin(ServerProtocol):
         after_id: Optional[SnowflakeID] = None,
     ) -> List[Any]:
         """Get messages from a text channel."""
-        channel = self.get_channel(user_id, channel_id)
+        channel = self.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
 

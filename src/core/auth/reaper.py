@@ -34,12 +34,33 @@ class AccountReaper:
         audit_config = self._config.get("audit_log", {})
         halt_on_invalid = audit_config.get("halt_on_invalid_audit", True)
         if not is_valid:
+            # SECURITY: a real chain break IS serious (tamper-evident
+            # failure of an audit log) but raising SystemExit(1) takes
+            # the entire server down — operators can't examine what's
+            # wrong, HTTP traffic stops, and a buggy pre-fix chain race
+            # (or a deliberate GDPR-purge rotation) becomes a full
+            # outage.  We now:
+            #   - log CRITICAL every time;
+            #   - if halt_on_invalid_audit is True, set a class-level
+            #     halt flag so the reaper does NOT start its background
+            #     thread (so we don't write NEW events to a known-broken
+            #     chain), but the rest of the server boot keeps
+            #     running so the operator can debug;
+            #   - if halt_on_invalid_audit is False, log WARNING and
+            #     proceed so operators can override on purpose
+            #     (recovery from a known pre-fix race).
             msg = f"REAPER HALTED: Audit log integrity check failed! {error}"
             if halt_on_invalid:
-                logger.critical(msg)
-                raise SystemExit(1)
-            logger.error(msg)
-            return
+                logger.critical(
+                    f"{msg} - background purge thread disabled; "
+                    "server will continue to boot so the operator can inspect."
+                )
+                self._audit_halted = True
+                return
+            logger.warning(
+                f"deletion_log audit check failed but "
+                f"halt_on_invalid_audit=False. Proceeding: {error}"
+            )
 
         if count > 0:
             logger.info(f"Audit log verified: {count} records intact.")
@@ -101,6 +122,19 @@ class AccountReaper:
     def _run_forever(self):
         interval = self._reaper_config.get("interval_hours", 24) * 3600
         while self._is_running:
+            # HALT-FLAG GUARD: ``start()`` flips ``self._audit_halted``
+            # when the chain could not be verified and the operator did
+            # not override ``halt_on_invalid_audit``. Treat every cycle
+            # entry as a no-op so the daemon never writes NEW rows to a
+            # known-broken chain (which would silently extend a corrupt
+            # history).  Operators can still re-init via a config flip
+            # + restart without losing the halted signal otherwise.
+            if getattr(self, "_audit_halted", False):
+                logger.warning(
+                    "Reaper: audit log chain is halted; skipping harvest cycle."
+                )
+                time.sleep(min(interval, 60))
+                continue
             try:
                 self.harvest()
             except Exception as e:
@@ -117,6 +151,16 @@ class AccountReaper:
         Main purge logic. Identifies and erases users past their grace period.
         Also cleans up expired passkey challenges.
         """
+        # HALT-FLAG GUARD: skip every harvest cycle when the chain was
+        # rejected at startup so we cannot write new rows against a
+        # broken chain.  This sits alongside the ``_run_forever`` guard
+        # so a direct invocation of ``harvest()`` (e.g. tests, cron,
+        # admin trigger) is also a no-op.
+        if getattr(self, "_audit_halted", False):
+            logger.warning(
+                "Reaper: ``harvest()`` called while audit chain is halted; refusing to run."
+            )
+            return
         now = int(time.time())
         batch_size = self._reaper_config.get("batch_size", 50)
 

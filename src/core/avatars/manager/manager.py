@@ -28,5 +28,5 @@ class AvatarManager(
 
     def __init__(self, db=None):
         """Initialize avatar manager."""
-        super().__init__(db)
+        super().__init__(db)  # type: ignore[call-arg]  # BaseManager MRO doesn't propagate `db` through mixins
         self._setup_complete = False

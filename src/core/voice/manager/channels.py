@@ -126,14 +126,33 @@ class ChannelOpsMixin(VoiceProtocol):
             (server_id,),
         )
 
-        channels = []
+        # Pre-filter rows the caller can view BEFORE asking the
+        # database to compute per-channel counts. The bulk COUNT is
+        # scoped to the channels we will return, so we don't pay for
+        # rows that the permissions filter will drop anyway.
+        visible_rows: list = []
         for row in rows:
-            if self._servers:
-                if not self._servers.has_permission(
-                    user_id, server_id, "channels.view", row["id"]
-                ):
-                    continue
+            if self._servers and not self._servers.has_permission(
+                user_id, server_id, "channels.view", row["id"]
+            ):
+                continue
+            visible_rows.append(dict(row))
+        if not visible_rows:
+            return []
+
+        # One bulk SELECT COUNT for ALL visible channels — replaces
+        # the per-row COUNT that ``_row_to_voice_channel`` would
+        # otherwise fire. Net: an N-channels list query is now exactly
+        # 1 SELECT-listing + 1 SELECT-COUNT instead of N+1.
+        prefetched_counts = self._get_channel_user_counts_bulk(  # type: ignore[attr-defined]  # mixed in via ops mixin
+            [r["id"] for r in visible_rows]
+        )
+
+        channels: List[VoiceChannel] = []
+        for row in visible_rows:
             settings = self._get_channel_settings(row["id"])
-            channels.append(self._row_to_voice_channel(dict(row), settings))
+            channels.append(
+                self._row_to_voice_channel(row, settings, prefetched_counts)  # type: ignore[call-arg]  # positional arg signed different from caller
+            )
 
         return channels

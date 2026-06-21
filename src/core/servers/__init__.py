@@ -336,6 +336,22 @@ def get_channel(channel_id: int, user_id: int) -> Optional[Channel]:
     return _get_manager().get_channel(channel_id, user_id)
 
 
+def channel_exists(channel_id: int) -> bool:
+    """Membership-agnostic existence probe.
+
+    Returns ``True`` if the channel row exists at all, regardless
+    of whether the caller is a member or has any permission.
+    Use this to distinguish ``404`` (channel gone) from ``403``
+    (exists, caller blocked) in the channels API: pre-check
+    ``channel_exists`` first; only treat a non-existent channel
+    as ``404``; treat a missing ``get_channel`` result for an
+    existing channel as ``403``. Single ``SELECT 1`` query — cheap
+    enough to call on every PATCH / invite request without load
+    concerns.
+    """
+    return _get_manager().channel_exists(channel_id)  # type: ignore[attr-defined]  # mixed-in via ServerManager extends ChannelOpsMixin
+
+
 def get_channels(
     user_id: int,
     server_id: int,

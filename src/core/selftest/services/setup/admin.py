@@ -280,6 +280,10 @@ class AdminSetupMixin(SetupServiceBase):
                         int(time.time()),
                     ),
                 )
+            # Whichever id is now in admin_users (existing row wins, then
+            # insertion of other_id, then unchanged other_id) becomes the
+            # ``target`` for admin-to-admin endpoints.
+            self.ctx.test_admin_user_id = other_id
             db.execute(
                 "UPDATE auth_users SET permissions = ? WHERE id = ?",
                 ('{"admin.*": true, "*": true}', other_id),

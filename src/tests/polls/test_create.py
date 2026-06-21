@@ -146,16 +146,22 @@ class TestCreatePoll:
 class TestGetPoll:
     """Tests for getting polls."""
 
-    def test_get_poll_success(self, poll_with_options, dm_with_message):
+    def test_get_poll_success(self, dm_with_message):
         """Test getting a poll successfully."""
-        poll = poll_with_options
         user1, user2, dm, msg, polls, messaging = dm_with_message
+
+        poll = polls.create_poll(
+            user_id=user1.id,
+            message_id=msg.id,
+            question="Get poll test?",
+            options=["Red", "Blue"],
+        )
 
         retrieved = polls.get_poll(poll.id, user1.id)
 
         assert retrieved is not None
         assert retrieved.id == poll.id
-        assert retrieved.question == poll.question
+        assert retrieved.question == "Get poll test?"
 
     def test_get_poll_nonexistent(self, dm_with_message):
         """Test getting nonexistent poll returns None."""
