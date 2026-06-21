@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-63"
+DEFAULT_VERSION = "a.1.0-64"
 
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
@@ -339,33 +339,33 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "rate_limiting": {
             "enabled": True,
-            "global": {"requests": 100, "window_seconds": 60.0, "burst": 50},
+            "global": {"requests": 200, "window_seconds": 60.0, "burst": 100},
             "user": {
-                "requests": 120,
+                "requests": 200,
+                "window_seconds": 60.0,
+                "burst": 40,
+                "hourly_limit": 7200,
+                "daily_limit": 100000,
+            },
+            "ip": {
+                "requests": 100,
                 "window_seconds": 60.0,
                 "burst": 20,
                 "hourly_limit": 3600,
-                "daily_limit": 50000,
-            },
-            "ip": {
-                "requests": 60,
-                "window_seconds": 60.0,
-                "burst": 10,
-                "hourly_limit": 1800,
-                "daily_limit": 10000,
+                "daily_limit": 25000,
             },
             "routes": {
                 "static_client_html": {
-                    "requests": 30,
+                    "requests": 60,
                     "window_seconds": 60.0,
-                    "burst": 10,
-                    "hourly_limit": 600,
+                    "burst": 20,
+                    "hourly_limit": 1200,
                 },
                 "static_client_assets": {
-                    "requests": 600,
+                    "requests": 1000,
                     "window_seconds": 60.0,
-                    "burst": 100,
-                    "hourly_limit": 18000,
+                    "burst": 200,
+                    "hourly_limit": 36000,
                 },
             },
             "bot_multiplier": 1.5,

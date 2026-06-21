@@ -39,6 +39,12 @@ from .fetcher import (
     write_current_version,
 )
 
+from .manifest import (
+    get_signing_key,
+    regenerate_manifest,
+    verify_manifest,
+)
+
 # Re-export InstallResult to keep callers stable
 from . import fetcher as _fetcher  # noqa: F401  (kept for back-compat)
 
@@ -237,6 +243,21 @@ class StaticClientManager:
                 if cmp < 0:
                     continue
                 if cmp == 0:
+                    # Verify manifest integrity on startup
+                    path = self._install_dir / format_release_tag(parsed)
+                    key = get_signing_key()
+                    if key is not None and path.is_dir():
+                        if not verify_manifest(path, key):
+                            logger.info(
+                                f"static_client: manifest invalid for "
+                                f"{format_release_tag(parsed)}, attempting repair"
+                            )
+                            if not regenerate_manifest(path, key):
+                                logger.warning(
+                                    f"static_client: manifest repair failed, "
+                                    f"re-downloading {format_release_tag(parsed)}"
+                                )
+                                return self._fetch_and_install(parsed, asset)
                     logger.info(
                         f"static_client: already on {format_release_tag(parsed)}; no action"
                     )
@@ -275,6 +296,22 @@ class StaticClientManager:
                 asset, self._cfg.git_lab, self._cfg.max_zip_size_bytes
             )
             install_zip_at(zip_path, target_dir)
+
+            # Generate and sign integrity manifest
+            from .manifest import generate_manifest, write_manifest
+
+            try:
+                files = generate_manifest(target_dir)
+                key = get_signing_key()
+                if key is not None and files:
+                    write_manifest(target_dir, files, key)
+                    logger.info(
+                        f"static_client: wrote manifest for {tag} ({len(files)} files)"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    f"static_client: failed to write manifest for {tag}: {exc}"
+                )
         except FetchError as exc:
             logger.warning(f"static_client: failed to install {tag}: {exc}")
             return InstallResult(
