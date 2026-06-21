@@ -54,7 +54,8 @@ class ChannelMixin:
         self, channel_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Channel]:
         """Get a channel by ID if user has access."""
-        return self._manager.get_channel(user_id, channel_id)
+        # Delegate with canonical (channel_id, user_id) order.
+        return self._manager.get_channel(channel_id, user_id)
 
     def get_channels(
         self,
