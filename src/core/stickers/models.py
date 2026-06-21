@@ -17,11 +17,21 @@ class StickerFormat(Enum):
 
 
 class PackType(Enum):
-    """Type of sticker pack."""
+    """Type of sticker pack.
+
+    NOTE: ``PERSONAL`` is a per-user pack (server_id IS NULL,
+    created_by = user_id) that previously had to be expressed as
+    ``PackType.SERVER`` with a NULL server_id, which made routing
+    queries ambiguous (``WHERE pack_type = SERVER AND server_id IS NULL``
+    matched every personal pack AND every mis-typed "server" pack
+    with no server). The dedicated variant lets the manager index
+    by ``pack_type`` alone.
+    """
 
     DEFAULT = "default"
     SERVER = "server"
     PURCHASED = "purchased"
+    PERSONAL = "personal"
 
 
 @dataclass

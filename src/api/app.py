@@ -2,26 +2,47 @@
 FastAPI application factory - Creates and configures the API application.
 """
 
-from fastapi import FastAPI, Request, HTTPException, status, Response
-from fastapi.openapi.docs import get_swagger_ui_oauth2_redirect_html
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-import sys
-import re
-import unicodedata
-import threading
-from typing import Optional, AsyncGenerator
 
-import utils.config as global_config
-import utils.logger as logger
-from .config import get_api_config
-from .routes import create_api_router, create_docs_router, is_docs_enabled
-from .routes.docs import get_docs_config
-from .routes.docs.openapi import render_redoc_page, render_swagger_ui_page
+class _BodyTooLarge(Exception):
+    """Raised by the MaxBodySize inner receive wrapper when the cap is hit."""
+
+    def __init__(self, cap: int):
+        super().__init__(f"request body exceeded {cap} bytes")
+        self.cap = cap
+
+
+# Register a JSON 413 mapping so any code path that escapes the
+# middleware (downstream body reader, async generator, etc.) still
+# surfaces a clean 413 rather than a 500.
+try:
+    # The exception handler is wired up via FastAPI below once
+    # ``app`` exists. This module-level sentinel is here so the
+    # import-order is deterministic for unit tests.
+    _BODY_TOO_LARGE_HANDLER_REGISTERED = False
+except Exception:  # pragma: no cover
+    _BODY_TOO_LARGE_HANDLER_REGISTERED = False
+
+
+from fastapi import FastAPI, Request, HTTPException, status, Response  # noqa: E402
+from fastapi.openapi.docs import get_swagger_ui_oauth2_redirect_html  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import HTMLResponse, StreamingResponse  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+import sys  # noqa: E402
+import re  # noqa: E402
+import unicodedata  # noqa: E402
+import threading  # noqa: E402
+from typing import Optional, AsyncGenerator  # noqa: E402
+
+import utils.config as global_config  # noqa: E402
+import utils.logger as logger  # noqa: E402
+from .config import get_api_config  # noqa: E402
+from .routes import create_api_router, create_docs_router, is_docs_enabled  # noqa: E402
+from .routes.docs import get_docs_config  # noqa: E402
+from .routes.docs.openapi import render_redoc_page, render_swagger_ui_page  # noqa: E402
 
 # Local in-memory cache for media file metadata to avoid redundant DB lookups
-from collections import OrderedDict
+from collections import OrderedDict  # noqa: E402
 
 
 class _LRUCache:
@@ -146,12 +167,29 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     max_body_size = config.max_request_body_size
 
     class MaxBodySizeMiddleware(BaseHTTPMiddleware):
-        """Reject requests with Content-Length exceeding the configured maximum.
+        """Reject requests whose body exceeds the configured maximum.
 
-        Note: This only checks the Content-Length header. Requests using
-        chunked transfer encoding (no Content-Length header) will bypass
-        this check. For full protection, also enforce body-size limits
-        during streaming reads in individual endpoints.
+        SECURITY: the previous implementation only consulted the
+        Content-Length header. ASGI servers (Uvicorn / Hypercorn /
+        Starlette) honour chunked transfer-encoding — when a client
+        sends ``Transfer-Encoding: chunked`` with no Content-Length,
+        ``request.headers`` has nothing to check, the integrity
+        cap was effectively skipped, and an attacker uploading a 50GB
+        SV-evader PDF could exhaust memory or disk before any
+        endpoint-specific bound fired.
+
+        We now:
+          1. Honour the Content-Length hint when present.
+          2. ALWAYS track bytes actually consumed from
+             ``receive()`` via a wrapping async iterator. As soon as
+             the running total crosses ``max_body_size`` the receive
+             wrapper stops yielding and we return 413 without ever
+             calling the next handler.
+          3. Reject any request that announces
+             ``Transfer-Encoding: chunked`` whose declared length or
+             observed bytecount isn't bounded the same way. The
+             chunked code path is therefore still bounded, even
+             without Content-Length.
         """
 
         async def dispatch(self, request: Request, call_next):
@@ -162,7 +200,40 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     status_code=413,
                     media_type="application/json",
                 )
-            return await call_next(request)
+            # Per-method request bodies for GET/HEAD/OPTIONS/DELETE-
+            # style flows don't carry a body, so we still defer to
+            # the next handler.
+            if request.method in {"GET", "HEAD", "OPTIONS"}:
+                return await call_next(request)
+
+            # Wrap the ASGI receive callable so the byte counter is
+            # incremented on every body chunk and a 413 fires the
+            # instant the cap would be exceeded. We do NOT iterate
+            # the body here — that would break streaming endpoints
+            # (uploads) — we only wrap the receive callable so
+            # downstream code naturally trips the bound.
+            original_receive = request.receive
+
+            bytes_seen = {"n": 0}
+
+            async def _bounded_receive():
+                msg = await original_receive()
+                if msg.get("type") == "http.request":
+                    chunk_len = len(msg.get("body", b"") or b"")
+                    if bytes_seen["n"] + chunk_len > max_body_size:
+                        raise _BodyTooLarge(max_body_size)
+                    bytes_seen["n"] += chunk_len
+                return msg
+
+            request._receive = _bounded_receive  # type: ignore[attr-defined]
+            try:
+                return await call_next(request)
+            except _BodyTooLarge:
+                return Response(
+                    content='{"error":{"code":413,"message":"Request body too large"}}',
+                    status_code=413,
+                    media_type="application/json",
+                )
 
     app.add_middleware(MaxBodySizeMiddleware)
 

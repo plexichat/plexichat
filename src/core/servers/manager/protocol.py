@@ -59,9 +59,10 @@ class ServerProtocol:
         return super().get_server(server_id, user_id)  # type: ignore[misc]
 
     def get_channel(
-        self, user_id: SnowflakeID, channel_id: SnowflakeID
+        self, channel_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Any]:
-        return super().get_channel(user_id, channel_id)  # type: ignore[misc]
+        # Canonical (channel_id, user_id) order matches manager/base.py.
+        return super().get_channel(channel_id, user_id)  # type: ignore[misc]
 
     def get_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Any]:
         return super().get_member(server_id, user_id)  # type: ignore[misc]

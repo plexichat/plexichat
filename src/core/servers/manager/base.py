@@ -184,9 +184,20 @@ class ServerManager(
         return self.channel_handler.delete_category(user_id, category_id)
 
     def get_channel(
-        self, user_id: SnowflakeID, channel_id: SnowflakeID
+        self, channel_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Channel]:
-        """Get a channel by ID with caching."""
+        """Get a channel by ID with caching.
+
+        Canonical signature: ``(channel_id, user_id)`` — same order
+        as the public :class:`ServersManager` exposed via
+        ``src/core/servers/__init__.py`` and the channel-mixin
+        convenience wrapper.  The prior ``(user_id, channel_id)``
+        order was a divergence that forced every caller to use
+        keyword arguments to remain order-invariant, violating
+        AGENTS.md's strict-typing guidelines.  Pin it here so the
+        cache key + membership filter below read the same fields
+        regardless of which wrapper invokes us.
+        """
         cache_key = channel_id
         cached_row = self._cache_get(self._channel_cache_prefix, cache_key)
 

@@ -158,7 +158,7 @@ def get_pack_stickers(user_id: int, pack_id: int) -> List[Sticker]:
 
 def remove_sticker(user_id: int, sticker_id: int) -> bool:
     """Remove a sticker from its pack."""
-    return _get_manager().remove_sticker(user_id, sticker_id)
+    return _get_manager().delete_sticker(user_id, sticker_id)
 
 
 def send_sticker(user_id: int, message_id: int, sticker_id: int) -> StickerUsage:
