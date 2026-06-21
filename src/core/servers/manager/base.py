@@ -225,6 +225,49 @@ class ServerManager(
 
         return _row_to_channel(cached_row, self._encrypt_descriptions)
 
+    def channel_exists(self, channel_id: SnowflakeID) -> bool:
+        """Membership-AGNOSTIC existence probe.
+
+        Returns ``True`` if a channel exists at all, regardless of
+        whether the caller is a member or has any permission. Use
+        this to distinguish ``404`` (channel gone) from ``403``
+        (exists, caller blocked) — :meth:`get_channel` returns
+        ``None`` in BOTH cases because its WHERE / membership join
+        filters out non-members. Callers wire this into a cheap
+        pre-check before :meth:`get_channel` so the channel API
+        can return distinct status codes for the two failure
+        modes the auto-loop / selftest care about.
+
+        Single ``SELECT 1`` query against ``srv_channels``; no
+        membership or permission joins, no row hydration. Cheap
+        enough to call on every PATCH / invite request without
+        load concerns.
+        """
+        row = self._db.fetch_one(
+            # ``exists`` is reserved in both SQLite and Postgres, so
+            # we double-quote the alias. The cursor returns the
+            # UN-quoted name ``exists`` so ``row["exists"]`` below
+            # works on both backends without translation.
+            'SELECT EXISTS(SELECT 1 FROM srv_channels WHERE id = ?) AS "exists"',
+            (channel_id,),
+        )
+        if row is None:
+            return False
+        # Dict-key access is the codebase standard: ``fetch_one``
+        # returns dict-style rows (consistent with ``cached_row =
+        # dict(row)`` in get_channel and ``row["server_id"]``
+        # string-key lookups elsewhere in this file). SQLite
+        # returns 0/1 ints (``bool()`` normalises); Postgres
+        # returns True/False bools (``bool()`` passes through).
+        # KeyError only fires if a column-name mismatch slips
+        # through (a dispatcher-level bug worth surfacing); we
+        # fail closed by returning False so a missing column can
+        # never silently misclassify the 404-vs-403 dual-probe.
+        try:
+            return bool(row["exists"])
+        except KeyError:
+            return False
+
     def get_channels(
         self,
         user_id: SnowflakeID,

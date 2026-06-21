@@ -160,42 +160,42 @@ async def admin_force_password_change(request: Request, target_admin_id: str):
     """
     Force a specific admin to change their password on next login.
 
-    Requires admin.edit permission.
+    Requires admin.edit permission (already gated by
+    `require_admin_permission`).  The actual mutation + audit trail are
+    handled by the service-layer helper so route code never touches
+    raw SQL or the audit logger directly.
     """
     check_host_restriction(request)
     current_admin_id = require_admin_permission(request, "admin.edit")
 
     try:
-        target_id = int(target_admin_id)
-        import src.api as api
+        from src.core import admin
 
-        db = api.get_db()
-        if db is None:
+        try:
+            target_id_int = int(target_admin_id)
+        except (TypeError, ValueError):
             raise HTTPException(
-                status_code=500,
-                detail={"error": {"code": 500, "message": "Database not available"}},
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid admin ID"}},
             )
-        db.execute(
-            "UPDATE admin_users SET force_password_change = 1 WHERE id = ?",
-            (target_id,),
-        )
 
-        # Log the action
-        from src.core.admin.permissions import log_admin_action
-
-        log_admin_action(
-            db,
-            current_admin_id,
-            "force_password_change",
-            "admin_user",
-            target_id,
-            {"message": f"Forced password change for admin {target_id}"},
-            request.client.host if request.client else "unknown",
+        client_ip = request.client.host if request.client else "unknown"
+        success, message = admin.force_password_change(
+            acting_admin_id=current_admin_id,
+            target_admin_id=target_id_int,
+            client_ip=client_ip,
         )
-
-        return SuccessResponse(
-            success=True, message="Password change forced successfully"
-        )
+        if not success:
+            status_code = (
+                404 if "does not exist" in message or "Invalid" in message else 400
+            )
+            raise HTTPException(
+                status_code=status_code,
+                detail={"error": {"code": status_code, "message": message}},
+            )
+        return SuccessResponse(success=True, message=message)
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(
             status_code=400,

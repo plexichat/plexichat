@@ -1,4 +1,5 @@
 import httpx
+from typing import List
 from urllib.parse import urlencode
 from fastapi import APIRouter, Request, HTTPException
 
@@ -20,7 +21,58 @@ try:
 except ImportError:
     config_util = None
 
+try:
+    from src.utils.net import get_client_ip as _oauth_get_client_ip
+except ImportError:  # pragma: no cover
+    _oauth_get_client_ip = None
+
 router = APIRouter()
+
+
+# ----------------------------- redirect_uri allow-list -----------------------------
+#
+# SECURITY: ``redirect_uri`` is supplied by the caller (effectively the
+# browser) and is later round-tripped to the IdP and back to us. If we
+# accept any URI the user gives us we hand them an open redirector
+# and a token-replay primitive.
+#
+# The allow-list is built once at module load from two sources:
+#   1. ``oauth.<provider>.allowed_redirect_uris`` config list.
+#   2. The default localhost dev origin (127.0.0.1:8000 / [::1]:8000)
+#      which is only accepted when ``oauth.allow_localhost_redirects``
+#      is true (default: true for dev builds).
+def _provider_allowed_redirects(provider: str) -> List[str]:
+    if not config_util:
+        return []
+    oauth_cfg = config_util.get("oauth", {}) or {}
+    provider_cfg = oauth_cfg.get(provider, {}) or {}
+    out = list(provider_cfg.get("allowed_redirect_uris", []) or [])
+    if oauth_cfg.get("allow_localhost_redirects", True):
+        out.extend(
+            [
+                "http://127.0.0.1:8000",
+                "http://localhost:8000",
+                "https://127.0.0.1:8000",
+                "https://localhost:8000",
+            ]
+        )
+    return out
+
+
+def _redirect_uri_is_allowed(provider: str, redirect_uri: str) -> bool:
+    """Strict exact-match allow-list comparison.
+
+    No substring matching, no glob, no ``startswith`` — a single
+    mistyped character MUST reject. URL normalisation is done by
+    canonicalising trailing slashes only.
+    """
+    if not redirect_uri:
+        return False
+    target = redirect_uri.rstrip("/")
+    for candidate in _provider_allowed_redirects(provider):
+        if candidate.rstrip("/") == target:
+            return True
+    return False
 
 
 @router.get(
@@ -47,6 +99,25 @@ async def oauth_login_init(
             },
         )
 
+    if not _redirect_uri_is_allowed(provider, redirect_uri):
+        from utils import (
+            logger as _oauth_logger,
+        )  # local alias to keep import surface small
+
+        _oauth_logger.warning(
+            f"OAuth login rejected: redirect_uri={redirect_uri!r} "
+            f"not on the allow-list for provider {provider}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": "redirect_uri is not on the allow-list for this provider",
+                }
+            },
+        )
+
     oauth_config = config_util.get("oauth", {}) if config_util else {}
     provider_config = oauth_config.get(provider, {})
 
@@ -64,7 +135,14 @@ async def oauth_login_init(
         )
 
     provider_info = OAUTH_PROVIDERS[provider]
-    ip_address = request.client.host if request.client else None
+    # SECURITY: prefer the trusted-proxy-aware ``get_client_ip()``
+    # helper so X-Forwarded-For is honoured only for trusted peers
+    # and never spoofable from the open internet. Fall back to
+    # ``request.client.host`` only when the helper is unavailable.
+    if _oauth_get_client_ip is not None:
+        ip_address = _oauth_get_client_ip(request)
+    else:
+        ip_address = request.client.host if request.client else None
 
     pkce_enabled = oauth_config.get("pkce_enabled", True) and provider_info.get(
         "supports_pkce", False
@@ -162,6 +240,21 @@ async def oauth_callback(
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Auth module unavailable"}},
+        )
+
+    if not _redirect_uri_is_allowed(provider, callback_data.redirect_uri):
+        logger.warning(
+            f"OAuth callback rejected: redirect_uri={callback_data.redirect_uri!r} "
+            f"not on the allow-list for provider {provider}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": "redirect_uri is not on the allow-list for this provider",
+                }
+            },
         )
 
     valid, state_record, error_msg = verify_oauth_state(
@@ -349,7 +442,13 @@ async def oauth_callback(
                 detail={"error": {"code": 401, "message": "Could not identify user"}},
             )
 
-        ip_address = request.client.host if request.client else None
+        # SECURITY: pull the IP through the hardened helper rather than
+        # ``request.client.host`` so X-Forwarded-For spoofing attempts
+        # outside the trusted-proxy perimeter cannot hijack audit logs.
+        if _oauth_get_client_ip is not None:
+            ip_address = _oauth_get_client_ip(request)
+        else:
+            ip_address = request.client.host if request.client else None
         user_agent = request.headers.get("User-Agent")
 
         try:

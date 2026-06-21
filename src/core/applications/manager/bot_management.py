@@ -454,11 +454,38 @@ class BotManagementMixin(ApplicationManagerProtocol):
     def revoke_authorized_app(
         self, token_id: SnowflakeID, user_id: SnowflakeID
     ) -> bool:
-        self._db.execute(
-            "UPDATE app_oauth2_tokens SET revoked = 1 WHERE id = ? AND user_id = ?",
+        # SECURITY/CORRECTNESS FIX: the prior implementation targeted a
+        # non-existent table ``app_oauth2_tokens`` so the revoke call
+        # silently mutated zero rows. The real revocation table is
+        # ``app_oauth_tokens`` (matches ``get_user_authorized_apps``
+        # above and the DSAR collector). The query is portable
+        # across SQLite / Postgres because it avoids ``RETURNING``
+        # and ``DELETE … WHERE id=`` semantics that differ across
+        # drivers.
+        cursor = self._db.execute(
+            "UPDATE app_oauth_tokens SET revoked = 1 WHERE id = ? AND user_id = ?",
             (token_id, user_id),
         )
-        logger.info(f"Authorized app token {token_id} revoked by user {user_id}")
+        try:
+            rows = cursor.rowcount
+        except Exception:
+            rows = None  # pragma: no cover -- drivers without rowcount
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        logger.info(
+            f"Authorized app token {token_id} revoked by user {user_id} "
+            f"(rows affected: {rows if rows is not None else 'unknown'})"
+        )
+        if rows is not None and rows == 0:
+            # Surface this as a hard failure so the API layer can
+            # return 404 instead of accepting a no-op revocation.
+            from ..exceptions import ApplicationNotFoundError
+
+            raise ApplicationNotFoundError(
+                f"No authorized app token {token_id} for user {user_id}"
+            )
         return True
 
     def get_bot_directory(

@@ -2,7 +2,6 @@
 Private helper functions for admin authentication.
 """
 
-import hashlib
 import os
 import secrets
 import string
@@ -14,8 +13,21 @@ import utils.logger as logger
 
 
 def _hash_admin_token(token: str) -> str:
-    """Hash admin bearer tokens before persistence."""
-    return "sha256$" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+    """Hash admin bearer tokens before persistence.
+
+    SECURITY: the previous implementation used unsalted
+    ``hashlib.sha256(token).hexdigest()`` giving us a deterministic
+    fingerprint that an attacker with read-only DB access could
+    brute-force against a dictionary of guessed secrets. We now use
+    Argon2id via the encryption module which adds a per-row random
+    salt and a key-stretching cost that makes offline guessing
+    economically infeasible. The returned string is the canonical
+    ``$argon2id$v=19$m=…$salt$hash`` digest with no extra prefix; any
+    legacy ``sha256$`` row can be detected by prefix scan and rotated.
+    """
+    import src.utils.encryption as encryption
+
+    return encryption.hash_password(token)
 
 
 def _create_otp_challenge(admin_id: int, is_setup: bool, ttl_seconds: int = 300) -> str:

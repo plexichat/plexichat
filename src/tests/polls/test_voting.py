@@ -1,5 +1,10 @@
 """
 Tests for poll voting.
+
+Uses ``dm_with_message`` (returns a 6-tuple with two distinct users,
+a DM, and a message) to avoid the implicit ordering contract of
+``poll_with_options``.  Each test that needs a poll creates one
+inline so assertions stay clear and self-contained.
 """
 
 import pytest
@@ -15,10 +20,16 @@ from src.core.polls import (
 class TestVoting:
     """Tests for voting on polls."""
 
-    def test_vote_success(self, poll_with_options, dm_with_message):
+    def test_vote_success(self, dm_with_message):
         """Test voting on a poll successfully."""
-        poll = poll_with_options
-        user1, user2, dm, msg, polls, messaging = dm_with_message
+        user1, user2, _dm, msg, polls, _messaging = dm_with_message
+
+        poll = polls.create_poll(
+            user_id=user1.id,
+            message_id=msg.id,
+            question="What is your favorite color?",
+            options=["Red", "Blue", "Green", "Yellow"],
+        )
 
         option_id = poll.options[0].id
         results = polls.vote(user2.id, poll.id, [option_id])
@@ -27,10 +38,16 @@ class TestVoting:
         assert results.user_voted is True
         assert option_id in results.user_votes
 
-    def test_vote_updates_count(self, poll_with_options, dm_with_message):
+    def test_vote_updates_count(self, dm_with_message):
         """Test voting updates vote count."""
-        poll = poll_with_options
-        user1, user2, dm, msg, polls, messaging = dm_with_message
+        user1, _user2, _dm, msg, polls, _messaging = dm_with_message
+
+        poll = polls.create_poll(
+            user_id=user1.id,
+            message_id=msg.id,
+            question="What is your favorite color?",
+            options=["Red", "Blue", "Green", "Yellow"],
+        )
 
         option_id = poll.options[1].id
         results = polls.vote(user1.id, poll.id, [option_id])
@@ -59,12 +76,12 @@ class TestVoting:
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth_manager.register(
             username=f"multi_vote1_{unique_id}",
-            email=f"multi_vote1_{unique_id}@example.com",
+            email=f"multi_vote1_{unique_id}@test.local",
             password="TestPass123!",
         )
         user2 = auth_manager.register(
             username=f"multi_vote2_{unique_id}",
-            email=f"multi_vote2_{unique_id}@example.com",
+            email=f"multi_vote2_{unique_id}@test.local",
             password="TestPass123!",
         )
 
@@ -93,12 +110,12 @@ class TestVoting:
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth_manager.register(
             username=f"single_vote1_{unique_id}",
-            email=f"single_vote1_{unique_id}@example.com",
+            email=f"single_vote1_{unique_id}@test.local",
             password="TestPass123!",
         )
         user2 = auth_manager.register(
             username=f"single_vote2_{unique_id}",
-            email=f"single_vote2_{unique_id}@example.com",
+            email=f"single_vote2_{unique_id}@test.local",
             password="TestPass123!",
         )
 
@@ -118,10 +135,16 @@ class TestVoting:
                 user2.id, poll.id, [poll.options[0].id, poll.options[1].id]
             )
 
-    def test_vote_invalid_option_fails(self, poll_with_options, dm_with_message):
+    def test_vote_invalid_option_fails(self, dm_with_message):
         """Test voting for invalid option fails."""
-        poll = poll_with_options
-        user1, user2, dm, msg, polls, messaging = dm_with_message
+        user1, user2, _dm, msg, polls, _messaging = dm_with_message
+
+        poll = polls.create_poll(
+            user_id=user1.id,
+            message_id=msg.id,
+            question="What is your favorite color?",
+            options=["Red", "Blue", "Green", "Yellow"],
+        )
 
         with pytest.raises(PollOptionNotFoundError):
             polls.vote(user2.id, poll.id, [999999999])

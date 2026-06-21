@@ -24,8 +24,55 @@ from src.core.auth.exceptions import (
 
 try:
     from src.core.ratelimit.decorators import rate_limit
-except ImportError:
+except ImportError as _passkey_rl_exc:
     rate_limit = None
+    # SECURITY: previously this ImportError was silently consumed
+    # and ``rate_limit`` was set to ``None``. Every route's decorator
+    # then degraded to a no-op identity-function and an attacker
+    # could brute-force passkey challenges or replay registration
+    # attempts without any backoff. We now (a) log a loud WARNING so
+    # operators notice at process startup, and (b) re-raise in any
+    # configuration where rate limiting is mandatory (the
+    # ``PLEXICHAT_REQUIRE_FAIL_CLOSED`` env-var or the
+    # ``rate_limiting.required`` config flag).
+    import utils.logger as logger
+
+    logger.critical(
+        "PASSKEY RATE_LIMIT IMPORT FAILED: %s. "
+        "Passkey routes will run WITHOUT rate limiting. "
+        "Install plexichat-ratelimit and restart, OR explicitly "
+        "opt-out by setting PLEXICHAT_ALLOW_PASSKEY_NO_RATELIMIT=1. "
+        "In production PLEXICHAT_REQUIRE_FAIL_CLOSED=1 will be "
+        "respected and the process refuses to start.",
+        _passkey_rl_exc,
+    )
+
+    import os as _passkey_os
+    import utils.config as _passkey_cfg
+
+    try:
+        rl_required = bool(_passkey_cfg.get("rate_limiting", {}).get("required", False))
+    except Exception:
+        rl_required = False
+
+    if rl_required or _passkey_os.environ.get(
+        "PLEXICHAT_REQUIRE_FAIL_CLOSED", ""
+    ) not in ("", "0"):
+        if _passkey_os.environ.get("PLEXICHAT_ALLOW_PASSKEY_NO_RATELIMIT", "") in (
+            "1",
+            "true",
+            "yes",
+        ):
+            logger.critical(
+                "Opted-in to running without passkey rate-limit "
+                "via PLEXICHAT_ALLOW_PASSKEY_NO_RATELIMIT."
+            )
+        else:
+            raise RuntimeError(
+                "Passkey rate-limit import failed and fail-closed "
+                "mode is required; refusing to start."
+            ) from _passkey_rl_exc
+
 
 router = APIRouter()
 

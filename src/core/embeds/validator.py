@@ -5,6 +5,7 @@ Handles field limits, character limits, URL validation, and XSS prevention.
 """
 
 import re
+import unicodedata
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
@@ -28,11 +29,21 @@ MAX_FIELDS = 25
 MAX_EMBEDS_PER_MESSAGE = 10
 
 # URL validation pattern (http/https only)
+#
+# SECURITY: the previous regex accepted both ``localhost`` and
+# raw IPv4 literals like ``http://10.0.0.5``. Either of those in an
+# embed/avatar URL became a hard SSRF primitive — anywhere a
+# user-supplied URL is fetched server-side (link previews, image
+# proxying, embed enrichment), the attacker pointed Plexichat at
+# an internal endpoint. Regex alone cannot block IPv6 brackets,
+# octal IP forms, or DNS-rebinding. We drop the IP/literal
+# allowance entirely here — the centralised URLValidator in
+# ``src.utils.security`` is the canonical place that resolves DNS
+# and rejects private/loopback/link-local/multicast/unspecified
+# ranges. URL_PATTERN here only enforces shape.
 URL_PATTERN = re.compile(
     r"^https?://"
-    r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|"
-    r"localhost|"
-    r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
+    r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?)"
     r"(?::\d+)?"
     r"(?:/?|[/?]\S+)$",
     re.IGNORECASE,
@@ -106,9 +117,82 @@ def validate_url(url: str, field_name: str = "url") -> str:
             f"URL must use http or https protocol in {field_name}", url
         )
 
-    # Validate URL format
+    # SECURITY: a URL-shaped string is the one context where
+    # bidi-override / zero-width characters MUST be stripped before
+    # matching. Apply BEFORE the URL_PATTERN check so that an
+    # invisible character inside the host doesn't let a malicious
+    # URL slip past.
+    url = _strip_url_dangerous_unicode(url)
+
+    # Validate URL shape first
     if not URL_PATTERN.match(url):
         raise InvalidUrlError(f"Invalid URL format in {field_name}", url)
+
+    # SECURITY: reject raw IPv4 / IPv6 literals and ``localhost``-
+    # style hostnames. Plexichat frequently fetches the validated URL
+    # server-side, so a literal ``http://10.0.0.5`` would otherwise
+    # become an SSRF primitive. We delegate the heavy lifting to the
+    # centralised URLValidator in src.utils.security which resolves
+    # DNS and blocks private/loopback/link-local/multicast ranges.
+    try:
+        from src.utils.security import URLValidator
+
+        URLValidator().validate_url_for_request(url)
+    except (ImportError, ModuleNotFoundError):
+        # Strict fallback: if the security module is unavailable we
+        # still want to refuse obviously-private IPs by parsing them
+        # with the stdlib. We log a CRITICAL so operators notice
+        # the missing security module.
+        import ipaddress
+        from urllib.parse import urlparse as _urlparse
+
+        try:
+            import utils.logger as _url_logger
+
+            _url_logger.critical(
+                "src.utils.security.URLValidator unavailable; "
+                "falling back to raw IP literal block in embed "
+                "validation. Install src.utils.security to enable "
+                "DNS-based SSRF protection."
+            )
+        except Exception:
+            pass
+
+        parsed_host = _urlparse(url).hostname or ""
+        if parsed_host:
+            # Strip IPv6 brackets if present.
+            bare = parsed_host.strip("[]")
+            try:
+                ip = ipaddress.ip_address(bare)
+                if (
+                    ip.is_private
+                    or ip.is_loopback
+                    or ip.is_link_local
+                    or ip.is_reserved
+                    or ip.is_multicast
+                    or ip.is_unspecified
+                ):
+                    raise InvalidUrlError(
+                        f"Private/reserved IP literal not allowed in {field_name}",
+                        url,
+                    )
+            except ValueError:
+                # Not an IP — likely a DNS hostname. We cannot block
+                # DNS-rebinding without the security helper; refuse
+                # tricky literal-looking names ourselves.
+                if bare.lower() in {
+                    "localhost",
+                    "localhost.localdomain",
+                    "local",
+                    "ip6-localhost",
+                    "ip6-loopback",
+                } or bare.lower().endswith((".local", ".internal")):
+                    raise InvalidUrlError(
+                        f"Localhost-like hostname not allowed in {field_name}",
+                        url,
+                    )
+    except ValueError as ssrf_exc:
+        raise InvalidUrlError(f"URL failed SSRF check in {field_name}: {ssrf_exc}", url)
 
     return url
 
@@ -188,6 +272,52 @@ def sanitize_content(content: str, field_name: str = "content") -> str:
     if not content:
         return content
 
+    # SECURITY: decode-then-match so obvious bypasses
+    # (HTML entities, percent encoding, case toggling, mixed
+    # upper/lower) become visible. We do NOT strip zero-width /
+    # format-category characters from content text here because
+    # those characters are part of legitimate multilingual content
+    # (Arabic tatweel, Hebrew niqqud with ZWJ, emoji ZWJ
+    # sequences, RTL marks). Lifting the categories globally
+    # mutilates user data.
+    # The category-strip is instead implemented in
+    # ``_strip_url_dangerous_unicode`` and applied ONLY where the
+    # content is treated as a URL-shape input.
+    import html as _html
+    import re as _re
+    import urllib.parse as _ulr
+
+    decoded = _ulr.unquote(content)
+    decoded = _html.unescape(decoded)
+    normalized_full = unicodedata.normalize("NFKC", decoded)
+    normalized_no_ws = _re.sub(r"\s+", "", normalized_full).lower()
+
+    dangerous_children = (
+        "script",
+        "javascript",
+        "vbscript",
+        "data",
+        "iframe",
+        "object",
+        "embed",
+        "onload",
+        "onerror",
+        "onclick",
+        "onmouseover",
+    )
+    for child in dangerous_children:
+        if child in normalized_no_ws:
+            if child == "data" and (
+                "data:text" not in normalized_no_ws
+                and "data:application" not in normalized_no_ws
+                and "data:image" not in normalized_no_ws
+            ):
+                continue
+            raise EmbedSanitizationError(
+                f"Potentially unsafe content detected in {field_name}",
+                field_name,
+            )
+
     for pattern in DANGEROUS_PATTERNS:
         if pattern.search(content):
             raise EmbedSanitizationError(
@@ -195,6 +325,19 @@ def sanitize_content(content: str, field_name: str = "content") -> str:
             )
 
     return content
+
+
+def _strip_url_dangerous_unicode(value: str) -> str:
+    """Strip invisible / bidi-override characters from URL-shaped strings.
+
+    Mirrors the previous sanitize-time stripping but scoped to URL
+    contexts where those characters are an attack primitive (zero-
+    width inside a hostname, bidi override in a URL displayed in a
+    browser status bar). Multilingual TEXT body content is unaffected.
+    """
+    import unicodedata as _ud
+
+    return "".join(ch for ch in value if _ud.category(ch) not in ("Cf", "Cc", "Cs"))
 
 
 def validate_string_length(value: str, max_length: int, field_name: str) -> str:

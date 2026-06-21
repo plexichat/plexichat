@@ -25,32 +25,32 @@ logger = logging.getLogger(__name__)
 def up(db):
     """Drop unencrypted columns after verification period."""
     logger.info(
-        "Migration 025: Starting removal of unencrypted poll columns. "
+        "Migration 026: Starting removal of unencrypted poll columns. "
         "This operation is irreversible."
     )
 
     if db.type == "postgres":
         if db.table_exists("poll_polls") and db.column_exists("poll_polls", "question"):
-            logger.info("Migration 025: Dropping question column from poll_polls")
+            logger.info("Migration 026: Dropping question column from poll_polls")
             db.execute("ALTER TABLE poll_polls DROP COLUMN question")
 
         if db.table_exists("poll_options") and db.column_exists("poll_options", "text"):
-            logger.info("Migration 025: Dropping text column from poll_options")
+            logger.info("Migration 026: Dropping text column from poll_options")
             db.execute("ALTER TABLE poll_options DROP COLUMN text")
     else:
         # SQLite requires table recreation for column drop
         logger.warning(
-            "Migration 025: SQLite requires manual table recreation for column drop. "
+            "Migration 026: SQLite requires manual table recreation for column drop. "
             "Please recreate poll_polls and poll_options tables without question/text columns."
         )
 
-    logger.info("Migration 025: Completed")
+    logger.info("Migration 026: Completed")
 
 
 def down(db):
     """Rollback - NOT SUPPORTED (data loss would occur)."""
     logger.error(
-        "Migration 025 rollback: NOT SUPPORTED. "
+        "Migration 026 rollback: NOT SUPPORTED. "
         "Unencrypted columns were dropped and data cannot be recovered."
     )
     raise RuntimeError(

@@ -37,15 +37,29 @@ class DeleteMessageAction(BaseAction):
         try:
             bot_user_id = context.get("bot_user_id") if context else None
             if not bot_user_id:
-                # Use hard delete for AutoMod violations
-                self._db.execute(
-                    "DELETE FROM msg_messages WHERE id = ?",
-                    (violation.message_id,),
-                )
-                # Also delete associated attachments from DB (files stay until cleanup)
-                self._db.execute(
-                    "DELETE FROM msg_attachments WHERE message_id = ?",
-                    (violation.message_id,),
+                # SECURITY: similar to ban.py / kick.py, the previous
+                # raw-SQL DELETE path bypassed the messaging
+                # permission layer. When ``bot_user_id`` is missing we
+                # now refuse the action unless explicit, audited
+                # system context is supplied. The ``self._messaging``
+                # reference is the permission-aware helper.
+                system_context = bool((context or {}).get("__system_context__"))
+                if not (self._messaging and system_context):
+                    logger.error(
+                        "AutoMod message delete REFUSED: bot_user_id "
+                        "missing and no permission-checked system "
+                        "context was supplied."
+                    )
+                    return False
+
+                # Use hard delete for AutoMod violations (only via
+                # the messaging module so cache invalidation and
+                # audit hooks are honoured correctly — the legacy
+                # raw-SQL branch is intentionally removed).
+                self._messaging.delete_message(
+                    user_id=0,  # 0 = system actor in audit trail
+                    message_id=violation.message_id,
+                    hard_delete=True,
                 )
 
                 # Manual invalidation since we used raw SQL

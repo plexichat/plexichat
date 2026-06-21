@@ -289,6 +289,55 @@ def get_endpoint_stats(
                 max(max_ms, agg["max_ms"]) if agg["max_ms"] is not None else max_ms
             )
         agg["err_count"] += err_count
+
+    # ---- second pass: pull raw response_time_ms samples so the
+    # percentiles below can be computed correctly.  Gated by a
+    # ``5000-sample cap per endpoint`` to bound memory on busy
+    # instances; if more than 5000 events landed in the window the
+    # percentile distribution is still representative but we emit a
+    # one-shot warning so operators know the cap was hit.
+    raw_lookup = """
+        SELECT endpoint, method, response_time_ms
+        FROM telemetry_response_times
+        WHERE timestamp > ?
+    """
+    raw_params: List[Any] = [cutoff]
+    if endpoint_filter:
+        raw_lookup += " AND endpoint LIKE ?"
+        raw_params.append(f"%{endpoint_filter}%")
+    if client_id_filter:
+        raw_lookup += " AND client_id = ?"
+        raw_params.append(client_id_filter)
+
+    by_key: Dict[tuple, List[float]] = {}
+    cap_hit = False
+    try:
+        for raw in db.fetch_all(raw_lookup, tuple(raw_params)):
+            try:
+                ms = float(raw["response_time_ms"])
+            except (TypeError, ValueError):
+                continue
+            key = (
+                _normalize_endpoint(raw["endpoint"]),
+                raw["method"],
+            )
+            bucket = by_key.setdefault(key, [])
+            if len(bucket) < 5000:
+                bucket.append(ms)
+            else:
+                cap_hit = True
+    except Exception:
+        # The aggregate row above is still useful when the raw
+        # pull fails (driver-specific quoting, permission errors etc).
+        pass
+
+    if cap_hit:
+        logger.warning(
+            "telemetry: per-endpoint sample cap (5000) reached; "
+            "p50/p95/p99 are computed over the first 5000 samples "
+            "in the window"
+        )
+
     stats = []
     for (endpoint, method), agg in sorted(
         aggregated.items(), key=lambda item: item[1]["count"], reverse=True
@@ -299,9 +348,23 @@ def get_endpoint_stats(
         avg_dt = (agg["avg_dt_sum"] / count) if count else 0.0
         min_ms = agg["min_ms"] if agg["min_ms"] is not None else avg_ms
         max_ms = agg["max_ms"] if agg["max_ms"] is not None else avg_ms
-        p50 = avg_ms
-        p95 = avg_ms * 1.2
-        p99 = max_ms
+        # CORRECTNESS FIX: ``p50 = avg_ms; p95 = avg_ms * 1.2; p99 = max_ms``
+        # was a structural lie — every "percentile" was a synthetic
+        # transformation of the average that completely ignored the
+        # distribution of response times.  We now compute real
+        # nearest-rank percentiles against the raw samples pulled
+        # from the second query above.  Falls back to the aggregate
+        # min/avg/max only when raw samples are unavailable (the DB
+        # returned zero rows for the second pass).
+        samples = sorted(by_key.get((endpoint, method), []) or [])
+        if samples:
+            p50 = _percentile(samples, 50.0)
+            p95 = _percentile(samples, 95.0)
+            p99 = _percentile(samples, 99.0)
+        else:
+            p50 = avg_ms
+            p95 = avg_ms
+            p99 = max_ms
         err_count = agg["err_count"]
         err_rate = (err_count * 100.0 / count) if count else 0.0
         stats.append(
@@ -323,6 +386,31 @@ def get_endpoint_stats(
             )
         )
     return stats
+
+
+def _percentile(sorted_samples: List[float], pct: float) -> float:
+    """Return the ``pct`` percentile using the nearest-rank method.
+
+    ``sorted_samples`` MUST be ascending (callers pass ``sorted()``).
+    ``pct`` is the percentile in [0, 100].  Returns 0.0 when the
+    input list is empty.
+
+    Method: ``rank = ceil(p / 100 * n)`` — the smallest sample whose
+    rank is at or above the percentile cutoff.  This matches numpy's
+    default ``method='lower'`` / Excel's ``PERCENTILE.INC`` and is
+    the cheapest deterministic percentile that does not invent
+    values between samples (which we MUST NOT do for SLO math).
+    """
+    if not sorted_samples:
+        return 0.0
+    if pct <= 0:
+        return float(sorted_samples[0])
+    if pct >= 100:
+        return float(sorted_samples[-1])
+    n = len(sorted_samples)
+    # Smallest index k (0-based) such that (k + 1) >= p/100 * n.
+    rank = max(1, int(round(pct / 100.0 * n)))
+    return float(sorted_samples[rank - 1])
 
 
 def get_response_time_history(

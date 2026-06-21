@@ -111,13 +111,53 @@ class ChannelInvitesMixin(ChannelBase):
                 )
 
             try:
-                invite = servers_mod.create_invite(
-                    user_id=current_user.user_id,
-                    channel_id=cid,
-                    max_age=body.max_age,
-                    max_uses=body.max_uses,
-                    temporary=body.temporary,
-                )
+                # SELFTEST FIX: pre-check channel visibility so we
+                # return 404 (channel gone) / 403 (channel exists
+                # but caller blocked) distinctly instead of letting
+                # ``create_invite`` raise and conflate both in a
+                # single status code.
+                if not servers_mod.channel_exists(cid):
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": {
+                                "code": 404,
+                                "message": "Channel not found",
+                            }
+                        },
+                    )
+                channel = servers_mod.get_channel(cid, current_user.user_id)
+                if not channel:
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error": {
+                                "code": 403,
+                                "message": "Channel access denied",
+                            }
+                        },
+                    )
+                try:
+                    invite = servers_mod.create_invite(
+                        user_id=current_user.user_id,
+                        channel_id=cid,
+                        max_age=body.max_age,
+                        max_uses=body.max_uses,
+                        temporary=body.temporary,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    exc_name = type(exc).__name__
+                    if "Permission" in exc_name or "Access" in exc_name:
+                        raise HTTPException(
+                            status_code=403,
+                            detail={
+                                "error": {
+                                    "code": 403,
+                                    "message": str(exc),
+                                }
+                            },
+                        )
+                    raise
                 return ChannelInviteResponse(
                     code=invite.code,
                     channel_id=SnowflakeID(cid),
@@ -130,6 +170,17 @@ class ChannelInvitesMixin(ChannelBase):
                     uses=0,
                     created_at=getattr(invite, "created_at", None),
                 )
+            except HTTPException:
+                # Re-raise HTTPException FIRST so the dual-probe's
+                # 404/403 status codes survive the outer ``except
+                # Exception`` block that follows. The outer handler
+                # categorises non-HTTPException errors by class-name
+                # substring (NotFound / Permission / Access / etc.),
+                # but HTTPException's class name doesn't match any of
+                # those substrings -- so without this re-raise the
+                # dual-probe's status code gets degraded to a generic
+                # 500. SELFTEST FIX.
+                raise
             except Exception as e:
                 exc_name = type(e).__name__
                 if "NotFound" in exc_name:
