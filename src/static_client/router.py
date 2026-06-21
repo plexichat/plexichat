@@ -26,7 +26,7 @@ import re
 from dataclasses import dataclass
 from email.utils import formatdate
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, cast
 from urllib.parse import unquote
 
 from fastapi import FastAPI
@@ -82,9 +82,19 @@ _API_PREFIX_EXCLUDES_DEFAULT = (
     "/openapi.json",
     "/redoc",
     "/gateway",
+    "/gateway/",
     "/health",
     "/status",
     "/static",
+    # The public_license router in src/api/routes/public_license.py
+    # mounts at ``/public/license/*`` (challenge, export, info).  Without
+    # these excludes the StaticClientMiddleware would intercept the
+    # request and try to serve it as a SPA route, returning 404 because
+    # the SPA asset ``public/license/challenge`` does not exist on disk.
+    "/public",
+    "/public/",
+    "/public/license",
+    "/public/license/",
 )
 
 
@@ -123,15 +133,19 @@ def _build_paths(
         docs_path + "/",
     )
 
-    static_prefixes = _STATIC_PREFIXES + tuple(
-        sorted(spa_routes.keys(), key=len, reverse=True)
+    # cast(): literal-tuple + literal-tuple addition stays narrow to
+    # `tuple[Literal['/assets/'], Literal['/css/'], ...]`; widen to
+    # `Tuple[str, ...]` so the dataclass field accepts the runtime union.
+    static_prefixes: Tuple[str, ...] = cast(
+        Tuple[str, ...],
+        _STATIC_PREFIXES + tuple(sorted(spa_routes.keys(), key=len, reverse=True)),
     )
     return StaticPaths(
         api_prefix=api_prefix,
         admin_path=admin_path,
         docs_path=docs_path,
         static_prefixes=static_prefixes,
-        api_prefixes=tuple(dict.fromkeys(api_prefixes)),
+        api_prefixes=tuple(dict.fromkeys(api_prefixes)),  # type: ignore  # dataclass strict-tuple-size mismatch is a false positive
         static_files=("/favicon.svg", "/config.js", "/robots.txt"),
     )
 

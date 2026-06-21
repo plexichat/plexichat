@@ -93,14 +93,48 @@ class ChannelCRUDMixin(ChannelBase):
 
                     db = api_module.get_db()
                     try:
-                        ch = servers_mod.get_channel(cid, current_user.user_id)
-                        if not ch:
-                            messaging_mod = api_module.get_messaging()
-                            if messaging_mod:
-                                ch = messaging_mod.get_conversation(
-                                    cid, current_user.user_id
+                        # SELFTEST FIX: split 404 (channel gone) from
+                        # 403 (exists, caller blocked) by pre-checking
+                        # the membership-agnostic existence probe.
+                        # If the channel exists as a server channel
+                        # but the membership-aware ``get_channel``
+                        # returns None, the caller lacks permission
+                        # -> 403. If the channel doesn't exist at all,
+                        # fall through to the messaging-conversation
+                        # path so DMs are still findable by id.
+                        if servers_mod.channel_exists(cid):
+                            ch = servers_mod.get_channel(cid, current_user.user_id)
+                            if not ch:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail={
+                                        "error": {
+                                            "code": 403,
+                                            "message": "Channel access denied",
+                                        }
+                                    },
                                 )
-                        return ch
+                            return ch
+                        # TODO(404-vs-403 parity): messaging_mod exposes
+                        # only the membership-aware ``get_conversation``,
+                        # so a non-participant who happens to know a
+                        # real conversation id here sees 404 instead of
+                        # 403. This mirrors the original code's
+                        # behaviour and is left for a follow-up that
+                        # adds a membership-agnostic
+                        # ``messaging_mod.conversation_exists`` probe
+                        # (the parallel of ``servers_mod.channel_exists``
+                        # used above). Tracked but not fixed in this
+                        # pass to keep the bounded change scoped to
+                        # server-channel routes per the selftest intent.
+                        messaging_mod = api_module.get_messaging()
+                        if messaging_mod:
+                            ch = messaging_mod.get_conversation(
+                                cid, current_user.user_id
+                            )
+                            if ch:
+                                return ch
+                        return None
                     finally:
                         if db:
                             db.close()
@@ -182,6 +216,35 @@ class ChannelCRUDMixin(ChannelBase):
 
                     db = api_module.get_db()
                     try:
+                        # SELFTEST FIX: pre-check channel existence +
+                        # access so the endpoint distinguishes 404
+                        # (channel gone) from 403 (exists but caller
+                        # lacks permission). Previously the manager
+                        # raised PermissionDenied when the user wasn't
+                        # a member, which surfaced as 500 or was
+                        # being conflated with 404 by the auto-loop
+                        # when the channel itself had been deleted.
+                        if not servers_mod.channel_exists(cid):
+                            raise HTTPException(
+                                status_code=404,
+                                detail={
+                                    "error": {
+                                        "code": 404,
+                                        "message": "Channel not found",
+                                    }
+                                },
+                            )
+                        existing = servers_mod.get_channel(cid, current_user.user_id)
+                        if not existing:
+                            raise HTTPException(
+                                status_code=403,
+                                detail={
+                                    "error": {
+                                        "code": 403,
+                                        "message": "Channel access denied",
+                                    }
+                                },
+                            )
                         return servers_mod.update_channel(
                             current_user.user_id, cid, **update_data
                         )
@@ -294,11 +357,25 @@ class ChannelCRUDMixin(ChannelBase):
                 )
 
             try:
-                channel = servers_mod.get_channel(cid, current_user.user_id)
-                if not channel:
+                # SELFTEST FIX: pre-check channel existence before
+                # fetching with membership-aware get_channel so the
+                # endpoint distinguishes 404 (channel gone) from 403
+                # (exists, caller blocked). Same pattern as PATCH.
+                if not servers_mod.channel_exists(cid):
                     raise HTTPException(
                         status_code=404,
                         detail={"error": {"code": 404, "message": "Channel not found"}},
+                    )
+                channel = servers_mod.get_channel(cid, current_user.user_id)
+                if not channel:
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error": {
+                                "code": 403,
+                                "message": "Channel access denied",
+                            }
+                        },
                     )
 
                 sid = channel.server_id

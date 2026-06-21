@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS poll_polls (
     id INTEGER PRIMARY KEY,
     message_id INTEGER NOT NULL UNIQUE,
     question TEXT NOT NULL,
+    question_encrypted TEXT,
     created_by INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     ends_at INTEGER,
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS poll_options (
     id INTEGER PRIMARY KEY,
     poll_id INTEGER NOT NULL,
     text TEXT NOT NULL,
+    text_encrypted TEXT,
     position INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (poll_id) REFERENCES poll_polls(id) ON DELETE CASCADE
 );

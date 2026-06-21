@@ -102,6 +102,14 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                     # If True, server refuses to start when audit log integrity check fails.
                     # Disable only if you need to recover from a backup or rebuild the chain.
                     "halt_on_invalid_audit": True,
+                    # SECURITY: when True and the chain fails verification
+                    # at boot, ``verify_chain`` renames the broken file to
+                    # ``<path>.broken-<ts>`` so the next ``log_event`` call
+                    # can begin a fresh genesis chain.  The sidecar keeps
+                    # the broken GDPR records for inventory / forensic
+                    # review without blocking legitimate new entries.
+                    # Operators MUST audit sidecar files manually.
+                    "rotate_on_broken_chain": False,
                 },
                 "reaper": {
                     "interval_hours": 24,
@@ -146,6 +154,13 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                     "backup_to_s3": True,
                     "s3_backup_path": "audit/dsar/log_backup.jsonl",
                     "halt_on_invalid_audit": True,
+                    # SECURITY: when True and the chain fails verification
+                    # at boot, ``verify_chain`` renames the broken file
+                    # to ``<path>.broken-<ts>`` so the harvester can
+                    # continue writing against a fresh genesis chain
+                    # instead of being blocked.  GDPR-impacting
+                    # artefacts still live in the sidecar.
+                    "rotate_on_broken_chain": False,
                 },
                 "harvester": {
                     "interval_hours": 24,

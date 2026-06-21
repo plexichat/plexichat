@@ -14,38 +14,38 @@ logger = logging.getLogger(__name__)
 
 def up(db):
     """Apply migration to add encrypted columns."""
-    logger.info("Migration 029: Starting internal notes encrypted column addition")
+    logger.info("Migration 030: Starting internal notes encrypted column addition")
 
     # User internal notes
     if db.table_exists("auth_users"):
         if not db.column_exists("auth_users", "internal_notes_encrypted"):
-            logger.info("Migration 029: Adding internal_notes_encrypted to auth_users")
+            logger.info("Migration 030: Adding internal_notes_encrypted to auth_users")
             db.execute(
                 "ALTER TABLE auth_users ADD COLUMN internal_notes_encrypted TEXT"
             )
         else:
             logger.info(
-                "Migration 029: Column internal_notes_encrypted already exists in auth_users"
+                "Migration 030: Column internal_notes_encrypted already exists in auth_users"
             )
     else:
-        logger.warning("Migration 029: Table auth_users does not exist, skipping")
+        logger.warning("Migration 030: Table auth_users does not exist, skipping")
 
     # Feedback internal notes
     if db.table_exists("feedback"):
         if not db.column_exists("feedback", "internal_notes_encrypted"):
-            logger.info("Migration 029: Adding internal_notes_encrypted to feedback")
+            logger.info("Migration 030: Adding internal_notes_encrypted to feedback")
             db.execute("ALTER TABLE feedback ADD COLUMN internal_notes_encrypted TEXT")
         else:
             logger.info(
-                "Migration 029: Column internal_notes_encrypted already exists in feedback"
+                "Migration 030: Column internal_notes_encrypted already exists in feedback"
             )
     else:
-        logger.warning("Migration 029: Table feedback does not exist, skipping")
+        logger.warning("Migration 030: Table feedback does not exist, skipping")
 
 
 def down(db):
     """Rollback: remove encrypted columns."""
-    logger.info("Migration 029 rollback: Starting rollback")
+    logger.info("Migration 030 rollback: Starting rollback")
 
     if db.type == "postgres":
         for table, col in [

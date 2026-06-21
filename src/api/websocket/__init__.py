@@ -90,7 +90,16 @@ def setup(
     )
 
     if _events_module:
-        _events_module.subscribe(_dispatcher.on_event)
+        # CRITICAL lane: real-time user-facing delivery.
+        # The WebSocket gateway is the explicit MUST-NOT-DROP
+        # consumer of the events pipeline -- a saturated async
+        # queue cannot drop WebSocket events, so connected clients
+        # do not see silent message gaps during bursts. Subscribed
+        # synchronously before the queue; the dispatcher invokes
+        # ``_dispatcher.on_event`` inline on the producing thread.
+        # ``_dispatcher.on_event`` itself enqueues onto per-
+        # connection queues, so the in-line call is non-blocking.
+        _events_module.subscribe(_dispatcher.on_event, critical=True)
 
     _setup_complete = True
 

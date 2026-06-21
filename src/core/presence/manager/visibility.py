@@ -44,14 +44,22 @@ class VisibilityMixin(PresenceManagerBase):
                     updated_at=0,
                 )
 
+        # CORRECTNESS FIX: invisible mode must NOT leak custom_status,
+        # ``last_seen`` or ``updated_at`` to anyone but the user
+        # themselves. The previous implementation forwarded the real
+        # custom_status + real timestamps inside an OFFLINE-shaped
+        # object, which let any viewer reconstruct the user's
+        # availability window. We now return a strictly empty
+        # presence that is indistinguishable from "has never been
+        # online".
         if presence.status == UserStatus.INVISIBLE:
             return Presence(
                 user_id=target_id,
                 status=UserStatus.OFFLINE,
-                custom_status=presence.custom_status,
+                custom_status=None,
                 activity=None,
-                last_seen=presence.last_seen,
-                updated_at=presence.updated_at,
+                last_seen=0,
+                updated_at=0,
             )
 
         return presence
@@ -110,14 +118,17 @@ class VisibilityMixin(PresenceManagerBase):
                 )
                 continue
 
+            # CORRECTNESS FIX: same per-target scrub as
+            # :meth:`get_visible_presence` — no leak of custom_status,
+            # last_seen or updated_at for an INVISIBLE user.
             if p.status == UserStatus.INVISIBLE:
                 result[target_id_raw] = Presence(
                     user_id=target_id_raw,
                     status=UserStatus.OFFLINE,
-                    custom_status=p.custom_status,
+                    custom_status=None,
                     activity=None,
-                    last_seen=p.last_seen,
-                    updated_at=p.updated_at,
+                    last_seen=0,
+                    updated_at=0,
                 )
             else:
                 result[target_id_raw] = p

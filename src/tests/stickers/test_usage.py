@@ -45,7 +45,9 @@ class TestStickerUsage:
         dm = messaging.create_dm(owner.id, other.id)
         msg = messaging.send_message(owner.id, dm.id, "Check this sticker!")
 
-        usage = stickers.send_sticker(owner.id, msg.id, sticker.id)
+        usage = stickers.send_sticker(
+            user_id=owner.id, message_id=msg.id, sticker_id=sticker.id
+        )
 
         assert usage is not None
         assert usage.sticker_id == sticker.id

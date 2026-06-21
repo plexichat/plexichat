@@ -35,7 +35,36 @@ class ElasticsearchIndexer(BaseIndexer):
         http_client=None,
     ):
         super().__init__(config)
-        self._hosts = hosts or ["http://localhost:9200"]
+        candidate_hosts = hosts or ["http://localhost:9200"]
+        # SECURITY: same approach as the meilisearch indexer. The
+        # configured host string is consumed by urllib with a
+        # blanket ``# nosec B310`` suppression; the suppression
+        # guarantees nothing about the built-in SSRF vector. We
+        # validate every configured host against the centralised
+        # URLValidator BEFORE accepting the configuration so an
+        # attacker cannot redirect ``index_message`` into a private
+        # network address.
+        try:
+            from src.utils.security import URLValidator
+
+            validator = URLValidator()
+            for h in list(candidate_hosts):
+                validator.validate_url_for_request(h)
+        except Exception as _es_host_exc:
+            import utils.logger as _es_logger
+
+            _es_logger.critical(
+                "Elasticsearch host list %r failed SSRF "
+                "validation; aborting indexer construction: %s",
+                candidate_hosts,
+                _es_host_exc,
+            )
+            raise SearchBackendError(
+                f"Elasticsearch host failed SSRF validation: {_es_host_exc}",
+                backend="elasticsearch",
+                original_error=_es_host_exc,
+            )
+        self._hosts = candidate_hosts
         self._index_prefix = index_prefix
         self._http_client = http_client
         self._initialized = False

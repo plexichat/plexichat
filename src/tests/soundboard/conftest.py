@@ -36,3 +36,16 @@ def server_with_sound(server_with_owner):
     )
 
     return owner, server, sound, soundboard, servers
+
+
+@pytest.fixture
+def db_and_modules(
+    db, auth_manager, messaging_manager, server_manager, soundboard_manager
+):
+    """Local override: the root conftest's db_and_modules returns the embeds
+    manager as the 5th element.  Soundboard tests need the soundboard
+    manager instead, so we re-bind here.  This is intentional and
+    mirrors the convention in ``tests/polls/conftest.py`` of pinning
+    the canonical tuple shape per suite.
+    """
+    return db, auth_manager, messaging_manager, server_manager, soundboard_manager

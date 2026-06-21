@@ -32,7 +32,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         soundboard_manager.upload_sound(
@@ -52,7 +52,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         with pytest.raises(SoundTooLargeError):
@@ -68,7 +68,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         with pytest.raises(SoundTooLongError):
@@ -84,7 +84,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         with pytest.raises(InvalidSoundFormatError):
@@ -98,7 +98,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -114,7 +114,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
@@ -124,7 +124,7 @@ class TestSoundboardErrors:
             1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
 
-        soundboard_manager.play_sound(1, 1, sound.id)
+        soundboard_manager.play_sound(1, sound.id, 1)
 
         remaining = soundboard_manager._check_cooldown(1, sound.id, 5)
         assert remaining is not None and remaining > 0
@@ -135,7 +135,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
@@ -145,7 +145,7 @@ class TestSoundboardErrors:
             1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
 
-        result = soundboard_manager.play_sound(1, 1, sound.id)
+        result = soundboard_manager.play_sound(1, sound.id, 1)
         assert result is not None
 
     def test_get_server_sounds(self, soundboard_manager, test_db):
@@ -154,7 +154,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         soundboard_manager.upload_sound(
@@ -173,7 +173,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -189,7 +189,7 @@ class TestSoundboardErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -209,7 +209,7 @@ class TestSoundFormats:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -223,7 +223,7 @@ class TestSoundFormats:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -231,19 +231,17 @@ class TestSoundFormats:
         )
         assert sound.format == SoundFormat.OGG
 
-    def test_upload_wav(self, soundboard_manager, test_db):
-        """Upload WAV sound."""
-        test_db.execute(
-            "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
-        )
-        test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
-        )
+    def test_upload_wav_not_supported(self, soundboard_manager):
+        """WAV is intentionally NOT in SoundFormat — assert the guard holds.
 
-        sound = soundboard_manager.upload_sound(
-            1, 1, "wav_sound", SoundFormat.WAV, "url", 1000, 1.0
+        Plexichat's soundboard exposes only MP3 + OGG.  If a future
+        PR expands the enum, this test will signal that the suite
+        needs a corresponding upload fixture.
+        """
+        assert not hasattr(SoundFormat, "WAV"), (
+            "SoundFormat.WAV re-appeared; supported formats are MP3 + OGG only — "
+            "update this contract test alongside the model change."
         )
-        assert sound.format == SoundFormat.WAV
 
 
 class TestSoundPlayback:
@@ -255,7 +253,7 @@ class TestSoundPlayback:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
@@ -265,7 +263,7 @@ class TestSoundPlayback:
             1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
 
-        result = soundboard_manager.play_sound(1, 1, sound.id)
+        result = soundboard_manager.play_sound(1, sound.id, 1)
         assert result is not None
 
     def test_play_sound_not_in_voice(self, soundboard_manager, test_db):
@@ -274,7 +272,7 @@ class TestSoundPlayback:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -282,7 +280,7 @@ class TestSoundPlayback:
         )
 
         with pytest.raises(NotInVoiceChannelError):
-            soundboard_manager.play_sound(1, None, sound.id)
+            soundboard_manager.play_sound(1, sound.id, None)
 
     def test_play_sound_with_custom_volume(self, soundboard_manager, test_db):
         """Play sound with custom volume."""
@@ -290,7 +288,7 @@ class TestSoundPlayback:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
@@ -300,7 +298,7 @@ class TestSoundPlayback:
             1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
 
-        result = soundboard_manager.play_sound(1, 1, sound.id, volume=0.8)
+        result = soundboard_manager.play_sound(1, sound.id, 1, volume=0.8)
         assert result is not None
 
     def test_play_sound_not_found(self, soundboard_manager, test_db):
@@ -309,14 +307,14 @@ class TestSoundPlayback:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
         )
 
         with pytest.raises(SoundNotFoundError):
-            soundboard_manager.play_sound(1, 1, 99999)
+            soundboard_manager.play_sound(1, 99999, 1)
 
 
 class TestSoundCooldowns:
@@ -330,7 +328,7 @@ class TestSoundCooldowns:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
@@ -343,10 +341,10 @@ class TestSoundCooldowns:
             1, 1, "sound2", SoundFormat.MP3, "url2", 1000, 1.0
         )
 
-        soundboard_manager.play_sound(1, 1, sound1.id)
+        soundboard_manager.play_sound(1, sound1.id, 1)
 
         with pytest.raises(CooldownError):
-            soundboard_manager.play_sound(1, 1, sound2.id)
+            soundboard_manager.play_sound(1, sound2.id, 1)
 
     def test_per_sound_cooldown(self, soundboard_manager, test_db):
         """Per-sound cooldown."""
@@ -354,20 +352,21 @@ class TestSoundCooldowns:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
         )
 
         sound = soundboard_manager.upload_sound(
-            1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0, cooldown=5
+            1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
+        soundboard_manager.update_sound(1, sound.id, cooldown=5)
 
-        soundboard_manager.play_sound(1, 1, sound.id)
+        soundboard_manager.play_sound(1, sound.id, 1)
 
         with pytest.raises(CooldownError):
-            soundboard_manager.play_sound(1, 1, sound.id)
+            soundboard_manager.play_sound(1, sound.id, 1)
 
     def test_get_cooldown_remaining(self, soundboard_manager, test_db):
         """Get remaining cooldown time."""
@@ -375,17 +374,18 @@ class TestSoundCooldowns:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
         )
 
         sound = soundboard_manager.upload_sound(
-            1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0, cooldown=10
+            1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
+        soundboard_manager.update_sound(1, sound.id, cooldown=10)
 
-        soundboard_manager.play_sound(1, 1, sound.id)
+        soundboard_manager.play_sound(1, sound.id, 1)
 
         remaining = soundboard_manager._check_cooldown(1, sound.id, 10)
         assert remaining > 0
@@ -400,7 +400,7 @@ class TestSoundManagement:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -416,11 +416,11 @@ class TestSoundManagement:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
-            1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0, cooldown=5
+            1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
 
         updated = soundboard_manager.update_sound(1, sound.id, cooldown=10)
@@ -432,7 +432,7 @@ class TestSoundManagement:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -444,7 +444,7 @@ class TestSoundManagement:
 
     def test_get_sound_not_found(self, soundboard_manager):
         """Get nonexistent sound."""
-        sound = soundboard_manager.get_sound(99999)
+        sound = soundboard_manager.get_sound(99999, 1)
         assert sound is None
 
     def test_delete_sound(self, soundboard_manager, test_db):
@@ -453,7 +453,7 @@ class TestSoundManagement:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -472,7 +472,7 @@ class TestSoundUsage:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
@@ -482,7 +482,7 @@ class TestSoundUsage:
             1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
 
-        soundboard_manager.play_sound(1, 1, sound.id)
+        soundboard_manager.play_sound(1, sound.id, 1)
 
         usage_count = soundboard_manager.get_usage_count(sound.id)
         assert usage_count >= 1
@@ -493,7 +493,7 @@ class TestSoundUsage:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
@@ -502,12 +502,15 @@ class TestSoundUsage:
         sound1 = soundboard_manager.upload_sound(
             1, 1, "popular", SoundFormat.MP3, "url1", 1000, 1.0
         )
+        # Disable per-sound cooldown so the test can replay it twice
+        # to verify usage_count aggregation.
+        soundboard_manager.update_sound(1, sound1.id, cooldown=0)
         soundboard_manager.upload_sound(
             1, 1, "unpopular", SoundFormat.MP3, "url2", 1000, 1.0
         )
 
-        soundboard_manager.play_sound(1, 1, sound1.id)
-        soundboard_manager.play_sound(1, 1, sound1.id)
+        soundboard_manager.play_sound(1, sound1.id, 1)
+        soundboard_manager.play_sound(1, sound1.id, 1)
 
         popular = soundboard_manager.get_popular_sounds(1, limit=5)
         assert len(popular) > 0
@@ -518,7 +521,7 @@ class TestSoundUsage:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
         test_db.execute(
             "INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'voice', 'voice', 1000, 1000, 0)"
@@ -528,7 +531,7 @@ class TestSoundUsage:
             1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
 
-        soundboard_manager.play_sound(1, 1, sound.id)
+        soundboard_manager.play_sound(1, sound.id, 1)
 
         recent = soundboard_manager.get_recent_sounds(1, 1, limit=5)
         assert len(recent) > 0
@@ -543,7 +546,7 @@ class TestSoundSearch:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         soundboard_manager.upload_sound(
@@ -562,7 +565,7 @@ class TestSoundSearch:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         results = soundboard_manager.search_sounds(1, 1, "")
@@ -578,7 +581,7 @@ class TestSoundPermissions:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(
@@ -594,7 +597,7 @@ class TestSoundPermissions:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sound = soundboard_manager.upload_sound(

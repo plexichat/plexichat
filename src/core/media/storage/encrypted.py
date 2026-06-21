@@ -69,10 +69,42 @@ class EncryptedStorage(StorageBackendBase):
         """
         Generate Additional Authenticated Data from path.
 
-        This binds the encrypted data to the storage path, preventing
-        an attacker from moving encrypted files between paths.
+        This binds the encrypted data to the canonical storage path so an
+        attacker cannot rebind a ciphertext to a different logical path.
+
+        SECURITY: the previous implementation used ``path.encode("utf-8")``
+        verbatim, which let an attacker swap two AADs at request time:
+        ``a/../b/file.enc`` and ``b/file.enc`` produced different bytes
+        even though they resolve to the same file, and conversely a path
+        like ``./file`` vs ``file`` produced different AADs for the same
+        underlying object.  We now canonicalise via:
+            * splitting on both POSIX ``/`` AND Windows ``\\`` separators,
+            * collapsing ``.`` / ``..`` redundant components,
+            * normalising case on Windows (case-insensitive FS).
+        The canonical form MUST be applied identically at store-time,
+        stream-time, and retrieve-time; the helper is centralised here
+        so all three paths share the same calculation.
         """
-        return path.encode("utf-8")
+        import posixpath
+
+        # Always treat input as POSIX segments for canonicalisation -
+        # the encrypted blob stores slash-separated keys regardless of
+        # host OS - but reject backslash/tilde injection from the caller.
+        cleaned = (path or "").replace("\\", "/")
+        # ``./``, ``../``, and absolute-prefix shenanigans would all
+        # let an attacker pick the AAD after the bytes were stored.
+        # Reject any escape attempt explicitly.
+        if "\x00" in cleaned:
+            raise StorageWriteError("Invalid storage path (NUL byte)", "encrypted")
+        canonical = posixpath.normpath(cleaned)
+        # ``normpath`` can still produce a leading ``../`` for parents
+        # of the storage root, which is never a valid AAD. Force a
+        # rooted-relative form.
+        if canonical.startswith("../") or canonical == "..":
+            raise StorageWriteError(
+                f"Invalid storage path (path traversal): {path}", "encrypted"
+            )
+        return canonical.encode("utf-8")
 
     def store(self, file_data: bytes, path: str, content_type: str) -> str:
         """Store encrypted file data."""

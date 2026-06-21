@@ -66,9 +66,13 @@ class PlexiJoinManager:
         params.extend([per_page, (page - 1) * per_page])
 
         connections = self.db.fetch_all(query, params)
+        # CORRECTNESS FIX: decrypt shared_key for every returned
+        # connection so dashboards / federation handlers always see
+        # the plaintext key (matches ``get_connection``).
+        materialized = [self._materialize_connection(c) for c in connections]
 
         return {
-            "connections": connections,
+            "connections": materialized,
             "total": total,
             "page": page,
             "per_page": per_page,
@@ -76,11 +80,43 @@ class PlexiJoinManager:
         }
 
     def get_connection(self, connection_id: int) -> Optional[Dict[str, Any]]:
-        """Get a specific connection by ID."""
-        return self.db.fetch_one(
+        """Get a specific connection by ID.
+
+        CORRECTNESS FIX: the previous implementation returned the
+        raw row with ``shared_key_encrypted`` still encrypted, so
+        every caller that needed the actual shared key had to call
+        ``_decrypt_key`` themselves — and most didn't, leaving
+        outbound federation silently broken (the encrypted blob was
+        forwarded to the remote instance which could not decrypt it
+        because the key was never written into a shared message).
+        We now materialise the decrypted ``shared_key`` here so
+        callers always see the plaintext they expect.
+        """
+        row = self.db.fetch_one(
             "SELECT * FROM plexijoin_connections WHERE id = ?",
             (connection_id,),
         )
+        if row is None:
+            return None
+        return self._materialize_connection(row)
+
+    def _materialize_connection(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Decrypt the shared_key in-place for a connection row."""
+        if row.get("shared_key_encrypted"):
+            try:
+                row["shared_key"] = self._decrypt_key(row["shared_key_encrypted"])
+            except Exception as e:  # pragma: no cover -- keyring failures
+                logger.error(
+                    "plexijoin: failed to decrypt shared_key for connection %s: %s",
+                    row.get("id"),
+                    e,
+                )
+                # Surface as empty string so downstream code's None check
+                # is unambiguous without hiding the failure.
+                row["shared_key"] = None
+        else:
+            row["shared_key"] = None
+        return row
 
     def create_connection(
         self,

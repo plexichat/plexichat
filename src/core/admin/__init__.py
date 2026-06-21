@@ -278,6 +278,30 @@ def change_password(
     return auth.change_password(_get_db(), admin_id, current_password, new_password)
 
 
+def force_password_change(
+    acting_admin_id: int,
+    target_admin_id: int,
+    client_ip: str = "unknown",
+) -> Tuple[bool, str]:
+    """Force another administrator to change their password on next login.
+
+    Routes pass an explicit ``int`` here; coercion is delegated to the
+    underlying service method so bad input produces a clean 400 instead
+    of a 500 from a swallowed :class:`ValueError`.  The audit log entry
+    and the SQL UPDATE are written back-to-back by the service layer, so
+    callers never need to drop into raw SQL or to ``log_admin_action``
+    themselves.
+    """
+    from .auth.password_mixin import force_password_change_target
+
+    return force_password_change_target(
+        db=_get_db(),
+        acting_admin_id=acting_admin_id,
+        target_admin_id=target_admin_id,
+        client_ip=client_ip,
+    )
+
+
 def get_security_status(admin_id: int):
     """Get admin account security posture and metadata."""
     return auth.get_security_status(_get_db(), admin_id)

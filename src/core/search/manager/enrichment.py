@@ -68,7 +68,18 @@ class EnrichmentMixin(SearchManagerBase):
         name_col: str,
         ttl: int = 300,
     ) -> Dict[int, str]:
-        from src.core.database import cache_get, cache_set, dialect, redis_available
+        # N+1 FIX: previously, this method did one cache lookup + one
+        # SQL fetch per id.  We collapse both into single bulk calls:
+        # Redis MGET for cache, single ``WHERE id IN (...)`` for the
+        # SQL fallback.  Same external contract: a dict ``{id: name}``
+        # containing only ids we could resolve (callers use
+        # ``.get(i)`` for safe misses).
+        from src.core.database import (
+            cache_set,
+            cache_get_many,  # type: ignore[attr-defined]  # duck-typed on cache backend
+            dialect,
+            redis_available,
+        )
 
         safe_table = dialect.sanitize_identifier(table, self._db.type)
         safe_id_col = dialect.sanitize_identifier(id_col, self._db.type)
@@ -79,22 +90,35 @@ class EnrichmentMixin(SearchManagerBase):
             return {}
         cached: Dict[int, str] = {}
         missing: List[int] = []
+
         if redis_available():
-            for i in uniq:
-                v = cache_get(f"{cache_prefix}:{i}")
+            # Bulk cache read: single MGET round-trip instead of N
+            # individual cache_get calls.
+            keys = [f"{cache_prefix}:{i}" for i in uniq]
+            bulk_values = cache_get_many(keys) or {}
+            for i, key in zip(uniq, keys):
+                v = bulk_values.get(key)
                 if isinstance(v, str):
                     cached[i] = v
                 else:
                     missing.append(i)
         else:
             missing = uniq
+
         if missing:
-            for i in missing:
-                row = self._db.fetch_one(
-                    f"SELECT {safe_id_col} as id, {safe_name_col} as name FROM {safe_table} WHERE {safe_id_col} = ?",
-                    (i,),
+            # Single SQL fetch for all missing ids, chunked to stay
+            # under the Python ``sqlite3`` default 999-bind-variable
+            # cap; Postgres allows 32k but chunking costs nothing.
+            chunk_size = 500
+            for start in range(0, len(missing), chunk_size):
+                chunk = missing[start : start + chunk_size]
+                placeholders = ",".join(["?"] * len(chunk))
+                rows = self._db.fetch_all(
+                    f"SELECT {safe_id_col} as id, {safe_name_col} as name "
+                    f"FROM {safe_table} WHERE {safe_id_col} IN ({placeholders})",
+                    tuple(chunk),
                 )
-                if row:
+                for row in rows:
                     i_val = int(row["id"])
                     n_val = row["name"]
                     cached[i_val] = n_val

@@ -3,9 +3,10 @@ Password management mixin providing check_password_change_required, change_passw
 """
 
 import time
-from typing import Tuple
+from typing import Tuple, Optional
 
 import utils.config as config
+import utils.logger as logger
 
 from typing import Any
 
@@ -182,3 +183,184 @@ class PasswordMixin:
                 _sync_password_to_auth_users(self._db, str(username), new_hash)
 
         return True, "Password changed successfully"
+
+    def admin_force_password_change_target(
+        self,
+        acting_admin_id: int,
+        target_admin_id: int,
+        client_ip: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """Deprecated mixin entry point — use the free function
+        :func:`force_password_change_target` in this module instead.
+        Retained so existing imports keep working.
+        """
+        return force_password_change_target(
+            db=self._db,
+            acting_admin_id=acting_admin_id,
+            target_admin_id=target_admin_id,
+            client_ip=client_ip,
+        )
+
+
+def force_password_change_target(
+    db: Any,
+    acting_admin_id: int,
+    target_admin_id: int,
+    client_ip: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Force another administrator to rotate their password on next login.
+
+    This is a **service-layer** helper.  The route layer MUST already
+    have validated the caller has ``admin.edit`` permission via
+    ``require_admin_permission``; this function additionally:
+
+    * coerces ``target_admin_id`` to ``int`` and rejects invalid input,
+    * confirms the target admin exists,
+    * refuses to target oneself (use :py:meth:`PasswordMixin.change_password`
+      for self-service rotation),
+    * refuses the privileged mutation (`return False`) when the audit
+      module can't be imported — a force-password-change without a
+      guaranteed audit row would break the audit-trail invariant,
+    * emits the audit-log row under the same atomic boundary as the SQL
+      UPDATE so a "mutated-but-un-audited" row cannot exist.
+
+    Audit-trail invariant has two paths depending on driver transaction
+    support:
+
+    * **Transactional drivers** (Postgres, recent SQLite): BEGIN first,
+      then UPDATE + audit_log + COMMIT under one boundary.  Failed audit
+      rolls the UPDATE back via ``db.rollback()``.
+    * **Non-transactional drivers** (SQLite autocommit, ephemeral test
+      backends, OR a transactional driver whose ``BEGIN`` just raised):
+      audit FIRST, then UPDATE only if audit succeeded.  This blocks the
+      "mutated-but-un-audited" tail-state race that earlier
+      implementations accepted as a CRITICAL-only failure.
+
+    Implementation lives outside :class:`PasswordMixin` so it can be
+    called as a plain function with an explicit ``db`` argument, without
+    the caller having to spin up a mixin pseudo-instance just to bind
+    ``_db``.
+    """
+    try:
+        target_id = int(target_admin_id)
+    except (TypeError, ValueError):
+        return False, "Invalid admin ID"
+
+    if int(acting_admin_id) == target_id:
+        return False, "Use change_password() to rotate your own credentials"
+
+    row = db.fetch_one(
+        "SELECT id FROM admin_users WHERE id = ?",
+        (target_id,),
+    )
+    if not row:
+        return False, "Target admin does not exist"
+
+    # Resolve the audit-log entry point up-front.  If the module is
+    # unavailable we refuse the privileged mutation rather than
+    # silently mutate state.
+    try:
+        from src.core.admin.permissions import log_admin_action
+    except Exception:  # pragma: no cover -- audit module unavailable
+        log_admin_action = None  # type: ignore[assignment]
+
+    if log_admin_action is None:
+        logger.critical(
+            "AUDIT-MISMATCH: force_password_change could not import "
+            "audit module for admin %s -> %s; refusing mutation",
+            acting_admin_id,
+            target_id,
+        )
+        return False, "Audit module unavailable"
+
+    # Attempt to open a transaction.  If BEGIN raises mid-flight, we
+    # flip ``rollback_supported`` to False and the audit-first gate
+    # below re-runs.  Doing BEGIN FIRST (rather than letting the
+    # audit-first branch skip entirely when we entered with
+    # rollback_supported=True) closes the prior mid-flight invariant
+    # break the reviewer flagged.
+    rollback_supported = hasattr(db, "begin_transaction") and hasattr(db, "commit")
+    if rollback_supported:
+        try:
+            db.begin_transaction()
+        except Exception as tx_exc:  # pragma: no cover
+            rollback_supported = False
+            logger.warning(
+                "force_password_change: transaction begin failed (%s); "
+                "falling back to audit-first non-atomic write",
+                tx_exc,
+            )
+
+    # Audit-first path: when no transaction can protect us, the audit
+    # row must be persisted BEFORE the UPDATE so a failing audit
+    # never leaves the DB in a mutated-but-un-audited state.
+    if not rollback_supported:
+        try:
+            log_admin_action(
+                db,
+                acting_admin_id,
+                "force_password_change",
+                "admin_user",
+                target_id,
+                {"message": f"Forced password change for admin {target_id}"},
+                client_ip or "unknown",
+            )
+        except Exception as audit_exc:
+            logger.critical(
+                "AUDIT-MISMATCH: force_password_change audit log write "
+                "failed for admin %s -> %s (no transaction support; "
+                "UPDATE refused): %s",
+                acting_admin_id,
+                target_id,
+                audit_exc,
+            )
+            return False, f"Audit log failed: {audit_exc}"
+
+    db.execute(
+        "UPDATE admin_users SET force_password_change = 1 WHERE id = ?",
+        (target_id,),
+    )
+
+    # Transactional path: emit the audit under the same transaction
+    # and rollback on any failure so the UPDATE and the audit row
+    # stay synchronised.
+    if rollback_supported:
+        try:
+            log_admin_action(
+                db,
+                acting_admin_id,
+                "force_password_change",
+                "admin_user",
+                target_id,
+                {"message": f"Forced password change for admin {target_id}"},
+                client_ip or "unknown",
+            )
+        except Exception as audit_exc:
+            logger.critical(
+                "AUDIT-MISMATCH: force_password_change audit log write "
+                "failed for admin %s -> %s; rolling back: %s",
+                acting_admin_id,
+                target_id,
+                audit_exc,
+            )
+            try:
+                db.rollback()
+            except Exception as rb_exc:  # pragma: no cover
+                logger.critical(
+                    "AUDIT-MISMATCH: rollback after failed audit also "
+                    "failed for admin %s: %s",
+                    target_id,
+                    rb_exc,
+                )
+            return False, f"Audit log failed: {audit_exc}"
+        try:
+            db.commit()
+        except Exception as commit_exc:  # pragma: no cover
+            logger.critical(
+                "force_password_change: commit failed for admin %s: %s",
+                target_id,
+                commit_exc,
+            )
+            return False, "Could not persist password change"
+
+    return True, "Password change forced successfully"

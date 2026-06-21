@@ -64,15 +64,30 @@ class TOTPReplayCache:
         for k in expired:
             del self._used_codes[k]
 
-    def check_and_mark(self, user_id: Union[int, str], code: str) -> bool:
+    def check_and_mark(
+        self,
+        user_id: Union[int, str],
+        code: str,
+        purpose: Optional[str] = None,
+        acting_user_id: Optional[Union[int, str]] = None,
+    ) -> bool:
         """
         Check if code was already used and mark it as used.
 
+        Security: the cache key includes both the user being authenticated
+        and the actor presenting the code (so an admin presenting a 2FA
+        code during impersonation cannot reuse a code that was meant for a
+        different operation) and the declared purpose of the verification.
+
         Args:
-            user_id: User ID to scope the code
+            user_id: User ID the code is intended for
             code: The TOTP code
+            purpose: Optional logical scope (e.g. "login", "set_2fa", "withdraw")
+            acting_user_id: Optional ID of the principal presenting the code
         """
-        key = f"{user_id}:{code}"
+        purpose_part = f":p:{purpose or 'default'}"
+        actor_part = f":a:{acting_user_id if acting_user_id is not None else user_id}"
+        key = f"{user_id}:{code}{purpose_part}{actor_part}"
         now = int(time.time())
 
         with self._lock:
@@ -170,20 +185,37 @@ def generate_totp_uri(secret: str, username: str, issuer: Optional[str] = None) 
 
 
 def verify_totp_code(
-    secret: str, code: str, window: int = 1, user_id: Optional[Union[int, str]] = None
+    secret: str,
+    code: str,
+    window: int = 1,
+    user_id: Optional[Union[int, str]] = None,
+    purpose: Optional[str] = None,
+    acting_user_id: Optional[Union[int, str]] = None,
 ) -> bool:
     """
     Verify a TOTP code with replay attack prevention.
+
+    The replay cache is now keyed by ``(user_id, code, purpose, acting_user_id)``
+    so a code presented for one purpose cannot be replayed against another
+    (e.g. a ``login``-purpose code cannot be used to authorize a 2FA
+    disable).  Callers MUST supply ``purpose`` and ``acting_user_id`` for
+    any privileged operation; the legacy single-user ``user_id`` form is
+    preserved for back-compat but is no longer the default.
 
     Args:
         secret: TOTP secret
         code: 6-digit code from authenticator app
         window: Number of time windows to check (for clock drift)
         user_id: User ID for replay prevention (if None, replay check is skipped)
+        purpose: Logical scope of this code use (e.g. "login", "disable_2fa")
+        acting_user_id: ID of the principal presenting the code
 
     Returns:
         True if code is valid and not a replay
     """
+    if not isinstance(code, str) or not code.isdigit():
+        return False
+
     totp_config = get_totp_config()
 
     totp = pyotp.TOTP(
@@ -198,7 +230,9 @@ def verify_totp_code(
 
     # Then check for replay attack (if user_id provided)
     if user_id is not None:
-        if not _replay_cache.check_and_mark(user_id, code):
+        if not _replay_cache.check_and_mark(
+            user_id, code, purpose=purpose, acting_user_id=acting_user_id
+        ):
             return False  # Replay detected
 
     return True

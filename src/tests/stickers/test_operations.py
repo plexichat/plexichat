@@ -21,7 +21,7 @@ class TestStickerErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sticker_manager.create_pack(1, "Pack1", server_id=1, pack_type=PackType.SERVER)
@@ -39,7 +39,7 @@ class TestStickerErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(
@@ -67,7 +67,7 @@ class TestStickerErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(
@@ -85,7 +85,7 @@ class TestStickerErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(
@@ -106,7 +106,7 @@ class TestStickerErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(
@@ -122,7 +122,7 @@ class TestStickerErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(
@@ -140,7 +140,7 @@ class TestStickerErrors:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         sticker_manager.create_pack(1, "Pack1", server_id=1, pack_type=PackType.SERVER)
@@ -159,7 +159,7 @@ class TestStickerPackManagement:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(
@@ -175,7 +175,7 @@ class TestStickerPackManagement:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(
@@ -191,7 +191,7 @@ class TestStickerPackManagement:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(
@@ -245,14 +245,17 @@ class TestStickerFormats:
 
         assert sticker.format == StickerFormat.LOTTIE
 
-    def test_add_gif_sticker(self, sticker_manager):
-        """Add GIF sticker."""
-        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
-        sticker = sticker_manager.add_sticker(
-            1, pack.id, "gif_sticker", StickerFormat.GIF, "url", 1000
-        )
+    def test_no_gif_format_in_models(self, sticker_manager):
+        """GIF is not in the supported sticker formats (PNG / APNG / LOTTIE only).
 
-        assert sticker.format == StickerFormat.GIF
+        Verifies the API guard against accidentally accepting GIF
+        uploads (which lack alpha-channel animation support and are
+        commonly rejected across chat platforms).
+        """
+        assert not hasattr(StickerFormat, "GIF"), (
+            "GIF sneaked back into StickerFormat; the model intentionally "
+            "excludes it — update this test if you intentionally re-added it."
+        )
 
 
 class TestStickerUsage:
@@ -372,7 +375,7 @@ class TestStickerPermissions:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(
@@ -391,7 +394,7 @@ class TestStickerPermissions:
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
         pack = sticker_manager.create_pack(

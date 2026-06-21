@@ -103,17 +103,45 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
         import src.utils.encryption as encryption
 
         authenticated = False
+        # SECURITY: the previous implementation silently accepted
+        # plain SHA-256 hex digests (``hashlib.sha256(pw).hexdigest()``)
+        # as a password-equivalent when encountering legacy DB rows.
+        # Unsalted SHA-256 is rainbow-table-friendly: anyone with a
+        # read-only leak of the password_hash column can recover usable
+        # passwords offline in seconds. We now refuse any non-Argon2id
+        # hash outright and force the operator to either clear or
+        # re-credential the affected admin row.
         if not password_hash.startswith("$argon2"):
             import hashlib
 
-            if hashlib.sha256(password.encode()).hexdigest() == password_hash:
-                authenticated = True
-                new_hash = encryption.hash_password(password)
-                db.execute(
-                    "UPDATE admin_users SET password_hash = ? WHERE id = ?",
-                    (new_hash, admin_id),
+            import utils.logger as _auth_logger
+
+            legacy_match = (
+                hashlib.sha256(password.encode()).hexdigest() == password_hash
+            )
+            if legacy_match or password_hash.startswith("sha256$"):
+                _auth_logger.critical(
+                    "AUTH-BYPASS-ATTEMPT: admin %s attempted login with a "
+                    "row stored using an insecure password hash (sha256 no salt). "
+                    "Refusing authentication; rotate this admin's password "
+                    "via the operator tools before granting access.",
+                    admin_id,
                 )
-                _sync_password_to_auth_users(db, username, new_hash)
+                # increment rate-limit so a brute-force over a leaked
+                # hash column cannot enumerate this account.
+                attempts_key = f"admin_login_attempts:{ip}"
+                attempts = cache_get(attempts_key) or []
+                attempts.append(time.time() * 1000)
+                cache_set(
+                    attempts_key,
+                    attempts,
+                    ttl=rate_config.get("window_seconds", 300),
+                )
+                return AdminLoginResult(
+                    success=False,
+                    error="Insecure password hash on file; contact operator",
+                    rate_limited=False,
+                )
         else:
             if encryption.verify_password(password, password_hash):
                 authenticated = True

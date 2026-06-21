@@ -27,6 +27,18 @@ class ActionMixin(AutoModProtocol):
         actions: List[RuleAction],
         context: Optional[Dict[str, Any]] = None,
     ) -> Violation:
+        # SECURITY: ban/kick/delete action executors REFUSE the raw-SQL
+        # fallback unless ``context[\"__system_context__\"]`` is set
+        # to True. AutoMod is fundamentally a SYSTEM actor
+        # (it executes on behalf of moderation rules, not an
+        # individual user's request), so we mark any caller-supplied
+        # context as system context at the entry point. This
+        # prevents the previous behaviour where AutoMod silently
+        # failed every auto-ban because nobody set the flag.
+        if context is None:
+            context = {}
+        context.setdefault("__system_context__", True)
+        context.setdefault("__automod_caller__", True)
         now = self._get_timestamp()
         violation_id = self._generate_id()
 
@@ -175,6 +187,13 @@ class ActionMixin(AutoModProtocol):
         if action_type == ActionType.LOG_ONLY:
             success = True
         else:
+            # SECURITY: ad-hoc moderator-triggered ``trigger_action``
+            # calls (admin CLI buttons, manual bans, audit re-walks)
+            # also need the system context flag set so the
+            # ban/kick/delete executors do not refuse the call.
+            if context is None:
+                context = {}
+            context.setdefault("__system_context__", True)
             success = self._execute_action(action, violation, context)
 
         if success:

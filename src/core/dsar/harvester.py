@@ -38,12 +38,33 @@ class DSARHarvester:
         halt_on_invalid = audit_config.get("halt_on_invalid_audit", True)
 
         if not is_valid:
+            # SECURITY: a real chain break IS serious (tamper-evident
+            # failure of an audit log) but raising SystemExit(1) takes
+            # the entire server down — operators can't examine what's
+            # wrong, HTTP traffic stops, and a buggy pre-fix chain race
+            # (or a deliberate GDPR-purge rotation) becomes a full
+            # outage.  We now:
+            #   - log CRITICAL every time;
+            #   - if halt_on_invalid_audit is True, set a class-level
+            #     halt flag so the harvester does NOT start its
+            #     background thread (so we don't write NEW events to a
+            #     known-broken chain), but the rest of the server boot
+            #     keeps running so the operator can debug;
+            #   - if halt_on_invalid_audit is False, log WARNING and
+            #     proceed so operators can override on purpose
+            #     (recovery from a known pre-fix race).
             msg = f"HARVESTER HALTED: Audit log integrity check failed! {error}"
             if halt_on_invalid:
-                logger.critical(msg)
-                raise SystemExit(1)
-            logger.error(msg)
-            return
+                logger.critical(
+                    f"{msg} - background export thread disabled; "
+                    "server will continue to boot so the operator can inspect."
+                )
+                self._audit_halted = True
+                return
+            logger.warning(
+                f"DSAR audit check failed but halt_on_invalid_audit=False. "
+                f"Proceeding: {error}"
+            )
 
         if count > 0:
             logger.info(f"DSAR Audit log verified: {count} records intact.")
@@ -61,6 +82,17 @@ class DSARHarvester:
     def _run_forever(self):
         interval = self._harvester_config.get("interval_hours", 1) * 3600
         while self._is_running:
+            # HALT-FLAG GUARD: if ``start()`` flipped
+            # ``self._audit_halted`` (chain-integrity failed at boot)
+            # we MUST not run a harvest cycle, otherwise a new export
+            # row would be appended to a known-broken chain.  Operators
+            # reset by rotating the broken file aside and restarting.
+            if getattr(self, "_audit_halted", False):
+                logger.warning(
+                    "DSAR Harvester: audit log chain is halted; skipping harvest cycle."
+                )
+                time.sleep(min(interval, 60))
+                continue
             try:
                 self.harvest()
             except Exception as e:
@@ -75,6 +107,16 @@ class DSARHarvester:
         """
         Main processing logic for DSAR requests.
         """
+        # HALT-FLAG GUARD: refuse to run when the chain-integrity
+        # check failed at startup so this dsar export log cannot be
+        # extended against a known-broken chain.  Belt-and-braces with
+        # the ``_run_forever`` guard so direct invocations (tests,
+        # admin trigger, cron) are also no-ops.
+        if getattr(self, "_audit_halted", False):
+            logger.warning(
+                "DSAR Harvester: ``harvest()`` called while audit chain is halted; refusing to run."
+            )
+            return
         batch_size = self._harvester_config.get("batch_size", 10)
 
         self._cleanup_expired()

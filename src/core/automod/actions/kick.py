@@ -40,6 +40,20 @@ class KickUserAction(BaseAction):
                     reason=reason,
                 )
             else:
+                # SECURITY: see the matching comment in ban.py. The
+                # previous code path bypassed the server permission
+                # layer via raw SQL whenever ``bot_user_id`` was
+                # None. We now refuse that fallback unless explicit,
+                # audit-traceable system context is supplied.
+                system_context = bool((context or {}).get("__system_context__"))
+                if not (self._servers and system_context):
+                    logger.error(
+                        "AutoMod kick REFUSED: bot_user_id missing "
+                        "and no permission-checked system context "
+                        "was supplied."
+                    )
+                    return False
+
                 self._db.execute(
                     "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                     (violation.server_id, violation.user_id),

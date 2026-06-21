@@ -44,6 +44,28 @@ class BanUserAction(BaseAction):
                     delete_message_days=delete_message_days,
                 )
             else:
+                # SECURITY: the previous implementation fell back to a
+                # raw SQL DELETE/INSERT path whenever ``bot_user_id``
+                # was None. That bypassed the server permission layer
+                # entirely — any future caller (or regression) that
+                # invoked ``process_violation`` for a flagging-without-
+                # bot context would mutate membership without the user
+                # being permission-checked. We refuse this fallback
+                # unless an explicit, audit-traceable system-context
+                # marker is set, AND we require the servers module to
+                # be present (the layer that actually enforces roles,
+                # channel-permissions and audit).
+                system_context = bool((context or {}).get("__system_context__"))
+                if not (self._servers and system_context):
+                    logger.error(
+                        "AutoMod ban REFUSED: bot_user_id missing and "
+                        "no permission-checked system context was "
+                        "supplied. Configure a bot or set "
+                        "context['__system_context__']=True AFTER the "
+                        "permission layer has approved the action."
+                    )
+                    return False
+
                 self._db.execute(
                     "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                     (violation.server_id, violation.user_id),
@@ -62,6 +84,9 @@ class BanUserAction(BaseAction):
                         ban_id,
                         violation.server_id,
                         violation.user_id,
+                        # 0 here records the action as system-issued.
+                        # Audit consumers should treat banned_by=0 as
+                        # an automod action rather than a user action.
                         0,
                         reason,
                         encrypt_data(reason, context=f"ban:{ban_id}")

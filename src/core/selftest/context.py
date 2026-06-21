@@ -59,6 +59,15 @@ class SelfTestContext:
         self.test_admin_role_id: Optional[int] = None
         self.test_non_system_role_id: Optional[int] = None
         self.test_admin_role_request_id: Optional[int] = None
+        # An admin user that is NOT the same identity as the main
+        # self-test session (the main session logs in as test_user_id,
+        # with admin row at the same id).  The route handlers for
+        # admin-to-admin privileged actions (force-password-change,
+        # toggle-status, role-change, ...) refuse to act on the
+        # caller themselves, so resolve_target_admin_id() looks up
+        # this distinct test_admin_user_id instead of a fabricated
+        # snowflake that would 404 in admin_users.
+        self.test_admin_user_id: Optional[int] = None
         self.test_interaction_response_id: Optional[int] = None
         self.test_thread_id: Optional[int] = None
         self.test_dsar_id: Optional[int] = None

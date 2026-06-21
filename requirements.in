@@ -33,6 +33,10 @@ cryptography==48.0.1
 pyotp==2.9.0
 webauthn==2.5.0
 xxhash==3.4.1
+# SECURITY: defusedxml is required for safe SVG parsing in
+# Plexichat's media/SVG-XSS sanitizer. Stating it here makes
+# ``pip install plexichat`` pull it in transitively.
+defusedxml==0.7.1
 
 # Validation & Serialization
 pydantic==2.13.2
@@ -77,6 +81,14 @@ qrcode[pil]==7.4.2
 
 # S3/MinIO Storage (optional)
 boto3==1.42.82
+
+# Push notifications
+# PyJWT is required for token-based APNs HTTP/2 push delivery
+# (replaces the now-removed ``# TODO`` stub in push/manager.py).
+PyJWT==2.10.1
+# httpx[http2] pulls in h2 for the APNs HTTP/2 transport.
+httpx[http2]==0.27.2
+# cryptography pinned to 48.0.1+ clears GHSA-537c-gmf6-5ccf (pip-audit)
 
 # Testing & Development
 pytest==9.0.3

@@ -37,6 +37,29 @@ class DataGenerator:
             val = "partner"
         elif "username" in name_low:
             val = "selftest_admin"
+        elif (
+            name_low == "target_admin_id"
+            or name_low == "admin_id"
+            or name_low.startswith("target_admin_")
+        ):
+            # Admin-to-admin endpoint target (e.g.
+            # ``/api/v1/admin/auth/force-password-change/{target_admin_id}``).
+            # The main self-test session authenticates as test_user_id, so we
+            # resolve to ``test_admin_user_id`` — a different admin row
+            # seeded by ``setup_other_admin_user`` — to satisfy both the
+            # ``exists in admin_users`` lookup and the ``acting != target``
+            # self-target refusal in ``force_password_change_target``.
+            #
+            # IMPORTANT: this branch MUST NOT have an inner ``else: val =
+            # test_user_id`` override, because the route can still hit the
+            # acting==target refusal if a fallback defaults to the acting
+            # admin.  Keeping this branch minimal and monotonic to keep the
+            # invariant intact under edit.
+            val = (
+                str(self.ctx.test_admin_user_id)
+                if self.ctx.test_admin_user_id
+                else _gen_snowflake()
+            )
         elif "user" in name_low or "member" in name_low:
             if (
                 "/force-purge" in path

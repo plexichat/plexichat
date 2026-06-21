@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def up(db):
     """Drop unencrypted columns after verification period."""
     logger.info(
-        "Migration 031: Starting removal of unencrypted internal notes columns. "
+        "Migration 032: Starting removal of unencrypted internal notes columns. "
         "This operation is irreversible."
     )
 
@@ -35,21 +35,21 @@ def up(db):
             ("feedback", "internal_notes"),
         ]:
             if db.table_exists(table) and db.column_exists(table, col):
-                logger.info(f"Migration 031: Dropping {col} column from {table}")
+                logger.info(f"Migration 032: Dropping {col} column from {table}")
                 db.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
     else:
         logger.warning(
-            "Migration 031: SQLite requires manual table recreation for column drop. "
+            "Migration 032: SQLite requires manual table recreation for column drop. "
             "Please recreate tables without unencrypted columns."
         )
 
-    logger.info("Migration 031: Completed")
+    logger.info("Migration 032: Completed")
 
 
 def down(db):
     """Rollback - NOT SUPPORTED."""
     logger.error(
-        "Migration 031 rollback: NOT SUPPORTED. "
+        "Migration 032 rollback: NOT SUPPORTED. "
         "Unencrypted columns were dropped and data cannot be recovered."
     )
     raise RuntimeError(
