@@ -13,7 +13,7 @@ import utils.logger as logger
 import utils.config as config
 import utils.version as version
 
-VERSION = "a.1.0-63"
+VERSION = "a.1.0-64"
 
 
 class PlexichatServer:
@@ -179,13 +179,14 @@ class PlexichatServer:
         assert host is not None
         assert port is not None
 
-        log_level = config.get("logging", {}).get("level", "info").lower()
+        plexi_level = config.get("logging", {}).get("level", "info").lower()
+        uvi_level = plexi_level if plexi_level not in ("debug", "trace") else "info"
 
         uvi_config = uvicorn.Config(
             self.app,
             host=host,
             port=port,
-            log_level=log_level,
+            log_level=uvi_level,
             loop="asyncio",
             **ssl_config,
         )
