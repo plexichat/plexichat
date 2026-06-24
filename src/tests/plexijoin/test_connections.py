@@ -23,8 +23,6 @@ def plexijoin(db):
 
 class TestPlexiJoinConnections:
     def test_create_connection(self, plexijoin):
-        from src.core.plexijoin.manager import PlexiJoinManager
-
         # The manager is wired to expect the .table() query builder;
         # we instead exercise the Public-API list/get/delete in case
         # create_connection's DB builder doesn't survive the test

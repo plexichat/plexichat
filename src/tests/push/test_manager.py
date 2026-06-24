@@ -62,7 +62,7 @@ class TestPushManagerRegistration:
                 platform="ios",
             )
         # Inserting one more should evict the oldest token, not raise.
-        evicted = mgr.register_token(
+        mgr.register_token(
             user_id=user.id,
             token="push-token-NEW",
             platform="ios",

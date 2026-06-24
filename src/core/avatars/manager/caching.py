@@ -23,8 +23,10 @@ class AvatarCachingMixin(AvatarProtocol):
     _AVATAR_CACHE_MAX = 1024
     _AVATAR_CACHE_TTL_SEC = 600  # 10 minutes
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, db=None) -> None:
+        # AvatarProtocol has no __init__; object.__init__ takes 0 args.
+        # Stash db for downstream consumers; the mixin-only state follows.
+        self._db = db
         # Track ONLY the in-process key set so we can prune aggressively
         # on churn. Values are (bytes, last_used_ts).
         self._key_set: "OrderedDict[str, float]" = OrderedDict()
