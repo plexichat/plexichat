@@ -53,7 +53,6 @@ class TestRequestExport:
         from src.core.dsar import (
             request_data_export,
             approve_request,
-            get_request_status,
         )
 
         req = request_data_export(user.id)

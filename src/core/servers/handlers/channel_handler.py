@@ -68,7 +68,7 @@ class ChannelHandler:
         nsfw: bool = False,
         slowmode_seconds: int = 0,
         read_receipts_enabled: bool = True,
-    ) -> Channel:
+    ) -> Optional[Channel]:
         """Create a new channel in a server."""
         server = self.manager.get_server(server_id, user_id)
         if not server:
@@ -177,15 +177,16 @@ class ChannelHandler:
             cache_delete(f"server_channels:{server_id}")
         invalidate_pattern(f"server_channels:*{server_id}*")
 
-        result = self.manager.get_channel(user_id, channel_id)
-        # Channel might not be immediately retrievable due to permissions or caching
-        # Return the channel object directly from the database instead
+        result = self.manager.get_channel(channel_id, user_id)
+        if result:
+            return result
+        # Fallback: direct DB fetch if membership/permission check filtered it out
         row = self.db.fetch_one(
             "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0", (channel_id,)
         )
         if row:
             return _row_to_channel(row, self.manager._encrypt_descriptions)
-        return result
+        return None
 
     def create_category(
         self,
@@ -292,7 +293,7 @@ class ChannelHandler:
         category_id: Optional[SnowflakeID] = None,
     ) -> Channel:
         """Update channel settings."""
-        channel = self.manager.get_channel(user_id, channel_id)
+        channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
@@ -384,13 +385,13 @@ class ChannelHandler:
             )
 
         invalidate_pattern(f"server_channels:*{channel.server_id}*")
-        result = self.manager.get_channel(user_id, channel_id)
+        result = self.manager.get_channel(channel_id, user_id)
         assert result is not None
         return result
 
     def delete_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
         """Delete a channel."""
-        channel = self.manager.get_channel(user_id, channel_id)
+        channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
@@ -422,7 +423,7 @@ class ChannelHandler:
         self, user_id: SnowflakeID, channel_id: SnowflakeID, position: int
     ) -> Channel:
         """Move a channel to a new position."""
-        channel = self.manager.get_channel(user_id, channel_id)
+        channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
@@ -439,6 +440,6 @@ class ChannelHandler:
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
 
-        result = self.manager.get_channel(user_id, channel_id)
+        result = self.manager.get_channel(channel_id, user_id)
         assert result is not None
         return result

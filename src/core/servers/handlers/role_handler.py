@@ -299,7 +299,7 @@ class RoleHandler:
         deny: Optional[Dict[str, bool]] = None,
     ) -> ChannelOverride:
         """Set permission override for a channel."""
-        channel = self.manager.get_channel(user_id, channel_id)
+        channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             from ..exceptions import ChannelNotFoundError
 
@@ -376,7 +376,7 @@ class RoleHandler:
         target_id: SnowflakeID,
     ) -> bool:
         """Delete a permission override."""
-        channel = self.manager.get_channel(user_id, channel_id)
+        channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             from ..exceptions import ChannelNotFoundError
 

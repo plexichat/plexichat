@@ -620,7 +620,7 @@ class MemberHandler:
         temporary: bool = False,
     ) -> Invite:
         """Create an invite to a channel."""
-        channel = self.manager.get_channel(user_id, channel_id)
+        channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(

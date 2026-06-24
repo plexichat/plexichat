@@ -28,8 +28,6 @@ class TestPlexiJoinInbound:
         assert "total" in env
 
     def test_approve_request_missing_raises(self, plexijoin):
-        from src.core.plexijoin.manager import PlexiJoinManager
-
         try:
             plexijoin.approve_request(999999, admin_id=1)
         except ValueError:

@@ -53,7 +53,6 @@ class TestMessageSearch:
 
     def test_remove_from_index_safe_on_missing(self, db):
         # manager.search might not be importable; lazy-import.
-        from src.core.search import setup as search_setup
         from src.core.search.manager import SearchManager
 
         # Synthesize manager direct from raw db.
