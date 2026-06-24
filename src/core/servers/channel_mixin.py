@@ -16,6 +16,10 @@ class ChannelMixin:
 
     _manager: Any = None
 
+    def channel_exists(self, channel_id: SnowflakeID) -> bool:
+        """Check if a channel exists by ID (membership-agnostic)."""
+        return self._manager.channel_exists(channel_id)
+
     def create_channel(
         self,
         user_id: SnowflakeID,

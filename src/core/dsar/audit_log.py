@@ -74,19 +74,19 @@ class DSARLog:
             if size == 0:
                 return "0" * 64
             pos = size
-            buffer = b""
+            buffer = ""
             while pos > 0:
                 pos -= 1
                 file_handle.seek(pos)
                 char = file_handle.read(1)
-                if char == b"\n" and buffer:
+                if char == "\n" and buffer:
                     break
                 buffer = char + buffer
 
             if not buffer:
                 return "0" * 64
 
-            last_line = json.loads(buffer.decode("utf-8"))
+            last_line = json.loads(buffer)
             return last_line.get("checksum", "0" * 64)
         except Exception as e:
             logger.error(f"Error reading last hash from open handle: {e}")

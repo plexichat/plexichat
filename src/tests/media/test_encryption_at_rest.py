@@ -26,7 +26,7 @@ class TestEncryptionWrap:
         assert callable(wrap_storage_with_encryption)
 
     def test_dedup_hash_blocked_check(self, media_setup):
-        from src.core.media import setup, is_hash_blocked
+        from src.core.media import is_hash_blocked
 
         blocked, reason = is_hash_blocked("0" * 64)
         assert blocked is False
