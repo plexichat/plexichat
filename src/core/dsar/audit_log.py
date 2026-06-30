@@ -3,7 +3,7 @@ import json
 import hashlib
 import time
 from pathlib import Path
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Dict, Tuple, List, Any, cast
 
 try:
     import fcntl as fcntl  # POSIX-only fcntl
@@ -128,13 +128,14 @@ class DSARLog:
         # LK_LOCK busy is NOT fatal — we drop to debug log and let
         # the POSIX fcntl path below also serialise the write.
         if msvcrt:
+            _mod = cast(Any, msvcrt)
             lock_token = None
             lock_acquired = False
             try:
                 self._ensure_lock_file()
                 lock_token = open(self.lock_path, "r+b")
                 try:
-                    msvcrt.locking(lock_token.fileno(), msvcrt.LK_LOCK, 1)
+                    _mod.locking(lock_token.fileno(), _mod.LK_LOCK, 1)
                     lock_acquired = True
                 except Exception as lock_exc:
                     logger.debug(
@@ -178,9 +179,9 @@ class DSARLog:
                         # incident.
                         if lock_token is not None and lock_acquired:
                             try:
-                                msvcrt.locking(
+                                _mod.locking(
                                     lock_token.fileno(),
-                                    msvcrt.LK_UNLCK,
+                                    _mod.LK_UNLCK,
                                     1,
                                 )
                             except Exception as unlock_exc:

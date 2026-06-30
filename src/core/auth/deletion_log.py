@@ -12,7 +12,7 @@ import json
 import hashlib
 import time
 from pathlib import Path
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any, cast
 
 import utils.config as config
 import utils.logger as logger
@@ -78,11 +78,12 @@ class _MsvcrtLock:
 
     def __init__(self, fd: int) -> None:
         self._fd = fd
+        self._mod = cast(Any, msvcrt) if msvcrt is not None else None
 
     def __enter__(self) -> "_MsvcrtLock":
-        if msvcrt is not None:
+        if self._mod is not None:
             try:
-                msvcrt.locking(self._fd, msvcrt.LK_LOCK, 1)
+                self._mod.locking(self._fd, self._mod.LK_LOCK, 1)
             except Exception as e:  # pragma: no cover -- Windows-only
                 logger.warning(
                     "deletion_log: msvcrt LK_LOCK failed (%s); continuing without "
@@ -93,8 +94,8 @@ class _MsvcrtLock:
 
     def __exit__(self, *exc: object) -> None:
         try:
-            if msvcrt is not None:
-                msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+            if self._mod is not None:
+                self._mod.locking(self._fd, self._mod.LK_UNLCK, 1)
         except Exception:
             pass
 
