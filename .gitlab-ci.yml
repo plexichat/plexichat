@@ -6,6 +6,8 @@ stages:
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIP_INDEX_URL: "http://192.168.3.133:3141/root/pypi/+simple/"
+  PIP_TRUSTED_HOST: "192.168.3.133"
   PYTHONUNBUFFERED: "1"
   PYTHONDONTWRITEBYTECODE: "1"
 
