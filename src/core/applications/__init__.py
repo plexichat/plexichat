@@ -640,7 +640,7 @@ def request_bot(
 
 
 def review_bot_request(
-    server_id: Optional[int],
+    server_id: int,
     request_id: int,
     reviewer_id: int,
     approve: bool,
@@ -720,13 +720,17 @@ def get_bot_directory(
     include_public: bool = True,
     limit: int = 50,
     offset: int = 0,
-) -> List[Dict[str, Any]]:
-    """Get a directory of available bots."""
+    q: Optional[str] = None,
+    tag: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get the bot directory."""
     return _get_manager().get_bot_directory(
         server_id=server_id,
         include_public=include_public,
         limit=limit,
         offset=offset,
+        q=q,
+        tag=tag,
     )
 
 
