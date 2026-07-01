@@ -210,7 +210,7 @@ Configuration: See `monitoring` section in [Default Configuration Reference](def
 
 - Built-in self-test suite for validating API behavior
 - Configurable test scope (excluded endpoints, stack trace capture)
-- Must never be enabled in production (creates test user with known credentials)
+- Safe for production (auto-generated random credentials, cleans up after itself)
 
 Configuration: See `selftest` section in [Default Configuration Reference](default-config.md)
 
