@@ -3,6 +3,8 @@ from typing import Any, Dict, List, Union
 
 # Patterns for sensitive data
 EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+# Email domains to never mask (official Plexichat addresses)
+EMAIL_ALLOWLIST_DOMAINS = {"plexichat.com", "plexichat.internal"}
 # Common keys for sensitive data in dictionaries
 SENSITIVE_KEYS = {
     "password",
@@ -37,6 +39,8 @@ def mask_email(email: str) -> str:
         return email
     try:
         user, domain = email.split("@", 1)
+        if domain.lower() in EMAIL_ALLOWLIST_DOMAINS:
+            return email
         if len(user) <= 1:
             return f"*@{domain}"
         return f"{user[0]}***@{domain}"
