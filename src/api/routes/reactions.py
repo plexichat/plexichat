@@ -97,7 +97,9 @@ async def add_reaction(
     """
     # Rate limit reactions: 10 per second per user
     rl_result = ratelimit.check_rate_limit(
-        user_id=current_user.user_id, route="PUT /reactions"
+        user_id=current_user.user_id,
+        route="PUT /reactions",
+        is_internal=getattr(request.state, "is_internal", False),
     )
     if not rl_result.allowed:
         raise HTTPException(
@@ -267,7 +269,9 @@ async def remove_reaction(
     """
     # Rate limit reaction removal: 15 per second per user
     rl_result = ratelimit.check_rate_limit(
-        user_id=current_user.user_id, route="DELETE /reactions"
+        user_id=current_user.user_id,
+        route="DELETE /reactions",
+        is_internal=getattr(request.state, "is_internal", False),
     )
     if not rl_result.allowed:
         raise HTTPException(

@@ -484,7 +484,7 @@ selftest:
 
 ### Security Considerations
 
-- **Production-safe**: Selftest uses long, randomly-generated passwords by default (via `secrets.token_urlsafe(16)`). Set `selftest.test_user.password` to a specific strong password in config if you prefer.
+- **Production-safe**: Selftest always uses long, randomly-generated passwords (via `_generate_strong_password`). Password is never configurable in config.
 - **Safe for production**: Selftest only creates and deletes its own test users (`selftest_admin` / `selftest_admin_other`). It never touches real admin accounts, admin roles, or admin data. All test resources are cleaned up via API calls before shutdown.
 - `exit_on_failure: false` prevents the server from shutting down if a self-test fails, which could be exploited for denial-of-service.
 - `capture_stack_traces: true` in development is fine, but stack traces in production can reveal implementation details. Set to false in production for defense-in-depth.
