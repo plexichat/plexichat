@@ -94,16 +94,18 @@ class OTPSetupMixin:
         if not totp_enabled or not secret:
             return False, "OTP is not enabled"
 
+        import hashlib
         from src.utils.encryption import verify_password as _verify_pwd
 
         normalized = code.upper().replace("-", "")
+        candidate_sha256 = hashlib.sha256(normalized.lower().encode()).hexdigest()
         verified = pyotp.TOTP(secret).verify(code, valid_window=1)
         if not verified:
             if backup_codes_hashed:
                 try:
                     hashed_list = json.loads(backup_codes_hashed)
                     for h in hashed_list:
-                        if _verify_pwd(normalized.lower(), str(h)):
+                        if candidate_sha256 == str(h) or _verify_pwd(normalized.lower(), str(h)):
                             verified = True
                             break
                 except (json.JSONDecodeError, TypeError):
@@ -150,10 +152,10 @@ class OTPSetupMixin:
         if not totp_enabled:
             return False, [], "Enable OTP before generating backup codes"
 
-        from src.utils.encryption import hash_password as _hash_pwd
+        from src.core.auth.totp import hash_backup_codes as _hash_backup_codes
 
         backup_codes = [secrets.token_hex(4).upper() for _ in range(10)]
-        hashed_codes = [_hash_pwd(c.replace("-", "").lower()) for c in backup_codes]
+        hashed_codes = _hash_backup_codes(backup_codes)
         self._db.execute(
             "UPDATE admin_users SET backup_codes = NULL, backup_codes_hash = ? WHERE id = ?",
             (json.dumps(hashed_codes), admin_id),
