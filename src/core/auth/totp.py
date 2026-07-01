@@ -7,6 +7,7 @@ Includes replay attack prevention and DoS mitigation for backup codes.
 
 import os
 import time
+import hashlib
 import threading
 import importlib
 from typing import List, Tuple, Optional, Dict, Any, Union
@@ -27,8 +28,6 @@ import utils.config as config
 from src.utils.encryption import (
     encrypt_data,
     decrypt_data,
-    hash_password,
-    verify_password,
 )
 
 # pyotp for TOTP
@@ -267,29 +266,29 @@ def generate_backup_codes(count: Optional[int] = None) -> List[str]:
     return codes
 
 
+def _hash_backup_code(code: str) -> str:
+    """Fast hash a single backup code using SHA-256.
+
+    Backup codes are high-entropy random tokens, so Argon2id is unnecessary
+    overhead. SHA-256 provides adequate protection for storage.
+    """
+    normalized = code.replace("-", "").lower()
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 def hash_backup_codes(codes: List[str]) -> List[str]:
-    """
-    Hash backup codes for storage.
+    """Hash backup codes for storage.
 
-    Args:
-        codes: List of plain backup codes
-
-    Returns:
-        List of hashes for storage
+    Uses SHA-256 — backup codes are high-entropy random tokens, so
+    expensive Argon2id hashing provides no meaningful security benefit.
     """
-    result = []
-    for code in codes:
-        normalized = code.replace("-", "").lower()
-        hashed = hash_password(normalized)
-        result.append(hashed)
-    return result
+    return [_hash_backup_code(c) for c in codes]
 
 
 def verify_backup_code(
     code: str, hashed_codes: List[Any], max_checks: Optional[int] = None
 ) -> Tuple[bool, int]:
-    """
-    Verify a backup code against stored hashes.
+    """Verify a backup code against stored hashes.
 
     Args:
         code: Backup code to verify (with or without dash)
@@ -299,20 +298,18 @@ def verify_backup_code(
     Returns:
         Tuple of (valid, index) where index is the matched code index or -1
     """
-    # Normalize code (remove dash, lowercase)
     normalized = code.replace("-", "").lower()
+    candidate = hashlib.sha256(normalized.encode()).hexdigest()
 
     for i, entry in enumerate(hashed_codes):
-        # Support both old format (prefix, hash) and new format (just hash string)
         if isinstance(entry, (list, tuple)) and len(entry) == 2:
             _, hashed = entry
         else:
             hashed = entry
 
-        # Ensure hashed is a string for verify_password
         hashed_str = str(hashed) if not isinstance(hashed, str) else hashed
 
-        if verify_password(normalized, hashed_str):
+        if candidate == hashed_str:
             return True, i
 
     return False, -1
