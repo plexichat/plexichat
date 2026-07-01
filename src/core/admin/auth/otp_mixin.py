@@ -86,6 +86,7 @@ class OTPMixin(SessionMixin, PasswordMixin):
             (admin_id,),
         )
         from src.core.auth.totp import hash_backup_codes as _hash_backup_codes
+
         backup_codes = [secrets.token_hex(4).upper() for _ in range(10)]
         hashed_codes = _hash_backup_codes(backup_codes)
         db.execute(
@@ -186,7 +187,9 @@ class OTPMixin(SessionMixin, PasswordMixin):
                 hashed_list = []
             for i, hashed in enumerate(hashed_list):
                 hashed_str = str(hashed)
-                if candidate_sha256 == hashed_str or _verify_pwd(normalized.lower(), hashed_str):
+                if candidate_sha256 == hashed_str or _verify_pwd(
+                    normalized.lower(), hashed_str
+                ):
                     hashed_list.pop(i)
                     db.execute(
                         "UPDATE admin_users SET backup_codes_hash = ?, last_login = ? WHERE id = ?",
@@ -208,7 +211,11 @@ class OTPMixin(SessionMixin, PasswordMixin):
             codes = backup_codes_plaintext.split(",")
             if normalized in codes:
                 codes.remove(normalized)
-                hashed_remaining = [hashlib.sha256(c.lower().encode()).hexdigest() for c in codes if c.strip()]
+                hashed_remaining = [
+                    hashlib.sha256(c.lower().encode()).hexdigest()
+                    for c in codes
+                    if c.strip()
+                ]
                 db.execute(
                     "UPDATE admin_users SET backup_codes = NULL, backup_codes_hash = ?, last_login = ? WHERE id = ?",
                     (json.dumps(hashed_remaining), int(time.time() * 1000), admin_id),

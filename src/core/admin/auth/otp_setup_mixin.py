@@ -105,7 +105,9 @@ class OTPSetupMixin:
                 try:
                     hashed_list = json.loads(backup_codes_hashed)
                     for h in hashed_list:
-                        if candidate_sha256 == str(h) or _verify_pwd(normalized.lower(), str(h)):
+                        if candidate_sha256 == str(h) or _verify_pwd(
+                            normalized.lower(), str(h)
+                        ):
                             verified = True
                             break
                 except (json.JSONDecodeError, TypeError):

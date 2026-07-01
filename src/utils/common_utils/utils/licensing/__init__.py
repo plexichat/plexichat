@@ -257,7 +257,11 @@ def _try_load_license(explicit_path: Optional[str] = None) -> bool:
     if _load_license_from_default_location(lm):
         return True
 
-    # No license found - will enter free tier mode
+    if env_value:
+        logger.warning(
+            f"PLEXICHAT_LICENSE is set but is neither a valid file path nor a valid "
+            f"base64 license (starts with: '{env_value[:20]}…'). Check the variable value."
+        )
     logger.debug("No license file found, entering free tier mode")
     return False
 
@@ -276,29 +280,35 @@ def _load_license_from_explicit_path(lm: "LicenseManager", path: Optional[str]) 
 
 def _load_license_from_env_path(lm: "LicenseManager", env_value: str) -> bool:
     """Attempt to load a license from ``PLEXICHAT_LICENSE`` treated as a path."""
-    if not env_value or env_value.startswith("eyJ"):
+    if not env_value:
         return False
     if not ("/" in env_value or "\\" in env_value or "." in env_value):
+        logger.debug(f"PLEXICHAT_LICENSE does not look like a file path: '{env_value}'")
         return False
     try:
         if not Path(env_value).exists():
+            logger.debug(f"PLEXICHAT_LICENSE path does not exist: {env_value}")
             return False
         lm.load_from_file(env_value)
         logger.debug(f"Loaded license from env var path: {env_value}")
         return True
-    except (InvalidLicenseError, OSError):
+    except (InvalidLicenseError, OSError) as exc:
+        logger.debug(f"PLEXICHAT_LICENSE path failed: {env_value} ({exc})")
         return False
 
 
 def _load_license_from_env_base64(lm: "LicenseManager", env_value: str) -> bool:
     """Attempt to load a license from ``PLEXICHAT_LICENSE`` treated as base64."""
-    if not env_value or not env_value.startswith("eyJ"):
+    if not env_value:
         return False
     try:
         lm.load_from_base64(env_value)
         logger.debug("Loaded license from env var (base64)")
         return True
-    except InvalidLicenseError:
+    except Exception as exc:
+        logger.debug(
+            f"PLEXICHAT_LICENSE is not valid base64 (starts with: '{env_value[:20]}…'): {exc}"
+        )
         return False
 
 
