@@ -221,6 +221,12 @@ class AppCRUDMixin(ApplicationManagerProtocol):
                 "Only the owner can delete the application"
             )
 
+        if app.bot_id and self._auth:
+            try:
+                self._auth.delete_bot(owner_id=user_id, bot_id=app.bot_id)
+            except Exception as e:
+                logger.warning(f"Failed to delete bot on app deletion: {e}")
+
         self._db.execute("DELETE FROM app_applications WHERE id = ?", (application_id,))
         logger.info(f"Application deleted: {application_id}")
         return True
@@ -280,7 +286,20 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         if app.bot_id:
             raise ApplicationAccessDeniedError("Application already has a bot")
 
-        bot_username = f"{app.name.lower().replace(' ', '_')}_bot"
+        base_username = f"{app.name.lower().replace(' ', '_')}_bot"
+        bot_username = base_username
+        for attempt in range(100):
+            taken = self._db.fetch_one(
+                "SELECT 1 FROM auth_users WHERE username = ? UNION SELECT 1 FROM auth_bots WHERE username = ?",
+                (bot_username, bot_username),
+            )
+            if not taken:
+                break
+            bot_username = f"{base_username}_{attempt + 2}"
+        else:
+            raise ApplicationAccessDeniedError(
+                "Could not generate unique bot username, please rename the application"
+            )
         bot = self._auth.create_bot(
             owner_id=user_id,
             username=bot_username,

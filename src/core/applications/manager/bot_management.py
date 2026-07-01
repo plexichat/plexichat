@@ -46,7 +46,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
         server_id: SnowflakeID,
         application_id: SnowflakeID,
         approved_by: SnowflakeID,
-        permissions: str = "0",
+        permissions: str = "{}",
         bot_name: Optional[str] = None,
     ) -> ApprovedBot:
         self._check_bot_license()
@@ -233,7 +233,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
 
     def review_bot_request(
         self,
-        server_id: Optional[SnowflakeID],
+        server_id: SnowflakeID,
         request_id: SnowflakeID,
         reviewer_id: SnowflakeID,
         approve: bool,
@@ -246,7 +246,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
         if not row:
             raise BotRequestError("Bot request not found", request_id)
 
-        if server_id is not None and row["server_id"] != server_id:
+        if row["server_id"] != server_id:
             raise BotRequestError("Bot request not found", request_id)
 
         self._require_server_manage_permission(reviewer_id, row["server_id"])
@@ -494,35 +494,57 @@ class BotManagementMixin(ApplicationManagerProtocol):
         include_public: bool = True,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        query_parts = [
-            """SELECT a.id, a.name, a.description, a.icon_url, a.bot_id,
-                      bp.short_description, bp.tags, bp.nsfw, bp.private
-               FROM app_applications a
-               LEFT JOIN app_bot_profiles bp ON a.id = bp.application_id
-               WHERE a.bot_id IS NOT NULL"""
-        ]
+        q: Optional[str] = None,
+        tag: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        base_where = ["a.bot_id IS NOT NULL"]
         params = []
 
         if include_public:
-            query_parts.append("AND (bp.private IS NULL OR bp.private = 0)")
+            base_where.append("(bp.private IS NULL OR bp.private = 0)")
 
         if server_id:
-            query_parts.append(
-                "AND a.id NOT IN (SELECT application_id FROM app_approved_bots WHERE server_id = ? AND status = 'approved')"
+            base_where.append(
+                "a.id NOT IN (SELECT application_id FROM app_approved_bots WHERE server_id = ? AND status = 'approved')"
             )
             params.append(server_id)
 
-        query_parts.append("ORDER BY a.name ASC")
-        query_parts.append("LIMIT ? OFFSET ?")
-        params.extend([limit, offset])
+        if q:
+            base_where.append("(a.name LIKE ? OR bp.short_description LIKE ?)")
+            like_q = f"%{q}%"
+            params.append(like_q)
+            params.append(like_q)
 
-        rows = self._db.fetch_all(" ".join(query_parts), tuple(params))
+        if tag:
+            base_where.append("bp.tags LIKE ?")
+            params.append(f'%"{tag}"%')
 
-        result = []
+        where_clause = " AND ".join(base_where)
+
+        count_row = self._db.fetch_one(
+            f"""SELECT COUNT(*) as total
+                FROM app_applications a
+                LEFT JOIN app_bot_profiles bp ON a.id = bp.application_id
+                WHERE {where_clause}""",
+            tuple(params),
+        )
+        total = count_row["total"] if count_row else 0
+
+        rows = self._db.fetch_all(
+            f"""SELECT a.id, a.name, a.description, a.icon_url, a.bot_id,
+                       bp.short_description, bp.tags, bp.nsfw, bp.private
+                FROM app_applications a
+                LEFT JOIN app_bot_profiles bp ON a.id = bp.application_id
+                WHERE {where_clause}
+                ORDER BY a.name ASC
+                LIMIT ? OFFSET ?""",
+            tuple(params + [limit, offset]),
+        )
+
+        bots = []
         for row in rows:
             tags = json.loads(row["tags"]) if row["tags"] else []
-            result.append(
+            bots.append(
                 {
                     "id": row["id"],
                     "name": row["name"],
@@ -534,7 +556,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
                 }
             )
 
-        return result
+        return {"bot_list": bots, "total": total}
 
     def _check_bot_license(self) -> bool:
         try:

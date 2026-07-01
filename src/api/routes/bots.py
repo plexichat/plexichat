@@ -106,7 +106,7 @@ class ApproveBotRequest(BaseModel):
     """Request to approve a bot on a server."""
 
     application_id: int
-    permissions: str = "0"
+    permissions: str = "{}"
     bot_name: Optional[str] = None
 
 
@@ -289,6 +289,61 @@ async def remove_approved_bot(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": str(e)}},
+        )
+
+
+# === Bot Disable/Enable Endpoints ===
+
+
+@router.post(
+    "/{bot_id}/disable",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Disable a bot",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
+        404: {"model": ErrorResponse, "description": "Bot not found"},
+    },
+)
+async def disable_bot(
+    bot_id: int,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Disable a bot owned by the current user."""
+    from src.core import auth
+
+    try:
+        auth.disable_bot(owner_id=current_user.user_id, bot_id=bot_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": 404, "message": str(e)}},
+        )
+
+
+@router.post(
+    "/{bot_id}/enable",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Enable a bot",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
+        404: {"model": ErrorResponse, "description": "Bot not found"},
+    },
+)
+async def enable_bot(
+    bot_id: int,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Enable a bot owned by the current user."""
+    from src.core import auth
+
+    try:
+        auth.enable_bot(owner_id=current_user.user_id, bot_id=bot_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": 404, "message": str(e)}},
         )
 
 
@@ -553,6 +608,8 @@ async def update_bot_profile(
 )
 async def list_bot_directory(
     server_id: Optional[int] = None,
+    q: Optional[str] = None,
+    tag: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
 ):
@@ -560,16 +617,18 @@ async def list_bot_directory(
     try:
         if limit > 100:
             limit = 100
-        bots = applications.get_bot_directory(
+        result = applications.get_bot_directory(
             server_id=server_id,
             include_public=True,
             limit=limit,
             offset=offset,
+            q=q,
+            tag=tag,
         )
-        entries = [BotDirectoryEntry(**bot) for bot in bots]
+        entries = [BotDirectoryEntry(**bot) for bot in result["bot_list"]]
         return BotDirectoryResponse(
             bots=entries,
-            total=len(entries),
+            total=result["total"],
             limit=limit,
             offset=offset,
         )
