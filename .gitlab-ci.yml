@@ -30,7 +30,7 @@ cache:
     name: python:3.12-bullseye
     pull_policy: if-not-present
   before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
+    - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git
     - |
       if [ -d ".venv" ]; then
         echo "Using cached virtual environment"
@@ -49,6 +49,7 @@ cache:
             pip-audit \
             safety
       fi
+      pip install --upgrade pip
     # common_utils is bundled directly in the repository at src/utils/common_utils/
 
 # =========================================================
