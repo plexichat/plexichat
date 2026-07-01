@@ -59,8 +59,6 @@ class OTPMixin(SessionMixin, PasswordMixin):
         if not secret:
             return AdminLoginResult(success=False, error="OTP not configured")
 
-        from src.utils.encryption import hash_password as _hash_pwd
-
         last_row = db.fetch_one(
             "SELECT otp_last_used_code, otp_last_used_at FROM admin_users WHERE id = ?",
             (admin_id,),
@@ -87,8 +85,9 @@ class OTPMixin(SessionMixin, PasswordMixin):
             "UPDATE admin_users SET totp_enabled = 1, must_setup_otp = 0 WHERE id = ?",
             (admin_id,),
         )
+        from src.core.auth.totp import hash_backup_codes as _hash_backup_codes
         backup_codes = [secrets.token_hex(4).upper() for _ in range(10)]
-        hashed_codes = [_hash_pwd(c.replace("-", "").lower()) for c in backup_codes]
+        hashed_codes = _hash_backup_codes(backup_codes)
         db.execute(
             "UPDATE admin_users SET backup_codes = NULL, backup_codes_hash = ? WHERE id = ?",
             (json.dumps(hashed_codes), admin_id),
@@ -159,11 +158,6 @@ class OTPMixin(SessionMixin, PasswordMixin):
                     success=False, error="Code already used — wait for next code"
                 )
 
-        from src.utils.encryption import (
-            hash_password as _hash_pwd,
-            verify_password as _verify_pwd,
-        )
-
         if pyotp.TOTP(secret).verify(code, valid_window=1):
             db.execute(
                 "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ?, last_login = ? WHERE id = ?",
@@ -180,14 +174,19 @@ class OTPMixin(SessionMixin, PasswordMixin):
                 requires_password_change=requires_password_change,
             )
 
+        import hashlib
+        from src.utils.encryption import verify_password as _verify_pwd
+
         normalized = code.upper().replace("-", "")
+        candidate_sha256 = hashlib.sha256(normalized.lower().encode()).hexdigest()
         if backup_codes_hashed:
             try:
                 hashed_list = json.loads(backup_codes_hashed)
             except (json.JSONDecodeError, TypeError):
                 hashed_list = []
             for i, hashed in enumerate(hashed_list):
-                if _verify_pwd(normalized.lower(), str(hashed)):
+                hashed_str = str(hashed)
+                if candidate_sha256 == hashed_str or _verify_pwd(normalized.lower(), hashed_str):
                     hashed_list.pop(i)
                     db.execute(
                         "UPDATE admin_users SET backup_codes_hash = ?, last_login = ? WHERE id = ?",
@@ -209,7 +208,7 @@ class OTPMixin(SessionMixin, PasswordMixin):
             codes = backup_codes_plaintext.split(",")
             if normalized in codes:
                 codes.remove(normalized)
-                hashed_remaining = [_hash_pwd(c.lower()) for c in codes if c.strip()]
+                hashed_remaining = [hashlib.sha256(c.lower().encode()).hexdigest() for c in codes if c.strip()]
                 db.execute(
                     "UPDATE admin_users SET backup_codes = NULL, backup_codes_hash = ?, last_login = ? WHERE id = ?",
                     (json.dumps(hashed_remaining), int(time.time() * 1000), admin_id),
