@@ -4,7 +4,7 @@ Feedback API routes.
 Handles user feedback submission with rate limiting.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 
 import utils.config as config
 import utils.logger as logger
@@ -34,7 +34,9 @@ router = APIRouter(prefix="/feedback", tags=["Feedback"])
     },
 )
 async def submit_feedback(
-    feedback_data: FeedbackCreate, current_user: TokenInfo = Depends(get_current_user)
+    feedback_data: FeedbackCreate,
+    request: Request,
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> FeedbackResponse:
     """
     Submit feedback.
@@ -60,7 +62,11 @@ async def submit_feedback(
             )
 
         # Check rate limit
-        rl_result = ratelimit.check_rate_limit(user_id=user_id, route="POST /feedback")
+        rl_result = ratelimit.check_rate_limit(
+            user_id=user_id,
+            route="POST /feedback",
+            is_internal=getattr(request.state, "is_internal", False),
+        )
         if not rl_result.allowed:
             logger.warning(f"User {user_id} hit feedback rate limit")
             raise HTTPException(

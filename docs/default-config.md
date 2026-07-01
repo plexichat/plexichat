@@ -462,7 +462,7 @@ selftest:
   test_user:
     username: "selftest_admin"
     email: "selftest@internal.local"
-    password: ""  # Empty = auto-generate a long random password (safe for production)
+    # Password is always auto-generated — never set it in config
 
 admin_ui:
   enabled: true
