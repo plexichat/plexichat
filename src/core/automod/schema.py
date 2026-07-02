@@ -97,6 +97,8 @@ def create_tables(db):
         for table, columns in tables_to_fix:
             if table not in allowed_tables:
                 continue
+            if not db.table_exists(table):
+                continue
             for col in columns:
                 if not re.match(r"^[a-zA-Z0-9_]+$", col):
                     continue
