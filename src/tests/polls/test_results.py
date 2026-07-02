@@ -12,7 +12,7 @@ class TestPollResults:
     def test_get_results_success(self, poll_with_options, dm_with_message):
         """Test getting poll results successfully."""
         poll = poll_with_options
-        user1, user2, dm, msg, polls, messaging = dm_with_message
+        user1, _user2, _dm, _msg, polls, _messaging = dm_with_message
 
         results = polls.get_results(poll.id, user1.id)
 
@@ -121,7 +121,7 @@ class TestPollResults:
     def test_results_user_votes_tracked(self, poll_with_options, dm_with_message):
         """Test user's votes are tracked in results."""
         poll = poll_with_options
-        user1, user2, dm, msg, polls, messaging = dm_with_message
+        user1, user2, _dm, _msg, polls, _messaging = dm_with_message
 
         option_id = poll.options[0].id
         polls.vote(user2.id, poll.id, [option_id])

@@ -229,21 +229,21 @@ When changing KEKs (e.g., migrating from a single system key to dedicated keys),
 
 ```bash
 # Validate current keyrings
-python main.py --migrate-kek --kek-validate --kek-all
+python main.py migrate-kek --kek-validate --kek-all
 
 # Migrate a specific keyring from the old shared system KEK to the new dedicated KEK
-python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
+python main.py migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
 
 # Migrate all keyrings to their dedicated KEKs
-python main.py --migrate-kek --kek-keyring system_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_SYSTEM_KEY
-python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
-python main.py --migrate-kek --kek-keyring file_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MEDIA_KEY
+python main.py migrate-kek --kek-keyring system_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_SYSTEM_KEY
+python main.py migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY
+python main.py migrate-kek --kek-keyring file_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MEDIA_KEY
 
 # Dry run (validate only)
-python main.py --migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
+python main.py migrate-kek --kek-keyring message_keyring.json --kek-old-env PLEXICHAT_SYSTEM_KEY --kek-new-env PLEXICHAT_MESSAGE_KEY --kek-dry-run
 
 # Rollback a migration
-python main.py --migrate-kek --kek-rollback --kek-keyring message_keyring.json
+python main.py migrate-kek --kek-rollback --kek-keyring message_keyring.json
 ```
 
 The migration tool:
@@ -274,7 +274,7 @@ If keyrings are corrupted or KEKs are lost:
 
 1. Restore keyring files from backup
 2. Ensure KEK environment variables are set correctly
-3. Run validation: `python main.py --migrate-kek --kek-validate --all`
+3. Run validation: `python main.py migrate-kek --kek-validate --kek-all`
 4. If validation fails, use the migration tool to re-encrypt with current KEKs
 
 **Security Best Practices for KEKs**
@@ -299,6 +299,16 @@ tls:
 - Most deployments terminate TLS at a reverse proxy (nginx, Caddy, Traefik). Keep `tls.enabled: false` and configure TLS on your proxy.
 - If Plexichat serves TLS directly, set `enabled: true` and provide certificate paths.
 - Never run production traffic over unencrypted HTTP.
+
+### Encryption at-Rest Defaults
+
+The default encryption posture is tuned for the OWASP 2024 guidance and the medium-sensitivity data Plexichat stores:
+
+- **Argon2id password hashing** uses `time_cost: 3` (OWASP 2024 minimum), `memory_cost: 65536` (64 MiB), `parallelism: 2`, `hash_length: 32`, and `salt_length: 16`. Do not lower `time_cost` or `memory_cost` in production. See `authentication.password` and `encryption.argon2` in the [Default Configuration Reference](default-config.md).
+- **`*_encrypted` columns** for medium-sensitivity user data (email, phone, display name, bio, and similar fields) are written as AES-256-GCM ciphertext using the system keyring, and are the source of truth at rest. Legacy plaintext columns are kept for backward compatibility with older clients and migration tooling.
+- **`media.signing_key`** is auto-generated with `secrets.token_hex(32)` and persisted to `config/config.yaml` on first startup if it is still `CHANGE_THIS_SIGNING_KEY`. The generated value is the per-installation default; rotate it through the key-rotation flow if it is ever disclosed.
+- **Message content** is encrypted at rest whenever `messaging.encrypt_messages: true` (the default), using the dedicated `message_keyring.json` and its `PLEXICHAT_MESSAGE_KEY` KEK.
+- **Media files** are encrypted at rest when `media.encrypt_at_rest: true` (the default), and media URLs are signed with the auto-generated `media.signing_key` and expire after `media.signing_expiry` seconds.
 
 **CORS Enforcement**
 
@@ -474,9 +484,10 @@ selftest:
 
 ### Security Considerations
 
-- **Never enable in production**: `selftest.enabled: true` creates a test user with known credentials (`selftest_admin` / `SelfTest_Password_123!`). This is a severe security risk.
+- **Production-safe**: Selftest always uses long, randomly-generated passwords (via `_generate_strong_password`). Password is never configurable in config.
+- **Safe for production**: Selftest only creates and deletes its own test users (`selftest_admin` / `selftest_admin_other`). It never touches real admin accounts, admin roles, or admin data. All test resources are cleaned up via API calls before shutdown.
 - `exit_on_failure: false` prevents the server from shutting down if a self-test fails, which could be exploited for denial-of-service.
-- `capture_stack_traces: true` in development is fine, but stack traces in production can reveal implementation details.
+- `capture_stack_traces: true` in development is fine, but stack traces in production can reveal implementation details. Set to false in production for defense-in-depth.
 
 ---
 
@@ -510,7 +521,7 @@ Use environment variable interpolation (`${VAR_NAME}`) in config files to keep s
 - Rate limiting: `rate_limiting.enabled: true`
 - Message encryption: `messaging.encrypt_messages: true`
 - Media signing key: `media.signing_key` -- changed from default
-- Self-test: `selftest.enabled: false`
+- Self-test: `selftest.enabled: true` is safe for production (random passwords, API cleanup, no admin data loss). See Selftest Infrastructure above.
 - Trusted proxies: `api.trusted_proxies` -- configured if behind proxy
 - OAuth PKCE: `oauth.pkce_enabled: true`
 

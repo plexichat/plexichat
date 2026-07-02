@@ -33,7 +33,7 @@ from .docs import (
 )
 from .telemetry import router as telemetry_router
 from .admin import router as admin_router
-from .features import router as features_router
+from .features import features_router, feature_expansion_router
 from .voice import router as voice_router
 from .avatars import router as avatars_router
 from .media import router as media_router
@@ -41,7 +41,6 @@ from .reports import router as reports_router
 from .qr import router as qr_router
 from .help import router as help_router, robots_router
 from .config import router as config_router
-from .feature_routes import router as feature_expansion_router
 
 import utils.config as config
 import utils.logger as logger
@@ -113,10 +112,8 @@ def create_api_router() -> APIRouter:
 
     # Include admin router with configurable path
     admin_config = config.get("admin_ui", {})
-    if admin_config.get("enabled", False):
-        admin_path = admin_config.get("path", "/admin")
-        # Remove /api/v1 prefix since admin is mounted at root
-        api_router.include_router(admin_router, prefix=admin_path, tags=["Admin"])
+    admin_path = admin_config.get("path", "/admin")
+    api_router.include_router(admin_router, prefix=admin_path, tags=["Admin"])
 
     # Include features router (admin endpoints + user features)
     api_router.include_router(features_router, tags=["Features"])

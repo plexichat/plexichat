@@ -1,0 +1,107 @@
+from typing import Optional, List, Dict, Any
+
+import utils.logger as logger
+from src.core.database import cached, invalidate_pattern
+
+
+from .protocol import AuthManagerProtocol
+
+
+class IpBlacklistMixin(AuthManagerProtocol):
+    def block_ip(
+        self,
+        ip_address: str,
+        reason: Optional[str] = None,
+        blocked_by: Optional[int] = None,
+        duration_hours: Optional[int] = None,
+    ) -> bool:
+        invalidate_pattern("ip_blocked:*")
+
+        now = self._get_timestamp()
+        expires_at = now + (duration_hours * 3600 * 1000) if duration_hours else None
+
+        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        ip_encrypted = self.crypto.encrypt_data(ip_address, context="ip_blacklist")
+
+        self._db.upsert(
+            "auth_ip_blacklist",
+            [
+                "ip_index",
+                "ip_encrypted",
+                "reason",
+                "reason_encrypted",
+                "blocked_at",
+                "blocked_by",
+                "expires_at",
+            ],
+            (
+                ip_index,
+                ip_encrypted,
+                reason,
+                self.crypto.encrypt_data(reason, context=f"ip_block:{ip_index}")
+                if reason
+                else None,
+                now,
+                blocked_by,
+                expires_at,
+            ),
+            conflict_columns=["ip_index"],
+        )
+        logger.info(f"IP blocked by {blocked_by}: {reason}")
+        return True
+
+    def unblock_ip(self, ip_address: str) -> bool:
+        invalidate_pattern("ip_blocked:*")
+
+        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
+
+        self._db.execute(
+            "DELETE FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
+            (ip_index, legacy_index, legacy_index),
+        )
+        logger.info("IP unblocked")
+        return True
+
+    @cached(ttl=300, prefix="ip_blocked")
+    def is_ip_blocked(self, ip_address: str) -> bool:
+        try:
+            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+            legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
+
+            row = self._db.fetch_one(
+                "SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
+                (ip_index, legacy_index, legacy_index),
+            )
+            if not row:
+                return False
+
+            expires_at = row["expires_at"]
+            if expires_at and expires_at < self._get_timestamp():
+                self.unblock_ip(ip_address)
+                return False
+
+            return True
+        except Exception:
+            return False
+
+    def get_blocked_ips(self) -> List[Dict[str, Any]]:
+        rows = self._db.fetch_all(
+            "SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC"
+        )
+        for r in rows:
+            try:
+                r["ip_address"] = self.crypto.decrypt_data(
+                    r["ip_encrypted"], context="ip_blacklist"
+                )
+            except Exception:
+                r["ip_address"] = "UNKNOWN"
+            if r.get("reason_encrypted"):
+                try:
+                    r["reason"] = self.crypto.decrypt_data(
+                        r["reason_encrypted"],
+                        context=f"ip_block:{r.get('ip_index', '')}",
+                    )
+                except Exception:
+                    pass
+        return rows

@@ -3,14 +3,13 @@ Admin dashboard and system metrics routes.
 """
 
 from fastapi import APIRouter, Request, HTTPException
-import time
 from src.api.schemas.admin import (
     AdminDashboardResponse,
     TelemetryEndpointStat,
     SystemMetrics,
 )
 from .utils import check_host_restriction, get_admin_from_token
-import src.api as api
+from src.core import applications
 import utils.logger as logger
 
 router = APIRouter()
@@ -66,17 +65,11 @@ async def get_dashboard(request: Request):
 
         total_users, active_users, scheduled_deletions, db_status = 0, 0, 0, "healthy"
         try:
-            db = api.get_db()
-            if db:
-                total_users = db.fetch_one("SELECT COUNT(*) as c FROM auth_users")["c"]
-                cutoff = int((time.time() - 86400) * 1000)
-                active_users = db.fetch_one(
-                    "SELECT COUNT(*) as c FROM auth_users WHERE last_login_at > ?",
-                    (cutoff,),
-                )["c"]
-                scheduled_deletions = db.fetch_one(
-                    "SELECT COUNT(*) as c FROM auth_users WHERE deletion_status = 'frozen'"
-                )["c"]
+            counts = applications.get_admin_dashboard_counts()
+            total_users = counts["total_users"]
+            active_users = counts["active_users"]
+            scheduled_deletions = counts["scheduled_deletions"]
+            db_status = counts["db_status"]
         except Exception as ue:
             logger.warning(f"User stats dashboard error: {ue}")
             db_status = "degraded"
@@ -94,95 +87,7 @@ async def get_dashboard(request: Request):
         # New feature stats
         feature_stats = {}
         try:
-            db = api.get_db()
-            if db:
-                # Bookmarks count
-                try:
-                    row = db.fetch_one("SELECT COUNT(*) as c FROM user_bookmarks")
-                    feature_stats["bookmarks"] = row["c"] if row else 0
-                except Exception:
-                    feature_stats["bookmarks"] = 0
-
-                # Scheduled messages count
-                try:
-                    row = db.fetch_one(
-                        "SELECT COUNT(*) as c FROM scheduled_messages WHERE status = 'pending'"
-                    )
-                    feature_stats["scheduled_messages_pending"] = row["c"] if row else 0
-                except Exception:
-                    feature_stats["scheduled_messages_pending"] = 0
-
-                # Forwarded messages count
-                try:
-                    row = db.fetch_one("SELECT COUNT(*) as c FROM forwarded_messages")
-                    feature_stats["forwarded_messages"] = row["c"] if row else 0
-                except Exception:
-                    feature_stats["forwarded_messages"] = 0
-
-                # Voice messages count
-                try:
-                    row = db.fetch_one(
-                        "SELECT COUNT(*) as c FROM msg_messages WHERE is_voice = 1"
-                    )
-                    feature_stats["voice_messages"] = row["c"] if row else 0
-                except Exception:
-                    feature_stats["voice_messages"] = 0
-
-                # User profiles with custom status
-                try:
-                    row = db.fetch_one(
-                        "SELECT COUNT(*) as c FROM user_profiles WHERE status IS NOT NULL"
-                    )
-                    feature_stats["profiles_with_status"] = row["c"] if row else 0
-                except Exception:
-                    feature_stats["profiles_with_status"] = 0
-
-                # Push tokens registered
-                try:
-                    row = db.fetch_one(
-                        "SELECT COUNT(*) as c FROM push_tokens WHERE active = 1"
-                    )
-                    feature_stats["push_tokens_active"] = row["c"] if row else 0
-                except Exception:
-                    feature_stats["push_tokens_active"] = 0
-
-                # Webhook retry queue
-                try:
-                    row = db.fetch_one(
-                        "SELECT COUNT(*) as c FROM webhook_retry_queue WHERE status = 'pending'"
-                    )
-                    feature_stats["webhook_retries_pending"] = row["c"] if row else 0
-                except Exception:
-                    feature_stats["webhook_retries_pending"] = 0
-
-                # Reports by category
-                try:
-                    rows = db.fetch_all(
-                        "SELECT category, COUNT(*) as c FROM message_reports GROUP BY category ORDER BY c DESC LIMIT 10"
-                    )
-                    feature_stats["report_categories"] = [
-                        {"category": r["category"], "count": r["c"]} for r in rows
-                    ]
-                except Exception:
-                    feature_stats["report_categories"] = []
-
-                # Active DM spam filters
-                try:
-                    row = db.fetch_one(
-                        "SELECT COUNT(*) as c FROM dm_spam_filters WHERE enabled = 1"
-                    )
-                    feature_stats["dm_spam_filters_active"] = row["c"] if row else 0
-                except Exception:
-                    feature_stats["dm_spam_filters_active"] = 0
-
-                # Threads with slowmode
-                try:
-                    row = db.fetch_one(
-                        "SELECT COUNT(*) as c FROM thread_threads WHERE slowmode_interval_ms > 0"
-                    )
-                    feature_stats["threads_with_slowmode"] = row["c"] if row else 0
-                except Exception:
-                    feature_stats["threads_with_slowmode"] = 0
+            feature_stats = applications.get_admin_dashboard_feature_stats()
         except Exception as fe:
             logger.warning(f"Feature stats dashboard error: {fe}")
 

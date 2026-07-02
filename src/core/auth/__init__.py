@@ -133,9 +133,50 @@ def register(
     ip_address: Optional[str] = None,
     age: Optional[int] = None,
     dob: Optional[str] = None,
+    is_internal: bool = False,
 ) -> User:
     """
     Register a new user account.
+
+    Args:
+        username: Unique username
+        email: Email address
+        password: Password (will be validated for strength)
+        device_info: Optional device information
+        ip_address: Optional IP address
+        age: Optional user age
+        dob: Optional date of birth
+        is_internal: Whether this is an internal request (bypasses blacklist)
+
+    Returns:
+        Created User object
+
+    Raises:
+        UserExistsError: Username or email already taken
+        WeakPasswordError: Password does not meet requirements
+        InvalidUsernameError: Username format invalid
+        InvalidEmailError: Email format invalid
+    """
+    return _get_manager().register(
+        username, email, password, device_info, ip_address, age, dob, is_internal
+    )
+
+
+def register_selftest(
+    username: str,
+    email: str,
+    password: str,
+    device_info: Optional[Dict[str, str]] = None,
+    ip_address: Optional[str] = None,
+    age: Optional[int] = None,
+    dob: Optional[str] = None,
+) -> User:
+    """
+    Register a new user account for internal use (e.g. self-test).
+
+    Bypasses the username blacklist check so internal accounts can use
+    reserved names like 'selftest_admin' without conflicting with the
+    blacklist pattern '^selftest' that prevents real users from taking them.
 
     Args:
         username: Unique username
@@ -156,7 +197,7 @@ def register(
         InvalidEmailError: Email format invalid
     """
     return _get_manager().register(
-        username, email, password, device_info, ip_address, age, dob
+        username, email, password, device_info, ip_address, age, dob, is_internal=True
     )
 
 
@@ -238,6 +279,18 @@ def verify_token(
 def refresh_session(token: str) -> Optional[str]:
     """Refresh a session token. Returns new token or None if not refreshable."""
     return _get_manager().refresh_session(token)
+
+
+def create_session_for_user(
+    user_id: int,
+    device_info: Optional[Dict[str, str]] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> AuthResult:
+    """Create a session for an already-authenticated user (bypasses password re-verify)."""
+    return _get_manager().create_session_for_user(
+        user_id, device_info, ip_address, user_agent
+    )
 
 
 def logout(token: str) -> bool:
@@ -342,6 +395,57 @@ def regenerate_backup_codes(user_id: int, password: str) -> List[str]:
 def get_2fa_status(user_id: int) -> TwoFactorStatus:
     """Get 2FA status for a user."""
     return _get_manager().get_2fa_status(user_id)
+
+
+# === Passkey (WebAuthn/FIDO2) ===
+
+
+def generate_passkey_registration_options(
+    user_id: int, device_name: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    return _get_manager().generate_passkey_registration_options(user_id, device_name)
+
+
+def verify_passkey_registration(
+    user_id: int,
+    challenge_id: str,
+    credential_response: Dict[str, Any],
+    ip_address: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    return _get_manager().verify_passkey_registration(
+        user_id, challenge_id, credential_response, ip_address
+    )
+
+
+def generate_passkey_authentication_options(
+    username: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _get_manager().generate_passkey_authentication_options(username)
+
+
+def verify_passkey_authentication(
+    challenge_id: str,
+    credential_response: Dict[str, Any],
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> AuthResult:
+    return _get_manager().verify_passkey_authentication(
+        challenge_id, credential_response, ip_address, user_agent
+    )
+
+
+def list_passkeys(user_id: int) -> List[Dict[str, Any]]:
+    return _get_manager().list_passkeys(user_id)
+
+
+def revoke_passkey(
+    user_id: int, passkey_id: int, ip_address: Optional[str] = None
+) -> bool:
+    return _get_manager().revoke_passkey(user_id, passkey_id, ip_address)
+
+
+def rename_passkey(user_id: int, passkey_id: int, new_name: str) -> bool:
+    return _get_manager().rename_passkey(user_id, passkey_id, new_name)
 
 
 # === Password Management ===
@@ -713,6 +817,7 @@ __all__ = [
     "validate_permissions",
     # Registration
     "register",
+    "register_selftest",
     "verify_email",
     "resend_verification",
     # Login
@@ -722,6 +827,7 @@ __all__ = [
     # Sessions
     "verify_token",
     "refresh_session",
+    "create_session_for_user",
     "logout",
     "logout_all",
     "get_sessions",
@@ -736,6 +842,14 @@ __all__ = [
     "disable_2fa",
     "regenerate_backup_codes",
     "get_2fa_status",
+    # Passkeys
+    "generate_passkey_registration_options",
+    "verify_passkey_registration",
+    "generate_passkey_authentication_options",
+    "verify_passkey_authentication",
+    "list_passkeys",
+    "revoke_passkey",
+    "rename_passkey",
     # Password
     "change_password",
     "request_password_reset",

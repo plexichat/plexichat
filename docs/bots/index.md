@@ -51,14 +51,15 @@ The application includes a bot account automatically. The `bot_id` is the bot's 
 Generate a token for the bot to authenticate:
 
 ```http
-POST /api/v1/applications/{application_id}/bot/token
+POST /api/v1/applications/{application_id}/bot
 Authorization: Bearer your_user_token
 ```
 
 Response:
 ```json
 {
-  "token": "bot_token_here"
+  "token": "bot_token_here",
+  "bot_id": "987654321098765432"
 }
 ```
 
@@ -701,25 +702,10 @@ const permissions = Permissions.SEND_MESSAGES | Permissions.READ_MESSAGES;
 ### Handling OAuth Callback
 
 ```http
-GET /callback?code=authorization_code&state=random_state_string
+GET /api/v1/oauth/{provider}/callback?code=authorization_code&state=state_token
 ```
 
-Exchange code for access token:
-
-```http
-POST /api/v1/oauth2/token
-Content-Type: application/json
-
-{
-  "client_id": "your_application_id",
-  "client_secret": "your_client_secret",
-  "grant_type": "authorization_code",
-  "code": "authorization_code",
-  "redirect_uri": "https://your-bot.com/callback"
-}
-```
-
-Response includes bot access token for the installed server.
+Plexichat handles the code-to-token exchange internally. After the user authorizes your application, the OAuth provider redirects back to `/api/v1/oauth/{provider}/callback` where Plexichat exchanges the authorization code for an access token with the provider and creates a session. No additional token exchange is required on your end.
 
 ## Testing
 

@@ -1,6 +1,6 @@
 # Middleware Test Suite - Index
 
-## 📁 Test Files (5 files, ~102KB, 170+ tests)
+## [folder] Test Files (5 files, ~102KB, 170+ tests)
 
 ### Core Test Files
 1. **[test_middleware_authentication.py](test_middleware_authentication.py)** (21KB, 40 tests)
@@ -44,7 +44,7 @@
 - **[middleware_test_summary.txt](middleware_test_summary.txt)** - Implementation summary
 - **[MIDDLEWARE_INDEX.md](MIDDLEWARE_INDEX.md)** - This file
 
-## 🎯 Coverage by Middleware
+## [target] Coverage by Middleware
 
 | Middleware | File | Tests | Coverage |
 |------------|------|-------|----------|
@@ -54,7 +54,7 @@
 | Rate Limiting | `rate_limiting.py` | 40 | Enforcement, bypass, user extraction |
 | Integration | All | 25 | Combined scenarios, ordering, propagation |
 
-## 🚀 Quick Start
+## [rocket] Quick Start
 
 ### Run All Tests
 ```bash
@@ -76,7 +76,7 @@ pytest src/tests/api/test_middleware_*.py --cov=src/api/middleware --cov-report=
 pytest src/tests/api/test_middleware_authentication.py::TestSecurityScenarios -v
 ```
 
-## 📊 Test Statistics
+## [graph] Test Statistics
 
 - **Total Test Files**: 5
 - **Total Test Classes**: 35+
@@ -91,7 +91,7 @@ pytest src/tests/api/test_middleware_authentication.py::TestSecurityScenarios -v
 - **Performance Tests**: ~10 tests
 - **Edge Case Tests**: ~15 tests
 
-## 🔍 Test Classes by File
+## [search] Test Classes by File
 
 ### test_middleware_authentication.py
 1. `TestAuthenticationMiddleware` - Core middleware
@@ -139,17 +139,17 @@ pytest src/tests/api/test_middleware_authentication.py::TestSecurityScenarios -v
 6. `TestRealWorldScenarios` - Real scenarios
 7. `TestErrorPropagation` - Error propagation
 
-## 🔒 Security Testing Coverage
+## [lock] Security Testing Coverage
 
 ### Covered Attack Vectors
-- ✅ SQL Injection (in tokens, headers)
-- ✅ XSS Attacks (in tokens, error messages)
-- ✅ Token Reuse (after logout/revocation)
-- ✅ Brute Force (rate limiting on login)
-- ✅ Session Hijacking (token validation)
-- ✅ Information Leakage (error details, stack traces)
-- ✅ Path Traversal (via rate limiting)
-- ✅ Header Injection (malicious headers)
+- OK SQL Injection (in tokens, headers)
+- OK XSS Attacks (in tokens, error messages)
+- OK Token Reuse (after logout/revocation)
+- OK Brute Force (rate limiting on login)
+- OK Session Hijacking (token validation)
+- OK Information Leakage (error details, stack traces)
+- OK Path Traversal (via rate limiting)
+- OK Header Injection (malicious headers)
 
 ### Security Test Examples
 ```bash
@@ -163,14 +163,14 @@ pytest src/tests/api/test_middleware_error_handling.py::TestSecurityAndInformati
 pytest src/tests/api/test_middleware_rate_limiting.py::TestSecurityScenarios -v
 ```
 
-## 📈 Performance Testing
+## [chart] Performance Testing
 
 ### Performance Tests Included
-- ✅ Concurrent requests (50+ simultaneous)
-- ✅ Minimal overhead measurement (<5s for 100 requests)
-- ✅ Thread safety verification
-- ✅ Rate limit efficiency
-- ✅ Timing accuracy (millisecond precision)
+- OK Concurrent requests (50+ simultaneous)
+- OK Minimal overhead measurement (<5s for 100 requests)
+- OK Thread safety verification
+- OK Rate limit efficiency
+- OK Timing accuracy (millisecond precision)
 
 ### Run Performance Tests
 ```bash
@@ -178,7 +178,7 @@ pytest src/tests/api/test_middleware_logging.py::TestPerformance -v
 pytest src/tests/api/test_middleware_authentication.py::TestConcurrency -v
 ```
 
-## 🛠️ Common Use Cases
+## [wrench] Common Use Cases
 
 ### Testing New Middleware
 1. Create `test_middleware_<name>.py`
@@ -199,7 +199,7 @@ pytest src/tests/api/test_middleware_authentication.py::TestConcurrency -v
 4. Clean up rate limiting after tests
 5. Test both success and failure paths
 
-## 📚 Additional Resources
+## [books] Additional Resources
 
 ### Related Files
 - **Middleware Source**: `src/api/middleware/`
@@ -212,10 +212,10 @@ pytest src/tests/api/test_middleware_authentication.py::TestConcurrency -v
 - **API README**: `src/api/README.md`
 - **Middleware README**: `src/api/middleware/README.md`
 
-## ✅ Checklist for Running Tests
+## OK Checklist for Running Tests
 
 - [ ] Ensure test environment is set up (see AGENTS.md)
-- [ ] Install test dependencies: `pip install -r requirements-test.txt`
+- [ ] Install test dependencies: `pip install --require-hashes -r requirements.txt`
 - [ ] Run all tests: `pytest src/tests/api/test_middleware_*.py -v`
 - [ ] Check coverage: `pytest --cov=src/api/middleware --cov-report=html`
 - [ ] Review coverage report: Open `htmlcov/index.html`
@@ -223,7 +223,7 @@ pytest src/tests/api/test_middleware_authentication.py::TestConcurrency -v
 - [ ] Check for no warnings or errors
 - [ ] Verify execution time (<30 seconds)
 
-## 🎓 Learning Resources
+## [grad] Learning Resources
 
 ### Understanding the Tests
 1. Start with `test_middleware_authentication.py` (most straightforward)
@@ -244,4 +244,4 @@ pytest src/tests/api/test_middleware_authentication.py::TestConcurrency -v
 **Total Implementation Time**: ~2 hours
 **Lines of Code**: ~2,800+
 **Test Coverage**: 170+ tests across 5 files
-**Status**: ✅ Complete and ready for use
+**Status**: OK Complete and ready for use

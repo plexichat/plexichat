@@ -13,10 +13,9 @@ Usage:
 
     # Report a message
     report = reports.report_message(reporter_id, message_id, reason, details)
-
-    # Report a user
-    report = reports.report_user(reporter_id, user_id, reason, details)
 """
+
+from src.core.database.core.schema_splitter import split_sql_statements
 
 import time
 from typing import Optional, List, Dict, Any
@@ -195,7 +194,7 @@ def _get_db():
 
 def create_tables(db) -> None:
     """Create report tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
     for statement in statements:
         if statement:
             try:

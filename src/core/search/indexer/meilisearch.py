@@ -36,6 +36,33 @@ class MeilisearchIndexer(BaseIndexer):
         http_client=None,
     ):
         super().__init__(config)
+        # SECURITY: the host string is configured at module-load
+        # time. We previously passed it straight into urllib with a
+        # blanket ``# nosec B310`` suppression. The configured host
+        # could be ``http://10.0.0.5`` (SSRF landing page inside the
+        # data-centre network) or ``http://localhost:7700`` (SSRF
+        # loopback into a dev instance). Validate the configured
+        # host up-front via the centralised URLValidator so the
+        # ``ActivityIndexer`` cannot be coerced into hitting an
+        # arbitrary internal endpoint at index time.
+        try:
+            from src.utils.security import URLValidator
+
+            URLValidator().validate_url_for_request(host)
+        except Exception as _meili_host_exc:
+            import utils.logger as _meili_logger
+
+            _meili_logger.critical(
+                "Meilisearch host %r failed SSRF validation; "
+                "aborting indexer construction: %s",
+                host,
+                _meili_host_exc,
+            )
+            raise SearchBackendError(
+                f"Meilisearch host failed SSRF validation: {_meili_host_exc}",
+                backend="meilisearch",
+                original_error=_meili_host_exc,
+            )
         self._host = host.rstrip("/")
         self._api_key = api_key
         self._index_prefix = index_prefix

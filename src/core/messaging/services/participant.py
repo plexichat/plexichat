@@ -13,7 +13,6 @@ from ..exceptions import (
 )
 from .base import BaseService
 from src.core.base import SnowflakeID
-from src.core.database.cache import cached, invalidate_pattern
 
 
 class ParticipantService(BaseService):
@@ -41,9 +40,14 @@ class ParticipantService(BaseService):
             part_id, conversation_id, user_id, role, now, auto_commit=auto_commit
         )
 
-        # Invalidate cache
+        # ORPHAN-FIX: we no longer use the ``@cached`` decorator on
+        # ``get_participant_ids`` (audit-trail: prior session dropped
+        # it because the cache-key was conversation_id only, which
+        # would collide with limit/offset variants). The
+        # ``invalidate_pattern(f"participant_ids:*{cid}*")`` calls
+        # in this service were the corresponding cache-evict pattern
+        # and now invalidate nothing reachable. Drop them.
         self._cache_invalidate((conversation_id, user_id))
-        invalidate_pattern(f"participant_ids:*{conversation_id}*")
 
         row = self._repo.get_by_conversation_and_user(conversation_id, user_id)
         if row is None:
@@ -80,10 +84,11 @@ class ParticipantService(BaseService):
 
         self._repo.create_bulk(participants_data)
 
-        # Invalidate caches
+        # ORPHAN-FIX (see add_participant): the ``participant_ids``
+        # Redis pattern eviction was coupled to the dropped @cached
+        # decorator and now hits Redis for nothing reachable. Drop it.
         for cid in conversation_ids:
             self._cache_invalidate((cid, user_id))
-            invalidate_pattern(f"participant_ids:*{cid}*")
 
     def remove_user_from_multiple_conversations(
         self,
@@ -96,10 +101,10 @@ class ParticipantService(BaseService):
 
         self._repo.delete_bulk(user_id, conversation_ids)
 
-        # Invalidate caches
+        # ORPHAN-FIX (see add_participant): drop the now-unreachable
+        # ``invalidate_pattern(f"participant_ids:*{cid}*")`` loop.
         for cid in conversation_ids:
             self._cache_invalidate((cid, user_id))
-            invalidate_pattern(f"participant_ids:*{cid}*")
 
     def remove_participant(
         self,
@@ -110,7 +115,8 @@ class ParticipantService(BaseService):
         """Remove a participant from a conversation."""
         self._repo.delete(conversation_id, user_id, auto_commit=auto_commit)
         self._cache_invalidate((conversation_id, user_id))
-        invalidate_pattern(f"participant_ids:*{conversation_id}*")
+        # ORPHAN-FIX (see add_participant): drop the now-unreachable
+        # ``invalidate_pattern(f"participant_ids:*{conversation_id}*")``.
 
     def get_participant(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
@@ -124,10 +130,27 @@ class ParticipantService(BaseService):
         rows = self._repo.get_all_by_conversation(conversation_id)
         return [self._repo.row_to_model(row) for row in rows]
 
-    @cached(ttl=15, prefix="participant_ids")
-    def get_participant_ids(self, conversation_id: SnowflakeID) -> List[SnowflakeID]:
-        """Get all participant user IDs (for event routing)."""
-        return self._repo.get_user_ids_by_conversation(conversation_id)
+    def get_participant_ids(
+        self,
+        conversation_id: SnowflakeID,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[SnowflakeID]:
+        """Get all participant user IDs (for event routing).
+
+        ``limit``: OOM FIX for power users with very large groups.
+        Callers that only need a delivery fan-out subset (e.g.
+        reactions, search-result enrichment) should pass a sensible
+        ceiling. ``@cached`` is intentionally NOT applied here: the
+        previous decorator-keyed on ``conversation_id`` alone, which
+        caused a cache-key collision when callers asked for different
+        ``limit``/``offset`` shapes and got back the wrong-shaped
+        list. Callers that want caching should manage a TTL cache
+        themselves at the call site; the route layer already does.
+        """
+        return self._repo.get_user_ids_by_conversation(
+            conversation_id, limit=limit, offset=offset
+        )
 
     def is_participant(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID

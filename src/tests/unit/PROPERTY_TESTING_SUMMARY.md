@@ -83,37 +83,37 @@ This implementation adds comprehensive property-based testing using Hypothesis t
 ## Validation Coverage
 
 ### AuthManager
-✅ Username validation
+OK Username validation
 - Length boundaries (3-32 chars)
 - Character set (alphanumeric + underscore)
 - Reserved names (admin, system, etc.)
 - Special characters rejection
 - Unicode edge cases
 
-✅ Email validation
+OK Email validation
 - Format validation (user@domain.tld)
 - TLD validation (200+ TLDs)
 - Missing @ or domain rejection
 - Malformed emails
 
-✅ Password validation
+OK Password validation
 - Length boundaries (12-128 chars)
 - Complexity requirements (upper, lower, digit, special)
 - Weakness detection
 - Empty/whitespace rejection
 
-✅ 2FA/TOTP
+OK 2FA/TOTP
 - Code format (6 digits)
 - Backup code generation
 - Token expiry
 
-✅ Session management
+OK Session management
 - Session limits
 - Expiry calculation
 - Token hash format
 
 ### MessagingManager
-✅ Message content
+OK Message content
 - Length validation (0-4000 chars)
 - Empty/whitespace rejection
 - HTML/XSS sanitization
@@ -121,65 +121,65 @@ This implementation adds comprehensive property-based testing using Hypothesis t
 - Spoiler detection
 - NSFW detection
 
-✅ Attachments
+OK Attachments
 - Count limits (max 10)
 - Size limits (10MB)
 - Type validation
 
-✅ Group conversations
+OK Group conversations
 - Participant limits (1-100)
 - DM lookup keys
 - Conversation types
 
 ### ServersManager
-✅ Server names
+OK Server names
 - Length validation (2-100 chars)
 - Non-empty requirement
 - Unicode support
 
-✅ Channel names
+OK Channel names
 - Length validation (max 100)
 - Format normalization (lowercase, hyphens)
 - Non-empty requirement
 
-✅ Role names
+OK Role names
 - Length validation (max 100)
 - Non-empty requirement
 - Position hierarchy
 
-✅ Permissions
+OK Permissions
 - Permission dictionary format
 - Override handling
 - Boolean values
 
-✅ Invites
+OK Invites
 - Code generation (8 chars, alphanumeric)
 - Expiry calculation
 - Max uses tracking
 - Unlimited invites (0 = infinite)
 
 ### WebhooksManager
-✅ Webhook names
+OK Webhook names
 - Length validation (max 80 chars)
 - XSS sanitization
 - Non-empty requirement
 
-✅ Webhook tokens
+OK Webhook tokens
 - Format validation
 - Hash generation
 - URL parsing
 
-✅ Webhook messages
+OK Webhook messages
 - Content length (max 2000)
 - Username override (max 80)
 - Embed limits (max 10)
 
-✅ Avatar URLs
+OK Avatar URLs
 - Scheme validation (http/https)
 - JavaScript/data scheme rejection
 
 ### Embeds
-✅ Field limits
+OK Field limits
 - Title: 256 chars
 - Description: 4096 chars
 - Field count: 25 max
@@ -187,75 +187,75 @@ This implementation adds comprehensive property-based testing using Hypothesis t
 - Field value: 1024 chars
 - Total characters: 6000 max
 
-✅ Color validation
+OK Color validation
 - Hex format (#RRGGBB)
 - Invalid format rejection
 
 ### Security Tests
-✅ SQL Injection
+OK SQL Injection
 - Quote escaping
 - Comment injection
 - Union attacks
 - Drop table attempts
 
-✅ XSS Prevention
+OK XSS Prevention
 - Script tag sanitization
 - Event handler removal
 - JavaScript: URL blocking
 - iframe injection blocking
 
-✅ Path Traversal
+OK Path Traversal
 - Directory traversal patterns (../)
 - Windows paths (..\\)
 - URL encoding variants
 
-✅ Homograph Attacks
+OK Homograph Attacks
 - Cyrillic lookalikes
 - Greek lookalikes
 - Mixed script detection
 
 ### Unicode Edge Cases
-✅ Zero-width characters
+OK Zero-width characters
 - Zero-width space (U+200B)
 - Zero-width joiner (U+200D)
 - BOM (U+FEFF)
 
-✅ Bidirectional text
+OK Bidirectional text
 - RTL text (Hebrew, Arabic)
 - LTR/RTL mixing
 - Bidi override characters
 
-✅ Combining characters
+OK Combining characters
 - Excessive diacritics
 - Zalgo text handling
 
-✅ Normalization
+OK Normalization
 - NFC vs NFD forms
 - Consistency across forms
 
-✅ Character sets
+OK Character sets
 - Emoji (U+1F600-1F64F)
 - CJK (U+4E00-9FFF)
 - Arabic (U+0600-06FF)
 - Control characters (U+0000-001F)
 
 ### Boundary Conditions
-✅ Minimum values
+OK Minimum values
 - Zero length strings
 - Zero counts
 - Negative values
 
-✅ Maximum values
+OK Maximum values
 - 2^63-1 for Snowflake IDs
 - Max length strings
 - Max count limits
 
-✅ Just under/over limits
+OK Just under/over limits
 - Max - 1
 - Max
 - Max + 1
 
-✅ Extreme values
+OK Extreme values
 - 10K+ character strings
 - 100K+ character strings
 - Large integer values
@@ -321,7 +321,7 @@ pytest src/tests/unit/test_property_based_validation.py::TestAuthManagerProperty
 ## Integration
 
 ### Requirements
-Already included in `requirements-test.txt`:
+Already included in `requirements.txt`:
 ```
 hypothesis>=6.0.0
 ```
@@ -336,10 +336,10 @@ Already configured in `.gitignore`:
 
 ### Adding New Tests
 1. Choose appropriate file:
-   - Core validation → `test_property_based_validation.py`
-   - Manager logic → `test_property_based_managers.py`
-   - Edge cases → `test_property_based_edge_cases.py`
-   - Critical path → `test_property_based_quick.py`
+   - Core validation -> `test_property_based_validation.py`
+   - Manager logic -> `test_property_based_managers.py`
+   - Edge cases -> `test_property_based_edge_cases.py`
+   - Critical path -> `test_property_based_quick.py`
 
 2. Define strategy if needed
 3. Write property test

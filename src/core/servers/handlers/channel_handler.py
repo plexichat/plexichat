@@ -15,6 +15,7 @@ from ..exceptions import (
     ServerNotFoundError,
 )
 from ..permissions import has_permission as check_permission
+from ..manager.converters import _row_to_channel, _row_to_category
 from src.core.database import cache_delete, redis_available
 from src.core.database.cache import cached, invalidate_pattern
 
@@ -67,7 +68,7 @@ class ChannelHandler:
         nsfw: bool = False,
         slowmode_seconds: int = 0,
         read_receipts_enabled: bool = True,
-    ) -> Channel:
+    ) -> Optional[Channel]:
         """Create a new channel in a server."""
         server = self.manager.get_server(server_id, user_id)
         if not server:
@@ -100,13 +101,19 @@ class ChannelHandler:
         now = self.manager._get_timestamp()
         channel_id = self.manager._generate_id()
 
-        # Encrypt topic if enabled
+        # Store topic in topic_encrypted column (or topic column for backward compat)
+        # If encryption is enabled, encrypt it; otherwise, store as plaintext
         topic_encrypted = None
-        if topic and self.manager._encrypt_descriptions:
-            from src.utils.encryption import encrypt_data
+        if topic:
+            if self.manager._encrypt_descriptions:
+                from src.utils.encryption import encrypt_data
 
-            topic_encrypted = encrypt_data(topic)
+                topic_encrypted = encrypt_data(topic)
+            else:
+                topic_encrypted = topic
 
+        # After migration 029, unencrypted topic column no longer exists.
+        # Always use topic_encrypted (encrypted or plaintext based on config).
         self.db.execute(
             """INSERT INTO srv_channels 
                (id, server_id, name, channel_type, category_id, position, topic_encrypted, nsfw, slowmode_seconds, read_receipts_enabled, created_at, updated_at)
@@ -171,14 +178,15 @@ class ChannelHandler:
         invalidate_pattern(f"server_channels:*{server_id}*")
 
         result = self.manager.get_channel(channel_id, user_id)
-        # Channel might not be immediately retrievable due to permissions or caching
-        # Return the channel object directly from the database instead
+        if result:
+            return result
+        # Fallback: direct DB fetch if membership/permission check filtered it out
         row = self.db.fetch_one(
             "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0", (channel_id,)
         )
         if row:
-            return self.manager._row_to_channel(row)
-        return result
+            return _row_to_channel(row, self.manager._encrypt_descriptions)
+        return None
 
     def create_category(
         self,
@@ -208,7 +216,7 @@ class ChannelHandler:
         )
 
         row = self.db.fetch_one("SELECT * FROM srv_categories WHERE id = ?", (cat_id,))
-        return self.manager._row_to_category(row)
+        return _row_to_category(row)
 
     def delete_category(self, user_id: SnowflakeID, category_id: SnowflakeID) -> bool:
         """Delete a channel category."""
@@ -267,7 +275,9 @@ class ChannelHandler:
             # If batch fails or returns empty for some reason, we default to denied (safe)
             # unless administrator (handled in get_permissions_batch)
             if check_permission(perms, "channels.view"):
-                channels.append(self.manager._row_to_channel(row))
+                channels.append(
+                    _row_to_channel(row, self.manager._encrypt_descriptions)
+                )
 
         return channels
 
@@ -301,12 +311,16 @@ class ChannelHandler:
             changes["name"] = {"old": channel.name, "new": name}
 
         if topic is not None:
-            # Encrypt topic if enabled
+            # After migration 029, unencrypted topic column no longer exists.
+            # Always use topic_encrypted (encrypted or plaintext based on config).
             topic_encrypted = None
-            if topic and self.manager._encrypt_descriptions:
-                from src.utils.encryption import encrypt_data
+            if topic:
+                if self.manager._encrypt_descriptions:
+                    from src.utils.encryption import encrypt_data
 
-                topic_encrypted = encrypt_data(topic)
+                    topic_encrypted = encrypt_data(topic)
+                else:
+                    topic_encrypted = topic
 
             updates.append("topic_encrypted = ?")
             params.append(topic_encrypted)
@@ -358,7 +372,9 @@ class ChannelHandler:
                 )
                 self.db.execute(query, (value, now, channel_id))
 
-            self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
+            self.manager._cache_invalidate(
+                self.manager._channel_cache_prefix, channel_id
+            )
             self.manager._log_audit(
                 channel.server_id,
                 user_id,
@@ -388,7 +404,7 @@ class ChannelHandler:
             (now, channel_id),
         )
 
-        self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
+        self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
         if redis_available():
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
@@ -419,14 +435,10 @@ class ChannelHandler:
             (position, self.manager._get_timestamp(), channel_id),
         )
 
-        self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
+        self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
         if redis_available():
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
-
-        result = self.manager.get_channel(channel_id, user_id)
-        assert result is not None
-        return result
 
         result = self.manager.get_channel(channel_id, user_id)
         assert result is not None

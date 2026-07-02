@@ -208,19 +208,19 @@ pytest src/tests/security/ --cov=src/core --cov=src/api
 
 ```
 src/tests/security/
-├── __init__.py                          # Package initialization
-├── test_xss_prevention.py               # XSS prevention tests
-├── test_sql_injection.py                # SQL injection tests
-├── test_csrf_protection.py              # CSRF protection tests
-├── test_authentication_bypass.py        # Auth bypass tests
-├── test_authorization.py                # Authorization tests
-├── test_session_hijacking.py            # Session security tests
-├── test_token_validation.py             # Token validation tests
-├── test_api_security.py                 # API security tests
-├── test_comprehensive_security.py       # Additional security tests
-├── README.md                            # Comprehensive documentation
-├── SUMMARY.md                           # Implementation summary
-└── INDEX.md                             # This file
++-- __init__.py                          # Package initialization
++-- test_xss_prevention.py               # XSS prevention tests
++-- test_sql_injection.py                # SQL injection tests
++-- test_csrf_protection.py              # CSRF protection tests
++-- test_authentication_bypass.py        # Auth bypass tests
++-- test_authorization.py                # Authorization tests
++-- test_session_hijacking.py            # Session security tests
++-- test_token_validation.py             # Token validation tests
++-- test_api_security.py                 # API security tests
++-- test_comprehensive_security.py       # Additional security tests
++-- README.md                            # Comprehensive documentation
++-- SUMMARY.md                           # Implementation summary
++-- INDEX.md                             # This file
 ```
 
 ## Coverage Matrix
@@ -245,41 +245,41 @@ src/tests/security/
 
 ## Test Categories by OWASP Top 10
 
-1. **A01:2021 – Broken Access Control**
+1. **A01:2021 - Broken Access Control**
    - test_authorization.py
    - test_csrf_protection.py
    
-2. **A02:2021 – Cryptographic Failures**
+2. **A02:2021 - Cryptographic Failures**
    - test_token_validation.py
    - test_comprehensive_security.py (Data Protection)
 
-3. **A03:2021 – Injection**
+3. **A03:2021 - Injection**
    - test_sql_injection.py
    - test_xss_prevention.py
 
-4. **A04:2021 – Insecure Design**
+4. **A04:2021 - Insecure Design**
    - test_session_hijacking.py
    - test_comprehensive_security.py
 
-5. **A05:2021 – Security Misconfiguration**
+5. **A05:2021 - Security Misconfiguration**
    - test_api_security.py
    - test_comprehensive_security.py
 
-6. **A06:2021 – Vulnerable and Outdated Components**
+6. **A06:2021 - Vulnerable and Outdated Components**
    - (Covered by dependency scanning, not in this suite)
 
-7. **A07:2021 – Identification and Authentication Failures**
+7. **A07:2021 - Identification and Authentication Failures**
    - test_authentication_bypass.py
    - test_session_hijacking.py
 
-8. **A08:2021 – Software and Data Integrity Failures**
+8. **A08:2021 - Software and Data Integrity Failures**
    - test_token_validation.py
    - test_comprehensive_security.py
 
-9. **A09:2021 – Security Logging and Monitoring Failures**
+9. **A09:2021 - Security Logging and Monitoring Failures**
    - test_comprehensive_security.py (Audit Logging)
 
-10. **A10:2021 – Server-Side Request Forgery (SSRF)**
+10. **A10:2021 - Server-Side Request Forgery (SSRF)**
     - test_api_security.py (Path Traversal)
 
 ## Maintenance Schedule

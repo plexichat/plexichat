@@ -1,37 +1,49 @@
 # Plexichat Docker Compose Stack
 
 This compose file lives in the `plexichat` repo and orchestrates:
-- backend (`python main.py`)
-- db (Postgres)
-- redis
-- minio (+ bucket init)
-- client (from sibling `../plexichat-client`)
+- backend (FastAPI server)
+- db (PostgreSQL 16)
+- redis (Redis 7)
+- minio (S3-compatible storage + bucket init)
+- client (Nginx serving Vite-built static assets)
+- cert-init (self-signed TLS certificate generation)
 - backup job
 
-## Zero-config bootstrap
+## Quick Deploy
 
-Run once:
+The recommended way to deploy Plexichat is via the standalone deploy scripts,
+which handle credential generation, config file creation, and compose file
+download without requiring a git clone:
 
-```powershell
-docker compose -f .\docker-compose.yml run --rm bootstrap
+**Linux / macOS:**
+```bash
+curl -sSL https://plexichat.com/deploy.sh | bash
 ```
 
-This generates:
-- `./.env.generated` (random credentials/secrets)
-- `./config/docker-config.yaml` (docker-specific backend config)
-- `../plexichat-client/docker/runtime/client-config.js` (client runtime config)
-
-## Start
-
+**Windows (PowerShell):**
 ```powershell
-docker compose -f .\docker-compose.yml up -d cert-init
-docker compose -f .\docker-compose.yml up -d --build
+irm https://plexichat.com/deploy.ps1 | iex
+```
+
+The scripts are interactive by default. Pass `--non-interactive` (or `-NonInteractive`)
+to use defaults and skip prompts. See `--help` for all available flags.
+
+## Manual Start (Developer Workflow)
+
+If you have the repository cloned locally, you can start the stack directly:
+
+```bash
+# Generate .env, config/docker-config.yaml, and docker/runtime/client-config.js
+# using the deploy script, or create them manually.
+
+# Start the stack
+VERSION=a.1.0-59 docker compose up -d
 ```
 
 ## Verify
 
-```powershell
-curl.exe http://localhost:8000/api/v1/health
-curl.exe -k https://localhost/
-curl.exe -k https://localhost/docs
+```bash
+curl http://localhost:8000/api/v1/health
+curl -k https://localhost/
+curl -k https://localhost/docs
 ```

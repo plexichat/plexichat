@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-56"
+DEFAULT_VERSION = "a.1.0-65"
 
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
@@ -92,10 +92,24 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "hard_freeze": True,
                 "anonymize_content": True,
                 "audit_log": {
-                    "file_path": str(home_dir / "audit" / "deletion_log.jsonl"),
+                    # Path to the deletion audit log (JSONL file with hash chain)
+                    "file_path": str(home_dir / "data" / "deletion_log.jsonl"),
+                    # Enable SHA256 hash chaining for tamper-evidence
                     "hash_chain_enabled": True,
+                    # Backup audit log to S3 for disaster recovery
                     "backup_to_s3": True,
                     "s3_backup_path": "audit/deletions/log_backup.jsonl",
+                    # If True, server refuses to start when audit log integrity check fails.
+                    # Disable only if you need to recover from a backup or rebuild the chain.
+                    "halt_on_invalid_audit": True,
+                    # SECURITY: when True and the chain fails verification
+                    # at boot, ``verify_chain`` renames the broken file to
+                    # ``<path>.broken-<ts>`` so the next ``log_event`` call
+                    # can begin a fresh genesis chain.  The sidecar keeps
+                    # the broken GDPR records for inventory / forensic
+                    # review without blocking legitimate new entries.
+                    # Operators MUST audit sidecar files manually.
+                    "rotate_on_broken_chain": False,
                 },
                 "reaper": {
                     "interval_hours": 24,
@@ -112,6 +126,47 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "age_gate_enabled": False,
                 "minimum_age": 13,
                 "age_verification_type": "boolean",  # "boolean" or "dob"
+            },
+            "dsar": {
+                # Data Subject Access Request (GDPR Article 20 - Right to Portability)
+                "enabled": True,
+                # Require admin review before generating exports (vs auto-approve)
+                "require_admin_review": True,
+                # Default export format
+                "default_format": "json",
+                # Supported export formats
+                "export_formats": ["json", "zip"],
+                # Maximum export size in MB (approximate limit, collection is unconstrained)
+                "max_export_size_mb": 500,
+                # How long download links remain valid after export is ready (days)
+                "retention_days": 7,
+                # How long pending requests survive without admin action (days)
+                "pending_expiry_days": 30,
+                # Local directory for export files when using the local storage
+                # backend. The backend itself, S3 credentials, and database
+                # storage settings are all inherited from the `media` block to
+                # avoid duplicating configuration.
+                "local_path": str(home_dir / "data" / "exports" / "dsar"),
+                # Audit log settings (mirrors account_deletion audit_log structure)
+                "audit_log": {
+                    "file_path": str(home_dir / "data" / "dsar_audit_log.jsonl"),
+                    "hash_chain_enabled": True,
+                    "backup_to_s3": True,
+                    "s3_backup_path": "audit/dsar/log_backup.jsonl",
+                    "halt_on_invalid_audit": True,
+                    # SECURITY: when True and the chain fails verification
+                    # at boot, ``verify_chain`` renames the broken file
+                    # to ``<path>.broken-<ts>`` so the harvester can
+                    # continue writing against a fresh genesis chain
+                    # instead of being blocked.  GDPR-impacting
+                    # artefacts still live in the sidecar.
+                    "rotate_on_broken_chain": False,
+                },
+                "harvester": {
+                    "interval_hours": 24,
+                    "boot_check_enabled": True,
+                    "batch_size": 20,
+                },
             },
             "email_validation": {
                 "strict": True,
@@ -299,20 +354,34 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "rate_limiting": {
             "enabled": True,
-            "global": {"requests": 100, "window_seconds": 60.0, "burst": 50},
+            "global": {"requests": 200, "window_seconds": 60.0, "burst": 100},
             "user": {
-                "requests": 120,
+                "requests": 200,
+                "window_seconds": 60.0,
+                "burst": 40,
+                "hourly_limit": 7200,
+                "daily_limit": 100000,
+            },
+            "ip": {
+                "requests": 100,
                 "window_seconds": 60.0,
                 "burst": 20,
                 "hourly_limit": 3600,
-                "daily_limit": 50000,
+                "daily_limit": 25000,
             },
-            "ip": {
-                "requests": 60,
-                "window_seconds": 60.0,
-                "burst": 10,
-                "hourly_limit": 1800,
-                "daily_limit": 10000,
+            "routes": {
+                "static_client_html": {
+                    "requests": 60,
+                    "window_seconds": 60.0,
+                    "burst": 20,
+                    "hourly_limit": 1200,
+                },
+                "static_client_assets": {
+                    "requests": 1000,
+                    "window_seconds": 60.0,
+                    "burst": 200,
+                    "hourly_limit": 36000,
+                },
             },
             "bot_multiplier": 1.5,
             "webhook_multiplier": 1.0,
@@ -457,7 +526,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "encryption": {
             "argon2": {
-                "time_cost": 2,
+                "time_cost": 3,
                 "memory_cost": 65536,
                 "parallelism": 2,
                 "hash_length": 32,
@@ -499,6 +568,11 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "exit_on_failure": False,
             "capture_stack_traces": True,
             "retry_on_failure": True,
+            # Controls whether admin-only endpoints are tested during self-test.
+            # When False, admin endpoints are skipped entirely and the test user
+            # is NOT granted admin permissions. Set to True to test admin routes
+            # (requires admin-level permissions on the test user).
+            "enable_admin_tests": True,
             "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],
             "test_user": {
                 "username": "selftest_admin",
@@ -608,7 +682,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "max_sticker_name_length": 32,
             "max_pack_name_length": 64,
             "max_pack_description_length": 256,
-            "allowed_formats": ["image/png", "image/webp", "image/gif"],
+            "allowed_formats": ["png", "apng", "json"],
             "max_suggestions": 10,
         },
         "soundboard": {
@@ -750,5 +824,58 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "enabled": True,
             "rate_limit": {"max_per_minute": 10},
             "retention_days": 30,
+        },
+        "static_client": {
+            "enabled": False,
+            "serve": True,
+            "install_dir": str(home_dir / "client"),
+            "source": "gitlab_release",
+            "version_pin": "match_server",
+            "auto_update": False,
+            "auto_update_min_age_seconds": 3600,
+            "auto_update_check_interval_seconds": 3600,
+            "git_lab": {
+                "project_id": 2,
+                "api_url": "https://gitlab.plexichat.com/api/v4",
+                "private_token_env": "PLEXICHAT_GITLAB_TOKEN",
+                "verify_tls": True,
+                "request_timeout_seconds": 30,
+            },
+            "cache_control": {
+                "hashed_assets": "public, max-age=31536000, immutable",
+                "html": "no-store, max-age=0",
+                "other": "public, max-age=300",
+            },
+            "security_headers": {
+                "x_content_type_options": "nosniff",
+                "x_frame_options": "SAMEORIGIN",
+                "referrer_policy": "strict-origin-when-cross-origin",
+                "permissions_policy": "geolocation=(), microphone=(self), camera=()",
+                "content_security_policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-hashes' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';",
+            },
+            "rate_limit": {
+                "enabled": True,
+                "html": {"requests": 300, "window_seconds": 60, "burst": 60},
+                "assets": {"requests": 1200, "window_seconds": 60, "burst": 120},
+            },
+            "max_zip_size_bytes": 104857600,
+            "spa_routes": {
+                "/app": "app.html",
+                "/settings": "settings.html",
+                "/register": "register.html",
+                "/forgot-password": "forgot-password.html",  # pragma: allowlist secret
+                "/reset-password": "reset-password.html",  # pragma: allowlist secret
+                "/oauth-callback": "oauth-callback.html",
+                "/error": "error.html",
+                "/invite": "app.html",
+            },
+            "log_downloads": False,
+            "config_injection": {
+                "enabled": True,
+                "filename": "config.js",
+                "public_server_url": "http://localhost:8000",
+                "content": 'window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", hideServerField: true, defaultTheme: "ocean", version: "{version}" };',
+            },
+            "invite_redirect": True,
         },
     }

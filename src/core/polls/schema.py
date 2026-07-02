@@ -4,6 +4,8 @@ Poll database schema - Table definitions for polls module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Polls table
@@ -11,6 +13,7 @@ CREATE TABLE IF NOT EXISTS poll_polls (
     id INTEGER PRIMARY KEY,
     message_id INTEGER NOT NULL UNIQUE,
     question TEXT NOT NULL,
+    question_encrypted TEXT,
     created_by INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     ends_at INTEGER,
@@ -29,6 +32,7 @@ CREATE TABLE IF NOT EXISTS poll_options (
     id INTEGER PRIMARY KEY,
     poll_id INTEGER NOT NULL,
     text TEXT NOT NULL,
+    text_encrypted TEXT,
     position INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (poll_id) REFERENCES poll_polls(id) ON DELETE CASCADE
 );
@@ -57,7 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_poll_votes_option ON poll_votes(option_id);
 
 def create_tables(db):
     """Create all poll tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

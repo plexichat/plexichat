@@ -1,11 +1,12 @@
 """
 Database module - Provides database connectivity for SQLite and PostgreSQL.
 
-This module follows the zero-friction pattern established by common-utils.
+This module follows the zero-friction pattern established by common_utils.
 It acts as a facade, delegating to engine-specific, monitoring, and dialect components.
 """
 
 import threading
+from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 
 import utils.config as config
@@ -15,6 +16,7 @@ from ..engines.base import BaseEngine
 from ..engines.sqlite import SqliteEngine
 from ..engines.postgres import PostgresEngine
 from ..monitoring import DatabaseMonitor
+from ..builder.composer import QueryBuilder
 from .connection import DatabaseConnectionMixin
 from .execution import DatabaseExecutionMixin
 from .maintenance import DatabaseMaintenanceMixin
@@ -47,8 +49,8 @@ class Database(
         self._local = DatabaseLocal()
         self._lock = threading.RLock()
 
-        self._query_cache: Dict[str, Tuple[float, Any]] = {}
-        self._query_cache_ttl = 0.0
+        self._query_cache: "OrderedDict[str, Tuple[float, Any]]" = OrderedDict()
+        self._query_cache_ttl = 1.0
         self._query_cache_lock = threading.RLock()
 
         self._in_transaction = False
@@ -81,6 +83,39 @@ class Database(
         logger.info(f"Database initialized with type: {self.type}")
         if self.type == "postgres":
             self.start_pool_monitoring()
+
+    def fetch_last_insert_id(self) -> Optional[int]:
+        """Get the last insert ID (compatibility shim for migration tracker).
+
+        Returns the rowid of the last successful INSERT.
+        For SQLite, uses last_insert_rowid(). For PostgreSQL, uses LASTVAL().
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if self.type == "postgres":
+                cursor.execute("SELECT LASTVAL()")
+            else:
+                cursor.execute("SELECT last_insert_rowid()")
+            result = cursor.fetchone()
+            if result:
+                return result[0] if not hasattr(result, "keys") else result[0]
+            return None
+        finally:
+            cursor.close()
+
+    def table(self, table_name: str):
+        """Get a TableQuery builder for the given table.
+
+        Args:
+            table_name: Name of the table
+
+        Returns:
+            TableQuery instance for method chaining (insert, select, update, delete)
+        """
+        conn = self._get_conn()
+        qb = QueryBuilder(conn, self.type)
+        return qb.table(table_name)
 
     @property
     def transaction_depth(self) -> int:

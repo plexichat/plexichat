@@ -106,7 +106,7 @@ class ApproveBotRequest(BaseModel):
     """Request to approve a bot on a server."""
 
     application_id: int
-    permissions: str = "0"
+    permissions: str = "{}"
     bot_name: Optional[str] = None
 
 
@@ -212,6 +212,173 @@ async def list_approved_bots(
 
 
 @router.post(
+    "/servers/{server_id}/request",
+    response_model=BotRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Request a bot for a server",
+    responses={
+        400: {
+            "model": ErrorResponse,
+            "description": "Request already exists or bot already approved",
+        },
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def request_bot(
+    server_id: int,
+    body: RequestBotRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Request approval for a bot on a server."""
+    try:
+        req = applications.request_bot(
+            server_id=server_id,
+            application_id=body.application_id,
+            requester_id=current_user.user_id,
+            reason=body.reason,
+        )
+        return _bot_request_to_response(req)
+    except BotRequestExistsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+    except BotAlreadyApprovedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": str(e)}},
+        )
+
+
+@router.delete(
+    "/servers/{server_id}/approved/{application_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove an approved bot from a server",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
+        404: {"model": ErrorResponse, "description": "Bot not found"},
+    },
+)
+async def remove_approved_bot(
+    server_id: int,
+    application_id: int,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Remove an approved bot from a server."""
+    try:
+        applications.remove_approved_bot(
+            server_id=server_id,
+            application_id=application_id,
+            user_id=current_user.user_id,
+        )
+    except PermissionDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": str(e)}},
+        )
+    except InstallationNotFoundError:
+        pass
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": str(e)}},
+        )
+
+
+# === Bot Disable/Enable Endpoints ===
+
+
+@router.post(
+    "/{bot_id}/disable",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Disable a bot",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
+        404: {"model": ErrorResponse, "description": "Bot not found"},
+    },
+)
+async def disable_bot(
+    bot_id: int,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Disable a bot owned by the current user."""
+    from src.core import auth
+
+    try:
+        auth.disable_bot(owner_id=current_user.user_id, bot_id=bot_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": 404, "message": str(e)}},
+        )
+
+
+@router.post(
+    "/{bot_id}/enable",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Enable a bot",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
+        404: {"model": ErrorResponse, "description": "Bot not found"},
+    },
+)
+async def enable_bot(
+    bot_id: int,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Enable a bot owned by the current user."""
+    from src.core import auth
+
+    try:
+        auth.enable_bot(owner_id=current_user.user_id, bot_id=bot_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": 404, "message": str(e)}},
+        )
+
+
+# === Bot Request Endpoints ===
+
+
+@router.get(
+    "/servers/{server_id}/requests",
+    response_model=List[BotRequestResponse],
+    summary="List bot requests for a server",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def list_bot_requests(
+    server_id: int,
+    status_filter: Optional[str] = None,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Get bot requests for a server."""
+    try:
+        requests = applications.get_bot_requests(
+            server_id=server_id,
+            status=status_filter,
+        )
+        return [_bot_request_to_response(req) for req in requests]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": str(e)}},
+        )
+
+
+@router.post(
     "/servers/{server_id}/approve",
     response_model=ApprovedBotResponse,
     status_code=status.HTTP_201_CREATED,
@@ -272,118 +439,6 @@ async def approve_bot(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": 404, "message": str(e)}},
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
-        )
-
-
-@router.delete(
-    "/servers/{server_id}/approved/{application_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Remove an approved bot from a server",
-    responses={
-        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
-        403: {"model": ErrorResponse, "description": "Permission denied"},
-        404: {"model": ErrorResponse, "description": "Bot not found"},
-    },
-)
-async def remove_approved_bot(
-    server_id: int,
-    application_id: int,
-    current_user: TokenInfo = Depends(get_current_user),
-):
-    """Remove an approved bot from a server."""
-    try:
-        applications.remove_approved_bot(
-            server_id=server_id,
-            application_id=application_id,
-            user_id=current_user.user_id,
-        )
-    except PermissionDeniedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
-        )
-    except InstallationNotFoundError:
-        pass
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
-        )
-
-
-# === Bot Request Endpoints ===
-
-
-@router.get(
-    "/servers/{server_id}/requests",
-    response_model=List[BotRequestResponse],
-    summary="List bot requests for a server",
-    responses={
-        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
-async def list_bot_requests(
-    server_id: int,
-    status_filter: Optional[str] = None,
-    current_user: TokenInfo = Depends(get_current_user),
-):
-    """Get bot requests for a server."""
-    try:
-        requests = applications.get_bot_requests(
-            server_id=server_id,
-            status=status_filter,
-        )
-        return [_bot_request_to_response(req) for req in requests]
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
-        )
-
-
-@router.post(
-    "/servers/{server_id}/request",
-    response_model=BotRequestResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Request a bot for a server",
-    responses={
-        400: {
-            "model": ErrorResponse,
-            "description": "Request already exists or bot already approved",
-        },
-        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
-async def request_bot(
-    server_id: int,
-    body: RequestBotRequest,
-    current_user: TokenInfo = Depends(get_current_user),
-):
-    """Request approval for a bot on a server."""
-    try:
-        req = applications.request_bot(
-            server_id=server_id,
-            application_id=body.application_id,
-            requester_id=current_user.user_id,
-            reason=body.reason,
-        )
-        return _bot_request_to_response(req)
-    except BotRequestExistsError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
-        )
-    except BotAlreadyApprovedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
         )
     except Exception as e:
         raise HTTPException(
@@ -553,6 +608,8 @@ async def update_bot_profile(
 )
 async def list_bot_directory(
     server_id: Optional[int] = None,
+    q: Optional[str] = None,
+    tag: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
 ):
@@ -560,16 +617,18 @@ async def list_bot_directory(
     try:
         if limit > 100:
             limit = 100
-        bots = applications.get_bot_directory(
+        result = applications.get_bot_directory(
             server_id=server_id,
             include_public=True,
             limit=limit,
             offset=offset,
+            q=q,
+            tag=tag,
         )
-        entries = [BotDirectoryEntry(**bot) for bot in bots]
+        entries = [BotDirectoryEntry(**bot) for bot in result["bot_list"]]
         return BotDirectoryResponse(
             bots=entries,
-            total=len(entries),
+            total=result["total"],
             limit=limit,
             offset=offset,
         )

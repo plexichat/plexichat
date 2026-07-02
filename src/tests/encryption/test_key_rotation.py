@@ -7,15 +7,10 @@ concurrent access, and data integrity across rotations.
 
 import pytest
 import os
-import sys
 import time
 import threading
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-src_path = os.path.join(project_root, "src")
-for path in [project_root, src_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+# common_utils is now a native package.
 
 from src.utils.encryption.core import (  # noqa: E402
     EncryptionManager,

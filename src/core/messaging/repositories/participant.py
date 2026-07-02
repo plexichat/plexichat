@@ -23,7 +23,7 @@ class ParticipantRepository(BaseRepository[Participant]):
     ) -> None:
         """Create a new participant."""
         self._execute(
-            """INSERT INTO msg_participants 
+            """INSERT OR IGNORE INTO msg_participants 
                (id, conversation_id, user_id, role, joined_at)
                VALUES (?, ?, ?, ?, ?)""",
             (part_id, conversation_id, user_id, role.value, joined_at),
@@ -39,11 +39,14 @@ class ParticipantRepository(BaseRepository[Participant]):
         if not participants:
             return
 
-        self.begin_transaction()
+        in_trans = getattr(self._db, "in_transaction", False)
+        if not in_trans:
+            self.begin_transaction()
+
         try:
             for p in participants:
                 self._execute(
-                    """INSERT INTO msg_participants 
+                    """INSERT OR IGNORE INTO msg_participants 
                        (id, conversation_id, user_id, role, joined_at)
                        VALUES (?, ?, ?, ?, ?)""",
                     (
@@ -55,10 +58,11 @@ class ParticipantRepository(BaseRepository[Participant]):
                     ),
                     auto_commit=False,
                 )
-            if auto_commit:
+            if auto_commit and not in_trans:
                 self.commit()
         except Exception:
-            self.rollback()
+            if not in_trans:
+                self.rollback()
             raise
 
     def get_by_conversation_and_user(
@@ -80,13 +84,36 @@ class ParticipantRepository(BaseRepository[Participant]):
         )
 
     def get_user_ids_by_conversation(
-        self, conversation_id: SnowflakeID
+        self,
+        conversation_id: SnowflakeID,
+        limit: Optional[int] = None,
+        offset: int = 0,
     ) -> List[SnowflakeID]:
-        """Get all participant user IDs in a conversation."""
-        rows = self._fetch_all(
-            "SELECT user_id FROM msg_participants WHERE conversation_id = ?",
-            (conversation_id,),
-        )
+        """Get all participant user IDs in a conversation.
+
+        ``limit`` / ``offset``: OOM FIX for power users with very large
+        groups.  Callers that only need a delivery fan-out subset
+        (e.g. reactions, search-result enrichment) should pass a
+        sensible ceiling; the existing ``get_participant_ids`` service
+        inherits this signature via the previous turn's edit.
+
+        LIMIT/OFFSET ORDER NOTE: SQLite uses ``LIMIT n OFFSET m``,
+        Postgres accepts ``OFFSET m LIMIT n``.  We emit both, gated
+        on which the driver understands via ``self._db.type`` (the
+        Database abstraction exposes ``type``).  When both limit and
+        offset are 0/None, we return the full set (caller opt-out of
+        paging).
+        """
+        params: List[Any] = [conversation_id]
+        sql_parts: List[str] = [
+            "SELECT user_id FROM msg_participants WHERE conversation_id = ?"
+        ]
+        if offset and offset > 0:
+            sql_parts.append(f"OFFSET {int(offset)}")
+        if limit is not None and limit > 0:
+            sql_parts.append(f"LIMIT {int(limit)}")
+        sql = " ".join(sql_parts)
+        rows = self._fetch_all(sql, tuple(params))
         return [row["user_id"] for row in rows]
 
     def exists(self, conversation_id: SnowflakeID, user_id: SnowflakeID) -> bool:

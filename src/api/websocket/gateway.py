@@ -170,15 +170,8 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
 
     # Detect if this is a secure self-test connection
-    is_local = (
-        websocket.client.host in ("127.0.0.1", "::1") if websocket.client else False
-    )
-    internal_secret = api.get_internal_secret()
-    # WebSocket headers are accessible via .headers (a Headers object)
-    provided_secret = websocket.headers.get("X-Plexichat-Internal-Secret")
-    is_selftest = (
-        internal_secret is not None and provided_secret == internal_secret and is_local
-    )
+    # Uses centralized validation (is_local + hmac.compare_digest)
+    is_selftest = api.is_self_test_request(websocket)
 
     session_manager, dispatcher, auth_module, presence_module, servers_module = (
         _get_modules()

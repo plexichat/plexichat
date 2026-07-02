@@ -4,12 +4,24 @@ A real-time messaging platform server with REST API and WebSocket gateway.
 
 ## Installation
 
-```bash
-# Clone with submodules (required)
-git clone --recurse-submodules https://gitlab.plexichat.com/plexichat/plexichat.git
+The recommended way to deploy Plexichat is via our standalone deployment scripts. These scripts automate version selection, network configuration, secret generation, and Docker Compose orchestration--without requiring a git clone.
 
-# Or if already cloned without submodules:
-git submodule update --init --recursive
+**Linux / macOS:**
+```bash
+curl -sSL https://plexichat.com/deploy.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://plexichat.com/deploy.ps1 | iex
+```
+
+## Manual Installation (Development)
+
+If you are a developer and wish to run the project from source:
+
+```bash
+git clone https://gitlab.plexichat.com/plexichat/plexichat.git
 ```
 
 ## Features
@@ -47,7 +59,9 @@ git submodule update --init --recursive
   - Flexible database support (SQLite/PostgreSQL) with automatic migrations
   - Redis integration for distributed caching
 
-## Quick Start
+## Quick Start (Development)
+
+If you have cloned the repository and wish to run it manually (not recommended for production):
 
 ```bash
 # Create virtual environment
@@ -59,12 +73,39 @@ python -m venv .venv
 # Activate (Linux/Mac)
 source .venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies with hash verification
+pip install --require-hashes -r requirements.txt
 
 # Run server
 python main.py
+
+# Validate config without starting (pre-flight check)
+python main.py pre-flight
+
+# See all CLI options
+python main.py --help
 ```
+
+For full CLI reference, see [docs/cli/overview.md](docs/cli/overview.md).
+
+### Dependency Management
+
+Direct dependencies are listed in `requirements.in`. The `requirements.txt` file is auto-generated with pinned transitive dependencies and integrity hashes.
+
+To update dependencies:
+
+```bash
+# Install uv (if not already installed)
+pip install uv
+
+# Edit requirements.in, then regenerate
+uv pip compile requirements.in --generate-hashes -o requirements.txt
+
+# Install with hash verification
+pip install --require-hashes -r requirements.txt
+```
+
+Commit both `requirements.in` and `requirements.txt`.
 
 The server will:
 
@@ -105,33 +146,59 @@ docs:
 
 See `docs/` and `config/` for repository-backed configuration details.
 
+## Licensing
+
+Plexichat requires a valid license for commercial use. Without one, the server runs in free tier mode (all base features work, premium features disabled).
+
+**License File Location (in priority order):**
+1. `PLEXICHAT_LICENSE` env var pointing to a file path
+2. `PLEXICHAT_LICENSE` env var as a base64-encoded license JSON
+3. `~/.plexichat/config/license` (default)
+4. `~/.plexichat/config/license.json` (fallback)
+
+License files are plain JSON with an Ed25519 signature. Example:
+```json
+{
+  "version": "1.0",
+  "instance_id": "my-instance",
+  "issued_at": 1700000000,
+  "features": { "bond": true, "join": true },
+  "signature": "..."
+}
+```
+
+**Hot-swapping:** The admin API (`POST /api/v1/admin/license/apply`) applies a license **in-memory only** — it does NOT persist to disk. On restart the original file is re-read. For permanent changes, update the license file on disk and call `POST /api/v1/admin/license/check` to reload it.
+
+To obtain a license, contact sales@plexichat.com or visit https://plexichat.com.
+
 ## Project Structure
 
 ```
 plexichat/
-├── main.py              # Server entry point
-├── requirements.txt     # Production dependencies
-├── config/              # Default configuration templates
-├── docs/                # API and system documentation
-├── src/
-│   ├── api/             # FastAPI application layer
-│   │   ├── routes/      # REST API endpoints
-│   │   ├── schemas/     # Pydantic data models
-│   │   ├── middleware/  # Security, rate limiting, logging
-│   │   └── websocket/   # Gateway event handlers
-│   ├── core/            # Business logic (domain layer)
-│   │   ├── auth/        # Identity and sessions
-│   │   ├── messaging/   # Conversations and messages
-│   │   ├── threads/     # Threaded conversations
-│   │   ├── servers/     # Guild management and roles
-│   │   ├── voice/       # WebRTC signaling and states
-│   │   ├── automod/     # Content moderation engine
-│   │   ├── notifications/ # Mention parsing and alerts
-│   │   ├── events/      # Internal event dispatcher
-│   │   ├── selftest/    # Self-test validation suite
-│   │   └── ...          # Additional core modules
-│   ├── tests/           # Comprehensive test suite
-│   └── utils/           # Low-level utilities and submodules
++-- main.py              # Server entry point
++-- requirements.in      # Direct dependency spec (source of truth)
++-- requirements.txt     # Pinned dependencies with integrity hashes (auto-generated)
++-- config/              # Default configuration templates
++-- docs/                # API and system documentation
++-- src/
+|   +-- api/             # FastAPI application layer
+|   |   +-- routes/      # REST API endpoints
+|   |   +-- schemas/     # Pydantic data models
+|   |   +-- middleware/  # Security, rate limiting, logging
+|   |   +-- websocket/   # Gateway event handlers
+|   +-- core/            # Business logic (domain layer)
+|   |   +-- auth/        # Identity and sessions
+|   |   +-- messaging/   # Conversations and messages
+|   |   +-- threads/     # Threaded conversations
+|   |   +-- servers/     # Guild management and roles
+|   |   +-- voice/       # WebRTC signaling and states
+|   |   +-- automod/     # Content moderation engine
+|   |   +-- notifications/ # Mention parsing and alerts
+|   |   +-- events/      # Internal event dispatcher
+|   |   +-- selftest/    # Self-test validation suite
+|   |   +-- ...          # Additional core modules
+|   +-- tests/           # Comprehensive test suite
+|   +-- utils/           # Low-level utilities and submodules
 ```
 
 ## API Overview
@@ -188,7 +255,7 @@ Built-in admin panel for managing feedback, telemetry, admin account security, A
 
 See root README.md for full configuration options.
 
-## ⚠️ Critical Backup Requirements
+## [!] Critical Backup Requirements
 
 **Losing the encryption key files will make ALL encrypted data permanently unrecoverable.** The server will refuse to start if keyring decryption fails.
 
@@ -196,7 +263,7 @@ You **must** regularly back up these files from `~/.plexichat/data/`:
 
 | File | What it protects |
 |------|-----------------|
-| `.machine_key` | Root KEK — decrypts all keyrings. **Lose this = lose everything.** |
+| `.machine_key` | Root KEK -- decrypts all keyrings. **Lose this = lose everything.** |
 | `system_keyring.json` | Admin TOTP, API tokens, encrypted user fields |
 | `file_keyring.json` | Media files at rest (avatars, attachments) |
 | `message_keyring.json` | Message content (when `encrypt_messages: true`) |
@@ -211,8 +278,8 @@ See [SECURITY.md](SECURITY.md) for full details.
 ### Quick Start
 
 ```bash
-# Install dependencies (includes test dependencies)
-pip install -r requirements.txt
+# Install dependencies with hash verification (includes test deps)
+pip install --require-hashes -r requirements.txt
 
 # Run the server test suite
 pytest src/tests
@@ -237,4 +304,4 @@ pytest src/tests
 
 ## Version
 
-Current version: `a.1.0-56` (Alpha)
+Current version: `a.1.0-65` (Alpha)

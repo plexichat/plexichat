@@ -288,6 +288,44 @@ class RedisStorage(RateLimitStorage):
             reset_after = float(result[2])
 
             return allowed, remaining, reset_after
-        except Exception:
-            # Log error and fail open
-            return True, capacity, 0.0
+        except Exception as exc:
+            # SECURITY: the previous ``except Exception: return True``
+            # FAIL-OPENED the bucket on backend errors. That turns a
+            # transient Redis outage into an unbounded free-fire
+            # corridor for the attacker. We now FAIL-CLOSED: deny the
+            # request and surface the condition to the operator so
+            # it can be observed (rate-limit fail mode should never
+            # be silent in production). Operators who want the
+            # previous behaviour can opt in via configuration.
+            import os as _os
+            import utils.config as _cfg
+
+            try:
+                fail_open = bool(
+                    _cfg.get("rate_limiting", {}).get(
+                        "fail_open_on_backend_error", False
+                    )
+                )
+            except Exception:
+                fail_open = False
+
+            if fail_open and not _os.environ.get("PLEXICHAT_REQUIRE_FAIL_CLOSED", ""):
+                from utils import logger as _log
+
+                _log.error(
+                    "rate-limit Redis backend error, FAIL-OPEN "
+                    "(insecure). Set "
+                    "rate_limiting.fail_open_on_backend_error=false "
+                    "or unset PLEXICHAT_REQUIRE_FAIL_CLOSED to keep "
+                    "fail-open behaviour: %s",
+                    exc,
+                )
+                return True, capacity, 0.0
+
+            from utils import logger as _log
+
+            _log.critical(
+                "rate-limit Redis backend error, FAIL-CLOSED (denying request): %s",
+                exc,
+            )
+            return False, 0, 60.0

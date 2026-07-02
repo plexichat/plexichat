@@ -6,7 +6,24 @@ Provides security checks for uploaded files including:
 - Executable file blocking
 - Path traversal prevention
 - Filename sanitization
+- XML/SVG sanitization via defusedxml + element allow-list
 """
+
+# SECURITY: ``defusedxml`` is a hard runtime dependency for the
+# SVG/proper-XML sanitization in :class:`FileValidator`. Plexichat
+# refuses to import this module without it, because falling back to
+# stdlib ``xml.etree`` would re-enable XXE / billion-laughs
+# processing of attacker-controlled SVG payloads. This module-load
+# guard runs for every entry point that imports this validation
+# module (web server via ``app.py``, the CLI, migration tools, and
+# admin-tools), not just those that go through the FastAPI factory.
+try:
+    import defusedxml  # noqa: F401
+except ImportError:  # pragma: no cover
+    raise ImportError(
+        "defusedxml is required for safe SVG/XML handling in plexichat. "
+        "Install it with: pip install defusedxml"
+    ) from None
 
 import os
 import re
@@ -322,39 +339,312 @@ class FileValidator:
         if not is_valid:
             return False, error, safe_filename
 
-        # SECURITY: Basic SVG sanitization to prevent XSS (script execution)
+        # SECURITY: SVG XSS sanitization via real XML parsing + an
+        # explicit element/attribute allow-list. The previous
+        # implementation did a regex substring scan against an
+        # attacker-supplied byte stream (``<script``, ``onclick``,
+        # ``javascript:``); that scan is trivially bypassable via
+        # CDATA sections, XML entities, mixed-case tags, NULL-byte
+        # insertion, ``xlink:href`` usage in ``<use>`` elements, or
+        # any of the standard SMIL/foreignObject vectors. We now:
+        #   1) parse the SVG as XML using ``defusedxml`` (which
+        #      disables DTD/entity-resolution primitives),
+        #   2) walk the parsed tree and reject any node whose
+        #      element name is NOT in the structural allow-list,
+        #   3) reject any attribute starting with ``on`` (event
+        #      handlers) OR whose key matches a known-dangerous
+        #      href binding (``href``, ``xlink:href``,
+        #      ``src``) AND whose resolved URI scheme is not in the
+        #      safe-scheme list,
+        #   4) fail CLOSED on any parse error (defusedxml raises on
+        #      XXE/billion-laughs by design).
         if content_type.lower() == "image/svg+xml":
-            danger_patterns = [
-                b"<script",
-                b"onabort",
-                b"onactivate",
-                b"onbegin",
-                b"onclick",
-                b"onerror",
-                b"onfocusin",
-                b"onfocusout",
-                b"onload",
-                b"onmousedown",
-                b"onmousemove",
-                b"onmouseout",
-                b"onmouseover",
-                b"onmouseup",
-                b"onrepeat",
-                b"onresize",
-                b"onscroll",
-                b"onunload",
-                b'href="javascript:',
-                b'xlink:href="javascript:',
-            ]
-            file_data_lower = file_data.lower()
-            for pattern in danger_patterns:
-                if pattern in file_data_lower:
-                    logger.warning(
-                        f"Unsafe content detected in SVG file: {pattern.decode()}"
-                    )
-                    return False, "Unsafe content detected in SVG file", safe_filename
+            is_safe, reason = self._sanitize_svg(file_data)
+            if not is_safe:
+                logger.warning(f"Unsafe SVG blocked: {reason}")
+                return False, "Unsafe content detected in SVG file", safe_filename
 
         return True, None, safe_filename
+
+    @staticmethod
+    def _sanitize_svg(file_data: bytes) -> tuple:
+        """Parse + allow-list SVG ``file_data``. Returns (ok, reason)."""
+        # Allow-list of structural SVG elements. Anything outside
+        # this set is refused (script, foreignObject, iframe, etc.).
+        # Note: <style> is allowed but its content is sanitized for CSS-based XSS.
+        _ALLOWED_ELEMENTS = frozenset(
+            {
+                "svg",
+                "g",
+                "defs",
+                "symbol",
+                "use",
+                "title",
+                "desc",
+                "metadata",
+                "style",
+                "rect",
+                "circle",
+                "ellipse",
+                "line",
+                "polyline",
+                "polygon",
+                "path",
+                "text",
+                "tspan",
+                "textPath",
+                "marker",
+                "mask",
+                "clipPath",
+                "linearGradient",
+                "radialGradient",
+                "stop",
+                "pattern",
+                "image",
+                "view",
+                "switch",
+                "animate",
+                "animateTransform",
+                "animateMotion",
+                "set",
+                "mpath",
+                "feBlend",
+                "feColorMatrix",
+                "feComponentTransfer",
+                "feComposite",
+                "feConvolveMatrix",
+                "feDiffuseLighting",
+                "feDisplacementMap",
+                "feDistantLight",
+                "feFlood",
+                "feFuncA",
+                "feFuncB",
+                "feFuncG",
+                "feFuncR",
+                "feGaussianBlur",
+                "feImage",
+                "feMerge",
+                "feMergeNode",
+                "feMorphology",
+                "feOffset",
+                "fePointLight",
+                "feSpecularLighting",
+                "feSpotLight",
+                "feTile",
+                "feTurbulence",
+            }
+        )
+
+        # Attribute keys that may legitimately carry a URI on a safe
+        # element. Each one is also subject to a scheme allow-list:
+        # we never let attackers inject javascript:, vbscript:, data:
+        # text/html, file:, ftp:, gopher:, ws:, wss:, etc.
+        # Only http:, https:, and # (fragment) are allowed.
+        _URI_ATTRS = frozenset({"href", "xlink:href", "src", "action", "formaction"})
+        _SAFE_URI_SCHEMES = frozenset({"", "#", "http", "https"})
+        _SAFE_DATA_PREFIXES = (
+            "data:image/png;",
+            "data:image/jpeg;",
+            "data:image/gif;",
+            "data:image/webp;",
+            "data:image/svg+xml;",
+        )
+
+        def _check_uri(value: str) -> bool:
+            v = value.strip().lower()
+            if not v:
+                return True
+            for prefix in _SAFE_DATA_PREFIXES:
+                if v.startswith(prefix):
+                    return True
+            # Strip and inspect the scheme; reject javascript:, vbscript:,
+            # data:text/html, file:, ftp:, gopher:, ws:, wss:, etc.
+            if ":" in v:
+                scheme = v.split(":", 1)[0]
+                if scheme not in {"http", "https"} and not v.startswith("#"):
+                    return False
+            return True
+
+        def _sanitize_css(css_content: str) -> Tuple[bool, str]:
+            """
+            Sanitize CSS content to prevent CSS-based XSS attacks.
+
+            Blocks dangerous patterns like:
+            - url(javascript:...)
+            - url(vbscript:...)
+            - url(data:text/html,...)
+            - url(file:...)
+            - url(ftp:...)
+            - url(gopher:...)
+            - url(ws:...)
+            - url(wss:...)
+            """
+            import re
+
+            # Pattern to find url() function calls
+            url_pattern = re.compile(
+                r'url\s*\(\s*[\'"]?([^\'"]*)[\'"]?\s*\)', re.IGNORECASE
+            )
+
+            for match in url_pattern.finditer(css_content):
+                url_value = match.group(1).strip()
+
+                # First, check if it's a safe data URI (data:image/...)
+                if url_value.startswith("data:"):
+                    # Only allow data: URIs for safe image types
+                    safe_data_prefixes = (
+                        "data:image/png;",
+                        "data:image/jpeg;",
+                        "data:image/gif;",
+                        "data:image/webp;",
+                        "data:image/svg+xml;",
+                    )
+                    if not any(
+                        url_value.startswith(prefix) for prefix in safe_data_prefixes
+                    ):
+                        return (
+                            False,
+                            f"unsafe_data_uri:{url_value} detected in style element",
+                        )
+                    continue  # Safe data URI, continue to next check
+
+                # Check for dangerous schemes in url()
+                dangerous_schemes = {
+                    "javascript:",
+                    "vbscript:",
+                    "file:",
+                    "ftp:",
+                    "gopher:",
+                    "ws:",
+                    "wss:",
+                    "data:text/html:",
+                    "data:text/javascript:",
+                    "data:application/javascript:",
+                }
+
+                for scheme in dangerous_schemes:
+                    if url_value.startswith(scheme):
+                        return (
+                            False,
+                            f"dangerous_css_url:{scheme} detected in style element",
+                        )
+
+                # Check for external references that could be used for tracking
+                # Block any external domain references in url()
+                if url_value and not url_value.startswith("#"):
+                    # Block any external HTTP/HTTPS references in style elements
+                    # to prevent tracking and exfiltration
+                    return (
+                        False,
+                        f"external_reference:{url_value} detected in style element",
+                    )
+
+            return True, ""
+
+        try:
+            try:
+                from defusedxml.ElementTree import fromstring as _dx_fromstring
+            except ImportError:
+                # SECURITY: defusedxml is required for safe SVG
+                # parsing. We deliberately do NOT fall back to stdlib
+                # ElementTree because stdlib honours external
+                # entities / billion-laughs by default. Refuse the
+                # file outright when defusedxml is missing rather
+                # than risk a fallback that re-introduces XXE.
+                logger.critical(
+                    "defusedxml is not installed; refusing SVG file "
+                    "rather than risk XXE / entity-expansion XSS."
+                )
+                return False, "defusedxml_unavailable"
+
+            # Cap decode to a sane size so a multi-MiB SVG cannot
+            # exhaust worker memory during sanitation.
+            try:
+                text = file_data[: 4 * 1024 * 1024].decode("utf-8", errors="replace")
+            except Exception:
+                return False, "decode_failed"
+            try:
+                root = _dx_fromstring(text)
+            except Exception as parse_exc:
+                # defusedxml raises ParseError on entity expansion
+                # / XXE — that's a HIGH finding and must NOT silently
+                # pass as "the SVG is fine".
+                return False, f"xml_parse_failed:{type(parse_exc).__name__}"
+
+            # Walk the tree. We refuse on any element that is
+            # outside the structural allow-list AND on any
+            # attribute that is event-handler (``on*``) or that
+            # carries a non-allow-listed URI scheme.
+            stack = [root]
+            while stack:
+                elem = stack.pop()
+                tag = elem.tag
+                # ElementTree tags are ``{namespace}localname``.
+                if isinstance(tag, str) and tag.startswith("{"):
+                    local = tag.split("}", 1)[1].lower()
+                else:
+                    local = (tag or "").lower()
+                if local not in _ALLOWED_ELEMENTS:
+                    return (
+                        False,
+                        f"disallowed_element:{local!r}",
+                    )
+                try:
+                    attr_dict = elem.attrib or {}
+                except Exception:
+                    attr_dict = {}
+                for attr_key, attr_val in attr_dict.items():
+                    lower_key = attr_key.lower()
+                    # ElementTree namespaced attributes come back as
+                    # ``{ns}localname`` -- normalise to ``local``.
+                    if lower_key.startswith("{") and "}" in lower_key:
+                        lower_key = lower_key.split("}", 1)[1]
+                    if lower_key.startswith("on"):
+                        return False, f"event_handler_attr:{lower_key!r}"
+                    if lower_key in _URI_ATTRS and isinstance(attr_val, str):
+                        if not _check_uri(attr_val):
+                            return (
+                                False,
+                                f"unsafe_uri:{lower_key}={attr_val!r}",
+                            )
+                # Special handling for style elements to sanitize CSS content
+                if local == "style" and elem.text:
+                    css_content = elem.text.strip()
+                    if css_content:
+                        is_safe, css_reason = _sanitize_css(css_content)
+                        if not is_safe:
+                            return False, css_reason
+                # Special handling for use, image, and feImage elements
+                # to enforce stricter URI validation
+                if local in ("use", "image", "feimage"):
+                    # For these elements, only allow local references (#) or
+                    # trusted external domains if explicitly configured
+                    for attr_key, attr_val in attr_dict.items():
+                        lower_key = attr_key.lower()
+                        if lower_key.startswith("{") and "}" in lower_key:
+                            lower_key = lower_key.split("}", 1)[1]
+                        if lower_key in ("href", "xlink:href") and isinstance(
+                            attr_val, str
+                        ):
+                            v = attr_val.strip().lower()
+                            if v and not v.startswith("#"):
+                                # Block all external references for use, image, and feImage
+                                # to prevent SVG injection and tracking
+                                return (
+                                    False,
+                                    f"external_reference:{lower_key}={v!r}",
+                                )
+                # Walk children without iterating the live tree
+                # during mutation.
+                try:
+                    stack.extend(list(elem))
+                except Exception:
+                    pass
+            return True, ""
+        except Exception as exc:
+            # Catch-all: any unexpected failure must FAIL CLOSED.
+            logger.error(f"SVG sanitation unexpected error: {exc}")
+            return False, "sanitize_error"
 
 
 # Singleton instance

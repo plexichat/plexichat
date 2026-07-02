@@ -2,7 +2,7 @@
 Settings manager - handles CRUD operations for user settings.
 """
 
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List  # noqa: F401 (Dict/List re-exported via aliases)
 
 import utils.logger as logger
 
@@ -230,3 +230,28 @@ class SettingsManager(BaseManager):
             "SELECT COUNT(*) as count FROM user_settings WHERE user_id = ?", (user_id,)
         )
         return row.get("count", 0) if row else 0
+
+    # ------------------------------------------------------------------ #
+    # Long-name / test-friendly aliases                                  #
+    # ------------------------------------------------------------------ #
+    # The internal API uses short names (`get`, `set`, ...) per Python
+    # convention; the public alias set mirrors what the integration tests
+    # (and a growing chunk of the route layer) call explicitly.
+
+    def set_setting(self, user_id: SnowflakeID, key: str, value: str) -> "UserSetting":
+        return self.set(user_id, key, value)
+
+    def get_setting(self, user_id: SnowflakeID, key: str) -> Optional[str]:
+        return self.get(user_id, key)
+
+    def delete_setting(self, user_id: SnowflakeID, key: str) -> bool:
+        return self.delete(user_id, key)
+
+    def get_all_settings(self, user_id: SnowflakeID) -> Dict[str, str]:
+        return self.get_all(user_id)
+
+    def get_settings_count(self, user_id: SnowflakeID) -> int:
+        return self.get_count(user_id)
+
+    def get_settings_list(self, user_id: SnowflakeID) -> List[UserSetting]:
+        return self.get_all_as_list(user_id)

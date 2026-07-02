@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, Callable, Type
 
 from fastapi import Request
 
+import src.api as api
 import utils.config as config
 from src.core.ratelimit import RateLimitMiddlewareASGI as RateLimitMiddleware
 from src.core.ratelimit.middleware import extract_route_info
@@ -64,6 +65,16 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
         "webhook_id": None,
     }
 
+    # Self-test traffic carries the internal secret header but may reach the
+    # limiter before AuthenticationMiddleware marks request.state.is_internal.
+    # Detect it directly so the self-test bypass remains effective.
+    try:
+        if api.is_self_test_request(request):
+            user_info["is_internal"] = True
+            return user_info
+    except Exception:
+        pass
+
     if hasattr(request.state, "user") and request.state.user:
         user = request.state.user
         user_info["user_id"] = getattr(user, "user_id", None) or getattr(
@@ -89,7 +100,8 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
                 user_info["user_id"] = admin_id
 
     # Secure bypass check — requires non-empty bypass_secret.
-    bypass_secret = config.get("rate_limiting.bypass_secret")
+    rl_config = config.get("rate_limiting", {})
+    bypass_secret = rl_config.get("bypass_secret")
     if bypass_secret:
         bypass_header = request.headers.get("X-RateLimit-Bypass")
         if bypass_header and hmac.compare_digest(bypass_header, bypass_secret):
@@ -118,20 +130,7 @@ def create_rate_limit_middleware(
     Returns:
         Configured RateLimitMiddleware (requires app to be passed separately).
     """
-    default_excludes = [
-        "/",
-        "/health",
-        "/status",
-        "/api/v1/status",
-        "/api/v1/health",
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-    ]
-    # Admin API paths are excluded from general rate limiting.
-    # Admin login has its own rate limiting (in authenticate_admin)
-    # that returns proper 429 status codes.
-    all_excludes = list(set(default_excludes + (exclude_paths or [])))
+    all_excludes = list(exclude_paths or [])
     user_info_getter = custom_user_info_getter or get_user_info_from_request
 
     class ConfiguredRateLimitMiddleware(RateLimitMiddleware):

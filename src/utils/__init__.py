@@ -1,21 +1,75 @@
-"""
-Utility modules for Plexichat application.
+# Utility modules for the Plexichat application.
+import importlib
+import sys
 
-Contains:
-- encryption: Cryptographic utilities (Argon2id, AES-256-GCM, Ed25519, Snowflake IDs)
-- common-utils: Shared utilities (logger, config, validator, version) - git submodule
+try:
+    _config_module = importlib.import_module("src.utils.common_utils.utils.config")
+except ImportError as _e:
+    raise ImportError(
+        f"Failed to import utils.config: {_e}. Check that src/utils/common_utils/ has the required package structure."
+    ) from _e
 
-Usage:
-    import utils.logger as logger
-    import utils.config as config
-    import utils.validator as validator
-    import utils.version as version
-"""
+try:
+    _logger_module = importlib.import_module("src.utils.common_utils.utils.logger")
+except ImportError as _e:
+    raise ImportError(
+        f"Failed to import utils.logger: {_e}. Check that src/utils/common_utils/ has the required package structure."
+    ) from _e
 
-import os
+try:
+    _validator_module = importlib.import_module(
+        "src.utils.common_utils.utils.validator"
+    )
+except ImportError as _e:
+    raise ImportError(
+        f"Failed to import utils.validator: {_e}. Check that src/utils/common_utils/ has the required package structure."
+    ) from _e
 
-# Extend __path__ to include common-utils/utils so that submodule imports work
-# This allows `import utils.config` to find common-utils/utils/config
-_common_utils_subdir = os.path.join(os.path.dirname(__file__), "common-utils", "utils")
-if _common_utils_subdir not in __path__:
-    __path__.insert(0, _common_utils_subdir)  # type: ignore
+try:
+    _version_module = importlib.import_module("src.utils.common_utils.utils.version")
+except ImportError as _e:
+    raise ImportError(
+        f"Failed to import utils.version: {_e}. Check that src/utils/common_utils/ has the required package structure."
+    ) from _e
+
+# Register as proper submodules so `import utils.logger as logger` works
+sys.modules["utils.config"] = _config_module
+sys.modules["utils.logger"] = _logger_module
+sys.modules["utils.validator"] = _validator_module
+sys.modules["utils.version"] = _version_module
+
+try:
+    _licensing_module = importlib.import_module(
+        "src.utils.common_utils.utils.licensing"
+    )
+except ImportError as _e:
+    raise ImportError(
+        f"Failed to import utils.licensing: {_e}. Check that src/utils/common_utils/ has the required package structure."
+    ) from _e
+
+sys.modules["utils.licensing"] = _licensing_module
+
+# Re-export public symbols from each module
+for _name in dir(_config_module):
+    if not _name.startswith("_"):
+        globals()[_name] = getattr(_config_module, _name)
+
+for _name in dir(_logger_module):
+    if not _name.startswith("_"):
+        globals()[_name] = getattr(_logger_module, _name)
+
+for _name in dir(_validator_module):
+    if not _name.startswith("_"):
+        globals()[_name] = getattr(_validator_module, _name)
+
+for _name in dir(_version_module):
+    if not _name.startswith("_"):
+        globals()[_name] = getattr(_version_module, _name)
+
+for _name in dir(_licensing_module):
+    if not _name.startswith("_"):
+        globals()[_name] = getattr(_licensing_module, _name)
+
+
+def get_licensing():
+    return _licensing_module

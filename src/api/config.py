@@ -2,21 +2,26 @@
 API configuration - Settings for the REST API.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import List, Optional
 import os
 import sys
+import time
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-for path in [project_root, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+# No manual path manipulation needed; import via standard paths.
 
 try:
     import utils.config as config
 except ImportError:
     config = None
+
+# Module-level cache for API config (read on every request by auth middleware)
+_api_config_cache: Optional[APIConfig] = None
+_api_config_cache_time: float = 0
+_API_CONFIG_CACHE_TTL = 300  # 5 minutes
 
 
 @dataclass
@@ -53,6 +58,7 @@ class APIConfig:
             "ETag",
         ]
     )
+    access_token_required: bool = False
     docs_url: Optional[str] = "/docs"
     redoc_url: Optional[str] = "/redoc"
     openapi_url: Optional[str] = "/openapi.json"
@@ -61,13 +67,27 @@ class APIConfig:
 
 
 def get_api_config() -> APIConfig:
-    """Load API configuration from config file."""
+    """Load API configuration from config file (cached for 5 minutes)."""
+    global _api_config_cache, _api_config_cache_time
+    now = time.time()
+    if (
+        _api_config_cache is not None
+        and (now - _api_config_cache_time) < _API_CONFIG_CACHE_TTL
+    ):
+        return _api_config_cache
+
     if config is None:
-        return APIConfig()
+        result = APIConfig()
+        _api_config_cache = result
+        _api_config_cache_time = now
+        return result
     try:
         api_conf = config.get("api", {})
     except RuntimeError:
-        return APIConfig()
+        result = APIConfig()
+        _api_config_cache = result
+        _api_config_cache_time = now
+        return result
 
     import utils.version as version
 
@@ -129,7 +149,7 @@ def get_api_config() -> APIConfig:
         ["Content-Range", "Accept-Ranges", "Content-Length", "ETag"],
     )
 
-    return APIConfig(
+    result = APIConfig(
         title=api_conf.get("title", "Plexichat API"),
         description=api_conf.get(
             "description", "REST API for Plexichat messaging platform"
@@ -142,8 +162,22 @@ def get_api_config() -> APIConfig:
         cors_allow_methods=cors_methods,
         cors_allow_headers=cors_headers,
         cors_expose_headers=cors_expose_headers,
+        access_token_required=api_conf.get("access_token_required", False),
         docs_url=api_conf.get("docs_url", "/docs"),
         redoc_url=api_conf.get("redoc_url", "/redoc"),
         openapi_url=api_conf.get("openapi_url", "/openapi.json"),
         max_request_body_size=api_conf.get("max_request_body_size", 10 * 1024 * 1024),
     )
+    _api_config_cache = result
+    _api_config_cache_time = now
+    return result
+
+
+def clear_api_config_cache() -> None:
+    """Clear the cached API config so the next call re-reads from disk.
+
+    Useful for tests and admin config-reload operations.
+    """
+    global _api_config_cache, _api_config_cache_time
+    _api_config_cache = None
+    _api_config_cache_time = 0

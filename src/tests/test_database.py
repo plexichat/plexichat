@@ -9,18 +9,11 @@ import pytest
 
 pytestmark = pytest.mark.database_integration
 import os  # noqa: E402
-import sys  # noqa: E402
 import shutil  # noqa: E402
 import sqlite3  # noqa: E402
 
-# Setup paths before any imports
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-src_path = project_root
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
+# common_utils is now a native package.
 
-for path in [project_root, src_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
 
 import utils.config as config  # noqa: E402
 import utils.logger as logger  # noqa: E402

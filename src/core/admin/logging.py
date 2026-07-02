@@ -127,6 +127,8 @@ class AdminLogger:
 
         # Serialize metadata if present
         details_json = entry.details
+        target_user_id = None
+
         if entry.metadata:
             metadata_str = json.dumps(entry.metadata)
             if details_json:
@@ -134,24 +136,61 @@ class AdminLogger:
             else:
                 details_json = metadata_str
 
-        db.execute(
-            """
-            INSERT INTO admin_audit_log 
-            (admin_id, action, target_type, target_id, details, ip_address, user_agent, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                entry.admin_id,
-                entry.action,
-                entry.target_type,
-                entry.target_id,
-                details_json,
-                entry.ip_address,
-                entry.user_agent,
-                entry.status,
-                now,
-            ),
-        )
+            # Extract target_user_id from metadata if present
+            if "target_user_id" in entry.metadata:
+                target_user_id = entry.metadata["target_user_id"]
+
+        # If target_type is 'user', target_id is the user_id
+        if not target_user_id and entry.target_type == "user":
+            target_user_id = entry.target_id
+
+        has_target_user_id = False
+        try:
+            has_target_user_id = bool(
+                db.column_exists("admin_audit_log", "target_user_id")
+            )
+        except Exception:
+            has_target_user_id = True
+
+        if has_target_user_id:
+            db.execute(
+                """
+                INSERT INTO admin_audit_log
+                (admin_id, action, target_type, target_id, target_user_id, details, ip_address, user_agent, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    entry.admin_id,
+                    entry.action,
+                    entry.target_type,
+                    entry.target_id,
+                    target_user_id,
+                    details_json,
+                    entry.ip_address,
+                    entry.user_agent,
+                    entry.status,
+                    now,
+                ),
+            )
+        else:
+            db.execute(
+                """
+                INSERT INTO admin_audit_log
+                (admin_id, action, target_type, target_id, details, ip_address, user_agent, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    entry.admin_id,
+                    entry.action,
+                    entry.target_type,
+                    entry.target_id,
+                    details_json,
+                    entry.ip_address,
+                    entry.user_agent,
+                    entry.status,
+                    now,
+                ),
+            )
 
     def log_login(
         self,

@@ -38,6 +38,7 @@ async def search_messages(
     """Search messages in a channel by content."""
     messaging = api.get_messaging()
     auth = api.get_auth()
+    servers_mod = api.get_servers()
 
     try:
         try:
@@ -48,13 +49,26 @@ async def search_messages(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
+        # Resolve channel_id to conversation_id for server channels
+        conv_id = cid
+        if servers_mod:
+            try:
+                channel = servers_mod.get_channel(cid, current_user.user_id)
+                if (
+                    channel
+                    and hasattr(channel, "conversation_id")
+                    and channel.conversation_id
+                ):
+                    conv_id = channel.conversation_id
+            except Exception:
+                pass
+
         messages = []
 
         # Use messaging module's search (handles encryption via blind index)
         if messaging:
             try:
-                # messaging.search_messages handles both DMs and server channels
-                # as they are all backed by the same conversation system
+
                 def _search_messages_sync():
                     import src.api as api_module
 
@@ -62,7 +76,7 @@ async def search_messages(
                     try:
                         return messaging.search_messages(
                             user_id=current_user.user_id,
-                            conversation_id=cid,
+                            conversation_id=conv_id,
                             query=content,
                             limit=limit,
                         )

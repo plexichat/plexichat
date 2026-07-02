@@ -35,10 +35,16 @@ from .core import (
     sign_data as _sign_data,
     verify_signature as _verify_signature,
 )
+from .hkdf import derive_key as _derive_key
+from .channel_ratchet import (
+    ChannelRatchetManager as _ChannelRatchetManager,
+    WIRE_PREFIX as _RATCHET_WIRE_PREFIX,
+)
 
 _encryption_manager: Optional[EncryptionManager] = None
 _snowflake_generator: Optional[SnowflakeGenerator] = None
 _message_encryptor: Optional[MessageEncryptor] = None
+_ratchet_manager: Optional[_ChannelRatchetManager] = None
 _setup_called = False
 
 
@@ -46,7 +52,7 @@ def setup(
     worker_id: int = 1,
     datacenter_id: int = 1,
     epoch_timestamp: Optional[int] = None,
-    argon2_time_cost: int = 2,
+    argon2_time_cost: int = 3,
     argon2_memory_cost: int = 65536,
     argon2_parallelism: int = 2,
 ):
@@ -86,7 +92,8 @@ def _get_manager() -> EncryptionManager:
         _encryption_manager = EncryptionManager()
         _setup_called = True
 
-    assert _encryption_manager is not None
+    if _encryption_manager is None:
+        raise RuntimeError("Encryption manager could not be initialized.")
     return _encryption_manager
 
 
@@ -108,6 +115,86 @@ def _get_message_encryptor() -> MessageEncryptor:
         _message_encryptor = MessageEncryptor()
 
     return _message_encryptor
+
+
+def _get_ratchet_manager() -> Optional[_ChannelRatchetManager]:
+    """Internal: Get or create a default channel ratchet manager.
+
+    The manager is only created lazily when the database is available.
+    Callers that know they have a database should construct their own
+    manager via :class:`ChannelRatchetManager` and pass it in via
+    ``ratchet_manager=`` instead of relying on this singleton.
+    """
+    global _ratchet_manager
+    if _ratchet_manager is not None:
+        return _ratchet_manager
+    try:
+        from src.core.database import Database
+
+        db = Database()
+    except Exception:
+        return None
+    try:
+        is_connected = bool(getattr(db, "is_connected", lambda: False)())
+    except Exception:
+        is_connected = False
+    if not is_connected:
+        try:
+            db.connect()
+        except Exception:
+            return None
+    _ratchet_manager = _ChannelRatchetManager(db)
+    return _ratchet_manager
+
+
+def get_ratchet_manager(db: Optional[object] = None) -> _ChannelRatchetManager:
+    """Public accessor for the channel ratchet manager.
+
+    When ``db`` is provided, a fresh manager bound to that database
+    is returned (and cached). Otherwise the module-level singleton
+    is returned, creating it on first use.
+    """
+    global _ratchet_manager
+    if db is not None:
+        return _ChannelRatchetManager(db)
+    if _ratchet_manager is None:
+        _ratchet_manager = _get_ratchet_manager() or _ChannelRatchetManager(_LazyDb())
+    return _ratchet_manager
+
+
+class _LazyDb:
+    """Lazy database proxy used only when no explicit db is provided.
+
+    The proxy defers ``Database`` instantiation until a method is
+    actually called, so importing :mod:`utils.encryption` does not
+    eagerly open a connection.
+    """
+
+    def __getattr__(self, name: str) -> object:
+        from src.core.database import Database
+
+        db = Database()
+        try:
+            is_connected = bool(getattr(db, "is_connected", lambda: False)())
+        except Exception:
+            is_connected = False
+        if not is_connected:
+            try:
+                db.connect()
+            except Exception:
+                pass
+        return getattr(db, name)
+
+
+def hkdf_derive(
+    ikm: bytes,
+    *,
+    salt: bytes,
+    info: bytes,
+    length: int = 32,
+) -> bytes:
+    """Convenience wrapper around :func:`src.utils.encryption.hkdf.derive_key`."""
+    return _derive_key(ikm, salt=salt, info=info, length=length)
 
 
 def hash_password(password: str) -> str:
@@ -255,29 +342,70 @@ def parse_snowflake_id(snowflake_id: int) -> dict:
 # === Message Encryption (at rest) ===
 
 
-def encrypt_message(content: str, message_id: Optional[int] = None) -> str:
+def encrypt_message(
+    content: str,
+    message_id: Optional[int] = None,
+    *,
+    conversation_id: Optional[int] = None,
+    ratchet_manager: Optional[_ChannelRatchetManager] = None,
+) -> str:
     """
     Encrypt message content for storage at rest.
-    Uses AES-256-GCM with auto-generated key stored in ~/.plexichat/data/.message_encryption_key
+
+    When ``conversation_id`` and ``ratchet_manager`` are both provided,
+    the new v3 channel ratchet is used and the resulting envelope is
+    ``ENC:3:{interval_id}:{base64(...)}``. Otherwise the legacy
+    per-message keyring (``ENC:1:`` or ``ENC:2:``) is used.
 
     Args:
         content (str): The plaintext message content.
-        message_id (int, optional): Message ID for additional integrity protection.
+        message_id (int, optional): Message ID for additional integrity
+            protection.
+        conversation_id (int, optional): Conversation ID. When
+            supplied together with ``ratchet_manager``, enables the
+            v3 ratchet path.
+        ratchet_manager: Optional pre-built ratchet manager. When
+            ``None`` and ``conversation_id`` is provided, the module
+            singleton is used.
 
     Returns:
-        str: Encrypted content with prefix marker (ENC:1:...).
+        str: Encrypted content with prefix marker (ENC:1:..., ENC:2:...,
+        or ENC:3:...).
     """
+    if conversation_id is not None:
+        manager = ratchet_manager or _get_ratchet_manager()
+        if manager is not None and message_id is not None:
+            result = manager.encrypt(
+                conversation_id=int(conversation_id),
+                message_id=int(message_id),
+                plaintext=content.encode("utf-8"),
+            )
+            return result.envelope
     return _get_message_encryptor().encrypt_message(content, message_id)
 
 
-def decrypt_message(encrypted_content: str, message_id: Optional[int] = None) -> str:
+def decrypt_message(
+    encrypted_content: str,
+    message_id: Optional[int] = None,
+    *,
+    conversation_id: Optional[int] = None,
+    ratchet_manager: Optional[_ChannelRatchetManager] = None,
+) -> str:
     """
     Decrypt message content from storage.
-    Automatically detects legacy plaintext messages and returns them unchanged.
+    Automatically detects legacy plaintext messages and returns them
+    unchanged, and dispatches between the v3 ratchet envelope and
+    the legacy v1/v2 envelopes.
 
     Args:
-        encrypted_content (str): The encrypted content (or legacy plaintext).
+        encrypted_content (str): The encrypted content (or legacy
+            plaintext).
         message_id (int, optional): Message ID used during encryption.
+        conversation_id (int, optional): Conversation ID. Required to
+            decrypt v3 envelopes.
+        ratchet_manager: Optional pre-built ratchet manager. When
+            ``None`` and the envelope is v3, the module singleton is
+            used.
 
     Returns:
         str: Decrypted plaintext content.
@@ -285,6 +413,20 @@ def decrypt_message(encrypted_content: str, message_id: Optional[int] = None) ->
     Raises:
         ValueError: If decryption fails (corrupted data or wrong key).
     """
+    if encrypted_content.startswith(_RATCHET_WIRE_PREFIX):
+        if conversation_id is None or message_id is None:
+            raise ValueError(
+                "v3 ratchet envelope requires both conversation_id and message_id"
+            )
+        manager = ratchet_manager or _get_ratchet_manager()
+        if manager is None:
+            raise ValueError("no ratchet manager available to decrypt v3 envelope")
+        plaintext = manager.decrypt(
+            conversation_id=int(conversation_id),
+            message_id=int(message_id),
+            envelope=encrypted_content,
+        )
+        return plaintext.decode("utf-8")
     return _get_message_encryptor().decrypt_message(encrypted_content, message_id)
 
 
@@ -382,4 +524,6 @@ __all__ = [
     "rotate_keys",
     "encrypt_file",
     "decrypt_file",
+    "get_ratchet_manager",
+    "hkdf_derive",
 ]

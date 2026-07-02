@@ -258,7 +258,7 @@ def add_internal_note(
     )
 
     # Get admin username
-    row = db.fetch_one("SELECT username FROM admin_users WHERE id = ?", (admin_id,))
+    row = db.fetch_one("SELECT username FROM auth_users WHERE id = ?", (admin_id,))
     username = (
         (row["username"] if isinstance(row, dict) else row[0]) if row else "Unknown"
     )
@@ -278,7 +278,7 @@ def get_ticket_notes(db: Any, ticket_id: int) -> List[AdminNote]:
     rows = db.fetch_all(
         """SELECT n.id, n.ticket_id, n.admin_id, u.username, n.content, n.created_at
            FROM admin_notes n
-           LEFT JOIN admin_users u ON n.admin_id = u.id
+           LEFT JOIN auth_users u ON n.admin_id = u.id
            WHERE n.ticket_id = ?
            ORDER BY n.created_at ASC""",
         (ticket_id,),

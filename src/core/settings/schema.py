@@ -2,6 +2,8 @@
 Database schema for user settings module.
 """
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 SCHEMA_SQLITE = """
 -- User settings table
 CREATE TABLE IF NOT EXISTS user_settings (
@@ -9,6 +11,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
     user_id INTEGER NOT NULL,
     key VARCHAR(100) NOT NULL,
     value TEXT,
+    -- Encrypted value mirror (commit db920196)
+    value_encrypted TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
@@ -20,7 +24,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
 CREATE INDEX IF NOT EXISTS idx_user_settings_user ON user_settings(user_id);
 """
 
-SCHEMA_STATEMENTS = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]
+SCHEMA_STATEMENTS = split_sql_statements(SCHEMA_SQLITE)
 
 
 def create_tables(db) -> None:

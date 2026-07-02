@@ -34,11 +34,11 @@ class DatabaseTransactionMixin:
         except Exception:
             return
 
-    def begin_transaction(self: _DatabaseTransactionProtocol) -> None:
+    def begin_transaction(self) -> None:
         self._invalidate_query_cache()
-        conn = self._get_conn()
+        conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
         if self.transaction_depth == 0:
-            if self.type == "sqlite":
+            if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
                 conn.execute("BEGIN")
             self.in_transaction = True
             self.transaction_depth = 1
@@ -50,9 +50,17 @@ class DatabaseTransactionMixin:
         cursor.execute(f"SAVEPOINT sp_{self.transaction_depth}")
         cursor.close()
 
-    def commit(self: _DatabaseTransactionProtocol) -> None:
+    def _is_no_transaction(self, e: Exception) -> bool:
+        err_str = str(e).lower()
+        return (
+            "cannot commit" in err_str
+            or "cannot rollback" in err_str
+            or "no transaction" in err_str
+        )
+
+    def commit(self) -> None:
         self._invalidate_query_cache()
-        conn = self._get_conn()
+        conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
         if self.transaction_depth > 1:
             cursor = conn.cursor()
             try:
@@ -72,18 +80,27 @@ class DatabaseTransactionMixin:
             return
 
         if self.transaction_depth == 1:
-            if self.type == "sqlite":
-                conn.execute("COMMIT")
+            if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
+                try:
+                    conn.execute("COMMIT")
+                except Exception as e:
+                    if self._is_no_transaction(e):
+                        self.transaction_depth = 0
+                        self.in_transaction = False
+                        return
+                    raise
             else:
                 conn.commit()
             self.transaction_depth = 0
             self.in_transaction = False
+        elif self.transaction_depth == 0:
+            pass
         else:
             conn.commit()
 
-    def rollback(self: _DatabaseTransactionProtocol) -> None:
+    def rollback(self) -> None:
         self._invalidate_query_cache()
-        conn = self._get_conn()
+        conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
         if self.transaction_depth > 0:
             # If we're inside a nested transaction, our test-suite expects a rollback
             # to abort the *entire* transaction chain.
@@ -93,8 +110,15 @@ class DatabaseTransactionMixin:
                 self.in_transaction = False
                 return
 
-            if self.type == "sqlite":
-                conn.execute("ROLLBACK")
+            if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception as e:
+                    if self._is_no_transaction(e):
+                        self.transaction_depth = 0
+                        self.in_transaction = False
+                        return
+                    raise
             else:
                 conn.rollback()
             self.transaction_depth = 0

@@ -18,7 +18,7 @@ import utils.logger as logger
 try:
     from utils.logger import sanitize_log_message
 except ImportError:
-    # Fallback if common-utils is not synced
+    # Fallback if common_utils utilities are not available
     def sanitize_log_message(message: str) -> str:
         return message
 
@@ -27,10 +27,12 @@ ERROR_MAPPINGS = {
     "NotFoundError": 404,
     "AccessDeniedError": 403,
     "PermissionDeniedError": 403,
+    "FileUploadError": 403,
     "InvalidCredentialsError": 401,
     "TokenExpiredError": 401,
     "TokenInvalidError": 401,
     "AccountLockedError": 403,
+    "AccountDisabledError": 403,
     "UserExistsError": 409,
     "AlreadyExistsError": 409,
     "ExistsError": 409,
@@ -38,10 +40,18 @@ ERROR_MAPPINGS = {
     "InvalidError": 400,
     "LimitError": 400,
     "AttachmentLimitError": 400,
+    "ChannelFullError": 507,
+    "LicenseFeatureError": 403,
+    "UserNotInChannelError": 404,
+    "UserAlreadyInChannelError": 409,
+    "ChannelTypeError": 400,
+    "NotSpeakerError": 403,
+    "AlreadySpeakerError": 409,
     "RateLimitError": 429,
     "BlockedError": 403,
     "LockedError": 423,
     "ArchivedError": 410,
+    "InvalidRecipientError": 404,
 }
 
 
@@ -50,7 +60,9 @@ def get_status_code_for_exception(exc: Exception) -> int:
     exc_name = type(exc).__name__
 
     for pattern, code in ERROR_MAPPINGS.items():
-        if pattern in exc_name:
+        # Use endswith to avoid false positives from substring matches
+        # e.g. "NotFoundInCacheError" ends with "Error", not "NotFoundError"
+        if exc_name == pattern or exc_name.endswith(pattern):
             return code
 
     return 500
@@ -83,7 +95,7 @@ def _get_cors_headers(request: Request) -> dict:
         allow_wildcard = api_conf.get("allow_wildcard_cors", False)
     except Exception:
         cors_origins = ["*"]
-        allow_wildcard = False
+        allow_wildcard = True
 
     origin = request.headers.get("origin", "")
 
@@ -217,29 +229,13 @@ class ErrorHandlingMiddleware:
 
             message = str(exc)
 
-            # Check for self-test debug mode
+            # Check for self-test debug mode (uses centralized validation)
             include_traceback = False
 
-            # Only allow traceback capture if:
-            # 1. Config says it's enabled
-            # 2. Request is from localhost
-            # 3. Secure internal secret is present and matches
             import src.api as api
-            import hmac
 
             selftest_config = config.get("selftest", {})
-            is_local = (
-                request.client.host in ("127.0.0.1", "::1") if request.client else False
-            )
-
-            internal_secret = api.get_internal_secret()
-            provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
-            is_selftest = (
-                internal_secret is not None
-                and provided_secret is not None
-                and hmac.compare_digest(provided_secret, internal_secret)
-                and is_local
-            )
+            is_selftest = api.is_self_test_request(request)
 
             if selftest_config.get("capture_stack_traces", True) and is_selftest:
                 if request.headers.get("X-Plexichat-SelfTest-Debug") == "true":

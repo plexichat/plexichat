@@ -1,4 +1,5 @@
 import time
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import utils.logger as logger
@@ -7,9 +8,11 @@ from .. import dialect
 from .metrics import _query_count, _query_time_ms
 from .types import DbConnection, DbCursor
 
+_QUERY_CACHE_MAX = 100
+
 
 class _DatabaseExecutionProtocol(Protocol):
-    _query_cache: Dict[str, Tuple[float, Any]]
+    _query_cache: "OrderedDict[str, Tuple[float, Any]]"
     _query_cache_ttl: float
     _query_cache_lock: Any
     _pool: Any
@@ -33,12 +36,6 @@ class _DatabaseExecutionProtocol(Protocol):
 
     def _get_conn(self, auto_connect: bool = True) -> DbConnection: ...
 
-    def _handle_execution_error(
-        self, conn: DbConnection, cursor: DbCursor, e: Exception, query: str
-    ) -> None: ...
-
-    def _validate_transaction_state(self) -> None: ...
-
     def execute(
         self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True
     ) -> DbCursor: ...
@@ -52,6 +49,14 @@ class _DatabaseExecutionProtocol(Protocol):
     ) -> bool: ...
 
     def _sanitize_sqlite_query(self, query: str) -> str: ...
+
+    def _is_connection_error(self, e: BaseException) -> bool: ...
+
+    def _is_schema_error(self, e: BaseException) -> bool: ...
+
+    def _cache_get(self, key: str) -> Optional[Any]: ...
+
+    def _cache_put(self, key: str, value: Any, ttl: float) -> None: ...
 
 
 class DatabaseExecutionMixin:
@@ -112,7 +117,7 @@ class DatabaseExecutionMixin:
         auto_commit: bool = True,
     ) -> DbCursor:
         if self.transaction_depth > 0:
-            self._validate_transaction_state()
+            self._validate_transaction_state()  # pyright: ignore[reportAttributeAccessIssue]
 
         upper_query = query.strip().upper()
         if any(
@@ -156,15 +161,25 @@ class DatabaseExecutionMixin:
                     )
 
                 if auto_commit and not self.in_transaction:
-                    conn.commit()
+                    try:
+                        conn.commit()
+                    except Exception:
+                        pass
 
                 return cursor
             except Exception as e:
-                is_conn_error = (
-                    "OperationalError" in type(e).__name__ or "closed" in str(e).lower()
-                )
+                is_conn_error = self._is_connection_error(e)
 
-                if attempt < 2 and is_conn_error and not self.in_transaction:
+                # Do NOT retry schema errors (e.g. "no such column", "no such table", "duplicate column")
+                # Retrying is pointless since the schema won't change between attempts.
+                is_schema_error = self._is_schema_error(e)
+
+                if (
+                    attempt < 2
+                    and is_conn_error
+                    and not self.in_transaction
+                    and not is_schema_error
+                ):
                     logger.warning(
                         f"Database connection error (attempt {attempt + 1}), retrying: {e}"
                     )
@@ -180,7 +195,7 @@ class DatabaseExecutionMixin:
 
                 self.monitor.record_error(type(e).__name__)
                 temp_conn = getattr(self._local, "connection", None)
-                self._handle_execution_error(
+                self._handle_execution_error(  # pyright: ignore[reportAttributeAccessIssue]
                     temp_conn, locals().get("cursor"), e, query
                 )
                 raise
@@ -192,7 +207,7 @@ class DatabaseExecutionMixin:
         auto_commit: bool = True,
     ) -> DbCursor:
         if self.transaction_depth > 0:
-            self._validate_transaction_state()
+            self._validate_transaction_state()  # pyright: ignore[reportAttributeAccessIssue]
 
         query_sanitized = self._sanitize_sqlite_query(query)
         query_conv = dialect.convert_placeholders(query_sanitized, self.type)
@@ -211,14 +226,24 @@ class DatabaseExecutionMixin:
                 _query_time_ms.set(_query_time_ms.get() + exec_time)
 
                 if auto_commit and not self.in_transaction:
-                    conn.commit()
+                    try:
+                        conn.commit()
+                    except Exception:
+                        pass
                 return cursor
             except Exception as e:
-                is_conn_error = (
-                    "OperationalError" in type(e).__name__ or "closed" in str(e).lower()
-                )
+                is_conn_error = self._is_connection_error(e)
 
-                if attempt < 2 and is_conn_error and not self.in_transaction:
+                # Do NOT retry schema errors (e.g. "no such column", "no such table", "duplicate column")
+                # Retrying is pointless since the schema won't change between attempts.
+                is_schema_error = self._is_schema_error(e)
+
+                if (
+                    attempt < 2
+                    and is_conn_error
+                    and not self.in_transaction
+                    and not is_schema_error
+                ):
                     logger.warning(
                         f"Database connection error during execute_many (attempt {attempt + 1}), retrying: {e}"
                     )
@@ -234,23 +259,97 @@ class DatabaseExecutionMixin:
 
                 self.monitor.record_error(type(e).__name__)
                 temp_conn = getattr(self._local, "connection", None)
-                self._handle_execution_error(
+                self._handle_execution_error(  # pyright: ignore[reportAttributeAccessIssue]
                     temp_conn, locals().get("cursor"), e, query
                 )
                 raise
+
+    def _is_connection_error(
+        self: _DatabaseExecutionProtocol, e: BaseException
+    ) -> bool:
+        """Return True if the exception looks like a real connection/transport
+        failure that is worth retrying.
+
+        This deliberately avoids matching sqlite3.OperationalError by type name
+        alone — many OperationalError subclasses (e.g. "cannot commit - no
+        transaction is active") are not connection errors. We only retry when
+        the message itself signals disconnection, OR the exception type is
+        InterfaceError/DatabaseError, OR OperationalError with a connection
+        message.
+        """
+        err_str = str(e).lower()
+        type_name = type(e).__name__
+        if any(
+            phrase in err_str
+            for phrase in [
+                "connection refused",
+                "connection reset",
+                "connection closed",
+                "no connection",
+                "disconnected",
+                "broken pipe",
+                "lost connection",
+            ]
+        ):
+            return True
+        if "InterfaceError" in type_name:
+            return True
+        if "DatabaseError" in type_name and "connection" in err_str:
+            return True
+        if "OperationalError" in type_name and any(
+            p in err_str
+            for p in ["connection", "closed", "disconnected", "broken pipe"]
+        ):
+            return True
+        return False
+
+    def _is_schema_error(self: _DatabaseExecutionProtocol, e: BaseException) -> bool:
+        """Return True if the exception looks like a schema error that should
+        NOT be retried (the schema will not change between attempts).
+        """
+        err_str = str(e).lower()
+        return any(
+            phrase in err_str
+            for phrase in [
+                "no such column",
+                "no such table",
+                "no such index",
+                "no such view",
+                "duplicate column",
+                "already exists",
+            ]
+        )
+
+    def _cache_get(self: _DatabaseExecutionProtocol, key: str) -> Optional[Any]:
+        """LRU get from the query cache. Returns None on miss or expiry."""
+        with self._query_cache_lock:
+            if key not in self._query_cache:
+                return None
+            expiry, result = self._query_cache[key]
+            if time.time() >= expiry:
+                del self._query_cache[key]
+                return None
+            self._query_cache.move_to_end(key)
+            return result
+
+    def _cache_put(
+        self: _DatabaseExecutionProtocol, key: str, value: Any, ttl: float
+    ) -> None:
+        """LRU put into the query cache with size-bounded eviction."""
+        with self._query_cache_lock:
+            self._query_cache[key] = (time.time() + ttl, value)
+            self._query_cache.move_to_end(key)
+            while len(self._query_cache) > _QUERY_CACHE_MAX:
+                self._query_cache.popitem(last=False)
 
     def fetch_one(
         self: _DatabaseExecutionProtocol, query: str, params: Optional[Tuple] = None
     ) -> Optional[Dict[str, Any]]:
         cache_key = f"one:{query}:{params}"
-        now = time.time()
 
-        with self._query_cache_lock:
-            if cache_key in self._query_cache:
-                expiry, result = self._query_cache[cache_key]
-                if now < expiry:
-                    return result
-                del self._query_cache[cache_key]
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
 
         cursor = self.execute(query, params)
         result = cursor.fetchone()
@@ -285,12 +384,7 @@ class DatabaseExecutionMixin:
 
         cursor.close()
 
-        with self._query_cache_lock:
-            self._query_cache[cache_key] = (now + self._query_cache_ttl, final_result)
-            if len(self._query_cache) > 100:
-                self._query_cache = {
-                    k: v for k, v in self._query_cache.items() if v[0] > now
-                }
+        self._cache_put(cache_key, final_result, self._query_cache_ttl)
 
         return final_result
 
@@ -298,14 +392,10 @@ class DatabaseExecutionMixin:
         self: _DatabaseExecutionProtocol, query: str, params: Optional[Tuple] = None
     ) -> List[Dict[str, Any]]:
         cache_key = f"all:{query}:{params}"
-        now = time.time()
 
-        with self._query_cache_lock:
-            if cache_key in self._query_cache:
-                expiry, result = self._query_cache[cache_key]
-                if now < expiry:
-                    return result
-                del self._query_cache[cache_key]
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
 
         cursor = self.execute(query, params)
         results = cursor.fetchall()
@@ -339,8 +429,7 @@ class DatabaseExecutionMixin:
 
         cursor.close()
 
-        with self._query_cache_lock:
-            self._query_cache[cache_key] = (now + self._query_cache_ttl, final_results)
+        self._cache_put(cache_key, final_results, self._query_cache_ttl)
 
         return final_results
 

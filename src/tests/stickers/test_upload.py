@@ -169,10 +169,10 @@ class TestGetSticker:
         assert "pack_sticker_2" in names
 
 
-class TestRemoveSticker:
-    """Tests for removing stickers."""
+class TestDeleteSticker:
+    """Tests for deleting stickers."""
 
-    def test_remove_sticker_success(self, server_with_pack):
+    def test_delete_sticker_success(self, server_with_pack):
         """Test removing a sticker successfully."""
         owner, server, pack, stickers, servers = server_with_pack
 
@@ -185,7 +185,7 @@ class TestRemoveSticker:
             size=100000,
         )
 
-        result = stickers.remove_sticker(owner.id, sticker.id)
+        result = stickers.delete_sticker(owner.id, sticker.id)
         assert result is True
 
         retrieved = stickers.get_sticker(sticker.id)
@@ -196,4 +196,4 @@ class TestRemoveSticker:
         owner, server, pack, stickers, servers = server_with_pack
 
         with pytest.raises(StickerNotFoundError):
-            stickers.remove_sticker(owner.id, 999999999)
+            stickers.delete_sticker(owner.id, 999999999)

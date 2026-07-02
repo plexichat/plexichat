@@ -1,999 +1,939 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Plexichat Admin Dashboard</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230066ff'/><text x='50' y='70' font-family='sans-serif' font-weight='900' font-size='60' text-anchor='middle' fill='white'>P</text></svg>">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js" nonce="{{ csp_nonce }}"></script>
+    <title>Plexichat Admin Panel</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='oklch(0.75 0.18 165)'/><text x='50' y='70' font-family='sans-serif' font-weight='900' font-size='60' text-anchor='middle' fill='oklch(0.13 0.005 240)'>P</text></svg>"> <!-- pragma: allowlist secret -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous" nonce="{{ csp_nonce }}"></script> <!-- pragma: allowlist secret -->
     <link rel="stylesheet" href="/api/v1/admin/static/dashboard.css" nonce="{{ csp_nonce }}">
 </head>
-
 <body>
-    <div class="header">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <div style="background: var(--accent); width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: 900; color: white; border-radius: 4px;">P</div>
-            <h1 style="color: #fff; font-size: 1.1rem; font-weight: 700;">System Dashboard</h1>
-            <span id="server-version" style="font-size: 0.75rem; background: #222; padding: 3px 10px; border-radius: 12px; color: var(--line-primary); font-weight: 800; font-family: monospace;">...</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <a href="/docs/admin" target="_blank" class="btn btn-secondary" style="text-decoration: none;">Documentation</a>
-            <button class="btn btn-outline" data-click="logout">Logout</button>
-        </div>
-    </div>
-
-    <div class="container">
-        <div class="tabs">
-            <button class="tab active" data-tab="metrics">Metrics</button>
-            <button class="tab" data-tab="tickets">Tickets</button>
-            <button class="tab" data-tab="users">Users</button>
-            <button class="tab" data-tab="deletions">Deletions</button>
-            <button class="tab" data-tab="security">Security</button>
-            <button class="tab" data-tab="automod">AutoMod</button>
-            <button class="tab" data-tab="logs">Logs</button>
-            <button class="tab" data-tab="roles">Roles</button>
-            <button class="tab" data-tab="approvals">Approvals</button>
-            <button class="tab" data-tab="migrations">Migrations</button>
-            <button class="tab" data-tab="bots">Bots</button>
-        </div>
-
-        <div id="tab-metrics" class="tab-content">
-            <div class="grid grid-4" style="margin-bottom: 1.25rem;">
-                <div class="card" style="border-left: 4px solid var(--line-primary);">
-                    <div class="stat-label">Active Users (24h)</div>
-                    <div class="stat-value" id="stat-active-users">0</div>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-logo">
+                <div class="sidebar-logo-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 </div>
-                <div class="card" style="border-left: 4px solid #fff;">
-                    <div class="stat-label">Total Registered</div>
-                    <div class="stat-value" id="stat-total-users">0</div>
-                </div>
-                <div class="card" style="border-left: 4px solid var(--warn);">
-                    <div class="stat-label">Scheduled Deletions</div>
-                    <div class="stat-value" id="stat-scheduled-deletions">0</div>
-                </div>
-                <div class="card" style="border-left: 4px solid var(--good);">
-                    <div class="stat-label">Avg Latency</div>
-                    <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-avg-latency">0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">MS</span></div>
-                </div>
-                <div class="card" style="border-left: 4px solid var(--bad);">
-                    <div class="stat-label">Error Rate</div>
-                    <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-error-rate">0.0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">%</span></div>
+                <div class="sidebar-logo-text" id="sidebar-logo-text">
+                    <span class="sidebar-logo-title">Plexichat</span>
+                    <span class="sidebar-logo-subtitle">Admin Panel</span>
                 </div>
             </div>
-
-            <div class="metrics-grid">
-                <div class="metric-tile">
-                    <div class="tile-header"><span class="tile-title">Transactions & DB Intensity</span></div>
-                    <div class="tile-body"><canvas id="chart-tps"></canvas></div>
+            <nav class="sidebar-nav" id="sidebar-nav">
+                <p class="sidebar-section-header" id="sidebar-main-header">Main</p>
+                <ul style="list-style:none;display:flex;flex-direction:column;gap:2px;">
+                    <li><button class="sidebar-nav-item active" data-tab="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg><span>Dashboard</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="users"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Users</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="admins"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>Admins</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="tickets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg><span>Tickets</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="moderation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg><span>Moderation</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="security"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>Security</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="telemetry"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span>Telemetry</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span>Logs</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="database"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg><span>Database</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="approvals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><span>Approvals</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg><span>Audit Log</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="automod"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><span>AutoMod</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="bots"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg><span>Bots</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="migrations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span>Migrations</span></button></li>
+                </ul>
+                <div style="padding:8px 12px 4px;">
+                    <div style="height:1px;background:var(--sidebar-border);margin:8px 0;"></div>
                 </div>
-                <div class="metric-tile">
-                    <div class="tile-header"><span class="tile-title">Response Latency (ms)</span></div>
-                    <div class="tile-body"><canvas id="chart-latency"></canvas></div>
-                </div>
-                <div class="metric-tile">
-                    <div class="tile-header"><span class="tile-title">Database Connections</span><span id="db-conn-count" style="font-size: 0.65rem; color: var(--line-primary); font-family: monospace; font-weight: 900;">0/0</span></div>
-                    <div class="tile-body"><canvas id="chart-db-pool"></canvas></div>
-                </div>
-                <div class="metric-tile">
-                    <div class="tile-header"><span class="tile-title">CPU & Disk Load (%)</span></div>
-                    <div class="tile-body"><canvas id="chart-sys-res"></canvas></div>
-                </div>
-                <div class="metric-tile">
-                    <div class="tile-header"><span class="tile-title">Queries per Request</span></div>
-                    <div class="tile-body"><canvas id="chart-db-perf"></canvas></div>
-                </div>
-                <div class="metric-tile">
-                    <div class="tile-header"><span class="tile-title">Memory & Thread Count</span></div>
-                    <div class="tile-body"><canvas id="chart-process"></canvas></div>
-                </div>
-                <div class="metric-tile">
-                    <div class="tile-header"><span class="tile-title">Error Rate Trend (%)</span></div>
-                    <div class="tile-body"><canvas id="chart-errors"></canvas></div>
-                </div>
-                <div class="metric-tile">
-                    <div class="tile-header"><span class="tile-title">HTTP Status Distribution</span></div>
-                    <div class="tile-body"><canvas id="chart-status-dist"></canvas></div>
-                </div>
+                <p class="sidebar-section-header" id="sidebar-sys-header">System</p>
+                <ul style="list-style:none;display:flex;flex-direction:column;gap:2px;">
+                    <li><button class="sidebar-nav-item" data-tab="plexijoin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><span>PlexiJoin</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="license"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><path d="M9 21V9"/></svg><span>License</span></button></li>
+                </ul>
+            </nav>
+            <div class="sidebar-bottom">
+                <p class="sidebar-section-header" id="sidebar-account-header">Account</p>
+                <ul style="list-style:none;display:flex;flex-direction:column;gap:2px;">
+                    <li><button class="sidebar-nav-item" data-tab="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span id="sidebar-account-label">My Account</span></button></li>
+                </ul>
+                <button class="sidebar-collapse-btn" id="sidebar-toggle" data-click="toggleSidebar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><polyline points="15 18 9 12 15 6"/></svg>
+                    <span id="sidebar-collapse-label" style="margin-left:8px;font-size:13px;">Collapse</span>
+                </button>
             </div>
+            <div class="sidebar-version" id="sidebar-version">
+                <p class="sidebar-version-text" id="sidebar-version-text">API a.1.0-65</p>
+                <p class="sidebar-version-instance">Self-hosted instance</p>
+            </div>
+        </aside>
 
-            <div class="card" style="margin-top: 1.25rem;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                    <h3>Endpoint Performance Analysis</h3>
-                    <div style="display: flex; gap: 0.75rem; align-items: center;">
-                        <input type="text" id="endpoint-filter" placeholder="Filter endpoints...">
-                        <select id="metric-hours"><option value="1">1 Hour</option><option value="24" selected>24 Hours</option><option value="168">7 Days</option></select>
-                        <button class="btn btn-secondary" data-click="openExport">Export</button>
-                        <button class="btn btn-danger btn-sm" data-click="resetTelemetry">Reset</button>
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-left">
+                    <h1 class="header-title" id="page-title">Dashboard</h1>
+                    <span class="header-badge" id="header-status-badge">System Healthy</span>
+                </div>
+                <div class="header-right">
+                    <div class="header-search">
+                        <svg class="header-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input type="text" class="header-search-input" id="global-search" placeholder="Search...">
                     </div>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Endpoint</th><th>Method</th><th>Hits</th><th>Avg Latency</th><th>P95</th><th>Queries</th><th>DB Time</th><th>Errors</th>
-                        </tr>
-                    </thead>
-                    <tbody id="endpoints-tbody"></tbody>
-                </table>
-            </div>
-
-            <div class="card" style="margin-top: 1.25rem;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;flex-wrap:wrap;">
-                    <h3>Telemetry History</h3>
-                    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-                        <select id="telemetry-history-endpoint" style="min-width:220px;"></select>
-                        <select id="telemetry-history-method" style="min-width:110px;">
-                            <option value="GET">GET</option>
-                            <option value="POST">POST</option>
-                            <option value="PUT">PUT</option>
-                            <option value="PATCH">PATCH</option>
-                            <option value="DELETE">DELETE</option>
-                        </select>
-                        <select id="telemetry-history-hours" style="min-width:110px;">
-                            <option value="1">1 Hour</option>
-                            <option value="6">6 Hours</option>
-                            <option value="24" selected>24 Hours</option>
-                            <option value="168">7 Days</option>
-                        </select>
-                        <select id="telemetry-history-bucket" style="min-width:120px;">
-                            <option value="1">1 Min</option>
-                            <option value="5" selected>5 Min</option>
-                            <option value="15">15 Min</option>
-                            <option value="60">60 Min</option>
-                        </select>
-                        <button class="btn btn-secondary btn-sm" data-click="refreshTelemetryHistory">Refresh</button>
-                    </div>
-                </div>
-                <div style="height:320px;">
-                    <canvas id="chart-telemetry-history"></canvas>
-                </div>
-                <div id="telemetry-history-empty" style="margin-top:0.75rem;color:#666;font-size:0.8rem;"></div>
-            </div>
-        </div>
-
-        <div id="tab-tickets" class="tab-content hidden">
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;">
-                    <h3>Support Queue</h3>
-                    <div style="display:flex;gap:0.5rem;align-items:center;">
-                        <select id="ticket-status-filter" style="min-width:160px;">
-                            <option value="">All Statuses</option>
-                            <option value="open">Open</option>
-                            <option value="in_progress">In Progress</option>
-                            <option value="resolved">Resolved</option>
-                            <option value="closed">Closed</option>
-                        </select>
-                        <button class="btn btn-secondary btn-sm" data-click="refreshTickets">Refresh</button>
-                    </div>
-                </div>
-                <table>
-                    <thead>
-                        <tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th><th>Actions</th></tr>
-                    </thead>
-                    <tbody id="tickets-tbody"></tbody>
-                </table>
-            </div>
-            <div id="ticket-detail" class="card hidden">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <h2 id="view-ticket-title"></h2>
-                    <button class="btn btn-outline" data-click="closeTicketDetail">Close</button>
-                </div>
-                <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin:0.75rem 0;">
-                    <span class="badge" id="ticket-status-badge" style="background:#222;"></span>
-                    <div style="color:#666;font-size:0.8rem;">Created: <span id="ticket-created-at"></span></div>
-                    <div style="color:#666;font-size:0.8rem;">Resolved: <span id="ticket-resolved-at"></span></div>
-                    <div style="color:#666;font-size:0.8rem;">Resolved By: <span id="ticket-resolved-by"></span></div>
-                </div>
-                <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem;">
-                    <label style="font-size:0.7rem; font-weight:800; color:#555;">STATUS</label>
-                    <select id="ticket-status-select" style="min-width:180px;">
-                        <option value="open">Open</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="resolved">Resolved</option>
-                        <option value="closed">Closed</option>
-                    </select>
-                    <button class="btn btn-primary btn-sm" data-click="updateTicketStatus">Update Status</button>
-                </div>
-                <div id="view-ticket-content" style="background:#000; padding:1rem; margin:1rem 0; border-radius:4px;"></div>
-                <div id="ticket-notes-section">
-                    <h4>Internal Notes</h4>
-                    <div id="ticket-notes-list" style="margin:1rem 0;"></div>
-                    <div style="display:flex;gap:0.5rem;"><input type="text" id="new-note-input" style="flex:1;"><button class="btn btn-primary" data-click="addTicketNote">Add Note</button></div>
-                </div>
-            </div>
-        </div>
-
-        <div id="tab-users" class="tab-content hidden">
-            <div class="card">
-                <h3>User Search</h3>
-                <div style="display:flex;gap:1rem;margin:1rem 0;"><input type="text" id="user-search-input" placeholder="Search by username..." style="flex:1;"><button class="btn btn-primary" data-click="searchUsers">Execute Search</button></div>
-                <div id="user-results"></div>
-            </div>
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;">
-                    <h3>Tier Catalog</h3>
-                    <button class="btn btn-secondary btn-sm" data-click="refreshTierCatalog">Refresh</button>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Tier</th><th>Multiplier</th><th>Voice/Day</th><th>Video/Day</th><th>Uploads/Day</th><th>Max File MB</th><th>Servers</th><th>Msg Len</th><th>Reactions</th><th>Pins</th><th>Emoji Slots</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tiers-catalog-tbody"></tbody>
-                </table>
-            </div>
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;">
-                    <h3>Admin Users</h3>
-                    <button class="btn btn-primary btn-sm" data-click="showCreateAdminModal">Create Admin User</button>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Username</th><th>Email</th><th>Role</th><th>Created</th><th>Last Login</th><th>Status</th><th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="admin-users-tbody"></tbody>
-                </table>
-            </div>
-            <div id="user-manage" class="card hidden">
-                <div style="display:flex;gap:2rem;">
-                    <img id="user-avatar-large" style="width:100px;height:100px;border-radius:4px;background:#222;">
-                    <div style="flex:1;">
-                        <h2 id="user-display-name"></h2>
-                        <p id="user-display-id" style="color:#666; font-family:monospace; font-size:0.8rem;"></p>
-                        
-                        <div class="grid grid-2" style="margin-top:1.5rem;">
-                            <div>
-                                <label style="font-size:0.7rem; font-weight:800; color:#555;">TIER</label>
-                                <div style="display:flex;gap:0.5rem;margin-top:0.25rem;"><select id="user-tier-select" style="flex:1;"><option value="free">Free</option><option value="alpha">Alpha</option><option value="beta">Beta</option><option value="premium">Premium</option><option value="staff">Staff</option></select><button class="btn btn-primary" data-click="updateUserTier">Set</button></div>
-                                
-                                <label style="font-size:0.7rem; font-weight:800; color:#555; margin-top:1rem; display:block;">BADGES</label>
-                                <div id="user-badges-list" style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-top:0.25rem;margin-bottom:0.5rem;"></div>
-                                <div style="display:flex;gap:0.5rem;">
-                                    <input type="text" id="new-badge-input" list="available-badges-list" placeholder="Select badge..." style="flex:1;">
-                                    <datalist id="available-badges-list"></datalist>
-                                    <button class="btn btn-secondary btn-sm" data-click="addUserBadge">Add</button>
-                                </div>
-                            </div>
-                            <div>
-                                <label style="font-size:0.7rem; font-weight:800; color:#555;">ACTIONS</label>
-                                <div style="display:flex;gap:0.5rem;margin-top:0.25rem;flex-wrap:wrap;">
-                                    <button class="btn btn-secondary" data-click="killUserSessions">Kill Sessions</button>
-                                    <button class="btn btn-danger" id="suspend-btn" data-click="suspendUser">Suspend</button>
-                                    <button class="btn btn-outline" data-click="forceUserRename">Force Rename</button>
-                                </div>
-                                
-                                <label style="font-size:0.7rem; font-weight:800; color:#555; margin-top:1rem; display:block;">NOTES</label>
-                                <textarea id="user-notes-input" rows="3" style="width:100%;margin-top:0.25rem;resize:vertical;" placeholder="Internal user notes..."></textarea>
-                                <button class="btn btn-primary btn-sm" style="margin-top:0.5rem;" data-click="saveUserNotes">Save Notes</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div id="tab-deletions" class="tab-content hidden">
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;flex-wrap:wrap;">
-                    <h3>Scheduled Account Deletions</h3>
-                    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-                        <select id="deletion-filter-days" style="min-width:160px;">
-                            <option value="">All Timeframes</option>
-                            <option value="1">Critical (&lt;1 day)</option>
-                            <option value="7">Warning (&lt;7 days)</option>
-                            <option value="30">Normal (&lt;30 days)</option>
-                        </select>
-                        <button class="btn btn-secondary btn-sm" data-click="refreshDeletions">Refresh</button>
-                    </div>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Username</th><th>User ID</th><th>Scheduled</th><th>Deletion Date</th><th>Days Left</th><th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="deletions-tbody"></tbody>
-                </table>
-                <div id="deletions-empty" style="padding:2rem;text-align:center;color:#666;font-size:0.9rem;">No scheduled deletions found.</div>
-            </div>
-        </div>
-
-        <div id="tab-security" class="tab-content hidden">
-            <div class="grid grid-2">
-                <div class="card">
-                    <h3>Admin Account</h3>
-                    <div class="grid grid-2" style="margin-top:1rem;gap:0.75rem;">
-                        <div>
-                            <div class="stat-label">Username</div>
-                            <div id="admin-security-username" style="font-family:monospace;">-</div>
-                        </div>
-                        <div>
-                            <div class="stat-label">Last Login</div>
-                            <div id="admin-security-last-login" style="font-family:monospace;">-</div>
-                        </div>
-                        <div>
-                            <div class="stat-label">2FA Status</div>
-                            <div id="admin-security-otp-status" style="font-family:monospace;">-</div>
-                        </div>
-                        <div>
-                            <div class="stat-label">Backup Codes Remaining</div>
-                            <div id="admin-security-backup-count" style="font-family:monospace;">0</div>
-                        </div>
-                    </div>
-                    <div style="margin-top:1rem;">
-                        <h4 style="font-size:0.85rem;margin-bottom:0.5rem;">Change Password</h4>
-                        <div style="display:flex;flex-direction:column;gap:0.5rem;">
-                            <input type="password" id="admin-current-password" placeholder="Current password" autocomplete="current-password">
-                            <input type="password" id="admin-new-password" placeholder="New password" autocomplete="new-password">
-                            <button class="btn btn-primary btn-sm" data-click="changeAdminPassword">Change Password</button>
-                        </div>
-                    </div>
-                    <div style="margin-top:1rem;">
-                        <h4 style="font-size:0.85rem;margin-bottom:0.5rem;">2FA Management</h4>
-                        <div style="display:flex;flex-direction:column;gap:0.5rem;">
-                            <input type="password" id="admin-2fa-password" placeholder="Current password" autocomplete="current-password">
-                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                                <button class="btn btn-secondary btn-sm" data-click="beginAdminOtpSetup">Set Up / Reset 2FA</button>
-                                <button class="btn btn-outline btn-sm" data-click="regenerateAdminBackupCodes">Regenerate Backup Codes</button>
-                            </div>
-                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                                <input type="text" id="admin-disable-otp-code" placeholder="Current OTP or backup code" style="flex:1;min-width:220px;">
-                                <button class="btn btn-danger btn-sm" data-click="disableAdminOtp">Disable 2FA</button>
-                            </div>
-                        </div>
-                        <div id="admin-security-otp-setup" class="hidden" style="margin-top:1rem;padding:0.75rem;border:1px solid var(--border);border-radius:4px;background:#101012;">
-                            <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-start;">
-                                <img id="admin-otp-qr" alt="Admin OTP QR Code" style="width:160px;height:160px;background:#fff;padding:0.5rem;border-radius:4px;">
-                                <div style="display:flex;flex-direction:column;gap:0.5rem;flex:1;min-width:220px;">
-                                    <div style="font-size:0.8rem;color:#bbb;">Scan this QR code with your authenticator, then verify with a fresh code.</div>
-                                    <div id="admin-otp-secret" style="font-family:monospace;word-break:break-all;"></div>
-                                    <input type="text" id="admin-otp-verify-code" placeholder="Authenticator code">
-                                    <button class="btn btn-primary btn-sm" data-click="verifyAdminOtpSetup">Verify 2FA Setup</button>
+                    <div class="dropdown" id="notif-dropdown">
+                        <button class="header-btn" id="notif-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            <span class="header-notif-dot"></span>
+                        </button>
+                        <div class="dropdown-menu" id="notif-menu">
+                            <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;">Notifications</div>
+                            <div class="notif-list" id="notif-list">
+                                <div class="notif-item" style="cursor:default;">
+                                    <div class="notif-desc">No new notifications</div>
                                 </div>
                             </div>
                         </div>
-                        <div id="admin-backup-codes" class="hidden" style="margin-top:1rem;padding:0.75rem;border:1px solid var(--border);border-radius:4px;background:#101012;">
-                            <div style="font-size:0.8rem;color:#bbb;margin-bottom:0.5rem;">Store these backup codes securely. They are shown once.</div>
-                            <pre id="admin-backup-codes-list" style="margin:0;font-family:monospace;white-space:pre-wrap;"></pre>
+                    </div>
+                    <a href="/docs/admin" target="_blank" class="btn btn-ghost" style="text-decoration:none;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    </a>
+                    <div class="header-avatar" id="header-avatar" data-click="showAccount">
+                        <div class="header-avatar-icon" id="header-avatar-initials">SA</div>
+                        <div class="header-avatar-info">
+                            <span class="header-avatar-name" id="header-avatar-name">sysadmin</span>
+                            <span class="header-avatar-role">Super Admin</span>
                         </div>
                     </div>
                 </div>
-                <div class="card">
-                    <h3>IP Access Control</h3>
-                    <div style="display:flex;gap:0.5rem;margin:1rem 0;"><input type="text" id="block-ip-val" placeholder="IP Address" style="flex:1;"><button class="btn btn-danger" data-click="blockIP">Block IP</button></div>
-                    <table><thead><tr><th>IP Address</th><th>Reason</th><th>Action</th></tr></thead><tbody id="blocked-ips-tbody"></tbody></table>
-                </div>
-                <div class="card">
-                    <h3>Username Blacklist</h3>
-                    <div style="display:flex;gap:0.5rem;margin:1rem 0;"><input type="text" id="ban-username-val" placeholder="Pattern (e.g. admin*)" style="flex:1;"><button class="btn btn-danger" data-click="addBannedUsername">Ban Pattern</button></div>
-                    <table><thead><tr><th>Pattern</th><th>Reason</th><th>Action</th></tr></thead><tbody id="banned-usernames-tbody"></tbody></table>
-                </div>
-                <div class="card" style="grid-column: span 2;">
-                    <h3>API Access Tokens</h3>
-                    <div style="display:flex;gap:0.5rem;margin:1rem 0;flex-wrap:wrap;">
-                        <input type="text" id="access-token-name" placeholder="Token name (optional)" style="flex:2;min-width:200px;">
-                        <input type="text" id="access-token-description" placeholder="Description / owner notes" style="flex:3;min-width:240px;">
-                        <input type="datetime-local" id="access-token-expires" style="min-width:220px;">
-                        <select id="access-token-scope-mode" style="min-width:180px;">
-                            <option value="none">No IP Scope</option>
-                            <option value="monitor">Monitor IP Scope</option>
-                            <option value="enforce">Enforce IP Scope</option>
+            </header>
+
+            <!-- Main Area -->
+            <div class="main-area">
+
+                <!-- ===== DASHBOARD TAB ===== -->
+                <div class="tab-content active" id="tab-dashboard">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span class="badge badge-success" id="dash-health-badge">System Healthy</span>
+                            <span class="text-muted text-sm" id="dash-last-updated">Last updated: loading...</span>
+                        </div>
+                        <select id="dash-time-range" style="width:140px;">
+                            <option value="1h">Last 1h</option>
+                            <option value="6h">Last 6h</option>
+                            <option value="24h" selected>Last 24h</option>
+                            <option value="7d">Last 7d</option>
                         </select>
-                        <input type="text" id="access-token-custom" placeholder="Custom token (optional)" minlength="32" maxlength="128" style="flex:3;min-width:260px;">
-                        <button class="btn btn-primary" data-click="createAccessToken">Create Token</button>
                     </div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:-0.5rem;margin-bottom:0.5rem;">Custom tokens must be 32-128 characters.</div>
-                    <div id="access-token-generated" style="font-size:0.8rem;color:#bbb;margin-bottom:0.5rem;"></div>
-                    <table>
-                        <thead><tr><th>Name</th><th>Expires</th><th>Last Used</th><th>Requests</th><th>IPs</th><th>Status</th><th>Action</th></tr></thead>
-                        <tbody id="access-tokens-tbody"></tbody>
-                    </table>
-                    <div id="access-token-detail" class="card hidden" style="margin-top:1rem;background:#101012;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;">
-                            <h4 id="access-token-detail-title" style="font-size:1rem;">Token Detail</h4>
-                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                                <button class="btn btn-secondary btn-sm" data-click="refreshAccessTokenDetail">Refresh</button>
-                                <button class="btn btn-outline btn-sm" data-click="closeAccessTokenDetail">Close</button>
+
+                    <div class="stats-grid" id="dash-stats">
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Active Users (24h)</span><svg class="stat-card-icon" style="color:var(--chart-1);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div><div class="stat-card-value" id="stat-active-users">0</div><div class="stat-card-change positive" id="stat-active-change">+8.2% from yesterday</div></div>
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Total Registered</span><svg class="stat-card-icon" style="color:var(--chart-2);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><div class="stat-card-value" id="stat-total-users">0</div><div class="stat-card-change positive" id="stat-total-change">+1,247 this week</div></div>
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Scheduled Deletions</span><svg class="stat-card-icon" style="color:var(--chart-3);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="stat-card-value" id="stat-scheduled-deletions">0</div><div class="stat-card-change" style="color:var(--muted-foreground);font-size:12px;" id="stat-deletion-note">30-day grace period</div></div>
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Avg API Latency</span><svg class="stat-card-icon" style="color:var(--primary);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-card-value" id="stat-avg-latency">0</div><div class="stat-card-change positive" id="stat-latency-change">-12ms from avg</div></div>
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Error Rate</span><svg class="stat-card-icon" style="color:var(--warning);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><div class="stat-card-value" id="stat-error-rate">0.0%</div><div class="stat-card-change positive" id="stat-error-change">Below 1% threshold</div></div>
+                    </div>
+
+                    <div class="grid-2" style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(500px,1fr));margin-bottom:24px;">
+                        <div class="metric-tile"><div class="tile-header"><span class="tile-title">Transactions & DB Intensity</span></div><div class="tile-body"><canvas id="chart-tps"></canvas></div></div>
+                        <div class="metric-tile"><div class="tile-header"><span class="tile-title">Response Latency (ms)</span></div><div class="tile-body"><canvas id="chart-latency"></canvas></div></div>
+                    </div>
+
+                    <div class="grid" style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));margin-bottom:24px;">
+                        <div class="metric-tile"><div class="tile-header"><span class="tile-title">DB Connection Pool</span><span id="db-conn-count" style="font-size:11px;color:var(--primary);font-family:monospace;">0/0</span></div><div class="tile-body chart-container-sm"><canvas id="chart-db-pool"></canvas></div></div>
+                        <div class="metric-tile"><div class="tile-header"><span class="tile-title">CPU & Disk Load (%)</span></div><div class="tile-body chart-container-sm"><canvas id="chart-sys-res"></canvas></div></div>
+                        <div class="metric-tile"><div class="tile-header"><span class="tile-title">Error Rate Trend (%)</span></div><div class="tile-body chart-container-sm"><canvas id="chart-errors"></canvas></div></div>
+                        <div class="metric-tile"><div class="tile-header"><span class="tile-title">HTTP Status Distribution</span></div><div class="tile-body chart-container-sm"><canvas id="chart-status-dist"></canvas></div></div>
+                    </div>
+
+                    <div class="resource-grid" style="margin-bottom:24px;">
+                        <div class="resource-card"><div class="resource-icon" style="background:color-mix(in oklch, var(--chart-1) 15%, transparent);color:var(--chart-1);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg></div><div><div class="resource-label">CPU Usage</div><div class="resource-value" id="dash-cpu">0%</div></div></div>
+                        <div class="resource-card"><div class="resource-icon" style="background:color-mix(in oklch, var(--chart-2) 15%, transparent);color:var(--chart-2);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div><div class="resource-label">Memory</div><div class="resource-value" id="dash-memory">0 GB</div></div></div>
+                        <div class="resource-card"><div class="resource-icon" style="background:color-mix(in oklch, var(--chart-3) 15%, transparent);color:var(--chart-3);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></div><div><div class="resource-label">Disk Usage</div><div class="resource-value" id="dash-disk">0%</div></div></div>
+                        <div class="resource-card"><div class="resource-icon" style="background:color-mix(in oklch, var(--primary) 15%, transparent);color:var(--primary);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div><div><div class="resource-label">Uptime</div><div class="resource-value" id="dash-uptime">0d</div></div></div>
+                    </div>
+
+                    <div class="feature-grid" style="margin-bottom:24px;">
+                        <div class="feature-card"><div class="feature-card-header"><span class="feature-card-label">Bookmarks</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted-foreground);"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></div><div class="feature-card-value" id="dash-bookmarks">0</div></div>
+                        <div class="feature-card"><div class="feature-card-header"><span class="feature-card-label">Scheduled Messages</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted-foreground);"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div class="feature-card-value" id="dash-scheduled-msgs">0</div></div>
+                        <div class="feature-card"><div class="feature-card-header"><span class="feature-card-label">Voice Messages</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted-foreground);"><rect x="9" y="1" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/></svg></div><div class="feature-card-value" id="dash-voice-msgs">0</div></div>
+                        <div class="feature-card"><div class="feature-card-header"><span class="feature-card-label">Push Tokens</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted-foreground);"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="feature-card-value" id="dash-push-tokens">0</div></div>
+                        <div class="feature-card"><div class="feature-card-header"><span class="feature-card-label">Pending Reports</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--chart-3);"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg></div><div class="feature-card-value" id="dash-pending-reports">0</div></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Endpoint Performance Analysis</span>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                                <input type="text" id="endpoint-filter" placeholder="Filter endpoints..." style="width:180px;">
+                                <select id="metric-hours" style="width:120px;"><option value="1">1 Hour</option><option value="24" selected>24 Hours</option><option value="168">7 Days</option></select>
+                                <button class="btn btn-secondary btn-sm" data-click="openExport">Export</button>
+                                <button class="btn btn-outline btn-sm" data-click="resetTelemetry">Reset</button>
                             </div>
                         </div>
-                        <div class="grid grid-4" style="margin-top:1rem;">
-                            <div><div class="stat-label">Total Requests</div><div class="stat-value" id="access-token-stat-requests">0</div></div>
-                            <div><div class="stat-label">Distinct IPs</div><div class="stat-value" id="access-token-stat-ips">0</div></div>
-                            <div><div class="stat-label">Denied Uses</div><div class="stat-value" id="access-token-stat-denied">0</div></div>
-                            <div><div class="stat-label">Last Used</div><div style="font-family:monospace;" id="access-token-stat-last-used">Never</div></div>
+                        <div class="card-content" style="padding:0;">
+                            <div style="overflow-x:auto;">
+                                <table>
+                                    <thead><tr><th>Endpoint</th><th>Method</th><th>Hits</th><th>Avg Latency</th><th>P95</th><th>Queries</th><th>DB Time</th><th>Errors</th></tr></thead>
+                                    <tbody id="endpoints-tbody"></tbody>
+                                </table>
+                            </div>
                         </div>
-                        <div class="grid grid-2" style="margin-top:1rem;">
-                            <div>
-                                <h5 style="margin-bottom:0.5rem;">Settings</h5>
-                                <div style="display:flex;flex-direction:column;gap:0.5rem;">
-                                    <input type="text" id="access-token-detail-name" placeholder="Token name">
-                                    <input type="text" id="access-token-detail-description" placeholder="Description">
-                                    <input type="datetime-local" id="access-token-detail-expires">
-                                    <select id="access-token-detail-scope-mode">
-                                        <option value="none">No IP Scope</option>
-                                        <option value="monitor">Monitor IP Scope</option>
-                                        <option value="enforce">Enforce IP Scope</option>
-                                    </select>
-                                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                                        <button class="btn btn-primary btn-sm" data-click="saveAccessTokenSettings">Save Settings</button>
-                                        <button class="btn btn-secondary btn-sm" data-click="clearAccessTokenExpiry">Clear Expiry</button>
-                                        <button class="btn btn-danger btn-sm" data-click="rotateAccessToken">Rotate Token</button>
-                                        <button id="btn-unrevoke-token" class="btn btn-secondary btn-sm" data-click="unrevokeSelectedAccessToken" style="display:none;">Unrevoke Token</button>
-                                        <button id="btn-revoke-token" class="btn btn-outline btn-sm" data-click="revokeSelectedAccessToken">Revoke Token</button>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Telemetry History</span>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                                <select id="telemetry-history-endpoint" style="min-width:180px;"></select>
+                                <select id="telemetry-history-method" style="width:100px;"><option value="GET">GET</option><option value="POST">POST</option><option value="PUT">PUT</option><option value="PATCH">PATCH</option><option value="DELETE">DELETE</option></select>
+                                <select id="telemetry-history-hours" style="width:100px;"><option value="1">1H</option><option value="6">6H</option><option value="24" selected>24H</option><option value="168">7D</option></select>
+                                <select id="telemetry-history-bucket" style="width:100px;"><option value="1">1 Min</option><option value="5" selected>5 Min</option><option value="15">15 Min</option><option value="60">60 Min</option></select>
+                                <button class="btn btn-secondary btn-sm" data-click="refreshTelemetryHistory">Refresh</button>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div style="height:280px;"><canvas id="chart-telemetry-history"></canvas></div>
+                            <div id="telemetry-history-empty" class="text-sm text-muted" style="margin-top:8px;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== USERS TAB ===== -->
+                <div class="tab-content" id="tab-users">
+                    <div class="inner-tabs" id="users-inner-tabs">
+                        <button class="inner-tab active" data-inner-tab="all-users">All Users</button>
+                        <button class="inner-tab" data-inner-tab="scheduled-deletions">Scheduled Deletions</button>
+                        <button class="inner-tab" data-inner-tab="tiers">Tier Catalog</button>
+                    </div>
+                    <div class="inner-tab-content active" id="inner-all-users">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>User Management</span>
+                                <div class="relative" style="width:256px;position:relative;">
+                                    <svg style="position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--muted-foreground);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                    <input type="text" id="user-search-input" placeholder="Search users..." style="padding-left:36px;">
+                                </div>
+                            </div>
+                            <div class="card-content" style="padding:0;">
+                                <div style="overflow-x:auto;">
+                                    <table><thead><tr><th>User</th><th>Email</th><th>Tier</th><th>Status</th><th>Last Login</th><th class="text-right">Actions</th></tr></thead><tbody id="users-tbody"></tbody></table>
+                                </div>
+                                <div style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);">
+                                    <span class="text-sm text-muted" id="users-count">Showing 0 users</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="user-detail-panel"></div>
+                    </div>
+                    <div class="inner-tab-content" id="inner-scheduled-deletions">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Scheduled Deletions (30-Day Grace Period)</span>
+                            </div>
+                            <div class="card-content" style="padding:0;">
+                                <table><thead><tr><th>User</th><th>Email</th><th>Request Date</th><th>Days Remaining</th><th class="text-right">Actions</th></tr></thead><tbody id="deletions-tbody"></tbody></table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="inner-tab-content" id="inner-tiers">
+                        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));" id="tiers-grid"></div>
+                    </div>
+                </div>
+
+                <!-- ===== ADMINS TAB ===== -->
+                <div class="tab-content" id="tab-admins">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Admin Users</span>
+                            <button class="btn btn-primary btn-sm" data-click="showCreateAdminModal">Create Admin User</button>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <table><thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Created</th><th>Last Login</th><th>Status</th><th class="text-right">Actions</th></tr></thead><tbody id="admin-users-tbody"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== TICKETS TAB ===== -->
+                <div class="tab-content" id="tab-tickets">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg>Support Queue</span>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <select id="ticket-status-filter" style="width:160px;"><option value="">All Statuses</option><option value="open">Open</option><option value="in_progress">In Progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+                                <button class="btn btn-secondary btn-sm" data-click="refreshTickets">Refresh</button>
+                            </div>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <table><thead><tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th><th class="text-right">Actions</th></tr></thead><tbody id="tickets-tbody"></tbody></table>
+                        </div>
+                    </div>
+                    <div class="card hidden" id="ticket-detail">
+                        <div class="card-header">
+                            <span class="card-title" id="view-ticket-title">Ticket Detail</span>
+                            <button class="btn btn-outline btn-sm" data-click="closeTicketDetail">Close</button>
+                        </div>
+                        <div class="card-content">
+                            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+                                <span class="badge badge-warning" id="ticket-status-badge">open</span>
+                                <span class="text-sm text-muted">Created: <span id="ticket-created-at"></span></span>
+                                <span class="text-sm text-muted">Resolved: <span id="ticket-resolved-at"></span></span>
+                                <span class="text-sm text-muted">By: <span id="ticket-resolved-by"></span></span>
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
+                                <span class="text-xs text-muted" style="font-weight:600;">STATUS</span>
+                                <select id="ticket-status-select" style="width:180px;"><option value="open">Open</option><option value="in_progress">In Progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+                                <button class="btn btn-primary btn-sm" data-click="updateTicketStatus">Update Status</button>
+                            </div>
+                            <div id="view-ticket-content" style="background:var(--bg);padding:16px;border-radius:6px;margin-bottom:16px;border:1px solid var(--border);"></div>
+                            <div id="ticket-notes-section">
+                                <h4 style="font-size:14px;font-weight:600;margin-bottom:12px;">Internal Notes</h4>
+                                <div id="ticket-notes-list" style="margin-bottom:12px;"></div>
+                                <div style="display:flex;gap:8px;"><input type="text" id="new-note-input" style="flex:1;" placeholder="Add note..."><button class="btn btn-primary btn-sm" data-click="addTicketNote">Add Note</button></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== MODERATION TAB ===== -->
+                <div class="tab-content" id="tab-moderation">
+                    <div class="inner-tabs" id="mod-inner-tabs">
+                        <button class="inner-tab active" data-inner-tab="hash-reports">Image Reports</button>
+                        <button class="inner-tab" data-inner-tab="message-reports">Message Reports</button>
+                        <button class="inner-tab" data-inner-tab="user-reports">User Reports</button>
+                        <button class="inner-tab" data-inner-tab="blocked-hashes">Blocked Hashes</button>
+                        <button class="inner-tab" data-inner-tab="blocked-users">Blocked Users</button>
+                    </div>
+                    <div class="inner-tab-content active" id="inner-hash-reports">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>Image Hash Reports</span>
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <select id="hash-report-status" style="width:160px;"><option value="pending">Pending</option><option value="blocked">Blocked</option><option value="cleared">Cleared</option><option value="">All</option></select>
+                                    <button class="btn btn-secondary btn-sm" data-click="refreshHashReports">Refresh</button>
+                                </div>
+                            </div>
+                            <div class="card-content"><div class="media-report-grid" id="hash-reports-grid"></div></div>
+                        </div>
+                    </div>
+                    <div class="inner-tab-content" id="inner-message-reports">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">Message Reports</span>
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <select id="message-report-status" style="width:160px;"><option value="pending">Pending</option><option value="reviewed">Reviewed</option><option value="actioned">Actioned</option><option value="dismissed">Dismissed</option><option value="">All</option></select>
+                                    <button class="btn btn-secondary btn-sm" data-click="refreshMessageReports">Refresh</button>
+                                </div>
+                            </div>
+                            <div class="card-content">
+                                <div id="message-report-counts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px;"></div>
+                                <div style="overflow-x:auto;"><table><thead><tr><th>Message</th><th>Reporter</th><th>Reported User</th><th>Reason</th><th>Status</th><th>Reported</th><th class="text-right">Action</th></tr></thead><tbody id="message-reports-tbody"></tbody></table></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="inner-tab-content" id="inner-user-reports">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">User Reports</span>
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <select id="user-report-status" style="width:160px;"><option value="pending">Pending</option><option value="reviewed">Reviewed</option><option value="actioned">Actioned</option><option value="dismissed">Dismissed</option><option value="">All</option></select>
+                                    <button class="btn btn-secondary btn-sm" data-click="refreshUserReports">Refresh</button>
+                                </div>
+                            </div>
+                            <div class="card-content">
+                                <div id="user-report-counts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px;"></div>
+                                <div style="overflow-x:auto;"><table><thead><tr><th>Reported User</th><th>Reporter</th><th>Reason</th><th>Evidence</th><th>Status</th><th>Reported</th><th class="text-right">Action</th></tr></thead><tbody id="user-reports-tbody"></tbody></table></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="inner-tab-content" id="inner-blocked-hashes">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">Blocked Hashes</span>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                    <input type="text" id="block-hash-val" placeholder="Hash (SHA-256 or pHash)" style="width:260px;">
+                                    <input type="text" id="block-hash-reason" placeholder="Reason" style="width:200px;">
+                                    <button class="btn btn-danger btn-sm" data-click="blockHash">Block Hash</button>
+                                </div>
+                            </div>
+                            <div class="card-content" style="padding:0;"><table><thead><tr><th>Hash</th><th>Type</th><th>Reason</th><th>Blocked</th><th class="text-right">Action</th></tr></thead><tbody id="blocked-hashes-tbody"></tbody></table></div>
+                        </div>
+                    </div>
+                    <div class="inner-tab-content" id="inner-blocked-users">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">Blocked Users</span>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                    <input type="text" id="block-user-id" placeholder="User ID" style="width:160px;">
+                                    <input type="text" id="block-user-reason" placeholder="Reason" style="width:200px;">
+                                    <input type="number" id="block-user-duration" placeholder="Duration (hours)" style="width:160px;">
+                                    <button class="btn btn-danger btn-sm" data-click="blockUser">Block User</button>
+                                </div>
+                            </div>
+                            <div class="card-content" style="padding:0;"><table><thead><tr><th>User ID</th><th>Username</th><th>Reason</th><th>Blocked</th><th>Expires</th><th class="text-right">Action</th></tr></thead><tbody id="blocked-users-tbody"></tbody></table></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== SECURITY TAB ===== -->
+                <div class="tab-content" id="tab-security">
+                    <div class="inner-tabs" id="sec-inner-tabs">
+                        <button class="inner-tab active" data-inner-tab="sec-admin">Admin Account</button>
+                        <button class="inner-tab" data-inner-tab="sec-ip">IP Blocking</button>
+                        <button class="inner-tab" data-inner-tab="sec-usernames">Banned Usernames</button>
+                        <button class="inner-tab" data-inner-tab="sec-tokens">API Tokens</button>
+                    </div>
+                    <div class="inner-tab-content active" id="inner-sec-admin">
+                        <div class="card">
+                            <div class="card-content">
+                                <div class="grid-2" style="display:grid;gap:16px;">
+                                    <div><span class="text-xs text-muted" style="font-weight:600;">Username</span><p class="font-mono" id="admin-security-username">-</p></div>
+                                    <div><span class="text-xs text-muted" style="font-weight:600;">Last Login</span><p class="font-mono" id="admin-security-last-login">-</p></div>
+                                    <div><span class="text-xs text-muted" style="font-weight:600;">2FA Status</span><p class="font-mono" id="admin-security-otp-status">-</p></div>
+                                    <div><span class="text-xs text-muted" style="font-weight:600;">Backup Codes</span><p class="font-mono" id="admin-security-backup-count">0</p></div>
+                                </div>
+                                <div class="grid-2" style="display:grid;gap:16px;margin-top:24px;">
+                                    <div>
+                                        <h4 style="font-size:14px;font-weight:600;margin-bottom:12px;">Change Password</h4>
+                                        <div style="display:flex;flex-direction:column;gap:8px;">
+                                            <input type="password" id="admin-current-password" placeholder="Current password" autocomplete="current-password">
+                                            <input type="password" id="admin-new-password" placeholder="New password" autocomplete="new-password">
+                                            <button class="btn btn-primary btn-sm" data-click="changeAdminPassword">Change Password</button>
+                                        </div>
                                     </div>
-                                    <div id="access-token-rotated" style="font-size:0.8rem;color:#bbb;"></div>
-                                </div>
-                            </div>
-                            <div>
-                                <h5 style="margin-bottom:0.5rem;">Current Metadata</h5>
-                                <div style="display:flex;flex-direction:column;gap:0.35rem;font-size:0.85rem;color:#bbb;">
-                                    <div><strong>Created:</strong> <span id="access-token-detail-created"></span></div>
-                                    <div><strong>First Used:</strong> <span id="access-token-detail-first-used"></span></div>
-                                    <div><strong>Last IP:</strong> <span id="access-token-detail-last-ip"></span></div>
-                                    <div><strong>Last Path:</strong> <span id="access-token-detail-last-path"></span></div>
-                                    <div><strong>Last User-Agent:</strong> <span id="access-token-detail-last-ua"></span></div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="grid grid-2" style="margin-top:1rem;">
-                            <div>
-                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-                                    <h5>IP Scopes</h5>
-                                </div>
-                                <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap;">
-                                    <select id="access-token-scope-type" style="min-width:120px;">
-                                        <option value="ip">IP</option>
-                                        <option value="cidr">CIDR</option>
-                                    </select>
-                                    <input type="text" id="access-token-scope-value" placeholder="203.0.113.5 or 203.0.113.0/24" style="flex:1;min-width:220px;">
-                                    <button class="btn btn-primary btn-sm" data-click="addAccessTokenScope">Add Scope</button>
-                                </div>
-                                <table>
-                                    <thead><tr><th>Type</th><th>Value</th><th>Action</th></tr></thead>
-                                    <tbody id="access-token-scopes-tbody"></tbody>
-                                </table>
-                            </div>
-                            <div>
-                                <h5 style="margin-bottom:0.5rem;">Top IPs</h5>
-                                <table>
-                                    <thead><tr><th>IP</th><th>Requests</th><th>Denied</th><th>Last Seen</th></tr></thead>
-                                    <tbody id="access-token-top-ips-tbody"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                        <div class="grid grid-2" style="margin-top:1rem;">
-                            <div>
-                                <h5 style="margin-bottom:0.5rem;">Top Paths</h5>
-                                <table>
-                                    <thead><tr><th>Path</th><th>Method</th><th>Requests</th><th>Last Seen</th></tr></thead>
-                                    <tbody id="access-token-top-paths-tbody"></tbody>
-                                </table>
-                            </div>
-                            <div>
-                                <h5 style="margin-bottom:0.5rem;">Recent Activity</h5>
-                                <table>
-                                    <thead><tr><th>When</th><th>IP</th><th>Request</th><th>Status</th></tr></thead>
-                                    <tbody id="access-token-events-tbody"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="card" style="grid-column: span 2;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <h3>Image Reports</h3>
-                        <div style="display:flex;gap:0.5rem;align-items:center;">
-                            <select id="hash-report-status" style="min-width:160px;">
-                                <option value="pending" selected>Pending</option>
-                                <option value="blocked">Blocked</option>
-                                <option value="cleared">Cleared</option>
-                                <option value="">All</option>
-                            </select>
-                            <button class="btn btn-outline btn-sm" data-click="refreshHashReports">Refresh</button>
-                        </div>
-                    </div>
-                    <div id="hash-reports-grid" class="media-report-grid" style="margin-top:1rem;"></div>
-                </div>
-                <div class="card" style="grid-column: span 2;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
-                        <h3>Message Reports</h3>
-                        <div style="display:flex;gap:0.5rem;align-items:center;">
-                            <select id="message-report-status" style="min-width:160px;">
-                                <option value="pending" selected>Pending</option>
-                                <option value="reviewed">Reviewed</option>
-                                <option value="actioned">Actioned</option>
-                                <option value="dismissed">Dismissed</option>
-                                <option value="">All</option>
-                            </select>
-                            <button class="btn btn-outline btn-sm" data-click="refreshMessageReports">Refresh</button>
-                        </div>
-                    </div>
-                    <div id="message-report-counts" class="grid" style="margin:1rem 0 0.75rem 0;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"></div>
-                    <table>
-                        <thead><tr><th>Message</th><th>Reporter</th><th>Reported User</th><th>Reason</th><th>Status</th><th>Reported</th><th>Action</th></tr></thead>
-                        <tbody id="message-reports-tbody"></tbody>
-                    </table>
-                </div>
-                <div class="card" style="grid-column: span 2;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
-                        <h3>User Reports</h3>
-                        <div style="display:flex;gap:0.5rem;align-items:center;">
-                            <select id="user-report-status" style="min-width:160px;">
-                                <option value="pending" selected>Pending</option>
-                                <option value="reviewed">Reviewed</option>
-                                <option value="actioned">Actioned</option>
-                                <option value="dismissed">Dismissed</option>
-                                <option value="">All</option>
-                            </select>
-                            <button class="btn btn-outline btn-sm" data-click="refreshUserReports">Refresh</button>
-                        </div>
-                    </div>
-                    <div id="user-report-counts" class="grid" style="margin:1rem 0 0.75rem 0;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"></div>
-                    <table>
-                        <thead><tr><th>Reported User</th><th>Reporter</th><th>Reason</th><th>Evidence</th><th>Status</th><th>Reported</th><th>Action</th></tr></thead>
-                        <tbody id="user-reports-tbody"></tbody>
-                    </table>
-                </div>
-                <div class="card" style="grid-column: span 2;">
-                    <h3>Blocked Hashes</h3>
-                    <div style="display:flex;gap:0.5rem;margin:1rem 0;flex-wrap:wrap;">
-                        <input type="text" id="block-hash-val" placeholder="Hash (SHA-256 or pHash)" style="flex:2;min-width:260px;">
-                        <input type="text" id="block-hash-reason" placeholder="Reason" style="flex:2;min-width:200px;">
-                        <button class="btn btn-danger" data-click="blockHash">Block Hash</button>
-                    </div>
-                    <table>
-                        <thead><tr><th>Hash</th><th>Type</th><th>Reason</th><th>Blocked</th><th>Action</th></tr></thead>
-                        <tbody id="blocked-hashes-tbody"></tbody>
-                    </table>
-                </div>
-                <div class="card" style="grid-column: span 2;">
-                    <h3>Blocked Users</h3>
-                    <div style="display:flex;gap:0.5rem;margin:1rem 0;flex-wrap:wrap;">
-                        <input type="text" id="block-user-id" placeholder="User ID" style="flex:1;min-width:160px;">
-                        <input type="text" id="block-user-reason" placeholder="Reason" style="flex:2;min-width:200px;">
-                        <input type="number" id="block-user-duration" placeholder="Duration (hours)" style="flex:1;min-width:160px;">
-                        <button class="btn btn-danger" data-click="blockUser">Block User</button>
-                    </div>
-                    <table>
-                        <thead><tr><th>User ID</th><th>Username</th><th>Reason</th><th>Blocked</th><th>Expires</th><th>Action</th></tr></thead>
-                        <tbody id="blocked-users-tbody"></tbody>
-                    </table>
-                </div>
-                <div class="card" style="grid-column: span 2;">
-                    <h3>System Actions</h3>
-                    <p style="color:#888;font-size:0.8rem;margin:0.5rem 0;">Dangerous system-wide operations.</p>
-                    <button class="btn btn-danger" data-click="globalSessionPurge">PURGE ALL SESSIONS</button>
-                </div>
-            </div>
-        </div>
-
-        <div id="tab-automod" class="tab-content hidden">
-            <div class="grid grid-2">
-                <div class="card">
-                    <h3>AutoMod Configuration</h3>
-                    <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin:0.75rem 0;">
-                        <label style="font-size:0.7rem; font-weight:800; color:#555;">ENABLED</label>
-                        <input type="checkbox" id="automod-enabled">
-                        <button class="btn btn-primary btn-sm" data-click="saveAutomodConfig">Save Config</button>
-                    </div>
-                    <div class="grid grid-2" style="gap:0.75rem;">
-                        <div>
-                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">OpenAI</h4>
-                            <div style="display:flex;flex-direction:column;gap:0.5rem;">
-                                <input type="text" id="automod-openai-key" placeholder="API Key">
-                                <input type="text" id="automod-openai-model" placeholder="Model">
-                                <input type="text" id="automod-openai-url" placeholder="API URL">
-                                <input type="number" step="0.01" min="0" max="1" id="automod-openai-threshold" placeholder="Threshold">
-                            </div>
-                        </div>
-                        <div>
-                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Perspective</h4>
-                            <div style="display:flex;flex-direction:column;gap:0.5rem;">
-                                <input type="text" id="automod-perspective-key" placeholder="API Key">
-                                <input type="number" step="0.01" min="0" max="1" id="automod-perspective-threshold" placeholder="Threshold">
-                                <input type="text" id="automod-perspective-attributes" placeholder="Attributes (comma separated)">
-                            </div>
-                        </div>
-                        <div style="grid-column: span 2;">
-                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Custom</h4>
-                            <div class="grid grid-2" style="gap:0.5rem;">
-                                <input type="text" id="automod-custom-endpoint" placeholder="Endpoint URL">
-                                <input type="text" id="automod-custom-key" placeholder="API Key">
-                                <input type="text" id="automod-custom-auth-header" placeholder="Auth Header">
-                                <input type="text" id="automod-custom-auth-prefix" placeholder="Auth Prefix">
-                                <input type="number" step="1" min="1" id="automod-custom-timeout" placeholder="Timeout Seconds">
-                                <input type="number" step="0.01" min="0" max="1" id="automod-custom-threshold" placeholder="Threshold">
-                                <input type="text" id="automod-custom-headers" placeholder="Headers JSON">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="card">
-                    <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;">
-                        <h3>AutoMod Rules</h3>
-                        <div style="display:flex;gap:0.5rem;align-items:center;">
-                            <input type="number" id="automod-server-id" placeholder="Server ID" style="min-width:180px;">
-                            <button class="btn btn-secondary btn-sm" data-click="loadAutomodRules">Load Rules</button>
-                        </div>
-                    </div>
-                    <table style="margin-top:0.75rem;">
-                        <thead>
-                            <tr><th>Name</th><th>Type</th><th>Enabled</th><th>Priority</th><th>Actions</th><th>Controls</th></tr>
-                        </thead>
-                        <tbody id="automod-rules-tbody"></tbody>
-                    </table>
-                </div>
-                <div class="card" style="grid-column: span 2;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;">
-                        <h3>Rule Editor</h3>
-                        <span id="automod-editing" style="font-size:0.75rem;color:#777;font-family:monospace;"></span>
-                    </div>
-                    <div class="grid grid-2" style="gap:0.75rem;margin-top:0.75rem;">
-                        <input type="number" id="automod-rule-server-id" placeholder="Server ID">
-                        <input type="text" id="automod-rule-name" placeholder="Rule Name">
-                        <select id="automod-rule-type">
-                            <option value="keyword">Keyword</option>
-                            <option value="regex">Regex</option>
-                            <option value="message_spam">Message Spam</option>
-                            <option value="mention_spam">Mention Spam</option>
-                            <option value="invite_links">Invite Links</option>
-                            <option value="external_links">External Links</option>
-                            <option value="caps_percentage">Caps Percentage</option>
-                            <option value="mass_emoji">Mass Emoji</option>
-                            <option value="repeated_chars">Repeated Chars</option>
-                        </select>
-                        <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
-                            <label style="font-size:0.7rem; font-weight:800; color:#555;">ENABLED</label>
-                            <input type="checkbox" id="automod-rule-enabled" checked>
-                            <label style="font-size:0.7rem; font-weight:800; color:#555;">CHECK ALL</label>
-                            <input type="checkbox" id="automod-rule-check-all">
-                        </div>
-                        <input type="number" id="automod-rule-priority" placeholder="Priority">
-                        <input type="text" id="automod-exempt-roles" placeholder="Exempt Roles (comma IDs)">
-                        <input type="text" id="automod-exempt-channels" placeholder="Exempt Channels (comma IDs)">
-                    </div>
-                    <div class="grid grid-2" style="gap:0.75rem;margin-top:1rem;">
-                        <div>
-                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Mode</h4>
-                            <div id="automod-rule-mode-help" style="font-size:0.8rem;color:#888;">
-                                Keyword and regex rules can be edited with the helpers below. Other rule types use the JSON config field.
-                            </div>
-                        </div>
-                        <div>
-                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Keyword Helper</h4>
-                            <div id="automod-keyword-helper" style="display:flex;flex-direction:column;gap:0.5rem;">
-                                <input type="text" id="automod-keywords" placeholder="Keywords (comma separated)">
-                                <div style="display:flex;gap:0.75rem;align-items:center;">
-                                    <label style="font-size:0.7rem; font-weight:800; color:#555;">CASE</label>
-                                    <input type="checkbox" id="automod-keyword-case">
-                                    <label style="font-size:0.7rem; font-weight:800; color:#555;">WHOLE</label>
-                                    <input type="checkbox" id="automod-keyword-whole" checked>
+                                    <div>
+                                        <h4 style="font-size:14px;font-weight:600;margin-bottom:12px;">2FA Management</h4>
+                                        <div style="display:flex;flex-direction:column;gap:8px;">
+                                            <input type="password" id="admin-2fa-password" placeholder="Current password" autocomplete="current-password">
+                                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                                <button class="btn btn-secondary btn-sm" data-click="beginAdminOtpSetup">Set Up / Reset 2FA</button>
+                                                <button class="btn btn-outline btn-sm" data-click="regenerateAdminBackupCodes">Regenerate Backup Codes</button>
+                                            </div>
+                                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                                <input type="text" id="admin-disable-otp-code" placeholder="Current OTP or backup code" style="flex:1;min-width:200px;">
+                                                <button class="btn btn-danger btn-sm" data-click="disableAdminOtp">Disable 2FA</button>
+                                            </div>
+                                        </div>
+                                        <div id="admin-security-otp-setup" class="hidden" style="margin-top:16px;padding:12px;border:1px solid var(--border);border-radius:8px;">
+                                            <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+                                                <img id="admin-otp-qr" alt="QR Code" style="width:160px;height:160px;background:#fff;padding:8px;border-radius:6px;">
+                                                <div style="display:flex;flex-direction:column;gap:8px;flex:1;min-width:200px;">
+                                                    <div class="text-sm text-muted">Scan QR with authenticator, then verify.</div>
+                                                    <div id="admin-otp-secret" class="font-mono" style="word-break:break-all;"></div>
+                                                    <input type="text" id="admin-otp-verify-code" placeholder="Authenticator code">
+                                                    <button class="btn btn-primary btn-sm" data-click="verifyAdminOtpSetup">Verify 2FA Setup</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div id="admin-backup-codes" class="hidden" style="margin-top:16px;padding:12px;border:1px solid var(--border);border-radius:8px;">
+                                            <div class="text-sm text-muted" style="margin-bottom:8px;">Store these codes securely. Shown once.</div>
+                                            <pre id="admin-backup-codes-list" style="font-family:monospace;white-space:pre-wrap;"></pre>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <div>
-                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Regex Helper</h4>
-                            <div id="automod-regex-helper" style="display:flex;flex-direction:column;gap:0.5rem;">
-                                <textarea id="automod-regex-patterns" rows="4" placeholder="One pattern per line"></textarea>
-                                <div style="display:flex;gap:0.75rem;align-items:center;">
-                                    <label style="font-size:0.7rem; font-weight:800; color:#555;">CASE</label>
-                                    <input type="checkbox" id="automod-regex-case">
-                                    <label style="font-size:0.7rem; font-weight:800; color:#555;">MULTILINE</label>
-                                    <input type="checkbox" id="automod-regex-multiline">
+                    </div>
+                    <div class="inner-tab-content" id="inner-sec-ip">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg>Blocked IP Addresses</span>
+                                <button class="btn btn-danger btn-sm" data-click="showBlockIPModal">Block IP</button>
+                            </div>
+                            <div class="card-content" style="padding:0;"><table><thead><tr><th>IP Address</th><th>Reason</th><th>Blocked At</th><th>Expires</th><th>Blocked By</th><th class="text-right">Action</th></tr></thead><tbody id="blocked-ips-tbody"></tbody></table></div>
+                        </div>
+                    </div>
+                    <div class="inner-tab-content" id="inner-sec-usernames">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>Banned Username Patterns</span>
+                                <button class="btn btn-danger btn-sm" data-click="showBanUsernameModal">Add Pattern</button>
+                            </div>
+                            <div class="card-content" style="padding:0;"><table><thead><tr><th>Pattern</th><th>Type</th><th>Reason</th><th>Created By</th><th class="text-right">Action</th></tr></thead><tbody id="banned-usernames-tbody"></tbody></table></div>
+                        </div>
+                    </div>
+                    <div class="inner-tab-content" id="inner-sec-tokens">
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>API Access Tokens</span>
+                                <button class="btn btn-primary btn-sm" data-click="showCreateTokenModal">Create Token</button>
+                            </div>
+                            <div class="card-content" style="padding:0;">
+                                <table><thead><tr><th>Name</th><th>Token Prefix</th><th>IP Scope</th><th class="text-right">Requests</th><th class="text-right">Denied</th><th>Status</th><th>Last Used</th><th class="text-right">Actions</th></tr></thead><tbody id="access-tokens-tbody"></tbody></table>
+                            </div>
+                        </div>
+                        <div class="card hidden" id="access-token-detail">
+                            <div class="card-header">
+                                <span class="card-title" id="access-token-detail-title">Token Detail</span>
+                                <div style="display:flex;gap:8px;"><button class="btn btn-secondary btn-sm" data-click="refreshAccessTokenDetail">Refresh</button><button class="btn btn-outline btn-sm" data-click="closeAccessTokenDetail">Close</button></div>
+                            </div>
+                            <div class="card-content">
+                                <div class="grid-4" style="display:grid;gap:16px;margin-bottom:16px;">
+                                    <div><span class="text-xs text-muted">Requests</span><div class="stat-card-value" style="font-size:20px;" id="access-token-stat-requests">0</div></div>
+                                    <div><span class="text-xs text-muted">Distinct IPs</span><div class="stat-card-value" style="font-size:20px;" id="access-token-stat-ips">0</div></div>
+                                    <div><span class="text-xs text-muted">Denied</span><div class="stat-card-value" style="font-size:20px;" id="access-token-stat-denied">0</div></div>
+                                    <div><span class="text-xs text-muted">Last Used</span><div class="font-mono text-sm" id="access-token-stat-last-used">Never</div></div>
+                                </div>
+                                <div class="grid-2" style="display:grid;gap:16px;">
+                                    <div>
+                                        <h5 style="font-size:13px;font-weight:600;margin-bottom:8px;">Settings</h5>
+                                        <div style="display:flex;flex-direction:column;gap:8px;">
+                                            <input type="text" id="access-token-detail-name" placeholder="Token name">
+                                            <input type="text" id="access-token-detail-description" placeholder="Description">
+                                            <input type="datetime-local" id="access-token-detail-expires">
+                                            <select id="access-token-detail-scope-mode"><option value="none">No IP Scope</option><option value="monitor">Monitor</option><option value="enforce">Enforce</option></select>
+                                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                                <button class="btn btn-primary btn-sm" data-click="saveAccessTokenSettings">Save</button>
+                                                <button class="btn btn-secondary btn-sm" data-click="clearAccessTokenExpiry">Clear Expiry</button>
+                                                <button class="btn btn-danger btn-sm" data-click="rotateAccessToken">Rotate</button>
+                                                <button class="btn btn-secondary btn-sm hidden" data-click="unrevokeSelectedAccessToken" id="btn-unrevoke-token">Unrevoke</button>
+                                                <button class="btn btn-outline btn-sm" data-click="revokeSelectedAccessToken" id="btn-revoke-token">Revoke</button>
+                                            </div>
+                                            <div id="access-token-rotated" class="text-sm text-muted"></div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h5 style="font-size:13px;font-weight:600;margin-bottom:8px;">Metadata</h5>
+                                        <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted-foreground);">
+                                            <div><strong>Created:</strong> <span id="access-token-detail-created"></span></div>
+                                            <div><strong>First Used:</strong> <span id="access-token-detail-first-used"></span></div>
+                                            <div><strong>Last IP:</strong> <span id="access-token-detail-last-ip"></span></div>
+                                            <div><strong>Last Path:</strong> <span id="access-token-detail-last-path"></span></div>
+                                            <div><strong>Last UA:</strong> <span id="access-token-detail-last-ua"></span></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="grid-2" style="display:grid;gap:16px;margin-top:16px;">
+                                    <div>
+                                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                            <h5 style="font-size:13px;font-weight:600;">IP Scopes</h5>
+                                        </div>
+                                        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                                            <select id="access-token-scope-type" style="width:100px;"><option value="ip">IP</option><option value="cidr">CIDR</option></select>
+                                            <input type="text" id="access-token-scope-value" placeholder="203.0.113.5" style="flex:1;">
+                                            <button class="btn btn-primary btn-sm" data-click="addAccessTokenScope">Add</button>
+                                        </div>
+                                        <table><thead><tr><th>Type</th><th>Value</th><th class="text-right">Action</th></tr></thead><tbody id="access-token-scopes-tbody"></tbody></table>
+                                    </div>
+                                    <div>
+                                        <h5 style="font-size:13px;font-weight:600;margin-bottom:8px;">Top IPs</h5>
+                                        <table><thead><tr><th>IP</th><th class="text-right">Requests</th><th class="text-right">Denied</th><th>Last Seen</th></tr></thead><tbody id="access-token-top-ips-tbody"></tbody></table>
+                                    </div>
+                                </div>
+                                <div class="grid-2" style="display:grid;gap:16px;margin-top:16px;">
+                                    <div><h5 style="font-size:13px;font-weight:600;margin-bottom:8px;">Top Paths</h5><table><thead><tr><th>Path</th><th>Method</th><th class="text-right">Requests</th><th>Last Seen</th></tr></thead><tbody id="access-token-top-paths-tbody"></tbody></table></div>
+                                    <div><h5 style="font-size:13px;font-weight:600;margin-bottom:8px;">Recent Activity</h5><table><thead><tr><th>When</th><th>IP</th><th>Request</th><th>Status</th></tr></thead><tbody id="access-token-events-tbody"></tbody></table></div>
                                 </div>
                             </div>
                         </div>
-                        <div id="automod-config-section" style="grid-column: span 2;">
-                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Config JSON</h4>
-                            <textarea id="automod-config-json" rows="4" placeholder='{"keywords":["spam"],"case_sensitive":false,"whole_word":true}'></textarea>
+                        <div style="margin-top:16px;">
+                            <button class="btn btn-danger" data-click="globalSessionPurge">PURGE ALL SESSIONS</button>
                         </div>
-                        <div style="grid-column: span 2;">
-                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Actions JSON</h4>
-                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
-                                <button class="btn btn-secondary btn-sm" data-click="automodPresetDelete">Delete Only</button>
-                                <button class="btn btn-secondary btn-sm" data-click="automodPresetAlert">Delete + Alert</button>
-                                <button class="btn btn-secondary btn-sm" data-click="automodPresetTimeout">Timeout + Alert</button>
+                    </div>
+                </div>
+
+                <!-- ===== TELEMETRY TAB ===== -->
+                <div class="tab-content" id="tab-telemetry">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Telemetry & Performance</span>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <select id="tel-hours" style="width:120px;"><option value="1">1 Hour</option><option value="6">6 Hours</option><option value="24" selected>24 Hours</option><option value="168">7 Days</option></select>
+                                <button class="btn btn-secondary btn-sm" data-click="refreshTelemetryStats">Refresh</button>
+                                <button class="btn btn-outline btn-sm" data-click="openExport">Export</button>
+                                <button class="btn btn-danger btn-sm" data-click="resetTelemetry">Reset</button>
                             </div>
-                            <textarea id="automod-actions-json" rows="4" placeholder='[{"action_type":"delete_message"},{"action_type":"alert_moderators"}]'></textarea>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <div style="overflow-x:auto;">
+                                <table><thead><tr><th>Endpoint</th><th>Method</th><th>Hits</th><th>Avg (ms)</th><th>Min</th><th>Max</th><th>P95</th><th>P99</th><th>Errors</th><th>Error Rate</th></tr></thead><tbody id="telemetry-stats-tbody"></tbody></table>
+                            </div>
                         </div>
                     </div>
-                    <div style="display:flex;gap:0.75rem;align-items:center;margin-top:1rem;flex-wrap:wrap;">
-                        <button class="btn btn-primary" data-click="saveAutomodRule">Save Rule</button>
-                        <button class="btn btn-outline" data-click="resetAutomodRule">Reset</button>
+                </div>
+
+                <!-- ===== LOGS TAB ===== -->
+                <div class="tab-content" id="tab-logs">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>System Logs</span>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <select id="log-file-select" style="width:250px;"></select>
+                                <input type="text" id="log-search" placeholder="Grep..." style="width:150px;">
+                                <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;"><input type="checkbox" id="log-auto-refresh" checked> LIVE</label>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div id="log-viewer">Select a log file...</div>
+                            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+                                <button class="btn btn-outline btn-sm" data-click="scrollLogTop">Top</button>
+                                <button class="btn btn-outline btn-sm" data-click="scrollLogBottom">Bottom</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== DATABASE TAB ===== -->
+                <div class="tab-content" id="tab-database">
+                    <div class="stats-grid" id="db-stats-grid">
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Applied</span></div><div class="stat-card-value" id="migration-applied-count">-</div></div>
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Pending</span></div><div class="stat-card-value" id="migration-pending-count">-</div></div>
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Failed</span></div><div class="stat-card-value" id="migration-failed-count">-</div></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>Database Migrations</span>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <button class="btn btn-secondary btn-sm" data-click="refreshMigrations">Refresh</button>
+                                <button class="btn btn-outline btn-sm" data-click="showEmergencyModal">Emergency Override</button>
+                            </div>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <table><thead><tr><th>Version</th><th>Name</th><th>Status</th><th>Irreversible</th><th>Applied At</th><th class="text-right">Actions</th></tr></thead><tbody id="migrations-tbody"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== APPROVALS TAB ===== -->
+                <div class="tab-content" id="tab-approvals">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Approval Requests</span>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <select id="approval-status-filter" style="width:160px;"><option value="">All Statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
+                                <button class="btn btn-secondary btn-sm" data-click="refreshApprovals">Refresh</button>
+                            </div>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <table><thead><tr><th>ID</th><th>Action</th><th>Requested By</th><th>Status</th><th>Approvals</th><th>Created</th><th class="text-right">Actions</th></tr></thead><tbody id="approvals-tbody"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== AUDIT TAB ===== -->
+                <div class="tab-content" id="tab-audit">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>Audit Log</span>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                                <select id="audit-action-filter" style="width:160px;"><option value="">All Actions</option><option value="login">Login</option><option value="user">User</option><option value="role">Role</option><option value="approval">Approval</option><option value="config">Config</option></select>
+                                <select id="audit-status-filter" style="width:140px;"><option value="">All Status</option><option value="success">Success</option><option value="failure">Failure</option></select>
+                                <button class="btn btn-secondary btn-sm" data-click="refreshAuditLog">Refresh</button>
+                                <button class="btn btn-outline btn-sm" data-click="exportAuditLog">Export</button>
+                            </div>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <table><thead><tr><th>Timestamp</th><th>Admin</th><th>Action</th><th>Target</th><th>Details</th><th>Status</th></tr></thead><tbody id="audit-tbody"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== AUTOMOD TAB ===== -->
+                <div class="tab-content" id="tab-automod">
+                    <div class="grid-2" style="display:grid;gap:16px;">
+                        <div class="card">
+                            <div class="card-header"><span class="card-title">AutoMod Configuration</span></div>
+                            <div class="card-content">
+                                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                                    <label style="font-size:12px;font-weight:600;color:var(--muted-foreground);margin:0;">ENABLED</label>
+                                    <input type="checkbox" id="automod-enabled" style="width:auto;">
+                                    <button class="btn btn-primary btn-sm" data-click="saveAutomodConfig">Save Config</button>
+                                </div>
+                                <div class="grid-2" style="display:grid;gap:12px;">
+                                    <div><h4 style="font-size:13px;color:var(--muted-foreground);margin-bottom:8px;">OpenAI</h4><div style="display:flex;flex-direction:column;gap:8px;"><input type="text" id="automod-openai-key" placeholder="API Key"><input type="text" id="automod-openai-model" placeholder="Model"><input type="text" id="automod-openai-url" placeholder="API URL"><input type="number" step="0.01" min="0" max="1" id="automod-openai-threshold" placeholder="Threshold"></div></div>
+                                    <div><h4 style="font-size:13px;color:var(--muted-foreground);margin-bottom:8px;">Perspective</h4><div style="display:flex;flex-direction:column;gap:8px;"><input type="text" id="automod-perspective-key" placeholder="API Key"><input type="number" step="0.01" min="0" max="1" id="automod-perspective-threshold" placeholder="Threshold"><input type="text" id="automod-perspective-attributes" placeholder="Attributes (comma separated)"></div></div>
+                                    <div style="grid-column:span 2;"><h4 style="font-size:13px;color:var(--muted-foreground);margin-bottom:8px;">Custom Provider</h4><div class="grid-2" style="display:grid;gap:8px;"><input type="text" id="automod-custom-endpoint" placeholder="Endpoint URL"><input type="text" id="automod-custom-key" placeholder="API Key"><input type="text" id="automod-custom-auth-header" placeholder="Auth Header"><input type="text" id="automod-custom-auth-prefix" placeholder="Auth Prefix"><input type="number" id="automod-custom-timeout" placeholder="Timeout (s)"><input type="number" step="0.01" min="0" max="1" id="automod-custom-threshold" placeholder="Threshold"><input type="text" id="automod-custom-headers" placeholder='Headers JSON'></div></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">AutoMod Rules</span>
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <input type="number" id="automod-server-id" placeholder="Server ID" style="width:140px;">
+                                    <button class="btn btn-secondary btn-sm" data-click="loadAutomodRules">Load</button>
+                                </div>
+                            </div>
+                            <div class="card-content" style="padding:0;">
+                                <table><thead><tr><th>Name</th><th>Type</th><th>Enabled</th><th>Priority</th><th>Actions</th><th class="text-right">Controls</th></tr></thead><tbody id="automod-rules-tbody"></tbody></table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Rule Editor</span>
+                            <span id="automod-editing" class="text-sm text-muted"></span>
+                        </div>
+                        <div class="card-content">
+                            <div class="grid-2" style="display:grid;gap:12px;">
+                                <input type="number" id="automod-rule-server-id" placeholder="Server ID">
+                                <input type="text" id="automod-rule-name" placeholder="Rule Name">
+                                <select id="automod-rule-type"><option value="keyword">Keyword</option><option value="regex">Regex</option><option value="message_spam">Message Spam</option><option value="mention_spam">Mention Spam</option><option value="invite_links">Invite Links</option><option value="external_links">External Links</option><option value="caps_percentage">Caps Percentage</option><option value="mass_emoji">Mass Emoji</option><option value="repeated_chars">Repeated Chars</option></select>
+                                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;"><label style="font-size:12px;font-weight:600;color:var(--muted-foreground);margin:0;">ENABLED</label><input type="checkbox" id="automod-rule-enabled" checked style="width:auto;"><label style="font-size:12px;font-weight:600;color:var(--muted-foreground);margin:0;">CHECK ALL</label><input type="checkbox" id="automod-rule-check-all" style="width:auto;"></div>
+                                <input type="number" id="automod-rule-priority" placeholder="Priority">
+                                <input type="text" id="automod-exempt-roles" placeholder="Exempt Roles (comma IDs)">
+                                <input type="text" id="automod-exempt-channels" placeholder="Exempt Channels (comma IDs)">
+                            </div>
+                            <div class="grid-2" style="display:grid;gap:12px;margin-top:16px;">
+                                <div><h4 style="font-size:13px;color:var(--muted-foreground);margin-bottom:8px;">Mode</h4><div id="automod-rule-mode-help" class="text-sm text-muted">Keyword and regex rules can use helpers below.</div></div>
+                                <div><h4 style="font-size:13px;color:var(--muted-foreground);margin-bottom:8px;">Keyword Helper</h4><div id="automod-keyword-helper" style="display:flex;flex-direction:column;gap:8px;"><input type="text" id="automod-keywords" placeholder="Keywords (comma separated)"><div style="display:flex;gap:8px;align-items:center;"><label style="font-size:12px;margin:0;">Case</label><input type="checkbox" id="automod-keyword-case" style="width:auto;"><label style="font-size:12px;margin:0;">Whole</label><input type="checkbox" id="automod-keyword-whole" checked style="width:auto;"></div></div></div>
+                                <div><h4 style="font-size:13px;color:var(--muted-foreground);margin-bottom:8px;">Regex Helper</h4><div id="automod-regex-helper" style="display:flex;flex-direction:column;gap:8px;"><textarea id="automod-regex-patterns" rows="4" placeholder="One pattern per line"></textarea><div style="display:flex;gap:8px;align-items:center;"><label style="font-size:12px;margin:0;">Case</label><input type="checkbox" id="automod-regex-case" style="width:auto;"><label style="font-size:12px;margin:0;">Multiline</label><input type="checkbox" id="automod-regex-multiline" style="width:auto;"></div></div></div>
+                                <div style="grid-column:span 2;"><h4 style="font-size:13px;color:var(--muted-foreground);margin-bottom:8px;">Config JSON</h4><textarea id="automod-config-json" rows="4" placeholder='{"keywords":["spam"],"case_sensitive":false}'></textarea></div>
+                                <div style="grid-column:span 2;"><h4 style="font-size:13px;color:var(--muted-foreground);margin-bottom:8px;">Actions JSON</h4><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;"><button class="btn btn-secondary btn-sm" data-click="automodPresetDelete">Delete Only</button><button class="btn btn-secondary btn-sm" data-click="automodPresetAlert">Delete + Alert</button><button class="btn btn-secondary btn-sm" data-click="automodPresetTimeout">Timeout + Alert</button></div><textarea id="automod-actions-json" rows="4" placeholder='[{"action_type":"delete_message"}]'></textarea></div>
+                            </div>
+                            <div style="display:flex;gap:8px;margin-top:16px;"><button class="btn btn-primary" data-click="saveAutomodRule">Save Rule</button><button class="btn btn-outline" data-click="resetAutomodRule">Reset</button></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== BOTS TAB ===== -->
+                <div class="tab-content" id="tab-bots">
+                    <div class="stats-grid" id="bots-stats-grid">
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Total Bots</span></div><div class="stat-card-value" id="bot-stat-total">0</div></div>
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Approved Installations</span></div><div class="stat-card-value" id="bot-stat-approved">0</div></div>
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Pending Requests</span></div><div class="stat-card-value" id="bot-stat-pending">0</div></div>
+                        <div class="stat-card"><div class="stat-card-header"><span class="stat-card-label">Servers with Bots</span></div><div class="stat-card-value" id="bot-stat-servers">0</div></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>Applications & Bots</span>
+                            <button class="btn btn-secondary btn-sm" data-click="botsRefresh">Refresh</button>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <table><thead><tr><th>Application</th><th>Bot ID</th><th>Owner</th><th>Approved Servers</th><th>Pending Requests</th><th>Created</th></tr></thead><tbody id="bots-table-body"></tbody></table>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Pending Bot Requests</span>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <table><thead><tr><th>Application</th><th>Server</th><th>Requester</th><th>Reason</th><th>Status</th><th>Requested</th></tr></thead><tbody id="bots-requests-body"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== MIGRATIONS TAB ===== -->
+                <div class="tab-content" id="tab-migrations">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Database Migrations</span>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <button class="btn btn-secondary btn-sm" data-click="refreshMigrations">Refresh</button>
+                                <button class="btn btn-outline btn-sm" data-click="showEmergencyModal">Emergency Override</button>
+                            </div>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <table><thead><tr><th>Version</th><th>Name</th><th>Status</th><th>Irreversible</th><th>Applied At</th><th class="text-right">Actions</th></tr></thead><tbody id="migrations-tbody-mig"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== PLEXIJOIN TAB ===== -->
+                <div class="tab-content" id="tab-plexijoin">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>PlexiJoin Federation</span>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <button class="btn btn-primary btn-sm" data-click="showCreateConnectionModal">Add Connection</button>
+                                <button class="btn btn-secondary btn-sm" data-click="refreshPlexiJoin">Refresh</button>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div id="plexijoin-status" style="margin-bottom:16px;"></div>
+                            <div id="plexijoin-connections"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== LICENSE TAB ===== -->
+                <div class="tab-content" id="tab-license">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><path d="M9 21V9"/></svg>License</span>
+                        </div>
+                        <div class="card-content" id="license-content">
+                            <div id="license-loading" class="text-muted">Loading license info...</div>
+                            <div id="license-info" class="hidden"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== ACCOUNT TAB ===== -->
+                <div class="tab-content" id="tab-account">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>My Account</span>
+                            <button class="btn btn-outline btn-sm" data-click="logout">Logout</button>
+                        </div>
+                        <div class="card-content">
+                            <div class="grid-2" style="display:grid;gap:16px;">
+                                <div>
+                                    <span class="text-xs text-muted" style="font-weight:600;">Username</span>
+                                    <p class="font-mono" id="account-username">-</p>
+                                </div>
+                                <div>
+                                    <span class="text-xs text-muted" style="font-weight:600;">Role</span>
+                                    <p class="font-mono" id="account-role">-</p>
+                                </div>
+                                <div>
+                                    <span class="text-xs text-muted" style="font-weight:600;">Last Login</span>
+                                    <p class="font-mono" id="account-last-login">-</p>
+                                </div>
+                                <div>
+                                    <span class="text-xs text-muted" style="font-weight:600;">2FA Status</span>
+                                    <p class="font-mono" id="account-2fa-status">-</p>
+                                </div>
+                            </div>
+                            <div style="margin-top:24px;">
+                                <h4 style="font-size:14px;font-weight:600;margin-bottom:12px;">Change Password</h4>
+                                <div style="display:flex;flex-direction:column;gap:8px;max-width:400px;">
+                                    <input type="password" id="account-current-password" placeholder="Current password" autocomplete="current-password">
+                                    <input type="password" id="account-new-password" placeholder="New password" autocomplete="new-password">
+                                    <div><button class="btn btn-primary btn-sm" data-click="changeOwnPassword">Change Password</button></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div><!-- /main-area -->
+        </div><!-- /main-content -->
+    </div><!-- /app-layout -->
+
+    <!-- Export Modal -->
+    <div class="modal-overlay" id="export-modal">
+        <div class="modal">
+            <div class="modal-header"><span class="modal-title">Export Telemetry</span><button class="btn btn-ghost" data-click="closeExport"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+            <div class="modal-body">
+                <div style="margin-bottom:16px;">
+                    <label style="margin-bottom:8px;">Select Format</label>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:var(--secondary);padding:12px;border-radius:6px;border:1px solid var(--border);"><input type="radio" name="export_format" value="json" checked><span>JSON Data</span></label>
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:var(--secondary);padding:12px;border-radius:6px;border:1px solid var(--border);"><input type="radio" name="export_format" value="csv"><span>CSV Spreadsheet</span></label>
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:var(--secondary);padding:12px;border-radius:6px;border:1px solid var(--border);"><input type="radio" name="export_format" value="txt"><span>Plain Text</span></label>
                     </div>
                 </div>
             </div>
-        </div>
-
-        <div id="tab-logs" class="tab-content hidden">
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                    <div style="display:flex;gap:1rem;align-items:center;"><h3>System Logs</h3><select id="log-file-select" style="min-width:250px;"></select></div>
-                    <div style="display:flex;gap:0.5rem;align-items:center;"><input type="text" id="log-search" placeholder="Grep..."><label style="font-size:0.8rem;"><input type="checkbox" id="log-auto-refresh"> LIVE</label></label></div>
-                </div>
-                <div id="log-viewer">Select a log file...</div>
-                <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem;"><button class="btn btn-outline" data-click="scrollLogTop">Top</button><button class="btn btn-outline" data-click="scrollLogBottom">Bottom</button></div>
-            </div>
-        </div>
-
-        <div id="tab-roles" class="tab-content hidden">
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;">
-                    <h3>Admin Roles</h3>
-                    <button class="btn btn-primary btn-sm" data-click="createRole">Create Role</button>
-                </div>
-                <table>
-                    <thead>
-                        <tr><th>Name</th><th>Description</th><th>Permissions</th><th>System</th><th>Actions</th></tr>
-                    </thead>
-                    <tbody id="roles-tbody"></tbody>
-                </table>
-            </div>
-            <div id="role-detail" class="card hidden">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <h2 id="role-detail-title"></h2>
-                    <button class="btn btn-outline" data-click="closeRoleDetail">Close</button>
-                </div>
-                <div style="margin:1rem 0;">
-                    <label style="font-size:0.7rem; font-weight:800; color:#555;">DESCRIPTION</label>
-                    <input type="text" id="role-description-input" style="width:100%;margin-top:0.25rem;">
-                </div>
-                <div style="margin:1rem 0;">
-                    <label style="font-size:0.7rem; font-weight:800; color:#555;">PERMISSIONS (JSON)</label>
-                    <textarea id="role-permissions-input" rows="10" style="width:100%;margin-top:0.25rem;font-family:monospace;"></textarea>
-                </div>
-                <div style="display:flex;gap:0.5rem;">
-                    <button class="btn btn-primary" data-click="updateRole">Update Role</button>
-                    <button class="btn btn-danger" data-click="deleteRole">Delete Role</button>
-                </div>
-            </div>
-        </div>
-
-        <div id="tab-approvals" class="tab-content hidden">
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;">
-                    <h3>Approval Requests</h3>
-                    <div style="display:flex;gap:0.5rem;align-items:center;">
-                        <select id="approval-status-filter" style="min-width:160px;">
-                            <option value="">All Statuses</option>
-                            <option value="pending">Pending</option>
-                            <option value="approved">Approved</option>
-                            <option value="rejected">Rejected</option>
-                        </select>
-                        <button class="btn btn-secondary btn-sm" data-click="refreshApprovals">Refresh</button>
-                    </div>
-                </div>
-                <table>
-                    <thead>
-                        <tr><th>ID</th><th>Action</th><th>Requested By</th><th>Status</th><th>Approvals</th><th>Created</th><th>Actions</th></tr>
-                    </thead>
-                    <tbody id="approvals-tbody"></tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Export Modal -->
-        <div id="export-modal" class="card hidden" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1000;width:400px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h3>Export Telemetry</h3>
-                <button class="btn btn-outline btn-sm" data-click="closeExport">✕</button>
-            </div>
-            
-            <div style="margin-bottom:1.5rem;">
-                <label style="display:block;color:#888;font-size:0.75rem;font-weight:800;margin-bottom:0.5rem;text-transform:uppercase;">Select Format</label>
-                <div style="display:flex;flex-direction:column;gap:0.5rem;">
-                    <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;background:#1c1c1e;padding:0.75rem;border-radius:4px;border:1px solid var(--border);">
-                        <input type="radio" name="export_format" value="json" checked>
-                        <span style="font-weight:600;">JSON Data</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;background:#1c1c1e;padding:0.75rem;border-radius:4px;border:1px solid var(--border);">
-                        <input type="radio" name="export_format" value="csv">
-                        <span style="font-weight:600;">CSV Spreadsheet</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;background:#1c1c1e;padding:0.75rem;border-radius:4px;border:1px solid var(--border);">
-                        <input type="radio" name="export_format" value="txt">
-                        <span style="font-weight:600;">Plain Text Report</span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="grid grid-2">
-                <button class="btn btn-secondary" data-click="triggerCopy">Copy to Clipboard</button>
-                <button class="btn btn-primary" data-click="triggerDownload">Download File</button>
-            </div>
-        </div>
-
-        <div id="tab-bots" class="tab-content hidden">
-        <h2>Bot Management</h2>
-        <div id="bots-loading" class="status-card" style="text-align: center; padding: 2rem;">Loading bot data...</div>
-        <div id="bots-content" style="display: none;">
-            <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
-                <div class="status-card" style="flex: 1; min-width: 150px;">
-                    <div class="stat-label">Total Bots</div>
-                    <div class="stat-value" id="bot-stat-total">0</div>
-                </div>
-                <div class="status-card" style="flex: 1; min-width: 150px;">
-                    <div class="stat-label">Approved Installations</div>
-                    <div class="stat-value" id="bot-stat-approved">0</div>
-                </div>
-                <div class="status-card" style="flex: 1; min-width: 150px;">
-                    <div class="stat-label">Pending Requests</div>
-                    <div class="stat-value" id="bot-stat-pending">0</div>
-                </div>
-                <div class="status-card" style="flex: 1; min-width: 150px;">
-                    <div class="stat-label">Servers with Bots</div>
-                    <div class="stat-value" id="bot-stat-servers">0</div>
-                </div>
-            </div>
-            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
-                <h3 style="flex: 1;">Applications & Bots</h3>
-                <div style="display: flex; gap: 0.5rem;">
-                    <button class="btn btn-secondary btn-sm" data-click="bots-refresh">Refresh</button>
-                </div>
-            </div>
-            <div style="overflow-x: auto;">
-                <table class="data-table" id="bots-table">
-                    <thead>
-                        <tr>
-                            <th>Application</th>
-                            <th>Bot ID</th>
-                            <th>Owner</th>
-                            <th>Approved Servers</th>
-                            <th>Pending Requests</th>
-                            <th>Created</th>
-                        </tr>
-                    </thead>
-                    <tbody id="bots-table-body">
-                        <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No bots found</td></tr>
-                    </tbody>
-                </table>
-            </div>
-            <div style="display: flex; gap: 1rem; margin-top: 2rem; margin-bottom: 1rem;">
-                <h3 style="flex: 1;">Pending Bot Requests</h3>
-            </div>
-            <div style="overflow-x: auto;">
-                <table class="data-table" id="bots-requests-table">
-                    <thead>
-                        <tr>
-                            <th>Application</th>
-                            <th>Server</th>
-                            <th>Requester</th>
-                            <th>Reason</th>
-                            <th>Status</th>
-                            <th>Requested</th>
-                        </tr>
-                    </thead>
-                    <tbody id="bots-requests-body">
-                        <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No requests found</td></tr>
-                    </tbody>
-                </table>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" data-click="triggerCopy">Copy</button>
+                <button class="btn btn-primary" data-click="triggerDownload">Download</button>
             </div>
         </div>
     </div>
-    <div id="tab-migrations" class="tab-content hidden">
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;">
-                    <h3>Database Migrations</h3>
-                    <div style="display:flex;gap:0.5rem;align-items:center;">
-                        <button class="btn btn-secondary btn-sm" data-click="refreshMigrations">Refresh</button>
-                        <a href="#" style="color:var(--warn);text-decoration:none;font-size:0.8rem;" data-click="showEmergencyModal">Emergency Override</a>
-                    </div>
+
+    <!-- Run Migration Modal -->
+    <div class="modal-overlay" id="migration-run-modal">
+        <div class="modal">
+            <div class="modal-header"><span class="modal-title">Run Migration</span><button class="btn btn-ghost" data-click="closeMigrationModal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+            <div class="modal-body" id="migration-run-modal-content"></div>
+            <div class="modal-footer"><button class="btn btn-secondary" data-click="closeMigrationModal">Cancel</button><button class="btn btn-primary" id="migration-run-confirm-btn" data-click="confirmRunMigration">Run Migration</button></div>
+        </div>
+    </div>
+
+    <!-- Migration Details Modal -->
+    <div class="modal-overlay" id="migration-details-modal">
+        <div class="modal">
+            <div class="modal-header"><span class="modal-title">Migration Details</span><button class="btn btn-ghost" data-click="closeMigrationModal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+            <div class="modal-body" id="migration-details-modal-content"></div>
+            <div class="modal-footer"><button class="btn btn-secondary" data-click="closeMigrationModal">Close</button></div>
+        </div>
+    </div>
+
+    <!-- Emergency Override Modal -->
+    <div class="modal-overlay" id="migration-emergency-modal">
+        <div class="modal">
+            <div class="modal-header"><span class="modal-title">Emergency Override</span><button class="btn btn-ghost" data-click="closeMigrationModal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+            <div class="modal-body">
+                <div style="background:color-mix(in oklch, var(--destructive) 10%, transparent);border:1px solid var(--destructive);border-radius:8px;padding:16px;margin-bottom:16px;">
+                    <h3 style="color:var(--destructive);margin-bottom:8px;">Warning</h3>
+                    <p class="text-sm">Emergency override tokens bypass the uptime delay for irreversible migrations. Use only in emergencies.</p>
                 </div>
-
-                <div class="grid" style="margin-bottom:1rem;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
-                    <div class="card" style="background:#1a1a1c;padding:1rem;border-radius:3px;border:1px solid var(--border);">
-                        <div class="stat-value" id="migration-applied-count" style="font-size:1.5rem;font-weight:700;color:var(--accent);">-</div>
-                        <div class="stat-label" style="font-size:0.8rem;color:#888;margin-top:0.25rem;">Applied</div>
-                    </div>
-                    <div class="card" style="background:#1a1a1c;padding:1rem;border-radius:3px;border:1px solid var(--border);">
-                        <div class="stat-value" id="migration-pending-count" style="font-size:1.5rem;font-weight:700;color:var(--accent);">-</div>
-                        <div class="stat-label" style="font-size:0.8rem;color:#888;margin-top:0.25rem;">Pending</div>
-                    </div>
-                    <div class="card" style="background:#1a1a1c;padding:1rem;border-radius:3px;border:1px solid var(--border);">
-                        <div class="stat-value" id="migration-failed-count" style="font-size:1.5rem;font-weight:700;color:var(--accent);">-</div>
-                        <div class="stat-label" style="font-size:0.8rem;color:#888;margin-top:0.25rem;">Failed</div>
-                    </div>
+                <div style="margin-bottom:12px;">
+                    <label>Reason</label>
+                    <input type="text" id="migration-emergency-reason" placeholder="Explain why you need emergency access">
                 </div>
-
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Version</th><th>Name</th><th>Status</th><th>Irreversible</th><th>Applied At</th><th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="migrations-tbody"></tbody>
-                </table>
+                <div style="margin-bottom:12px;">
+                    <label>Expires In (minutes)</label>
+                    <input type="number" id="migration-emergency-expires" value="30" min="5" max="120">
+                </div>
             </div>
-        </div>
-
-        <!-- Run Migration Modal -->
-        <div id="migration-run-modal" class="card hidden" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1000;width:500px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h3>Run Migration</h3>
-                <button class="btn btn-outline btn-sm" data-click="closeMigrationModal">Close</button>
-            </div>
-            <div id="migration-run-modal-content"></div>
-            <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem;">
-                <button class="btn btn-secondary" data-click="closeMigrationModal">Cancel</button>
-                <button class="btn btn-primary" id="migration-run-confirm-btn" data-click="confirmRunMigration">Run Migration</button>
-            </div>
-        </div>
-
-        <!-- Migration Details Modal -->
-        <div id="migration-details-modal" class="card hidden" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1000;width:500px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h3>Migration Details</h3>
-                <button class="btn btn-outline btn-sm" data-click="closeMigrationModal">Close</button>
-            </div>
-            <div id="migration-details-modal-content"></div>
-            <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem;">
-                <button class="btn btn-secondary" data-click="closeMigrationModal">Close</button>
-            </div>
-        </div>
-
-        <!-- Emergency Override Modal -->
-        <div id="migration-emergency-modal" class="card hidden" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1000;width:500px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h3>Emergency Override</h3>
-                <button class="btn btn-outline btn-sm" data-click="closeMigrationModal">Close</button>
-            </div>
-            <div style="background:rgba(255,68,68,0.1);border:1px solid var(--bad);border-radius:4px;padding:1rem;margin-bottom:1rem;">
-                <h3 style="color:var(--bad);margin-bottom:0.5rem;">Warning</h3>
-                <p style="font-size:0.85rem;">Emergency override tokens bypass the uptime delay for irreversible migrations. Use only in emergencies.</p>
-            </div>
-            <div style="margin-bottom:1rem;">
-                <label style="display:block;color:#888;font-size:0.85rem;margin-bottom:0.5rem;">Reason</label>
-                <input type="text" id="migration-emergency-reason" placeholder="Explain why you need emergency access" style="width:100%;padding:0.75rem;background:#1a1a1c;border:1px solid var(--border);border-radius:3px;color:#fff;">
-            </div>
-            <div style="margin-bottom:1rem;">
-                <label style="display:block;color:#888;font-size:0.85rem;margin-bottom:0.5rem;">Expires In (minutes)</label>
-                <input type="number" id="migration-emergency-expires" value="30" min="5" max="120" style="width:100%;padding:0.75rem;background:#1a1a1c;border:1px solid var(--border);border-radius:3px;color:#fff;">
-            </div>
-            <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
+            <div class="modal-footer">
                 <button class="btn btn-secondary" data-click="closeMigrationModal">Cancel</button>
                 <button class="btn btn-danger" data-click="generateEmergencyToken">Generate Token</button>
             </div>
         </div>
+    </div>
 
-        <!-- Create Admin User Modal -->
-        <div id="admin-user-modal" class="card hidden" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1000;width:500px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h3 id="admin-user-modal-title">Create Admin User</h3>
-                <button class="btn btn-outline btn-sm" data-click="closeAdminUserModal">Close</button>
+    <!-- Create Admin User Modal -->
+    <div class="modal-overlay" id="admin-user-modal">
+        <div class="modal">
+            <div class="modal-header"><span class="modal-title" id="admin-user-modal-title">Create Admin User</span><button class="btn btn-ghost" data-click="closeAdminUserModal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px;"><label>Username</label><input type="text" id="admin-user-username" placeholder="Username"></div>
+                <div style="margin-bottom:12px;"><label>Email</label><input type="email" id="admin-user-email" placeholder="Email address"></div>
+                <div style="margin-bottom:12px;"><label>Password</label><input type="password" id="admin-user-password" placeholder="Password" autocomplete="new-password"></div>
+                <div style="margin-bottom:12px;"><label>Role</label><select id="admin-user-role"><option value="admin">Admin</option><option value="moderator">Moderator</option><option value="support">Support</option></select></div>
             </div>
-            <div style="margin-bottom:1rem;">
-                <label style="display:block;color:#888;font-size:0.85rem;margin-bottom:0.5rem;">Username</label>
-                <input type="text" id="admin-user-username" placeholder="Username" style="width:100%;padding:0.75rem;background:#1a1a1c;border:1px solid var(--border);border-radius:3px;color:#fff;">
+            <div class="modal-footer"><button class="btn btn-secondary" data-click="closeAdminUserModal">Cancel</button><button class="btn btn-primary" data-click="saveAdminUser">Save</button></div>
+        </div>
+    </div>
+
+    <!-- Block IP Modal -->
+    <div class="modal-overlay" id="block-ip-modal">
+        <div class="modal">
+            <div class="modal-header"><span class="modal-title">Block IP Address</span><button class="btn btn-ghost" data-click="closeBlockIPModal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px;"><label>IP Address</label><input type="text" id="block-ip-val" placeholder="192.168.1.100 or CIDR range"></div>
+                <div style="margin-bottom:12px;"><label>Duration</label><select id="block-ip-duration"><option value="1h">1 Hour</option><option value="24h">24 Hours</option><option value="7d">7 Days</option><option value="30d">30 Days</option><option value="permanent">Permanent</option></select></div>
+                <div style="margin-bottom:12px;"><label>Reason</label><textarea id="block-ip-reason" placeholder="Reason for blocking this IP" rows="3"></textarea></div>
             </div>
-            <div style="margin-bottom:1rem;">
-                <label style="display:block;color:#888;font-size:0.85rem;margin-bottom:0.5rem;">Email</label>
-                <input type="email" id="admin-user-email" placeholder="Email address" style="width:100%;padding:0.75rem;background:#1a1a1c;border:1px solid var(--border);border-radius:3px;color:#fff;">
+            <div class="modal-footer"><button class="btn btn-secondary" data-click="closeBlockIPModal">Cancel</button><button class="btn btn-danger" data-click="confirmBlockIP">Block IP</button></div>
+        </div>
+    </div>
+
+    <!-- Ban Username Modal -->
+    <div class="modal-overlay" id="ban-username-modal">
+        <div class="modal">
+            <div class="modal-header"><span class="modal-title">Ban Username Pattern</span><button class="btn btn-ghost" data-click="closeBanUsernameModal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px;"><label>Pattern</label><input type="text" id="ban-username-pattern" placeholder="admin* or .*support.*" class="font-mono"></div>
+                <div style="margin-bottom:12px;"><label>Type</label><select id="ban-username-type"><option value="wildcard">Wildcard (*)</option><option value="regex">Regular Expression</option><option value="exact">Exact Match</option></select></div>
+                <div style="margin-bottom:12px;"><label>Reason</label><textarea id="ban-username-reason" placeholder="Reason for banning this pattern" rows="3"></textarea></div>
             </div>
-            <div style="margin-bottom:1rem;">
-                <label style="display:block;color:#888;font-size:0.85rem;margin-bottom:0.5rem;">Password</label>
-                <input type="password" id="admin-user-password" placeholder="Password" style="width:100%;padding:0.75rem;background:#1a1a1c;border:1px solid var(--border);border-radius:3px;color:#fff;">
+            <div class="modal-footer"><button class="btn btn-secondary" data-click="closeBanUsernameModal">Cancel</button><button class="btn btn-danger" data-click="confirmBanUsername">Add Pattern</button></div>
+        </div>
+    </div>
+
+    <!-- Create Token Modal -->
+    <div class="modal-overlay" id="create-token-modal">
+        <div class="modal" style="max-width:600px;">
+            <div class="modal-header"><span class="modal-title">Create API Token</span><button class="btn btn-ghost" data-click="closeCreateTokenModal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px;"><label>Token Name</label><input type="text" id="create-token-name" placeholder="My API Token"></div>
+                <div style="margin-bottom:12px;"><label>Description</label><input type="text" id="create-token-description" placeholder="What is this used for?"></div>
+                <div class="grid-2" style="display:grid;gap:12px;">
+                    <div><label>Scope Mode</label><select id="create-token-scope-mode"><option value="none">No IP restriction</option><option value="allowlist">IP Allowlist</option><option value="denylist">IP Denylist</option></select></div>
+                    <div><label>Expires In</label><select id="create-token-expires"><option value="30d">30 Days</option><option value="90d">90 Days</option><option value="1y">1 Year</option><option value="never">Never</option></select></div>
+                </div>
+                <div style="margin-bottom:12px;"><label>IP / CIDR Scopes</label><input type="text" id="create-token-scopes" placeholder="10.0.0.0/8, 192.168.1.100 (comma separated)" class="font-mono"></div>
+                <div><label>Custom Token (optional)</label><input type="text" id="create-token-custom" placeholder="Leave blank to auto-generate" class="font-mono"></div>
             </div>
-            <div style="margin-bottom:1rem;">
-                <label style="display:block;color:#888;font-size:0.85rem;margin-bottom:0.5rem;">Role</label>
-                <select id="admin-user-role" style="width:100%;padding:0.75rem;background:#1a1a1c;border:1px solid var(--border);border-radius:3px;color:#fff;">
-                    <option value="admin">Admin</option>
-                    <option value="moderator">Moderator</option>
-                    <option value="support">Support</option>
-                </select>
+            <div class="modal-footer"><button class="btn btn-secondary" data-click="closeCreateTokenModal">Cancel</button><button class="btn btn-primary" data-click="confirmCreateToken">Create Token</button></div>
+        </div>
+    </div>
+
+    <!-- Create PlexiJoin Connection Modal -->
+    <div class="modal-overlay" id="create-connection-modal">
+        <div class="modal">
+            <div class="modal-header"><span class="modal-title">Add Federation Connection</span><button class="btn btn-ghost" data-click="closeCreateConnectionModal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px;"><label>Instance URL</label><input type="url" id="create-conn-url" placeholder="https://instance.example.com"></div>
+                <div style="margin-bottom:12px;"><label>Display Name</label><input type="text" id="create-conn-name" placeholder="My Federation"></div>
+                <div><label>API Key</label><input type="text" id="create-conn-key" placeholder="Shared API key"></div>
             </div>
-            <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
-                <button class="btn btn-secondary" data-click="closeAdminUserModal">Cancel</button>
-                <button class="btn btn-primary" data-click="saveAdminUser">Save</button>
-            </div>
+            <div class="modal-footer"><button class="btn btn-secondary" data-click="closeCreateConnectionModal">Cancel</button><button class="btn btn-primary" data-click="confirmCreateConnection">Add Connection</button></div>
         </div>
     </div>
 
     <script src="/api/v1/admin/static/dashboard.js" nonce="{{ csp_nonce }}"></script>
     <script nonce="{{ csp_nonce }}">
-        // Token check - redirect if not authenticated
         if (!sessionStorage.getItem('plexichat-admin-token')) {
             window.location.replace('/api/v1/admin/login');
         }

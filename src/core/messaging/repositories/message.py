@@ -2,6 +2,7 @@
 Message repository - Data access for messages.
 """
 
+import time
 from typing import Any, Dict, List, Optional
 
 from src.core.database import cached, invalidate_pattern
@@ -27,14 +28,22 @@ class MessageRepository(BaseRepository[Message]):
         content_index: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         webhook_id: Optional[SnowflakeID] = None,
+        ratchet_interval_id: Optional[SnowflakeID] = None,
         auto_commit: bool = True,
     ) -> None:
         """Create a new message."""
+        if created_at is None:
+            created_at = int(time.time() * 1000)
+        message_type_value = (
+            message_type.value
+            if isinstance(message_type, MessageType)
+            else str(message_type)
+        )
         self._execute(
             """INSERT INTO msg_messages 
                (id, conversation_id, author_id, content, content_encrypted, content_index, message_type, 
-                created_at, updated_at, reply_to_id, metadata, webhook_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_at, updated_at, reply_to_id, metadata, webhook_id, ratchet_interval_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 msg_id,
                 conversation_id,
@@ -42,12 +51,13 @@ class MessageRepository(BaseRepository[Message]):
                 content,
                 content_encrypted,
                 content_index,
-                message_type.value,
+                message_type_value,
                 created_at,
                 created_at,
                 reply_to_id,
                 self._json_dumps(metadata),
                 webhook_id,
+                ratchet_interval_id,
             ),
             auto_commit=auto_commit,
         )
@@ -257,7 +267,33 @@ class MessageRepository(BaseRepository[Message]):
         # Decrypt if encrypted (new format with ENC: prefix)
         if is_message_encrypted(content):
             try:
-                content = decrypt_message(content, row["id"])
+                if content.startswith("ENC:3:"):
+                    from src.utils.encryption.channel_ratchet import (
+                        ratchet_encryption_licensed,
+                    )
+
+                    if not ratchet_encryption_licensed():
+                        from utils.logger import warning
+
+                        warning(
+                            "MessageRepository._row_to_message: encountered "
+                            "ENC:3: ratchet envelope for message %s but the "
+                            "v3 channel ratchet is not licensed on this "
+                            "instance (free tier or licence lacks "
+                            "'channel_ratchet_encryption'). Returning a "
+                            "sentinel; this is a licence-downgrade condition, "
+                            "not a key corruption error.",
+                            row.get("id"),
+                        )
+                        content = "[unsupported encryption version]"
+                    else:
+                        content = decrypt_message(
+                            content,
+                            row["id"],
+                            conversation_id=row.get("conversation_id"),
+                        )
+                else:
+                    content = decrypt_message(content, row["id"])
             except Exception:
                 content = "[decryption failed]"
         # Legacy: decrypt from content_encrypted field

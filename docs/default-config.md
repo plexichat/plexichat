@@ -129,6 +129,29 @@ authentication:
       interval_hours: 24
       boot_check_enabled: true
       batch_size: 50
+  dsar:
+    enabled: true
+    require_admin_review: true
+    default_format: "json"
+    export_formats: ["json", "zip"]
+    max_export_size_mb: 500
+    retention_days: 7
+    pending_expiry_days: 30
+    # Local export directory when media.storage_backend is "local".
+    # The backend itself, S3 credentials, and database settings are all
+    # inherited from the `media` block - DSAR reuses the same storage.
+    local_path: "~/.plexichat/data/exports/dsar"
+    s3_path_prefix: "dsar-exports"
+    audit_log:
+      file_path: "~/.plexichat/data/dsar_audit_log.jsonl"
+      hash_chain_enabled: true
+      backup_to_s3: true
+      s3_backup_path: "audit/dsar/log_backup.jsonl"
+      halt_on_invalid_audit: true
+    harvester:
+      interval_hours: 24
+      boot_check_enabled: true
+      batch_size: 20
 
 api:
   title: "Plexichat API"
@@ -439,7 +462,7 @@ selftest:
   test_user:
     username: "selftest_admin"
     email: "selftest@internal.local"
-    password: "SelfTest_Password_123!"
+    # Password is always auto-generated — never set it in config
 
 admin_ui:
   enabled: true

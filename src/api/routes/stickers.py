@@ -162,8 +162,10 @@ async def create_sticker(
             tags=tag_list,
         )
 
-        # Dispatch update
-        await _dispatch_stickers_update(sid)
+        # Dispatch update as background task (don't block response)
+        import asyncio
+
+        asyncio.create_task(_dispatch_stickers_update(sid))
 
         return StickerResponse.model_validate(sticker)
 

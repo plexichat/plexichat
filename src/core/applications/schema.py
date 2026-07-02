@@ -4,6 +4,8 @@ Application database schema - Table definitions for applications module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Applications table
@@ -146,6 +148,8 @@ CREATE TABLE IF NOT EXISTS app_interactions (
     application_id INTEGER NOT NULL,
     interaction_type INTEGER NOT NULL,
     data TEXT,
+    -- Encrypted interaction payload (commit c7d02342)
+    data_encrypted TEXT,
     server_id INTEGER,
     channel_id INTEGER,
     user_id INTEGER NOT NULL,
@@ -165,9 +169,13 @@ CREATE TABLE IF NOT EXISTS app_webhook_deliveries (
     application_id INTEGER NOT NULL,
     interaction_id INTEGER NOT NULL,
     endpoint_url TEXT NOT NULL,
+    -- request_body/response_body are legacy plaintext columns kept for backward compatibility
+    -- new writes go to request_body_encrypted / response_body_encrypted.
     request_body TEXT NOT NULL,
     response_status INTEGER,
     response_body TEXT,
+    request_body_encrypted TEXT,
+    response_body_encrypted TEXT,
     delivered_at INTEGER NOT NULL,
     success INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (application_id) REFERENCES app_applications(id) ON DELETE CASCADE,
@@ -206,7 +214,7 @@ CREATE INDEX IF NOT EXISTS idx_app_webhook_deliveries_interaction ON app_webhook
 
 def create_tables(db):
     """Create all application tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

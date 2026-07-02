@@ -23,8 +23,6 @@ voice:
   sfu_backend: "mediasoup"
 ```
 
-**Note**: The default SFU backend is `mediasoup`, not `aiortc`. The `mediasoup` backend requires a separate mediasoup server (see below). For lightweight or development deployments without a separate SFU, use `aiortc`.
-
 ### Deployment Considerations
 
 **Why SFU Backend Choice Matters**
@@ -127,10 +125,10 @@ Settings for the built-in Python-based SFU.
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "mediasoup"
+  sfu_backend: "aiortc"
 ```
 
-**Note**: The default SFU backend is `mediasoup`, not `aiortc`. The `mediasoup` backend requires a separate mediasoup server (see below). For lightweight or development deployments without a separate SFU, use `aiortc`.
+**Note**: The runtime fallback for `sfu_backend` (when the key is absent from your `voice:` config block) is `aiortc`. This section applies to the built-in Python-based SFU which requires no external infrastructure.
 
 ### Deployment Considerations
 

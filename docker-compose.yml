@@ -5,17 +5,6 @@ name: plexichat
 # Defaults to latest if not specified
 
 services:
-  bootstrap:
-    image: python:3.12-slim
-    working_dir: /workspace
-    volumes:
-      - ./:/workspace
-      - ../plexichat-client/docker/runtime:/workspace-client-runtime
-    command: python /workspace/docker/bootstrap/bootstrap.py
-    restart: "no"
-    profiles:
-      - setup
-
   db:
     image: postgres:16-alpine
     env_file:
@@ -87,16 +76,15 @@ services:
       fi
       "
     restart: "no"
-    profiles:
-      - setup
 
   backend:
-    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${VERSION}
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${VERSION:-latest}
     env_file:
       - .env
     environment:
       PLEXICHAT_CONFIG: /app/config/docker-config.yaml
       PLEXICHAT_SMTP_PASSWORD: ${PLEXICHAT_SMTP_PASSWORD:-}
+      PLEXICHAT_PUBLIC_SERVER_URL: ${PLEXICHAT_PUBLIC_SERVER_URL:-http://localhost:8000}
       NO_STRICT_CONFIG: "false"
     volumes:
       - ./config/docker-config.yaml:/app/config/docker-config.yaml:ro
@@ -115,7 +103,7 @@ services:
       - "30000-30100:30000-30100/udp"
 
   client:
-    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${VERSION}
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${VERSION:-latest}
     env_file:
       - .env
     depends_on:
@@ -128,6 +116,7 @@ services:
       - ./docker/runtime/client-config.js:/usr/share/nginx/html/config.js:ro
     ports:
       - "80:80"
+      - "443:443"
 
   backup:
     image: postgres:16-alpine

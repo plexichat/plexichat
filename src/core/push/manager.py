@@ -300,20 +300,155 @@ class PushManager:
         sound: str,
         push_config: Dict[str, Any],
     ) -> bool:
-        """Send via Apple Push Notification service."""
+        """Send via Apple Push Notification service over HTTP/2 + JWT.
+
+        Replaces the previous ``# TODO: Implement APNs HTTP/2 push`` stub
+        which silently dropped every iOS notification.  Plexichat uses
+        Apple's token-based authentication (recommended since iOS 13):
+
+        * Build an ES256 JWT from the operator-supplied ``apns_p8_key``
+          (the entire PEM contents, escaping newlines into ``\\n``),
+          ``apns_key_id`` and ``apns_team_id`` configured under
+          ``push_notifications.apns_*``.
+        * POST the APNs JSON payload to
+          ``https://api.push.apple.com/3/device/<device_token>``.
+        * APNs REQUIRES HTTP/2 (falls back to ``api.development``
+          for sandbox testing).
+        * Each burst of pushes MUST cache the JWT for the lifetime of
+          its 1-hour validity — we cache per-(team_id, key_id) inside
+          ``self._apns_jwt_cache``.
+
+        Returns ``True`` on a 200 from APNs, ``False`` on any
+        non-fatal error (token unregistered / invalid topic / etc).
+        """
         if not self._apns_available:
             logger.debug(f"APNs not configured - would send push to {token[:16]}...")
             return False
 
         try:
-            # Try to use a simple HTTP/2 APNs client
-            # For production, use a proper APNs library like aioapns or apns2
-            logger.debug(f"APNs push would be sent to {token[:16]}...")
-            # TODO: Implement APNs HTTP/2 push when library is available
+            import httpx  # already a project dep
+            import jwt  # type: ignore  # PyJWT, optional dep — see note below
+            import time as _time
+
+            # ---- config sanity ----
+            team_id = push_config.get("apns_team_id")
+            key_id = push_config.get("apns_key_id")
+            bundle_id = push_config.get("apns_bundle_id")
+            p8_key = push_config.get("apns_p8_key")
+            use_sandbox = bool(push_config.get("apns_use_sandbox", False))
+            ttl_seconds = int(push_config.get("apns_ttl_seconds", 3600))
+
+            missing = [
+                name
+                for name, value in (
+                    ("apns_team_id", team_id),
+                    ("apns_key_id", key_id),
+                    ("apns_bundle_id", bundle_id),
+                    ("apns_p8_key", p8_key),
+                )
+                if not value
+            ]
+            if missing:
+                logger.error(
+                    f"APNs push skipped — missing config: {', '.join(missing)}"
+                )
+                return False
+
+            # The user-supplied P8 may have either literal newlines or
+            # ``\n`` escape sequences (YAML supports both). Normalise.
+            assert isinstance(p8_key, str)
+            if "\\n" in p8_key and "\n" not in p8_key:
+                p8_key = p8_key.encode().decode("unicode_escape")
+
+            # ---- JWT cache (1-hour lifetime) ----
+            cache_key = (team_id, key_id)
+            cached = self._apns_jwt_cache.get(cache_key)
+            now_ts = int(_time.time())
+            if not cached or cached[1] <= now_ts:
+                payload = {"iss": team_id, "iat": now_ts}
+                token_jwt = jwt.encode(
+                    payload,
+                    p8_key,
+                    algorithm="ES256",
+                    headers={"kid": key_id},  # type: ignore  # cryptography strict-types p8_key but dict[str|None] is validated at runtime
+                )
+                # Refresh 5 minutes before expiry to keep clock-skew safe.
+                self._apns_jwt_cache[cache_key] = (
+                    token_jwt,
+                    now_ts + max(60, ttl_seconds - 300),
+                )
+                token_jwt = self._apns_jwt_cache[cache_key][0]
+            else:
+                token_jwt = cached[0]
+
+            # ---- APNs payload (the ``aps`` dict is mandatory) ----
+            aps_payload: Dict[str, Any] = {
+                "alert": {"title": title, "body": body},
+                "sound": sound or "default",
+            }
+            if badge is not None:
+                aps_payload["badge"] = int(badge)
+            payload_dict: Dict[str, Any] = {"aps": aps_payload}
+            if data:
+                # APNs custom keys MUST be strings, ≤4KB, no nested dict
+                # beyond one level — coerce innocent types here.
+                for k, v in data.items():
+                    try:
+                        payload_dict[str(k)] = v if isinstance(v, str) else str(v)
+                    except Exception:
+                        continue
+
+            url = (
+                "https://api.development.push.apple.com/3/device/"
+                if use_sandbox
+                else "https://api.push.apple.com/3/device/"
+            ) + token
+            headers = {
+                "authorization": f"bearer {token_jwt}",
+                "apns-topic": bundle_id,
+                "apns-push-type": "alert",
+                "apns-expiration": str(now_ts + ttl_seconds),
+            }
+
+            # httpx >= 0.20 supports http2=True once the optional
+            # ``h2`` package is installed.  Plexichat's requirements
+            # already pin ``h2`` transitively via ``httpx[http2]``.
+            with httpx.Client(http2=True, timeout=10.0) as client:
+                response = client.post(url, json=payload_dict, headers=headers)
+
+            if response.status_code == 200:
+                logger.debug(
+                    f"APNs push sent to {token[:16]}… ({response.status_code})"
+                )
+                return True
+
+            # APNs 410 == Unregistered token — caller should delete.
+            # ``BadDeviceToken`` / ``Unregistered`` are reasons Apple
+            # returns 400 with a ``reason`` JSON field.
+            reason = ""
+            try:
+                reason = response.json().get("reason", "") or ""
+            except Exception:
+                pass
+            logger.warning(
+                f"APNs push failed for {token[:16]}… "
+                f"(status={response.status_code}, reason={reason})"
+            )
+            return False
+
+        except ImportError as e:
+            # PyJWT or httpx[http2] missing — log actionable detail.
+            logger.error(f"APNs push unavailable — install PyJWT + httpx[http2]: {e}")
             return False
         except Exception as e:
-            logger.error(f"APNs push failed: {e}")
+            logger.error(f"APNs push failed for {token[:16]}…: {e}")
             return False
+
+    # Token-based JWT cache: ``{ (team_id, key_id): (jwt_string, exp_ts) }``.
+    # Populated lazily by ``_send_apns`` so a server restart resets the
+    # cache (Apple lets us cache for an hour, after which the token is
+    # rejected with ``InvalidProviderToken``).
+    _apns_jwt_cache: Dict[tuple, tuple] = {}
 
     def send_bulk_push(
         self,

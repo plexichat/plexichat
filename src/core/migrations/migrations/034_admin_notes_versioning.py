@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def up(db):
     """Apply the migration."""
-    logger.info("Migration 033: Starting Admin Notes Versioning")
+    logger.info("Migration 034: Starting Admin Notes Versioning")
 
     # === Admin Notes Versioning Table ===
     db.execute("""
@@ -41,32 +41,31 @@ def up(db):
     )
 
     # === Add markdown support columns ===
-    try:
-        from src.core.database import dialect
+    from src.core.database import dialect
 
-        safe_table = dialect.sanitize_identifier("auth_users", db.type)
-        db.execute(
-            f"ALTER TABLE {safe_table} ADD COLUMN internal_notes_format VARCHAR(20) DEFAULT 'plain'"
-        )
-    except Exception:
-        pass
+    for table_name in ("auth_users", "feedback"):
+        if not db.table_exists(table_name):
+            continue
+        if db.column_exists(table_name, "internal_notes_format"):
+            continue
+        safe_table = dialect.sanitize_identifier(table_name, db.type)
+        try:
+            db.execute(
+                f"ALTER TABLE {safe_table} ADD COLUMN internal_notes_format VARCHAR(20) DEFAULT 'plain'"
+            )
+        except Exception as e:
+            logger.debug(
+                "Migration 034: %s.internal_notes_format already present (%s)",
+                table_name,
+                e,
+            )
 
-    try:
-        from src.core.database import dialect
-
-        safe_table = dialect.sanitize_identifier("feedback", db.type)
-        db.execute(
-            f"ALTER TABLE {safe_table} ADD COLUMN internal_notes_format VARCHAR(20) DEFAULT 'plain'"
-        )
-    except Exception:
-        pass
-
-    logger.info("Migration 033: Admin Notes Versioning completed successfully")
+    logger.info("Migration 034: Admin Notes Versioning completed successfully")
 
 
 def down(db):
     """Rollback the migration."""
-    logger.info("Migration 033 rollback: Starting rollback")
+    logger.info("Migration 034 rollback: Starting rollback")
 
     # Drop versioning table
     if db.table_exists("admin_notes_versioning"):
@@ -90,10 +89,10 @@ def down(db):
                 )
 
             logger.info(
-                "Migration 033 rollback: Dropped table and columns (PostgreSQL)"
+                "Migration 034 rollback: Dropped table and columns (PostgreSQL)"
             )
         except Exception as e:
-            logger.warning(f"Migration 033 rollback error: {e}")
+            logger.warning(f"Migration 034 rollback error: {e}")
     else:
         # SQLite: Clear column values but leave columns
         try:
@@ -103,9 +102,9 @@ def down(db):
                 db.execute("UPDATE feedback SET internal_notes_format = 'plain'")
 
             logger.info(
-                "Migration 033 rollback: Dropped table, cleared column values (SQLite)"
+                "Migration 034 rollback: Dropped table, cleared column values (SQLite)"
             )
         except Exception as e:
-            logger.warning(f"Migration 033 rollback error: {e}")
+            logger.warning(f"Migration 034 rollback error: {e}")
 
-    logger.info("Migration 033 rollback completed")
+    logger.info("Migration 034 rollback completed")

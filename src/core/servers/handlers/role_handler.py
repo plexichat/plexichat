@@ -6,6 +6,7 @@ import json
 from typing import Optional, List, Dict, Any
 from src.core.base import SnowflakeID
 from ..models import Role, ChannelOverride, AuditLogAction
+from ..manager.converters import _row_to_role, _row_to_override
 from ..exceptions import (
     RoleNotFoundError,
     RoleHierarchyError,
@@ -98,7 +99,7 @@ class RoleHandler:
             return None
         if not self.manager._is_member(row["server_id"], user_id):
             return None
-        return self.manager._row_to_role(row)
+        return _row_to_role(row)
 
     def get_roles(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Role]:
         """Get all roles in a server."""
@@ -107,7 +108,7 @@ class RoleHandler:
             "SELECT * FROM srv_roles WHERE server_id = ? AND deleted = 0 ORDER BY position DESC",
             (server_id,),
         )
-        return [self.manager._row_to_role(row) for row in rows]
+        return [_row_to_role(row) for row in rows]
 
     def update_role(
         self,
@@ -286,7 +287,7 @@ class RoleHandler:
                WHERE channel_id = ? AND target_type = ? AND target_id = ?""",
             (channel_id, target_type, target_id),
         )
-        return self.manager._row_to_override(row) if row else None
+        return _row_to_override(row) if row else None
 
     def set_channel_override(
         self,
@@ -629,7 +630,7 @@ class RoleHandler:
                ORDER BY r.position DESC""",
             (member.id,),
         )
-        return [self.manager._row_to_role(row) for row in rows]
+        return [_row_to_role(row) for row in rows]
 
     def assign_role(
         self,

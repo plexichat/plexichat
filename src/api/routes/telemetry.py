@@ -41,7 +41,9 @@ async def submit_response_times(
     client_ip = request.client.host if request.client else "unknown"
 
     rl_result = ratelimit.check_rate_limit(
-        ip_address=client_ip, route="POST /telemetry"
+        ip_address=client_ip,
+        route="POST /telemetry",
+        is_internal=getattr(request.state, "is_internal", False),
     )
     if not rl_result.allowed:
         logger.warning(f"Telemetry submission rate limit exceeded for {client_ip}")

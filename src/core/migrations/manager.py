@@ -6,12 +6,16 @@ entire migration process including discovery, validation, execution, and trackin
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+from src.core.database import cached
 
 from . import validator
 from .tracker import MigrationTracker
 from .runner import MigrationRunner
+from .progress import ProgressBar
 
 logger = logging.getLogger(__name__)
 
@@ -269,34 +273,59 @@ class MigrationManager:
                 "failed_count": 0,
                 "migrations": [],
                 "dry_run": dry_run,
+                "total_elapsed_ms": 0,
             }
 
-            for migration in pending:
-                try:
-                    # Validate dependencies before applying
-                    self.validate_dependencies(migration, applied)
+            total = len(pending)
+            batch_start = time.monotonic()
+            with ProgressBar("migrations", total=total) as progress:
+                for index, migration in enumerate(pending, start=1):
+                    migration_start = time.monotonic()
+                    try:
+                        # Validate dependencies before applying
+                        self.validate_dependencies(migration, applied)
 
-                    result = self._execute_migration(migration, dry_run)
-                    results["migrations"].append(result)
-                    results["applied_count"] += 1
+                        result = self._execute_migration(migration, dry_run)
+                        results["migrations"].append(result)
+                        results["applied_count"] += 1
 
-                    # Update applied list for dependency validation of subsequent migrations
-                    applied.append(migration.version)
-                except Exception as e:
-                    results["success"] = False
-                    results["failed_count"] += 1
-                    error_result = {
-                        "version": migration.version,
-                        "name": migration.name,
-                        "success": False,
-                        "error": str(e),
-                    }
-                    results["migrations"].append(error_result)
-                    logger.error(
-                        f"Failed to apply migration {migration.version}: {str(e)}"
-                    )
-                    # Continue with next migration or stop based on configuration
-                    break
+                        # Update applied list for dependency validation of subsequent migrations
+                        applied.append(migration.version)
+
+                        elapsed_ms = int((time.monotonic() - migration_start) * 1000)
+                        logger.info(
+                            f"Migration {migration.version} applied in {elapsed_ms}ms"
+                        )
+                        progress.set(
+                            index,
+                            suffix=f"{migration.version} {elapsed_ms}ms",
+                        )
+                    except Exception as e:
+                        results["success"] = False
+                        results["failed_count"] += 1
+                        error_result = {
+                            "version": migration.version,
+                            "name": migration.name,
+                            "success": False,
+                            "error": str(e),
+                        }
+                        results["migrations"].append(error_result)
+                        logger.error(
+                            f"Failed to apply migration {migration.version}: {str(e)}"
+                        )
+                        # Stop on the first failure - this is a fatal state and
+                        # continuing would just compound errors. The caller
+                        # surfaces the failure so startup can abort.
+                        progress.set(index, suffix=f"{migration.version} FAILED")
+                        break
+
+            results["total_elapsed_ms"] = int((time.monotonic() - batch_start) * 1000)
+
+            # Invalidate cached migration status after applying all
+            if not dry_run and results["applied_count"] > 0:
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern("migration_status:*")
 
             return results
         finally:
@@ -351,6 +380,11 @@ class MigrationManager:
             # Mark as rolled back in tracker
             self.tracker.record_rollback(version)
 
+            # Invalidate cached migration status
+            from src.core.database import invalidate_pattern
+
+            invalidate_pattern("migration_status:*")
+
             return {
                 "success": True,
                 "version": version,
@@ -361,9 +395,10 @@ class MigrationManager:
             logger.error(f"Rollback of migration {version} failed: {str(e)}")
             raise
 
+    @cached(ttl=15, prefix="migration_status")
     def get_migration_status(self) -> Dict[str, Any]:
         """
-        Get current migration status.
+        Get current migration status (cached for 15s to reduce admin dashboard DB load).
 
         Returns:
             Dictionary with applied, pending, failed counts and lists
@@ -501,6 +536,12 @@ class MigrationManager:
                     migration.version, result["execution_time_ms"], rollback_sql
                 )
 
+                # Invalidate cached migration status so the admin dashboard
+                # reflects the change immediately.
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern("migration_status:*")
+
             return {
                 "success": True,
                 "version": migration.version,
@@ -514,4 +555,9 @@ class MigrationManager:
             # Record failure only on real runs
             if not dry_run:
                 self.tracker.record_migration_failure(migration.version, str(e))
+                # Invalidate cached migration status even on failure
+                # (failed_count may have changed).
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern("migration_status:*")
             raise

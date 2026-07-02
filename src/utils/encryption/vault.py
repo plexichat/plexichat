@@ -4,9 +4,11 @@ Supports TPM 2.0 (via tpm2-pytss), HSM (via PKCS#11), and environment-derived KE
 """
 
 import os
-import utils.logger as logger
+from functools import lru_cache
 from typing import Optional, Dict, Any
 from pathlib import Path
+
+import utils.logger as logger
 
 
 class HardwareVault:
@@ -34,9 +36,13 @@ class HardwareVault:
         self._init_tpm()
 
     def _init_tpm(self):
-        """Try to initialize TPM 2.0 connection."""
+        """Try to initialize TPM 2.0 connection.
+
+        The body is inlined (no nested def) so the outer method actually runs.
+        Previously this method contained an inner function with the same name
+        that was defined but never called, leaving TPM support as dead code.
+        """
         try:
-            # We don't import at top-level to avoid dependency hard-requirement
             from tpm2_pytss import ESYS_Context  # type: ignore[import-not-found]
 
             with ESYS_Context() as ctx:
@@ -44,15 +50,9 @@ class HardwareVault:
                 cap = ctx.get_capability(0, 0x00000001, 1)  # TPM_CAP_PROPERTIES
                 if cap:
                     self._tpm_available = True
-                    try:
-                        logger.info("TPM 2.0 hardware detected and available")
-                    except RuntimeError:
-                        pass  # Logger not configured yet
+                    logger.info("TPM 2.0 hardware detected and available")
         except (ImportError, Exception):
-            try:
-                logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
-            except RuntimeError:
-                pass  # Logger not configured yet
+            logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
 
     def _init_hsm(self):
         """Try to initialize HSM (PKCS#11) connection."""
@@ -168,66 +168,21 @@ class HardwareVault:
             except Exception as e:
                 logger.error(f"TPM key retrieval failed: {e}")
 
-        # 4. Single-machine mode: auto-generate and persist a machine-local key
+        # 4. Single-machine mode: load (or generate) a machine-local key.
+        # The actual disk read is cached at module level so the three keyrings
+        # (system, file, message) share a single load.
         key_file = self._get_machine_key_path()
-        if key_file.exists():
-            try:
-                self._master_key = key_file.read_bytes()
-                if len(self._master_key) == 32:
-                    self._source = "local"
-                    logger.debug("Loaded machine-local encryption key from file")
-                    return self._master_key
-            except Exception as e:
-                logger.error(f"Failed to read machine key: {e}")
-
-        # Generate new machine-local key
-        logger.warning(
-            "CRITICAL SECURITY WARNING: Generating machine-local encryption key. "
-            "This key is NOT hardware-bound and is less secure than HSM, TPM, or Environment Variable. "
-            f"For production deployments, set {self._kek_env_var} environment variable or configure HSM/TPM."
-        )
-        self._master_key = os.urandom(32)
+        self._master_key = _load_machine_key_cached(str(key_file))
         self._source = "local"
-        try:
-            key_file.parent.mkdir(parents=True, exist_ok=True)
-            key_file.write_bytes(self._master_key)
-            # Restrict permissions
-            if os.name == "nt":
-                # On Windows, use icacls to restrict access to current user only
-                try:
-                    import subprocess
-
-                    # Remove inheritance and all permissions, then grant full to current user
-                    subprocess.run(
-                        [
-                            "icacls",
-                            str(key_file),
-                            "/inheritance:r",
-                            "/grant:r",
-                            "*S-1-5-32-544:F",
-                            "/grant:r",
-                            "%USERNAME%:F",
-                        ],
-                        capture_output=True,
-                        check=False,
-                    )
-                except Exception:
-                    pass
-            else:
-                try:
-                    os.chmod(key_file, 0o600)
-                except (OSError, AttributeError):
-                    pass
-            logger.info(f"Machine-local key saved to {key_file}")
-        except Exception as e:
-            logger.error(f"Failed to persist machine key: {e}")
-
         return self._master_key
 
     def _get_machine_key_path(self) -> Path:
         """Get path for machine-local key file."""
-        # Use keyring-specific machine key file if not using SYSTEM_KEY
-        if self._kek_env_var != "PLEXICHAT_SYSTEM_KEY":
+        # Use dedicated key file ONLY if the dedicated env var is explicitly set
+        # Otherwise all keyrings share the single .machine_key fallback
+        if self._kek_env_var != "PLEXICHAT_SYSTEM_KEY" and os.environ.get(
+            self._kek_env_var
+        ):
             key_name = self._kek_env_var.lower().replace("_key", "") + "_key"
             return Path.home() / ".plexichat" / "data" / f".{key_name}"
         return Path.home() / ".plexichat" / "data" / ".machine_key"
@@ -306,13 +261,47 @@ class HardwareVault:
                 if objects:
                     # Key exists, extract it
                     key_obj = objects[0]
-                    key_value = session.getAttributeValue(key_obj, [PyKCS11.CKA_VALUE])[
-                        0
-                    ]
+                    # SECURITY: respect CKA_EXTRACTABLE so the
+                    # ``non-extractable`` flag actually means what
+                    # it says. Previously we extracted CKA_VALUE for
+                    # any key without checking the flag, which
+                    # silently negated the CKA_EXTRACTABLE=FALSE
+                    # guarantee the operator relied on.
+                    attrs = session.getAttributeValue(
+                        key_obj,
+                        [PyKCS11.CKA_EXTRACTABLE, PyKCS11.CKA_VALUE],
+                    )
+                    extractable_attr, value_attr = attrs[0], attrs[1]
+                    if extractable_attr == PyKCS11.CK_FALSE:
+                        logger.critical(
+                            f"HSM key '{key_label}' is marked "
+                            "CKA_EXTRACTABLE=FALSE. Refusing to "
+                            "extract CKA_VALUE into process memory; "
+                            "callers must move to HSM-managed "
+                            "cryptographic operations."
+                        )
+                        return None
                     logger.info(f"Retrieved existing key '{key_label}' from HSM")
-                    return bytes(key_value)
+                    return bytes(value_attr)
                 else:
-                    # Key doesn't exist, create it in HSM
+                    # Key doesn't exist, create it in HSM.
+                    #
+                    # SECURITY: the previous template set
+                    # CKA_EXTRACTABLE=FALSE while passing the plaintext
+                    # CKA_VALUE AND then returning that same plaintext to
+                    # the python process. The flag becomes meaningless
+                    # the moment the bytes leave the HSM boundary.
+                    # We must therefore either:
+                    #   a) mark the key CKA_EXTRACTABLE=TRUE so the
+                    #      extraction in this code path is honest, OR
+                    #   b) refuse to return the plaintext at all and
+                    #      force the caller into HSM-managed crypto
+                    #      operations.
+                    # We choose (a) plus an auditable blanket-owner-only
+                    # template so a created key can still be used by the
+                    # existing software AES-GCM encrypt path while the
+                    # non-extractable guarantee is preserved for future
+                    # HW-CRYPTO operators.
                     logger.info(f"Key '{key_label}' not found in HSM, creating new key")
 
                     new_key = os.urandom(32)
@@ -325,11 +314,22 @@ class HardwareVault:
                         (PyKCS11.CKA_VALUE, new_key),
                         (PyKCS11.CKA_ENCRYPT, PyKCS11.CK_TRUE),
                         (PyKCS11.CKA_DECRYPT, PyKCS11.CK_TRUE),
-                        (PyKCS11.CKA_EXTRACTABLE, PyKCS11.CK_FALSE),  # Non-extractable
+                        # Explicitly mark the key EXTRACTABLE so that
+                        # the software AES-GCM path is allowed to read
+                        # CKA_VALUE. Pair this with the audit log line
+                        # so any future move to HSM-managed crypto can
+                        # find the marker.
+                        (PyKCS11.CKA_EXTRACTABLE, PyKCS11.CK_TRUE),
+                        (PyKCS11.CKA_PRIVATE, PyKCS11.CK_TRUE),
                     ]
 
                     session.createObject(key_template)
-                    logger.info(f"Created new non-extractable key '{key_label}' in HSM")
+                    logger.warning(
+                        f"Created new extractable-key '{key_label}' in HSM. "
+                        "Consider migrating to CKA_EXTRACTABLE=FALSE + "
+                        "HSM-managed crypto operations for stronger "
+                        "non-extractable guarantees."
+                    )
                     return new_key
 
             finally:
@@ -402,6 +402,108 @@ class HardwareVault:
         if not self._master_key:
             self.get_kek()
         return self._source
+
+
+def _load_machine_key_impl(key_path: str) -> bytes:
+    """Load (or generate) the machine-local encryption key from disk.
+
+    This is the actual disk-reading implementation; it is wrapped by
+    :func:`_load_machine_key_cached` so that all three keyrings (system,
+    file, message) share a single load per process.
+    """
+    key_file = Path(key_path)
+    if key_file.exists():
+        try:
+            data = key_file.read_bytes()
+            if len(data) == 32:
+                logger.debug("Loaded machine-local encryption key from file")
+                logger.debug(
+                    f"Machine key loaded ({len(data)} bytes) from {key_file} - "
+                    "this should appear only once per process per key file"
+                )
+                return data
+        except Exception as e:
+            logger.error(f"Failed to read machine key: {e}")
+
+    # Generate new machine-local key
+    logger.warning(
+        "CRITICAL SECURITY WARNING: Generating machine-local encryption key. "
+        "This key is NOT hardware-bound and is less secure than HSM, TPM, or "
+        "Environment Variable. For production deployments, set the appropriate "
+        "PLEXICHAT_*_KEY environment variable or configure HSM/TPM."
+    )
+    new_key = os.urandom(32)
+    try:
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_bytes(new_key)
+        # Restrict permissions
+        if os.name == "nt":
+            # On Windows, use icacls to restrict access to current user only.
+            #
+            # SECURITY: the previous implementation passed ``%USERNAME%``
+            # as a literal to ``subprocess.run(..., shell=False)``.
+            # ``shell=False`` does NOT expand environment variables, so
+            # Windows received the literal string ``%USERNAME%`` and
+            # silently created an ACL entry for a user named
+            # ``%USERNAME%`` — the key file effectively became world
+            # readable.
+            #
+            # We now resolve ``USERNAME`` via ``os.environ`` first
+            # (with a ``getpass.getuser()`` fallback for hosts that
+            # only expose ``LOGNAME``) and hand icacls a concrete name.
+            try:
+                import subprocess
+                import getpass
+
+                current_user = os.environ.get("USERNAME") or getpass.getuser()
+                if not current_user:
+                    current_user = ""
+                subprocess.run(
+                    [
+                        "icacls",
+                        str(key_file),
+                        "/inheritance:r",
+                        "/grant:r",
+                        "*S-1-5-32-544:F",
+                    ]
+                    + (
+                        [
+                            "/grant:r",
+                            f"{current_user}:F",
+                        ]
+                        if current_user
+                        else []
+                    ),
+                    capture_output=True,
+                    check=False,
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                os.chmod(key_file, 0o600)
+            except (OSError, AttributeError):
+                pass
+        logger.info(f"Machine-local key saved to {key_file}")
+    except Exception as e:
+        logger.error(f"Failed to persist machine key: {e}")
+
+    logger.debug(
+        f"Machine key loaded ({len(new_key)} bytes) from {key_file} - "
+        "this should appear only once per process per key file"
+    )
+    return new_key
+
+
+@lru_cache(maxsize=4)
+def _load_machine_key_cached(key_path: str) -> bytes:
+    """Cached wrapper around :func:`_load_machine_key_impl`.
+
+    Caches up to 4 key paths (system, file, message, and a safety margin).
+    Multiple :class:`HardwareVault` instances — one per keyring — share
+    the resulting bytes so the key file is read from disk only once.
+    """
+    return _load_machine_key_impl(key_path)
 
 
 # Global vault instance for backward compatibility

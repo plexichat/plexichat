@@ -169,6 +169,101 @@ See [Redis Configuration](deployment/configuration/config-redis.md) for detailed
 
 ---
 
+### Configuration Hot-Path Performance
+
+`utils.config.get()` is one of the most frequently called functions in the
+codebase — it backs nearly every module's config lookup. Three small changes
+keep it off the critical path.
+
+**Caching `get()` results**
+
+`ConfigLoader.get()` now caches its return value keyed on `(key, repr(default))`.
+Subsequent calls for the same key/default return the cached value in O(1) without
+touching the underlying dict. The cache is invalidated automatically on:
+
+- `set()` (after a successful save)
+- `_load_config()` (after a fresh load or reload)
+
+A module-level sentinel is used to distinguish a cached `None` from a cache
+miss, so keys that legitimately map to `None` are not re-queried forever.
+
+**Atomic config writes**
+
+`_save_config()` previously opened the destination file for writing directly.
+A crash mid-write left a truncated, unparseable YAML/JSON file behind. It now
+writes to `<config_path>.tmp` and uses `os.replace()` to rename over the real
+path. On any error the temporary file is cleaned up and the original config
+is preserved. The rename is atomic on POSIX and on NTFS, so readers always
+see either the old or the new file in full.
+
+**Skipping regex when no `$` is present**
+
+`${VAR}` interpolation is a rare case in practice — most config strings are
+plain literals. The resolver used to run the interpolation regex over every
+string in the config tree, paying the cost of a regex compile-cache lookup
+and an empty match attempt. There is now an early return in both
+`_resolve_value()` and `_resolve_config()` when the string contains no `$`
+character, skipping the regex entirely.
+
+**Deep-copy `get_all()`**
+
+`config.get_all()` previously returned a shallow copy of the live config dict.
+Nested structures (lists, dicts) were still shared with the loader, so a
+caller mutating them could corrupt the in-process config. The returned dict
+is now a `copy.deepcopy()` of the loader's state, so it is safe to pass
+through serialization or templating layers without defensive copying.
+
+---
+
+### Database Query Cache
+
+`fetch_one()` and `fetch_all()` cache their results under a stable cache key
+(`f"{one|all}:{query}:{params}"`) with a per-row TTL (default 1 second).
+Repeated lookups for the same query within the TTL hit the cache and never
+touch the database.
+
+**Backed by an `OrderedDict` LRU**
+
+The cache used to be a plain `dict` that was rebuilt (O(n) comprehension)
+every time the 100-entry cap was hit. It is now an `OrderedDict` capped at
+100 entries. Reads call `move_to_end(key)` so the most recently used entry
+moves to the back; writes evict from the front with `popitem(last=False)`.
+Eviction is O(1) per entry, and the cache size is bounded without rebuilding
+the whole structure.
+
+**Invalidation**
+
+The cache is cleared in three places:
+
+- Any `INSERT` / `UPDATE` / `DELETE` / `REPLACE` / `DROP` / `CREATE` / `ALTER`
+  statement (the `execute()` method detects these by inspecting the
+  upper-cased query prefix and calls `.clear()` under the cache lock).
+- `begin_transaction()`, `commit()`, and `rollback()` — transactions should
+  never read from a snapshot taken before the transaction boundary.
+- The TTL expires (lazy expiry on read).
+
+**Retry classification**
+
+`execute()` and `execute_many()` previously treated every
+`sqlite3.OperationalError` (or any error with "closed" in the message) as a
+connection error and retried. This caused harmless errors like
+`cannot commit - no transaction is active` to be retried needlessly. The
+check is now more precise:
+
+- A regex-anchored substring check looks for actual transport phrases
+  (`connection refused`, `connection reset`, `connection closed`,
+  `no connection`, `disconnected`, `broken pipe`, `lost connection`).
+- `InterfaceError` is always retried.
+- `DatabaseError` is retried only when the message suggests disconnection.
+- `OperationalError` is retried only when the message contains a
+  connection-failure phrase — not by type name alone.
+
+In addition, the schema-error guard now also matches `no such index` and
+`no such view`, so transient errors that look like schema problems are not
+retried.
+
+---
+
 ## Server Worker Configuration
 
 ```yaml

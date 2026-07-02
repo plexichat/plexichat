@@ -4,18 +4,11 @@ Tests for database connection pool management, including age-based eviction.
 
 import pytest
 import os
-import sys
 import time
 from unittest.mock import MagicMock
 
-# Setup paths
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-src_path = project_root
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
+# common_utils is now a native package.
 
-for path in [project_root, src_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
 
 import src.utils.config as config  # noqa: E402
 import src.utils.logger as logger  # noqa: E402

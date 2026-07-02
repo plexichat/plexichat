@@ -4,6 +4,8 @@ Webhook database schema - Table definitions for webhooks module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Webhooks table
@@ -50,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_msg_channel ON webhook_messages(channel_i
 
 def create_tables(db):
     """Create all webhook tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

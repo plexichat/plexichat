@@ -2,6 +2,7 @@
 Emoji routes - Custom emoji management endpoints.
 """
 
+import asyncio
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 
@@ -458,8 +459,8 @@ async def create_emoji(
 
             _invalidate_emoji_cache(sid, emoji.id)
 
-            # Dispatch WebSocket event
-            await _dispatch_emoji_update(sid)
+            # Dispatch WebSocket event (fire-and-forget, errors are self-contained)
+            asyncio.create_task(_dispatch_emoji_update(sid))
 
             return _emoji_to_response(emoji)
         except Exception as e:
@@ -588,8 +589,8 @@ async def update_emoji(
 
             _invalidate_emoji_cache(sid, eid)
 
-            # Dispatch WebSocket event
-            await _dispatch_emoji_update(sid)
+            # Dispatch WebSocket event (fire-and-forget, errors are self-contained)
+            asyncio.create_task(_dispatch_emoji_update(sid))
 
             return _emoji_to_response(emoji)
         except Exception as e:
@@ -700,8 +701,8 @@ async def delete_emoji(
 
             _invalidate_emoji_cache(sid, eid)
 
-            # Dispatch WebSocket event
-            await _dispatch_emoji_update(sid)
+            # Dispatch WebSocket event (fire-and-forget, errors are self-contained)
+            asyncio.create_task(_dispatch_emoji_update(sid))
 
             return SuccessResponse(success=True, message=None)
         except Exception as e:

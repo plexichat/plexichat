@@ -2,7 +2,8 @@
 Message routes - Message CRUD endpoints.
 
 This module aggregates message-related routes from sub-modules:
-- messages_crud.py: Core message CRUD operations (create, read, update, delete)
+- messages_crud/: Core message CRUD operations (create, read, update, delete)
+  - Sub-package with send, retrieve, edit, delete, broadcast mixins
 - messages_list.py: List operations (get channel messages, get pinned messages)
 - pins.py: Pin/unpin operations
 - search.py: Message search functionality
@@ -27,11 +28,11 @@ from .messages import get_msg_id
 router = APIRouter(tags=["Messages"])
 
 # Include all routers - this maintains the exact same public API
+router.include_router(search_router)
+router.include_router(read_receipts_router)
 router.include_router(crud_router)
 router.include_router(list_router)
 router.include_router(pins_router)
-router.include_router(search_router)
-router.include_router(read_receipts_router)
 router.include_router(typing_router)
 
 __all__ = ["router", "get_msg_id"]

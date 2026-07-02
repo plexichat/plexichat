@@ -4,6 +4,8 @@ Server database schema - Table definitions for server module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Servers table
@@ -11,7 +13,7 @@ CREATE TABLE IF NOT EXISTS srv_servers (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     owner_id INTEGER NOT NULL,
-    description TEXT,
+    description_encrypted TEXT,
     icon_url TEXT,
     default_role_id INTEGER,
     default_channel_id INTEGER,
@@ -51,7 +53,7 @@ CREATE TABLE IF NOT EXISTS srv_channels (
     channel_type TEXT NOT NULL DEFAULT 'text',
     category_id INTEGER,
     position INTEGER DEFAULT 0,
-    topic TEXT,
+    topic_encrypted TEXT,
     nsfw INTEGER DEFAULT 0,
     slowmode_seconds INTEGER DEFAULT 0,
     read_receipts_enabled INTEGER DEFAULT 1,
@@ -104,6 +106,9 @@ CREATE TABLE IF NOT EXISTS srv_members (
     muted INTEGER DEFAULT 0,
     deafened INTEGER DEFAULT 0,
     inviter_id INTEGER,
+    -- Timeout (013)
+    timeout_until BIGINT,
+    timeout_reason TEXT,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id),
     UNIQUE(server_id, user_id)
 );
@@ -176,6 +181,7 @@ CREATE TABLE IF NOT EXISTS srv_bans (
     user_id INTEGER NOT NULL,
     banned_by INTEGER NOT NULL,
     reason TEXT,
+    reason_encrypted TEXT,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id),
     UNIQUE(server_id, user_id)
@@ -194,6 +200,7 @@ CREATE TABLE IF NOT EXISTS srv_audit_log (
     target_type TEXT,
     target_id INTEGER,
     changes TEXT,
+    changes_encrypted TEXT,
     reason TEXT,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id)
@@ -341,7 +348,7 @@ CREATE INDEX IF NOT EXISTS idx_srv_progress_user ON srv_onboarding_progress(user
 
 def create_tables(db):
     """Create all server tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

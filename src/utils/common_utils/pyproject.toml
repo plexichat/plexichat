@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "common_utils"
+version = "0.1.0"
+description = "Common utilities for Python projects"
+authors = [{name = "User", email = "user@example.com"}]
+packages = ["utils"]
+dependencies = [
+    "cryptography>=41.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    "."
+]

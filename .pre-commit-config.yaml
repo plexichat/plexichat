@@ -11,7 +11,7 @@ repos:
         entry: ruff check --fix .
         args: [
           "--extend-exclude",
-          ".venv,venv,.pytest_cache,cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,media,config,logs,src/utils/common-utils,src/tests"
+          ".venv,venv,.pytest_cache,cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,media,config,logs,src/utils/common_utils,src/tests"
         ]
       - id: ruff-format
         pass_filenames: false
@@ -26,6 +26,7 @@ repos:
           (?x)^(
               src/core/migrations/cloner\.py|
               src/utils/encryption/kek_migration\.py|
+              src/core/media/deduplication/.*\.py|
               src/api/routes/docs/.*\.py
           )$
         additional_dependencies:

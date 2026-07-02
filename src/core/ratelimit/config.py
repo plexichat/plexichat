@@ -25,9 +25,9 @@ def _build_global_limit() -> RateLimitConfig:
 def _build_user_limit() -> RateLimitConfig:
     """Build user rate limit from config."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.user.requests", 70),
+        requests=app_config.get("rate_limiting.user.requests", 200),
         window_seconds=app_config.get("rate_limiting.user.window_seconds", 60.0),
-        burst=app_config.get("rate_limiting.user.burst", 20),
+        burst=app_config.get("rate_limiting.user.burst", 40),
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.USER,
         hourly_limit=app_config.get("rate_limiting.user.hourly_limit", 3600),
@@ -38,9 +38,9 @@ def _build_user_limit() -> RateLimitConfig:
 def _build_ip_limit() -> RateLimitConfig:
     """Build IP rate limit from config."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.ip.requests", 70),
+        requests=app_config.get("rate_limiting.ip.requests", 100),
         window_seconds=app_config.get("rate_limiting.ip.window_seconds", 60.0),
-        burst=app_config.get("rate_limiting.ip.burst", 10),
+        burst=app_config.get("rate_limiting.ip.burst", 20),
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.IP,
         hourly_limit=app_config.get("rate_limiting.ip.hourly_limit", 1800),
@@ -193,23 +193,23 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         scope=BucketType.ROUTE,
     ),
     "POST /channels/{id}/messages": RateLimitConfig(
-        requests=app_config.get("rate_limiting.routes.send_message.requests", 5),
+        requests=app_config.get("rate_limiting.routes.send_message.requests", 10),
         window_seconds=app_config.get("rate_limiting.routes.send_message.window", 5.0),
-        burst=3,
+        burst=5,
         algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
         scope=BucketType.RESOURCE,
     ),
     "PATCH /channels/{id}/messages/{msg_id}": RateLimitConfig(
-        requests=5,
+        requests=10,
         window_seconds=5.0,
-        burst=2,
+        burst=5,
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.RESOURCE,
     ),
     "DELETE /channels/{id}/messages/{msg_id}": RateLimitConfig(
-        requests=5,
+        requests=10,
         window_seconds=5.0,
-        burst=2,
+        burst=5,
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.RESOURCE,
     ),
@@ -373,6 +373,32 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
         scope=BucketType.USER,
     ),
+    "static_client:html": RateLimitConfig(
+        requests=app_config.get("rate_limiting.routes.static_client_html.requests", 60),
+        window_seconds=app_config.get(
+            "rate_limiting.routes.static_client_html.window_seconds", 60.0
+        ),
+        burst=app_config.get("rate_limiting.routes.static_client_html.burst", 20),
+        algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+        scope=BucketType.IP,
+        hourly_limit=app_config.get(
+            "rate_limiting.routes.static_client_html.hourly_limit", 1200
+        ),
+    ),
+    "static_client:assets": RateLimitConfig(
+        requests=app_config.get(
+            "rate_limiting.routes.static_client_assets.requests", 1000
+        ),
+        window_seconds=app_config.get(
+            "rate_limiting.routes.static_client_assets.window_seconds", 60.0
+        ),
+        burst=app_config.get("rate_limiting.routes.static_client_assets.burst", 200),
+        algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
+        scope=BucketType.IP,
+        hourly_limit=app_config.get(
+            "rate_limiting.routes.static_client_assets.hourly_limit", 36000
+        ),
+    ),
 }
 
 
@@ -414,9 +440,9 @@ def get_default_config() -> RateLimitConfig:
         Default RateLimitConfig.
     """
     return RateLimitConfig(
-        requests=30,
+        requests=60,
         window_seconds=30.0,
-        burst=5,
+        burst=10,
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.ROUTE,
     )

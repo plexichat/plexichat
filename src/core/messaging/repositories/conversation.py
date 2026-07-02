@@ -2,6 +2,7 @@
 Conversation repository - Data access for conversations.
 """
 
+import time
 from typing import Any, Dict, List, Optional
 
 from ..models import Conversation, ConversationType
@@ -99,6 +100,8 @@ class ConversationRepository(BaseRepository[Conversation]):
         auto_commit: bool = True,
     ) -> None:
         """Update conversation fields."""
+        if updated_at is None:
+            updated_at = last_message_at or int(time.time() * 1000)
         updates = ["updated_at = ?"]
         params: List[Any] = [updated_at]
 

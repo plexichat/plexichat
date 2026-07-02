@@ -85,6 +85,9 @@ PERMISSION_SCOPES = {
     "admin.edit": "Edit admin accounts",
     "admin.roles": "Manage admin roles and permissions",
     "admin.approvals": "Handle approval workflows",
+    # Data export (DSAR)
+    "data_export.read": "View and manage data export requests",
+    "data_export.process": "Approve, deny, and generate data exports",
     # Wildcard permissions
     "*": "Full system access (super admin only)",
 }
@@ -328,6 +331,96 @@ def _create_approval_request(
     except Exception as e:
         logger.error(f"Error creating approval request: {e}")
         raise
+
+
+def get_admin_max_position(db, admin_id: int) -> int:
+    """
+    Get the highest position of all roles assigned to an admin.
+
+    Args:
+        db: Database instance
+        admin_id: The admin user ID
+
+    Returns:
+        The maximum position value across all assigned roles (0 if no roles)
+    """
+    try:
+        row = db.fetch_one(
+            """
+            SELECT COALESCE(MAX(r.position), 0) as max_pos
+            FROM admin_roles r
+            JOIN admin_role_assignments a ON r.id = a.role_id
+            WHERE a.admin_id = ?
+        """,
+            (admin_id,),
+        )
+        if row:
+            return row["max_pos"] if isinstance(row, dict) else int(row[0])
+        return 0
+    except Exception as e:
+        logger.error(f"Error getting admin max position: {e}")
+        return 0
+
+
+def can_manage_admin(db, current_admin_id: int, target_admin_id: int) -> bool:
+    """
+    Check if the current admin can manage (modify roles, toggle status, delete) a target admin.
+
+    Hierarchy rule: An admin can only manage another admin whose highest role position
+    is strictly lower than their own highest role position.
+
+    Args:
+        db: Database instance
+        current_admin_id: The admin performing the action
+        target_admin_id: The admin being acted upon
+
+    Returns:
+        True if the current admin can manage the target admin
+    """
+    # Prevent self-management
+    if current_admin_id == target_admin_id:
+        logger.warning(f"Admin {current_admin_id} attempted to manage themselves")
+        return False
+
+    # Get both admins' max positions
+    current_pos = get_admin_max_position(db, current_admin_id)
+    target_pos = get_admin_max_position(db, target_admin_id)
+
+    # Can only manage if current admin's position is strictly higher
+    return current_pos > target_pos
+
+
+def can_manage_role(db, admin_id: int, role_id: int) -> bool:
+    """
+    Check if an admin can manage (modify, delete) a specific role.
+
+    Hierarchy rule: An admin can only manage roles at a position strictly lower
+    than their own highest role position.
+
+    Args:
+        db: Database instance
+        admin_id: The admin user ID
+        role_id: The role ID to check
+
+    Returns:
+        True if the admin can manage the role
+    """
+    admin_pos = get_admin_max_position(db, admin_id)
+
+    role = db.fetch_one(
+        "SELECT position, is_system FROM admin_roles WHERE id = ?", (role_id,)
+    )
+    if not role:
+        return False
+
+    role_pos = role["position"] if isinstance(role, dict) else int(role[0])
+    is_system = role.get("is_system", 0) if isinstance(role, dict) else bool(role[1])
+
+    if is_system:
+        # System roles can only be managed by super admins (position >= 100)
+        return admin_pos >= 100
+
+    return admin_pos > role_pos
 
 
 def log_admin_action(

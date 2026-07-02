@@ -13,17 +13,27 @@ Security features:
 """
 
 import base64
+import dataclasses
 import json
 import os
 import secrets
 import time
+import utils.config as config
+import utils.logger as logger
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import utils.config as config
-import utils.logger as logger
-
 from src.utils.encryption import EncryptionManager
+
+
+class _WebAuthnJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles webauthn-specific types like bytes."""
+
+    def default(self, o: Any) -> Any:
+        if isinstance(o, bytes):
+            return base64.urlsafe_b64encode(o).rstrip(b"=").decode("ascii")
+        return super().default(o)
+
 
 # WebAuthn components (defined as Any to satisfy pyright)
 generate_authentication_options: Any = None
@@ -112,14 +122,23 @@ class AuthenticationOptions:
 class PasskeyManager:
     """Manages WebAuthn/FIDO2 passkey operations."""
 
-    def __init__(self, db):
+    def __init__(self, db, crypto=None):
         """Initialize the passkey manager.
 
         Args:
             db: Database instance
+            crypto: Optional EncryptionManager instance (reuses existing one)
         """
         self._db = db
-        self._crypto = EncryptionManager()
+        if crypto is not None:
+            self._crypto = crypto
+        else:
+            encryption_cfg = config.get("encryption", {}).get("argon2", {})
+            self._crypto = EncryptionManager(
+                argon2_time_cost=encryption_cfg.get("time_cost", 3),
+                argon2_memory_cost=encryption_cfg.get("memory_cost", 65536),
+                argon2_parallelism=encryption_cfg.get("parallelism", 2),
+            )
         self._config = config.get("authentication", {}).get("passkeys", {})
         self._challenge_ttl = self._config.get("challenge_ttl_seconds", 300)
 
@@ -340,8 +359,10 @@ class PasskeyManager:
             attestation=AttestationConveyancePreference.DIRECT,
         )
 
-        # Convert to dict for JSON serialization
-        options_dict = json.loads(options.json())
+        # Convert to dict for JSON serialization with proper bytes handling
+        options_dict = json.loads(
+            json.dumps(dataclasses.asdict(options), cls=_WebAuthnJSONEncoder)
+        )
 
         return RegistrationOptions(
             challenge_id=challenge_id,
@@ -558,8 +579,10 @@ class PasskeyManager:
             user_verification=UserVerificationRequirement.PREFERRED,
         )
 
-        # Convert to dict
-        options_dict = json.loads(options.json())
+        # Convert to dict with proper bytes handling
+        options_dict = json.loads(
+            json.dumps(dataclasses.asdict(options), cls=_WebAuthnJSONEncoder)
+        )
 
         return AuthenticationOptions(
             challenge_id=challenge_id,

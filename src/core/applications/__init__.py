@@ -241,6 +241,11 @@ __all__ = [
     "get_user_authorized_apps",
     "revoke_authorized_app",
     "get_bot_directory",
+    "get_admin_bot_stats",
+    "get_admin_bot_applications",
+    "get_admin_bot_requests",
+    "get_admin_dashboard_counts",
+    "get_admin_dashboard_feature_stats",
     # Bot models
     "ApprovedBot",
     "BotRequest",
@@ -635,7 +640,7 @@ def request_bot(
 
 
 def review_bot_request(
-    server_id: Optional[int],
+    server_id: int,
     request_id: int,
     reviewer_id: int,
     approve: bool,
@@ -715,11 +720,46 @@ def get_bot_directory(
     include_public: bool = True,
     limit: int = 50,
     offset: int = 0,
-) -> List[Dict[str, Any]]:
-    """Get a directory of available bots."""
+    q: Optional[str] = None,
+    tag: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get the bot directory."""
     return _get_manager().get_bot_directory(
         server_id=server_id,
         include_public=include_public,
         limit=limit,
         offset=offset,
+        q=q,
+        tag=tag,
     )
+
+
+def get_admin_bot_stats() -> Dict[str, int]:
+    """Get bot statistics for the admin dashboard."""
+    return _get_manager().get_admin_bot_stats()
+
+
+def get_admin_bot_applications(
+    limit: int = 50, offset: int = 0
+) -> List[Dict[str, Any]]:
+    """Get bot application entries for the admin panel."""
+    return _get_manager().get_admin_bot_applications(limit=limit, offset=offset)
+
+
+def get_admin_bot_requests(
+    status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
+) -> List[Dict[str, Any]]:
+    """Get bot request entries for the admin panel."""
+    return _get_manager().get_admin_bot_requests(
+        status_filter=status_filter, limit=limit, offset=offset
+    )
+
+
+def get_admin_dashboard_counts() -> Dict[str, Any]:
+    """Get top-line admin dashboard counts."""
+    return _get_manager().get_admin_dashboard_counts()
+
+
+def get_admin_dashboard_feature_stats() -> Dict[str, Any]:
+    """Get feature stats for the admin dashboard."""
+    return _get_manager().get_admin_dashboard_feature_stats()

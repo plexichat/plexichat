@@ -27,6 +27,7 @@ __all__ = [
     "get_dispatcher",
     "is_setup",
     "broadcast_server_status",
+    "broadcast_ratchet_update",
     "close_all_connections",
     "GatewayOpcode",
     "GatewayCloseCode",
@@ -89,7 +90,16 @@ def setup(
     )
 
     if _events_module:
-        _events_module.subscribe(_dispatcher.on_event)
+        # CRITICAL lane: real-time user-facing delivery.
+        # The WebSocket gateway is the explicit MUST-NOT-DROP
+        # consumer of the events pipeline -- a saturated async
+        # queue cannot drop WebSocket events, so connected clients
+        # do not see silent message gaps during bursts. Subscribed
+        # synchronously before the queue; the dispatcher invokes
+        # ``_dispatcher.on_event`` inline on the producing thread.
+        # ``_dispatcher.on_event`` itself enqueues onto per-
+        # connection queues, so the in-line call is non-blocking.
+        _events_module.subscribe(_dispatcher.on_event, critical=True)
 
     _setup_complete = True
 
@@ -165,6 +175,37 @@ async def broadcast_server_status(status_data: dict) -> int:
     if not _setup_complete or _dispatcher is None:
         return 0
     return await _dispatcher.broadcast_server_status(status_data)
+
+
+async def broadcast_ratchet_update(
+    conversation_id: int,
+    update_data: dict,
+) -> int:
+    """
+    Broadcast a RATCHET_UPDATE to all connected clients.
+
+    Convenience function that delegates to the dispatcher. Safe to
+    call even if the websocket module is not initialized (returns 0
+    in that case). Use this from places that don't have a reference
+    to the dispatcher (e.g. background ratchet split-on-delete).
+
+    Args:
+        conversation_id: Conversation that experienced the change.
+        update_data: Payload describing the change. Recommended keys:
+            - reason: "rotation" | "split" | "re_anchor" | ...
+            - new_interval_id: Optional[int]
+            - at_message_id: Optional[int]
+            - at: Optional[int] ms timestamp
+
+    Returns:
+        Number of connections notified.
+    """
+    if not _setup_complete or _dispatcher is None:
+        return 0
+    return await _dispatcher.broadcast_ratchet_update(
+        conversation_id=conversation_id,
+        update_data=update_data,
+    )
 
 
 async def close_all_connections(

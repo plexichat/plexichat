@@ -141,38 +141,38 @@ def test_username_validation(username):
 ## Test Coverage Areas
 
 ### Input Validation
-- ✅ Length limits (min/max)
-- ✅ Character sets (alphanumeric, special)
-- ✅ Format validation (email, URLs)
-- ✅ Empty/whitespace-only inputs
-- ✅ Unicode edge cases
+- OK Length limits (min/max)
+- OK Character sets (alphanumeric, special)
+- OK Format validation (email, URLs)
+- OK Empty/whitespace-only inputs
+- OK Unicode edge cases
 
 ### Security
-- ✅ SQL injection patterns
-- ✅ XSS attempts (script tags, event handlers)
-- ✅ Path traversal attempts
-- ✅ Homograph attacks (visual spoofing)
-- ✅ Zero-width character abuse
+- OK SQL injection patterns
+- OK XSS attempts (script tags, event handlers)
+- OK Path traversal attempts
+- OK Homograph attacks (visual spoofing)
+- OK Zero-width character abuse
 
 ### Boundary Conditions
-- ✅ Zero values
-- ✅ Maximum values (2^63-1 for IDs)
-- ✅ Just under/over limits
-- ✅ Very large inputs (10K+ chars)
+- OK Zero values
+- OK Maximum values (2^63-1 for IDs)
+- OK Just under/over limits
+- OK Very large inputs (10K+ chars)
 
 ### Unicode & Internationalization
-- ✅ Emoji (U+1F600-1F64F)
-- ✅ RTL text (Hebrew, Arabic)
-- ✅ CJK characters (Chinese/Japanese/Korean)
-- ✅ Combining diacriticals
-- ✅ Control characters
-- ✅ Normalization (NFC vs NFD)
+- OK Emoji (U+1F600-1F64F)
+- OK RTL text (Hebrew, Arabic)
+- OK CJK characters (Chinese/Japanese/Korean)
+- OK Combining diacriticals
+- OK Control characters
+- OK Normalization (NFC vs NFD)
 
 ### Data Integrity
-- ✅ JSON parsing (valid/malformed)
-- ✅ Metadata serialization
-- ✅ Timestamp calculations
-- ✅ ID generation/ordering
+- OK JSON parsing (valid/malformed)
+- OK Metadata serialization
+- OK Timestamp calculations
+- OK ID generation/ordering
 
 ## Debugging Failed Tests
 
@@ -208,18 +208,18 @@ def test_something(text):
 ## Best Practices
 
 ### DO:
-- ✅ Use `assume()` to filter invalid inputs for test focus
-- ✅ Test invariants (properties that always hold)
-- ✅ Use `@example()` for known edge cases
-- ✅ Set reasonable `max_examples` (100-500)
-- ✅ Handle expected exceptions gracefully
+- OK Use `assume()` to filter invalid inputs for test focus
+- OK Test invariants (properties that always hold)
+- OK Use `@example()` for known edge cases
+- OK Set reasonable `max_examples` (100-500)
+- OK Handle expected exceptions gracefully
 
 ### DON'T:
-- ❌ Test exact output values (test properties instead)
-- ❌ Use random.random() (non-deterministic)
-- ❌ Ignore Unicode edge cases
-- ❌ Forget to test empty/null cases
-- ❌ Skip boundary value testing
+- X Test exact output values (test properties instead)
+- X Use random.random() (non-deterministic)
+- X Ignore Unicode edge cases
+- X Forget to test empty/null cases
+- X Skip boundary value testing
 
 ## Performance Considerations
 
@@ -238,7 +238,7 @@ In CI pipelines:
 # .gitlab-ci.yml
 test:
   script:
-    - pip install -r requirements-test.txt
+    - pip install --require-hashes -r requirements.txt
     - pytest src/tests/unit/test_property_based*.py -v --hypothesis-profile=ci
 ```
 

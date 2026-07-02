@@ -332,17 +332,18 @@ class GatewayDispatcher:
         tasks = []
 
         with self._lock:
-            for conn in self._session_manager._connections.values():
-                if not conn.is_authenticated:
-                    continue
-                # conn.user_id is guaranteed to be non-None by is_authenticated
-                if conn.user_id is not None and conn.user_id in exclude_set:
-                    continue
-                if not filter_event_by_intents(event, conn.intents):
-                    continue
+            all_connections = self._session_manager.get_all_connections()
+        for conn in all_connections:
+            if not conn.is_authenticated:
+                continue
+            # conn.user_id is guaranteed to be non-None by is_authenticated
+            if conn.user_id is not None and conn.user_id in exclude_set:
+                continue
+            if not filter_event_by_intents(event, conn.intents):
+                continue
 
-                payload = self._build_dispatch_payload(conn, event)
-                tasks.append(self._send_to_connection(conn, payload))
+            payload = self._build_dispatch_payload(conn, event)
+            tasks.append(self._send_to_connection(conn, payload))
 
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -353,6 +354,7 @@ class GatewayDispatcher:
     async def broadcast_server_status(
         self,
         status_data: Dict[str, Any],
+        connections: Optional[List[Connection]] = None,
     ) -> int:
         """
         Broadcast server status to all connected clients.
@@ -365,6 +367,7 @@ class GatewayDispatcher:
                 - message: Human-readable message
                 - estimated_downtime_seconds: Optional estimated downtime
                 - restart_at: Optional restart timestamp
+            connections: Optional pre-fetched connection list to avoid double-snapshot
 
         Returns:
             Number of connections notified
@@ -372,8 +375,9 @@ class GatewayDispatcher:
         sent_count = 0
         tasks = []
 
-        with self._lock:
-            connections = list(self._session_manager._connections.values())
+        if connections is None:
+            with self._lock:
+                connections = self._session_manager.get_all_connections()
 
         for conn in connections:
             if conn.is_authenticated:
@@ -389,6 +393,63 @@ class GatewayDispatcher:
 
         logger.info(
             f"Broadcast server status '{status_data.get('state')}' to {sent_count} connections"
+        )
+        return sent_count
+
+    async def broadcast_ratchet_update(
+        self,
+        conversation_id: int,
+        update_data: Dict[str, Any],
+        connections: Optional[List[Connection]] = None,
+    ) -> int:
+        """
+        Broadcast a RATCHET_UPDATE to all members of a conversation.
+
+        Sent whenever the channel ratchet is rotated, split, or
+        re-anchored. Connected clients can use this to invalidate
+        any cached active-interval key before the next message
+        arrives.
+
+        Args:
+            conversation_id: Conversation that experienced the ratchet change.
+            update_data: Payload describing the change. Expected keys:
+                - reason: "rotation" | "split" | "re_anchor" | ...
+                - new_interval_id: Optional[int]
+                - at_message_id: Optional[int]
+                - at: Optional[int] ms timestamp
+            connections: Optional pre-fetched connection list.
+
+        Returns:
+            Number of connections notified.
+        """
+        sent_count = 0
+        tasks = []
+
+        if connections is None:
+            with self._lock:
+                connections = self._session_manager.get_all_connections()
+
+        payload = {
+            "op": int(GatewayOpcode.RATCHET_UPDATE),
+            "t": "RATCHET_UPDATE",
+            "d": {
+                "conversation_id": int(conversation_id),
+                **dict(update_data),
+            },
+        }
+
+        for conn in connections:
+            if not conn.is_authenticated:
+                continue
+            tasks.append(self._send_to_connection(conn, payload))
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            sent_count = sum(1 for r in results if r is True)
+
+        logger.info(
+            f"Broadcast RATCHET_UPDATE for conversation {conversation_id} "
+            f"to {sent_count} connections (reason={update_data.get('reason')})"
         )
         return sent_count
 
@@ -412,19 +473,20 @@ class GatewayDispatcher:
             Number of connections closed
         """
         with self._lock:
-            connections = list(self._session_manager._connections.values())
+            connections = self._session_manager.get_all_connections()
 
         if not connections:
             return 0
 
-        # Notify clients first if requested
+        # Notify clients first if requested (reuse the same connection snapshot)
         if notify_first:
             await self.broadcast_server_status(
                 {
                     "state": "shutting_down",
                     "message": reason,
                     "closing_in_seconds": grace_period_seconds,
-                }
+                },
+                connections=connections,
             )
             # Give clients time to receive the notification
             await asyncio.sleep(grace_period_seconds)

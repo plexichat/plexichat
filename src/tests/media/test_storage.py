@@ -87,7 +87,6 @@ class TestStorage:
 
     def test_get_storage_for_file_default(self, media_manager):
         """Test that files go to primary storage by default."""
-        from src.core.media.models import MediaType
 
         storage, backend = media_manager._get_storage_for_file("image/png", 1000)
         assert storage == media_manager._storage

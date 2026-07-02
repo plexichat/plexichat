@@ -254,6 +254,17 @@ def add_participant(
     )
 
 
+def add_participant_to_conversations(
+    user_id: int,
+    conversation_ids: list,
+    role: ParticipantRole = ParticipantRole.MEMBER,
+) -> None:
+    """Add a participant to multiple conversations (for server joins)."""
+    return _get_manager().add_participant_to_conversations(
+        user_id, conversation_ids, role
+    )
+
+
 def remove_participant(user_id: int, conversation_id: int, participant_id: int) -> bool:
     """Remove a participant from a group conversation."""
     return _get_manager().remove_participant(user_id, conversation_id, participant_id)
@@ -330,14 +341,14 @@ def send_message(
         AttachmentError: If attachment is invalid
     """
     return _get_manager().send_message(
-        user_id,
-        conversation_id,
-        content,
-        message_type,
-        reply_to_id,
-        attachments,
-        embeds,
-        webhook_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        content=content,
+        message_type=message_type,
+        reply_to_id=reply_to_id,
+        attachments=attachments,
+        embeds=embeds,
+        webhook_id=webhook_id,
     )
 
 
@@ -619,6 +630,7 @@ __all__ = [
     "leave_conversation",
     # Participants
     "add_participant",
+    "add_participant_to_conversations",
     "remove_participant",
     "update_participant_role",
     "get_participants",

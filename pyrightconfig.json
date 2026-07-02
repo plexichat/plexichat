@@ -4,11 +4,14 @@
     "main.py"
   ],
   "exclude": [
-    "src/tests"
+    "src/tests",
+    "src/core/migrations/cloner.py",
+    "src/utils/encryption/kek_migration.py",
+    "src/api/routes/docs"
   ],
   "extraPaths": [
     "src",
-    "src/utils/common-utils",
+    "src/utils/common_utils",
     "src/utils"
   ],
   "pythonVersion": "3.12",

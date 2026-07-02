@@ -3,12 +3,15 @@ Hardened schema for authentication module.
 Adds blind indexes for encrypted fields and improved integrity.
 """
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 SCHEMA_SQLITE = """
 -- Users table
 CREATE TABLE IF NOT EXISTS auth_users (
     id INTEGER PRIMARY KEY,
     account_type TEXT NOT NULL DEFAULT 'user',
     username TEXT UNIQUE NOT NULL,
+    display_name_encrypted TEXT,
     -- Blind index for email lookups
     email_index TEXT UNIQUE,
     -- Encrypted email
@@ -28,7 +31,20 @@ CREATE TABLE IF NOT EXISTS auth_users (
     avatar_url TEXT,
     age_verified INTEGER DEFAULT 0,
     date_of_birth TEXT,
-    force_username_change INTEGER DEFAULT 0
+    force_username_change INTEGER DEFAULT 0,
+    -- Internal admin notes about the user
+    internal_notes TEXT,
+    internal_notes_format TEXT DEFAULT 'plain',
+    internal_notes_encrypted TEXT,
+    -- Account deletion (017)
+    deletion_status TEXT NOT NULL DEFAULT 'active',
+    deletion_at BIGINT,
+    -- Custom status (019)
+    custom_status_text TEXT,
+    custom_status_emoji TEXT,
+    custom_status_expires_at INTEGER,
+    -- Login/ban reason (commit db920196)
+    reason_encrypted TEXT
 );
 
 -- Sessions table with Token Binding
@@ -58,6 +74,7 @@ CREATE TABLE IF NOT EXISTS auth_bots (
     owner_id INTEGER NOT NULL,
     username TEXT UNIQUE NOT NULL,
     display_name TEXT NOT NULL,
+    display_name_encrypted TEXT,
     token_hash TEXT NOT NULL,
     permissions TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -72,6 +89,9 @@ CREATE TABLE IF NOT EXISTS auth_devices (
     fingerprint TEXT NOT NULL,
     name TEXT,
     device_type TEXT,
+    name_encrypted TEXT,
+    device_type_encrypted TEXT,
+    fingerprint_encrypted TEXT,
     first_seen_at INTEGER NOT NULL,
     last_seen_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
@@ -95,6 +115,7 @@ CREATE TABLE IF NOT EXISTS auth_ip_blacklist (
     ip_index TEXT PRIMARY KEY,
     ip_encrypted TEXT,
     reason TEXT,
+    reason_encrypted TEXT,
     blocked_at INTEGER NOT NULL,
     blocked_by INTEGER,
     expires_at INTEGER
@@ -148,6 +169,7 @@ CREATE TABLE IF NOT EXISTS auth_external_accounts (
     user_id INTEGER NOT NULL,
     provider TEXT NOT NULL,
     external_id TEXT NOT NULL,
+    external_id_encrypted TEXT,
     email_index TEXT,
     created_at INTEGER NOT NULL,
     last_login_at INTEGER,
@@ -285,16 +307,38 @@ CREATE TABLE IF NOT EXISTS username_blacklist (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Account deletion records (017)
+CREATE TABLE IF NOT EXISTS auth_deletion_records (
+    id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    identifier_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    scheduled_at BIGINT NOT NULL,
+    purged_at BIGINT,
+    audit_log_checksum TEXT,
+    UNIQUE(user_id)
+);
+
 -- Passkey indexes
 CREATE INDEX IF NOT EXISTS idx_auth_passkeys_user ON auth_passkeys(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_passkeys_credential ON auth_passkeys(credential_id);
 CREATE INDEX IF NOT EXISTS idx_auth_passkey_challenges_expires ON auth_passkey_challenges(expires_at);
 CREATE INDEX IF NOT EXISTS idx_auth_passkey_challenges_id ON auth_passkey_challenges(challenge_id);
+
+-- Indexes for auth_users (017, 005)
+CREATE INDEX IF NOT EXISTS idx_auth_users_deletion_status ON auth_users(deletion_status);
+CREATE INDEX IF NOT EXISTS idx_auth_users_deletion_at ON auth_users(deletion_at);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_ip_index ON auth_sessions(ip_index);
+CREATE INDEX IF NOT EXISTS idx_auth_known_ips_ip_index ON auth_known_ips(ip_index);
+
+-- Index for auth_deletion_records
+CREATE INDEX IF NOT EXISTS idx_auth_deletion_records_user ON auth_deletion_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_deletion_records_hash ON auth_deletion_records(identifier_hash);
 """
 
 
 def create_tables(db) -> None:
-    statements = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]
+    statements = split_sql_statements(SCHEMA_SQLITE)
     for statement in statements:
         # Convert schema types for PostgreSQL compatibility (BLOB -> BYTEA, etc.)
         converted = (

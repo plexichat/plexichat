@@ -42,6 +42,7 @@ async def get_unread_count(
 ) -> UnreadCountResponse:
     """Get unread message count for a channel."""
     messaging = api.get_messaging()
+    servers_mod = api.get_servers()
     if not messaging:
         raise HTTPException(
             status_code=500,
@@ -59,8 +60,22 @@ async def get_unread_count(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
+        # Resolve channel_id to conversation_id for server channels
+        conv_id = cid
+        if servers_mod:
+            try:
+                channel = servers_mod.get_channel(cid, current_user.user_id)
+                if (
+                    channel
+                    and hasattr(channel, "conversation_id")
+                    and channel.conversation_id
+                ):
+                    conv_id = channel.conversation_id
+            except Exception:
+                pass
+
         counts = await run_in_threadpool(
-            messaging.get_unread_count, current_user.user_id, cid
+            messaging.get_unread_count, current_user.user_id, conv_id
         )
         return UnreadCountResponse(
             channel_id=SnowflakeID(channel_id), unread_count=counts.get(cid, 0)

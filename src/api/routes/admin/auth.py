@@ -14,7 +14,11 @@ from src.api.schemas.admin import (
     AdminBackupCodesResponse,
 )
 from src.api.schemas.common import SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 import utils.logger as logger
 
 router = APIRouter()
@@ -156,50 +160,42 @@ async def admin_force_password_change(request: Request, target_admin_id: str):
     """
     Force a specific admin to change their password on next login.
 
-    Requires super_admin permissions.
+    Requires admin.edit permission (already gated by
+    `require_admin_permission`).  The actual mutation + audit trail are
+    handled by the service-layer helper so route code never touches
+    raw SQL or the audit logger directly.
     """
     check_host_restriction(request)
-    current_admin_id = get_admin_from_token(request)
-
-    # Check if current admin has permission to force password changes
-    from src.core.admin.permissions import check_admin_permission
-    import src.api as api
-
-    db = api.get_db()
-    if db is None:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Database not available"}},
-        )
-    if not check_admin_permission(current_admin_id, "admin.edit", db):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
-        )
+    current_admin_id = require_admin_permission(request, "admin.edit")
 
     try:
-        target_id = int(target_admin_id)
-        db.execute(
-            "UPDATE admin_users SET force_password_change = 1 WHERE id = ?",
-            (target_id,),
-        )
+        from src.core import admin
 
-        # Log the action
-        from src.core.admin.permissions import log_admin_action
+        try:
+            target_id_int = int(target_admin_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid admin ID"}},
+            )
 
-        log_admin_action(
-            db,
-            current_admin_id,
-            "force_password_change",
-            "admin_user",
-            target_id,
-            {"message": f"Forced password change for admin {target_id}"},
-            request.client.host if request.client else "unknown",
+        client_ip = request.client.host if request.client else "unknown"
+        success, message = admin.force_password_change(
+            acting_admin_id=current_admin_id,
+            target_admin_id=target_id_int,
+            client_ip=client_ip,
         )
-
-        return SuccessResponse(
-            success=True, message="Password change forced successfully"
-        )
+        if not success:
+            status_code = (
+                404 if "does not exist" in message or "Invalid" in message else 400
+            )
+            raise HTTPException(
+                status_code=status_code,
+                detail={"error": {"code": status_code, "message": message}},
+            )
+        return SuccessResponse(success=True, message=message)
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(
             status_code=400,

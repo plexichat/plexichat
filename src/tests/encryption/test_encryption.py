@@ -8,22 +8,12 @@ message encryption, secure token generation, and timing attack resistance.
 
 import pytest
 import os
-import sys
 import time
 import threading
 import base64
 import json
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-src_path = os.path.join(project_root, "src")
-encryption_path = os.path.join(src_path, "utils", "encryption")
-common_utils_path = os.path.join(src_path, "utils", "common-utils")
-
-for path in [project_root, src_path, encryption_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
 
 from src.utils.encryption import (  # noqa: E402
     hash_password,

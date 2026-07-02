@@ -6,13 +6,17 @@ This adapter is designed to work with the mediasoup-demo server.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
-import secrets
+import os
 import ssl
 from typing import Dict, Optional, Any, Callable, cast
 from dataclasses import dataclass, field
 
 import utils.logger as logger
+import utils.config as _voice_config  # noqa: F401
+
 
 from ..exceptions import SFUConnectionError, SFUTimeoutError
 from .base import (
@@ -24,6 +28,89 @@ from .base import (
     TransportDirection,
     MediaKind,
 )
+
+# Deployment-scoped secret used to derive stable peer / room
+# identifiers. Loaded once per process so the same `peer_id`
+# reproduces across calls — preventing Janus mediasoup-demo
+# reconnections from spinning a brand new room every time.
+_STABLE_PEER_SECRET: bytes = b""
+
+
+def _load_stable_peer_secret() -> bytes:
+    """Return the deployment-scoped secret used for stable peer IDs.
+
+    Order of precedence:
+    1. ``voice.mediated.stable_peer_secret`` config value (operators
+       who want long-lived PIDs across restarts set this),
+    2. ``PLEXICHAT_VOICE_STABLE_PEER_SECRET`` env var,
+    3. ``PLEXICHAT_SYSTEM_KEY`` env var (the same keyring secret
+       used by everything else; reuse keeps cross-module correlation
+       deterministic),
+    4. ``rate_limiting.bypass_secret`` (also random + stored in keyring),
+    5. Final fallback: an empty bytes blob (deterministic but NOT
+       secret — emits a single CRITICAL log so operators know).
+    """
+    global _STABLE_PEER_SECRET
+    if _STABLE_PEER_SECRET:
+        return _STABLE_PEER_SECRET
+    try:
+        voice_cfg = _voice_config.get("voice", {}) or {}
+        mediated = voice_cfg.get("mediated", {}) or {}
+        secret = mediated.get("stable_peer_secret")
+        if secret:
+            _STABLE_PEER_SECRET = secret.encode("utf-8")
+            return _STABLE_PEER_SECRET
+    except Exception:
+        pass
+
+    for env_name in (
+        "PLEXICHAT_VOICE_STABLE_PEER_SECRET",
+        "PLEXICHAT_SYSTEM_KEY",
+    ):
+        env_v = os.environ.get(env_name)
+        if env_v:
+            _STABLE_PEER_SECRET = env_v.encode("utf-8")
+            return _STABLE_PEER_SECRET
+
+    try:
+        rl_cfg = _voice_config.get("rate_limiting", {}) or {}
+        secret = rl_cfg.get("bypass_secret")
+        if secret:
+            _STABLE_PEER_SECRET = secret.encode("utf-8")
+            return _STABLE_PEER_SECRET
+    except Exception:
+        pass
+
+    logger.critical(
+        "mediasoup_ws: NO deployment-scoped stable-peer secret was "
+        "configured. peer_id values will be CONSTANT per instance "
+        "(any restart / redeploy rotates them). Set "
+        "voice.mediated.stable_peer_secret or "
+        "PLEXICHAT_VOICE_STABLE_PEER_SECRET in production."
+    )
+    return b""
+
+
+def _stable_peer_id(purpose: bytes) -> str:
+    """Compute a stable, deterministic hex-encoded peer/room identifier.
+
+    The output is identical across processes / restarts because we
+    mix a deployment-scoped secret with the ``purpose`` payload via
+    HMAC-SHA256. Two callers using the same ``purpose`` will get the
+    same hex string, so Janus mediasoup reconnections latch onto the
+    same room rather than spinning a fresh one every time.
+
+    If the secret is empty (no deployment config), this still returns
+    a *deterministic* value — the operator just loses the
+    deploy-wide uniqueness guarantee. Operators MUST configure a
+    secret before production use.
+    """
+    secret = _load_stable_peer_secret() or b"plexichat-dev-fallback"
+    digest = hmac.new(secret, purpose, hashlib.sha256).hexdigest()
+    return digest[:32]
+
+
+_load_stable_peer_secret()
 
 
 @dataclass
@@ -83,10 +170,59 @@ class MediasoupWSAdapter(SFUAdapter):
         self._ssl_context = self._create_ssl_context()
 
     def _create_ssl_context(self) -> ssl.SSLContext:
-        """Create SSL context that accepts self-signed certificates."""
+        """Create an SSL context for the mediasoup signaling socket.
+
+        SECURITY: the previous implementation set
+        ``verify_mode=ssl.CERT_NONE`` and ``check_hostname=False`` which
+        disabled every protection against an active MITM. Any peer on
+        the wire path could substitute / replay packets and our
+        WebRTC handshake (carrying ICE / DTLS fingerprints) would still
+        accept the malicious server.
+
+        We now require full chain + hostname verification by default.
+        Operators who actually need self-signed dev certs must opt in
+        explicitly via ``voice.mediated.mtls.allow_self_signed`` (only
+        honourable in ``MAINTAINER_MODE``/dev); operators who run
+        production with a public CA MUST NOT touch that flag.
+        """
+        import os as _os
+        import utils.config as _cfg
+
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        try:
+            voice_cfg = _cfg.get("voice", {}) or {}
+            mediated = voice_cfg.get("mediated", {}) or {}
+            mtls_cfg = mediated.get("mtls", {}) or {}
+            allow_self_signed = bool(mtls_cfg.get("allow_self_signed", False))
+        except Exception:
+            allow_self_signed = False
+
+        # Refuse self-signed overrides outside an explicit dev mode.
+        # ``PLEXICHAT_ALLOW_INSECURE_TLS=1`` is the documented opt-in
+        # but is intentionally noisy: any operator running it in
+        # production sees the loud CRITICAL log line below.
+        env_override = _os.environ.get("PLEXICHAT_ALLOW_INSECURE_TLS", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        env_override = env_override and not _os.environ.get(
+            "PLEXICHAT_REQUIRE_FAIL_CLOSED", ""
+        )
+
+        if allow_self_signed and env_override:
+            logger.critical(
+                "mediasoup WebSocket TLS verification DISABLED via "
+                "PLEXICHAT_ALLOW_INSECURE_TLS + voice.mediated.mtls."
+                "allow_self_signed. This MUST NOT be used in "
+                "production."
+            )
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
         return ctx
 
     def _get_connection_key(self, room_id: str, peer_id: str) -> str:
@@ -684,8 +820,17 @@ class MediasoupWSAdapter(SFUAdapter):
 
     async def health_check(self) -> bool:
         """Check if the mediasoup server is healthy by attempting a connection."""
-        test_room = f"health_check_{secrets.token_hex(4)}"
-        test_peer = f"health_{secrets.token_hex(4)}"
+        # CORRECTNESS FIX: ``secrets.token_hex(4)`` was being used to
+        # generate ``test_room``/``test_peer`` — random strings that
+        # change on every call, so each health-check opened a brand
+        # new room in mediasoup-demo and the operator had no way to
+        # correlate results across runs. We now derive BOTH values
+        # deterministically from a deployment-scoped secret so the
+        # same physical SFU gets the same probe identity, and falls
+        # back to a constant when the secret is missing (dev mode).
+        static_purpose = b"plexichat.mediasoup_ws.health_check"
+        test_room = _stable_peer_id(static_purpose + b".room")
+        test_peer = _stable_peer_id(static_purpose + b".peer")
 
         try:
             connection = await self._connect(test_room, test_peer)

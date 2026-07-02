@@ -1,0 +1,38 @@
+"""EndpointTester composition class.
+
+Combines all mixins into a single EndpointTester class used by SelfTestRunner.
+"""
+
+from .base import EndpointTesterBase
+from .core import CoreMixin
+from .auth import AuthMixin
+from .admin import AdminMixin
+from .applications import ApplicationMixin
+from .resources import ResourceMixin
+from .media import MediaMixin
+from .polls import PollMixin
+from .bots import BotMixin
+from .features import FeatureMixin
+from .twofa import TwoFAMixin
+from .interactions import InteractionMixin
+
+
+class EndpointTester(
+    CoreMixin,
+    AuthMixin,
+    AdminMixin,
+    ApplicationMixin,
+    ResourceMixin,
+    MediaMixin,
+    PollMixin,
+    BotMixin,
+    FeatureMixin,
+    TwoFAMixin,
+    InteractionMixin,
+    EndpointTesterBase,
+):
+    """Endpoint test execution service for SelfTestRunner.
+
+    Executes individual API endpoint tests, DELETE resource tests,
+    and specialised bot-server integration flows.
+    """

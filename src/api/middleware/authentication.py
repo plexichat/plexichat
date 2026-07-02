@@ -13,6 +13,8 @@ import src.api as api
 from src.core.auth.models import TokenInfo
 from src.core.auth.exceptions import AuthError
 
+import utils.logger as logger
+
 security = HTTPBearer(auto_error=False)
 
 
@@ -30,29 +32,65 @@ class AuthenticationMiddleware:
         if "state" not in scope:
             scope["state"] = {}
 
-        # 1. Check for Internal Service Authentication (HTTP only for now)
-        is_internal = False
+        # 1. Check for Internal Service / Self-Test Authentication (HTTP only for now)
         if scope["type"] == "http":
             # Create request from scope ONLY to avoid consuming the 'receive' stream
             request = Request(scope)
             path = scope.get("path", "")
 
-            import hmac
-
-            internal_secret = api.get_internal_secret()
-            provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
-            is_internal = bool(
-                internal_secret
-                and provided_secret
-                and hmac.compare_digest(provided_secret, internal_secret)
-            )
+            # Use centralized self-test validation which enforces:
+            # 1. Request originates from localhost (127.0.0.1 or ::1)
+            # 2. X-Plexichat-Internal-Secret matches via hmac.compare_digest
+            is_internal = api.is_self_test_request(request)
 
             if is_internal:
-                import utils.logger as logger
+                scope["state"]["is_internal"] = True
 
-                logger.debug(f"Auth: Internal service authenticated for path {path}")
+                # Also process Bearer token for internal/self-test requests
+                # so authenticated endpoints have user context.
+                # Only rate limits are bypassed (via is_internal), not auth.
+                auth_header = request.headers.get("Authorization")
+                if auth_header:
+                    token = self._extract_token(auth_header)
+                    if token:
+                        auth = api.get_auth()
+                        if auth:
+                            from src.utils.net import get_client_ip
 
-        scope["state"]["is_internal"] = is_internal
+                            ip = get_client_ip(request)
+                            ua = request.headers.get("User-Agent")
+
+                            def _verify_token(token_str, client_ip, user_agent):
+                                return auth.verify_token(
+                                    token_str,
+                                    ip_address=client_ip,
+                                    user_agent=user_agent,
+                                    is_selftest=True,
+                                )
+
+                            from fastapi.concurrency import run_in_threadpool
+
+                            try:
+                                token_info = await run_in_threadpool(
+                                    _verify_token, token, ip, ua
+                                )
+
+                                if token_info:
+                                    scope["state"]["user"] = token_info
+                            except Exception as e:
+                                if isinstance(e, AuthError):
+                                    logger.warning(
+                                        f"Auth: Internal token verification AuthError for path {path}: {e}"
+                                    )
+                                else:
+                                    logger.error(
+                                        f"Auth: Internal system error during token verification for path {path}: {e}",
+                                        exc_info=True,
+                                    )
+
+                # Early return — rate limits already bypassed via is_internal
+                await self.app(scope, receive, send)
+                return
 
         # 2. Extract and Verify Bearer Token (HTTP only)
         # WebSockets handle their own auth during the handshake or via subprotocol
@@ -130,11 +168,6 @@ class AuthenticationMiddleware:
                 or path.startswith("/api/v1/auth/password-requirements")
                 or is_webhook_execute
             )
-
-            if is_internal:
-                # Early exit for internal services - they don't need user tokens
-                await self.app(scope, receive, send)
-                return
 
             if (
                 not is_admin_path
@@ -240,8 +273,6 @@ class AuthenticationMiddleware:
             if auth_header and not is_admin_path and not is_public_endpoint:
                 token = self._extract_token(auth_header)
                 if token:
-                    import utils.logger as logger
-
                     auth = api.get_auth()
                     if auth:
                         try:
@@ -251,19 +282,13 @@ class AuthenticationMiddleware:
                             ip = get_client_ip(request)
                             ua = request.headers.get("User-Agent")
 
-                            # Use a wrapper to ensure DB connection is returned to pool in the worker thread
+                            # Verify token in a threadpool to avoid blocking the event loop
                             def _verify_with_cleanup(token_str, client_ip, user_agent):
-                                api.get_db()
-                                try:
-                                    return auth.verify_token(
-                                        token_str,
-                                        ip_address=client_ip,
-                                        user_agent=user_agent,
-                                    )
-                                finally:
-                                    # Don't close the DB connection - it's managed by the test framework
-                                    # and the auth module needs to keep using it
-                                    pass
+                                return auth.verify_token(
+                                    token_str,
+                                    ip_address=client_ip,
+                                    user_agent=user_agent,
+                                )
 
                             from fastapi.concurrency import run_in_threadpool
 
@@ -301,7 +326,6 @@ class AuthenticationMiddleware:
                         logger.error(f"Auth: Auth module NOT AVAILABLE for path {path}")
                         scope["state"]["system_error"] = "Auth module not available"
                 else:
-                    import utils.logger as logger
                     from utils.logger import mask_string
 
                     masked_header = mask_string(auth_header)
@@ -327,8 +351,6 @@ async def get_current_user(request: Request) -> TokenInfo:
         # Check if there was a system error (DB failed) vs auth error (invalid token)
         system_error = request.scope.get("state", {}).get("system_error")
         if system_error:
-            import utils.logger as logger
-
             logger.error(
                 f"get_current_user: System error blocking authentication: {system_error}"
             )
@@ -346,8 +368,6 @@ async def get_current_user(request: Request) -> TokenInfo:
             "auth_error", "Authentication required"
         )
 
-        import utils.logger as logger
-
         logger.debug(
             f"get_current_user: No user in state for path {request.url.path}. Error: {error}"
         )
@@ -360,8 +380,9 @@ async def get_current_user(request: Request) -> TokenInfo:
     # Enforce account status (Locked or Forced Username Change)
     path = request.url.path
 
-    # Account Lock check (Total block)
+    # Account Lock check (returns 403)
     if user.account_locked:
+        logger.warning(f"403 account_locked=True for user {user.user_id} at {path}")
         raise HTTPException(
             status_code=403,
             detail={
@@ -375,6 +396,7 @@ async def get_current_user(request: Request) -> TokenInfo:
 
     # Account Deletion check (Hard Freeze)
     if getattr(user, "deletion_status", "active") == "frozen":
+        logger.warning(f"403 deletion_status=frozen for user {user.user_id} at {path}")
         raise HTTPException(
             status_code=403,
             detail={
@@ -388,6 +410,9 @@ async def get_current_user(request: Request) -> TokenInfo:
 
     # Forced Username Change check
     if user.force_username_change:
+        logger.warning(
+            f"403 force_username_change=True for user {user.user_id} at {path}"
+        )
         # Allow GET @me (to see current status) and PATCH @me (to fix the username)
         # Also allow logout
         is_me_path = path == "/api/v1/users/@me"
@@ -430,7 +455,11 @@ async def get_token_info(token: str) -> Optional[TokenInfo]:
 
     try:
         return await run_in_threadpool(_verify_token, token)
-    except Exception:
+    except Exception as e:
+        # Log the exception to avoid silently masking system errors as "invalid token"
+        logger.warning(
+            f"get_token_info: Exception during token verification: {type(e).__name__}: {e}"
+        )
         return None
 
 

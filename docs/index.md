@@ -34,6 +34,10 @@ This portal documents the Plexichat backend: the REST API, the WebSocket gateway
 - [Email](deployment/configuration/config-email.md) -- SMTP setup for email verification and password reset
 - [Embeds & URL Preview](deployment/configuration/config-embeds.md) -- embed limits and URL preview configuration
 
+### Licensing
+
+- [Licensing](deployment/licensing.md) -- license file setup, env var configuration, hot-swapping, feature gating
+
 ### Deployment & Operations
 
 - [Deployment](deployment/index.md) -- installation, security hardening, scaling, monitoring, backup
@@ -43,6 +47,7 @@ This portal documents the Plexichat backend: the REST API, the WebSocket gateway
 - [Security Best Practices](security.md) -- authentication security, encryption, production checklist
 - [Performance Tuning](performance.md) -- subsystem optimization and scaling recommendations
 - [Access Tokens](admin/index.md#access-tokens) -- optional API access-token gate for closed deployments (in Admin Guide)
+- [Data Export (DSAR)](admin/data-export.md) -- GDPR Article 20 right-to-portability exports (in Admin Guide)
 - [Rate Limits](rate-limits.md) -- rate limit tiers and 429 response handling
 - [Errors](errors.md) -- error response format and common error codes
 - [OAuth Scopes](oauth-scopes.md) -- OAuth scope reference for bot and application permissions

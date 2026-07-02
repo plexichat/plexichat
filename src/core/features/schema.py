@@ -4,6 +4,8 @@ Database schema for user features module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 SCHEMA_SQLITE = """
 -- User features table (admin-controlled feature flags and badges)
 CREATE TABLE IF NOT EXISTS user_features (
@@ -66,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_features_audit_admin ON user_features_audit(admin
 CREATE INDEX IF NOT EXISTS idx_features_audit_created ON user_features_audit(created_at);
 """
 
-SCHEMA_STATEMENTS = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]
+SCHEMA_STATEMENTS = split_sql_statements(SCHEMA_SQLITE)
 
 
 def create_tables(db) -> None:

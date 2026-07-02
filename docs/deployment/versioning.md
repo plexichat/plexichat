@@ -130,16 +130,13 @@ git stash
 # Pull latest code
 git pull origin main
 
-# Update submodules
-git submodule update --init --recursive
-
 # Update dependencies
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 
 # Run database migrations
-python -m alembic upgrade head
+python -m src.core.migrations.cli apply_migrations
 
 # Start the service
 sudo systemctl start plexichat
@@ -155,19 +152,19 @@ curl https://your-server.com/api/v1/version
 docker pull plexichat:latest
 
 # Stop containers
-docker-compose down
+docker compose down
 
-# Update docker-compose.yml if needed
+# Update compose file if needed
 # (check for new environment variables or configuration changes)
 
 # Start containers
-docker-compose up -d
+docker compose up -d
 
 # Run migrations
-docker-compose exec plexichat python -m alembic upgrade head
+docker compose exec plexichat python -m src.core.migrations.cli apply_migrations
 
 # Verify the update
-docker-compose exec plexichat curl http://localhost:8000/api/v1/version
+docker compose exec plexichat curl http://localhost:8000/api/v1/version
 ```
 
 #### Method 3: Manual Update
@@ -189,10 +186,10 @@ cp /opt/plexichat/data/plexichat.db data/
 # Install dependencies
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 
 # Run migrations
-python -m alembic upgrade head
+python -m src.core.migrations.cli apply_migrations
 
 # Update service configuration
 sudo systemctl edit plexichat
@@ -246,9 +243,6 @@ sudo systemctl stop plexichat
 git log --oneline -10
 git checkout <previous-commit-hash>
 
-# Restore submodules
-git submodule update --init --recursive
-
 # Restore database if needed
 cp /backups/plexichat-pre-update-YYYYMMDD.db data/plexichat.db
 
@@ -260,17 +254,17 @@ sudo systemctl start plexichat
 
 ```bash
 # Stop containers
-docker-compose down
+docker compose down
 
 # Use previous image tag
-# Edit docker-compose.yml to use previous tag
+# Edit compose file to use previous tag
 # e.g., image: plexichat:r.1.0-50
 
 # Start containers
-docker-compose up -d
+docker compose up -d
 
 # Restore database if needed
-docker-compose exec postgres psql -U plexichat plexichat < /backups/plexichat-pre-update-YYYYMMDD.sql
+docker compose exec postgres psql -U plexichat plexichat < /backups/plexichat-pre-update-YYYYMMDD.sql
 ```
 
 ## Database Migrations
@@ -289,17 +283,16 @@ For more control over migrations:
 
 ```bash
 # Check pending migrations
-python -m alembic current
-python -m alembic history
+python -m src.core.migrations.cli list_migrations
 
-# Run specific migration
-python -m alembic upgrade <revision>
+# Apply pending migrations (applies all unapplied migrations in order)
+python -m src.core.migrations.cli apply_migrations
 
 # Rollback migration (if reversible)
-python -m alembic downgrade <revision>
+python -m src.core.migrations.cli rollback_migration <revision>
 
 # Dry-run migration
-python -m alembic upgrade head --sql
+python -m src.core.migrations.cli apply_migrations --dry-run
 ```
 
 ### Irreversible Migrations

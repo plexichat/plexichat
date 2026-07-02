@@ -102,7 +102,7 @@ Expected response:
 
 Verify all API endpoints:
 ```bash
-docker compose exec backend python main.py --self-test
+docker compose exec backend python main.py self-test
 ```
 
 This runs automated checks on authentication, messaging, servers, and more.
