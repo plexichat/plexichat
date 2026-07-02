@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS migrations_history (
     status VARCHAR(20) NOT NULL DEFAULT 'completed',
     rollback_sql TEXT,
     error_message TEXT,
-    is_irreversible BOOLEAN DEFAULT 0,
+    is_irreversible BOOLEAN DEFAULT FALSE,
     depends_on TEXT,
     metadata TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
