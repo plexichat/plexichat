@@ -436,7 +436,7 @@ class MigrationTracker:
                 "system",
                 created_at,
                 datetime.utcnow(),
-                1 if is_irreversible else 0,
+                is_irreversible,
                 depends_on,
                 metadata_json,
             ),

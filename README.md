@@ -304,4 +304,4 @@ pytest src/tests
 
 ## Version
 
-Current version: `a.1.0-68` (Alpha)
+Current version: `a.1.0-69` (Alpha)
