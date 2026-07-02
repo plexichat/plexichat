@@ -8,15 +8,15 @@ from utils.logger.sanitizer import sanitize_data, sanitize_log_message
 
 def test_sanitize_data_masks_expanded_sensitive_keys():
     payload = {
-        "api_secret": "super-secret-value",
-        "private_key": "private-key-material",
+        "api_secret": "super-secret-value",  # pragma: allowlist secret
+        "private_key": "private-key-material",  # pragma: allowlist secret
         "jwt": "header.payload.signature",
     }
 
     sanitized = sanitize_data(payload)
 
-    assert sanitized["api_secret"] == "su***ue"
-    assert sanitized["private_key"] == "pr***al"
+    assert sanitized["api_secret"] == "su***ue"  # pragma: allowlist secret
+    assert sanitized["private_key"] == "pr***al"  # pragma: allowlist secret
     assert sanitized["jwt"] == "he***re"
 
 
