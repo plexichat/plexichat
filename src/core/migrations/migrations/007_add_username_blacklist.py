@@ -40,7 +40,7 @@ def up(db):
     else:
         db.execute("""
             CREATE TABLE IF NOT EXISTS username_blacklist (
-                id BIGSERIAL PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 pattern TEXT NOT NULL UNIQUE,
                 is_regex BOOLEAN DEFAULT FALSE,
                 reason TEXT,

@@ -79,7 +79,7 @@ def up(db):
         db.execute("""
             CREATE TABLE IF NOT EXISTS admin_notes (
                 id INTEGER PRIMARY KEY,
-                ticket_id BIGINT NOT NULL,
+                ticket_id INTEGER NOT NULL,
                 admin_id INTEGER NOT NULL,
                 content TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
@@ -91,7 +91,7 @@ def up(db):
         db.execute("""
             CREATE TABLE IF NOT EXISTS admin_notes (
                 id BIGINT PRIMARY KEY,
-                ticket_id BIGINT NOT NULL,
+                ticket_id INTEGER NOT NULL,
                 admin_id BIGINT NOT NULL,
                 content TEXT NOT NULL,
                 created_at BIGINT NOT NULL,

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-72"
+DEFAULT_VERSION = "a.1.0-73"
 
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:

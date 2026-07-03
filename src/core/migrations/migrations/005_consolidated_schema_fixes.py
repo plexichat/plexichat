@@ -137,7 +137,7 @@ def _add_ip_index_to_auth(db, db_type: str):
                 if db_type == "postgres":
                     db.execute("""
                         CREATE TABLE IF NOT EXISTS auth_ip_blacklist (
-                            id BIGSERIAL PRIMARY KEY,
+                            id SERIAL PRIMARY KEY,
                             ip_index TEXT NOT NULL UNIQUE,
                             ip_encrypted TEXT NOT NULL,
                             expires_at BIGINT NOT NULL,

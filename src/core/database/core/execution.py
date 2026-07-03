@@ -1,3 +1,4 @@
+import re
 import time
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Protocol, Tuple
@@ -9,6 +10,34 @@ from .metrics import _query_count, _query_time_ms
 from .types import DbConnection, DbCursor
 
 _QUERY_CACHE_MAX = 100
+
+
+def apply_pg_type_fixes(query: str) -> str:
+    """Auto-fix INTEGER→BIGINT and other PG16 type issues in DDL statements.
+
+    Migration files run raw SQL through ``db.execute()`` which bypasses the
+    ``convert_schema`` pipeline used by schema files.  This function ensures
+    INTEGER columns that may hold 64-bit snowflake IDs are upgraded to BIGINT,
+    and fixes other PostgreSQL‑16 strict‑typing incompatibilities.
+    """
+    # Match word-boundary INTEGER only in DDL context
+    converted = re.sub(r"\bINTEGER\b", "BIGINT", query, flags=re.IGNORECASE)
+
+    # BOOLEAN DEFAULT 0/1 → FALSE/TRUE
+    converted = re.sub(
+        r"\bBOOLEAN\s+DEFAULT\s+0\b",
+        "BOOLEAN DEFAULT FALSE",
+        converted,
+        flags=re.IGNORECASE,
+    )
+    converted = re.sub(
+        r"\bBOOLEAN\s+DEFAULT\s+1\b",
+        "BOOLEAN DEFAULT TRUE",
+        converted,
+        flags=re.IGNORECASE,
+    )
+
+    return converted
 
 
 class _DatabaseExecutionProtocol(Protocol):
@@ -137,6 +166,9 @@ class DatabaseExecutionMixin:
 
         query_sanitized = self._sanitize_sqlite_query(query)
         query_conv = dialect.convert_placeholders(query_sanitized, self.type)
+
+        if self.type == "postgres":
+            query_conv = apply_pg_type_fixes(query_conv)
 
         for attempt in range(3):
             try:

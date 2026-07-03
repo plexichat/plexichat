@@ -107,6 +107,8 @@ def create_tables(db):
                     # to avoid "operator does not exist: bigint ~ unknown" on PG16.
                     # On a fresh DB the columns are already BIGINT — the ALTER is
                     # a no-op but the USING clause must still be syntactically valid.
+                    # Cast column to text before using the ~ regex operator;
+                    # PostgreSQL 16 rejects "operator does not exist: bigint ~ unknown".
                     db.execute(
                         f'ALTER TABLE {table} ALTER COLUMN "{col}" TYPE BIGINT '
                         f"USING CASE WHEN (\"{col}\"::text) ~ '^[0-9]+$' "
