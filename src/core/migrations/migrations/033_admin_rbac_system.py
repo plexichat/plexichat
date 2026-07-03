@@ -23,12 +23,12 @@ def up(db):
     # === Admin Roles Table ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS admin_roles (
-            id INTEGER PRIMARY KEY,
+            id BIGINT PRIMARY KEY,
             name VARCHAR(50) UNIQUE NOT NULL,
             description TEXT,
             permissions TEXT NOT NULL,
             created_at INTEGER NOT NULL,
-            created_by INTEGER NOT NULL,
+            created_by BIGINT NOT NULL,
             updated_at INTEGER,
             is_system INTEGER NOT NULL DEFAULT 0
         )
@@ -38,10 +38,10 @@ def up(db):
     # === Admin Role Assignments Table ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS admin_role_assignments (
-            admin_id INTEGER NOT NULL,
-            role_id INTEGER NOT NULL,
+            admin_id BIGINT NOT NULL,
+            role_id BIGINT NOT NULL,
             assigned_at INTEGER NOT NULL,
-            assigned_by INTEGER NOT NULL,
+            assigned_by BIGINT NOT NULL,
             PRIMARY KEY (admin_id, role_id)
         )
     """)
@@ -55,12 +55,12 @@ def up(db):
     # === Admin Audit Log Table ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS admin_audit_log (
-            id INTEGER PRIMARY KEY,
-            admin_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            admin_id BIGINT NOT NULL,
             action VARCHAR(100) NOT NULL,
             target_type VARCHAR(50),
-            target_id INTEGER,
-            target_user_id INTEGER,
+            target_id BIGINT,
+            target_user_id BIGINT,
             details TEXT,
             ip_address VARCHAR(45),
             user_agent TEXT,
@@ -87,17 +87,17 @@ def up(db):
     # === Admin Approvals Table ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS admin_approvals (
-            id INTEGER PRIMARY KEY,
-            requested_by INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            requested_by BIGINT NOT NULL,
             action_type VARCHAR(100) NOT NULL,
             target_type VARCHAR(50),
-            target_id INTEGER,
+            target_id BIGINT,
             action_details TEXT,
             status VARCHAR(20) NOT NULL DEFAULT 'pending',
             required_approvals INTEGER NOT NULL DEFAULT 2,
             current_approvals INTEGER NOT NULL DEFAULT 0,
-            approved_by TEXT,
-            rejected_by INTEGER,
+            approved_by BIGINT,
+            rejected_by BIGINT,
             rejection_reason TEXT,
             expires_at INTEGER,
             created_at INTEGER NOT NULL,

@@ -50,9 +50,9 @@ def up(db):
     try:
         db.execute("""
             CREATE TABLE IF NOT EXISTS admin_approval_comments (
-                id INTEGER PRIMARY KEY,
-                approval_id INTEGER NOT NULL,
-                admin_id INTEGER NOT NULL,
+                id BIGINT PRIMARY KEY,
+                approval_id BIGINT NOT NULL,
+                admin_id BIGINT NOT NULL,
                 comment TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 FOREIGN KEY (approval_id) REFERENCES admin_approvals(id) ON DELETE CASCADE

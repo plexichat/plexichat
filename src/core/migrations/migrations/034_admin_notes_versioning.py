@@ -19,12 +19,12 @@ def up(db):
     # === Admin Notes Versioning Table ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS admin_notes_versioning (
-            id INTEGER PRIMARY KEY,
+            id BIGINT PRIMARY KEY,
             target_type VARCHAR(50) NOT NULL,
-            target_id INTEGER NOT NULL,
+            target_id BIGINT NOT NULL,
             note_content TEXT NOT NULL,
             note_format VARCHAR(20) DEFAULT 'plain',
-            created_by INTEGER NOT NULL,
+            created_by BIGINT NOT NULL,
             created_at INTEGER NOT NULL,
             version_number INTEGER NOT NULL,
             change_reason TEXT
