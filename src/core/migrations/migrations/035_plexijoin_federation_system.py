@@ -20,7 +20,7 @@ def up(db):
     # === PlexiJoin Connections Table ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS plexijoin_connections (
-            id BIGINT PRIMARY KEY,
+            id INTEGER PRIMARY KEY,
             remote_instance_id TEXT NOT NULL UNIQUE,
             remote_url TEXT NOT NULL,
             shared_key_encrypted TEXT NOT NULL,
@@ -31,7 +31,7 @@ def up(db):
             last_activity INTEGER,
             note TEXT,
             created_at INTEGER NOT NULL,
-            created_by BIGINT NOT NULL
+            created_by INTEGER NOT NULL
         )
     """)
     db.execute(
@@ -47,7 +47,7 @@ def up(db):
     # === PlexiJoin Inbound Requests Table ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS plexijoin_inbound_requests (
-            id BIGINT PRIMARY KEY,
+            id INTEGER PRIMARY KEY,
             remote_instance_id TEXT NOT NULL,
             remote_url TEXT NOT NULL,
             requested_by TEXT,
@@ -55,7 +55,7 @@ def up(db):
             status TEXT NOT NULL DEFAULT 'pending',
             requested_at INTEGER NOT NULL,
             reviewed_at INTEGER,
-            reviewed_by BIGINT
+            reviewed_by INTEGER
         )
     """)
     db.execute(
@@ -68,8 +68,8 @@ def up(db):
     # === PlexiJoin Traffic Log Table ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS plexijoin_traffic_log (
-            id BIGINT PRIMARY KEY,
-            connection_id BIGINT NOT NULL,
+            id INTEGER PRIMARY KEY,
+            connection_id INTEGER NOT NULL,
             direction TEXT NOT NULL,
             message_count INTEGER NOT NULL,
             recorded_at INTEGER NOT NULL,
