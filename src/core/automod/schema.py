@@ -103,16 +103,16 @@ def create_tables(db):
                 if not re.match(r"^[a-zA-Z0-9_]+$", col):
                     continue
                 try:
-                    # Use USING clause with safe conversion: valid integers are
-                    # cast to BIGINT; non-numeric garbage (e.g. leaked column names)
-                    # is set to NULL instead of failing the entire ALTER TABLE.
+                    # Cast column to text before applying regex (~ operator)
+                    # to avoid "operator does not exist: bigint ~ unknown" on PG16.
+                    # On a fresh DB the columns are already BIGINT — the ALTER is
+                    # a no-op but the USING clause must still be syntactically valid.
                     db.execute(
                         f'ALTER TABLE {table} ALTER COLUMN "{col}" TYPE BIGINT '
-                        f"USING CASE WHEN \"{col}\" ~ '^[0-9]+$' "
+                        f"USING CASE WHEN (\"{col}\"::text) ~ '^[0-9]+$' "
                         f'THEN "{col}"::bigint ELSE NULL END'
                     )
                 except Exception:
-                    # Column may already be BIGINT or contain incompatible data
                     pass
 
     db.execute("""
