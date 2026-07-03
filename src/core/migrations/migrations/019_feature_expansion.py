@@ -51,12 +51,12 @@ def up(db):
     # === Message Forwarding ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS msg_forwarded (
-            id INTEGER PRIMARY KEY,
-            message_id INTEGER NOT NULL,
-            original_message_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            message_id BIGINT NOT NULL,
+            original_message_id BIGINT NOT NULL,
             original_conversation_id INTEGER,
             original_author_id INTEGER,
-            forwarded_by INTEGER NOT NULL,
+            forwarded_by BIGINT NOT NULL,
             original_content TEXT,
             original_created_at INTEGER,
             created_at INTEGER NOT NULL
@@ -75,9 +75,9 @@ def up(db):
     # === Scheduled Messages ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS msg_scheduled (
-            id INTEGER PRIMARY KEY,
-            conversation_id INTEGER NOT NULL,
-            author_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            conversation_id BIGINT NOT NULL,
+            author_id BIGINT NOT NULL,
             content TEXT NOT NULL,
             scheduled_at INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
@@ -103,10 +103,10 @@ def up(db):
     # === User Bookmarks (per-user message pins) ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS user_bookmarks (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            message_id INTEGER NOT NULL,
-            conversation_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            message_id BIGINT NOT NULL,
+            conversation_id BIGINT NOT NULL,
             label TEXT,
             created_at INTEGER NOT NULL,
             UNIQUE(user_id, message_id)
@@ -125,8 +125,8 @@ def up(db):
     # === User Profiles with custom status ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS user_profiles (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL UNIQUE,
+            id BIGINT PRIMARY KEY,
+            user_id BIGINT NOT NULL UNIQUE,
             bio TEXT,
             banner_url TEXT,
             social_links TEXT,
@@ -173,10 +173,10 @@ def up(db):
     try:
         db.execute("""
             CREATE TABLE IF NOT EXISTS reports (
-                id INTEGER PRIMARY KEY,
-                reporter_id INTEGER NOT NULL,
+                id BIGINT PRIMARY KEY,
+                reporter_id BIGINT NOT NULL,
                 report_type TEXT NOT NULL,
-                target_id INTEGER NOT NULL,
+                target_id BIGINT NOT NULL,
                 channel_id INTEGER,
                 server_id INTEGER,
                 reason TEXT NOT NULL,
@@ -230,8 +230,8 @@ def up(db):
     # === DM Anti-Spam ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS dm_spam_filters (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            user_id BIGINT NOT NULL,
             target_user_id INTEGER,
             pattern TEXT,
             filter_type TEXT NOT NULL DEFAULT 'rate',
@@ -252,9 +252,9 @@ def up(db):
 
     db.execute("""
         CREATE TABLE IF NOT EXISTS dm_spam_events (
-            id INTEGER PRIMARY KEY,
-            sender_id INTEGER NOT NULL,
-            recipient_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            sender_id BIGINT NOT NULL,
+            recipient_id BIGINT NOT NULL,
             event_type TEXT NOT NULL,
             content_hash TEXT,
             created_at INTEGER NOT NULL
@@ -270,8 +270,8 @@ def up(db):
     # === Webhook Retry Queue ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS webhook_retry_queue (
-            id INTEGER PRIMARY KEY,
-            webhook_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            webhook_id BIGINT NOT NULL,
             payload TEXT NOT NULL,
             attempt_count INTEGER NOT NULL DEFAULT 0,
             max_attempts INTEGER NOT NULL DEFAULT 5,
@@ -295,8 +295,8 @@ def up(db):
     # === Push Notification Tokens ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS push_tokens (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            user_id BIGINT NOT NULL,
             token TEXT NOT NULL,
             platform TEXT NOT NULL,
             device_id TEXT,
@@ -315,9 +315,9 @@ def up(db):
     # === Last Chat Tracking ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS user_last_chat (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL UNIQUE,
-            conversation_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            user_id BIGINT NOT NULL UNIQUE,
+            conversation_id BIGINT NOT NULL,
             last_message_id INTEGER,
             scroll_position INTEGER,
             updated_at INTEGER NOT NULL
@@ -330,9 +330,9 @@ def up(db):
     # === Recent Chat History ===
     db.execute("""
         CREATE TABLE IF NOT EXISTS user_recent_chats (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            conversation_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            conversation_id BIGINT NOT NULL,
             accessed_at INTEGER NOT NULL,
             unread_count INTEGER NOT NULL DEFAULT 0
         )
