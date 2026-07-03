@@ -131,7 +131,7 @@ def up(db):
         db,
         "thread_threads",
         "slowmode_updated_by",
-        "slowmode_updated_by INTEGER",
+        "slowmode_updated_by BIGINT",
     )
     _add_column_if_missing(
         db,
