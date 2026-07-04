@@ -23,8 +23,8 @@ class DatabaseStorage(RateLimitStorage):
     def _ensure_table(self):
         """Create the rate limit table if it doesn't exist."""
         # Database.execute handles placeholder conversion if needed
-        self._db.execute("""  # type: ignore[attr-defined]
-            CREATE TABLE IF NOT EXISTS ratelimit_buckets (
+        self._db.execute(  # type: ignore[attr-defined]
+            """CREATE TABLE IF NOT EXISTS ratelimit_buckets (
                 key TEXT PRIMARY KEY,
                 bucket_type TEXT,
                 tokens REAL,
@@ -32,7 +32,8 @@ class DatabaseStorage(RateLimitStorage):
                 expires_at REAL,
                 data TEXT
             )
-        """)
+        """
+        )
         # Database class handles index creation differences if any (usually similar)
         if self._db.type == "sqlite":
             self._db.execute(  # type: ignore[attr-defined]
