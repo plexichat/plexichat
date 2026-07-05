@@ -33,6 +33,52 @@ def build_brand_styles(conf: DocsConfig) -> str:
             --radius-sm: 4px;
             --radius-md: 6px;
             --radius-lg: 8px;
+            --code-bg: #0f172a;
+            --code-text: #e2e8f0;
+            --note-bg: #f0fdf4;
+            --note-border: #bbf7d0;
+            --note-text: #166534;
+        }
+
+        [data-theme="dark"] {
+            --bg: #0b0f19;
+            --surface: #111827;
+            --text: #f9fafb;
+            --text-muted: #9ca3af;
+            --accent: #818cf8;
+            --accent-hover: #6366f1;
+            --border: #1f2937;
+            --border-light: #1f2937;
+            --code-bg: #000000;
+            --code-text: #e2e8f0;
+            --note-bg: #0f2937;
+            --note-border: #1a4a5a;
+            --note-text: #94d3e8;
+        }
+
+        .dark-mode-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-muted);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: all 0.2s ease;
+        }
+        .dark-mode-toggle:hover {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
         }
 
         * { box-sizing: border-box; }
@@ -161,7 +207,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .nav-list a {
             border: 1px solid transparent;
             border-radius: var(--radius-sm);
-            color: #27272a;
+            color: var(--text);
             display: block;
             font-size: 0.95rem;
             padding: 6px var(--spacing-sm);
@@ -192,7 +238,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         }
 
         .docs-content {
-            max-width: 820px;
+            max-width: 940px;
             margin: 0 auto;
             padding: 0 var(--spacing-xl);
         }
@@ -319,17 +365,17 @@ def build_brand_styles(conf: DocsConfig) -> str:
         li + li { margin-top: var(--spacing-sm); }
 
         code {
-            background: #f1f5f9;
-            border: 1px solid #e2e8f0;
+            background: var(--bg);
+            border: 1px solid var(--border);
             border-radius: var(--radius-sm);
-            color: #0f172a;
+            color: var(--text);
             font-family: var(--font-code);
             font-size: 0.875em;
             padding: 2px var(--spacing-xs);
         }
 
         pre {
-            background: #0f172a;
+            background: var(--code-bg);
             border-radius: var(--radius-md);
             overflow-x: auto;
             padding: var(--spacing-lg);
@@ -342,7 +388,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
             padding: 0;
             font-size: 0.875rem;
             line-height: 1.6;
-            color: #e2e8f0;
+            color: var(--code-text);
         }
 
         .code-block {
@@ -409,13 +455,13 @@ def build_brand_styles(conf: DocsConfig) -> str:
         }
 
         .note {
-            background: #f0fdf4;
-            border: 1px solid #bbf7d0;
+            background: var(--note-bg);
+            border: 1px solid var(--note-border);
             border-left: 4px solid #22c55e;
             border-radius: var(--radius-md);
             margin: 0 0 var(--spacing-lg);
             padding: var(--spacing-md) var(--spacing-lg);
-            color: #166534;
+            color: var(--note-text);
             font-size: 0.9rem;
         }
 

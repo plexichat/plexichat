@@ -64,6 +64,30 @@ def render_swagger_ui_page(
     )
     html = html.replace("</head>", f"<style>{build_brand_styles(conf)}</style></head>")
 
+    dark_mode_script = """
+    <button class="dark-mode-toggle" onclick="toggleDarkMode()" id="darkModeToggle" aria-label="Toggle dark mode">&#x263E;</button>
+    <script>
+        function toggleDarkMode() {
+            var theme = document.documentElement.getAttribute('data-theme');
+            if (theme === 'dark') {
+                document.documentElement.removeAttribute('data-theme');
+                localStorage.setItem('plexi-docs-theme', 'light');
+            } else {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                localStorage.setItem('plexi-docs-theme', 'dark');
+            }
+        }
+        (function() {
+            var saved = localStorage.getItem('plexi-docs-theme');
+            if (saved === 'dark') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
+    """
+
+    html = html.replace("</body>", f"{dark_mode_script}</body>")
+
     return HTMLResponse(html)
 
 
@@ -91,5 +115,29 @@ def render_redoc_page(request: Request, title: str, openapi_url: str) -> HTMLRes
     )
     html = html.replace("</body>", f"</div>{footer_html}</div></main></div></body>")
     html = html.replace("</head>", f"<style>{build_brand_styles(conf)}</style></head>")
+
+    dark_mode_script = """
+    <button class="dark-mode-toggle" onclick="toggleDarkMode()" id="darkModeToggle" aria-label="Toggle dark mode">&#x263E;</button>
+    <script>
+        function toggleDarkMode() {
+            var theme = document.documentElement.getAttribute('data-theme');
+            if (theme === 'dark') {
+                document.documentElement.removeAttribute('data-theme');
+                localStorage.setItem('plexi-docs-theme', 'light');
+            } else {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                localStorage.setItem('plexi-docs-theme', 'dark');
+            }
+        }
+        (function() {
+            var saved = localStorage.getItem('plexi-docs-theme');
+            if (saved === 'dark') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
+    """
+
+    html = html.replace("</body>", f"{dark_mode_script}</body>")
 
     return HTMLResponse(html)
