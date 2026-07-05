@@ -10,7 +10,12 @@ from fastapi.responses import HTMLResponse
 
 from ..config import _runtime_docs_config, get_docs_config
 from ..renderer import markdown_to_html
-from ..navigation import build_sidebar_html, build_shell_header_html, build_footer_html
+from ..navigation import (
+    build_sidebar_html,
+    build_shell_header_html,
+    build_footer_html,
+    build_related_links_html,
+)
 from ..theme import build_brand_styles
 
 
@@ -56,6 +61,7 @@ class ServingMixin:
         )
         sidebar_html = build_sidebar_html(conf, current_path)
         footer_html = build_footer_html(conf)
+        related_links_html = build_related_links_html(current_path)
         page_title = title.split(" - ", 1)[0]
         shell_header = build_shell_header_html(
             conf,
@@ -79,7 +85,7 @@ class ServingMixin:
             <div class="docs-content">
                 {shell_header}
                 <div class="content-container">{html_content}</div>
-                {{related_links_html}}
+                {related_links_html}
                 {footer_html}
             </div>
         </main>
