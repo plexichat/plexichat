@@ -69,7 +69,7 @@ class EnvGeneratorMixin:
         <ol>
             <li>Generate configuration using the button above</li>
             <li>Copy to clipboard and save as <code>.env.generated</code> on your server</li>
-            <li>Run: <code>VERSION=a.1.0-53 docker compose up -d</code></li>
+            <li>Run: <code>VERSION=a.1.0-83 docker compose up -d</code></li>
         </ol>
     </div>
 
@@ -87,8 +87,8 @@ class EnvGeneratorMixin:
 # Generated securely on ${new Date().toISOString()}
 # DO NOT commit this file to version control
 
-# Version to deploy (e.g., a.1.0-53)
-# Set via: VERSION=a.1.0-53 docker compose up -d
+# Version to deploy (e.g., a.1.0-83)
+# Set via: VERSION=a.1.0-83 docker compose up -d
 VERSION=${version}
 
 POSTGRES_DBNAME=plexichat
