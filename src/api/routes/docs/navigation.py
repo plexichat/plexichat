@@ -59,14 +59,22 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
 
     html = ['<aside class="sidebar">']
     html.append('<div class="sidebar-header">')
-    html.append(f'<a href="{conf.path}" class="brand-mark">Plexichat</a>')
+    html.append(
+        f'<a href="{conf.path}" class="brand-mark">'
+        '<svg class="brand-logo" viewBox="0 0 128 128" width="22" height="22" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;margin-right:6px">'
+        '<path d="M64 16 L104 34 V64 C104 94 82 110 64 116 C46 110 24 94 24 64 V34 Z" fill="#6366f1" opacity="0.12"/>'
+        '<path d="M32 40 C48 20, 80 20, 96 40" stroke="#6366f1" stroke-width="4.5" fill="none"/>'
+        '<path d="M96 88 C80 108, 48 108, 32 88" stroke="#6366f1" stroke-width="4.5" fill="none"/>'
+        '<circle cx="32" cy="64" r="6" fill="#6366f1"/>'
+        '<circle cx="96" cy="64" r="6" fill="#6366f1"/>'
+        '<circle cx="64" cy="64" r="9" fill="#6366f1"/>'
+        "</svg>"
+        '<span class="brand-text">Plexichat</span></a>'
+    )
     html.append('<span class="sidebar-caption">Documentation</span>')
     html.append(f"<h3>{conf.title}</h3>")
     html.append(f'<p class="sidebar-description">{conf.description}</p>')
     html.append("</div>")
-
-    # Add surface navigation at top of sidebar
-    html.append(build_surface_nav_html(conf, current_path, in_sidebar=True))
 
     for category, items in categories.items():
         html.append(
@@ -163,7 +171,17 @@ def build_shell_header_html(
         '<header class="shell-header">'
         '<div class="shell-header-inner">'
         '<div class="shell-brand-block">'
-        f'<a href="{conf.path}" class="brand-mark">Plexichat</a>'
+        f'<a href="{conf.path}" class="brand-mark">'
+        '<svg class="brand-logo" viewBox="0 0 128 128" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">'
+        '<path d="M64 16 L104 34 V64 C104 94 82 110 64 116 C46 110 24 94 24 64 V34 Z" fill="#6366f1" opacity="0.12"/>'
+        '<path d="M32 40 C48 20, 80 20, 96 40" stroke="#6366f1" stroke-width="4.5" fill="none"/>'
+        '<path d="M96 88 C80 108, 48 108, 32 88" stroke="#6366f1" stroke-width="4.5" fill="none"/>'
+        '<circle cx="32" cy="64" r="6" fill="#6366f1"/>'
+        '<circle cx="96" cy="64" r="6" fill="#6366f1"/>'
+        '<circle cx="64" cy="64" r="9" fill="#6366f1"/>'
+        "</svg>"
+        '<span class="brand-text">Plexichat</span>'
+        "</a>"
         f'<span class="surface-badge">{surface_label}</span>'
         f'<h1 class="shell-title">{page_title}</h1>'
         f'<p class="shell-summary">{page_summary}</p>'
