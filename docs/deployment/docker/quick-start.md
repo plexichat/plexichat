@@ -93,7 +93,7 @@ Expected response:
 ```json
 {
   "status": "healthy",
-  "version": "a.1.0-53",
+  "version": "a.1.0-83",
   "timestamp": "2024-01-15T10:30:45Z"
 }
 ```
