@@ -39,7 +39,7 @@ static_client:
   server. This is the safe default.
 - `"latest"`: install the latest release of the same stage and major
   version as the server, regardless of minor/build.
-- Explicit version string (e.g. `"a.1.0-83"`): pin to that exact version.
+- Explicit version string (e.g. `"a.1.0-84"`): pin to that exact version.
 
 ## Update Behaviour
 
