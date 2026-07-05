@@ -68,6 +68,9 @@ class EventType(Enum):
 
     RATCHET_UPDATE = "RATCHET_UPDATE"
 
+    MESSAGE_BOOKMARK_ADD = "MESSAGE_BOOKMARK_ADD"
+    MESSAGE_BOOKMARK_REMOVE = "MESSAGE_BOOKMARK_REMOVE"
+
 
 class GatewayIntent(IntFlag):
     """Gateway intents for filtering events."""
