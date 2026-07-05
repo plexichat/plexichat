@@ -76,12 +76,12 @@ class ServingMixin:
     <div class="docs-layout">
         {sidebar_html}
         <main class="docs-main">
-            {shell_header}
-            <section class="page-card">
+            <div class="docs-content">
+                {shell_header}
                 <div class="content-container">{html_content}</div>
                 {{related_links_html}}
                 {footer_html}
-            </section>
+            </div>
         </main>
     </div>
     <script>
