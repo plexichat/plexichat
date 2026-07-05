@@ -154,7 +154,7 @@ def build_shell_header_html(
 ) -> str:
     """Build a branded shell header shared by all docs surfaces."""
     surface_labels = {
-        "portal": "Narrative Docs",
+        "portal": "Guides",
         "swagger": "OpenAPI Explorer",
         "redoc": "API Reference",
     }

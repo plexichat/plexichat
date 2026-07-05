@@ -121,3 +121,17 @@ class DocsRouter(
         router.get("/deployment/env-generator")(self.docs_env_generator)
 
         router.get("/cli/overview")(self.docs_cli_overview)
+
+        router.get("/favicon.ico")(self._favicon)
+
+    async def _favicon(self):
+        """Return a minimal SVG favicon to prevent 405 errors."""
+        from fastapi.responses import Response
+
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+            '<rect width="32" height="32" rx="6" fill="#6366f1"/>'
+            '<text x="16" y="23" font-size="20" text-anchor="middle" fill="#fff" '
+            'font-family="sans-serif" font-weight="bold">P</text></svg>'
+        )
+        return Response(content=svg, media_type="image/svg+xml")

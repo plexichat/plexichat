@@ -14,7 +14,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
             --bg: #fafafa;
             --surface: #ffffff;
             --text: #18181b;
-            --text-muted: #52525b;
+            --text-muted: #3f3f46;
             --accent: #6366f1;
             --accent-hover: #4f46e5;
             --border: #e4e4e7;
@@ -127,7 +127,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
 
         .nav-category {
             color: var(--text-muted);
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.08em;
             margin: var(--spacing-xl) var(--spacing-md) var(--spacing-sm);
@@ -135,7 +135,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: var(--spacing-xs);
+            justify-content: space-between;
             user-select: none;
             transition: color 0.15s ease;
         }
@@ -145,13 +145,13 @@ def build_brand_styles(conf: DocsConfig) -> str:
         }
 
         .nav-category::after {
-            content: "+";
+            content: "−";
             font-size: 0.875rem;
-            transition: transform 0.15s ease;
+            font-weight: bold;
         }
 
         .nav-category.collapsed::after {
-            transform: rotate(45deg);
+            content: "+";
         }
 
         .nav-list { list-style: none; margin: 0; padding: 0; }
@@ -161,10 +161,10 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .nav-list a {
             border: 1px solid transparent;
             border-radius: var(--radius-sm);
-            color: var(--text-muted);
+            color: #27272a;
             display: block;
-            font-size: 0.875rem;
-            padding: 5px var(--spacing-sm);
+            font-size: 0.95rem;
+            padding: 6px var(--spacing-sm);
             text-decoration: none;
             transition: all 0.15s ease;
             line-height: 1.4;
