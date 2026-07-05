@@ -14,7 +14,6 @@ from ..navigation import (
     build_sidebar_html,
     build_shell_header_html,
     build_footer_html,
-    build_related_links_html,
 )
 from ..theme import build_brand_styles
 
@@ -61,7 +60,6 @@ class ServingMixin:
         )
         sidebar_html = build_sidebar_html(conf, current_path)
         footer_html = build_footer_html(conf)
-        related_links_html = build_related_links_html(current_path)
         page_title = title.split(" - ", 1)[0]
         shell_header = build_shell_header_html(
             conf,
@@ -85,11 +83,11 @@ class ServingMixin:
             <div class="docs-content">
                 {shell_header}
                 <div class="content-container">{html_content}</div>
-                {related_links_html}
                 {footer_html}
             </div>
         </main>
     </div>
+    <button class="dark-mode-toggle" onclick="toggleDarkMode()" id="darkModeToggle" aria-label="Toggle dark mode">&#x263E;</button>
     <script>
         document.querySelectorAll('.copy-btn').forEach(btn => {{
             btn.addEventListener('click', async () => {{
@@ -106,6 +104,24 @@ class ServingMixin:
             navList.classList.toggle('collapsed');
             element.classList.toggle('collapsed');
         }}
+
+        function toggleDarkMode() {{
+            var theme = document.documentElement.getAttribute('data-theme');
+            if (theme === 'dark') {{
+                document.documentElement.removeAttribute('data-theme');
+                localStorage.setItem('plexi-docs-theme', 'light');
+            }} else {{
+                document.documentElement.setAttribute('data-theme', 'dark');
+                localStorage.setItem('plexi-docs-theme', 'dark');
+            }}
+        }}
+
+        (function() {{
+            var saved = localStorage.getItem('plexi-docs-theme');
+            if (saved === 'dark') {{
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }}
+        }})();
     </script>
 </body>
 </html>"""
