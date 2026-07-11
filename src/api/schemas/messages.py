@@ -2,7 +2,7 @@
 Message schemas - Request/response models for message endpoints.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
@@ -250,7 +250,10 @@ class TranscriptExportRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    format: str = Field("json", description="Export format: json, csv, txt, html")
+    format: Literal["json", "csv", "txt", "html"] = Field(
+        "json",
+        description="Export format: json, csv, txt, html",
+    )
     from_date: Optional[str] = Field(None, description="Start date (ISO 8601)")
     to_date: Optional[str] = Field(None, description="End date (ISO 8601)")
     timezone: str = Field("UTC", description="Timezone for dates")
