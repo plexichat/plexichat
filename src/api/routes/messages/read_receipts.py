@@ -474,14 +474,16 @@ async def get_last_read(
     if servers_mod:
         try:
             channel = servers_mod.get_channel(cid, current_user.user_id)
-            if (
-                channel
-                and hasattr(channel, "conversation_id")
-                and channel.conversation_id
-            ):
-                conv_id = channel.conversation_id
+            if channel:
+                if hasattr(channel, "conversation_id") and channel.conversation_id:
+                    conv_id = channel.conversation_id
+        except HTTPException:
+            raise
         except Exception:
-            pass
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Channel not found"}},
+            )
 
     try:
         from starlette.concurrency import run_in_threadpool
@@ -545,14 +547,16 @@ async def mark_unread(
     if servers_mod:
         try:
             channel = servers_mod.get_channel(cid, current_user.user_id)
-            if (
-                channel
-                and hasattr(channel, "conversation_id")
-                and channel.conversation_id
-            ):
-                conv_id = channel.conversation_id
+            if channel:
+                if hasattr(channel, "conversation_id") and channel.conversation_id:
+                    conv_id = channel.conversation_id
+        except HTTPException:
+            raise
         except Exception:
-            pass
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Channel not found"}},
+            )
 
     try:
         from starlette.concurrency import run_in_threadpool
