@@ -235,6 +235,13 @@ async def get_export_status(
             detail={"error": {"code": 404, "message": "Export not found"}},
         )
 
+    # Ownership check
+    if str(status.get("user_id")) != str(current_user.user_id):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Export not found"}},
+        )
+
     return TranscriptExportStatusResponse(
         export_id=status["export_id"],
         status=status["status"],
@@ -272,7 +279,7 @@ async def download_transcript_export(
             svc = TranscriptExportService(
                 db, MessageRepository(db), ParticipantRepository(db)
             )
-            file_path = svc.get_export_file_path(export_id)
+            file_path = svc.get_export_file_path(export_id, str(current_user.user_id))
             status = svc.get_export_status(export_id)
         finally:
             if db:
@@ -285,6 +292,13 @@ async def download_transcript_export(
         )
 
     if not file_path or not status:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Export not found"}},
+        )
+
+    # Ownership check
+    if str(status.get("user_id")) != str(current_user.user_id):
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Export not found"}},

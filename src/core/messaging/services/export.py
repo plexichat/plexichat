@@ -81,13 +81,35 @@ class TranscriptExportService(BaseService):
                 export_config.get("temporary_storage_hours", 24) * 3600
             )
 
+            # Rate limit check
+            min_interval = export_config.get("rate_limit", {}).get(
+                "requests_per_hour", 5
+            )
+            recent_count = sum(
+                1
+                for e in self._exports.values()
+                if e.get("user_id") == str(user_id)
+                and e.get("created_at", 0) > time.time() - 3600
+            )
+            if recent_count >= min_interval:
+                return {
+                    "export_id": export_id,
+                    "status": "failed",
+                    "message_count": 0,
+                    "file_url": None,
+                    "expires_at": None,
+                    "error": "Rate limit exceeded (max 5 exports per hour)",
+                }
+
             export_info = {
                 "export_id": export_id,
+                "user_id": str(user_id),
                 "status": "ready",
                 "message_count": len(messages),
                 "file_path": file_path,
-                "file_url": f"/api/v1/channels/{conversation_id}/messages/export/{export_id}/download",
+                "file_url": f"/channels/{conversation_id}/messages/export/{export_id}/download",
                 "expires_at": expiry,
+                "created_at": time.time(),
                 "mime_type": mime,
                 "format": export_format,
             }
@@ -107,14 +129,34 @@ class TranscriptExportService(BaseService):
 
     def get_export_status(self, export_id: str) -> Optional[Dict[str, Any]]:
         """Get the status of an export."""
+        self._cleanup_expired()
         return self._exports.get(export_id)
 
-    def get_export_file_path(self, export_id: str) -> Optional[str]:
-        """Get the file path for a completed export."""
+    def get_export_file_path(self, export_id: str, user_id: str = "") -> Optional[str]:
+        """Get the file path for a completed export (with optional ownership check)."""
+        self._cleanup_expired()
         info = self._exports.get(export_id)
-        if info and info.get("status") == "ready":
-            return info.get("file_path")
-        return None
+        if not info or info.get("status") != "ready":
+            return None
+        if user_id and str(info.get("user_id", "")) != str(user_id):
+            return None
+        return info.get("file_path")
+
+    def _cleanup_expired(self) -> None:
+        """Remove expired exports from memory and disk."""
+        now = time.time()
+        expired_ids = [
+            eid
+            for eid, info in self._exports.items()
+            if info.get("expires_at", 0) < now
+        ]
+        for eid in expired_ids:
+            info = self._exports.pop(eid, None)
+            if info and info.get("file_path"):
+                try:
+                    os.remove(info["file_path"])
+                except OSError:
+                    pass
 
     def _get_messages_for_export(
         self,
@@ -131,33 +173,34 @@ class TranscriptExportService(BaseService):
         if not messages:
             return []
 
+        from_ts = None
+        to_ts = None
+
+        if from_date:
+            try:
+                from_ts = int(
+                    __import__("datetime").datetime.fromisoformat(from_date).timestamp()
+                    * 1000
+                )
+            except ValueError:
+                raise ValueError(f"Invalid from_date format: {from_date}")
+
+        if to_date:
+            try:
+                to_ts = int(
+                    __import__("datetime").datetime.fromisoformat(to_date).timestamp()
+                    * 1000
+                )
+            except ValueError:
+                raise ValueError(f"Invalid to_date format: {to_date}")
+
         result = []
         for msg in messages:
             msg_time = msg.get("created_at", 0)
-            if from_date:
-                try:
-                    from_ts = int(
-                        __import__("datetime")
-                        .datetime.fromisoformat(from_date)
-                        .timestamp()
-                        * 1000
-                    )
-                    if msg_time < from_ts:
-                        continue
-                except Exception:
-                    pass
-            if to_date:
-                try:
-                    to_ts = int(
-                        __import__("datetime")
-                        .datetime.fromisoformat(to_date)
-                        .timestamp()
-                        * 1000
-                    )
-                    if msg_time > to_ts:
-                        continue
-                except Exception:
-                    pass
+            if from_ts is not None and msg_time < from_ts:
+                continue
+            if to_ts is not None and msg_time > to_ts:
+                continue
             result.append(msg)
 
         return result
