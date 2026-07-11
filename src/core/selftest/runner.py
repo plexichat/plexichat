@@ -340,6 +340,7 @@ class SelfTestRunner:
             self.endpoints.test_password_reset_confirm()
             self.endpoints.test_media_upload_complete()
             self.endpoints.test_dsar()
+            self.endpoints.test_transcript_export()
             # Poll vote must run before poll close
             self.endpoints.test_poll_vote()
             self.endpoints.test_poll_close()

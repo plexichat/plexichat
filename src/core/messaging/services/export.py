@@ -21,6 +21,10 @@ from src.core.base import SnowflakeID
 class TranscriptExportService(BaseService):
     """Service for chat transcript export."""
 
+    # Shared across all service instances so exports created in one request
+    # (POST) remain retrievable in subsequent requests (GET/status/download).
+    _exports: Dict[str, Dict[str, Any]] = {}
+
     def __init__(
         self,
         db: Any,
@@ -30,7 +34,6 @@ class TranscriptExportService(BaseService):
         super().__init__(db)
         self._message_repo = message_repo
         self._participant_repo = participant_repo
-        self._exports: Dict[str, Dict[str, Any]] = {}
 
     def request_export(
         self,
@@ -43,7 +46,7 @@ class TranscriptExportService(BaseService):
     ) -> Dict[str, Any]:
         """Request a transcript export."""
         export_id = f"export_{int(time.time() * 1000)}_{user_id}"
-        export_config = config.get_section("transcript_export", {})  # type: ignore[attr-defined]
+        export_config = config.get("transcript_export", {})
 
         max_messages = export_config.get("max_messages_per_export", 10000)
 
@@ -167,7 +170,7 @@ class TranscriptExportService(BaseService):
     ) -> List[Dict[str, Any]]:
         """Get messages for export with optional date filtering."""
         messages = self._message_repo.get_by_conversation(
-            conversation_id, limit=max_messages, include_deleted=False
+            conversation_id, limit=max_messages
         )
 
         if not messages:

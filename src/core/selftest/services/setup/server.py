@@ -59,6 +59,37 @@ class ServerSetupMixin(SetupServiceBase):
         except Exception as e:
             logger.warning(f"Failed to create test message: {e}")
 
+    def create_test_export(self) -> None:
+        if not self.ctx.test_conversation_id or not self.ctx.test_user_id:
+            return
+        logger.debug("Creating test transcript export...")
+        try:
+            from src.core.messaging.services.export import TranscriptExportService
+            from src.core.messaging.repositories.message import MessageRepository
+            from src.core.messaging.repositories.participant import (
+                ParticipantRepository,
+            )
+
+            db = api.get_db()
+            try:
+                svc = TranscriptExportService(
+                    db, MessageRepository(db), ParticipantRepository(db)
+                )
+                result = svc.request_export(
+                    self.ctx.test_user_id,
+                    self.ctx.test_conversation_id,
+                    "json",
+                )
+                export_id = result.get("export_id")
+                if export_id:
+                    self.ctx.test_export_id = str(export_id)
+                    logger.debug(f"Test export ID: {self.ctx.test_export_id}")
+            finally:
+                if db:
+                    db.close()
+        except Exception as e:
+            logger.warning(f"Failed to create test export: {e}")
+
     def create_test_role(self) -> None:
         servers_mod = api.get_servers()
         if not servers_mod:

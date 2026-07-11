@@ -221,6 +221,14 @@ class DataGenerator:
             val = "csv"
         elif "deletion_at" in name_low:
             val = str(int(time.time()) + 86400)
+        elif name_low == "export_id":
+            # Transcript export ids are minted server-side; resolve to the
+            # export seeded during setup so status/download endpoints return 200.
+            val = (
+                str(self.ctx.test_export_id)
+                if self.ctx.test_export_id
+                else _gen_snowflake()
+            )
         elif "connection" in name_low and "plexijoin" in path:
             val = str(self.ctx.test_plexijoin_connection_id or _gen_snowflake())
         elif "request" in name_low and "plexijoin" in path and "deny" in path:
