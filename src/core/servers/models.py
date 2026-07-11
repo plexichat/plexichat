@@ -183,6 +183,7 @@ class Channel:
     rtc_region: Optional[str] = None
     slowmode_seconds: int = 0
     read_receipts_enabled: bool = True
+    transcript_export_enabled: bool = True
     conversation_id: Optional[SnowflakeID] = None
     deleted: bool = False
     deleted_at: Optional[int] = None
@@ -480,6 +481,8 @@ SERVER_PERMISSIONS = {
     "onboarding.manage": "Manage welcome screen and onboarding",
     # AutoMod permissions
     "server.automod": "Manage server auto-moderation rules",
+    # Transcript export
+    "messages.export_transcript": "Export chat transcripts",
     # Administrator (bypasses all permissions)
     "administrator": "Full administrator access",
 }
@@ -495,5 +498,6 @@ DEFAULT_EVERYONE_PERMISSIONS = {
     "voice.connect": True,
     "voice.speak": True,
     "invites.create": True,
+    "messages.export_transcript": True,
     "events.view": True,
 }

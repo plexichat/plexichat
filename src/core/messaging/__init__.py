@@ -450,6 +450,51 @@ def mark_read(
     return _get_manager().mark_read(user_id, conversation_id, up_to_message_id)
 
 
+def get_last_read(user_id: int, conversation_id: int) -> Dict[str, Any]:
+    """
+    Get the last read position for a user in a conversation.
+
+    Args:
+        user_id: User ID
+        conversation_id: Conversation ID
+
+    Returns:
+        Dict with last_read_message_id and last_read_at
+    """
+    return _get_manager().get_last_read(user_id, conversation_id)
+
+
+def mark_unread(
+    user_id: int, conversation_id: int, up_to_message_id: Optional[int] = None
+) -> int:
+    """
+    Mark messages as unread by rolling back last read position.
+
+    Args:
+        user_id: User ID
+        conversation_id: Conversation ID
+        up_to_message_id: Optional message ID to mark as the new last read
+
+    Returns:
+        New unread count
+    """
+    return _get_manager().mark_unread(user_id, conversation_id, up_to_message_id)
+
+
+def mark_all_server_read(user_id: int, server_id: int) -> int:
+    """
+    Mark all channels in a server as read.
+
+    Args:
+        user_id: User ID
+        server_id: Server ID
+
+    Returns:
+        Number of channels marked as read
+    """
+    return _get_manager().mark_all_server_read(user_id, server_id)
+
+
 def get_unread_count(
     user_id: int, conversation_id: Optional[int] = None
 ) -> Dict[int, int]:
@@ -649,6 +694,9 @@ __all__ = [
     # Message Status
     "mark_delivered",
     "mark_read",
+    "get_last_read",
+    "mark_unread",
+    "mark_all_server_read",
     "get_unread_count",
     "get_message_status",
     "get_reader_ids",

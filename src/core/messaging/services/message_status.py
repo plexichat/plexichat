@@ -319,6 +319,99 @@ class MessageStatusService(BaseService):
 
         return result
 
+    def get_last_read(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+    ) -> Dict[str, Any]:
+        """Get the last read position for a user in a conversation."""
+        participant = self._participant_svc.get_participant(conversation_id, user_id)
+        if not participant:
+            if not self._participant_svc.is_participant(conversation_id, user_id):
+                raise ConversationAccessDeniedError(
+                    "Not a participant in this conversation"
+                )
+            return {"last_read_message_id": None, "last_read_at": None}
+
+        return {
+            "last_read_message_id": participant.last_read_message_id,
+            "last_read_at": participant.last_read_at,
+        }
+
+    def mark_unread(
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        up_to_message_id: Optional[SnowflakeID] = None,
+    ) -> int:
+        """Mark messages as unread by rolling back last_read_message_id.
+
+        If up_to_message_id is provided, sets last_read to the message before that one.
+        If not provided, rolls back to the message before the latest message.
+
+        Returns the new unread count.
+        """
+        participant = self._participant_svc.get_participant(conversation_id, user_id)
+        if not participant:
+            if not self._participant_svc.is_participant(conversation_id, user_id):
+                raise ConversationAccessDeniedError(
+                    "Not a participant in this conversation"
+                )
+            raise ConversationAccessDeniedError("Participant record not found")
+
+        # Determine target message ID for new last_read
+        target_msg_id = up_to_message_id
+        if not target_msg_id:
+            # Get the message right before the most recent one
+            max_id = self._message_repo.get_max_id_in_conversation(conversation_id)
+            if not max_id:
+                return 0
+            target_msg_id = max_id - 1  # One before latest
+
+        now = self._get_timestamp()
+
+        # Update participant's last read position to the target
+        self._participant_repo.update_last_read(
+            conversation_id, user_id, target_msg_id, now
+        )
+
+        # Recalculate unread count
+        new_count = self._repo.get_unread_count(user_id, conversation_id)
+
+        # Invalidate caches
+        try:
+            self.get_unread_count.invalidate(self, user_id, conversation_id)  # type: ignore
+            self.get_unread_count.invalidate(self, user_id, None)  # type: ignore
+        except Exception:
+            pass
+
+        return new_count
+
+    def mark_all_server_read(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+    ) -> int:
+        """Mark all channels in a server as read.
+
+        Returns the number of channels marked.
+        """
+        import src.api as api
+
+        servers_mod = api.get_servers()
+        if not servers_mod:
+            return 0
+
+        channels = servers_mod.get_channels(server_id, user_id)
+        count = 0
+        for channel in channels:
+            if hasattr(channel, "conversation_id") and channel.conversation_id:
+                try:
+                    self.mark_read(user_id, channel.conversation_id)
+                    count += 1
+                except Exception:
+                    continue
+
+        return count
+
     def create_initial_status(
         self,
         message_id: SnowflakeID,
