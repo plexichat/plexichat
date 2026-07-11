@@ -65,7 +65,7 @@ aiortc==1.14.0
 python-multipart==0.0.32
 python-dotenv==1.2.2
 python-dateutil==2.9.0.post0
-mistune==3.2.1
+mistune==3.3.0
 markdown==3.8.1
 
 # Image Processing
