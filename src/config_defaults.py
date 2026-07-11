@@ -820,6 +820,18 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "allowed_schemes": ["http", "https"],
             },
         },
+        "transcript_export": {
+            "enabled": True,
+            "max_messages_per_export": 10000,
+            "max_date_range_days": 365,
+            "allowed_formats": ["json", "csv", "txt", "html"],
+            "rate_limit": {
+                "requests_per_hour": 5,
+                "requests_per_day": 20,
+            },
+            "max_file_size_mb": 50,
+            "temporary_storage_hours": 24,
+        },
         "telemetry": {
             "enabled": True,
             "rate_limit": {"max_per_minute": 10},

@@ -622,6 +622,31 @@ class MessagingManager(BaseManager):
             user_id, conversation_id, up_to_message_id
         )
 
+    def get_last_read(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+    ) -> Dict[str, Any]:
+        """Get the last read position for a user in a conversation."""
+        return self._message_status_svc.get_last_read(user_id, conversation_id)
+
+    def mark_unread(
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        up_to_message_id: Optional[SnowflakeID] = None,
+    ) -> int:
+        """Mark messages as unread."""
+        return self._message_status_svc.mark_unread(
+            user_id, conversation_id, up_to_message_id
+        )
+
+    def mark_all_server_read(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+    ) -> int:
+        """Mark all channels in a server as read."""
+        return self._message_status_svc.mark_all_server_read(user_id, server_id)
+
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: Optional[SnowflakeID] = None
     ) -> Dict[SnowflakeID, int]:

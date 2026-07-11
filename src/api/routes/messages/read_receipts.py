@@ -13,6 +13,10 @@ from src.api.schemas.messages import (
     UnreadCountResponse,
     AllUnreadCountsResponse,
     AckResponse,
+    LastReadResponse,
+    MarkUnreadRequest,
+    MarkUnreadResponse,
+    BulkReadResponse,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.database import cached
@@ -423,6 +427,211 @@ def get_all_unread_counts(
         logger.error(
             f"Error getting all unread counts for user {current_user.user_id}: {e}",
             exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.get(
+    "/channels/{channel_id}/messages/last-read",
+    response_model=LastReadResponse,
+    summary="Get last read position",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Channel not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_last_read(
+    channel_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> LastReadResponse:
+    """Get the last read message position for the current user in a channel."""
+    msg_manager = api.get_messaging()
+    servers_mod = api.get_servers()
+
+    if not msg_manager:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {"code": 500, "message": "Messaging module not available"}
+            },
+        )
+
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid channel ID"}},
+        )
+
+    # Resolve to conversation_id
+    conv_id = cid
+    if servers_mod:
+        try:
+            channel = servers_mod.get_channel(cid, current_user.user_id)
+            if (
+                channel
+                and hasattr(channel, "conversation_id")
+                and channel.conversation_id
+            ):
+                conv_id = channel.conversation_id
+        except Exception:
+            pass
+
+    try:
+        from starlette.concurrency import run_in_threadpool
+
+        def _get_last_read(uid, cid):
+            from src.core import messaging
+
+            return messaging.get_last_read(uid, cid)
+
+        result = await run_in_threadpool(_get_last_read, current_user.user_id, conv_id)
+        return LastReadResponse(
+            channel_id=SnowflakeID(channel_id),
+            last_read_message_id=result.get("last_read_message_id"),
+            last_read_at=result.get("last_read_at"),
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.post(
+    "/channels/{channel_id}/messages/mark-unread",
+    response_model=MarkUnreadResponse,
+    summary="Mark messages as unread",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid channel ID"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Channel not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def mark_unread(
+    channel_id: str,
+    body: Optional[MarkUnreadRequest] = None,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> MarkUnreadResponse:
+    """Mark messages as unread in a channel."""
+    msg_manager = api.get_messaging()
+    servers_mod = api.get_servers()
+
+    if not msg_manager:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {"code": 500, "message": "Messaging module not available"}
+            },
+        )
+
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid channel ID"}},
+        )
+
+    conv_id = cid
+    if servers_mod:
+        try:
+            channel = servers_mod.get_channel(cid, current_user.user_id)
+            if (
+                channel
+                and hasattr(channel, "conversation_id")
+                and channel.conversation_id
+            ):
+                conv_id = channel.conversation_id
+        except Exception:
+            pass
+
+    try:
+        from starlette.concurrency import run_in_threadpool
+
+        message_id = body.message_id if body else None
+
+        def _mark_unread(uid, cid, mid):
+            from src.core import messaging
+
+            return messaging.mark_unread(uid, cid, mid)
+
+        new_count = await run_in_threadpool(
+            _mark_unread, current_user.user_id, conv_id, message_id
+        )
+        return MarkUnreadResponse(success=True, unread_count=new_count)
+    except Exception as e:
+        from src.core.messaging.exceptions import (
+            ConversationAccessDeniedError as MsgConvDenied,
+        )
+
+        if isinstance(e, MsgConvDenied):
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
+            )
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.post(
+    "/servers/{server_id}/messages/read-all",
+    response_model=BulkReadResponse,
+    summary="Mark all channels in a server as read",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Server not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def mark_all_server_read(
+    server_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> BulkReadResponse:
+    """Mark all channels in a server as read."""
+    msg_manager = api.get_messaging()
+    servers_mod = api.get_servers()
+
+    if not msg_manager or not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Module not available"}},
+        )
+
+    try:
+        sid = int(server_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server ID"}},
+        )
+
+    try:
+        from starlette.concurrency import run_in_threadpool
+
+        def _mark_all_read(uid, sid):
+            from src.core import messaging
+
+            return messaging.mark_all_server_read(uid, sid)
+
+        channels_marked = await run_in_threadpool(
+            _mark_all_read, current_user.user_id, sid
+        )
+        return BulkReadResponse(success=True, channels_marked=channels_marked)
+    except Exception as e:
+        logger.error(
+            f"Error marking all read for server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
             status_code=500,
