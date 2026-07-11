@@ -355,7 +355,8 @@ class MessageStatusService(BaseService):
                 raise ConversationAccessDeniedError(
                     "Not a participant in this conversation"
                 )
-            raise ConversationAccessDeniedError("Participant record not found")
+            # No read state yet — nothing to mark unread
+            return 0
 
         # Determine target message ID for new last_read
         target_msg_id = up_to_message_id
@@ -400,7 +401,12 @@ class MessageStatusService(BaseService):
         if not servers_mod:
             return 0
 
-        channels = servers_mod.get_channels(server_id, user_id)
+        try:
+            channels = servers_mod.get_channels(server_id, user_id)
+        except Exception:
+            # Not a member or server inaccessible — nothing to mark
+            return 0
+
         count = 0
         for channel in channels:
             if hasattr(channel, "conversation_id") and channel.conversation_id:

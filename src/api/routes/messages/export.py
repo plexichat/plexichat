@@ -122,7 +122,7 @@ async def request_transcript_export(
     # Check export is enabled
     import utils.config as config
 
-    export_config = config.get_section("transcript_export", {})  # type: ignore[attr-defined]
+    export_config = config.get("transcript_export", {})
     if not export_config.get("enabled", True):
         raise HTTPException(
             status_code=403,
