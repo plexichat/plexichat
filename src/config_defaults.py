@@ -354,20 +354,20 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "rate_limiting": {
             "enabled": True,
-            "global": {"requests": 200, "window_seconds": 60.0, "burst": 100},
+            "global": {"requests": 5000, "window_seconds": 60.0, "burst": 1000},
             "user": {
-                "requests": 200,
+                "requests": 2000,
                 "window_seconds": 60.0,
-                "burst": 40,
-                "hourly_limit": 7200,
-                "daily_limit": 100000,
+                "burst": 500,
+                "hourly_limit": 60000,
+                "daily_limit": 1000000,
             },
             "ip": {
-                "requests": 100,
+                "requests": 1000,
                 "window_seconds": 60.0,
-                "burst": 20,
-                "hourly_limit": 3600,
-                "daily_limit": 25000,
+                "burst": 300,
+                "hourly_limit": 30000,
+                "daily_limit": 200000,
             },
             "routes": {
                 "static_client_html": {
