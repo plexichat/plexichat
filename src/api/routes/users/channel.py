@@ -76,7 +76,7 @@ class ChannelMixin:
                 status_code=500, detail={"error": {"code": 500, "message": str(e)}}
             )
 
-    @cached(ttl=30, prefix="user_dm_channels_api")
+    @cached(ttl=5, prefix="user_dm_channels_api")
     def get_dm_channels(
         self,
         current_user: TokenInfo = Depends(get_current_user),
