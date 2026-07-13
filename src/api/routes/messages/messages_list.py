@@ -16,6 +16,10 @@ from src.core.servers.exceptions import (
     ServerNotFoundError,
     ChannelNotFoundError,
 )
+from src.core.messaging.exceptions import (
+    ConversationNotFoundError,
+    ConversationAccessDeniedError,
+)
 from .helpers import _message_to_response
 
 router = APIRouter(tags=["Messages"])
@@ -105,7 +109,15 @@ async def get_channel_messages(
                 )
 
             except Exception as e:
-                if isinstance(e, (ServerNotFoundError, ChannelNotFoundError)):
+                if isinstance(
+                    e,
+                    (
+                        ServerNotFoundError,
+                        ChannelNotFoundError,
+                        ConversationNotFoundError,
+                        ConversationAccessDeniedError,
+                    ),
+                ):
                     raise HTTPException(
                         status_code=404,
                         detail={"error": {"code": 404, "message": "Channel not found"}},
