@@ -99,6 +99,16 @@ def get_api_config() -> APIConfig:
 
     # SECURITY: Validate CORS origins - reject wildcards unless explicitly allowed
     cors_origins = api_conf.get("cors_origins", [])
+    # Fallback to safe explicit origins if the config omitted them entirely
+    # (an empty/None list would otherwise fail closed and break the browser
+    # client, which is served from a different origin than the API).
+    if not cors_origins:
+        cors_origins = [
+            "https://plexichat.com",
+            "https://app.plexichat.com",
+            "https://api.plexichat.com",
+            "https://www.plexichat.com",
+        ]
     allow_wildcard = api_conf.get("allow_wildcard_cors", False)
 
     import utils.logger as logger
