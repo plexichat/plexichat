@@ -89,9 +89,30 @@ def format_error_response(code: int, message: str, debug: bool = False) -> dict:
 
 def _get_cors_headers(request: Request) -> dict:
     """Get CORS headers for error responses."""
+    cors_allow_headers = [
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "X-API-Access-Token",
+        "X-Plexichat-Request",
+    ]
+    cors_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     try:
         api_conf = config.get("api", {})
         cors_origins = api_conf.get("cors_origins", ["*"])
+        cors_allow_headers = api_conf.get(
+            "cors_allow_headers",
+            [
+                "Authorization",
+                "Content-Type",
+                "Accept",
+                "X-API-Access-Token",
+                "X-Plexichat-Request",
+            ],
+        )
+        cors_methods = api_conf.get(
+            "cors_allow_methods", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        )
         allow_wildcard = api_conf.get("allow_wildcard_cors", False)
     except Exception:
         cors_origins = ["*"]
@@ -114,8 +135,8 @@ def _get_cors_headers(request: Request) -> dict:
         return {
             "Access-Control-Allow-Origin": origin if origin else "*",
             "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, X-Custom-Header",
+            "Access-Control-Allow-Methods": ", ".join(cors_methods),
+            "Access-Control-Allow-Headers": ", ".join(cors_allow_headers),
         }
     return {}
 
