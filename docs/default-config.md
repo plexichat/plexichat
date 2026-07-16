@@ -14,7 +14,7 @@ Copy this complete configuration file as your starting point. Save it as `config
 # Modify values according to your deployment needs
 application:
   name: Plexichat
-  version: a.1.0-96
+  version: a.1.0-97
   environment: development
 server:
   host: 127.0.0.1
@@ -161,7 +161,7 @@ authentication:
 api:
   title: Plexichat API
   description: REST API for the Plexichat messaging platform
-  version: a.1.0-96
+  version: a.1.0-97
   api_prefix: /api/v1
   debug: true
   cors_origins:
@@ -674,7 +674,7 @@ bots:
   approved_bots_page_size: 50
   max_requests_pending_per_user: 10
 versioning:
-  min_supported_version: a.1.0-96
+  min_supported_version: a.1.0-97
   update_url: null
 docs:
   enabled: true
