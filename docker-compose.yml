@@ -6,6 +6,7 @@ name: plexichat
 
 services:
   db:
+    restart: unless-stopped
     image: postgres:16-alpine
     env_file:
       - .env
@@ -22,6 +23,7 @@ services:
       retries: 10
 
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     env_file:
       - .env
@@ -36,6 +38,7 @@ services:
       retries: 10
 
   minio:
+    restart: unless-stopped
     image: minio/minio:latest
     env_file:
       - .env
@@ -78,6 +81,7 @@ services:
     restart: unless-stopped
 
   backend:
+    restart: unless-stopped
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:-latest}
     env_file:
       - .env
@@ -103,6 +107,7 @@ services:
       - "30000-30100:30000-30100/udp"
 
   client:
+    restart: unless-stopped
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${CLIENT_VERSION:-latest}
     env_file:
       - .env
