@@ -120,6 +120,23 @@ async def pin_message(
 
                 asyncio.create_task(dispatch_pin())
 
+                try:
+                    from src.core.events.gateway_emit import emit_channel_pins_update
+
+                    server_id = None
+                    servers_mod = api.get_servers()
+                    if servers_mod:
+                        try:
+                            chan = servers_mod.get_channel(cid, current_user.user_id)
+                            server_id = getattr(chan, "server_id", None)
+                        except Exception:
+                            pass
+                    emit_channel_pins_update(
+                        channel_id=cid, guild_id=server_id, pinned_message_ids=None
+                    )
+                except Exception as ge:
+                    logger.debug(f"emit_channel_pins_update failed: {ge}")
+
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
@@ -243,6 +260,23 @@ async def unpin_message(
                         logger.debug(f"Failed to broadcast unpin update: {e}")
 
                 asyncio.create_task(dispatch_unpin())
+
+                try:
+                    from src.core.events.gateway_emit import emit_channel_pins_update
+
+                    server_id = None
+                    servers_mod = api.get_servers()
+                    if servers_mod:
+                        try:
+                            chan = servers_mod.get_channel(cid, current_user.user_id)
+                            server_id = getattr(chan, "server_id", None)
+                        except Exception:
+                            pass
+                    emit_channel_pins_update(
+                        channel_id=cid, guild_id=server_id, pinned_message_ids=None
+                    )
+                except Exception as ge:
+                    logger.debug(f"emit_channel_pins_update failed: {ge}")
 
         return SuccessResponse(success=True, message=None)
     except HTTPException:

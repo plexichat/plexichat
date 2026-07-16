@@ -147,6 +147,20 @@ class ProfileMixin:
                         logger.debug(
                             f"Cache invalidation failed for user {current_user.user_id}: {ce}"
                         )
+                    try:
+                        from src.core.events.gateway_emit import emit_user_update
+
+                        emit_user_update(
+                            {
+                                "id": user.id,
+                                "username": user.username,
+                                "avatar_url": getattr(user, "avatar_url", None),
+                                "email": getattr(user, "email", None),
+                            },
+                            exclude_user_id=current_user.user_id,
+                        )
+                    except Exception as ge:
+                        logger.debug(f"emit_user_update failed: {ge}")
                     return _user_to_response(user, include_private=True)
                 except Exception as e:
                     exc_name = type(e).__name__
