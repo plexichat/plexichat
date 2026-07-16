@@ -203,6 +203,13 @@ class SelfTestRunner:
             "/api/v1/admin/admin-users/{user_id}/toggle-status",
             "/api/v1/admin/users/{user_id}/force-purge",
             "/api/v1/admin/users/{user_id}/force-username-change",
+            # Clear-reactions is deferred (auto-fired in the destructive phase);
+            # it only removes reactions and is safe to exercise generally.
+            "DELETE:/api/v1/channels/{channel_id}/messages/{message_id}/reactions",
+            # Bulk-delete is a destructive batch operation that removes the tracked
+            # test message; deferred so it runs after the message is no longer
+            # needed by other tests, then the delete_batch phase validates it.
+            "POST:/api/v1/channels/{channel_id}/messages/bulk-delete",
         }
 
         if not self.ctx.standalone_mode:
@@ -351,6 +358,7 @@ class SelfTestRunner:
             self.endpoints.test_user_2fa_flow()
             self.endpoints.test_admin_2fa_flow()
             self.endpoints.test_interaction_callback()
+            self.endpoints.test_bulk_delete_messages()
         else:
             logger.info(
                 "Skipping standalone-specific endpoint tests (not in standalone mode)"

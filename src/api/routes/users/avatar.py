@@ -64,6 +64,20 @@ class AvatarMixin:
                         f"Cache invalidation failed for user {current_user.user_id}: {ce}"
                     )
 
+                try:
+                    from src.core.events.gateway_emit import emit_user_update
+
+                    emit_user_update(
+                        {
+                            "id": current_user.user_id,
+                            "username": "",
+                            "avatar_url": result["url"],
+                        },
+                        exclude_user_id=current_user.user_id,
+                    )
+                except Exception as ge:
+                    logger.debug(f"emit_user_update (avatar) failed: {ge}")
+
                 return UserAvatarResponse(
                     success=True,
                     avatar_url=result["url"],

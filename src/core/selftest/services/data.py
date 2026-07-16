@@ -454,6 +454,20 @@ class DataGenerator:
                 if self.ctx.test_conversation_id:
                     body["target_conversation_id"] = str(self.ctx.test_conversation_id)
 
+            if "/channels/" in path and path.endswith("/threads") and method == "POST":
+                body["name"] = "Self-test thread"
+                body["thread_type"] = "public"
+                body["auto_archive_duration"] = 1440
+                body.pop("parent_message_id", None)
+
+            if "/messages/bulk-delete" in path and method == "POST":
+                # Use throwaway message IDs (not the tracked test message) so the
+                # generic auto-fire exercises the endpoint with a 200 without
+                # deleting resources other tests depend on. Real message deletion
+                # is verified by test_bulk_delete_messages().
+                if isinstance(body, dict) and "message_ids" in body:
+                    body["message_ids"] = [str(self.generate_snowflake())]
+
             if (
                 "features/voice-messages" in path
                 and method == "POST"

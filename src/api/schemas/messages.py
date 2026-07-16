@@ -49,6 +49,16 @@ class MessageUpdateRequest(BaseModel):
     content: str = Field(..., max_length=4000, description="New message content")
 
 
+class BulkDeleteRequest(BaseModel):
+    """Bulk-delete messages request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    message_ids: List[SnowflakeID] = Field(
+        ..., description="Message IDs to delete", max_length=100
+    )
+
+
 class AttachmentResponse(BaseModel):
     """Attachment response."""
 

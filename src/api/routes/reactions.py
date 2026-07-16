@@ -360,6 +360,101 @@ async def remove_reaction(
         )
 
 
+@router.delete(
+    "/channels/{channel_id}/messages/{message_id}/reactions",
+    response_model=SuccessResponse,
+    summary="Clear all reactions",
+    responses={
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid message ID or channel ID",
+        },
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {
+            "model": ErrorResponse,
+            "description": "Not authorized to clear reactions",
+        },
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Reactions module not available"},
+    },
+)
+async def clear_reactions(
+    channel_id: str,
+    message_id: str,
+    request: Request,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SuccessResponse:
+    """
+    Remove all reactions from a message.
+
+    Emits MESSAGE_REACTION_REMOVE_ALL to connected clients so reaction
+    pills update live without a refresh.
+    """
+    rl_result = ratelimit.check_rate_limit(
+        user_id=current_user.user_id,
+        route="DELETE /reactions/all",
+        is_internal=getattr(request.state, "is_internal", False),
+    )
+    if not rl_result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": f"Rate limited. Try again in {rl_result.retry_after}s",
+                }
+            },
+            headers={"Retry-After": str(rl_result.retry_after)},
+        )
+
+    reactions = api.get_reactions()
+    if not reactions:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {"code": 503, "message": "Reactions module not available"}
+            },
+        )
+
+    try:
+        mid = int(message_id)
+        cid = int(channel_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid message or channel ID"}},
+        )
+
+    try:
+        reactions.remove_all_reactions(current_user.user_id, mid)
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "Forbidden" in exc_name or "Permission" in exc_name:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Not authorized to clear reactions",
+                    }
+                },
+            )
+        logger.error(f"Failed to clear reactions for message {mid}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Failed to clear reactions"}},
+        )
+
+    from src.core.events.gateway_emit import emit_message_reaction_remove_all
+
+    emit_message_reaction_remove_all(
+        channel_id=cid,
+        message_id=mid,
+        actor_id=current_user.user_id,
+    )
+    return SuccessResponse(success=True, message=None)
+
+
 @router.get(
     "/channels/{channel_id}/messages/{message_id}/reactions/{emoji:path}",
     response_model=List[ReactionUserResponse],

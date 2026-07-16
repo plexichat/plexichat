@@ -30,6 +30,12 @@ class PasswordMixin(AuthManagerProtocol):
             (self.crypto.hash_password(new), user_id),
         )
         self._log_audit(AuditEventType.PASSWORD_CHANGE, user_id, True)
+        try:
+            from src.core.events.gateway_emit import emit_security_alert
+
+            emit_security_alert(user_id, "password_change")
+        except Exception:
+            pass
         invalidate_pattern("user_data:*")
         return True
 

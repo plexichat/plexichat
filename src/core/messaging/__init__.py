@@ -61,13 +61,6 @@ from .models import (
     ParticipantRole,
     FilterAction,
 )
-from .events import (
-    MessagingEventBus,
-    MessagingEvent,
-    MessagingEventType,
-    EventResult,
-    get_event_bus,
-)
 
 # Module state
 _manager = None
@@ -380,6 +373,18 @@ def delete_message(user_id: int, message_id: int, hard_delete: bool = False) -> 
     return _get_manager().delete_message(user_id, message_id, hard_delete)
 
 
+def delete_messages_bulk(
+    user_id: int, channel_id: int, message_ids: List[int]
+) -> List[int]:
+    """
+    Bulk-delete messages from a channel.
+
+    Delegates to the manager, which only removes messages the caller is
+    permitted to delete. Returns the list of message IDs actually deleted.
+    """
+    return _get_manager().delete_messages_bulk(user_id, channel_id, message_ids)
+
+
 def get_message(user_id: int, message_id: int) -> Optional[Message]:
     """Get a single message by ID."""
     return _get_manager().get_message(user_id, message_id)
@@ -658,12 +663,6 @@ __all__ = [
     "MessageStatusType",
     "ParticipantRole",
     "FilterAction",
-    # Events
-    "MessagingEventBus",
-    "MessagingEvent",
-    "MessagingEventType",
-    "EventResult",
-    "get_event_bus",
     # Conversations
     "create_dm",
     "create_group",
@@ -684,6 +683,7 @@ __all__ = [
     "is_participant",
     # Messages
     "send_message",
+    "delete_messages_bulk",
     "edit_message",
     "delete_message",
     "get_message",

@@ -14,6 +14,7 @@ from .messages import router as messages_router
 from .relationships import router as relationships_router
 from .presence import router as presence_router
 from .reactions import router as reactions_router
+from .threads import router as threads_router
 from .emojis import router as emojis_router
 from .search import router as search_router
 from .webhooks import router as webhooks_router
@@ -98,6 +99,7 @@ def create_api_router() -> APIRouter:
     )
     api_router.include_router(presence_router, tags=["Presence"])
     api_router.include_router(reactions_router, tags=["Reactions"])
+    api_router.include_router(threads_router, tags=["Threads"])
     api_router.include_router(webhooks_router, tags=["Webhooks"])
     api_router.include_router(bots_router, tags=["Bots"])
     api_router.include_router(applications_router, tags=["Applications"])

@@ -12,8 +12,28 @@ from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.database import cached
 
 import utils.logger as logger
+from src.core.events.gateway_emit import (
+    emit_guild_role_create,
+    emit_guild_role_update,
+    emit_guild_role_delete,
+)
 
 router = APIRouter()
+
+
+def role_to_dict(role, server_id: int) -> dict:
+    """Serialize a server role object into a gateway-safe dict."""
+    return {
+        "id": getattr(role, "id", None),
+        "server_id": server_id,
+        "name": getattr(role, "name", None),
+        "color": getattr(role, "color", None),
+        "position": getattr(role, "position", 0),
+        "permissions": getattr(role, "permissions", {}) or {},
+        "hoist": getattr(role, "hoist", False),
+        "mentionable": getattr(role, "mentionable", False),
+        "is_default": getattr(role, "is_default", False),
+    }
 
 
 @router.get(
@@ -123,6 +143,7 @@ async def create_role(
             hoist=body.hoist,
             mentionable=body.mentionable,
         )
+        emit_guild_role_create(sid, role_to_dict(role, sid))
         return RoleResponse(
             id=SnowflakeID(role.id),
             server_id=SnowflakeID(sid),
@@ -191,6 +212,7 @@ async def update_role(
         servers_mod.require_permission(current_user.user_id, sid, "roles.manage")
         update_data = body.model_dump(exclude_unset=True)
         role = servers_mod.update_role(current_user.user_id, rid, **update_data)
+        emit_guild_role_update(sid, role_to_dict(role, sid))
         return RoleResponse(
             id=SnowflakeID(role.id),
             server_id=SnowflakeID(sid),
@@ -258,6 +280,7 @@ async def delete_role(
 
         servers_mod.require_permission(current_user.user_id, sid, "roles.manage")
         servers_mod.delete_role(current_user.user_id, rid)
+        emit_guild_role_delete(sid, rid)
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise

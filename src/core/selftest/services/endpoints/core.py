@@ -291,3 +291,112 @@ class CoreMixin(EndpointTesterBase):
                 }
             )
             logger.error(f"EXCEPTION: {method:<6} {path:<40} -> {e}")
+
+    def test_bulk_delete_messages(self) -> None:
+        """Verify POST /channels/{id}/messages/bulk-delete end-to-end.
+
+        Creates a few real messages in the test channel, bulk-deletes them,
+        and confirms they are gone. This genuinely exercises the feature that
+        emits MESSAGE_DELETE_BULK to connected clients.
+        """
+        channel_id = self.ctx.test_channel_id
+        if not channel_id:
+            logger.warning("test_bulk_delete_messages skipped: no test channel")
+            return
+
+        logger.info(
+            f"Testing POST /api/v1/channels/{channel_id}/messages/bulk-delete "
+            "(creating fresh messages)..."
+        )
+        created_ids = []
+        for i in range(3):
+            try:
+                resp = self.ctx.session.post(
+                    f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages",
+                    json={"content": f"bulk-delete selftest {i}"},
+                    timeout=5,
+                )
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    mid = data.get("id") or (data.get("message") or {}).get("id")
+                    if mid:
+                        created_ids.append(str(mid))
+            except Exception as exc:
+                logger.debug(f"bulk-delete message creation attempt {i} failed: {exc}")
+
+        logger.info(
+            f"Created {len(created_ids)} messages for bulk-delete: {created_ids}"
+        )
+
+        if not created_ids:
+            logger.error(
+                "FAILED: test_bulk_delete_messages -> could not create test messages"
+            )
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": f"/api/v1/channels/{channel_id}/messages/bulk-delete",
+                    "status_code": 0,
+                    "duration_ms": 0,
+                    "success": False,
+                    "error": "message creation failed",
+                }
+            )
+            return
+
+        bulk_resp = self.ctx.session.post(
+            f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages/bulk-delete",
+            json={"message_ids": created_ids},
+            timeout=5,
+        )
+        success = 200 <= bulk_resp.status_code < 300
+        self.ctx.results.append(
+            {
+                "method": "POST",
+                "path": f"/api/v1/channels/{channel_id}/messages/bulk-delete",
+                "status_code": bulk_resp.status_code,
+                "duration_ms": 0,
+                "success": success,
+                "traceback": None,
+            }
+        )
+        if not success:
+            logger.error(
+                f"FAILED: test_bulk_delete_messages -> Status {bulk_resp.status_code} "
+                f"({bulk_resp.text[:200]})"
+            )
+            return
+
+        logger.info(
+            f"Bulk-delete PASSED -> {bulk_resp.status_code} "
+            f"({len(created_ids)} messages deleted); verifying removal..."
+        )
+
+        # Confirm the messages are actually gone.
+        all_gone = True
+        for mid in created_ids:
+            try:
+                check = self.ctx.session.get(
+                    f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages/{mid}",
+                    timeout=5,
+                )
+                if check.status_code == 200:
+                    all_gone = False
+                    logger.error(
+                        f"FAILED: test_bulk_delete_messages -> message {mid} still present"
+                    )
+                    self.ctx.results.append(
+                        {
+                            "method": "GET",
+                            "path": f"/api/v1/channels/{channel_id}/messages/{mid}",
+                            "status_code": check.status_code,
+                            "duration_ms": 0,
+                            "success": False,
+                            "error": "message not deleted",
+                        }
+                    )
+            except Exception as exc:
+                logger.debug(f"bulk-delete verification for {mid} errored: {exc}")
+
+        if all_gone:
+            logger.info("Bulk-delete verification PASSED -> all messages removed")
