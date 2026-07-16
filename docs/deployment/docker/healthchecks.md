@@ -50,7 +50,7 @@ curl http://localhost:8000/health
 ```json
 {
   "status": "healthy",
-  "version": "a.1.0-96",
+  "version": "a.1.0-97",
   "timestamp": "2024-01-15T10:30:45Z",
   "database": "connected",
   "redis": "connected",
