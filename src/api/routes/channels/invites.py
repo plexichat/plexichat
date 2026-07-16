@@ -158,6 +158,20 @@ class ChannelInvitesMixin(ChannelBase):
                             },
                         )
                     raise
+                try:
+                    from src.core.events.gateway_emit import emit_invite_create
+
+                    emit_invite_create(
+                        invite.server_id if hasattr(invite, "server_id") else 0,
+                        {
+                            "code": invite.code,
+                            "server_id": getattr(invite, "server_id", None),
+                            "channel_id": cid,
+                            "inviter_id": current_user.user_id,
+                        },
+                    )
+                except Exception as ge:
+                    logger.debug(f"emit_invite_create failed: {ge}")
                 return ChannelInviteResponse(
                     code=invite.code,
                     channel_id=SnowflakeID(cid),
@@ -496,6 +510,20 @@ class ChannelInvitesMixin(ChannelBase):
         try:
             try:
                 servers_mod.delete_invite(current_user.user_id, invite_code)
+                try:
+                    from src.core.events.gateway_emit import emit_invite_delete
+
+                    server_id = None
+                    try:
+                        inv = servers_mod.get_invite(invite_code)
+                        server_id = getattr(inv, "server_id", None)
+                    except Exception:
+                        pass
+                    emit_invite_delete(
+                        server_id if server_id is not None else 0, invite_code
+                    )
+                except Exception as ge:
+                    logger.debug(f"emit_invite_delete failed: {ge}")
                 return {"success": True}
             except Exception as e:
                 exc_name = type(e).__name__

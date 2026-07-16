@@ -142,6 +142,17 @@ class ApiTokenMixin(AuthManagerProtocol):
                 "admin_id": updated_by,
             },
         )
+        if updated_by:
+            try:
+                from src.core.events.gateway_emit import emit_security_alert
+
+                emit_security_alert(
+                    updated_by,
+                    "security_settings_updated",
+                    detail={"scope": "api_access_token", "action": "update"},
+                )
+            except Exception:
+                pass
         # Reuse the in-memory row we already fetched, avoiding a second SELECT
         return self._row_to_access_token(row)
 
@@ -163,6 +174,17 @@ class ApiTokenMixin(AuthManagerProtocol):
                     "admin_id": revoked_by,
                 },
             )
+        if revoked_by:
+            try:
+                from src.core.events.gateway_emit import emit_security_alert
+
+                emit_security_alert(
+                    revoked_by,
+                    "security_settings_updated",
+                    detail={"scope": "api_access_token", "action": "revoke"},
+                )
+            except Exception:
+                pass
         return cursor.rowcount > 0
 
     def unrevoke_api_access_token(
@@ -184,6 +206,17 @@ class ApiTokenMixin(AuthManagerProtocol):
                     "admin_id": unrevoked_by,
                 },
             )
+        if unrevoked_by:
+            try:
+                from src.core.events.gateway_emit import emit_security_alert
+
+                emit_security_alert(
+                    unrevoked_by,
+                    "security_settings_updated",
+                    detail={"scope": "api_access_token", "action": "unrevoke"},
+                )
+            except Exception:
+                pass
         return cursor.rowcount > 0
 
     def rotate_api_access_token(
@@ -226,6 +259,17 @@ class ApiTokenMixin(AuthManagerProtocol):
                 "admin_id": rotated_by,
             },
         )
+        if rotated_by:
+            try:
+                from src.core.events.gateway_emit import emit_security_alert
+
+                emit_security_alert(
+                    rotated_by,
+                    "security_settings_updated",
+                    detail={"scope": "api_access_token", "action": "rotate"},
+                )
+            except Exception:
+                pass
         return new_token
 
     def add_api_access_token_scope(
