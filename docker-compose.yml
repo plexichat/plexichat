@@ -60,9 +60,9 @@ services:
       /bin/sh -c "
       until mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\"; do sleep 2; done;
       mc mb -p local/$${S3_BUCKET} || true;
-      mc anonymous set download local/$${S3_BUCKET} || true;
-      "
-    restart: "no"
+       mc anonymous set download local/$${S3_BUCKET} || true;
+       "
+    restart: unless-stopped
 
   cert-init:
     image: alpine:3.20
@@ -75,7 +75,7 @@ services:
         openssl req -x509 -nodes -newkey rsa:2048 -keyout /certs/privkey.pem -out /certs/fullchain.pem -days 365 -subj '/CN=localhost';
       fi
       "
-    restart: "no"
+    restart: unless-stopped
 
   backend:
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:-latest}
