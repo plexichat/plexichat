@@ -171,6 +171,37 @@ transcript artifact (produced by a later transcription group) to the call via
 `transcript_artifact_id` and sets `has_transcript = True` on the linked
 artifact.
 
+## Transcription framework (`transcription/`)
+
+`src/core/artifacts/transcription/` implements the voice-call transcription
+framework. See `transcription/README.md` for the full detail; the essentials:
+
+- **Providers** (`provider.py`): `LocalWhisperProvider` (runs OpenAI Whisper
+  in-process), `OpenAIWhisperProvider` (real OpenAI Whisper API call), and
+  `AzureSpeechProvider` (Azure Speech SDK or REST batch transcription). All
+  return a `TranscriptionResult` with timestamped, optionally speaker-attributed
+  segments. `get_transcription_provider(config)` is the single decision point
+  and raises `ValueError` on inconsistent config (this becomes the capability
+  `misconfigured` state).
+- **Worker** (`worker.py`): `transcribe_call(call_id, db, config)` loads the
+  `voice_calls` row, enforces gating (enabled + auto_transcribe + capability
+  `AVAILABLE` + recorded + consent), resolves the recording reference from the
+  linked `voice_call` artifact `payload["recording_ref"]`, runs the provider,
+  creates a `TRANSCRIPT` artifact, links it via `set_transcript`, and emits
+  `ARTIFACT_UPDATE`. `schedule_transcribe_call` is the fire-and-forget
+  scheduler (asyncio task or bounded queue).
+- **Auto-wiring**: when a call ends (`VoiceCallManager.end_call`, reached from
+  the voice lifecycle hook in `src/core/voice/manager/calls.py`), and
+  transcription is enabled + auto_transcribe + licensed, the transcription job
+  is scheduled automatically.
+- **Capability reuse**: `capabilities.py` evaluates `voice_transcription` by
+  calling `get_transcription_provider(...).is_available()`, so the
+  `DEPENDENCY_MISSING` / `MISCONFIGURED` state is the single source of truth
+  shared by the admin panel and the worker.
+- **DSAR**: `src/core/dsar/collector.py` includes the user's `voice_calls`
+  (initiator or consented participant) and their `voice_call` / `transcript`
+  artifacts, with transcript text surfaced inline.
+
 ### Manager surface (`voice_calls.py`)
 
 `VoiceCallManager(db, artifact_manager=None, config=None)` exposes:

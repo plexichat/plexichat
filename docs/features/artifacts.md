@@ -123,6 +123,28 @@ explicitly turns it on (and, for `local_whisper`, whisper is present).
 | `azure_key` | `${AZURE_SPEECH_KEY:-}` | API key for the Azure Speech provider (env-interpolated). |
 | `max_audio_minutes` | `120` | Maximum audio length (minutes) accepted for transcription. |
 
+#### Transcription framework
+
+The `transcription/` subpackage implements the voice-call transcription
+framework (full detail in `src/core/artifacts/transcription/README.md`):
+
+- **Providers** (`provider.py`): `LocalWhisperProvider` (runs OpenAI Whisper
+  in-process, lazy model load), `OpenAIWhisperProvider` (real OpenAI Whisper
+  API call), `AzureSpeechProvider` (Azure Speech SDK or REST batch
+  transcription). All return a `TranscriptionResult` with timestamped,
+  optionally speaker-attributed segments. `get_transcription_provider(config)`
+  is the single backend-selection decision point and raises `ValueError` on
+  inconsistent config (surfaced as the capability `misconfigured` state).
+- **Worker** (`worker.py`): `transcribe_call(call_id, db, config)` loads the
+  `voice_calls` row, enforces gating (enabled + auto_transcribe + capability
+  `AVAILABLE` + recorded + consent), resolves the recording reference from the
+  linked `voice_call` artifact `payload["recording_ref"]`, runs the provider,
+  creates a `TRANSCRIPT` artifact, links it via `set_transcript`, and emits
+  `ARTIFACT_UPDATE`. `schedule_transcribe_call` is the fire-and-forget
+  scheduler used from the voice lifecycle hook on call end.
+- **Consent**: when `consent_required` is `true` (default), a call must have at
+  least one consented participant or transcription is skipped (GDPR-safe).
+
 ### `retention`
 
 | Key | Default | Meaning |
