@@ -256,6 +256,65 @@ raises. `get_capability(feature, config=None)` returns the info for one feature.
   per-feature breakdown plus a top-level `summary` (counts and a `by_state`
   grouping). Defined in `src/api/routes/admin/capabilities.py`.
 
+## REST API (Group 6)
+
+The artifact REST API lives in `src/api/routes/artifacts.py` (user scope) and
+`src/api/routes/admin/artifacts.py` (admin guarded), mounted under
+`/api/v1/artifacts` and `/api/v1/admin/artifacts`. All user endpoints require
+a valid auth token; admin endpoints additionally enforce host restriction and an
+admin token.
+
+### User endpoints
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| `POST` | `/artifacts` | `artifact.create` | Create an artifact + emit a transcript message. |
+| `GET` | `/artifacts` | `artifact.view` | List artifacts with filters. |
+| `GET` | `/artifacts/{artifact_id}` | `artifact.view` | Fetch one artifact; `404` when missing. |
+| `PATCH` | `/artifacts/{artifact_id}` | `artifact.edit` (or author) | Update mutable fields; `404` when missing. |
+| `DELETE` | `/artifacts/{artifact_id}` | `artifact.delete` (or author) | Delete an artifact; `404` when missing. |
+| `POST` | `/artifacts/convert-upload` | `artifact.create` | Convert an existing `msg_attachments` row into an `UPLOAD` artifact; `404` when the attachment is missing. |
+
+`convert_upload` queries the real `msg_attachments` table (filtered on
+`deleted = 0`) and returns `404` (not `500`) when no such attachment exists.
+`create_artifact` maps its request body directly onto
+`ArtifactManager.create(...)` (the `conversation_id`/`author_id`/`artifact_type`
+`title`/`summary`/`channel_id`/`server_id`/`status`/`recorded`/`has_transcript`
+`payload`/`retention_policy`/`license_feature` arguments match exactly). After a
+create/convert, an inline `MESSAGE_CREATE` is emitted via
+`events.create_message_create(message_id, channel_id, author_id, content,
+server_id, author)` with `data["type"] = 0`, `data["message_type"] =
+"artifact"`, and `data["metadata"] = {"artifact_id": ...}`.
+
+### Admin endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/artifacts` | List all artifacts across every server. |
+| `DELETE` | `/artifacts/{artifact_id}` | Force-delete any artifact. |
+| `POST` | `/artifacts/retention/purge` | Run `purge_expired` (see below). Returns `{purged: <count>}`. |
+
+### Permission names
+
+The route layer resolves these permission names through the server RBAC
+`require_permission`:
+
+- `artifact.view`
+- `artifact.create`
+- `artifact.edit`
+- `artifact.delete`
+- `artifact.manage_retention` (reserved for retention management; the admin
+  purge endpoint is admin-guarded instead).
+
+## Retention purge (`retention.py`)
+
+`purge_expired(db, config=None) -> int` deletes every row in the `artifacts`
+table where `expires_at IS NOT NULL AND expires_at <= <now-ms>` and returns the
+number of rows removed (`0` on a `None` db or on error). This is the real
+implementation backing the admin `/artifacts/retention/purge` endpoint. Media
+and linked-row cascade cleanup remain out of scope, matching the manager's
+`delete` semantics.
+
 ## Real-time fabric
 
 The collaborative layer that lets live whiteboards and shared code editors

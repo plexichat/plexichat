@@ -34,6 +34,8 @@ class SelfTestContext:
         self.test_channel_id: Optional[int] = None
         self.test_conversation_id: Optional[int] = None
         self.test_message_id: Optional[int] = None
+        self.test_artifact_id: Optional[int] = None
+        self.test_attachment_id: Optional[int] = None
         self.test_export_id: Optional[str] = None
         self.test_role_id: Optional[int] = None
         self.test_invite_code: Optional[str] = None
