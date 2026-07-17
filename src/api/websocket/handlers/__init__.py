@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from src.core.auth.manager import AuthManager
     from src.core.presence.manager import PresenceManager
     from src.core.servers.manager import ServerManager
+    from src.api.websocket.dispatcher import GatewayDispatcher
 
 
 class OpcodeHandler:
@@ -29,6 +30,7 @@ class OpcodeHandler:
         auth_module: Optional["AuthManager"] = None,
         presence_module: Optional["PresenceManager"] = None,
         servers_module: Optional["ServerManager"] = None,
+        dispatcher: Optional["GatewayDispatcher"] = None,
     ):
         """
         Initialize the opcode handler.
@@ -38,17 +40,20 @@ class OpcodeHandler:
             auth_module: Auth module for token verification
             presence_module: Presence module for status updates
             servers_module: Servers module for guild data
+            dispatcher: Gateway dispatcher (used by artifact relay)
         """
         self._session_manager = session_manager
         self._auth: Optional["AuthManager"] = auth_module
         self._presence: Optional["PresenceManager"] = presence_module
         self._servers: Optional["ServerManager"] = servers_module
+        self._dispatcher: Optional["GatewayDispatcher"] = dispatcher
 
         # Import specialized handlers
         from .connection import ConnectionHandler
         from .presence import PresenceHandler
         from .voice import VoiceHandler
         from .guild import GuildHandler
+        from .artifacts import ArtifactHandler
 
         self._connection_handler = ConnectionHandler(
             session_manager, auth_module, presence_module
@@ -56,6 +61,7 @@ class OpcodeHandler:
         self._presence_handler = PresenceHandler(presence_module)
         self._voice_handler = VoiceHandler(servers_module)
         self._guild_handler = GuildHandler(servers_module)
+        self._artifact_handler = ArtifactHandler()
 
     async def handle(
         self,
@@ -114,5 +120,19 @@ class OpcodeHandler:
             return await self._presence_handler.handle_typing_start(connection, data)
         elif op == GatewayOpcode.TYPING_STOP:
             return await self._presence_handler.handle_typing_stop(connection, data)
+        elif op == GatewayOpcode.ARTIFACT_SUBSCRIBE:
+            return await self._artifact_handler.handle_artifact_subscribe(
+                connection, data
+            )
+        elif op == GatewayOpcode.ARTIFACT_UNSUBSCRIBE:
+            return await self._artifact_handler.handle_artifact_unsubscribe(
+                connection, data
+            )
+        elif op == GatewayOpcode.ARTIFACT_OP:
+            if self._dispatcher is None:
+                return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
+            return await self._artifact_handler.handle_artifact_op(
+                connection, data, self._dispatcher
+            )
         else:
             return None, None, int(GatewayCloseCode.UNKNOWN_OPCODE)

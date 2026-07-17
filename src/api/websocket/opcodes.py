@@ -38,6 +38,12 @@ class GatewayOpcode(IntEnum):
     TYPING_STOP = 41
     # Plexichat channel ratchet opcodes
     RATCHET_UPDATE = 50
+    # Plexichat artifacts real-time fabric opcodes (collaborative whiteboards,
+    # live code editors, and other shared artifact canvases).
+    ARTIFACT_SUBSCRIBE = 60
+    ARTIFACT_UNSUBSCRIBE = 61
+    ARTIFACT_OP = 62
+    ARTIFACT_SYNC = 63
 
 
 class GatewayCloseCode(IntEnum):

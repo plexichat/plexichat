@@ -116,6 +116,25 @@ from src.api.websocket.intents import GatewayIntents
 intents = GatewayIntents.GUILDS | GatewayIntents.GUILD_MESSAGES
 ```
 
+The `ARTIFACTS` intent (`1 << 20`) gates delivery of artifact real-time
+fabric events (`ARTIFACT_CREATE` / `ARTIFACT_UPDATE` / `ARTIFACT_DELETE` /
+`ARTIFACT_OP`). It is included in `GatewayIntent.default_intents()` and
+`GatewayIntent.all_intents()`.
+
+### Artifact opcodes
+
+The artifacts real-time fabric uses opcodes 60-63:
+
+| Opcode | Name | Direction | Purpose |
+|--------|------|-----------|---------|
+| 60 | `ARTIFACT_SUBSCRIBE` | C→S | Subscribe to an artifact's live updates |
+| 61 | `ARTIFACT_UNSUBSCRIBE` | C→S | Unsubscribe from an artifact |
+| 62 | `ARTIFACT_OP` | C→S→C | Relay a realtime delta op to subscribers |
+| 63 | `ARTIFACT_SYNC` | S→C | Full snapshot for late joiners |
+
+Relay and snapshot helpers live in `src/api/websocket/artifacts.py`
+(`relay_artifact_op`, `send_artifact_sync`).
+
 ## Rate Limiting
 
 - 120 events per 60 seconds per connection
