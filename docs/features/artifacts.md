@@ -453,6 +453,52 @@ honors the same `anonymize_content` policy already applied to messages:
 
 The function returns the number of rows touched so the erasure is auditable.
 
+## Admin Panel
+
+The server-rendered admin dashboard exposes an **Artifacts** sidebar tab
+(`data-tab="artifacts"`) for instance-level oversight and maintenance of the
+Artifacts subsystem. It uses the existing `api()` fetch helper and `alert()`/
+`confirm()` patterns from `dashboard.js` and renders three cards:
+
+### Capabilities banners
+
+`renderArtifactCapabilities()` calls `GET /api/v1/admin/capabilities` and renders
+one banner per feature (`artifacts`, `artifacts_editor`, `artifacts_whiteboard`,
+`voice_transcription`, `voice_recording`). Each banner shows the feature name,
+its availability `state`, and the backend `message` (plus `details` when present).
+Banner color is driven by `state`:
+
+| `state` | Banner color | Meaning |
+| --- | --- | --- |
+| `available` | green | Feature is fully usable. |
+| `disabled_by_config` | amber | Turned off in server config. |
+| `disabled_by_license` | red | Required license feature is absent. |
+| `dependency_missing` | red | A runtime dependency (e.g. Whisper) is not installed. |
+| `misconfigured` | red | Enabled/licensed but required config (e.g. API key) is missing. |
+
+### Artifact list & force-delete
+
+`renderArtifactList()` calls `GET /api/v1/admin/artifacts` and renders a table of
+every artifact across all servers (type, title, author, server, created,
+retention, expires). Each row has a **Force delete** button wired to
+`forceDeleteArtifact()`, which confirms with the operator then calls
+`DELETE /api/v1/admin/artifacts/{id}` and re-renders the table on success. A
+**Refresh** button re-fetches both capabilities and the list.
+
+### Retention controls
+
+- **Run retention purge** — `runRetentionPurge()` confirms then `POST`s to
+  `/api/v1/admin/artifacts/retention/purge`, which deletes artifacts whose
+  `expires_at` is already in the past (returns `{purged: <count>}`). The count is
+  surfaced in a toast and the table refreshes.
+- **Per-server retention override** — a form (`saveServerRetention()`) that
+  `POST`s `{server_id, retention_days}` to
+  `/api/v1/admin/artifacts/retention/server`. A blank `retention_days` clears the
+  override so the server reverts to the global `default_retention_days` (`null` ⇒
+  never expire by default). The response echoes the effective override.
+
+All failures surface via `alert()` with the API error message.
+
 ## Related Documentation
 
 - [Default Configuration Reference](../default-config.md) - Complete configuration reference
