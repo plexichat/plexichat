@@ -1,4 +1,4 @@
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, List
 
 from ...base import SnowflakeID
 from ..models import VoiceState, VoiceChannel
@@ -66,6 +66,15 @@ class VoiceProtocol:
 
     def get_voice_state(self, user_id: SnowflakeID) -> Optional[VoiceState]:
         return super().get_voice_state(user_id)  # type: ignore[misc]
+
+    def get_channel_members(self, channel_id: SnowflakeID) -> List[Any]:
+        return super().get_channel_members(channel_id)  # type: ignore[misc]
+
+    def _on_member_joined(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:
+        return super()._on_member_joined(user_id, channel_id)  # type: ignore[misc]
+
+    def _on_member_left(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:
+        return super()._on_member_left(user_id, channel_id)  # type: ignore[misc]
 
     def get_voice_channel(
         self, channel_id: SnowflakeID, user_id: SnowflakeID

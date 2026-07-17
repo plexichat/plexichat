@@ -284,6 +284,36 @@ not re-uploaded). The `attachment` dict must carry `attachment_id` (or `id`);
 artifact `payload`. This is the backend for the retroactive-convert client flow
 and deliberately does not couple to the media module.
 
+### Voice call artifacts
+
+When a voice call ends it produces a `voice_calls` record plus a corresponding
+`voice_call` Artifact, so the call appears in chat history and the artifacts
+pane. The call lifecycle is driven by channel occupancy: it starts when the
+first participant joins a voice channel and ends when the last participant
+leaves.
+
+- **Start** — `VoiceCallManager.start_call(channel_id, server_id, initiator_id,
+  conversation_id=None)` inserts a `voice_calls` row (`started_at` now,
+  `participant_count` 1) and creates a linked `voice_call` Artifact in `LIVE`
+  status via `ArtifactManager.create(...)`, storing the `voice_calls.id` in the
+  artifact `payload`.
+- **End** — `VoiceCallManager.end_call(call_id, participant_ids=None)` sets
+  `ended_at`, `duration_seconds`, and `participant_count`, then transitions the
+  linked artifact to `COMPLETED`.
+- **Recording** — `config.artifacts.voice.allow_recording` gates recording. When
+  it is `false`, `mark_recorded(call_id, True)` is clamped to `false` and the
+  artifact's `recorded` flag is never set. The flag is mirrored on both the
+  `voice_calls` row and the linked artifact.
+- **Consent** — `add_consent(call_id, user_id)` appends to the
+  `consented_participants` JSON list (deduped) on the `voice_calls` row.
+- **Transcript** — `set_transcript(call_id, transcript_artifact_id)` links a
+  transcript artifact (from the transcription group) and sets `has_transcript =
+  true` on the linked artifact.
+
+All call/artifact interactions are wrapped defensively: if the artifacts layer
+is unavailable the voice pipeline keeps working and simply omits the call
+record.
+
 ## Real-time fabric (WebSocket)
 
 Collaborative artifacts (live whiteboards, shared code editors, and similar
