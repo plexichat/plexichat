@@ -406,6 +406,46 @@ implementation backing the admin `/artifacts/retention/purge` endpoint. Media
 and linked-row cascade cleanup remain out of scope, matching the manager's
 `delete` semantics.
 
+### Scheduled cleanup job
+
+`RetentionCleanupJob(db, config=None)` is a scheduled background worker (daemon
+thread) mirroring the `AccountReaper` pattern. It is started at boot by
+`src/server/initializer.py` (stored in `modules_store["artifact_retention"]`)
+and runs only when `artifacts.retention.run_cleanup_interval_minutes > 0`.
+
+Each cycle calls `run_once(db)` which:
+
+1. `_apply_retention_windows(db, config)` — for every artifact that has a
+   `retention_policy` but a `NULL expires_at`, stamps `expires_at =
+   created_at + <resolved retention days>`. Artifacts with no resolvable
+   retention period are left untouched (never expire).
+2. `purge_expired(db, config)` — removes rows whose window has elapsed. When
+   `artifacts.retention.purge_expired` is `False`, the cycle only applies
+   windows and does not delete anything.
+
+The loop sleeps `run_cleanup_interval_minutes` (in minutes) between cycles,
+with the sleep broken into small increments so `stop()` can shut it down
+promptly.
+
+### Per-server override
+
+`resolve_retention_days(server_id, config=None) -> Optional[int]` resolves the
+effective retention period (in days) for a server, returning `None` to mean
+"never expire". Resolution priority:
+
+1. A per-server override from the `server_artifact_settings` table
+   (`retention_days`), but only when `artifacts.allow_per_server_override` is
+   `True` and a row exists for the server. The table is created by migration
+   `048_add_server_artifact_settings.py`.
+2. The global `artifacts.default_retention_days` (`None` ⇒ never expire by
+   default).
+
+**No expire by default:** when `default_retention_days` is `None` (the
+documented default), artifacts never expire unless a per-artifact
+`retention_policy` or a per-server override explicitly sets a positive number
+of days. The cleanup interval gates how often the job runs, not whether data is
+deleted.
+
 ## Real-time fabric
 
 The collaborative layer that lets live whiteboards and shared code editors

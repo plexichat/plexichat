@@ -101,18 +101,51 @@ class ArtifactManager(BaseManager):
         if days is None:
             allow_override = artifacts_cfg.get("allow_per_server_override", False)
             if allow_override and server_id is not None:
-                servers = artifacts_cfg.get("servers", {}) or {}
-                server_cfg = servers.get(str(server_id)) or servers.get(server_id)
-                if (
-                    isinstance(server_cfg, dict)
-                    and server_cfg.get("retention_days") is not None
-                ):
-                    days = server_cfg.get("retention_days")
+                db_override = self.get_server_retention_days(server_id)
+                if db_override is not None:
+                    days = db_override
+                else:
+                    servers = artifacts_cfg.get("servers", {}) or {}
+                    server_cfg = servers.get(str(server_id)) or servers.get(server_id)
+                    if (
+                        isinstance(server_cfg, dict)
+                        and server_cfg.get("retention_days") is not None
+                    ):
+                        days = server_cfg.get("retention_days")
 
         if days is None:
             days = artifacts_cfg.get("default_retention_days")
 
         return days
+
+    # === Per-server retention override (server_artifact_settings) ===
+
+    def get_server_retention_days(self, server_id: SnowflakeID) -> Optional[int]:
+        """Return the per-server retention override for ``server_id``.
+
+        Reads from the ``server_artifact_settings`` table (migration 048).
+        Returns ``None`` when no override row exists, so callers fall back to
+        the global ``default_retention_days``.
+        """
+        from .repository import get_server_retention_days as _get
+
+        if self._db is None or server_id is None:
+            return None
+        return _get(self._db, server_id)
+
+    def set_server_retention_days(
+        self, server_id: SnowflakeID, retention_days: Optional[int]
+    ) -> None:
+        """Create, update, or clear the per-server retention override.
+
+        ``retention_days=None`` clears the override so the server reverts to the
+        global default.
+        """
+        from .repository import set_server_retention_days as _set
+
+        if self._db is None or server_id is None:
+            raise ValueError("db and server_id are required")
+        _set(self._db, server_id, retention_days)
 
     # === CRUD ===
 

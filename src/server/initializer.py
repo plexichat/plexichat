@@ -259,6 +259,30 @@ def initialize_modules(
         except Exception as e:
             logger.error(f"Failed to start DSAR Harvester: {e}")
 
+        # Artifact retention cleanup job (scheduled purge of expired artifacts)
+        try:
+            from src.core.artifacts.retention import RetentionCleanupJob
+
+            artifacts_cfg = config.get("artifacts", {}) or {}
+            retention_cfg = artifacts_cfg.get("retention", {}) or {}
+            cleanup_interval = retention_cfg.get("run_cleanup_interval_minutes", 60)
+            try:
+                cleanup_interval = int(cleanup_interval)
+            except (TypeError, ValueError):
+                cleanup_interval = 60
+            if cleanup_interval > 0:
+                artifact_retention = RetentionCleanupJob(db, artifacts_cfg)
+                artifact_retention.start()
+                modules_store["artifact_retention"] = artifact_retention
+                logger.info("Artifact retention cleanup job started")
+            else:
+                logger.info(
+                    "Artifact retention cleanup disabled "
+                    "(run_cleanup_interval_minutes <= 0)"
+                )
+        except Exception as e:
+            logger.error(f"Failed to start artifact retention job: {e}")
+
         def init_presence():
             timed_init(
                 "presence",

@@ -122,3 +122,26 @@ class RetentionPurgeResponse(BaseModel):
     """Response for a retention purge run."""
 
     purged: int = Field(0, description="Number of expired artifacts removed")
+
+
+class ServerRetentionRequest(BaseModel):
+    """Request body for setting a per-server retention override."""
+
+    server_id: int = Field(..., description="Target server id")
+    retention_days: Optional[int] = Field(
+        None,
+        description=(
+            "Per-server retention override in days. "
+            "None clears the override (falls back to global default)."
+        ),
+    )
+
+
+class ServerRetentionResponse(BaseModel):
+    """Response for a per-server retention override set/clear."""
+
+    server_id: int = Field(..., description="Server id")
+    retention_days: Optional[int] = Field(
+        None, description="Effective override after the operation (None = cleared)"
+    )
+    success: bool = Field(True, description="Whether the operation succeeded")
