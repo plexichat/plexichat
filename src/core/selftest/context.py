@@ -96,6 +96,7 @@ class SelfTestContext:
         self.setup: Any = None
         self.endpoints: Any = None
         self.ws: Any = None
+        self.artifacts: Any = None
         self.ratelimit: Any = None
         self.static_client: Any = None
         self.docs: Any = None
