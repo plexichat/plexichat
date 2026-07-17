@@ -26,10 +26,6 @@ class CallLifecycleMixin(VoiceProtocol):
         """Attach a ``VoiceCallManager`` (may be ``None`` to disable records)."""
         self._voice_call_manager = voice_call_manager
 
-    def _get_voice_call_manager(self):
-        manager = getattr(self, "_voice_call_manager", None)
-        return manager
-
     def _resolve_conversation_for_channel(
         self, channel_id: SnowflakeID
     ) -> Optional[SnowflakeID]:
@@ -50,7 +46,7 @@ class CallLifecycleMixin(VoiceProtocol):
         return None
 
     def _on_member_joined(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:
-        manager = self._get_voice_call_manager()
+        manager = self._voice_call_manager
         if manager is None:
             return
         try:
@@ -72,7 +68,7 @@ class CallLifecycleMixin(VoiceProtocol):
             )
 
     def _on_member_left(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:
-        manager = self._get_voice_call_manager()
+        manager = self._voice_call_manager
         if manager is None:
             return
         try:
@@ -81,6 +77,18 @@ class CallLifecycleMixin(VoiceProtocol):
                 return
             remaining = self.get_channel_members(channel_id)
             if not remaining:
+                try:
+                    user_count = self._get_channel_user_count(channel_id)
+                    if user_count > 0:
+                        logger.warning(
+                            f"get_channel_members returned 0 for channel {channel_id} "
+                            f"but get_channel_user_count reports {user_count} — skipping end_call"
+                        )
+                        return
+                except Exception as exc:
+                    logger.debug(
+                        f"get_channel_user_count failed for {channel_id}: {exc}"
+                    )
                 participant_ids = [user_id]
                 call = manager.end_call(existing.id, participant_ids=participant_ids)
                 logger.info(

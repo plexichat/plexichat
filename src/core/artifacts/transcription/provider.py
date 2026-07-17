@@ -80,12 +80,12 @@ class TranscriptionProvider(ABC):
         ``recording_ref`` is a path or URL to the recorded audio. ``opts`` is a
         per-call override dict (e.g. ``language``, ``diarize``).
         """
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def is_available(self) -> bool:
         """Return ``True`` only if the backend can actually run right now."""
-        raise NotImplementedError
+        ...
 
     # === Shared helpers ===
 
@@ -286,7 +286,11 @@ class OpenAIWhisperProvider(TranscriptionProvider):
         super().__init__(config)
         self._api_key: str = str(self._config.get("openai_api_key", "") or "")
         self._model: str = str(self._config.get("openai_model", "whisper-1"))
-        self._api_url: str = "https://api.openai.com/v1/audio/transcriptions"
+        self._api_url: str = str(
+            self._config.get(
+                "openai_api_base", "https://api.openai.com/v1/audio/transcriptions"
+            )
+        )
 
     def is_available(self) -> bool:
         return bool(self._api_key)

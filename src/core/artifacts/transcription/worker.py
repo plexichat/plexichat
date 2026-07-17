@@ -21,6 +21,7 @@ loop at schedule time).
 """
 
 import asyncio
+import threading
 from typing import Any, Dict, List, Optional
 
 import utils.config as config
@@ -157,15 +158,6 @@ async def transcribe_call(
             )
             return None
 
-        enabled = transcription_cfg.get("enabled", False)
-        auto = transcription_cfg.get("auto_transcribe", False)
-        if not enabled or not auto:
-            logger.info(
-                f"transcription: skipping call {call_id}; "
-                f"enabled={enabled} auto_transcribe={auto}."
-            )
-            return None
-
         call = get_voice_call(db, call_id)
         if call is None:
             logger.warning(f"transcription: call {call_id} not found.")
@@ -257,27 +249,35 @@ async def transcribe_call(
 # Bounded in-process queue used when no asyncio loop is running at schedule time
 # (e.g. a synchronous lifecycle hook). A background task drains it once a loop
 # starts; this keeps the API non-blocking in both sync and async contexts.
-_QUEUE: "asyncio.Queue" = asyncio.Queue()
+_QUEUE = None
 _QUEUE_DRAINING = False
+_QUEUE_LOCK = threading.Lock()
+
+
+def _get_queue():
+    global _QUEUE
+    if _QUEUE is None:
+        _QUEUE = asyncio.Queue()
+    return _QUEUE
 
 
 async def _drain_queue() -> None:
     """Process any queued transcription jobs. Runs while the loop is alive."""
-    global _QUEUE_DRAINING
-    _QUEUE_DRAINING = True
     try:
         while True:
-            job = await _QUEUE.get()
+            job = await _get_queue().get()
             try:
                 await transcribe_call(job["call_id"], job["db"], job["config"])
             except Exception as exc:  # noqa: BLE001 - never crash the drainer
                 logger.error(f"transcription: queued job failed: {exc}")
             finally:
-                _QUEUE.task_done()
+                _get_queue().task_done()
     except asyncio.CancelledError:  # pragma: no cover - shutdown
         return
     finally:
-        _QUEUE_DRAINING = False
+        with _QUEUE_LOCK:
+            global _QUEUE_DRAINING
+            _QUEUE_DRAINING = False
 
 
 def schedule_transcribe_call(
@@ -298,21 +298,25 @@ def schedule_transcribe_call(
             loop.create_task(transcribe_call(call_id, db, transcription_cfg))
             return
     except RuntimeError:
+        logger.debug("No running loop; enqueuing transcription job")
         pass
 
     # No running loop: defer to the bounded queue.
-    _QUEUE.put_nowait({"call_id": call_id, "db": db, "config": transcription_cfg})
+    _get_queue().put_nowait({"call_id": call_id, "db": db, "config": transcription_cfg})
+    ensure_transcription_drainer()
 
 
 def ensure_transcription_drainer() -> None:
     """Start the queue drainer task if a loop is running and not yet started."""
-    global _QUEUE_DRAINING
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    if loop.is_running() and not _QUEUE_DRAINING:
-        loop.create_task(_drain_queue())
+    with _QUEUE_LOCK:
+        global _QUEUE_DRAINING
+        if loop.is_running() and not _QUEUE_DRAINING:
+            _QUEUE_DRAINING = True
+            loop.create_task(_drain_queue())
 
 
 __all__ = [

@@ -17,6 +17,7 @@ limit (no new rate-limit mechanism is introduced).
 
 from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
 
+import src.api as api
 import utils.logger as logger
 
 from src.api.websocket.opcodes import GatewayCloseCode
@@ -26,13 +27,19 @@ from src.api.websocket.artifacts import (
     relay_artifact_op,
     send_artifact_sync,
 )
+from src.core.artifacts.repository import get_artifact
 
 if TYPE_CHECKING:
     from src.api.websocket.dispatcher import GatewayDispatcher
 
 
 class ArtifactHandler:
-    """Handles artifact-related opcodes."""
+    """Handles artifact-related real-time opcodes.
+
+    Manages subscribe/unsubscribe of artifact subscriptions and relays ops
+    between subscribers. Snapshot delivery fetches live artifact data from
+    the repository.
+    """
 
     def __init__(self) -> None:
         self._registry = get_artifact_subscription_registry()
@@ -67,16 +74,13 @@ class ArtifactHandler:
         self._registry.subscribe(connection.user_id, artifact_id)
         logger.debug(f"User {connection.user_id} subscribed to artifact {artifact_id}")
 
-        # Send a placeholder snapshot. The real snapshot is fetched by the
-        # routes/manager layer (later groups); here we just acknowledge.
+        db = api.get_db()
+        artifact = get_artifact(db, artifact_id) if db else None
+        snapshot = artifact.payload if artifact else {"error": "not_found"}
         try:
-            await send_artifact_sync(
-                connection,
-                artifact_id,
-                {"placeholder": True},
-            )
-        except Exception as e:  # pragma: no cover - defensive
-            logger.debug(f"Failed to send artifact sync placeholder: {e}")
+            await send_artifact_sync(connection, artifact_id, snapshot)  # type: ignore[arg-type]
+        except Exception as e:
+            logger.debug(f"Failed to send artifact sync: {e}")
 
         return None, None, None
 

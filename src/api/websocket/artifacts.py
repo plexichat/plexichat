@@ -117,20 +117,23 @@ async def relay_artifact_op(
     }
 
     sent = 0
-    tasks = []
     for conn in connections:
-        if not getattr(conn, "is_selftest", False) and not conn.check_rate_limit(
-            dispatcher._rate_limit_per_minute
-        ):
+        if not (
+            hasattr(conn, "is_selftest") and conn.is_selftest
+        ) and not conn.check_rate_limit(dispatcher._rate_limit_per_minute):
             logger.debug(
-                f"Artifact op rate limited for connection {conn.connection_id}"
+                f"Artifact op rate limited for user {getattr(conn, 'user_id', 'unknown')}, connection {conn.connection_id}"
             )
             continue
-        tasks.append(dispatcher._send_to_connection(conn, payload))
-
-    if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        sent = sum(1 for r in results if r is True)
+        try:
+            result = await asyncio.wait_for(
+                dispatcher._send_to_connection(conn, payload),
+                timeout=5,
+            )
+            if result is True:
+                sent += 1
+        except Exception:
+            pass
 
     logger.debug(
         f"Relayed ARTIFACT_OP for artifact {artifact_id} from {actor_id} "
@@ -180,8 +183,8 @@ async def send_artifact_sync(
     Returns:
         True if the frame was sent successfully.
     """
-    if not getattr(
-        connection, "is_selftest", False
+    if not (
+        hasattr(connection, "is_selftest") and connection.is_selftest
     ) and not connection.check_rate_limit(120):
         logger.debug(
             f"Artifact sync rate limited for connection {connection.connection_id}"

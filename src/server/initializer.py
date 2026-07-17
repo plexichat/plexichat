@@ -445,6 +445,14 @@ def initialize_modules(
             artifact_manager = ArtifactManager(db, artifacts_cfg)
             voice_call_manager = VoiceCallManager(db, artifact_manager, artifacts_cfg)
             voice.set_voice_call_manager(voice_call_manager)
+            try:
+                from src.core.artifacts.transcription.worker import (
+                    ensure_transcription_drainer,
+                )
+
+                ensure_transcription_drainer()
+            except Exception as e:
+                logger.debug(f"Failed to start transcription drainer: {e}")
         except Exception as e:
             logger.warning(f"Failed to attach voice call manager: {e}")
 

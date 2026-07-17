@@ -138,6 +138,16 @@ def update_artifact(db, artifact_id: SnowflakeID, **fields: Any) -> Optional[Art
 
     Only known columns are accepted; unknown keys are ignored to avoid
     constructing SQL from arbitrary input.
+
+    Args:
+        db: Database connection.
+        artifact_id: The ID of the artifact to update.
+        **fields: Column-value pairs to update. Only keys listed in
+            ``_COLUMNS`` are accepted; unknown keys are silently ignored.
+
+    Returns:
+        The updated :class:`Artifact`, or ``None`` if no artifact exists
+        with the given ``artifact_id``.
     """
     allowed: Dict[str, Any] = {}
     model_fields = set(Artifact.__dataclass_fields__.keys())
@@ -168,7 +178,15 @@ def update_artifact(db, artifact_id: SnowflakeID, **fields: Any) -> Optional[Art
 
 
 def delete_artifact(db, artifact_id: SnowflakeID) -> bool:
-    """Delete an artifact row. Returns True if a row was removed."""
+    """Delete an artifact row.
+
+    Args:
+        db: Database connection.
+        artifact_id: The ID of the artifact to delete.
+
+    Returns:
+        ``True`` if a row was removed, ``False`` otherwise.
+    """
     cursor = db.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
     return bool(getattr(cursor, "rowcount", 0) > 0)
 

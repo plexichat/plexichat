@@ -42,15 +42,26 @@ def _get_manager():
 async def admin_list_artifacts(request: Request) -> Dict[str, Any]:
     """List all artifacts across every server (admin oversight)."""
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
+    if admin_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Admin token required"}},
+        )
+
+    limit = int(request.query_params.get("limit", 100))
+    offset = int(request.query_params.get("offset", 0))
 
     try:
         manager = _get_manager()
-        artifacts = manager.list_with_filters(filters={})
+        artifacts = manager.list_with_filters(
+            filters={"limit": limit, "offset": offset}
+        )
         return {
             "total": len(artifacts),
             "items": [
-                ArtifactResponse.model_validate(a).model_dump() for a in artifacts
+                ArtifactResponse.model_validate(a).model_dump(mode="json")
+                for a in artifacts
             ],
         }
     except HTTPException:
@@ -67,7 +78,12 @@ async def admin_list_artifacts(request: Request) -> Dict[str, Any]:
 async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str, Any]:
     """Admin force-delete of any artifact."""
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
+    if admin_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Admin token required"}},
+        )
 
     try:
         try:
@@ -104,7 +120,12 @@ async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str,
 async def admin_purge_expired(request: Request) -> RetentionPurgeResponse:
     """Trigger a retention purge of expired artifacts."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
+    if admin_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Admin token required"}},
+        )
 
     try:
         import src.api as api_mod
@@ -140,7 +161,12 @@ async def admin_set_server_retention(
     reverts to the global ``default_retention_days``.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
+    if admin_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Admin token required"}},
+        )
 
     try:
         manager = _get_manager()

@@ -132,9 +132,11 @@ def anonymize_user_artifacts(
             """
             SELECT id, initiator_id, consented_participants
             FROM voice_calls
-            WHERE initiator_id = ? OR consented_participants LIKE ?
+            WHERE initiator_id = ?
+               OR (consented_participants IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM json_each(consented_participants) WHERE value = ?))
             """,
-            (user_id, f"%{user_id}%"),
+            (user_id, user_id),
         )
     except Exception as e:
         logger.error(

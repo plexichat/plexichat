@@ -166,9 +166,11 @@ class DataCollector:
             result = self._db.fetch_one(
                 """
                 SELECT COUNT(*) as count FROM voice_calls
-                WHERE initiator_id = ? OR consented_participants LIKE ?
+                WHERE initiator_id = ?
+                   OR (consented_participants IS NOT NULL
+                       AND EXISTS (SELECT 1 FROM json_each(consented_participants) WHERE value = ?))
                 """,
-                (user_id, f"%{user_id}%"),
+                (user_id, user_id),
             )
             if result:
                 counts["voice_voice_calls"] = (
@@ -889,17 +891,14 @@ class DataCollector:
 
         voice_calls = []
         try:
-            # Calls initiated by the user OR where the user consented (the
-            # consented_participants JSON column is matched via LIKE on the
-            # integer user id, which is safe because ids are stored as JSON
-            # arrays of integers).
             rows = self._db.fetch_all(
                 """
                 SELECT * FROM voice_calls
                 WHERE initiator_id = ?
-                   OR consented_participants LIKE ?
+                   OR (consented_participants IS NOT NULL
+                       AND EXISTS (SELECT 1 FROM json_each(consented_participants) WHERE value = ?))
                 """,
-                (user_id, f"%{user_id}%"),
+                (user_id, user_id),
             )
             for row in rows:
                 voice_calls.append(dict(row))
