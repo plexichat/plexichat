@@ -71,9 +71,13 @@ class VoiceProtocol:
         return super().get_channel_members(channel_id)  # type: ignore[misc]
 
     def _on_member_joined(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:
+        # mixin hook — subclasses (e.g. CallLifecycleMixin) override this
+        # mixin hook — override in subclass
         return super()._on_member_joined(user_id, channel_id)  # type: ignore[misc]
 
     def _on_member_left(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:
+        # mixin hook — subclasses (e.g. CallLifecycleMixin) override this
+        # mixin hook — override in subclass
         return super()._on_member_left(user_id, channel_id)  # type: ignore[misc]
 
     def get_voice_channel(

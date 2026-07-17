@@ -27,6 +27,7 @@ from src.api.schemas.artifacts import (
 
 router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
 
+ARTIFACT_ICON = config.get("artifacts", {}).get("inline_icon", "📎")
 
 # === Permission helpers ===
 
@@ -138,7 +139,7 @@ def _emit_artifact_message(
         channel_id = artifact.channel_id
         conversation_id = artifact.conversation_id
 
-        content = f"📎 {artifact.title}"
+        content = f"{ARTIFACT_ICON} {artifact.title}"
         event = events.create_message_create(
             message_id=int(artifact.id),
             channel_id=int(channel_id) if channel_id else 0,
@@ -571,6 +572,49 @@ async def convert_upload(
 
         attachment = dict(row)
         attachment["attachment_id"] = attachment_id
+
+        max_size_mb = config.get("artifacts", {}).get("max_artifact_size_mb", 200)
+        max_size_bytes = max_size_mb * 1024 * 1024
+        if attachment.get("size", 0) > max_size_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": f"Attachment exceeds maximum size of {max_size_mb} MB",
+                    }
+                },
+            )
+
+        msg_row = db.fetch_one(
+            "SELECT conversation_id, author_id FROM msg_messages WHERE id = ? AND deleted = 0",
+            (attachment["message_id"],),
+        )
+        if not msg_row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Source message not found"}},
+            )
+        msg_data = dict(msg_row)
+
+        if current_user.user_id != msg_data["author_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": 403, "message": "Not authorized"}},
+            )
+
+        source_conv_id = msg_data["conversation_id"]
+        messaging_mod = api.get_messaging()
+        if not _is_conversation_member(
+            messaging_mod, source_conv_id, current_user.user_id
+        ):
+            if not _require_server_permission(
+                current_user.user_id, server_id, "artifact.create"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"error": {"code": 403, "message": "Not authorized"}},
+                )
 
         manager = _get_manager()
         artifact = manager.convert_upload_to_artifact(

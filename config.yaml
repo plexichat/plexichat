@@ -1,1 +1,18 @@
-{}
+# Artifacts feature configuration
+artifacts:
+  enabled: true
+  default_retention_days: null  # null = never expire
+  allow_per_server_override: true
+  max_artifact_size_mb: 200
+  editor:
+    enabled: true
+    max_file_size_mb: 50
+  whiteboard:
+    enabled: false  # requires artifacts_whiteboard license feature
+  voice:
+    allow_recording: true
+    transcription:
+      enabled: false  # requires voice_transcription license feature
+      provider: local_whisper  # local_whisper, openai, or azure
+      consent_required: true
+      auto_transcribe: false

@@ -26,6 +26,7 @@ The suites use the live server database (:func:`src.api.get_db`) and the live
 WebSocket gateway, so they run cleanly inside ``main.py self-test``.
 """
 
+import asyncio
 import json
 import time
 from typing import Any, Dict, List, Optional
@@ -41,15 +42,22 @@ from src.core.artifacts.manager import ArtifactManager
 from src.core.artifacts.capabilities import (
     get_artifact_capabilities,
     CapabilityState,
+    _eval_editor,
+    _eval_whiteboard,
+    _eval_voice_transcription,
+    _eval_voice_recording,
 )
+from src.core.artifacts.federation import FederationArtifactBridge
 from src.core.artifacts.retention import purge_expired
 from src.core.artifacts.privacy import anonymize_user_artifacts
-from src.core.artifacts.models import ArtifactType, ArtifactStatus
+from src.core.artifacts.models import ArtifactType, ArtifactStatus, VoiceCall
 from src.core.artifacts.repository import (
     create_artifact,
+    create_voice_call,
     delete_artifact,
     get_artifact,
 )
+from src.core.artifacts.transcription import transcribe_call
 
 from ..context import SelfTestContext
 
@@ -112,6 +120,10 @@ class ArtifactsTester:
         self._test_capabilities()
         self._test_retention_and_privacy()
         self._test_wss_round_trip()
+        self._test_admin_endpoints()
+        self._test_transcription_worker()
+        self._test_federation_bridge()
+        self._test_individual_eval()
 
         logger.info("ARTIFACTS SELF-TEST SUITE COMPLETE")
 
@@ -679,6 +691,263 @@ class ArtifactsTester:
                         sock.close()
                     except Exception:
                         pass
+
+    # === 5. admin REST endpoints ===
+
+    def _test_admin_endpoints(self) -> None:
+        db = api.get_db()
+        if db is None:
+            self._record(
+                "GET",
+                "/api/v1/admin/artifacts",
+                False,
+                "admin_endpoints_db",
+                "Database unavailable",
+            )
+            return
+        try:
+            resp = self.ctx.session.get(self.ctx.base_url + "/api/v1/admin/artifacts")
+            self._check(
+                "admin_artifacts_list",
+                "/api/v1/admin/artifacts GET",
+                resp.ok,
+                f"GET failed: {resp.status_code}",
+            )
+
+            manager = ArtifactManager(db, config.get("artifacts", {}) or {})
+            art = manager.create(
+                conversation_id=None,
+                author_id=self.ctx.test_user_id or 1,
+                artifact_type=ArtifactType.UPLOAD,
+                title=f"admin-del-{_ARTIFACTS_TEST_NONCE}",
+                server_id=self.ctx.test_server_id,
+                status=ArtifactStatus.COMPLETED,
+                retention_policy={"days": 7},
+            )
+            art_id = int(art.id)
+            try:
+                resp = self.ctx.session.delete(
+                    self.ctx.base_url + f"/api/v1/admin/artifacts/{art_id}"
+                )
+                self._check(
+                    "admin_artifacts_delete",
+                    f"/api/v1/admin/artifacts/{art_id} DELETE",
+                    resp.ok,
+                    f"DELETE failed: {resp.status_code}",
+                )
+            finally:
+                try:
+                    delete_artifact(db, art_id)
+                except Exception:
+                    pass
+
+            resp = self.ctx.session.post(
+                self.ctx.base_url + "/api/v1/admin/artifacts/retention/purge"
+            )
+            self._check(
+                "admin_retention_purge",
+                "/api/v1/admin/artifacts/retention/purge POST",
+                resp.ok,
+                f"POST failed: {resp.status_code}",
+            )
+
+            server_id = self.ctx.test_server_id or 1
+            resp = self.ctx.session.post(
+                self.ctx.base_url + "/api/v1/admin/artifacts/retention/server",
+                json={"server_id": server_id},
+            )
+            self._check(
+                "admin_retention_server",
+                "/api/v1/admin/artifacts/retention/server POST",
+                resp.ok,
+                f"POST failed: {resp.status_code}",
+            )
+        except Exception as e:
+            self._record(
+                "ADMIN",
+                "/api/v1/admin/artifacts",
+                False,
+                "admin_endpoints_error",
+                str(e),
+            )
+
+    # === 6. transcription worker ===
+
+    def _test_transcription_worker(self) -> None:
+        db = api.get_db()
+        if db is None:
+            self._record(
+                "WORKER", "transcribe_call", False, "no_db", "Database unavailable"
+            )
+            return
+        try:
+            result = asyncio.run(transcribe_call(999999999, db))
+            self._check(
+                "transcribe_nonexistent_call",
+                "transcribe_call",
+                result is None,
+                f"expected None, got {result}",
+            )
+
+            call_id = _alloc_id(db)
+            call = VoiceCall(
+                id=call_id,
+                conversation_id=None,
+                channel_id=None,
+                server_id=self.ctx.test_server_id,
+                initiator_id=self.ctx.test_user_id or 1,
+                started_at=_now_ms(),
+                created_at=_now_ms(),
+                updated_at=_now_ms(),
+                recorded=False,
+            )
+            try:
+                create_voice_call(db, call)
+                result = asyncio.run(transcribe_call(call_id, db))
+                self._check(
+                    "transcribe_not_recorded",
+                    "transcribe_call",
+                    result is None,
+                    f"expected None, got {result}",
+                )
+            finally:
+                try:
+                    db.execute("DELETE FROM voice_calls WHERE id = ?", (call_id,))
+                except Exception:
+                    pass
+        except Exception as e:
+            self._record(
+                "WORKER", "transcribe_call", False, "transcription_worker_error", str(e)
+            )
+
+    # === 7. federation bridge ===
+
+    def _test_federation_bridge(self) -> None:
+        db = api.get_db()
+        if db is None:
+            self._record("FEDERATION", "bridge", False, "no_db", "Database unavailable")
+            return
+        try:
+
+            class _MockPlexijoin:
+                def list_connections(self, status=None):
+                    return {"connections": [{"id": 1, "remote_instance_id": 42}]}
+
+                def record_traffic(
+                    self, connection_id=None, direction=None, message_count=None
+                ):
+                    pass
+
+            bridge = FederationArtifactBridge(db, _MockPlexijoin())
+
+            count = bridge.forward_artifact_op(999999999, {"test": "op"}, 0)
+            self._check(
+                "federation_op_nonexistent",
+                "forward_artifact_op",
+                count == 0,
+                f"expected 0, got {count}",
+            )
+
+            count = bridge.forward_artifact_event("create", None)
+            self._check(
+                "federation_event_none",
+                "forward_artifact_event",
+                count == 0,
+                f"expected 0, got {count}",
+            )
+
+        except Exception as e:
+            self._record(
+                "FEDERATION",
+                "FederationArtifactBridge",
+                False,
+                "federation_bridge_error",
+                str(e),
+            )
+
+    # === 8. individual _eval_* functions ===
+
+    def _test_individual_eval(self) -> None:
+        try:
+            info = _eval_editor({"enabled": True, "editor": {"enabled": True}})
+            self._check(
+                "eval_editor_available",
+                "_eval_editor",
+                info.state == CapabilityState.AVAILABLE,
+                f"expected AVAILABLE, got {info.state}",
+            )
+
+            info = _eval_editor({"enabled": True, "editor": {"enabled": False}})
+            self._check(
+                "eval_editor_disabled",
+                "_eval_editor",
+                info.state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected DISABLED_BY_CONFIG, got {info.state}",
+            )
+
+            info = _eval_whiteboard({"enabled": True, "whiteboard": {"enabled": True}})
+            self._check(
+                "eval_whiteboard_available",
+                "_eval_whiteboard",
+                info.state
+                in (CapabilityState.AVAILABLE, CapabilityState.DISABLED_BY_LICENSE),
+                f"unexpected state: {info.state}",
+            )
+
+            info = _eval_whiteboard({"enabled": True, "whiteboard": {"enabled": False}})
+            self._check(
+                "eval_whiteboard_disabled",
+                "_eval_whiteboard",
+                info.state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected DISABLED_BY_CONFIG, got {info.state}",
+            )
+
+            info = _eval_voice_transcription(
+                {
+                    "enabled": True,
+                    "voice": {
+                        "transcription": {"enabled": True, "provider": "local_whisper"}
+                    },
+                }
+            )
+            self._check(
+                "eval_transcription_attempt",
+                "_eval_voice_transcription",
+                info.state != CapabilityState.AVAILABLE,
+                "unexpected AVAILABLE (whisper not expected in test env)",
+            )
+
+            info = _eval_voice_transcription(
+                {"enabled": True, "voice": {"transcription": {"enabled": False}}}
+            )
+            self._check(
+                "eval_transcription_disabled",
+                "_eval_voice_transcription",
+                info.state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected DISABLED_BY_CONFIG, got {info.state}",
+            )
+
+            info = _eval_voice_recording(
+                {"enabled": True, "voice": {"allow_recording": True}}
+            )
+            self._check(
+                "eval_recording_available",
+                "_eval_voice_recording",
+                info.state == CapabilityState.AVAILABLE,
+                f"expected AVAILABLE, got {info.state}",
+            )
+
+            info = _eval_voice_recording(
+                {"enabled": True, "voice": {"allow_recording": False}}
+            )
+            self._check(
+                "eval_recording_disabled",
+                "_eval_voice_recording",
+                info.state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected DISABLED_BY_CONFIG, got {info.state}",
+            )
+        except Exception as e:
+            self._record("EVAL", "_eval_*", False, "individual_eval_error", str(e))
 
 
 def _recv_json_with_timeout(sock: Any, timeout: float) -> Optional[Dict[str, Any]]:

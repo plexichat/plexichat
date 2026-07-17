@@ -56,12 +56,12 @@ def _default_transport(
     actor_id: int,
     connection_ids: List[int],
 ) -> None:
-    """Default (real) transport: log + let the bridge account for traffic.
+    """Default transport: logs the forwarding intent but does not ship bytes.
 
-    This is not a stub. It records that artifact traffic was produced for the
-    given federation links and logs what would be shipped. The real external
-    transport replaces this with a function that actually delivers the payload to
-    each remote instance.
+    The bridge accounts for traffic separately via
+    ``PlexiJoinManager.record_traffic`` in the calling method, not here.
+    A deployed external transport replaces this function to actually deliver
+    the payload to each remote instance.
     """
     if not connection_ids:
         return
@@ -146,7 +146,12 @@ class FederationArtifactBridge:
         except Exception as e:  # pragma: no cover - defensive
             logger.debug("FederationArtifactBridge: failed to list connections: %s", e)
             return []
-        connections = result.get("connections") or []
+        if not isinstance(result, dict):
+            logger.debug("FederationArtifactBridge: list_connections returned non-dict")
+            return []
+        connections = result.get("connections")
+        if not isinstance(connections, list):
+            return []
         matched: List[int] = []
         for conn in connections:
             remote_instance_id = conn.get("remote_instance_id")

@@ -22,10 +22,22 @@ import utils.logger as logger
 def purge_expired(db: Any, config: Optional[Dict[str, Any]] = None) -> int:
     """Delete artifacts whose retention window has elapsed.
 
+    ``config`` controls ``default_retention_days`` and
+    ``allow_per_server_override`` which affect what rows are considered expired:
+
+    * ``default_retention_days`` — the global fallback retention period applied
+      to artifacts that have a ``retention_policy`` but no per-server override.
+    * ``allow_per_server_override`` — when enabled, a server-specific
+      ``retention_days`` in ``server_artifact_settings`` takes priority over the
+      global default.
+
+    These settings are used by ``_apply_retention_windows`` to determine what
+    ``expires_at`` values are set on artifacts; ``purge_expired`` then removes
+    rows whose ``expires_at`` is in the past.
+
     Args:
         db: A connected database instance.
-        config: Optional artifacts config (unused by the current minimal
-            implementation but accepted for API symmetry).
+        config: Optional artifacts config dict.
 
     Returns:
         The number of artifact rows removed.
@@ -63,7 +75,9 @@ def _get_artifacts_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, 
 
 
 def resolve_retention_days(
-    server_id: Any, config: Optional[Dict[str, Any]] = None
+    server_id: Any,
+    config: Optional[Dict[str, Any]] = None,
+    db: Any = None,
 ) -> Optional[int]:
     """Resolve the effective retention period (days) for a server.
 
@@ -84,7 +98,8 @@ def resolve_retention_days(
     allow_override = bool(artifacts_cfg.get("allow_per_server_override", False))
 
     if server_id is not None and allow_override:
-        db = _resolve_db(config)
+        if db is None:
+            db = _resolve_db(config)
         if db is not None:
             try:
                 row = db.fetch_one(
@@ -134,8 +149,8 @@ def _resolve_db(config: Optional[Dict[str, Any]] = None) -> Any:
         db = api_mod.get_db()
         if db is not None:
             return db
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(f"_resolve_db failed: {exc}")
     return None
 
 
@@ -236,7 +251,7 @@ def _apply_retention_windows(db: Any, config: Optional[Dict[str, Any]] = None) -
 
         policy_days = _parse_policy_days(policy)
         if policy_days is None:
-            policy_days = resolve_retention_days(server_id, config)
+            policy_days = resolve_retention_days(server_id, config, db)
         if policy_days is None or policy_days <= 0:
             continue
 
