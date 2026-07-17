@@ -197,6 +197,49 @@ Each feature resolves to exactly one `CapabilityState`:
 See [`src/core/artifacts/README.md`](../src/core/artifacts/README.md) for the
 full capability-service reference.
 
+## REST API (Group 6)
+
+The artifact REST API is mounted under `/api/v1/artifacts` (user scope) and
+`/api/v1/admin/artifacts` (admin guarded). All user endpoints require a valid
+auth token; the admin endpoints additionally enforce host restriction and an
+admin token.
+
+### User endpoints (`/api/v1/artifacts`)
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| `POST` | `/artifacts` | `artifact.create` | Create an artifact + emit a transcript message. |
+| `GET` | `/artifacts` | `artifact.view` | List artifacts with filters (type, status, author, search, paging). |
+| `GET` | `/artifacts/{artifact_id}` | `artifact.view` | Fetch one artifact; `404` when missing. |
+| `PATCH` | `/artifacts/{artifact_id}` | `artifact.edit` (or author) | Update mutable fields; `404` when missing. |
+| `DELETE` | `/artifacts/{artifact_id}` | `artifact.delete` (or author) | Delete an artifact; `404` when missing. |
+| `POST` | `/artifacts/convert-upload` | `artifact.create` | Convert an existing `msg_attachments` row into an `UPLOAD` artifact; `404` when the attachment is missing. |
+
+Permission checks defer to the server RBAC layer for server-scoped actions. For
+DM/group conversations (no server), the caller must be a participant/owner of
+the conversation. The inline transcript message uses the `artifact` message type
+and references the artifact via `metadata.artifact_id`.
+
+### Admin endpoints (`/api/v1/admin/artifacts`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/artifacts` | List all artifacts across every server (admin oversight). |
+| `DELETE` | `/artifacts/{artifact_id}` | Force-delete any artifact. |
+| `POST` | `/artifacts/retention/purge` | Run `purge_expired` to delete artifacts whose `expires_at` is set and already in the past. Returns `{purged: <count>}`. |
+
+### Permission names
+
+The route layer uses the following permission names (resolved via the server
+RBAC `require_permission`):
+
+- `artifact.view`
+- `artifact.create`
+- `artifact.edit`
+- `artifact.delete`
+- `artifact.manage_retention` (reserved for retention management; the admin
+  purge endpoint is admin-guarded instead).
+
 ## Core Manager
 
 The domain logic for artifacts lives in `src/core/artifacts/` and is intentionally

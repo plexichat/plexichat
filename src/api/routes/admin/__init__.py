@@ -22,6 +22,7 @@ from .audit import router as audit_router
 from .licensing import router as licensing_router
 from .plexijoin import router as plexijoin_router
 from .capabilities import router as capabilities_router
+from .artifacts import router as admin_artifacts_router
 
 router = APIRouter()
 
@@ -45,3 +46,4 @@ router.include_router(audit_router)
 router.include_router(licensing_router)
 router.include_router(plexijoin_router)
 router.include_router(capabilities_router)
+router.include_router(admin_artifacts_router)
