@@ -15,6 +15,7 @@ from .models import (
     Artifact,
     ArtifactType,
     ArtifactStatus,
+    VoiceCall,
 )
 
 
@@ -264,3 +265,126 @@ def count_artifacts(db, filters: Optional[Dict[str, Any]] = None) -> int:
         f"SELECT COUNT(*) AS count FROM artifacts a{where}", tuple(params)
     )
     return int(row["count"]) if row else 0
+
+
+# === Voice calls (voice_calls table) ===
+
+_VOICE_CALL_COLUMNS = (
+    "id",
+    "artifact_id",
+    "conversation_id",
+    "channel_id",
+    "server_id",
+    "initiator_id",
+    "started_at",
+    "ended_at",
+    "duration_seconds",
+    "recorded",
+    "transcript_artifact_id",
+    "consented_participants",
+    "participant_count",
+    "created_at",
+    "updated_at",
+)
+
+
+def row_to_voice_call(row: Dict[str, Any]) -> VoiceCall:
+    """Build a :class:`VoiceCall` from a DB row dict."""
+    consented = _json_loads(row.get("consented_participants"))
+    if consented is None:
+        consented = []
+    return VoiceCall(
+        id=row["id"],
+        conversation_id=row.get("conversation_id"),
+        channel_id=row.get("channel_id"),
+        server_id=row.get("server_id"),
+        initiator_id=row.get("initiator_id"),
+        started_at=row["started_at"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        artifact_id=row.get("artifact_id"),
+        ended_at=row.get("ended_at"),
+        duration_seconds=row.get("duration_seconds"),
+        recorded=bool(row.get("recorded", 0)),
+        transcript_artifact_id=row.get("transcript_artifact_id"),
+        consented_participants=list(consented),
+        participant_count=int(row.get("participant_count", 0) or 0),
+    )
+
+
+def voice_call_to_row(call: VoiceCall) -> Dict[str, Any]:
+    """Serialize a :class:`VoiceCall` back into a column→value dict."""
+    return {
+        "id": call.id,
+        "artifact_id": call.artifact_id,
+        "conversation_id": call.conversation_id,
+        "channel_id": call.channel_id,
+        "server_id": call.server_id,
+        "initiator_id": call.initiator_id,
+        "started_at": call.started_at,
+        "ended_at": call.ended_at,
+        "duration_seconds": call.duration_seconds,
+        "recorded": 1 if call.recorded else 0,
+        "transcript_artifact_id": call.transcript_artifact_id,
+        "consented_participants": _json_dumps(call.consented_participants),
+        "participant_count": call.participant_count,
+        "created_at": call.created_at,
+        "updated_at": call.updated_at,
+    }
+
+
+def create_voice_call(db, call: VoiceCall) -> VoiceCall:
+    """Insert a voice_calls row and return it unchanged."""
+    row = voice_call_to_row(call)
+    placeholders = ", ".join("?" for _ in _VOICE_CALL_COLUMNS)
+    column_list = ", ".join(_VOICE_CALL_COLUMNS)
+    query = f"INSERT INTO voice_calls ({column_list}) VALUES ({placeholders})"
+    db.execute(query, tuple(row[c] for c in _VOICE_CALL_COLUMNS))
+    return call
+
+
+def get_voice_call(db, call_id: SnowflakeID) -> Optional[VoiceCall]:
+    """Fetch a single voice call by id."""
+    row = db.fetch_one("SELECT * FROM voice_calls WHERE id = ?", (call_id,))
+    if not row:
+        return None
+    return row_to_voice_call(row)
+
+
+def get_active_voice_call_by_channel(
+    db, channel_id: SnowflakeID
+) -> Optional[VoiceCall]:
+    """Fetch the active (not ended) voice call for a channel, if any."""
+    row = db.fetch_one(
+        "SELECT * FROM voice_calls WHERE channel_id = ? AND ended_at IS NULL "
+        "ORDER BY started_at DESC LIMIT 1",
+        (channel_id,),
+    )
+    if not row:
+        return None
+    return row_to_voice_call(row)
+
+
+def update_voice_call(db, call_id: SnowflakeID, **fields: Any) -> Optional[VoiceCall]:
+    """Update mutable columns of a voice call row."""
+    allowed: Dict[str, Any] = {}
+    for key, value in fields.items():
+        if key not in _VOICE_CALL_COLUMNS:
+            continue
+        if key in ("recorded",):
+            allowed[key] = 1 if value else 0
+        elif key in ("consented_participants",):
+            allowed[key] = _json_dumps(value)
+        else:
+            allowed[key] = value
+
+    if not allowed:
+        return get_voice_call(db, call_id)
+
+    set_clause = ", ".join(f"{col} = ?" for col in allowed)
+    params = tuple(allowed.values()) + (call_id,)
+    db.execute(
+        f"UPDATE voice_calls SET {set_clause} WHERE id = ?",
+        params,
+    )
+    return get_voice_call(db, call_id)

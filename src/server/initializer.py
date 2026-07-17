@@ -412,6 +412,18 @@ def initialize_modules(
         logger.warning(f"Failed to initialize voice module: {e}")
         failed_modules.append("voice")
 
+    if "voice" not in failed_modules:
+        try:
+            from src.core.artifacts.manager import ArtifactManager
+            from src.core.artifacts.voice_calls import VoiceCallManager
+
+            artifacts_cfg = config.get("artifacts", {}) or {}
+            artifact_manager = ArtifactManager(db, artifacts_cfg)
+            voice_call_manager = VoiceCallManager(db, artifact_manager, artifacts_cfg)
+            voice.set_voice_call_manager(voice_call_manager)
+        except Exception as e:
+            logger.warning(f"Failed to attach voice call manager: {e}")
+
     voice_config = config.get("voice") or {}
     if voice_config.get("enabled", False):
         try:
