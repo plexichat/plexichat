@@ -23,6 +23,7 @@ from .services.data import DataGenerator
 from .services.discovery import RouteDiscovery
 from .services.endpoints import EndpointTester
 from .services.websocket import WebSocketTester
+from .services.artifacts import ArtifactsTester
 from .services.ratelimit import RateLimitTester
 from .services.static_client import StaticClientTester
 from .services.docs import DocsTester
@@ -51,6 +52,7 @@ class SelfTestRunner:
         self.setup = SetupService(self.ctx)
         self.endpoints = EndpointTester(self.ctx)
         self.ws = WebSocketTester(self.ctx)
+        self.artifacts = ArtifactsTester(self.ctx)
         self.ratelimit = RateLimitTester(self.ctx)
         self.static_client = StaticClientTester(self.ctx)
         self.docs = DocsTester(self.ctx)
@@ -63,6 +65,7 @@ class SelfTestRunner:
         self.ctx.setup = self.setup
         self.ctx.endpoints = self.endpoints
         self.ctx.ws = self.ws
+        self.ctx.artifacts = self.artifacts
         self.ctx.ratelimit = self.ratelimit
         self.ctx.static_client = self.static_client
         self.ctx.docs = self.docs
@@ -91,6 +94,10 @@ class SelfTestRunner:
 
         # 3. WebSocket Test
         self.ws.test_websocket()
+
+        # 3b. Artifacts feature self-test suites (lifecycle, capabilities,
+        #     retention + privacy, and the WSS artifact-op round-trip harness).
+        self.artifacts.test_artifacts()
 
         # 4. Static client smoke tests (no-op when feature is disabled)
         self.static_client.test_static_client()
