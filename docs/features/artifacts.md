@@ -241,6 +241,47 @@ not re-uploaded). The `attachment` dict must carry `attachment_id` (or `id`);
 artifact `payload`. This is the backend for the retroactive-convert client flow
 and deliberately does not couple to the media module.
 
+## Real-time fabric (WebSocket)
+
+Collaborative artifacts (live whiteboards, shared code editors, and similar
+canvases) sync over the WebSocket gateway using a small real-time fabric. The
+REST routes documented elsewhere remain the source of truth for persisted
+state; the fabric only relays in-memory deltas and snapshots.
+
+### Gateway opcodes (60-63)
+
+Defined in `src/api/websocket/opcodes.GatewayOpcode`:
+
+| Opcode | Name | Direction | Purpose |
+|--------|------|-----------|---------|
+| 60 | `ARTIFACT_SUBSCRIBE` | C→S | Subscribe to an artifact's live updates |
+| 61 | `ARTIFACT_UNSUBSCRIBE` | C→S | Unsubscribe from an artifact |
+| 62 | `ARTIFACT_OP` | C→S→C | Relay a realtime delta op to subscribers |
+| 63 | `ARTIFACT_SYNC` | S→C | Full snapshot for late joiners |
+
+### Event types and intent
+
+- `src/core/events/types.EventType`: `ARTIFACT_CREATE`, `ARTIFACT_UPDATE`,
+  `ARTIFACT_DELETE`, `ARTIFACT_OP`.
+- `src/core/events/types.GatewayIntent.ARTIFACTS = 1 << 20` gates delivery of
+  those events and is part of both `default_intents()` and `all_intents()`.
+
+### Relay helpers
+
+`src/api/websocket/artifacts.py` owns the in-memory subscription registry
+(`ArtifactSubscriptionRegistry`: `subscribe` / `unsubscribe` /
+`get_subscribers` / `unsubscribe_all`) plus two async helpers used by the
+opcode handlers:
+
+- `relay_artifact_op(dispatcher, artifact_id, op, actor_id, exclude_user_id)` —
+  fans an `ARTIFACT_OP` to every other subscriber of an artifact. It only
+  relays; persistence is the job of a later group (editor / ops persistence).
+- `send_artifact_sync(connection, artifact_id, snapshot)` — emits an
+  `ARTIFACT_SYNC` full snapshot to a single connection (late-joiner bootstrap).
+
+Both reuse the existing dispatcher send path and the per-connection rate limit;
+no new rate-limit mechanism is introduced.
+
 ## Related Documentation
 
 - [Default Configuration Reference](../default-config.md) - Complete configuration reference

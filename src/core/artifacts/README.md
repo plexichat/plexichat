@@ -255,3 +255,48 @@ raises. `get_capability(feature, config=None)` returns the info for one feature.
 - `GET /api/v1/admin/capabilities` (admin guarded) — returns the same
   per-feature breakdown plus a top-level `summary` (counts and a `by_state`
   grouping). Defined in `src/api/routes/admin/capabilities.py`.
+
+## Real-time fabric
+
+The collaborative layer that lets live whiteboards and shared code editors
+sync in real time is implemented in the WebSocket gateway (Group 5), on top of
+the schema and domain models documented above. It does not touch the REST
+routes (those arrive in a later group).
+
+### Gateway opcodes (60-63)
+
+Defined in `src/api.websocket.opcodes.GatewayOpcode`:
+
+- `ARTIFACT_SUBSCRIBE = 60` — client subscribes to an artifact's live updates.
+- `ARTIFACT_UNSUBSCRIBE = 61` — client withdraws a subscription.
+- `ARTIFACT_OP = 62` — a realtime delta op for an artifact; relayed to the
+  artifact's other subscribers.
+- `ARTIFACT_SYNC = 63` — a full snapshot, sent to late joiners.
+
+### Event types
+
+Defined in `src.core.events.types.EventType`: `ARTIFACT_CREATE`,
+`ARTIFACT_UPDATE`, `ARTIFACT_DELETE`, `ARTIFACT_OP`.
+
+### Gateway intent
+
+`src.core.events.types.GatewayIntent.ARTIFACTS = 1 << 20` gates delivery of
+the artifact event types. It is part of both `default_intents()` and
+`all_intents()`.
+
+### Relay helpers
+
+`src/api/websocket/artifacts.py` owns the subscription registry
+(`subscribe` / `unsubscribe` / `get_subscribers`) and the async relay
+helpers used by the opcode handlers:
+
+- `relay_artifact_op(dispatcher, artifact_id, op, actor_id, exclude_user_id)`
+  fans an `ARTIFACT_OP` out to all other subscribers of an artifact. It only
+  relays — persistence of the op is the responsibility of a later group
+  (editor / ops persistence).
+- `send_artifact_sync(connection, artifact_id, snapshot)` emits an
+  `ARTIFACT_SYNC` full snapshot to a single connection (bootstrap for late
+  joiners). The snapshot dict is fetched by the caller.
+
+Delivery reuses the existing dispatcher send path and the per-connection rate
+limit; no new rate-limit mechanism is introduced.

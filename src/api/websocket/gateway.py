@@ -194,6 +194,7 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
         auth_module=auth_module,
         presence_module=presence_module,
         servers_module=servers_module,
+        dispatcher=dispatcher,
     )
 
     dispatcher.set_event_loop(asyncio.get_event_loop())
