@@ -448,6 +448,51 @@ def initialize_modules(
         except Exception as e:
             logger.warning(f"Failed to attach voice call manager: {e}")
 
+    # Federation bridge for artifacts (PlexiJoin). Built only when the
+    # PlexiJoin feature is licensed and its encryption service is available,
+    # mirroring how the PlexiJoin admin routes construct the manager. When
+    # federation is unavailable the WS artifact layer simply skips forwarding;
+    # local relay is never affected.
+    try:
+        from utils import licensing as license_module
+
+        if license_module.has_feature("plexijoin", default=False):
+            try:
+                import utils.encryption as enc_mod
+
+                class _PlexiJoinEncryptionService:
+                    @staticmethod
+                    def encrypt(data: str) -> str:
+                        return enc_mod.encrypt_data(data)
+
+                    @staticmethod
+                    def decrypt(data: str) -> str:
+                        return enc_mod.decrypt_data(data)
+
+                encryption_service = _PlexiJoinEncryptionService()
+            except Exception:
+                encryption_service = None
+
+            if encryption_service is not None and db is not None:
+                from src.core.plexijoin import PlexiJoinManager
+                from src.core.admin.logging import get_admin_logger
+                from src.core.artifacts.federation import (
+                    FederationArtifactBridge,
+                    set_artifact_federation_bridge,
+                )
+
+                plexijoin_manager = PlexiJoinManager(
+                    db=db,
+                    admin_logger=get_admin_logger(),
+                    encryption_service=encryption_service,
+                )
+                federation_bridge = FederationArtifactBridge(db, plexijoin_manager)
+                set_artifact_federation_bridge(federation_bridge)
+                modules_store["artifact_federation"] = federation_bridge
+                logger.info("Federation (PlexiJoin) artifact bridge initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize artifact federation bridge: {e}")
+
     voice_config = config.get("voice") or {}
     if voice_config.get("enabled", False):
         try:
