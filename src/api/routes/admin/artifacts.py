@@ -12,7 +12,12 @@ import utils.config as config
 from fastapi import APIRouter, Request, HTTPException, status
 
 from .utils import check_host_restriction, get_admin_from_token
-from src.api.schemas.artifacts import ArtifactResponse, RetentionPurgeResponse
+from src.api.schemas.artifacts import (
+    ArtifactResponse,
+    RetentionPurgeResponse,
+    ServerRetentionRequest,
+    ServerRetentionResponse,
+)
 
 
 router = APIRouter(prefix="/artifacts", tags=["Admin", "Artifacts"])
@@ -118,6 +123,36 @@ async def admin_purge_expired(request: Request) -> RetentionPurgeResponse:
         raise
     except Exception as e:
         logger.error(f"Admin retention purge failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.post("/retention/server")
+async def admin_set_server_retention(
+    request: Request, body: ServerRetentionRequest
+) -> ServerRetentionResponse:
+    """Set or clear a per-server retention override.
+
+    Persists the override in the ``server_artifact_settings`` table (migration
+    048). Passing ``retention_days=null`` clears the override so the server
+    reverts to the global ``default_retention_days``.
+    """
+    check_host_restriction(request)
+    get_admin_from_token(request)
+
+    try:
+        manager = _get_manager()
+        manager.set_server_retention_days(body.server_id, body.retention_days)
+        effective = manager.get_server_retention_days(body.server_id)
+        return ServerRetentionResponse(
+            server_id=body.server_id, retention_days=effective, success=True
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Admin set server retention failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Internal server error"}},

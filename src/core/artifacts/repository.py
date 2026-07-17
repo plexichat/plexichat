@@ -8,6 +8,7 @@ constrained to an explicit allow-list so no user input is interpolated into SQL.
 """
 
 import json
+import time
 from typing import Any, Dict, List, Optional
 
 from src.core.base import SnowflakeID
@@ -363,6 +364,77 @@ def get_active_voice_call_by_channel(
     if not row:
         return None
     return row_to_voice_call(row)
+
+
+# === Server artifact settings (per-server retention overrides) ===
+
+
+def get_server_retention_days(db, server_id: SnowflakeID) -> Optional[int]:
+    """Return the per-server retention override (days) or ``None``.
+
+    Reads from the ``server_artifact_settings`` table created by migration 048.
+    Returns ``None`` when no override exists or on any error (the caller then
+    falls back to the global default).
+    """
+    try:
+        row = db.fetch_one(
+            "SELECT retention_days FROM server_artifact_settings WHERE server_id = ?",
+            (server_id,),
+        )
+        if not row:
+            return None
+        raw = row.get("retention_days")
+        if raw is None:
+            return None
+        try:
+            days = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return days if days > 0 else None
+    except Exception:
+        return None
+
+
+def set_server_retention_days(
+    db, server_id: SnowflakeID, retention_days: Optional[int]
+) -> None:
+    """Create or update a per-server retention override.
+
+    Passing ``retention_days=None`` clears the override (deletes the row), so
+    the server falls back to the global ``default_retention_days``.
+    """
+    now = int(time.time() * 1000)
+    if retention_days is None:
+        db.execute(
+            "DELETE FROM server_artifact_settings WHERE server_id = ?",
+            (server_id,),
+        )
+        return
+
+    try:
+        days = int(retention_days)
+    except (TypeError, ValueError):
+        raise ValueError("retention_days must be a positive integer or None")
+    if days <= 0:
+        raise ValueError("retention_days must be a positive integer or None")
+
+    existing = db.fetch_one(
+        "SELECT id FROM server_artifact_settings WHERE server_id = ?",
+        (server_id,),
+    )
+    if existing:
+        db.execute(
+            "UPDATE server_artifact_settings "
+            "SET retention_days = ?, updated_at = ? WHERE server_id = ?",
+            (days, now, server_id),
+        )
+    else:
+        db.execute(
+            "INSERT INTO server_artifact_settings "
+            "(server_id, retention_days, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (server_id, days, now, now),
+        )
 
 
 def update_voice_call(db, call_id: SnowflakeID, **fields: Any) -> Optional[VoiceCall]:

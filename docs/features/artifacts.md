@@ -152,6 +152,41 @@ framework (full detail in `src/core/artifacts/transcription/README.md`):
 | `run_cleanup_interval_minutes` | `60` | How often the retention cleanup task runs. |
 | `purge_expired` | `true` | Delete artifacts/transcripts past their retention window. |
 
+#### Scheduled cleanup job
+
+`RetentionCleanupJob` (in `src/core/artifacts/retention.py`) is a daemon-thread
+background worker started at boot by the initializer. It runs only when
+`run_cleanup_interval_minutes > 0`. Each cycle calls `run_once(db)`, which:
+
+1. Applies retention windows — stamps `expires_at = created_at + <retention
+   days>` for any artifact that has a `retention_policy` but no `expires_at`
+   yet (via `_apply_retention_windows`).
+2. Purges expired rows (`purge_expired`). When `purge_expired` is `false`, the
+   job only applies windows and never deletes.
+
+The admin `POST /artifacts/retention/purge` endpoint calls `purge_expired`
+directly to trigger an on-demand purge.
+
+#### Per-server override & "no expire by default"
+
+Retention resolution honors the **no expire by default** rule: with
+`default_retention_days: null` (the default), artifacts never expire unless an
+explicit per-artifact `retention_policy` (carrying `days`) or a per-server
+override sets a positive day count.
+
+When `allow_per_server_override: true`, individual servers may override the
+global default via the `server_artifact_settings` table (created by migration
+`048_add_server_artifact_settings.py`). `resolve_retention_days(server_id,
+config)` resolves the effective period with this priority:
+
+1. The server's `retention_days` row in `server_artifact_settings` (only if
+   `allow_per_server_override` is enabled and a row exists).
+2. The global `default_retention_days` (`null` ⇒ never expire).
+
+This same resolution already drives `ArtifactManager.create(...)` when an
+artifact is first written, so the scheduled job keeps already-stored rows
+consistent with the active policy.
+
 ## Database Schema
 
 The Artifacts feature persists its data in three tables, created by migration
