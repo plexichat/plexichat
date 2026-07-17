@@ -37,6 +37,7 @@
                     <li><button class="sidebar-nav-item" data-tab="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg><span>Audit Log</span></button></li>
                     <li><button class="sidebar-nav-item" data-tab="automod"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><span>AutoMod</span></button></li>
                     <li><button class="sidebar-nav-item" data-tab="bots"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg><span>Bots</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="artifacts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg><span>Artifacts</span></button></li>
                     <li><button class="sidebar-nav-item" data-tab="migrations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span>Migrations</span></button></li>
                 </ul>
                 <div style="padding:8px 12px 4px;">
@@ -705,6 +706,70 @@
                         </div>
                         <div class="card-content" style="padding:0;">
                             <table><thead><tr><th>Application</th><th>Server</th><th>Requester</th><th>Reason</th><th>Status</th><th>Requested</th></tr></thead><tbody id="bots-requests-body"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== ARTIFACTS TAB ===== -->
+                <div class="tab-content" id="tab-artifacts">
+                    <div class="card" style="margin-bottom:20px;">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Artifacts Capabilities</span>
+                        </div>
+                        <div class="card-content">
+                            <p class="text-sm text-muted">Availability of each artifacts feature. Banners explain why a feature is unavailable (disabled, missing license, missing dependency, or misconfiguration).</p>
+                            <div id="artifacts-capabilities"></div>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom:20px;">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z"/></svg>All Artifacts</span>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <button class="btn btn-secondary btn-sm" data-click="refreshArtifacts">Refresh</button>
+                                <button class="btn btn-danger btn-sm" data-click="runRetentionPurge">Run retention purge</button>
+                            </div>
+                        </div>
+                        <div class="card-content" style="padding:0;">
+                            <div style="overflow-x:auto;">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Type</th>
+                                            <th>Title</th>
+                                            <th>Author</th>
+                                            <th>Server</th>
+                                            <th>Created</th>
+                                            <th>Retention</th>
+                                            <th>Expires</th>
+                                            <th class="text-right">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="artifacts-tbody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>Per-Server Retention Override</span>
+                        </div>
+                        <div class="card-content">
+                            <p class="text-sm text-muted">Set a retention window (in days) for a specific server. Leave blank and save to clear the override and fall back to the global default. <code>null</code> means artifacts never expire by default.</p>
+                            <form id="server-retention-form" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+                                <div style="flex:1;min-width:160px;">
+                                    <label class="text-sm" for="server-retention-id">Server ID</label>
+                                    <input type="number" id="server-retention-id" placeholder="e.g. 1001" min="0" required>
+                                </div>
+                                <div style="flex:1;min-width:160px;">
+                                    <label class="text-sm" for="server-retention-days">Retention Days (blank = clear)</label>
+                                    <input type="number" id="server-retention-days" placeholder="e.g. 30 (blank to clear)" min="0">
+                                </div>
+                                <button type="button" class="btn btn-primary btn-sm" data-click="saveServerRetention">Save override</button>
+                            </form>
+                            <div id="server-retention-result" class="text-sm text-muted" style="margin-top:10px;"></div>
                         </div>
                     </div>
                 </div>
