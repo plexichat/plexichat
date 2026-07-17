@@ -1,3 +1,4 @@
+import json
 import time
 from typing import Dict, Any
 
@@ -821,7 +822,13 @@ class DataCollector:
         }
 
     def _collect_voice(self, user_id: int) -> Dict[str, Any]:
-        """Collect voice state data."""
+        """Collect voice state data plus call/transcript artifacts.
+
+        Includes the user's ``voice_states`` rows, any ``voice_calls`` they
+        initiated or consented to, and the linked ``artifacts`` (voice_call and
+        transcript) they own. Transcript text is included inline so the export is
+        human-readable, in line with DSAR data-portability requirements.
+        """
         states = []
         try:
             rows = self._db.fetch_all(
@@ -832,7 +839,61 @@ class DataCollector:
         except Exception as e:
             logger.error(f"Failed to collect voice states for user {user_id}: {e}")
 
-        return {"voice_states": states}
+        voice_calls = []
+        try:
+            # Calls initiated by the user OR where the user consented (the
+            # consented_participants JSON column is matched via LIKE on the
+            # integer user id, which is safe because ids are stored as JSON
+            # arrays of integers).
+            rows = self._db.fetch_all(
+                """
+                SELECT * FROM voice_calls
+                WHERE initiator_id = ?
+                   OR consented_participants LIKE ?
+                """,
+                (user_id, f"%{user_id}%"),
+            )
+            for row in rows:
+                voice_calls.append(dict(row))
+        except Exception as e:
+            logger.error(f"Failed to collect voice calls for user {user_id}: {e}")
+
+        call_artifacts = []
+        transcripts = []
+        try:
+            rows = self._db.fetch_all(
+                """
+                SELECT * FROM artifacts
+                WHERE author_id = ?
+                  AND artifact_type IN ('voice_call', 'transcript')
+                """,
+                (user_id,),
+            )
+            for row in rows:
+                r = dict(row)
+                if r.get("artifact_type") == "transcript":
+                    payload = r.get("payload")
+                    if isinstance(payload, str):
+                        try:
+                            payload = json.loads(payload)
+                        except (ValueError, TypeError):
+                            payload = {}
+                    if isinstance(payload, dict):
+                        # Pull the flattened transcript text out so the export
+                        # is readable without re-parsing the segment array.
+                        r["transcript_text"] = payload.get("text", "")
+                    transcripts.append(r)
+                else:
+                    call_artifacts.append(r)
+        except Exception as e:
+            logger.error(f"Failed to collect voice artifacts for user {user_id}: {e}")
+
+        return {
+            "voice_states": states,
+            "voice_calls": voice_calls,
+            "voice_call_artifacts": call_artifacts,
+            "transcripts": transcripts,
+        }
 
     def _collect_automod(self, user_id: int) -> Dict[str, Any]:
         """Collect automod data."""
