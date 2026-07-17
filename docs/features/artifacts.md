@@ -130,6 +130,33 @@ explicitly turns it on (and, for `local_whisper`, whisper is present).
 | `run_cleanup_interval_minutes` | `60` | How often the retention cleanup task runs. |
 | `purge_expired` | `true` | Delete artifacts/transcripts past their retention window. |
 
+## Database Schema
+
+The Artifacts feature persists its data in three tables, created by migration
+`047_add_artifacts_tables.py` (which calls `create_tables` from
+`src/core/artifacts/schema.py`).
+
+- **`artifacts`** — the central record for every artifact. Key columns:
+  `id` (Snowflake INTEGER PK), `conversation_id`, `channel_id`, `server_id`,
+  `author_id`, `artifact_type` (`voice_call`, `whiteboard`, `upload`, `file`,
+  `transcript`, `future`), `title`, `summary`, `status`
+  (`live`, `completed`, `archived`), `recorded` (0/1), `has_transcript` (0/1),
+  `payload` (JSON TEXT), `retention_policy`, `expires_at`, `license_feature`,
+  `created_at`, `updated_at`. Indexed on `conversation_id`, `server_id`,
+  `author_id`, `artifact_type`, `created_at`.
+- **`voice_calls`** — call-specific metadata linked to `artifacts` via
+  `artifact_id`. Columns include `initiator_id`, `started_at`, `ended_at`,
+  `duration_seconds`, `recorded` (0/1), `transcript_artifact_id`,
+  `consented_participants` (JSON TEXT), `participant_count`. Indexed on
+  `artifact_id`, `conversation_id`, `server_id`.
+- **`artifact_ops`** — an ordered, append-only operations log for collaborative
+  artifacts. Columns: `id` (AUTOINCREMENT), `artifact_id`, `seq`, `op_type`,
+  `actor_id`, `data` (JSON TEXT), `created_at`, with `UNIQUE(artifact_id, seq)`
+  and indexes on `artifact_id` and `(artifact_id, seq)`.
+
+See [`src/core/artifacts/README.md`](../src/core/artifacts/README.md) for the
+full table/column reference.
+
 ## Related Documentation
 
 - [Default Configuration Reference](../default-config.md) - Complete configuration reference
