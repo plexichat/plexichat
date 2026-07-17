@@ -648,6 +648,49 @@ applications:
     refresh_enabled: true
   rate_limits:
     requests_per_minute: 60
+artifacts:
+  enabled: true
+  default_retention_days: null
+  allow_per_server_override: true
+  max_artifact_size_mb: 200
+  editor:
+    enabled: true
+    allowed_languages:
+    - python
+    - javascript
+    - typescript
+    - json
+    - markdown
+    - go
+    - rust
+    - sql
+    - yaml
+    - html
+    - css
+    max_file_size_mb: 50
+  whiteboard:
+    enabled: false
+    licensed_feature: artifacts_whiteboard
+    max_participants: 50
+    persist_ops: true
+    op_rate_per_sec: 30
+  voice:
+    allow_recording: true
+    transcription:
+      provider: local_whisper
+      enabled: false
+      auto_transcribe: false
+      language: auto
+      diarize: false
+      model_size: base
+      whisper_probe_on_startup: true
+      openai_api_key: ${OPENAI_API_KEY:-}
+      azure_key: ${AZURE_SPEECH_KEY:-}
+      max_audio_minutes: 120
+    transcript_retention_days: null
+  retention:
+    run_cleanup_interval_minutes: 60
+    purge_expired: true
 bots:
   enabled: true
   max_per_server: 10
