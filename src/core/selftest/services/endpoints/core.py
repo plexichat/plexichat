@@ -266,6 +266,21 @@ class CoreMixin(EndpointTesterBase):
                 except Exception:
                     pass
 
+            # Capture artifact ID from auto-loop POST /artifacts so subsequent
+            # GET/PATCH/DELETE /artifacts/{id} tests use a real, existing id.
+            if success and method == "POST" and path == "/api/v1/artifacts":
+                try:
+                    artifact_data = resp.json()
+                    if isinstance(artifact_data, dict):
+                        aid = artifact_data.get("id")
+                        if aid:
+                            self.ctx.test_artifact_id = int(aid)
+                            logger.debug(
+                                f"Captured artifact id={aid} from auto-loop POST"
+                            )
+                except Exception:
+                    pass
+
             if not success:
                 logger.error(
                     f"FAILED: {method:<6} {path:<40} -> Status {resp.status_code} ({duration:.1f}ms)"

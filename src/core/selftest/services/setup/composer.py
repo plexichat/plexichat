@@ -65,6 +65,7 @@ class SetupService(
             if not self.create_server_and_channel():
                 return False
             self.create_test_message()
+            self.create_test_attachment()
             self.create_test_export()
             self.create_test_role()
             self.create_test_invite()

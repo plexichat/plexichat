@@ -5,6 +5,7 @@ joins the other user, and creates a webhook.
 """
 
 import secrets
+import time
 
 import src.api as api
 import utils.logger as logger
@@ -58,6 +59,48 @@ class ServerSetupMixin(SetupServiceBase):
             logger.info(f"Test message ID: {self.ctx.test_message_id}")
         except Exception as e:
             logger.warning(f"Failed to create test message: {e}")
+
+    def create_test_attachment(self) -> None:
+        if not self.ctx.test_message_id:
+            return
+        db = api.get_db()
+        if not db:
+            return
+        logger.debug("Creating test attachment...")
+        try:
+            row = db.fetch_one(
+                "SELECT id FROM msg_attachments WHERE message_id = ? LIMIT 1",
+                (self.ctx.test_message_id,),
+            )
+            if row:
+                self.ctx.test_attachment_id = int(row["id"])
+                logger.debug(
+                    f"Reusing test attachment ID: {self.ctx.test_attachment_id}"
+                )
+                return
+            db.execute(
+                "INSERT INTO msg_attachments "
+                "(message_id, filename, content_type, size, url, created_at, deleted) "
+                "VALUES (?, ?, ?, ?, ?, ?, 0)",
+                (
+                    self.ctx.test_message_id,
+                    "selftest_upload.txt",
+                    "text/plain",
+                    11,
+                    "https://example.com/selftest_upload.txt",
+                    int(time.time() * 1000),
+                ),
+            )
+            aid = db.fetch_one(
+                "SELECT id FROM msg_attachments WHERE message_id = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (self.ctx.test_message_id,),
+            )
+            if aid:
+                self.ctx.test_attachment_id = int(aid["id"])
+                logger.debug(f"Test attachment ID: {self.ctx.test_attachment_id}")
+        except Exception as e:
+            logger.warning(f"Failed to create test attachment: {e}")
 
     def create_test_export(self) -> None:
         if not self.ctx.test_conversation_id or not self.ctx.test_user_id:

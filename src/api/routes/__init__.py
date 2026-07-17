@@ -43,6 +43,7 @@ from .qr import router as qr_router
 from .help import router as help_router, robots_router
 from .config import router as config_router
 from .capabilities import router as capabilities_router
+from .artifacts import router as artifacts_router
 
 import utils.config as config
 import utils.logger as logger
@@ -147,6 +148,9 @@ def create_api_router() -> APIRouter:
 
     # Include capabilities router (artifact feature availability state)
     api_router.include_router(capabilities_router, tags=["Capabilities"])
+
+    # Include artifacts router (artifact CRUD + inline transcript emission)
+    api_router.include_router(artifacts_router, tags=["Artifacts"])
 
     return api_router
 

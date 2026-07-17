@@ -26,6 +26,7 @@ class MessageType(Enum):
     TEXT = "text"
     SYSTEM = "system"
     ATTACHMENT = "attachment"
+    ARTIFACT = "artifact"
 
 
 class MessageStatusType(Enum):

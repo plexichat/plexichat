@@ -304,6 +304,8 @@ class DataGenerator:
                 )
             elif "sticker" in path:
                 val = str(self.ctx.test_sticker_id or _gen_snowflake())
+            elif "artifact" in path and "attachment" not in name_low:
+                val = str(self.ctx.test_artifact_id or _gen_snowflake())
             else:
                 val = _gen_snowflake()
         return val
@@ -634,6 +636,14 @@ class DataGenerator:
                     "%H:%M:%S"
                 )
 
+            if "artifacts" in path and "convert-upload" in path:
+                if "attachment_id" in body:
+                    body["attachment_id"] = str(
+                        self.ctx.test_attachment_id
+                        if self.ctx.test_attachment_id
+                        else self.generate_snowflake()
+                    )
+
             if "status" in body:
                 if "tickets" in path:
                     body["status"] = "open"
@@ -641,6 +651,8 @@ class DataGenerator:
                     body["status"] = "pending"
                 elif "reports" in path:
                     body["status"] = "open"
+                elif "artifacts" in path:
+                    body["status"] = "completed"
                 else:
                     body["status"] = "online"
 
