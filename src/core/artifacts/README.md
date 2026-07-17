@@ -5,9 +5,10 @@ feature: first-class, persistent records that represent durable outputs of a
 conversation such as voice calls, whiteboards, uploads, files, transcripts,
 and future artifact types.
 
-At this stage the module contains **only the database schema**. Models,
-managers, routes, and business logic are introduced by later groups and will
-build on top of the tables defined here.
+This stage adds the **domain logic** for artifacts (Group 4): dataclass models,
+a repository (DB access), and a manager (business logic). No routes, no
+websocket handlers, and no voice-call-specific logic are included here — those
+are added by later groups.
 
 ## Contents
 
@@ -120,6 +121,82 @@ Later groups will add:
 
 Those groups should depend on the tables and columns documented here rather
 than redefining schema.
+
+## Models (`models.py`)
+
+Pure dataclasses (same style as the messaging module) mapping to the tables
+above. All IDs are Snowflake `int`s; boolean DB columns are exposed as `bool`.
+
+- **`ArtifactType(str, Enum)`** — `VOICE_CALL`, `WHITEBOARD`, `UPLOAD`, `FILE`,
+  `TRANSCRIPT`, `FUTURE` (values match the `artifact_type` column).
+- **`ArtifactStatus(str, Enum)`** — `LIVE`, `COMPLETED`, `ARCHIVED`.
+- **`Artifact`** — fields: `id`, `conversation_id`, `channel_id`, `server_id`,
+  `author_id`, `artifact_type`, `title`, `summary`, `status`, `recorded`,
+  `has_transcript`, `payload` (dict), `created_at`, `updated_at`,
+  `retention_policy` (optional dict/str), `expires_at` (optional int),
+  `license_feature` (optional str).
+- **`VoiceCall`** — fields: `id`, `artifact_id`, `conversation_id`, `channel_id`,
+  `server_id`, `initiator_id`, `started_at`, `ended_at`, `duration_seconds`,
+  `recorded`, `transcript_artifact_id`, `consented_participants` (list[int]),
+  `participant_count`, `created_at`, `updated_at`. Defined here for later
+  voice-call groups but kept independent of call lifecycle logic.
+
+## Repository (`repository.py`)
+
+Functions operating on a `db` connection (parameterized SQL, no value
+interpolation; sort keys restricted to an allow-list):
+
+- `create_artifact(db, artifact) -> Artifact`
+- `get_artifact(db, artifact_id) -> Optional[Artifact]`
+- `update_artifact(db, artifact_id, **fields) -> Optional[Artifact]` — accepts
+  only known columns; enum/bool/JSON fields are normalized.
+- `delete_artifact(db, artifact_id) -> bool` — True if a row was removed.
+- `list_artifacts(db, filters) -> list[Artifact]` — `filters` supports:
+  `conversation_id`, `channel_id`, `server_id`, `author_id`, `artifact_type`
+  (single value or a list), `status`, `recorded` (bool), `has_transcript`
+  (bool), `search` (title/summary LIKE), `sort_by` (`created_at` | `title` |
+  `type` | `duration` — `duration` joins `voice_calls`), `sort_order`
+  (`asc` | `desc`), `limit`, `offset`.
+- `count_artifacts(db, filters) -> int`
+- `row_to_artifact(row)` / `artifact_to_row(artifact)` — row ↔ dataclass
+  conversion (JSON columns encoded/decoded transparently).
+
+## Manager (`manager.py`)
+
+`ArtifactManager(BaseManager)` wraps the repository and the artifacts config.
+
+- `__init__(db, config=None)` — config defaults to `utils.config.get("artifacts", {})`.
+- `create(...)` — builds an `Artifact` with a fresh Snowflake id, derives
+  `expires_at` from the resolved retention period (see below), and persists it.
+- `get(artifact_id)`, `update(artifact_id, **fields)`, `delete(artifact_id)`
+  (deletes the metadata row only; media purge / cascade cleanup of linked
+  `voice_calls` and `artifact_ops` is deferred to later groups).
+- `list_with_filters(filters, conversation_id=None, server_id=None,
+  channel_id=None, author_id=None)` — merges scope args into the filters and
+  delegates to `list_artifacts`. Visibility/permission enforcement is the
+  responsibility of the route layer.
+- `count(filters)`.
+- `convert_upload_to_artifact(attachment, conversation_id, author_id,
+  title=None, artifact_type=UPLOAD, server_id=None, channel_id=None) ->
+  Artifact` — creates an `UPLOAD`/`FILE` artifact referencing an **existing**
+  attachment. The `attachment` dict must carry an `attachment_id` (or `id`);
+  `filename`, `content_type`, `size`, `url`, and `metadata` are copied into the
+  artifact `payload`. This is the backend for the later retroactive-convert
+  client flow and intentionally does not couple to the media module.
+
+### Retention logic
+
+`compute_expires_at(retention_days, created_at) -> Optional[int]` returns the
+expiry timestamp in milliseconds, or `None` when `retention_days` is `None` or
+non-positive (i.e. never expires). `_resolve_retention_days` computes the
+effective period with this priority:
+
+1. An explicit per-artifact `retention_policy` carrying `days`.
+2. A per-server override — only when `allow_per_server_override` is set and
+   `artifacts.servers.<server_id>.retention_days` exists.
+3. The global `default_retention_days` (`None` ⇒ no expiry).
+
+When `default_retention_days` is `None`, created artifacts never expire.
 
 ## Capability service
 
