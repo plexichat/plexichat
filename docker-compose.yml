@@ -63,9 +63,12 @@ services:
       /bin/sh -c "
       until mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\"; do sleep 2; done;
       mc mb -p local/$${S3_BUCKET} || true;
-       mc anonymous set download local/$${S3_BUCKET} || true;
-       "
-    restart: unless-stopped
+        mc anonymous set download local/$${S3_BUCKET} || true;
+        "
+    # One-shot init job: run once, exit 0, then stop. MUST NOT restart,
+    # otherwise `backend` (which waits on service_completed_successfully)
+    # would block forever because the container loops instead of completing.
+    restart: "no"
 
   cert-init:
     image: alpine:3.20
@@ -78,7 +81,7 @@ services:
         openssl req -x509 -nodes -newkey rsa:2048 -keyout /certs/privkey.pem -out /certs/fullchain.pem -days 365 -subj '/CN=localhost';
       fi
       "
-    restart: unless-stopped
+    restart: "no"
 
   backend:
     restart: unless-stopped
