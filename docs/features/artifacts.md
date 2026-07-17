@@ -549,6 +549,50 @@ retention, expires). Each row has a **Force delete** button wired to
 
 All failures surface via `alert()` with the API error message.
 
+## Deployment Environment Variables
+
+The deploy scripts (`deploy.sh` / `deploy.ps1`) support environment-variable overrides
+for every key in the `artifacts.*` config block. Set these before running the installer
+to change artifact behaviour without editing the generated `docker-config.yaml`.
+
+### Artifact config overrides
+
+| Variable | Maps to config key | Notes |
+|---|---|---|
+| `ARTIFACTS_ENABLED` | `artifacts.enabled` | `true` / `false` |
+| `ARTIFACTS_EDITOR_ENABLED` | `artifacts.editor.enabled` | `true` / `false` |
+| `ARTIFACTS_WHITEBOARD_ENABLED` | `artifacts.whiteboard.enabled` | `true` / `false` |
+| `ARTIFACTS_VOICE_ALLOW_RECORDING` | `artifacts.voice.allow_recording` | `true` / `false` |
+| `ARTIFACTS_VOICE_TRANSCRIPTION_ENABLED` | `artifacts.voice.transcription.enabled` | `true` / `false` |
+| `ARTIFACTS_VOICE_TRANSCRIPTION_PROVIDER` | `artifacts.voice.transcription.provider` | `local_whisper`, `openai`, or `azure` |
+| `ARTIFACTS_DEFAULT_RETENTION_DAYS` | `artifacts.default_retention_days` | Positive integer or empty (never expire) |
+
+### License feature flags
+
+| Variable | Purpose |
+|---|---|
+| `ARTIFACTS_LICENSE_FEATURES` | Comma-separated list of active license features. Accepted values: `artifacts`, `artifacts_whiteboard`, `voice_transcription`, `voice_recording`, `artifacts_editor`. |
+
+Example (bash):
+```bash
+ARTIFACTS_WHITEBOARD_ENABLED=true \
+ARTIFACTS_VOICE_TRANSCRIPTION_ENABLED=true \
+ARTIFACTS_VOICE_TRANSCRIPTION_PROVIDER=openai \
+ARTIFACTS_LICENSE_FEATURES=artifacts,artifacts_whiteboard,voice_transcription \
+./deploy.sh install -r
+```
+
+Example (PowerShell):
+```powershell
+$env:ARTIFACTS_WHITEBOARD_ENABLED = "true"
+$env:ARTIFACTS_VOICE_TRANSCRIPTION_ENABLED = "true"
+$env:ARTIFACTS_LICENSE_FEATURES = "artifacts,artifacts_whiteboard,voice_transcription"
+.\deploy.ps1 install -RunNow
+```
+
+When an env var is left empty (or unset), the server uses the compiled-in default
+from `src/config_defaults.py`.
+
 ## Related Documentation
 
 - [Default Configuration Reference](../default-config.md) - Complete configuration reference
