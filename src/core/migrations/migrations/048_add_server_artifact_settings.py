@@ -21,8 +21,7 @@ CREATE TABLE IF NOT EXISTS server_artifact_settings (
     server_id INTEGER NOT NULL UNIQUE,
     retention_days INTEGER,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    FOREIGN KEY (server_id) REFERENCES srv_servers(id)
+    updated_at INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_server_artifact_settings_server

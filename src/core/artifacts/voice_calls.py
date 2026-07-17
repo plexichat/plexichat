@@ -58,9 +58,11 @@ class VoiceCallManager(BaseManager):
     # === Config helpers ===
 
     def _voice_config(self) -> Dict[str, Any]:
-        artifacts_cfg = self._artifacts_config or {}
-        if not artifacts_cfg:
-            artifacts_cfg = config.get("artifacts", {}) or {}
+        artifacts_cfg = (
+            self._artifacts_config
+            if self._artifacts_config
+            else config.get("artifacts", {}) or {}
+        )
         voice_cfg = artifacts_cfg.get("voice") or {}
         if not isinstance(voice_cfg, dict):
             voice_cfg = {}
@@ -161,7 +163,8 @@ class VoiceCallManager(BaseManager):
             participant_count=participant_count,
             updated_at=ended_at,
         )
-        assert updated is not None
+        if updated is None:
+            raise ValueError(f"Failed to update voice call {call_id}")
 
         if self._artifact_manager is not None and updated.artifact_id is not None:
             try:
@@ -218,7 +221,8 @@ class VoiceCallManager(BaseManager):
             consented_participants=consented,
             updated_at=self._get_timestamp(),
         )
-        assert updated is not None
+        if updated is None:
+            raise ValueError(f"Failed to update voice call {call_id}")
         return updated
 
     def set_transcript(
