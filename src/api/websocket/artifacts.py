@@ -136,6 +136,26 @@ async def relay_artifact_op(
         f"Relayed ARTIFACT_OP for artifact {artifact_id} from {actor_id} "
         f"to {sent}/{len(connections)} connections"
     )
+
+    # Federation hook: after the local fan-out, forward the op to any
+    # federation links whose remote server owns this artifact. This must never
+    # break local relay, so failures are isolated to the federation layer.
+    try:
+        from src.core.artifacts.federation import get_artifact_federation_bridge
+
+        bridge = get_artifact_federation_bridge()
+        if bridge is not None:
+            bridge.forward_artifact_op(
+                artifact_id=artifact_id,
+                op=op,
+                actor_id=actor_id,
+            )
+    except Exception as e:  # pragma: no cover - federation is best-effort
+        logger.debug(
+            f"Federation forward of ARTIFACT_OP for artifact {artifact_id} "
+            f"failed (non-fatal): {e}"
+        )
+
     return sent
 
 

@@ -412,6 +412,56 @@ opcode handlers:
 Both reuse the existing dispatcher send path and the per-connection rate limit;
 no new rate-limit mechanism is introduced.
 
+## Federation (PlexiJoin)
+
+When two Plexichat instances are federated via PlexiJoin, artifacts owned by a
+federated server can share their live operations and artifact-level events across
+the link. The integration is implemented at the manager level in
+`src/core/artifacts/federation.py` (`FederationArtifactBridge`) and does **not**
+build a cross-instance realtime transport (that external layer lives outside this
+repo).
+
+### How it works
+
+- **Server → link resolution.** `FederationArtifactBridge` resolves an
+  artifact's owning `server_id` (via the artifacts repository) and maps it to the
+  active federation connection(s) for that server. Links are matched on
+  `plexijoin_connections.remote_instance_id == server_id` and only `active`
+  links are considered.
+- **Op forwarding.** `relay_artifact_op` in `src/api/websocket/artifacts.py`
+  calls `bridge.forward_artifact_op(artifact_id, op, actor_id)` immediately after
+  the local fan-out. The call is wrapped in try/except so a federation failure
+  never breaks local relay.
+- **Event forwarding.** `forward_artifact_event(event_type, artifact)` shares
+  artifact create/update/delete events to the matching links.
+- **Traffic accounting.** Every forwarded op/event is recorded against the
+  resolved federation connections via `PlexiJoinManager.record_traffic`, keeping
+  federation accounting accurate.
+- **Visibility.** `get_federated_artifact_visibility(server_id)` returns
+  whether artifacts on that server are shareable cross-instance (at least one
+  active link exists). Exposed to the capability/visibility layer.
+
+### Injectable transport
+
+The real cross-instance transport is registered with
+`set_federation_transport(fn)`; the callable receives
+`(artifact_id, payload, actor_id, connection_ids)`. The **default transport is
+real** (records traffic + logs the forwarding intent), not a stub; a deployment
+replaces it with a function that performs the actual network send when the
+external transport is available.
+
+### Wiring
+
+The initializer builds `FederationArtifactBridge(db, plexijoin_manager)` only
+when PlexiJoin is licensed and its encryption service is available, then attaches
+it to the WS artifact layer with `set_artifact_federation_bridge(bridge)`.
+
+### Permissions
+
+The bridge only **forwards** ops/events. It never auto-grants local permissions
+to remote participants — remote participants are not local users, so visibility of
+federated artifacts remains gated by the local route/permission layer.
+
 ## DSAR / Privacy
 
 Artifacts, voice-call records, and transcripts are personal data and are fully
