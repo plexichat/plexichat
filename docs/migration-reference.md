@@ -53,6 +53,7 @@ This document provides a detailed reference for all database migrations in Plexi
 | 044 | Add DSAR Tables | Reversible | Medium | Adds DSAR tables for GDPR compliance |
 | 045 | Add Channel Ratchet | Reversible | Medium | Adds channel ratchet intervals for message encryption |
 | 046 | SB Cooldown Zero To Null Grace | Reversible | Medium | Migrates soundboard cooldown 0 to NULL for new semantics |
+| 047 | Add Artifacts Tables | Reversible | Medium | Creates artifacts, voice_calls, and artifact_ops tables for the Artifacts feature |
 
 ## Detailed Migration Descriptions
 
@@ -759,6 +760,25 @@ Also fixes the slowmode column name mismatch introduced in migration 019.
 
 ---
 
+### 047 - Add Artifacts Tables
+
+**Purpose**: Creates the database tables that back the Plexichat Artifacts feature.
+
+**Impact**: Medium - Schema creation.
+
+**Changes**: Creates three new tables via `CREATE TABLE IF NOT EXISTS`:
+- `artifacts` — central record for every artifact (voice calls, whiteboards, uploads, files, transcripts, future types).
+- `voice_calls` — call-specific metadata, linked to `artifacts` via `artifact_id`.
+- `artifact_ops` — ordered, append-only operations log for collaborative artifacts, with a `UNIQUE(artifact_id, seq)` constraint.
+
+**Dependencies**: 046
+
+**Considerations**:
+- All statements are idempotent (`IF NOT EXISTS`); safe to re-apply.
+- Implemented by importing `create_tables` from `src.core.artifacts.schema`.
+
+---
+
 ## Migration Dependencies
 
 Some migrations depend on others being applied first. The dependency chain is:
@@ -805,6 +825,7 @@ Some migrations depend on others being applied first. The dependency chain is:
 |                       +-- 044 (Add DSAR Tables)
 |                           +-- 045 (Add Channel Ratchet)
 |                               +-- 046 (SB Cooldown Zero To Null Grace)
+|                                   +-- 047 (Add Artifacts Tables)
 +-- 034 (Admin Notes Versioning)
 +-- 035 (PlexiJoin Federation System)
 |   +-- 036 (Fix Thread Threads Columns)
