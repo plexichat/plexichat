@@ -197,6 +197,50 @@ Each feature resolves to exactly one `CapabilityState`:
 See [`src/core/artifacts/README.md`](../src/core/artifacts/README.md) for the
 full capability-service reference.
 
+## Core Manager
+
+The domain logic for artifacts lives in `src/core/artifacts/` and is intentionally
+self-contained — no routes, websocket handlers, or voice-call lifecycle code.
+It is split into three layers:
+
+- **`models.py`** — dataclasses `Artifact`, `VoiceCall`, and the `ArtifactType`
+  (`voice_call`, `whiteboard`, `upload`, `file`, `transcript`, `future`) and
+  `ArtifactStatus` (`live`, `completed`, `archived`) enums. These mirror the
+  `artifacts` and `voice_calls` table columns; boolean DB columns are exposed as
+  `bool` and JSON columns as `dict`/`list`.
+- **`repository.py`** — parameterized data-access functions (`create_artifact`,
+  `get_artifact`, `update_artifact`, `delete_artifact`, `list_artifacts`,
+  `count_artifacts`) plus `row_to_artifact` / `artifact_to_row`. Sort keys are
+  restricted to an allow-list (`created_at`, `title`, `type`, `duration`) so no
+  user input is interpolated into SQL.
+- **`manager.py`** — `ArtifactManager(BaseManager)` wraps the repository and the
+  `artifacts` config block. Public surface: `create`, `get`, `update`, `delete`,
+  `list_with_filters`, `count`, and `convert_upload_to_artifact`.
+
+### Retention
+
+`ArtifactManager.create(...)` derives `expires_at` (a millisecond timestamp, or
+`NULL`/never-expire) from the effective retention period resolved by
+`_resolve_retention_days`, with this priority:
+
+1. An explicit per-artifact `retention_policy` carrying `days`.
+2. A per-server override — only when `allow_per_server_override` is `true` and
+   `artifacts.servers.<server_id>.retention_days` exists.
+3. The global `default_retention_days` (`null` ⇒ never expire).
+
+The helper `compute_expires_at(retention_days, created_at) -> Optional[int]`
+returns `None` when `retention_days` is `None` or non-positive, so callers can
+distinguish "never expires" from a concrete timestamp.
+
+### Upload conversion
+
+`convert_upload_to_artifact(attachment, conversation_id, author_id, ...)` creates
+an `UPLOAD`/`FILE` artifact that references an **existing** attachment (media is
+not re-uploaded). The `attachment` dict must carry `attachment_id` (or `id`);
+`filename`, `content_type`, `size`, `url`, and `metadata` are copied into the
+artifact `payload`. This is the backend for the retroactive-convert client flow
+and deliberately does not couple to the media module.
+
 ## Related Documentation
 
 - [Default Configuration Reference](../default-config.md) - Complete configuration reference
