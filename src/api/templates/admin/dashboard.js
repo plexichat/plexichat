@@ -41,7 +41,7 @@ const pageTitles = {
     dashboard:'Dashboard', users:'User Management', admins:'Admin Management', tickets:'Support Tickets',
     moderation:'Content Moderation', security:'Security', telemetry:'Telemetry & Performance',
     logs:'System Logs', database:'Database Management', approvals:'Approval Workflows',
-    audit:'Audit Log', automod:'AutoMod', bots:'Bots', migrations:'Database Migrations',
+    audit:'Audit Log', automod:'AutoMod', bots:'Bots', artifacts:'Artifacts', migrations:'Database Migrations',
     plexijoin:'PlexiJoin Federation', license:'License', account:'My Account'
 };
 
@@ -57,7 +57,7 @@ const showTab = n => {
         dashboard:'refreshMetrics', tickets:'loadTickets', users:'loadUsers', admins:'loadAdminUsers',
         moderation:'loadModeration', security:'loadSecurity', telemetry:'refreshTelemetryStats',
         logs:'loadLogs', database:'refreshDatabase', approvals:'loadApprovals', audit:'loadAuditLog',
-        automod:'loadAutomodConfig', bots:'refreshAdminBots', migrations:'refreshMigrations',
+        automod:'loadAutomodConfig', bots:'refreshAdminBots', artifacts:'renderArtifacts', migrations:'refreshMigrations',
         plexijoin:'refreshPlexiJoin', license:'loadLicense', account:'loadAccount'
     };
     if (loads[n]) { const fn = window[loads[n]]; if (fn) fn(); }
@@ -201,6 +201,10 @@ const actionHandlers = new Map([
     ['automodPresetAlert', automodPresetAlert],
     ['automodPresetDelete', automodPresetDelete],
     ['automodPresetTimeout', automodPresetTimeout],
+    ['refreshArtifacts', refreshArtifacts],
+    ['runRetentionPurge', runRetentionPurge],
+    ['saveServerRetention', saveServerRetention],
+    ['forceDeleteArtifact', forceDeleteArtifact],
 ]);
 document.addEventListener('click', e => {
     const btn = e.target.closest('[data-click]');
@@ -1534,6 +1538,155 @@ async function logout() {
     try { await fetch('/api/v1/admin/logout', { method:'POST', headers: { 'Authorization': `Bearer ${sessionStorage.getItem('plexichat-admin-token')}` } }); } catch(e) {}
     sessionStorage.removeItem('plexichat-admin-token');
     window.location.replace('/api/v1/admin/login');
+}
+
+// === ARTIFACTS ADMIN ===
+function artifactsStateClass(state) {
+    switch (state) {
+        case 'available': return 'banner-available';
+        case 'disabled_by_config': return 'banner-disabled-config';
+        case 'disabled_by_license': return 'banner-disabled-license';
+        case 'dependency_missing': return 'banner-dependency-missing';
+        case 'misconfigured': return 'banner-misconfigured';
+        default: return 'banner-disabled-config';
+    }
+}
+
+function artifactsStateLabel(state) {
+    switch (state) {
+        case 'available': return 'Available';
+        case 'disabled_by_config': return 'Disabled by config';
+        case 'disabled_by_license': return 'Disabled by license';
+        case 'dependency_missing': return 'Dependency missing';
+        case 'misconfigured': return 'Misconfigured';
+        default: return 'Unknown';
+    }
+}
+
+async function renderArtifacts() {
+    await Promise.all([renderArtifactCapabilities(), renderArtifactList()]);
+}
+
+async function renderArtifactCapabilities() {
+    try {
+        const d = await api('/api/v1/admin/capabilities');
+        const container = document.getElementById('artifacts-capabilities');
+        if (!container) return;
+        const caps = d.capabilities || d;
+        const features = ['artifacts', 'artifacts_editor', 'artifacts_whiteboard', 'voice_transcription', 'voice_recording'];
+        const rows = features.filter(f => caps[f]).map(f => {
+            const info = caps[f];
+            const detail = info.details ? ` — ${esc(info.details)}` : '';
+            return `
+                <div class="artifacts-banner ${artifactsStateClass(info.state)}">
+                    <div class="artifacts-banner-head">
+                        <span class="artifacts-banner-title">${esc(f)}</span>
+                        <span class="artifacts-banner-state">${esc(artifactsStateLabel(info.state))}</span>
+                    </div>
+                    <div class="artifacts-banner-msg">${esc(info.message || '')}${detail}</div>
+                </div>`;
+        });
+        container.innerHTML = rows.length ? rows.join('') : '<p class="text-muted">No capability data.</p>';
+    } catch (e) {
+        const container = document.getElementById('artifacts-capabilities');
+        if (container) container.innerHTML = `<div class="artifacts-banner banner-misconfigured"><div class="artifacts-banner-msg">Failed to load capabilities: ${esc(e.message || 'unknown error')}</div></div>`;
+    }
+}
+
+function formatExpires(artifact) {
+    if (artifact.expires_at) return ts(artifact.expires_at);
+    if (artifact.retention_policy && artifact.retention_policy.days) {
+        return `in ${esc(artifact.retention_policy.days)}d`;
+    }
+    return 'never';
+}
+
+async function renderArtifactList() {
+    try {
+        const d = await api('/api/v1/admin/artifacts');
+        const tbody = document.getElementById('artifacts-tbody');
+        if (!tbody) return;
+        const items = d.items || [];
+        setText('artifacts-count', String(d.total ?? items.length));
+        if (items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" class="text-muted" style="text-align:center;">No artifacts</td></tr>';
+            return;
+        }
+        tbody.innerHTML = items.map(a => `
+            <tr>
+                <td class="font-mono">${esc(a.id)}</td>
+                <td><span class="badge badge-outline">${esc(a.artifact_type)}</span></td>
+                <td>${esc(a.title)}</td>
+                <td class="font-mono">${esc(a.author_id)}</td>
+                <td class="font-mono">${a.server_id != null ? esc(a.server_id) : '<span class="text-muted">-</span>'}</td>
+                <td class="text-muted">${ts(a.created_at)}</td>
+                <td>${a.retention_policy && a.retention_policy.days != null ? esc(a.retention_policy.days) + 'd' : '<span class="text-muted">-</span>'}</td>
+                <td class="text-muted">${formatExpires(a)}</td>
+                <td class="text-right">
+                    <button class="btn btn-danger btn-xs" data-click="forceDeleteArtifact" data-id="${esc(a.id)}">Force delete</button>
+                </td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        const tbody = document.getElementById('artifacts-tbody');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="text-muted" style="text-align:center;">Failed to load: ${esc(e.message || 'unknown error')}</td></tr>`;
+    }
+}
+
+async function refreshArtifacts() {
+    try {
+        await renderArtifacts();
+        alert('Artifacts refreshed');
+    } catch (e) {
+        alert('Refresh failed: ' + (e.message || 'unknown error'));
+    }
+}
+
+async function forceDeleteArtifact(btn) {
+    const id = btn.dataset.id;
+    if (!confirm(`IRREVERSIBLE: Permanently delete artifact ${id}?`)) return;
+    try {
+        await api(`/api/v1/admin/artifacts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        alert('Artifact deleted');
+        await renderArtifactList();
+    } catch (e) {
+        alert('Failed: ' + (e.message || 'unknown error'));
+    }
+}
+
+async function runRetentionPurge() {
+    if (!confirm('Purge all artifacts whose retention window has expired?')) return;
+    try {
+        const d = await api('/api/v1/admin/artifacts/retention/purge', { method: 'POST' });
+        alert(`Retention purge complete — ${d.purged ?? 0} artifact(s) removed`);
+        await renderArtifactList();
+    } catch (e) {
+        alert('Purge failed: ' + (e.message || 'unknown error'));
+    }
+}
+
+async function saveServerRetention(e) {
+    if (e) e.preventDefault();
+    const idEl = document.getElementById('server-retention-id');
+    const daysEl = document.getElementById('server-retention-days');
+    const resultEl = document.getElementById('server-retention-result');
+    if (!idEl || !daysEl) return;
+    const serverId = idEl.value.trim();
+    const daysRaw = daysEl.value.trim();
+    if (serverId === '') { alert('Server ID is required'); return; }
+    const body = { server_id: Number(serverId), retention_days: daysRaw === '' ? null : Number(daysRaw) };
+    if (Number.isNaN(body.server_id)) { alert('Server ID must be a number'); return; }
+    if (daysRaw !== '' && Number.isNaN(body.retention_days)) { alert('Retention days must be a number'); return; }
+    try {
+        const d = await api('/api/v1/admin/artifacts/retention/server', { method: 'POST', body: JSON.stringify(body) });
+        const effective = d.retention_days == null ? 'cleared (use global default)' : `${esc(d.retention_days)} days`;
+        if (resultEl) resultEl.innerHTML = `<span style="color:var(--success);">Server ${esc(d.server_id)} override ${effective}.</span>`;
+        alert('Server retention override saved');
+        await renderArtifactList();
+    } catch (err) {
+        if (resultEl) resultEl.innerHTML = `<span style="color:var(--destructive);">Failed: ${esc(err.message || 'unknown error')}</span>`;
+        alert('Failed: ' + (err.message || 'unknown error'));
+    }
 }
 
 // === SIDEBAR TOGGLE INIT ===
