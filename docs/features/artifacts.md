@@ -157,6 +157,46 @@ The Artifacts feature persists its data in three tables, created by migration
 See [`src/core/artifacts/README.md`](../src/core/artifacts/README.md) for the
 full table/column reference.
 
+## Capabilities & Availability Banners
+
+Because several artifacts features can be unavailable for different reasons
+(disabled in config, missing license, missing dependency, or missing API key),
+the backend exposes a **capability service** that resolves each feature to a
+single availability state. The client and admin panel use this to render
+availability banners explaining *why* a feature is off instead of silently
+failing.
+
+The service lives in `src/core/artifacts/capabilities.py` and evaluates these
+features:
+
+| Feature | Notes |
+| --- | --- |
+| `artifacts` | Master switch. |
+| `artifacts_editor` | In-app editor artifact type. |
+| `artifacts_whiteboard` | Requires the `artifacts_whiteboard` license feature. |
+| `voice_transcription` | Requires the `voice_transcription` license feature; provider-dependent (local Whisper, OpenAI, Azure). |
+| `voice_recording` | Whether voice calls may be recorded. |
+
+Each feature resolves to exactly one `CapabilityState`:
+
+- `available` — fully usable.
+- `disabled_by_config` — turned off in server config.
+- `disabled_by_license` — required license feature is absent.
+- `dependency_missing` — a runtime dependency (e.g. Whisper) is not installed.
+- `misconfigured` — enabled and licensed, but required configuration (e.g. an
+  API key) is missing, or the provider is unknown.
+
+### Endpoints
+
+- `GET /api/v1/capabilities` (auth required) — returns the per-feature capability
+  dict `{feature: {state, message, details}}` for client-side availability notices.
+- `GET /api/v1/admin/capabilities` (admin guarded) — returns the same per-feature
+  breakdown plus a top-level `summary` with counts and a `by_state` grouping
+  (useful for the admin dashboard's availability overview).
+
+See [`src/core/artifacts/README.md`](../src/core/artifacts/README.md) for the
+full capability-service reference.
+
 ## Related Documentation
 
 - [Default Configuration Reference](../default-config.md) - Complete configuration reference

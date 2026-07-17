@@ -19,6 +19,9 @@ build on top of the tables defined here.
   executed via `db.execute(...)`. All statements use `CREATE TABLE IF NOT
   EXISTS` / `CREATE INDEX IF NOT EXISTS` so creation is idempotent.
 - `__init__.py` — package marker and module docstring.
+- `capabilities.py` — the **capability / availability service** (see
+  [Capability service](#capability-service) below). It evaluates the runtime
+  availability of every artifacts feature and is exposed via API endpoints.
 
 The tables are created by migration
 `src/core/migrations/migrations/047_add_artifacts_tables.py`, which imports
@@ -117,3 +120,61 @@ Later groups will add:
 
 Those groups should depend on the tables and columns documented here rather
 than redefining schema.
+
+## Capability service
+
+`capabilities.py` computes the **availability state** of each artifacts feature
+so the admin panel (and clients) can show banners explaining why a feature is
+unavailable.
+
+### `CapabilityState` enum
+
+Each feature resolves to exactly one state:
+
+| State                  | Meaning |
+|------------------------|---------|
+| `available`            | The feature is fully usable. |
+| `disabled_by_config`   | Turned off via server config. |
+| `disabled_by_license`  | Off because the required license feature is absent. |
+| `dependency_missing`   | A runtime dependency (e.g. Whisper) is not installed. |
+| `misconfigured`        | Enabled and licensed, but required configuration (e.g. an API key) is missing, or the provider is unknown. |
+
+`CapabilityInfo` carries `feature`, `state`, `message` (human-readable,
+admin-facing), and `details` (optional extras such as the selected provider).
+
+### Evaluated features
+
+`get_artifact_capabilities(config=None)` returns a dict keyed by feature name:
+
+- **`artifacts`** — master switch; `disabled_by_config` when
+  `artifacts.enabled is False`, else `available`.
+- **`artifacts_editor`** — `disabled_by_config` when
+  `artifacts.editor.enabled is False` or `artifacts.enabled is False`.
+- **`artifacts_whiteboard`** — `disabled_by_config` when
+  `artifacts.whiteboard.enabled is False` or `artifacts.enabled is False`;
+  `disabled_by_license` when `has_feature("artifacts_whiteboard")` is false;
+  else `available`.
+- **`voice_transcription`** — `disabled_by_config` when
+  `artifacts.voice.transcription.enabled is False` or `artifacts.enabled is
+  False`; `disabled_by_license` when `has_feature("voice_transcription")` is
+  false; otherwise evaluated by provider:
+  - `local_whisper` → `dependency_missing` if Whisper is not importable, else
+    `available`.
+  - `openai` / `azure` → `misconfigured` if the corresponding API key is empty,
+    else `available`.
+  - unknown provider → `misconfigured`.
+- **`voice_recording`** — `disabled_by_config` when
+  `artifacts.voice.allow_recording is False`, else `available`.
+
+Both functions accept an optional `config` dict; when omitted the artifacts
+config is loaded through the standard config accessor. Neither function ever
+raises. `get_capability(feature, config=None)` returns the info for one feature.
+
+### API endpoints
+
+- `GET /api/v1/capabilities` (auth required, user scope) — returns the per-feature
+  capability dict (`{feature: {state, message, details}}`) for client notices.
+  Defined in `src/api/routes/capabilities.py`.
+- `GET /api/v1/admin/capabilities` (admin guarded) — returns the same
+  per-feature breakdown plus a top-level `summary` (counts and a `by_state`
+  grouping). Defined in `src/api/routes/admin/capabilities.py`.
