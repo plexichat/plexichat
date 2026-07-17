@@ -202,6 +202,41 @@ framework. See `transcription/README.md` for the full detail; the essentials:
   (initiator or consented participant) and their `voice_call` / `transcript`
   artifacts, with transcript text surfaced inline.
 
+## DSAR / privacy
+
+Artifacts (including voice-call records and transcripts) are treated as
+personal data and are covered by the DSAR (GDPR data-portability / erasure)
+flows:
+
+- **Export (right to data portability).** `src/core/dsar/collector.py`
+  `_collect_voice` returns the user's `voice_states`, `voice_calls` (calls they
+  initiated or consented to), and the linked `artifacts` rows of type
+  `voice_call` and `transcript` that they authored. Transcript text is pulled
+  out of the `payload` JSON into a readable `transcript_text` field so the
+  JSON / ZIP export is human-readable without re-parsing segments. The DSAR
+  preview counts (`count_records`) include `content_artifacts`,
+  `content_transcripts`, and `voice_voice_calls` so the user sees how much
+  artifact data will be exported. Every export format (JSON and ZIP, which
+  dumps the whole collected dict) serializes these categories, so transcripts
+  are always present in the download.
+- **Deletion / anonymization (right to erasure).** On account purge the
+  account reaper calls `anonymize_user_artifacts(db, user_id, config)` from
+  `src/core/artifacts/privacy.py` (wired into `AccountReaper.purge_user`).
+  This honors the same `anonymize_content` policy used for messages:
+  - `anonymize_content=True` (default) — keeps the rows but removes the
+    identifiable link: `author_id` is set to a sentinel anonymized id,
+    inline transcript text is stripped from the `payload`, the user is removed
+    from `consented_participants` on calls they only consented to, and their
+    `actor_id` entries in `artifact_ops` are deleted. Calls they initiated are
+    anonymized (initiator_id → sentinel) rather than deleted.
+  - `anonymize_content=False` — deletes artifacts the user authored, the
+    linked `artifact_ops` for those artifacts, and any `voice_calls` rows they
+    initiated; consented-participant entries are removed from calls they did
+    not start.
+
+  The function returns the number of rows touched so the reaper's audit log can
+  record the erasure.
+
 ### Manager surface (`voice_calls.py`)
 
 `VoiceCallManager(db, artifact_manager=None, config=None)` exposes:
