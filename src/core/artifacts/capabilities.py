@@ -61,19 +61,6 @@ def _has_feature(feature: str) -> bool:
         return False
 
 
-def _whisper_importable() -> bool:
-    """Return True if a whisper implementation can be imported. Never raises."""
-    try:
-        import importlib.util
-
-        for name in ("whisper", "openai_whisper"):
-            if importlib.util.find_spec(name) is not None:
-                return True
-        return False
-    except Exception:
-        return False
-
-
 def _eval_artifacts(artifacts: Dict[str, Any]) -> CapabilityInfo:
     enabled = artifacts.get("enabled", True)
     if enabled is False:
@@ -167,57 +154,53 @@ def _eval_voice_transcription(artifacts: Dict[str, Any]) -> CapabilityInfo:
 
     provider = transcription.get("provider", "local_whisper")
     details: Dict[str, Any] = {"provider": provider}
-    if provider == "local_whisper":
-        if not _whisper_importable():
+    if provider in ("local_whisper", "openai", "azure"):
+        # The provider factory is the single source of truth for whether a
+        # backend is usable. A ValueError means the config is internally
+        # inconsistent (missing key, unknown provider) → misconfigured. For
+        # cloud providers the factory also validates the required credentials;
+        # for local_whisper it validates the import + model size.
+        try:
+            from src.core.artifacts.transcription.provider import (
+                get_transcription_provider,
+            )
+
+            prov = get_transcription_provider(transcription)
+        except ValueError as exc:
             return CapabilityInfo(
                 feature="voice_transcription",
-                state=CapabilityState.DEPENDENCY_MISSING,
-                message=(
-                    "Whisper selected but not installed — install with: "
-                    "pip install openai-whisper"
-                ),
+                state=CapabilityState.MISCONFIGURED,
+                message=str(exc),
                 details=details,
             )
-        return CapabilityInfo(
-            feature="voice_transcription",
-            state=CapabilityState.AVAILABLE,
-            message="Voice transcription (local Whisper) is available.",
-            details=details,
-        )
-    if provider == "openai":
-        api_key = transcription.get("openai_api_key", "") or ""
-        if not api_key:
+        if not prov.is_available():
+            # Local whisper reports dependency-missing only when the module is
+            # absent or the model size is invalid; cloud providers report a
+            # missing key via the factory above, so reaching here with
+            # local_whisper means the import failed.
+            if provider == "local_whisper":
+                return CapabilityInfo(
+                    feature="voice_transcription",
+                    state=CapabilityState.DEPENDENCY_MISSING,
+                    message=(
+                        "Whisper selected but not installed — install with: "
+                        "pip install openai-whisper"
+                    ),
+                    details=details,
+                )
             return CapabilityInfo(
                 feature="voice_transcription",
                 state=CapabilityState.MISCONFIGURED,
                 message=(
-                    "OpenAI transcription selected but the OpenAI API key "
-                    "(artifacts.voice.transcription.openai_api_key) is not set."
+                    f"{provider} transcription is not available with the "
+                    "current configuration."
                 ),
                 details=details,
             )
         return CapabilityInfo(
             feature="voice_transcription",
             state=CapabilityState.AVAILABLE,
-            message="Voice transcription (OpenAI) is available.",
-            details=details,
-        )
-    if provider == "azure":
-        azure_key = transcription.get("azure_key", "") or ""
-        if not azure_key:
-            return CapabilityInfo(
-                feature="voice_transcription",
-                state=CapabilityState.MISCONFIGURED,
-                message=(
-                    "Azure transcription selected but the Azure key "
-                    "(artifacts.voice.transcription.azure_key) is not set."
-                ),
-                details=details,
-            )
-        return CapabilityInfo(
-            feature="voice_transcription",
-            state=CapabilityState.AVAILABLE,
-            message="Voice transcription (Azure) is available.",
+            message=f"Voice transcription ({provider}) is available.",
             details=details,
         )
     return CapabilityInfo(

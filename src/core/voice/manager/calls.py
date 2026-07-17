@@ -87,5 +87,45 @@ class CallLifecycleMixin(VoiceProtocol):
                     f"Ended voice call {call.id} for channel {channel_id} "
                     f"({call.duration_seconds}s)"
                 )
+                self._maybe_schedule_transcription(call.id, channel_id)
         except Exception as exc:
             logger.warning(f"Failed to end voice call for channel {channel_id}: {exc}")
+
+    def _maybe_schedule_transcription(
+        self, call_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> None:
+        """Fire-and-forget auto-transcription when enabled and licensed.
+
+        Respects ``artifacts.voice.transcription.{enabled,auto_transcribe}`` and
+        the ``voice_transcription`` capability. The scheduler never blocks the
+        voice lifecycle path; failures are handled inside the worker.
+        """
+        try:
+            from src.core.artifacts.transcription.worker import (
+                schedule_transcribe_call,
+            )
+
+            transcription_cfg = None
+            try:
+                import utils.config as cfg
+
+                artifacts_cfg = cfg.get("artifacts", {}) or {}
+                transcription_cfg = (artifacts_cfg.get("voice", {}) or {}).get(
+                    "transcription", {}
+                ) or {}
+            except Exception:
+                transcription_cfg = None
+
+            if transcription_cfg is None:
+                return
+            if not transcription_cfg.get("enabled", False):
+                return
+            if not transcription_cfg.get("auto_transcribe", False):
+                return
+
+            db = getattr(self, "_db", None)
+            if db is None:
+                return
+            schedule_transcribe_call(call_id, db, transcription_cfg)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"transcription scheduling skipped: {exc}")
