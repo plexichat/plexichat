@@ -132,7 +132,7 @@ docker compose down -v
 
 For versioned deployment:
 ```bash
-VERSION=a.1.0-98 docker compose up -d
+VERSION=a.1.0-99 docker compose up -d
 ```
 
 See [Quick Start](quick-start.md) for detailed steps.
