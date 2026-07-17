@@ -412,6 +412,47 @@ opcode handlers:
 Both reuse the existing dispatcher send path and the per-connection rate limit;
 no new rate-limit mechanism is introduced.
 
+## DSAR / Privacy
+
+Artifacts, voice-call records, and transcripts are personal data and are fully
+covered by Plexichat's DSAR (GDPR data-portability and erasure) flows.
+
+### Export (right to data portability)
+
+The DSAR collector (`src/core/dsar/collector.py`) includes, in the `voice`
+category:
+
+- the user's `voice_states`,
+- `voice_calls` they initiated or consented to (`consented_participants`),
+- the `voice_call` and `transcript` `artifacts` they authored.
+
+Transcript text is surfaced inline as a readable `transcript_text` field
+(extracted from the `payload` JSON) so the downloaded export does not require
+re-parsing segment arrays. The DSAR preview counts (`count_records`) expose
+`content_artifacts`, `content_transcripts`, and `voice_voice_calls` so the
+requester sees exactly how much artifact data will be exported. Because every
+export format (JSON and ZIP) serializes the whole collected dict, transcripts
+and artifact metadata are always present in the download.
+
+### Deletion / anonymization (right to erasure)
+
+On account purge, the account reaper calls
+`anonymize_user_artifacts(db, user_id, config)` from
+`src/core/artifacts/privacy.py`, wired into `AccountReaper.purge_user`. It
+honors the same `anonymize_content` policy already applied to messages:
+
+- `anonymize_content=True` (default) — rows are kept but the user's
+  identifiable link is removed: `author_id` → sentinel anonymized id, inline
+  transcript text is stripped from the `payload`, the user is removed from
+  `consented_participants` on calls they only consented to, and their
+  `actor_id` operations in `artifact_ops` are deleted. Calls they initiated are
+  anonymized (`initiator_id` → sentinel) rather than removed.
+- `anonymize_content=False` — artifacts the user authored, their linked
+  `artifact_ops`, and any `voice_calls` rows they initiated are deleted;
+  consented-participant entries are removed from calls they did not start.
+
+The function returns the number of rows touched so the erasure is auditable.
+
 ## Related Documentation
 
 - [Default Configuration Reference](../default-config.md) - Complete configuration reference

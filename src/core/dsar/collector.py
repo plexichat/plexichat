@@ -129,6 +129,54 @@ class DataCollector:
             except Exception as e:
                 logger.debug(f"Could not count {table}: {e}")
 
+        # Artifact / transcript coverage. These tables are not keyed on
+        # ``user_id`` (artifacts use ``author_id``; voice_calls use
+        # ``initiator_id`` plus a JSON ``consented_participants`` list), so they
+        # are counted with dedicated queries to keep the DSAR preview accurate.
+        try:
+            result = self._db.fetch_one(
+                """
+                SELECT COUNT(*) as count FROM artifacts WHERE author_id = ?
+                """,
+                (user_id,),
+            )
+            if result:
+                counts["content_artifacts"] = (
+                    result.get("count", 0) if isinstance(result, dict) else result[0]
+                )
+        except Exception as e:
+            logger.debug(f"Could not count artifacts: {e}")
+
+        try:
+            result = self._db.fetch_one(
+                """
+                SELECT COUNT(*) as count FROM artifacts
+                WHERE author_id = ? AND artifact_type = 'transcript'
+                """,
+                (user_id,),
+            )
+            if result:
+                counts["content_transcripts"] = (
+                    result.get("count", 0) if isinstance(result, dict) else result[0]
+                )
+        except Exception as e:
+            logger.debug(f"Could not count transcripts: {e}")
+
+        try:
+            result = self._db.fetch_one(
+                """
+                SELECT COUNT(*) as count FROM voice_calls
+                WHERE initiator_id = ? OR consented_participants LIKE ?
+                """,
+                (user_id, f"%{user_id}%"),
+            )
+            if result:
+                counts["voice_voice_calls"] = (
+                    result.get("count", 0) if isinstance(result, dict) else result[0]
+                )
+        except Exception as e:
+            logger.debug(f"Could not count voice_calls: {e}")
+
         return counts
 
     def _collect_identity(self, user_id: int) -> Dict[str, Any]:

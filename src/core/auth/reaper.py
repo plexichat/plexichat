@@ -224,6 +224,17 @@ class AccountReaper:
                     f"Reaper: Failed to scrub some media for {user_id}: {me}"
                 )
 
+            # 2b. Scrub/delete artifact & transcript data (voice calls, call
+            # artifacts, transcripts, and collaborative ops).
+            try:
+                from src.core.artifacts.privacy import anonymize_user_artifacts
+
+                anonymize_user_artifacts(self._db, user_id, self._config)
+            except Exception as ae:
+                logger.warning(
+                    f"Reaper: Failed to scrub artifact data for {user_id}: {ae}"
+                )
+
             # 3. Final Database Erasure
             # Order matters: child tables before parent tables to respect FK constraints
             self._db.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
