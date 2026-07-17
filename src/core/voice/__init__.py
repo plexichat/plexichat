@@ -112,6 +112,8 @@ __all__ = [
     "set_afk_timeout",
     "get_afk_timeout",
     "check_afk_timeout",
+    # Voice call lifecycle
+    "set_voice_call_manager",
     # User voice state queries
     "get_user_voice_state",
     "is_user_in_voice",
@@ -165,6 +167,12 @@ def _get_manager():
     if not _setup_complete or _manager is None:
         raise RuntimeError("Voice module not initialized. Call voice.setup(db) first.")
     return _manager
+
+
+def set_voice_call_manager(voice_call_manager) -> None:
+    """Attach a VoiceCallManager to the live voice manager (no-op if not setup)."""
+    if _manager is not None:
+        _manager.set_voice_call_manager(voice_call_manager)
 
 
 # === Channel Operations ===

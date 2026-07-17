@@ -22,6 +22,7 @@ from .moderation import ModerationMixin
 from .stages import StageOpsMixin
 from .settings import SettingsMixin
 from .afk import AfkMixin
+from .calls import CallLifecycleMixin
 
 
 class VoiceManager(
@@ -31,6 +32,7 @@ class VoiceManager(
     StageOpsMixin,
     SettingsMixin,
     AfkMixin,
+    CallLifecycleMixin,
     BaseManager,
 ):
     def __init__(
@@ -45,6 +47,7 @@ class VoiceManager(
         self._servers = servers_module
         self._relationships = relationships_module
         self._presence = presence_module
+        self._voice_call_manager = None
 
         logger.info("Voice module initialized")
 

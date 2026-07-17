@@ -122,6 +122,66 @@ Later groups will add:
 Those groups should depend on the tables and columns documented here rather
 than redefining schema.
 
+## Voice call artifacts
+
+When a voice call ends it produces a `voice_call` record plus a corresponding
+`voice_call` Artifact, so the call appears in chat history and the artifacts
+pane carrying recording/transcript flags and participant consent.
+
+### Lifecycle
+
+A "call" is an aggregate over a voice channel. It is created lazily, keyed by
+`channel_id`:
+
+- **Start** — when the first participant joins a channel (see
+  `VoiceCallManager.start_call`), a `voice_calls` row is inserted
+  (`started_at` now, `participant_count` 1) and a linked `voice_call` Artifact
+  is created via `ArtifactManager.create(...)` with `artifact_type =
+  ArtifactType.VOICE_CALL`, `status = ArtifactStatus.LIVE`, `recorded`
+  reflecting the `allow_recording` config, and the `voice_calls.id` stored in
+  the artifact `payload`.
+- **End** — when the last participant leaves the channel (`VoiceCallManager.
+  end_call`), `ended_at`, `duration_seconds`, and `participant_count` are set on
+  the `voice_calls` row and the linked artifact is transitioned to
+  `ArtifactStatus.COMPLETED`.
+
+The voice module wraps every call/artifact interaction so a failure there never
+breaks voice: when the artifacts layer is unavailable (or the call manager is
+not attached), calls simply are not recorded. Voice keeps working regardless.
+
+### Recording flag
+
+`config["artifacts"]["voice"]["allow_recording"]` gates whether calls may be
+recorded. When it is `False`, `VoiceCallManager.mark_recorded(..., True)` is
+clamped to `False` and the artifact's `recorded` flag is never set. The flag is
+mirrored on both the `voice_calls` row and the linked `artifacts` row so the
+history and the call metadata agree.
+
+### Consent
+
+`VoiceCallManager.add_consent(call_id, user_id)` appends a user to the
+`consented_participants` JSON list on the `voice_calls` row (deduped). This is
+the set of participants that agreed to recording; it is surfaced on the call
+record and used by later groups to gate/annotate recordings.
+
+### Transcript link
+
+`VoiceCallManager.set_transcript(call_id, transcript_artifact_id)` links a
+transcript artifact (produced by a later transcription group) to the call via
+`transcript_artifact_id` and sets `has_transcript = True` on the linked
+artifact.
+
+### Manager surface (`voice_calls.py`)
+
+`VoiceCallManager(db, artifact_manager=None, config=None)` exposes:
+
+- `start_call(channel_id, server_id, initiator_id, conversation_id=None) -> VoiceCall`
+- `end_call(call_id, participant_ids=None) -> VoiceCall`
+- `mark_recorded(call_id, recorded: bool) -> VoiceCall`
+- `add_consent(call_id, user_id) -> VoiceCall`
+- `set_transcript(call_id, transcript_artifact_id) -> VoiceCall`
+- `get_active_by_channel(channel_id) -> Optional[VoiceCall]`
+
 ## Models (`models.py`)
 
 Pure dataclasses (same style as the messaging module) mapping to the tables

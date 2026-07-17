@@ -65,6 +65,9 @@ class ChannelOpsMixin(VoiceProtocol):
 
         result = self.get_voice_state(user_id)
         assert result is not None
+
+        self._on_member_joined(user_id, channel_id)
+
         return result
 
     def leave_channel(self, user_id: SnowflakeID) -> bool:
@@ -72,13 +75,17 @@ class ChannelOpsMixin(VoiceProtocol):
         if not state:
             raise UserNotInChannelError(f"User {user_id} is not in a voice channel")
 
+        channel_id = state.channel_id
+
         self._db.execute(
             "DELETE FROM voice_speaker_requests WHERE user_id = ?", (user_id,)
         )
 
         self._db.execute("DELETE FROM voice_states WHERE user_id = ?", (user_id,))
 
-        logger.debug(f"User {user_id} left voice channel {state.channel_id}")
+        logger.debug(f"User {user_id} left voice channel {channel_id}")
+
+        self._on_member_left(user_id, channel_id)
 
         return True
 
