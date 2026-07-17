@@ -10,6 +10,14 @@ from typing import Dict, Any
 # Version should be updated in main.py, this is a fallback
 DEFAULT_VERSION = "a.1.0-99"
 
+# License feature flags used by the Artifacts system.
+# Checked at runtime via utils.licensing.has_feature(<name>).
+ARTIFACTS_LICENSE_FEATURES = {
+    "artifacts": "Master artifacts feature (any artifact type).",
+    "artifacts_whiteboard": "Licensed multi-user live whiteboard artifacts.",
+    "voice_transcription": "Licensed automatic voice-call transcription.",
+}
+
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
     """
@@ -728,6 +736,63 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             },
             "rate_limits": {
                 "requests_per_minute": 60,
+            },
+        },
+        # License gating (checked via utils.licensing.has_feature):
+        #   - the whole "artifacts" block is gated by the "artifacts" feature
+        #   - "artifacts.whiteboard" (and its licensed_feature key) is gated
+        #     by the "artifacts_whiteboard" feature
+        #   - "artifacts.voice.transcription" is gated by the
+        #     "voice_transcription" feature
+        # See ARTIFACTS_LICENSE_FEATURES for the full documented set.
+        "artifacts": {
+            "enabled": True,
+            "default_retention_days": None,  # None = artifacts never expire by default
+            "allow_per_server_override": True,
+            "max_artifact_size_mb": 200,
+            "editor": {
+                "enabled": True,
+                "allowed_languages": [
+                    "python",
+                    "javascript",
+                    "typescript",
+                    "json",
+                    "markdown",
+                    "go",
+                    "rust",
+                    "sql",
+                    "yaml",
+                    "html",
+                    "css",
+                ],
+                "max_file_size_mb": 50,
+            },
+            "whiteboard": {
+                "enabled": False,
+                "licensed_feature": "artifacts_whiteboard",
+                "max_participants": 50,
+                "persist_ops": True,
+                "op_rate_per_sec": 30,
+            },
+            "voice": {
+                "allow_recording": True,
+                "transcription": {
+                    "provider": "local_whisper",  # default; active only when enabled:True AND whisper present
+                    "enabled": False,  # OFF until explicitly configured
+                    "auto_transcribe": False,
+                    "language": "auto",
+                    "diarize": False,
+                    "model_size": "base",
+                    "whisper_probe_on_startup": True,
+                    "openai_api_key": "${OPENAI_API_KEY:-}",
+                    "azure_key": "${AZURE_SPEECH_KEY:-}",
+                    "max_audio_minutes": 120,
+                },
+                "transcript_retention_days": None,
+            },
+            "retention": {
+                "run_cleanup_interval_minutes": 60,
+                "purge_expired": True,
             },
         },
         "bots": {
