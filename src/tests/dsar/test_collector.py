@@ -58,10 +58,11 @@ class TestDataCollector:
             "stickers",
             "soundboard",
             "media",
-            "avatars",
-            "api_tokens",
         ):
             assert category in export
+        # Media collector nests avatars and api_tokens under "media".
+        assert "avatars" in export["media"]
+        assert "api_tokens" in export["media"]
 
     def test_count_records_returns_dict(self, collector, seeded_user):
         counts = collector.count_records(seeded_user.id)
@@ -69,34 +70,59 @@ class TestDataCollector:
         # At minimum an auth_users row should be counted.
         assert any(k.startswith("identity_") for k in counts.keys())
 
-    def test_individual_categories_return(self, collector, seeded_user):
-        for method in (
-            "_collect_identity",
-            "_collect_sessions",
-            "_collect_profile",
-            "_collect_messages",
-            "_collect_relationships",
-            "_collect_servers",
-            "_collect_content",
-            "_collect_notifications",
-            "_collect_oauth",
-            "_collect_applications",
-            "_collect_reports",
-            "_collect_feedback",
-            "_collect_search",
-            "_collect_features",
-            "_collect_polls",
-            "_collect_voice",
-            "_collect_automod",
-            "_collect_presence",
-            "_collect_stickers",
-            "_collect_soundboard",
-            "_collect_media",
-            "_collect_avatars",
-            "_collect_api_tokens",
-        ):
+    def test_individual_categories_return(self, db, seeded_user):
+        from src.core.dsar.collectors import (
+            ApplicationsCollector,
+            AutomodCollector,
+            ContentCollector,
+            FeedbackCollector,
+            FeaturesCollector,
+            IdentityCollector,
+            MessagesCollector,
+            MediaCollector,
+            NotificationsCollector,
+            OAuthCollector,
+            PollsCollector,
+            PresenceCollector,
+            ProfileCollector,
+            RelationshipsCollector,
+            ReportsCollector,
+            SearchCollector,
+            ServersCollector,
+            SessionsCollector,
+            SoundboardCollector,
+            StickersCollector,
+            VoiceCollector,
+        )
+
+        collector_classes = (
+            IdentityCollector,
+            SessionsCollector,
+            ProfileCollector,
+            MessagesCollector,
+            RelationshipsCollector,
+            ServersCollector,
+            ContentCollector,
+            NotificationsCollector,
+            OAuthCollector,
+            ApplicationsCollector,
+            ReportsCollector,
+            FeedbackCollector,
+            SearchCollector,
+            FeaturesCollector,
+            PollsCollector,
+            VoiceCollector,
+            AutomodCollector,
+            PresenceCollector,
+            StickersCollector,
+            SoundboardCollector,
+            MediaCollector,
+        )
+
+        for cls in collector_classes:
+            collector = cls(db)
             try:
-                result = getattr(collector, method)(seeded_user.id)
+                result = collector.collect(seeded_user.id)
             except Exception:
                 result = {}
             assert isinstance(result, dict)
