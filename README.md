@@ -1,10 +1,10 @@
 # Plexichat Server
 
-![dev pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/-/badges/dev/pipeline.svg)
-![master pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/-/badges/master/pipeline.svg)
-![tag](https://img.shields.io/gitlab/v/tag/plexichat%2Fplexichat?gitlab_url=https://gitlab.plexichat.com)
-![issues](https://img.shields.io/gitlab/issues/open/plexichat%2Fplexichat?gitlab_url=https://gitlab.plexichat.com)
-![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)
+[![dev pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/-/badges/dev/pipeline.svg)](https://gitlab.plexichat.com/plexichat/plexichat/-/pipelines)
+[![master pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/-/badges/master/pipeline.svg)](https://gitlab.plexichat.com/plexichat/plexichat/-/pipelines)
+[![tag](https://img.shields.io/gitlab/v/tag/plexichat%2Fplexichat?gitlab_url=https://gitlab.plexichat.com)](https://gitlab.plexichat.com/plexichat/plexichat/-/tags)
+[![issues](https://img.shields.io/gitlab/issues/open/plexichat%2Fplexichat?gitlab_url=https://gitlab.plexichat.com)](https://gitlab.plexichat.com/plexichat/plexichat/-/issues)
+[![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](https://gitlab.plexichat.com/plexichat/plexichat/-/blob/master/LICENSE)
 
 A real-time messaging platform server with REST API and WebSocket gateway.
 
@@ -310,4 +310,4 @@ pytest src/tests
 
 ## Version
 
-Current version: `a.1.0-102` (Alpha)
+Current version: `a.1.0-103` (Alpha)
