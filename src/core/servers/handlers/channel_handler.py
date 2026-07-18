@@ -14,7 +14,7 @@ from ..exceptions import (
     ServerAccessDeniedError,
     ServerNotFoundError,
 )
-from ..permissions import has_permission as check_permission
+from ..permission_utils import has_permission as check_permission
 from ..manager.converters import _row_to_channel, _row_to_category
 from src.core.database import cache_delete, redis_available
 from src.core.database.cache import cached, invalidate_pattern

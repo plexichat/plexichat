@@ -82,6 +82,21 @@ class AuthManager(
     PermissionDeniedError = PermissionDeniedError
     BotLimitExceededError = BotLimitExceededError
 
+    _instance = None
+
+    @classmethod
+    def get_instance(cls):
+        """Get the global AuthManager instance."""
+        if cls._instance is None:
+            # Try to get from the module-level setup
+            from .. import _manager as module_manager
+
+            if module_manager is not None:
+                cls._instance = module_manager
+        if cls._instance is None:
+            raise RuntimeError("Auth not initialized. Call auth.setup(db) first.")
+        return cls._instance
+
     def __init__(self, db, email_sender=None):
         super().__init__(db)
         self.email_sender = email_sender
@@ -97,6 +112,8 @@ class AuthManager(
         self.deletion_log = DeletionLog()
         self.passkeys = PasskeyManager(db, crypto=self.crypto)
         self._ensure_system_user()
+        # Store as global instance
+        AuthManager._instance = self
 
     def _json_dumps(self, data: Any) -> str:
         return json.dumps(data)

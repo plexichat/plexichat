@@ -416,7 +416,7 @@ async def create_emoji(
         # Check permissions
         if servers_mod:
             perms = servers_mod.get_permissions(current_user.user_id, sid)
-            from src.core.servers.permissions import has_permission
+            from src.core.auth.permissions import has_permission
 
             if not (
                 has_permission(perms, "emojis.manage")
@@ -564,7 +564,7 @@ async def update_emoji(
         # Check permissions
         if servers_mod:
             perms = servers_mod.get_permissions(current_user.user_id, sid)
-            from src.core.servers.permissions import has_permission
+            from src.core.auth.permissions import has_permission
 
             if not (
                 has_permission(perms, "emojis.manage")
@@ -680,7 +680,7 @@ async def delete_emoji(
         # Check permissions
         if servers_mod:
             perms = servers_mod.get_permissions(current_user.user_id, sid)
-            from src.core.servers.permissions import has_permission
+            from src.core.auth.permissions import has_permission
 
             if not (
                 has_permission(perms, "emojis.manage")
