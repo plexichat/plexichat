@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-106"
+DEFAULT_VERSION = "a.1.0-107"
 
 # License feature flags used by the Artifacts system.
 # Checked at runtime via utils.licensing.has_feature(<name>).
