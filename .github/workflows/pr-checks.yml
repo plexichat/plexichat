@@ -129,8 +129,8 @@ jobs:
       - name: Dependency audit (safety)
         run: |
           source .venv/bin/activate
-          safety check -r requirements.txt --json > safety-report.json
-          safety check -r requirements.txt
+          safety scan -r requirements.txt --json > safety-report.json
+          safety scan -r requirements.txt
 
       - name: Upload security reports
         if: always()
