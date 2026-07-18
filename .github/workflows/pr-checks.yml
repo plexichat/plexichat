@@ -118,7 +118,7 @@ jobs:
           source .venv/bin/activate
           pip install --upgrade pip
           pip install --require-hashes -r requirements.txt
-          pip install pip-audit osv-scanner
+          pip install pip-audit
 
       - name: Dependency audit (pip-audit)
         run: |
@@ -129,11 +129,12 @@ jobs:
       - name: Dependency audit (osv-scanner + trivy)
         run: |
           source .venv/bin/activate
-          osv-scanner --format json --output osv-report.json . || true
-          osv-scanner . || true
+          curl -sfL https://raw.githubusercontent.com/google/osv-scanner/main/install.sh | sh || true
+          ./bin/osv-scanner --format json --output osv-report.json . || true
+          ./bin/osv-scanner . || true
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh || true
-          ./trivy fs --format json --output trivy-report.json . || true
-          ./trivy fs . || true
+          ./bin/trivy fs --format json --output trivy-report.json . || true
+          ./bin/trivy fs . || true
 
       - name: Upload security reports
         if: always()
