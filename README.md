@@ -1,7 +1,7 @@
 # Plexichat Server
 
-[![dev pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/-/badges/dev/pipeline.svg)](https://gitlab.plexichat.com/plexichat/plexichat/-/pipelines)
-[![master pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/-/badges/master/pipeline.svg)](https://gitlab.plexichat.com/plexichat/plexichat/-/pipelines)
+[![dev pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/badges/dev/pipeline.svg)](https://gitlab.plexichat.com/plexichat/plexichat/-/pipelines)
+[![master pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/badges/master/pipeline.svg)](https://gitlab.plexichat.com/plexichat/plexichat/-/pipelines)
 [![tag](https://img.shields.io/gitlab/v/tag/plexichat%2Fplexichat?gitlab_url=https://gitlab.plexichat.com)](https://gitlab.plexichat.com/plexichat/plexichat/-/tags)
 [![issues](https://img.shields.io/gitlab/issues/open/plexichat%2Fplexichat?gitlab_url=https://gitlab.plexichat.com)](https://gitlab.plexichat.com/plexichat/plexichat/-/issues)
 [![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](https://gitlab.plexichat.com/plexichat/plexichat/-/blob/master/LICENSE)
