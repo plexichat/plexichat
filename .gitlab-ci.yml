@@ -127,8 +127,8 @@ security:dependency_scanning:
   script:
     - pip-audit -r requirements.txt --format json > pip-audit-report.json
     - pip-audit -r requirements.txt
-    - safety check -r requirements.txt --json > safety-report.json
-    - safety check -r requirements.txt
+    - safety scan -r requirements.txt --json > safety-report.json
+    - safety scan -r requirements.txt
   artifacts:
     paths:
       - pip-audit-report.json
