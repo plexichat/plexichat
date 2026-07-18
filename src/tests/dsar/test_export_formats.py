@@ -26,13 +26,7 @@ def seeded_user(auth_manager, pii_gen):
 
 class TestExportGenerator:
     def test_generate_json(self, db, seeded_user):
-        from src.core.dsar.import_formats_safe import ExportFormatGenerator
-
-        # Try a guarded import path: first the canonical name, then the legacy.
-        try:
-            from src.core.dsar.export_formats import ExportFormatGenerator
-        except ImportError:
-            pytest.skip("ExportFormatGenerator not available")
+        from src.core.dsar.export_formats import ExportFormatGenerator
 
         sample = {"identity": {"id": seeded_user.id}}
         path, checksum, size = ExportFormatGenerator(db=db).generate_json(

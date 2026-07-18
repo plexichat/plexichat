@@ -83,7 +83,7 @@ class DataCollector:
 
         # Delegate to each collector
         for category, collector in self._collectors.items():
-            result[category] = collector.collect(self._db, user_id)
+            result[category] = collector.collect(user_id)
 
         return result
 
@@ -153,8 +153,9 @@ class DataCollector:
 
         for table, category in tables:
             try:
+                key_column = "id" if table == "auth_users" else "user_id"
                 result = self._db.fetch_one(
-                    f"SELECT COUNT(*) as count FROM {table} WHERE user_id = ?",
+                    f"SELECT COUNT(*) as count FROM {table} WHERE {key_column} = ?",
                     (user_id,),
                 )
                 if result:
