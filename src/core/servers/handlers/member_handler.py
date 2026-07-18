@@ -21,7 +21,7 @@ from ..exceptions import (
     InviteExpiredError,
     InviteMaxUsesError,
 )
-from ..permissions import can_manage_member
+from ..permission_utils import can_manage_member
 from src.core.database import cache_delete
 from src.core.database.cache import cached, invalidate_pattern
 from ..manager.converters import _row_to_member, _row_to_ban, _row_to_invite

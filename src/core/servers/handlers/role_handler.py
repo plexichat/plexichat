@@ -15,7 +15,7 @@ from ..exceptions import (
     InvalidRoleNameError,
 )
 from src.core.database import cached
-from ..permissions import (
+from ..permission_utils import (
     calculate_base_permissions,
     apply_channel_overrides,
     has_permission as check_permission,

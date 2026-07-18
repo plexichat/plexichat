@@ -13,7 +13,7 @@ from ..exceptions import (
     PermissionDeniedError,
     ServerError,
 )
-from ..permissions import (
+from src.core.servers.permission_utils import (
     has_permission as check_permission,
 )
 from .protocol import ServerProtocol

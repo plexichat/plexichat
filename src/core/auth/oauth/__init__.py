@@ -26,6 +26,7 @@ from .pkce import (
     verify_pkce,
     PKCEChallenge,
 )
+from .login import oauth_login
 
 __all__ = [
     "OAuthStateManager",
@@ -36,4 +37,5 @@ __all__ = [
     "generate_pkce_pair",
     "verify_pkce",
     "PKCEChallenge",
+    "oauth_login",
 ]

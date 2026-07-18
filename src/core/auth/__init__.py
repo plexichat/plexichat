@@ -27,7 +27,7 @@ Usage:
     token_info = auth.verify_token(result.token)
 """
 
-from typing import Optional, List, Dict, Protocol, Any
+from typing import Optional, Protocol
 
 from .exceptions import (
     AuthError,
@@ -70,6 +70,111 @@ from .permissions import (
     DEFAULT_BOT_PERMISSIONS,
     has_permission,
     validate_permissions,
+)
+
+# Re-export all public functions from submodules
+from .registration import (
+    register,
+    register_selftest,
+    verify_email,
+    resend_verification,
+)
+from .login import (
+    login,
+    complete_2fa,
+)
+from .sessions import (
+    verify_token,
+    refresh_session,
+    create_session_for_user,
+    logout,
+    logout_all,
+    logout_all_users,
+    get_sessions,
+    revoke_session,
+    schedule_account_deletion,
+    cancel_account_deletion,
+    delay_account_deletion,
+    force_purge_account,
+)
+from .profile import (
+    update_user,
+)
+from .twofa import (
+    setup_2fa,
+    confirm_2fa,
+    disable_2fa,
+    regenerate_backup_codes,
+    get_2fa_status,
+)
+from .passkeys import (
+    generate_passkey_registration_options,
+    verify_passkey_registration,
+    generate_passkey_authentication_options,
+    verify_passkey_authentication,
+    list_passkeys,
+    revoke_passkey,
+    rename_passkey,
+)
+from .passwords import (
+    change_password,
+    request_password_reset,
+    reset_password,
+    validate_password,
+)
+from .bots import (
+    create_bot,
+    get_bot,
+    get_user_bots,
+    regenerate_bot_token,
+    update_bot_permissions,
+    disable_bot,
+    enable_bot,
+    delete_bot,
+)
+from .tokens import (
+    create_api_access_token,
+    list_api_access_tokens,
+    get_api_access_token,
+    update_api_access_token,
+    revoke_api_access_token,
+    unrevoke_api_access_token,
+    rotate_api_access_token,
+    add_api_access_token_scope,
+    remove_api_access_token_scope,
+    list_api_access_token_scopes,
+    get_api_access_token_usage,
+    verify_api_access_token,
+    is_api_access_token_required,
+)
+from .devices import (
+    get_devices,
+    rename_device,
+    revoke_device,
+)
+from .ip_blacklist import (
+    block_ip,
+    unblock_ip,
+    is_ip_blocked,
+    get_blocked_ips,
+)
+from .audit import (
+    get_login_history,
+    get_security_events,
+)
+from .users import (
+    get_user,
+    get_user_by_username,
+    get_users_bulk,
+    get_user_profiles_bulk,
+    grant_permission,
+)
+from .capabilities import (
+    has_capability,
+    require_capability,
+)
+from .oauth import (
+    oauth_login,
 )
 
 # Module state
@@ -122,657 +227,6 @@ def _get_manager():
     return _manager
 
 
-# === User Registration ===
-
-
-def register(
-    username: str,
-    email: str,
-    password: str,
-    device_info: Optional[Dict[str, str]] = None,
-    ip_address: Optional[str] = None,
-    age: Optional[int] = None,
-    dob: Optional[str] = None,
-    is_internal: bool = False,
-) -> User:
-    """
-    Register a new user account.
-
-    Args:
-        username: Unique username
-        email: Email address
-        password: Password (will be validated for strength)
-        device_info: Optional device information
-        ip_address: Optional IP address
-        age: Optional user age
-        dob: Optional date of birth
-        is_internal: Whether this is an internal request (bypasses blacklist)
-
-    Returns:
-        Created User object
-
-    Raises:
-        UserExistsError: Username or email already taken
-        WeakPasswordError: Password does not meet requirements
-        InvalidUsernameError: Username format invalid
-        InvalidEmailError: Email format invalid
-    """
-    return _get_manager().register(
-        username, email, password, device_info, ip_address, age, dob, is_internal
-    )
-
-
-def register_selftest(
-    username: str,
-    email: str,
-    password: str,
-    device_info: Optional[Dict[str, str]] = None,
-    ip_address: Optional[str] = None,
-    age: Optional[int] = None,
-    dob: Optional[str] = None,
-) -> User:
-    """
-    Register a new user account for internal use (e.g. self-test).
-
-    Bypasses the username blacklist check so internal accounts can use
-    reserved names like 'selftest_admin' without conflicting with the
-    blacklist pattern '^selftest' that prevents real users from taking them.
-
-    Args:
-        username: Unique username
-        email: Email address
-        password: Password (will be validated for strength)
-        device_info: Optional device information
-        ip_address: Optional IP address
-        age: Optional user age
-        dob: Optional date of birth
-
-    Returns:
-        Created User object
-
-    Raises:
-        UserExistsError: Username or email already taken
-        WeakPasswordError: Password does not meet requirements
-        InvalidUsernameError: Username format invalid
-        InvalidEmailError: Email format invalid
-    """
-    return _get_manager().register(
-        username, email, password, device_info, ip_address, age, dob, is_internal=True
-    )
-
-
-def verify_email(token: str) -> bool:
-    """Verify email address with token from verification email."""
-    return _get_manager().verify_email(token)
-
-
-def resend_verification(email: str) -> bool:
-    """Resend email verification. Returns False if email not configured."""
-    return _get_manager().resend_verification(email)
-
-
-# === User Login ===
-
-
-def login(
-    username: str,
-    password: str,
-    device_info: Optional[Dict[str, str]] = None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-) -> AuthResult:
-    """
-    Authenticate a user.
-
-    Args:
-        username: Username or email
-        password: Password
-        device_info: Optional device information
-        ip_address: Optional IP address
-        user_agent: Optional user agent string
-
-    Returns:
-        AuthResult with status and token/challenge
-
-    Raises:
-        InvalidCredentialsError: Wrong username or password
-        AccountLockedError: Account temporarily locked
-        AccountDisabledError: Account permanently disabled
-        EmailNotVerifiedError: Email verification required
-    """
-    return _get_manager().login(username, password, device_info, ip_address, user_agent)
-
-
-def complete_2fa(challenge_token: str, code: str) -> AuthResult:
-    """Complete 2FA challenge with TOTP code or backup code."""
-    return _get_manager().complete_2fa(challenge_token, code)
-
-
-# === Session Management ===
-
-
-def verify_token(
-    token: str,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-    is_selftest: bool = False,
-) -> TokenInfo:
-    """
-    Verify a session or bot token.
-
-    Args:
-        token: The token to verify
-        ip_address: Optional IP for tracking
-        user_agent: Optional user agent for binding
-        is_selftest: Whether this is an internal self-test request
-
-    Returns:
-        TokenInfo with user/bot details and permissions
-
-    Raises:
-        TokenInvalidError: Token is malformed or invalid
-        TokenExpiredError: Token has expired
-    """
-    return _get_manager().verify_token(token, ip_address, user_agent, is_selftest)
-
-
-def refresh_session(token: str) -> Optional[str]:
-    """Refresh a session token. Returns new token or None if not refreshable."""
-    return _get_manager().refresh_session(token)
-
-
-def create_session_for_user(
-    user_id: int,
-    device_info: Optional[Dict[str, str]] = None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-) -> AuthResult:
-    """Create a session for an already-authenticated user (bypasses password re-verify)."""
-    return _get_manager().create_session_for_user(
-        user_id, device_info, ip_address, user_agent
-    )
-
-
-def logout(token: str) -> bool:
-    """Logout and invalidate a session token."""
-    return _get_manager().logout(token)
-
-
-def logout_all(user_id: int, except_token: Optional[str] = None) -> int:
-    """Logout all sessions for a user. Returns count of sessions revoked."""
-    return _get_manager().logout_all(user_id, except_token)
-
-
-def logout_all_users() -> int:
-    """Logout all sessions for all users."""
-    return _get_manager().logout_all_users()
-
-
-def get_sessions(user_id: int) -> List[Session]:
-    """Get all active sessions for a user."""
-    return _get_manager().get_sessions(user_id)
-
-
-def revoke_session(user_id: int, session_id: int) -> bool:
-    """Revoke a specific session."""
-    return _get_manager().revoke_session(user_id, session_id)
-
-
-def schedule_account_deletion(
-    user_id: int, password: str, totp_code: Optional[str] = None
-) -> bool:
-    """Schedule an account for deletion."""
-    return _get_manager().schedule_account_deletion(user_id, password, totp_code)
-
-
-def cancel_account_deletion(user_id: int, admin_id: Optional[int] = None) -> bool:
-    """Cancel a scheduled account deletion."""
-    return _get_manager().cancel_account_deletion(user_id, admin_id)
-
-
-def delay_account_deletion(
-    user_id: int, additional_days: int, admin_id: Optional[int] = None
-) -> bool:
-    """Extend the deletion grace period for a scheduled account deletion."""
-    return _get_manager().delay_account_deletion(user_id, additional_days, admin_id)
-
-
-def force_purge_account(user_id: int, admin_id: Optional[int] = None) -> bool:
-    """Immediately purge a user account, bypassing the grace period."""
-    return _get_manager().force_purge_account(user_id, admin_id)
-
-
-# === User Profile ===
-
-
-def update_user(
-    user_id: int,
-    username: Optional[str] = None,
-    email: Optional[str] = None,
-    permissions: Optional[Dict[str, bool]] = None,
-) -> User:
-    """
-    Update user profile information.
-
-    Args:
-        user_id: ID of the user to update
-        username: New username (optional)
-        email: New email address (optional)
-        permissions: New permissions (optional)
-
-    Returns:
-        Updated User object
-    """
-    return _get_manager().update_user(user_id, username, email, permissions)
-
-
-# === Two-Factor Authentication ===
-
-
-def setup_2fa(user_id: int) -> TwoFactorSetup:
-    """
-    Begin 2FA setup. Returns secret, QR URI, and backup codes.
-    User must call confirm_2fa() with a valid code to enable.
-    """
-    return _get_manager().setup_2fa(user_id)
-
-
-def confirm_2fa(user_id: int, code: str) -> bool:
-    """Confirm 2FA setup with a valid TOTP code."""
-    return _get_manager().confirm_2fa(user_id, code)
-
-
-def disable_2fa(user_id: int, password: str, code: str) -> bool:
-    """Disable 2FA. Requires password and current TOTP code."""
-    return _get_manager().disable_2fa(user_id, password, code)
-
-
-def regenerate_backup_codes(user_id: int, password: str) -> List[str]:
-    """Regenerate backup codes. Invalidates old codes."""
-    return _get_manager().regenerate_backup_codes(user_id, password)
-
-
-def get_2fa_status(user_id: int) -> TwoFactorStatus:
-    """Get 2FA status for a user."""
-    return _get_manager().get_2fa_status(user_id)
-
-
-# === Passkey (WebAuthn/FIDO2) ===
-
-
-def generate_passkey_registration_options(
-    user_id: int, device_name: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
-    return _get_manager().generate_passkey_registration_options(user_id, device_name)
-
-
-def verify_passkey_registration(
-    user_id: int,
-    challenge_id: str,
-    credential_response: Dict[str, Any],
-    ip_address: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    return _get_manager().verify_passkey_registration(
-        user_id, challenge_id, credential_response, ip_address
-    )
-
-
-def generate_passkey_authentication_options(
-    username: Optional[str] = None,
-) -> Dict[str, Any]:
-    return _get_manager().generate_passkey_authentication_options(username)
-
-
-def verify_passkey_authentication(
-    challenge_id: str,
-    credential_response: Dict[str, Any],
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-) -> AuthResult:
-    return _get_manager().verify_passkey_authentication(
-        challenge_id, credential_response, ip_address, user_agent
-    )
-
-
-def list_passkeys(user_id: int) -> List[Dict[str, Any]]:
-    return _get_manager().list_passkeys(user_id)
-
-
-def revoke_passkey(
-    user_id: int, passkey_id: int, ip_address: Optional[str] = None
-) -> bool:
-    return _get_manager().revoke_passkey(user_id, passkey_id, ip_address)
-
-
-def rename_passkey(user_id: int, passkey_id: int, new_name: str) -> bool:
-    return _get_manager().rename_passkey(user_id, passkey_id, new_name)
-
-
-# === Password Management ===
-
-
-def change_password(user_id: int, old_password: str, new_password: str) -> bool:
-    """Change password. Requires current password."""
-    return _get_manager().change_password(user_id, old_password, new_password)
-
-
-def request_password_reset(email: str) -> bool:
-    """Request password reset email. Returns False if email not configured."""
-    return _get_manager().request_password_reset(email)
-
-
-def reset_password(token: str, new_password: str) -> bool:
-    """Reset password with token from reset email."""
-    return _get_manager().reset_password(token, new_password)
-
-
-def validate_password(password: str) -> PasswordValidation:
-    """Validate password strength without creating account."""
-    return _get_manager().validate_password(password)
-
-
-# === Bot Management ===
-
-
-def create_bot(
-    owner_id: int,
-    username: str,
-    display_name: str,
-    permissions: Optional[Dict[str, bool]] = None,
-) -> Bot:
-    """
-    Create a bot account.
-
-    Args:
-        owner_id: User ID of the bot owner
-        username: Unique username for the bot
-        display_name: Display name
-        permissions: Optional custom permissions (defaults applied if None)
-
-    Returns:
-        Bot object with token (token only returned on creation)
-    """
-    return _get_manager().create_bot(owner_id, username, display_name, permissions)
-
-
-def get_bot(bot_id: int) -> Optional[Bot]:
-    """Get a bot by ID."""
-    return _get_manager().get_bot(bot_id)
-
-
-def get_user_bots(owner_id: int) -> List[Bot]:
-    """Get all bots owned by a user."""
-    return _get_manager().get_user_bots(owner_id)
-
-
-def regenerate_bot_token(owner_id: int, bot_id: int) -> str:
-    """Regenerate bot token. Old token immediately invalid."""
-    return _get_manager().regenerate_bot_token(owner_id, bot_id)
-
-
-def update_bot_permissions(
-    owner_id: int, bot_id: int, permissions: Dict[str, bool]
-) -> Bot:
-    """Update bot permissions."""
-    return _get_manager().update_bot_permissions(owner_id, bot_id, permissions)
-
-
-def disable_bot(owner_id: int, bot_id: int) -> bool:
-    """Disable a bot (can be re-enabled)."""
-    return _get_manager().disable_bot(owner_id, bot_id)
-
-
-def enable_bot(owner_id: int, bot_id: int) -> bool:
-    """Re-enable a disabled bot."""
-    return _get_manager().enable_bot(owner_id, bot_id)
-
-
-def delete_bot(owner_id: int, bot_id: int) -> bool:
-    """Permanently delete a bot."""
-    return _get_manager().delete_bot(owner_id, bot_id)
-
-
-# === API Access Tokens ===
-
-
-def create_api_access_token(
-    name: Optional[str],
-    created_by: Optional[int],
-    token_value: Optional[str] = None,
-    description: Optional[str] = None,
-    expires_at: Optional[int] = None,
-    scope_mode: str = "none",
-) -> AccessToken:
-    return _get_manager().create_api_access_token(
-        name,
-        created_by,
-        token_value,
-        description=description,
-        expires_at=expires_at,
-        scope_mode=scope_mode,
-    )
-
-
-def list_api_access_tokens(include_revoked: bool = True) -> List[AccessToken]:
-    return _get_manager().list_api_access_tokens(include_revoked)
-
-
-def get_api_access_token(token_id: int) -> Optional[AccessToken]:
-    return _get_manager().get_api_access_token(token_id)
-
-
-def update_api_access_token(
-    token_id: int,
-    updated_by: Optional[int],
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    expires_at: Optional[int] = None,
-    clear_expiry: bool = False,
-    scope_mode: Optional[str] = None,
-) -> Optional[AccessToken]:
-    return _get_manager().update_api_access_token(
-        token_id,
-        updated_by,
-        name=name,
-        description=description,
-        expires_at=expires_at,
-        clear_expiry=clear_expiry,
-        scope_mode=scope_mode,
-    )
-
-
-def revoke_api_access_token(token_id: int, revoked_by: Optional[int]) -> bool:
-    return _get_manager().revoke_api_access_token(token_id, revoked_by)
-
-
-def unrevoke_api_access_token(token_id: int, unrevoked_by: Optional[int]) -> bool:
-    return _get_manager().unrevoke_api_access_token(token_id, unrevoked_by)
-
-
-def rotate_api_access_token(
-    token_id: int,
-    rotated_by: Optional[int],
-    token_value: Optional[str] = None,
-) -> Optional[AccessToken]:
-    return _get_manager().rotate_api_access_token(token_id, rotated_by, token_value)
-
-
-def add_api_access_token_scope(
-    token_id: int,
-    scope_type: str,
-    value: str,
-    created_by: Optional[int],
-) -> Dict[str, Any]:
-    return _get_manager().add_api_access_token_scope(
-        token_id, scope_type, value, created_by
-    )
-
-
-def remove_api_access_token_scope(token_id: int, scope_id: int) -> bool:
-    return _get_manager().remove_api_access_token_scope(token_id, scope_id)
-
-
-def list_api_access_token_scopes(token_id: int) -> List[Dict[str, Any]]:
-    return _get_manager().list_api_access_token_scopes(token_id)
-
-
-def get_api_access_token_usage(
-    token_id: int,
-    recent_limit: int = 100,
-) -> Dict[str, Any]:
-    return _get_manager().get_api_access_token_usage(token_id, recent_limit)
-
-
-def verify_api_access_token(
-    token: str,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-    path: Optional[str] = None,
-    method: Optional[str] = None,
-) -> bool:
-    return _get_manager().verify_api_access_token(
-        token,
-        ip_address=ip_address,
-        user_agent=user_agent,
-        path=path,
-        method=method,
-    )
-
-
-def is_api_access_token_required() -> bool:
-    return _get_manager().is_api_access_token_required()
-
-
-# === Device Management ===
-
-
-def get_devices(user_id: int) -> List[Device]:
-    """Get all known devices for a user."""
-    return _get_manager().get_devices(user_id)
-
-
-def rename_device(user_id: int, device_id: int, name: str) -> bool:
-    """Rename a device."""
-    return _get_manager().rename_device(user_id, device_id, name)
-
-
-def revoke_device(user_id: int, device_id: int) -> bool:
-    """Revoke a device and all its sessions."""
-    return _get_manager().revoke_device(user_id, device_id)
-
-
-# === IP Blacklisting ===
-
-
-def block_ip(
-    ip_address: str,
-    reason: Optional[str] = None,
-    blocked_by: Optional[int] = None,
-    duration_hours: Optional[int] = None,
-) -> bool:
-    """Block an IP address."""
-    return _get_manager().block_ip(ip_address, reason, blocked_by, duration_hours)
-
-
-def unblock_ip(ip_address: str) -> bool:
-    """Unblock an IP address."""
-    return _get_manager().unblock_ip(ip_address)
-
-
-def is_ip_blocked(ip_address: str) -> bool:
-    """Check if an IP address is blocked."""
-    return _get_manager().is_ip_blocked(ip_address)
-
-
-def get_blocked_ips() -> List[Dict[str, Any]]:
-    """Get all blocked IPs."""
-    return _get_manager().get_blocked_ips()
-
-
-# === Audit ===
-
-
-def get_login_history(user_id: int, limit: int = 50) -> List[AuditEntry]:
-    """Get login history for a user."""
-    return _get_manager().get_login_history(user_id, limit)
-
-
-def get_security_events(user_id: int, limit: int = 50) -> List[AuditEntry]:
-    """Get security events for a user."""
-    return _get_manager().get_security_events(user_id, limit)
-
-
-# === Utility ===
-
-
-def get_user(user_id: int) -> Optional[User]:
-    """Get a user by ID."""
-    return _get_manager().get_user(user_id)
-
-
-def get_user_by_username(username: str) -> Optional[User]:
-    """Get a user by username."""
-    return _get_manager().get_user_by_username(username)
-
-
-def get_users_bulk(user_ids: List[int]) -> Dict[int, User]:
-    """Get multiple users by ID in a single query."""
-    return _get_manager().get_users_bulk(user_ids)
-
-
-def get_user_profiles_bulk(user_ids: List[int]) -> Dict[str, Any]:
-    """Get multiple user profiles in a single query (cached)."""
-    return _get_manager().get_user_profiles_bulk(user_ids)
-
-
-def grant_permission(user_id: int, permission: str) -> bool:
-    """Grant a specific permission to a user."""
-    return _get_manager().grant_permission(user_id, permission)
-
-
-def has_capability(token_info: TokenInfo, capability: str) -> bool:
-    """Check if token has a specific capability/permission."""
-    return has_permission(token_info.permissions, capability)
-
-
-def require_capability(token_info: TokenInfo, capability: str) -> None:
-    """Require a capability, raising PermissionDeniedError if missing."""
-    if not has_permission(token_info.permissions, capability):
-        raise PermissionDeniedError(f"Missing required permission: {capability}")
-
-
-# === OAuth ===
-
-
-def oauth_login(
-    provider: str,
-    external_id: str,
-    email: Optional[str] = None,
-    username_hint: Optional[str] = None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-    age: Optional[int] = None,
-    dob: Optional[str] = None,
-) -> AuthResult:
-    """
-    Login or register via OAuth provider.
-
-    If user exists with this OAuth link, logs them in.
-    If email matches existing user, links OAuth and logs in.
-    Otherwise creates new account.
-    """
-    return _get_manager().oauth_login(
-        provider=provider,
-        external_id=external_id,
-        email=email,
-        username_hint=username_hint,
-        ip_address=ip_address,
-        user_agent=user_agent,
-        age=age,
-        dob=dob,
-    )
-
-
 __all__ = [
     # Setup
     "setup",
@@ -798,6 +252,7 @@ __all__ = [
     "User",
     "Session",
     "Bot",
+    "AccessToken",
     "Device",
     "KnownIP",
     "AuditEntry",
@@ -830,6 +285,7 @@ __all__ = [
     "create_session_for_user",
     "logout",
     "logout_all",
+    "logout_all_users",
     "get_sessions",
     "revoke_session",
     "schedule_account_deletion",
@@ -882,14 +338,21 @@ __all__ = [
     "get_devices",
     "rename_device",
     "revoke_device",
+    # IP Blacklist
+    "block_ip",
+    "unblock_ip",
+    "is_ip_blocked",
+    "get_blocked_ips",
     # Audit
     "get_login_history",
     "get_security_events",
     # Utility
     "get_user",
     "get_user_by_username",
+    "get_users_bulk",
     "get_user_profiles_bulk",
     "grant_permission",
     "has_capability",
     "require_capability",
+    "update_user",
 ]

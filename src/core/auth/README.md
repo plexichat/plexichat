@@ -1,361 +1,72 @@
-# Authentication Module
+# Authentication Module Structure
 
-Secure authentication system for Plexichat API supporting user accounts, bot accounts, two-factor authentication, and granular permissions.
+This directory contains the refactored authentication module organized into focused submodules.
 
-## Features
+## Module Overview
 
-- User registration and login with secure password hashing (Argon2id)
-- Server-side session tokens (not JWT) for instant revocation
-- Two-factor authentication (TOTP) compatible with Google Authenticator
-- Backup codes for 2FA recovery
-- Bot accounts with restricted permissions
-- Device and IP tracking
-- Comprehensive audit logging
-- Granular permission system with wildcards
-- Account lockout after failed attempts
+| Module | Contents |
+|--------|----------|
+| `registration.py` | `register`, `register_selftest`, `verify_email`, `resend_verification` |
+| `login.py` | `login`, `complete_2fa` |
+| `sessions.py` | `verify_token`, `refresh_session`, `create_session_for_user`, `logout`, `logout_all`, `logout_all_users`, `get_sessions`, `revoke_session`, `schedule_account_deletion`, `cancel_account_deletion`, `delay_account_deletion`, `force_purge_account` |
+| `account.py` | `schedule_account_deletion`, `cancel_account_deletion`, `delay_account_deletion`, `force_purge_account` |
+| `profile.py` | `update_user` |
+| `twofa.py` | `setup_2fa`, `confirm_2fa`, `disable_2fa`, `regenerate_backup_codes`, `get_2fa_status` |
+| `passkeys.py` | `generate_passkey_registration_options`, `verify_passkey_registration`, `generate_passkey_authentication_options`, `verify_passkey_authentication`, `list_passkeys`, `revoke_passkey`, `rename_passkey` |
+| `passwords.py` | `change_password`, `request_password_reset`, `reset_password`, `validate_password` |
+| `bots.py` | `create_bot`, `get_bot`, `get_user_bots`, `regenerate_bot_token`, `update_bot_permissions`, `disable_bot`, `enable_bot`, `delete_bot` |
+| `tokens.py` | API access tokens CRUD + verify + scopes (`create_api_access_token`, `list_api_access_tokens`, `get_api_access_token`, `update_api_access_token`, `revoke_api_access_token`, `unrevoke_api_access_token`, `rotate_api_access_token`, `add_api_access_token_scope`, `remove_api_access_token_scope`, `list_api_access_token_scopes`, `get_api_access_token_usage`, `verify_api_access_token`, `is_api_access_token_required`) |
+| `devices.py` | `get_devices`, `rename_device`, `revoke_device` |
+| `ip_blacklist.py` | `block_ip`, `unblock_ip`, `is_ip_blocked`, `get_blocked_ips` |
+| `audit.py` | `get_login_history`, `get_security_events` |
+| `users.py` | `get_user`, `get_user_by_username`, `get_users_bulk`, `get_user_profiles_bulk`, `grant_permission` |
+| `capabilities.py` | `has_capability`, `require_capability` |
+| `oauth.py` | `oauth_login` |
 
-## Installation
+## Shared Modules (unchanged)
 
-Requires the following packages:
-
-```bash
-pip install pyotp qrcode pillow
-```
-
-## Setup
-
-```python
-from src.core.database import Database
-from src.core import auth
-
-# Initialize database
-db = Database()
-db.connect()
-
-# Initialize auth (creates tables automatically)
-auth.setup(db)
-
-# Optional: with email sender for verification
-auth.setup(db, email_sender=my_email_sender)
-```
+- `models.py` - Data models (User, Session, Bot, TokenInfo, etc.)
+- `exceptions.py` - Custom exceptions
+- `permissions.py` - Permission constants and validation
+- `manager.py` - AuthManager class (re-exports from managers.base)
+- `schema.py` - Database schema creation
+- `totp.py` - TOTP utilities
+- `passkeys.py` - PasskeyManager class
+- `reaper.py` - Account cleanup task
 
 ## Usage
 
-### User Registration
+### Setup (once at application startup)
+
+```python
+from src.core.auth import setup
+from src.core.database import Database
+
+db = Database()
+db.connect()
+setup(db)
+```
+
+### Using functions (import from root for convenience)
 
 ```python
 from src.core import auth
 
-user = auth.register(
-    username="alice",
-    email="alice@example.com",
-    password="SecurePassword123!"
-)
+user = auth.register("username", "email@example.com", "password")
+result = auth.login("username", "password")
+token_info = auth.verify_token(result.token)
 ```
 
-### User Login
+### Direct submodule imports (for clarity)
 
 ```python
-result = auth.login(
-    username="alice",
-    password="SecurePassword123!",
-    device_info={"fingerprint": "abc123", "name": "Desktop", "type": "desktop"},
-    ip_address="192.168.1.1"
-)
-
-if result.status == auth.AuthStatus.SUCCESS:
-    token = result.token
-    user = result.user
-elif result.status == auth.AuthStatus.TWO_FACTOR_REQUIRED:
-    # Need to complete 2FA
-    challenge_token = result.challenge_token
+from src.core.auth.registration import register, verify_email
+from src.core.auth.login import login
+from src.core.auth.sessions import verify_token, logout
+from src.core.auth.twofa import setup_2fa, confirm_2fa
+from src.core.auth.passwords import change_password
 ```
 
-### Verify Token (on every request)
+## Backward Compatibility
 
-```python
-try:
-    token_info = auth.verify_token(token, ip_address="192.168.1.1")
-    user_id = token_info.user_id
-    permissions = token_info.permissions
-except auth.TokenInvalidError:
-    # Invalid or revoked token
-    pass
-except auth.TokenExpiredError:
-    # Token expired
-    pass
-```
-
-### Check Permissions
-
-```python
-token_info = auth.verify_token(token)
-
-# Check permission
-if auth.has_capability(token_info, "messages.send"):
-    # User can send messages
-    pass
-
-# Require permission (raises PermissionDeniedError if missing)
-auth.require_capability(token_info, "bots.create")
-```
-
-### Two-Factor Authentication
-
-```python
-# Setup 2FA
-setup = auth.setup_2fa(user_id)
-print(f"Secret: {setup.secret}")
-print(f"QR URI: {setup.qr_uri}")
-print(f"Backup codes: {setup.backup_codes}")
-
-# Confirm 2FA with code from authenticator app
-auth.confirm_2fa(user_id, "123456")
-
-# Complete login with 2FA
-result = auth.complete_2fa(challenge_token, "123456")
-
-# Disable 2FA
-auth.disable_2fa(user_id, password="...", code="123456")
-
-# Regenerate backup codes
-new_codes = auth.regenerate_backup_codes(user_id, password="...")
-```
-
-### Bot Accounts
-
-```python
-# Create bot
-bot = auth.create_bot(
-    owner_id=user_id,
-    username="my_bot",
-    display_name="My Bot",
-    permissions={"messages.send": True, "messages.read": True}
-)
-bot_token = bot.token  # Save this - only shown once!
-
-# Use bot token
-token_info = auth.verify_token(bot_token)
-assert token_info.token_type == "bot"
-
-# Regenerate bot token
-new_token = auth.regenerate_bot_token(owner_id, bot_id)
-
-# Disable/enable bot
-auth.disable_bot(owner_id, bot_id)
-auth.enable_bot(owner_id, bot_id)
-
-# Delete bot
-auth.delete_bot(owner_id, bot_id)
-```
-
-### Session Management
-
-```python
-# Get active sessions
-sessions = auth.get_sessions(user_id)
-
-# Revoke specific session
-auth.revoke_session(user_id, session_id)
-
-# Logout current session
-auth.logout(token)
-
-# Logout all sessions except current
-auth.logout_all(user_id, except_token=current_token)
-```
-
-### Device Management
-
-```python
-# Get known devices
-devices = auth.get_devices(user_id)
-
-# Rename device
-auth.rename_device(user_id, device_id, "Work Laptop")
-
-# Revoke device (logs out all sessions)
-auth.revoke_device(user_id, device_id)
-```
-
-### Account Deletion (GDPR)
-
-Plexichat implements a secure account deletion workflow with a 30-day grace period and a cryptographically chained external audit log.
-
-```python
-# Schedule account for deletion (starts 30-day freeze)
-auth.schedule_account_deletion(user_id, password="...", code="123456")
-
-# Cancel a scheduled deletion
-auth.cancel_account_deletion(user_id, admin_id=...)
-```
-
-**Key Safety Features:**
-1. **Hard Freeze**: Once scheduled, all sessions are revoked and login is disabled.
-2. **Rollback Protection**: An external `deletion_log.jsonl` tracks deletions. If the database is restored from an old backup, the **Account Reaper** detects the discrepancy on boot and re-freezes the "zombie" accounts immediately.
-3. **Hash Chain**: The audit log entries are chained using SHA256 hashes, ensuring tamper-evidence.
-4. **Idempotent Purge**: The background Reaper permanently erases media, anonymizes messages, and deletes the user record once the grace period expires.
-
-### Audit Log
-
-```python
-# Get login history
-history = auth.get_login_history(user_id, limit=50)
-
-# Get all security events
-events = auth.get_security_events(user_id, limit=50)
-```
-
-## Configuration
-
-All settings are in `config/config.yaml` under `authentication`:
-
-```yaml
-authentication:
-  accounts:
-    allow_registration: true
-    require_email_verification: false
-    max_bots_per_user: 5
-    username_min_length: 3
-    username_max_length: 32
-    
-  sessions:
-    token_bytes: 32
-    expire_hours: 168  # 7 days
-    max_per_user: 10
-    extend_on_activity: true
-    
-  security:
-    max_failed_attempts: 5
-    lockout_duration_minutes: 15
-    token_cache_ttl: 30           # Redis cache TTL for validated tokens (seconds)
-    token_verify_rate_limit: 100  # Max token verifications per IP per minute
-    token_binding: false          # Bind tokens to IP (rejects if IP changes)
-    
-  totp:
-    issuer: Plexichat
-    digits: 6
-    interval: 30
-    backup_code_count: 10
-    
-  password:
-    min_length: 12
-    require_uppercase: true
-    require_lowercase: true
-    require_digit: true
-    require_special: true
-    
-  bots:
-    token_bytes: 48
-    require_owner_2fa: false
-```
-
-## Permission System
-
-Permissions are hierarchical with wildcard support:
-
-```python
-# Specific permission
-"messages.send"
-
-# Wildcard - all message permissions
-"messages.*"
-
-# Full admin
-"*"
-```
-
-### Available Permissions
-
-| Category | Permission | Description |
-|----------|------------|-------------|
-| messages | messages.send | Send messages |
-| messages | messages.read | Read messages |
-| messages | messages.edit | Edit own messages |
-| messages | messages.delete | Delete own messages |
-| conversations | conversations.create | Create conversations |
-| conversations | conversations.join | Join conversations |
-| voice | voice.join | Join voice channels |
-| voice | voice.initiate | Start voice calls |
-| bots | bots.create | Create bot accounts |
-| admin | admin.* | Administrative access |
-
-### Bot Restrictions
-
-Bots cannot have these permissions:
-- bots.create
-- bots.manage
-- account.delete
-- admin.*
-
-## Token Format
-
-### User Session Token
-```
-<session_id>.<random_secret>
-Example: 7891234567890123456.a8Kj2mNpQrStUvWxYz...
-```
-
-### Bot Token
-```
-bot.<bot_id>.<random_secret>
-Example: bot.7891234567890123456.a8Kj2mNpQrStUvWx...
-```
-
-## Security Features
-
-1. **Password Hashing**: Argon2id (OWASP recommended)
-2. **Token Storage**: Only SHA-256 hash stored, not the token itself
-3. **Constant-time Comparison**: Prevents timing attacks
-4. **Account Lockout**: Configurable failed attempt limits
-5. **Session Limits**: Maximum concurrent sessions per user
-6. **2FA**: TOTP with backup codes
-7. **Audit Logging**: All security events logged
-8. **Redis Token Caching**: Validated tokens cached for 30s (configurable) to reduce DB load
-9. **Rate Limited Verification**: Prevents brute-force token guessing (100/min per IP)
-10. **Token Binding**: Optional IP binding - tokens rejected if used from different IP
-
-### Redis Caching (Optional)
-
-When Redis is enabled, token verification is cached for faster repeated requests:
-- Cache TTL: 30 seconds (configurable via `security.token_cache_ttl`)
-- Cache key: SHA-256 hash prefix of token (secure, no token exposure)
-- Graceful fallback: If Redis unavailable, falls back to DB-only verification
-- Automatic invalidation: Cache cleared on logout
-
-### Token Binding
-
-Enable `security.token_binding: true` to bind tokens to the IP address they were first verified from. If a token is used from a different IP, it will be rejected. This helps detect stolen tokens but may cause issues with mobile users or VPNs.
-
-## Error Handling
-
-All auth errors inherit from `AuthError`:
-
-```python
-from src.core.auth import (
-    AuthError,
-    InvalidCredentialsError,
-    AccountLockedError,
-    TokenExpiredError,
-    TokenInvalidError,
-    TwoFactorRequiredError,
-    PermissionDeniedError,
-    UserExistsError,
-    WeakPasswordError,
-)
-
-try:
-    auth.login(username, password)
-except AccountLockedError as e:
-    print(f"Locked until: {e.locked_until}")
-except InvalidCredentialsError:
-    print("Wrong username or password")
-except TwoFactorRequiredError as e:
-    print(f"2FA required, challenge: {e.challenge_token}")
-```
-
-## Testing
-
-```bash
-pytest src/tests/auth/ -v
-```
+All functions are re-exported from `src.core.auth` (the package `__init__.py`), so existing code using `from src.core import auth` or `from src.core.auth import ...` continues to work without changes.
