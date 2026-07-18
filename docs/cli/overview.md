@@ -108,7 +108,7 @@ Print the current Plexichat server version and exit.
 
 ```bash
 python main.py version
-# Output: Plexichat Server a.1.0-104
+# Output: Plexichat Server a.1.0-105
 ```
 
 ---
