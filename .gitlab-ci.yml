@@ -30,7 +30,7 @@ cache:
     name: python:3.14.6-slim-trixie
     pull_policy: if-not-present
   before_script:
-    - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git
+    - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git libatomic1
     - |
       if [ -d ".venv" ]; then
         echo "Using cached virtual environment"
