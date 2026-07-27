@@ -444,6 +444,16 @@ media:
 
 **Note**: The malware scanning config uses `scanner_enabled`, `scanner_host`, and `scanner_port` (not `malware_scanning.enabled` or `clamav_socket`). The scanner defaults to connecting to ClamAV on localhost:3310 (TCP), not a Unix socket.
 
+**Docker Deployment**: When deploying via docker-compose, set these via environment variables — the config loader picks them up automatically:
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `SCANNER_ENABLED` | `false` | Enable ClamAV scanning (`true`/`false`/`1`/`0`/`yes`/`no`) |
+| `SCANNER_HOST` | `localhost` | ClamAV daemon hostname |
+| `SCANNER_PORT` | `3310` | ClamAV daemon TCP port |
+
+The docker-compose stack includes a pre-configured `clamav` service with 4 GB RAM limit, automatic signature updates, and third-party signature databases via `clamav-unofficial-sigs` sidecar (Sanesecurity, FOXHOLE, URLhaus, Linux Malware Detect, interServer).
+
 ### Deployment Considerations
 
 **Why Malware Scanning Matters**
@@ -466,6 +476,10 @@ Malware scanning protects your users and infrastructure from malicious file uplo
 
 **Operational Requirements**
 
+**Option A — Docker (recommended):**
+The docker-compose stack includes a pre-configured `clamav` service. Backend connects automatically via `SCANNER_HOST=clamav`. No manual setup required.
+
+**Option B — Native install:**
 1. Install ClamAV:
    ```bash
    # Ubuntu/Debian
@@ -491,6 +505,9 @@ Malware scanning protects your users and infrastructure from malicious file uplo
    ```bash
    sudo freshclam
    ```
+
+**Unofficial signatures (optional):**
+For improved detection rates (Sanesecurity, FOXHOLE, URLhaus, etc.), install the [clamav-unofficial-sigs](https://github.com/extremeshok/clamav-unofficial-sigs) updater. Note this increases ClamAV RAM usage. In Docker, this runs as an automatic sidecar.
 
 **Performance Impact**
 

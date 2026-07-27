@@ -59,7 +59,7 @@ has been heavily optimised:
 - External URL proxy with caching and SSRF protection
 - Content-type validation and configurable file size limits
 - Magic byte validation to prevent MIME type spoofing
-- Malware scanning interface for ClamAV
+- Malware scanning interface for ClamAV (file uploads only — does not scan message text or URLs)
 - Integration with messaging module for attachments
 
 ## Security Features
