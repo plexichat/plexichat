@@ -96,3 +96,4 @@ pytest-cov==7.1.0
 pytest-timeout==2.4.0
 psutil==7.2.2
 hypothesis==6.161.6
+pyasn1>=0.6.4
