@@ -14,7 +14,7 @@
     "src/utils/common_utils",
     "src/utils"
   ],
-  "pythonVersion": "3.12",
+  "pythonVersion": "3.14",
   "typeCheckingMode": "standard",
   "reportMissingImports": "error",
   "reportOptionalMemberAccess": "error",

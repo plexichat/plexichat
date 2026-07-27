@@ -141,7 +141,26 @@ EXTERNAL
 
 **Exit Status:** Success
 
-### 6. Backend (FastAPI Server)
+### 6. ClamAV (Malware Scanner)
+
+**Purpose:** Scan uploaded files for malware using ClamAV
+
+**Services:**
+- `clamd` — anti-virus daemon (TCP 3310)
+- `freshclam` — automatic signature updates (every 2 hours)
+
+**Dependencies:**
+- None (standalone)
+
+**Resources:**
+- RAM: 4 GB limit, 2 GB reservation (signatures spike during daily reload)
+- Volume: `clamav_db` (persists signature databases)
+- Additional sigs via `clamav-unofficial-sigs` sidecar (Sanesecurity, FOXHOLE, URLhaus, etc.)
+
+**Connections:**
+- Backend connects via `clamav:3310` (TCP, internal network)
+
+### 7. Backend (FastAPI Server)
 
 **Purpose:** Core application logic
 
@@ -153,7 +172,7 @@ EXTERNAL
 - Admin UI (`/admin`)
 
 **Dependencies:**
-- Depends on: Database, Redis, MinIO-Init
+- Depends on: Database, Redis, MinIO-Init, ClamAV
 
 **Connections:**
 - Database (pooled): `db:5432`
@@ -175,7 +194,7 @@ EXTERNAL
 - API: 8000/TCP
 - WebRTC: 30000-30100/UDP
 
-### 7. Client (Nginx)
+### 8. Client (Nginx)
 
 **Purpose:** Frontend web server and reverse proxy
 
@@ -205,7 +224,7 @@ EXTERNAL
 - HTTP on port 80
 - Interval: 10 seconds
 
-### 8. Backup (Restic)
+### 9. Backup (Restic)
 
 **Purpose:** Automated encrypted, deduplicated backups
 

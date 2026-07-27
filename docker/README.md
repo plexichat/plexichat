@@ -2,11 +2,13 @@
 
 This compose file lives in the `plexichat` repo and orchestrates:
 - backend (FastAPI server)
-- db (PostgreSQL 16)
-- redis (Redis 7)
+- db (PostgreSQL)
+- redis (Valkey)
 - minio (S3-compatible storage + bucket init)
 - client (Nginx serving Vite-built static assets)
 - cert-init (self-signed TLS certificate generation)
+- **clamav** (ClamAV malware scanning daemon)
+- **clamav-unofficial-sigs** (third-party signature updater sidecar)
 - **backup** (restic-based automated backup — DB, files, MinIO)
 
 ## Quick Deploy
@@ -47,6 +49,27 @@ curl http://localhost:8000/api/v1/health
 curl -k https://localhost/
 curl -k https://localhost/docs
 ```
+
+## Malware Scanning (ClamAV)
+
+The stack includes ClamAV for automatic malware scanning of uploaded files. Scanning runs in parallel with compression during upload — negligible latency.
+
+**Services:**
+- `clamav` — ClamAV daemon (clamd + freshclam), listens on TCP 3310
+- `clamav-unofficial-sigs` — sidecar that downloads third-party signature databases (Sanesecurity, FOXHOLE, URLhaus, Linux Malware Detect, interServer)
+
+**RAM:** ClamAV loads all signatures into memory (~1.2 GB baseline, spikes to ~2.4 GB during daily database reloads). The container is configured with a 4 GB limit and 2 GB reservation.
+
+**Config (env vars):**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCANNER_ENABLED` | `false` | Enable malware scanning via ClamAV |
+| `SCANNER_HOST` | `clamav` | ClamAV daemon hostname |
+| `SCANNER_PORT` | `3310` | ClamAV daemon TCP port |
+
+The backend is pre-configured with `SCANNER_ENABLED=true` and `SCANNER_HOST=clamav`. No additional setup required.
+
+ClamAV database updates (official + unofficial) are automatic. The `clamav_db` volume persists signatures across restarts.
 
 ## Backup Service
 

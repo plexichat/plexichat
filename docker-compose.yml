@@ -7,7 +7,7 @@ name: plexichat
 services:
   db:
     restart: unless-stopped
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     env_file:
       - .env
     environment:
@@ -24,7 +24,7 @@ services:
 
   redis:
     restart: unless-stopped
-    image: redis:7-alpine
+    image: valkey/valkey:9.1.1-alpine
     env_file:
       - .env
     command: >
@@ -71,7 +71,7 @@ services:
     restart: "no"
 
   cert-init:
-    image: alpine:3.20
+    image: alpine:3.24
     volumes:
       - certs:/certs
     entrypoint: >
@@ -83,6 +83,42 @@ services:
       "
     restart: "no"
 
+  clamav:
+    restart: unless-stopped
+    image: clamav/clamav:latest
+    environment:
+      CLAMD_CONF_StreamMaxLength: "600M"
+      CLAMD_CONF_MaxScanSize: "600M"
+      CLAMD_CONF_MaxFileSize: "600M"
+      CLAMD_CONF_MaxScanTime: "300000"
+    volumes:
+      - clamav_db:/var/lib/clamav
+    expose:
+      - "3310"
+    healthcheck:
+      test: ["CMD-SHELL", "echo PING | nc -w 2 localhost 3310 | grep PONG"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+        reservations:
+          memory: 2g
+
+  clamav-unofficial-sigs:
+    restart: unless-stopped
+    image: ghcr.io/extremeshok/clamav-unofficial-sigs:latest
+    environment:
+      CUS_MODE: updater
+      CUS_UPDATE_HOURS: "2"
+    volumes:
+      - clamav_db:/var/lib/clamav
+    depends_on:
+      - clamav
+
   backend:
     restart: unless-stopped
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:-latest}
@@ -93,6 +129,9 @@ services:
       PLEXICHAT_SMTP_PASSWORD: ${PLEXICHAT_SMTP_PASSWORD:-}
       PLEXICHAT_PUBLIC_SERVER_URL: ${PLEXICHAT_PUBLIC_SERVER_URL:-http://localhost:8000}
       NO_STRICT_CONFIG: "false"
+      SCANNER_ENABLED: "true"
+      SCANNER_HOST: clamav
+      SCANNER_PORT: "3310"
     volumes:
       - ./config/docker-config.yaml:/app/config/docker-config.yaml:ro
       - plexichat_home:/root/.plexichat
@@ -103,6 +142,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
     expose:
       - "8000"
     ports:
@@ -162,10 +203,4 @@ volumes:
   plexichat_home:
   certs:
   backup_repo:
-
-volumes:
-  postgres_data:
-  redis_data:
-  minio_data:
-  plexichat_home:
-  certs:
+  clamav_db:
