@@ -127,9 +127,24 @@ services:
       - "443:443"
 
   backup:
-    image: postgres:16-alpine
+    image: registry.plexichat.com/plexichat/plexichat/backup:${BACKEND_VERSION:-latest}
     env_file:
       - .env
+    environment:
+      RESTIC_REPOSITORY: /repo
+      RESTIC_PASSWORD: ${BACKUP_RESTIC_PASSWORD:-}
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 2 * * *}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-7}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-6}
+      BACKUP_KEEP_YEARLY: ${BACKUP_KEEP_YEARLY:-0}
+      BACKUP_INCLUDE_DB: ${BACKUP_INCLUDE_DB:-true}
+      BACKUP_INCLUDE_HOME: ${BACKUP_INCLUDE_HOME:-true}
+      BACKUP_INCLUDE_MINIO: ${BACKUP_INCLUDE_MINIO:-true}
+      BACKUP_SECONDARY_REPO: ${BACKUP_SECONDARY_REPO:-}
+      BACKUP_SECONDARY_PASSWORD: ${BACKUP_SECONDARY_PASSWORD:-}
+      BACKUP_SUCCESS_HOOK: ${BACKUP_SUCCESS_HOOK:-}
+      BACKUP_FAILURE_HOOK: ${BACKUP_FAILURE_HOOK:-}
     depends_on:
       db:
         condition: service_healthy
@@ -137,10 +152,16 @@ services:
       - postgres_data:/var/lib/postgresql/data:ro
       - plexichat_home:/plexichat-home:ro
       - minio_data:/minio-data:ro
-      - ./backups:/backups
-      - ./docker/backup/backup.sh:/backup.sh:ro
-    entrypoint: ["sh", "/backup.sh"]
+      - backup_repo:/repo
     restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  plexichat_home:
+  certs:
+  backup_repo:
 
 volumes:
   postgres_data:
