@@ -67,7 +67,7 @@ class BaseService:
         return snowflake
 
     def _cache_get(self, key: Any, default: Optional[Any] = None) -> Optional[Any]:
-        """Get value from cache (Local memory first, then Redis)."""
+        """Get value from cache (Local memory first, then Valkey)."""
         # 1. Try local memory
         if key in self._cache:
             value, expires = self._cache[key]
@@ -75,36 +75,38 @@ class BaseService:
                 return value
             del self._cache[key]
 
-        # 2. Try Redis
-        from src.core.database import cache_get, redis_available
+        # 2. Try Valkey
+        from src.core.database import cache_get, valkey_available
 
-        if redis_available():
-            cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
-            redis_val = cache_get(cache_key)
-            if redis_val is not None:
-                # Store back in local memory for even faster subsequent access
-                self._cache_set(key, redis_val)
-                return redis_val
+        if not valkey_available():
+            return default
+
+        cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
+        valkey_val = cache_get(cache_key)
+        if valkey_val is not None:
+            # Store back in local memory for even faster subsequent access
+            self._cache_set(key, valkey_val)
+            return valkey_val
 
         return default
 
     def _cache_set(self, key: Any, value: Any) -> None:
-        """Set value in cache (Local memory and Redis)."""
+        """Set value in cache (Local memory and Valkey)."""
         self._cache[key] = (value, (self._get_timestamp() / 1000.0) + self._cache_ttl)
 
-        from src.core.database import cache_set, redis_available
+        from src.core.database import cache_set, valkey_available
 
-        if redis_available():
+        if valkey_available():
             cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
             cache_set(cache_key, value, ttl=int(self._cache_ttl))
 
     def _cache_invalidate(self, key: Any) -> None:
-        """Invalidate a cache entry (Local memory and Redis)."""
+        """Invalidate a cache entry (Local memory and Valkey)."""
         self._cache.pop(key, None)
 
-        from src.core.database import cache_delete, redis_available
+        from src.core.database import cache_delete, valkey_available
 
-        if redis_available():
+        if valkey_available():
             cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
             cache_delete(cache_key)
 

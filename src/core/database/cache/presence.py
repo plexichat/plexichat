@@ -8,10 +8,10 @@ import time
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
-from ..redis_client import (
+from ..valkey_client import (
     get_client,
     is_available,
-    RedisOperationError,
+    ValkeyOperationError,
 )
 from .operations import cache_get
 
@@ -33,7 +33,7 @@ def cache_presence(
     try:
         client.set_json(f"presence:{user_id}", presence_data, ttl=client.ttl_presence)
         return True
-    except RedisOperationError as e:
+    except ValkeyOperationError as e:
         logger.warning(f"Failed to cache presence for user {user_id}: {e}")
         return False
 

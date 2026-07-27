@@ -321,16 +321,16 @@ PostgreSQL tests are skipped if no PostgreSQL server is available.
 
 ---
 
-# Redis Module
+# Valkey Module
 
-A Redis client module for caching, sessions, presence, and pub/sub with connection pooling and graceful degradation.
+A Valkey client module for caching, sessions, presence, and pub/sub with connection pooling and graceful degradation.
 
 ## Features
 
 - Connection pooling with automatic reconnection
 - TLS/SSL support for secure connections
 - Key prefixing to avoid collisions
-- Graceful degradation when Redis is unavailable
+- Graceful degradation when Valkey is unavailable
 - Pub/Sub support for real-time events
 - Decorator-based caching (`@cached`)
 - Session and presence caching helpers
@@ -340,9 +340,7 @@ A Redis client module for caching, sessions, presence, and pub/sub with connecti
 ## Requirements
 
 ```bash
-pip install redis>=5.0.0      # Redis client
-pip install hiredis>=2.3.0    # Optional, for performance
-pip install fakeredis>=2.20   # For testing (optional)
+pip install valkey-glide-sync>=2.5.0
 ```
 
 ## Configuration
@@ -350,7 +348,7 @@ pip install fakeredis>=2.20   # For testing (optional)
 Add to your `config.yaml`:
 
 ```yaml
-redis:
+valkey:
   enabled: true
   host: localhost
   port: 6379
@@ -359,9 +357,6 @@ redis:
   ssl: false
   ssl_cert_reqs: required   # required, optional, or none
   ssl_ca_certs: ""          # Path to CA cert file
-  connection_pool:
-    max_connections: 50
-    timeout: 5
   key_prefix: "plexichat:"
   ttl:
     session: 1800           # 30 minutes
@@ -373,19 +368,19 @@ redis:
 
 | Variable | Description |
 |----------|-------------|
-| `REDIS_URL` | Full Redis URL (overrides config) |
-| `REDIS_HOST` | Redis host |
-| `REDIS_PORT` | Redis port |
-| `REDIS_PASSWORD` | Redis password |
+| `VALKEY_URL` | Full Valkey URL (overrides config) |
+| `VALKEY_HOST` | Valkey host |
+| `VALKEY_PORT` | Valkey port |
+| `VALKEY_PASSWORD` | Valkey password |
 
 ## Usage
 
-### Basic Redis Client
+### Basic Valkey Client
 
 ```python
-from src.core.database import RedisClient
+from src.core.database import ValkeyClient
 
-client = RedisClient()
+client = ValkeyClient()
 client.connect()
 
 # Basic operations
@@ -419,7 +414,7 @@ client.close()
 ### Context Manager
 
 ```python
-with RedisClient() as client:
+with ValkeyClient() as client:
     client.set("key", "value")
     value = client.get("key")
 # Connection automatically closed
@@ -428,14 +423,14 @@ with RedisClient() as client:
 ### Module-Level Setup
 
 ```python
-from src.core.database import setup_redis, get_redis_client, redis_available
+from src.core.database import setup_valkey, get_valkey_client, valkey_available
 
 # Setup once in main.py
-setup_redis()
+setup_valkey()
 
 # Use anywhere
-if redis_available():
-    client = get_redis_client()
+if valkey_available():
+    client = get_valkey_client()
     client.set("key", "value")
 ```
 
@@ -535,9 +530,9 @@ reset_rate_limit("user:1:api")
 ### Pub/Sub
 
 ```python
-from src.core.database import RedisClient
+from src.core.database import ValkeyClient
 
-client = RedisClient()
+client = ValkeyClient()
 client.connect()
 
 # Publish
@@ -574,10 +569,10 @@ print(health)
 
 ### Authentication
 
-Set a password in Redis and config:
+Set a password in Valkey and config:
 
 ```yaml
-redis:
+valkey:
   password: "your-secure-password"
 ```
 
@@ -586,7 +581,7 @@ redis:
 For encrypted connections:
 
 ```yaml
-redis:
+valkey:
   ssl: true
   ssl_cert_reqs: required
   ssl_ca_certs: /path/to/ca-cert.pem
@@ -597,11 +592,11 @@ redis:
 All keys are automatically prefixed to avoid collisions:
 
 ```yaml
-redis:
+valkey:
   key_prefix: "plexichat:"
 ```
 
-A key `user:1` becomes `plexichat:user:1` in Redis.
+A key `user:1` becomes `plexichat:user:1` in Valkey.
 
 ### Input Sanitization
 
@@ -614,54 +609,51 @@ Keys are automatically sanitized to prevent injection:
 
 ```python
 from src.core.database import (
-    RedisError,
-    RedisConnectionError,
-    RedisOperationError,
+    ValkeyError,
+    ValkeyConnectionError,
+    ValkeyOperationError,
 )
 
 try:
     client.connect()
-except RedisConnectionError as e:
-    logger.error(f"Redis unavailable: {e}")
+except ValkeyConnectionError as e:
+    logger.error(f"Valkey unavailable: {e}")
     # Fall back to database-only mode
 
 try:
     client.set("key", "value")
-except RedisOperationError as e:
-    logger.error(f"Redis operation failed: {e}")
+except ValkeyOperationError as e:
+    logger.error(f"Valkey operation failed: {e}")
 ```
 
 ## Graceful Degradation
 
-The cache module gracefully handles Redis unavailability:
+The cache module gracefully handles Valkey unavailability:
 
 ```python
-from src.core.database import cached, redis_available
+from src.core.database import cached, valkey_available
 
 @cached(ttl=300)
 def get_user(user_id: int) -> dict:
     return db.fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
 
-# If Redis is down, function executes normally without caching
+# If Valkey is down, function executes normally without caching
 user = get_user(1)
 
 # Check availability
-if redis_available():
-    # Redis-specific operations
+if valkey_available():
+    # Valkey-specific operations
     pass
 ```
 
 ## Testing
 
 ```bash
-# Install test dependencies
-pip install fakeredis>=2.20
-
 # Run tests
-pytest src/tests/test_redis.py -v
+pytest src/tests/test_valkey.py -v
 ```
 
-Tests use `fakeredis` for unit tests (no real Redis required). Integration tests with real Redis are skipped if Redis is unavailable.
+Tests use an in-memory mock for unit tests. Integration tests with real Valkey are skipped if Valkey is unavailable.
 
 
 ---
@@ -670,9 +662,9 @@ Tests use `fakeredis` for unit tests (no real Redis required). Integration tests
 
 In-memory caching for small, frequently-read reference tables that rarely change.
 
-## When to Use RAM Cache vs Redis
+## When to Use RAM Cache vs Valkey
 
-| Use Case | RAM Cache | Redis |
+| Use Case | RAM Cache | Valkey |
 |----------|-----------|-------|
 | Static reference data (categories, config) | OK | |
 | User-specific data (settings, presence) | | OK |
@@ -727,7 +719,7 @@ Plexichat uses a multi-tier caching strategy:
 - **Data**: Static reference tables (search_categories)
 - **Latency**: ~1 nanosecond
 
-## Tier 2: Redis Cache (External)
+## Tier 2: Valkey Cache (External)
 - **TTL**: 30 seconds to 10 minutes depending on data type
 - **Data**: User data, server info, notification settings, sessions, presence
 - **Latency**: ~0.5-2ms
@@ -757,4 +749,4 @@ Caches are invalidated on writes:
 
 ## Graceful Degradation
 
-If Redis is unavailable, all operations fall back to direct database queries. The application continues to function, just with higher latency.
+If Valkey is unavailable, all operations fall back to direct database queries. The application continues to function, just with higher latency.

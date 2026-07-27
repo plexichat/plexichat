@@ -121,14 +121,14 @@ If still fails, check database logs:
 docker compose logs db --tail 50
 ```
 
-### Error: "Could not connect to Redis"
+### Error: "Could not connect to Valkey"
 
 **Message:**
 ```
-ERROR: Failed to connect to redis at redis:6379
+ERROR: Failed to connect to valkey at valkey:6379
 ```
 
-**Cause:** Redis service not running or wrong password
+**Cause:** Valkey service not running or wrong password
 
 **Fix:**
 

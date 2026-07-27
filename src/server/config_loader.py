@@ -279,9 +279,7 @@ def _apply_env_overrides() -> None:
         try:
             port_val = int(scanner_port)
             if port_val < 1 or port_val > 65535:
-                raise ValueError(
-                    f"Port must be between 1 and 65535, got {port_val}"
-                )
+                raise ValueError(f"Port must be between 1 and 65535, got {port_val}")
             media_config["scanner_port"] = port_val
         except ValueError as e:
             logger.warning(

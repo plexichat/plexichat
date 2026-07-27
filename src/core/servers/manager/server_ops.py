@@ -3,7 +3,7 @@ from typing import Optional, List
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
-from src.core.database import cache_get, cache_set, cache_delete, redis_available
+from src.core.database import cache_get, cache_set, cache_delete, valkey_available
 
 from ..models import (
     Server,
@@ -130,7 +130,7 @@ class ServerOpsMixin(ServerProtocol):
             self._permission_cache_prefix, f"{owner_id}:{server_id}:"
         )
 
-        if redis_available():
+        if valkey_available():
             cache_delete(f"user_servers:{owner_id}")
             cache_delete(f"server:{server_id}")
             cache_delete(f"server_channels:{server_id}")
@@ -192,7 +192,7 @@ class ServerOpsMixin(ServerProtocol):
             return None
 
         cache_key = f"server:{server_id}"
-        if redis_available():
+        if valkey_available():
             cached = cache_get(cache_key)
             if cached:
                 logger.debug(f"get_server: cache hit for {server_id}")
@@ -215,7 +215,7 @@ class ServerOpsMixin(ServerProtocol):
             return None
         server = _row_to_server(row, self._encrypt_descriptions)
 
-        if redis_available():
+        if valkey_available():
             cache_set(cache_key, _server_to_dict(server), ttl=300)
 
         return server
@@ -520,7 +520,7 @@ class ServerOpsMixin(ServerProtocol):
                 changes,
             )
 
-            if redis_available():
+            if valkey_available():
                 cache_delete(f"server:{server_id}")
 
         result = self.get_server(server_id, user_id)
@@ -542,7 +542,7 @@ class ServerOpsMixin(ServerProtocol):
             (now, server_id),
         )
 
-        if redis_available():
+        if valkey_available():
             cache_delete(f"server:{server_id}")
 
         self._log_audit(server_id, user_id, AuditLogAction.SERVER_DELETE)

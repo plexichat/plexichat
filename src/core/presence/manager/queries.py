@@ -1,6 +1,6 @@
 """Online query operations mixin.
 
-Handles queries for online friends and server members using Redis
+Handles queries for online friends and server members using Valkey
 set intersection for high-speed lookups with database fallback.
 """
 
@@ -8,8 +8,8 @@ from typing import List
 
 import utils.logger as logger
 from src.core.database import (
-    redis_available,
-    get_redis_client,
+    valkey_available,
+    get_valkey_client,
 )
 
 from .base import PresenceManagerBase
@@ -36,15 +36,15 @@ class OnlineQueryMixin(PresenceManagerBase):
         if not friend_ids:
             return []
 
-        if redis_available():
-            client = get_redis_client()
+        if valkey_available():
+            client = get_valkey_client()
             if client:
                 try:
                     online_set = client.smembers("presence:online_users")
                     online_ids = {int(uid) for uid in online_set}
                     return [fid for fid in friend_ids if fid in online_ids]
                 except Exception as e:
-                    logger.debug(f"Redis get_online_friends failed: {e}")
+                    logger.debug(f"Valkey get_online_friends failed: {e}")
 
         online_statuses = [
             UserStatus.ONLINE.value,
@@ -86,15 +86,15 @@ class OnlineQueryMixin(PresenceManagerBase):
                 return []
             member_ids = [m.user_id for m in members]
 
-        if redis_available():
-            client = get_redis_client()
+        if valkey_available():
+            client = get_valkey_client()
             if client:
                 try:
                     online_set = client.smembers("presence:online_users")
                     online_ids = {int(uid) for uid in online_set}
                     return [mid for mid in member_ids if mid in online_ids]
                 except Exception as e:
-                    logger.debug(f"Redis get_online_server_members failed: {e}")
+                    logger.debug(f"Valkey get_online_server_members failed: {e}")
 
         online_statuses = [
             UserStatus.ONLINE.value,

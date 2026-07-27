@@ -95,13 +95,13 @@ Retries: 3
 Start period: 10 seconds
 ```
 
-### Redis Healthcheck
+### Valkey Healthcheck
 
 **Command:** `redis-cli ping`
 
 **Manual Test:**
 ```bash
-docker compose exec redis redis-cli ping
+docker compose exec valkey redis-cli ping
 ```
 
 **Expected Output:**
@@ -169,7 +169,7 @@ WARNING backend is unhealthy
 
 **Possible Causes:**
 1. Database connection failed
-2. Redis connection failed
+2. Valkey connection failed
 3. MinIO connection failed
 4. Application crashed
 
@@ -231,7 +231,7 @@ cat backup.sql | docker compose exec -T db psql -U plexichat plexichat
 docker compose up
 ```
 
-### Redis unhealthy
+### Valkey unhealthy
 
 **Log:**
 ```
@@ -239,7 +239,7 @@ WARNING redis is unhealthy
 ```
 
 **Possible Causes:**
-1. Redis process crashed
+1. Valkey process crashed
 2. Port 6379 conflict
 3. Out of memory
 
@@ -404,7 +404,7 @@ curl -f http://localhost:8000/health || echo "FAILED"
 echo "Database health..."
 docker compose exec db pg_isready -U plexichat || echo "FAILED"
 
-echo "Redis health..."
+echo "Valkey health..."
 docker compose exec redis redis-cli ping || echo "FAILED"
 
 echo "MinIO health..."

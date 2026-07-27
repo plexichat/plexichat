@@ -2,7 +2,7 @@ from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
-from src.core.database import redis_available
+from src.core.database import valkey_available
 
 from ..models import (
     ChannelType,
@@ -91,7 +91,7 @@ class ChannelOpsMixin(ServerProtocol):
             return None
 
         key = f"slowmode:{channel_id}:{user_id}"
-        if redis_available():
+        if valkey_available():
             try:
                 from src.core.database import cache_get, cache_set
 
@@ -106,7 +106,7 @@ class ChannelOpsMixin(ServerProtocol):
                         pass
                 cache_set(key, str(now), ttl=slowmode_seconds)
             except Exception as e:
-                logger.debug(f"Slowmode check failed (Redis error): {e}")
+                logger.debug(f"Slowmode check failed (Valkey error): {e}")
         return None
 
     def get_channel_messages(

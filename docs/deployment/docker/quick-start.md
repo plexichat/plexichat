@@ -52,7 +52,7 @@ backend    | |                      Version a.1.0-110                       |
 backend    | +==============================================================+
 client     | healthy
 db         | healthy
-redis      | healthy
+valkey     | healthy
 minio      | healthy
 ```
 
@@ -65,7 +65,7 @@ Expected output:
 ```
 NAME       IMAGE           STATUS           PORTS
 db         postgres:16     Up 2 min (healthy)   5432/tcp
-redis      redis:7         Up 2 min (healthy)   6379/tcp
+valkey     valkey/valkey:9.1.1-alpine    Up 2 min (healthy)   6379/tcp
 minio      minio:latest    Up 2 min (healthy)   9000/tcp, 9001/tcp
 backend    plexichat:dev   Up 1 min (healthy)   0.0.0.0:8000->8000/tcp
 client     nginx:latest    Up 1 min (healthy)   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp

@@ -1,33 +1,23 @@
-"""Admin and monitoring operations mixin."""
-
 import time
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List
 
 import utils.logger as logger
 
-from .base import RedisClientBase, RedisOperationError
+from .base import ValkeyClientBase, ValkeyOperationError
 
 
-class AdminMixin(RedisClientBase):
-    """Mixin providing admin/monitoring operations."""
-
+class AdminMixin(ValkeyClientBase):
     def ping(self) -> bool:
-        """Check if Redis is responsive."""
         if not self._connected or not self._client:
             return False
 
         try:
-            return self._client.ping()
+            self._client.ping()
+            return True
         except Exception:
             return False
 
     def health_check(self) -> Dict[str, Any]:
-        """
-        Perform a health check on Redis connection.
-
-        Returns:
-            Dict with health status information.
-        """
         result = {
             "enabled": self.enabled,
             "connected": self._connected,
@@ -54,51 +44,48 @@ class AdminMixin(RedisClientBase):
         return result
 
     def flush_prefix(self) -> int:
-        """
-        Delete all keys with the configured prefix.
-        Use with caution!
-
-        Returns:
-            Number of keys deleted.
-        """
         self._ensure_connected()
         client = self._client
         assert client is not None
 
         try:
             pattern = f"{self.key_prefix}*"
-            keys = cast(List[str], client.keys(pattern))
+            raw_keys = self._scan_keys(client, pattern)
+            keys = self._decode_list(raw_keys) if raw_keys else []
             if keys:
-                return int(client.delete(*keys))
+                return int(client.delete(keys))
             return 0
         except Exception as e:
-            logger.error(f"Redis flush_prefix failed: {e}")
-            raise RedisOperationError(f"flush_prefix failed: {e}")
+            logger.error(f"GLIDE flush_prefix failed: {e}")
+            raise ValkeyOperationError(f"flush_prefix failed: {e}")
 
     def keys(self, pattern: str = "*") -> List[str]:
-        """
-        Get keys matching a pattern using non-blocking SCAN.
-
-        Args:
-            pattern: Glob-style pattern (e.g., "user:*").
-
-        Returns:
-            List of matching keys (without prefix).
-        """
         self._ensure_connected()
         client = self._client
         assert client is not None
         full_pattern = self._prefixed_key(pattern)
 
         try:
-            keys = []
-            for k in client.scan_iter(match=full_pattern, count=100):
-                keys.append(k)
-
+            raw_keys = self._scan_keys(client, full_pattern)
             prefix_len = len(self.key_prefix)
+            decoded = self._decode_list(raw_keys) if raw_keys else []
             return [
-                k[prefix_len:] if k.startswith(self.key_prefix) else k for k in keys
+                k[prefix_len:] if k.startswith(self.key_prefix) else k for k in decoded
             ]
         except Exception as e:
-            logger.error(f"Redis KEYS (SCAN) failed for {pattern}: {e}")
-            raise RedisOperationError(f"SCAN failed: {e}")
+            logger.error(f"GLIDE KEYS (SCAN) failed for {pattern}: {e}")
+            raise ValkeyOperationError(f"SCAN failed: {e}")
+
+    @staticmethod
+    def _scan_keys(client: Any, pattern: str) -> List[bytes]:
+        keys: List[bytes] = []
+        cursor: object = b"0"
+        while True:
+            result = client.scan(cursor, match=pattern, count=100)
+            cursor = result[0]
+            batch = result[1]
+            if batch:
+                keys.extend(batch)
+            if cursor == b"0" or cursor == "0":
+                break
+        return keys

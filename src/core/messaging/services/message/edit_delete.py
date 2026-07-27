@@ -215,7 +215,7 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         cache_delete(f"msg:obj:{message_id}")
 
         try:
-            from src.core.database import get_redis_client as get_client
+            from src.core.database import get_valkey_client as get_client
 
             client = get_client()
             if client:

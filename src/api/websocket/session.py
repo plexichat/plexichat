@@ -7,7 +7,7 @@ from typing import Optional, Dict, List, Set, Any
 import time
 import secrets
 import threading
-from src.core.database import get_redis_client, redis_available
+from src.core.database import get_valkey_client, valkey_available
 import utils.logger as logger
 
 from .connection import Connection, ConnectionState
@@ -68,18 +68,18 @@ class SessionManager:
         self._user_connections: Dict[int, Set[str]] = {}
         self._lock = threading.Lock()
 
-        # Redis settings
+        # Valkey settings
         self._worker_id = "unknown"
-        client = get_redis_client()
+        client = get_valkey_client()
         if client:
             self._worker_id = client.worker_id
 
-    def _redis_register_connection(self, user_id: int, connection_id: str) -> None:
-        """Register a connection in Redis for global tracking."""
-        if not redis_available():
+    def _valkey_register_connection(self, user_id: int, connection_id: str) -> None:
+        """Register a connection in Valkey for global tracking."""
+        if not valkey_available():
             return
 
-        client = get_redis_client()
+        client = get_valkey_client()
         if not client:
             return
 
@@ -98,14 +98,14 @@ class SessionManager:
             client.hset(f"conn:{connection_id}:info", "user_id", str(user_id))
             client.expire(f"conn:{connection_id}:info", 3600)  # 1h safety TTL
         except Exception as e:
-            logger.debug(f"Redis session registration failed: {e}")
+            logger.debug(f"Valkey session registration failed: {e}")
 
-    def _redis_unregister_connection(self, user_id: int, connection_id: str) -> None:
-        """Unregister a connection from Redis."""
-        if not redis_available():
+    def _valkey_unregister_connection(self, user_id: int, connection_id: str) -> None:
+        """Unregister a connection from Valkey."""
+        if not valkey_available():
             return
 
-        client = get_redis_client()
+        client = get_valkey_client()
         if not client:
             return
 
@@ -116,7 +116,7 @@ class SessionManager:
             )
             client.delete(f"conn:{connection_id}:info")
         except Exception as e:
-            logger.debug(f"Redis session unregistration failed: {e}")
+            logger.debug(f"Valkey session unregistration failed: {e}")
 
     @property
     def heartbeat_interval_ms(self) -> int:
@@ -142,9 +142,9 @@ class SessionManager:
         conn_id = connection.connection_id
         with self._lock:
             self._connections[conn_id] = connection
-        # Redis I/O outside lock to avoid blocking all connection operations
+        # Valkey I/O outside lock to avoid blocking all connection operations
         if user_id:
-            self._redis_register_connection(user_id, conn_id)
+            self._valkey_register_connection(user_id, conn_id)
 
     def remove_connection(self, connection_id: str) -> Optional[Connection]:
         """
@@ -166,9 +166,9 @@ class SessionManager:
                 user_conns.discard(connection_id)
                 if not user_conns:
                     self._user_connections.pop(user_id, None)
-        # Redis I/O outside lock
+        # Valkey I/O outside lock
         if user_id and connection:
-            self._redis_unregister_connection(user_id, connection_id)
+            self._valkey_unregister_connection(user_id, connection_id)
         return connection
 
     def get_connection(self, connection_id: str) -> Optional[Connection]:
@@ -190,8 +190,8 @@ class SessionManager:
             local_count = len(self._user_connections.get(user_id, set()))
 
         # 2. Add global count if available
-        if redis_available():
-            client = get_redis_client()
+        if valkey_available():
+            client = get_valkey_client()
             if client:
                 try:
                     # smembers returns a set of strings like "worker_id:connection_id"
@@ -236,8 +236,8 @@ class SessionManager:
             user_conns = self._user_connections.setdefault(user_id, set())
             user_conns.add(connection.connection_id)
 
-        # Register in Redis since we now know the user_id
-        self._redis_register_connection(user_id, connection.connection_id)
+        # Register in Valkey since we now know the user_id
+        self._valkey_register_connection(user_id, connection.connection_id)
 
         connection.set_identified(user_id, session_id, intents)
         return session
@@ -390,11 +390,11 @@ class SessionManager:
         return len(stale_ids)
 
     def clear_all_global_sessions(self) -> None:
-        """Clear all connections belonging to this worker from Redis (on shutdown)."""
-        if not redis_available():
+        """Clear all connections belonging to this worker from Valkey (on shutdown)."""
+        if not valkey_available():
             return
 
-        client = get_redis_client()
+        client = get_valkey_client()
         if not client:
             return
 
@@ -403,15 +403,15 @@ class SessionManager:
             with self._lock:
                 users = list(self._user_connections.keys())
 
-            # 2. Remove each connection from Redis
+            # 2. Remove each connection from Valkey
             for user_id in users:
                 conn_ids = self._user_connections.get(user_id, set())
                 for cid in list(conn_ids):
-                    self._redis_unregister_connection(user_id, cid)
+                    self._valkey_unregister_connection(user_id, cid)
 
-            logger.info(f"Cleared all Redis sessions for worker {self._worker_id}")
+            logger.info(f"Cleared all Valkey sessions for worker {self._worker_id}")
         except Exception as e:
-            logger.debug(f"Redis global session cleanup failed: {e}")
+            logger.debug(f"Valkey global session cleanup failed: {e}")
 
     def get_all_connections(self) -> List[Connection]:
         """

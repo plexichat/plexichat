@@ -2,21 +2,21 @@
 Rate limiting helpers.
 
 Provides check_rate_limit and reset_rate_limit functions
-with Redis primary and in-memory fallback.
+with Valkey primary and in-memory fallback.
 """
 
 import time
 from typing import Dict, List, Tuple
 
 import utils.logger as logger
-from ..redis_client import (
+from ..valkey_client import (
     get_client,
     is_available,
-    RedisOperationError,
+    ValkeyOperationError,
 )
 from .operations import cache_delete
 
-# Global dictionary for in-memory rate limiting when Redis is unavailable
+# Global dictionary for in-memory rate limiting when Valkey is unavailable
 _mem_rate_limits: Dict[str, List[float]] = {}
 
 
@@ -63,7 +63,7 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, i
         remaining = max(0, limit - current)
         allowed = current <= limit
         return allowed, remaining
-    except RedisOperationError as e:
+    except ValkeyOperationError as e:
         logger.warning(f"Rate limit check failed for {key}: {e}")
         return True, limit
 

@@ -46,7 +46,7 @@ DB_POOL_MIN_CONNECTIONS=5
 DB_POOL_MAX_CONNECTIONS=20
 
 # Redis
-REDIS_PASSWORD=your-redis-password
+VALKEY_PASSWORD=your-valkey-password
 
 # MinIO
 MINIO_ROOT_PASSWORD=your-minio-password
@@ -113,11 +113,11 @@ See [Connection Pooling](connection-pooling.md) for tuning guidance.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `REDIS_HOST` | `redis` | Redis hostname |
-| `REDIS_PORT` | `6379` | Redis port |
-| `REDIS_PASSWORD` | auto-generated | Redis password (CHANGE THIS) |
-| `REDIS_ENABLED` | true | Enable Redis caching |
-| `REDIS_CONNECTION_POOL` | 50 | Max Redis connections |
+| `VALKEY_HOST` | `valkey` | Valkey hostname |
+| `VALKEY_PORT` | `6379` | Valkey port |
+| `VALKEY_PASSWORD` | auto-generated | Valkey password (CHANGE THIS) |
+| `VALKEY_ENABLED` | true | Enable Valkey caching |
+| `VALKEY_CONNECTION_POOL` | 50 | Max Valkey connections |
 
 ### MinIO / S3 Storage
 
@@ -218,12 +218,12 @@ Result: Backend will use **40** (system env wins)
 
 ```bash
 POSTGRES_PASSWORD=your-strong-password
-REDIS_PASSWORD=your-strong-password
+VALKEY_PASSWORD=your-valkey-password
 MINIO_ROOT_PASSWORD=your-strong-password
 
 DB_POOL_MIN_CONNECTIONS=20
 DB_POOL_MAX_CONNECTIONS=150
-REDIS_CONNECTION_POOL=100
+VALKEY_CONNECTION_POOL=100
 
 LOG_LEVEL=INFO
 MONITORING_ALERT_ACTIVE_CONNECTIONS=5000
@@ -234,7 +234,7 @@ MONITORING_ALERT_ACTIVE_CONNECTIONS=5000
 ```bash
 DB_POOL_MIN_CONNECTIONS=2
 DB_POOL_MAX_CONNECTIONS=10
-REDIS_CONNECTION_POOL=10
+VALKEY_CONNECTION_POOL=10
 
 LOG_LEVEL=DEBUG
 ```

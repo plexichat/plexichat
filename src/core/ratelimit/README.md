@@ -12,7 +12,7 @@ Advanced rate limiting for Plexichat API with multiple bucket types, algorithms,
 - Admin/internal bypass
 - Standard rate limit headers
 - Thread-safe in-memory storage
-- Redis adapter interface (for distributed deployments)
+- Valkey adapter interface (for distributed deployments)
 - Route decorators for custom limits
 - FastAPI middleware integration
 
@@ -250,17 +250,17 @@ storage = MemoryStorage(
 ratelimit.setup(storage_backend=storage)
 ```
 
-### Redis (interface only)
+### Valkey (interface only)
 
 ```python
 from src.core.ratelimit.storage import RateLimitStorage
 
-class RedisStorage(RateLimitStorage):
-    def __init__(self, redis_client):
-        self.redis = redis_client
+class ValkeyStorage(RateLimitStorage):
+    def __init__(self, valkey_client):
+        self.valkey = valkey_client
 
     def get_bucket(self, key):
-        data = self.redis.get(f"ratelimit:{key}")
+        data = self.valkey.get(f"ratelimit:{key}")
         return json.loads(data) if data else None
 
     # Implement other methods...

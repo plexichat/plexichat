@@ -30,12 +30,12 @@ class ConfigPagesMixin:
             "/config-database",
         )
 
-    async def docs_config_redis(self, request: Request):
+    async def docs_config_valkey(self, request: Request):
         return await self._serve_page(
             request,
-            self._doc_path("deployment/configuration/config-redis.md"),
-            "Redis Configuration",
-            "/config-redis",
+            self._doc_path("deployment/configuration/config-valkey.md"),
+            "Valkey Configuration",
+            "/config-valkey",
         )
 
     async def docs_config_media(self, request: Request):

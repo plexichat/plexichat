@@ -80,7 +80,7 @@ For detailed configuration guidance for each module, refer to these guides:
 - **[Database Configuration](deployment/configuration/config-database.md)** - PostgreSQL/SQLite setup, connection pooling, migrations, and scaling
 - **[Email Configuration](deployment/configuration/config-email.md)** - SMTP settings for notifications and verification
 - **[Embed Configuration](deployment/configuration/config-embeds.md)** - URL preview and link embed settings
-- **[Redis Configuration](deployment/configuration/config-redis.md)** - Caching, session storage, connection pooling, and scaling strategies
+- **[Valkey Configuration](deployment/configuration/config-valkey.md)** - Caching, session storage, connection pooling, and scaling strategies
 - **[Media Configuration](deployment/configuration/config-media.md)** - File uploads, storage backends (local/S3), processing, and security
 - **[Voice Configuration](deployment/configuration/config-voice.md)** - WebRTC signaling, SFU backends, STUN/TURN servers, and NAT traversal
 - **[WebSocket Configuration](deployment/configuration/config-websocket.md)** - Gateway settings, compression, rate limits, and origin validation
@@ -109,7 +109,7 @@ These endpoints expose public constants and server state without revealing priva
 
 - `authentication` -- account policy, sessions, 2FA, login protections, age gate: [Authentication Configuration](deployment/configuration/config-authentication.md)
 - `database` -- persistence backend and pooling behavior: [Database Configuration](deployment/configuration/config-database.md)
-- `redis` -- caching, session storage, pub/sub: [Redis Configuration](deployment/configuration/config-redis.md)
+- `valkey` -- caching, session storage, pub/sub: [Valkey Configuration](deployment/configuration/config-valkey.md)
 - `media` -- upload rules, attachment processing, compression: [Media Configuration](deployment/configuration/config-media.md)
 - `voice` -- ICE servers, SFU backend, voice signaling: [Voice Configuration](deployment/configuration/config-voice.md)
 - `websocket` -- gateway settings, compression, rate limits: [WebSocket Configuration](deployment/configuration/config-websocket.md)

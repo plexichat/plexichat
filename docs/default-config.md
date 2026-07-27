@@ -49,11 +49,11 @@ database:
     auto_migrate: true
     migration_dir: /root/.plexichat/migrations
     irreversible_migration_delay_days: 7
-redis:
+valkey:
   enabled: false
-  host: ${REDIS_HOST:-localhost}
+  host: ${VALKEY_HOST:-localhost}
   port: 6379
-  password: ${REDIS_PASSWORD:-}
+  password: ${VALKEY_PASSWORD:-}
   db: 0
   ssl: false
   key_prefix: 'plexichat:'
@@ -887,10 +887,10 @@ database:
     password: "${POSTGRES_PASSWORD:-}"
     sslmode: require
 
-redis:
+valkey:
   enabled: true
-  host: "${REDIS_HOST:-localhost}"
-  password: "${REDIS_PASSWORD:-}"
+  host: "${VALKEY_HOST:-localhost}"
+  password: "${VALKEY_PASSWORD:-}"
 
 authentication:
   accounts:
@@ -909,7 +909,7 @@ authentication:
 - [Configuration Overview](configuration.md) - Discovery, interpolation, and module-specific guides
 - [Authentication Configuration](deployment/configuration/config-authentication.md) - Password policies, 2FA, sessions, account deletion
 - [Database Configuration](deployment/configuration/config-database.md) - PostgreSQL/SQLite setup, connection pooling, scaling
-- [Redis Configuration](deployment/configuration/config-redis.md) - Caching, session storage, connection pooling
+- [Valkey Configuration](deployment/configuration/config-valkey.md) - Caching, session storage, connection pooling
 - [Media Configuration](deployment/configuration/config-media.md) - Storage backends, file limits, processing, security
 - [Voice Configuration](deployment/configuration/config-voice.md) - SFU backends, STUN/TURN, NAT traversal
 - [WebSocket Configuration](deployment/configuration/config-websocket.md) - Gateway, compression, rate limits

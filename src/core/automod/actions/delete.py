@@ -68,9 +68,9 @@ class DeleteMessageAction(BaseAction):
                 cache_delete(f"msg:obj:{violation.message_id}")
                 invalidate_pattern(f"*messages_list:*{violation.channel_id}*")
                 invalidate_pattern(f"*messages_api:*{violation.channel_id}*")
-                # Clear recent messages Redis list too
+                # Clear recent messages Valkey list too
                 try:
-                    from src.core.database import get_redis_client as get_client
+                    from src.core.database import get_valkey_client as get_client
 
                     client = get_client()
                     if client:

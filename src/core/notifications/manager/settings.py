@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict
 
 from src.core.base import SnowflakeID
-from src.core.database import cache_get, cache_set, cache_delete, redis_available
+from src.core.database import cache_get, cache_set, cache_delete, valkey_available
 from ..models import (
     NotificationSettings,
     ChannelNotificationOverride,
@@ -65,7 +65,7 @@ class SettingsMixin(NotificationProtocol):
         self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
     ) -> NotificationSettings:
         cache_key = f"notif_settings:{user_id}:{server_id or 'global'}"
-        if redis_available():
+        if valkey_available():
             cached = cache_get(cache_key)
             if cached:
                 return NotificationSettings(
@@ -102,7 +102,7 @@ class SettingsMixin(NotificationProtocol):
                 mobile_push=True,
             )
 
-        if redis_available():
+        if valkey_available():
             cache_set(
                 cache_key,
                 {
@@ -182,7 +182,7 @@ class SettingsMixin(NotificationProtocol):
             )
 
         cache_key = f"notif_settings:{user_id}:{server_id or 'global'}"
-        if redis_available():
+        if valkey_available():
             cache_delete(cache_key)
 
         return self.get_notification_settings(user_id, server_id)

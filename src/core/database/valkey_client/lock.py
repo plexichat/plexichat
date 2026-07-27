@@ -1,31 +1,17 @@
-"""Distributed lock operations mixin."""
-
 import secrets
 import time
 from typing import Optional
 
 import utils.logger as logger
 
-from .base import RedisClientBase
+from .base import ValkeyClientBase
+from glide_sync import ExpirySet, ExpiryType, ConditionalChange
 
 
-class LockMixin(RedisClientBase):
-    """Mixin providing distributed lock operations."""
-
+class LockMixin(ValkeyClientBase):
     def acquire_lock(
         self, key: str, timeout: float = 10.0, lock_timeout: int = 30000
     ) -> Optional[str]:
-        """
-        Acquire a distributed lock.
-
-        Args:
-            key: Lock key.
-            timeout: How long to wait for the lock in seconds.
-            lock_timeout: How long the lock is valid for in milliseconds.
-
-        Returns:
-            The lock value (token) if acquired, None otherwise.
-        """
         self._ensure_connected()
         client = self._client
         assert client is not None
@@ -35,22 +21,18 @@ class LockMixin(RedisClientBase):
 
         start_time = time.time()
         while time.time() - start_time < timeout:
-            if client.set(full_key, lock_token, nx=True, px=lock_timeout):
+            result = client.set(
+                full_key,
+                lock_token,
+                conditional_set=ConditionalChange.ONLY_IF_DOES_NOT_EXIST,
+                expiry=ExpirySet(ExpiryType.MILLSEC, lock_timeout),
+            )
+            if result is not None:
                 return lock_token
             time.sleep(0.05)
         return None
 
     def release_lock(self, key: str, token: str) -> bool:
-        """
-        Release a distributed lock safely using a Lua script.
-
-        Args:
-            key: Lock key.
-            token: The token returned by acquire_lock.
-
-        Returns:
-            True if the lock was released, False if token mismatch or key missing.
-        """
         self._ensure_connected()
 
         script = """

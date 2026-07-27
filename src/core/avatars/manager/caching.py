@@ -11,11 +11,11 @@ from .protocol import AvatarProtocol
 
 
 class AvatarCachingMixin(AvatarProtocol):
-    """Mixin handling Redis caching of avatar data.
+    """Mixin handling Valkey caching of avatar data.
 
     BOUNDED: a per-process LRU caps the active cache key set so a
     long-running Plexichat instance with high avatar churn cannot
-    leak entries indefinitely while Redis TTL is the only filter.
+    leak entries indefinitely while Valkey TTL is the only filter.
     The 1024-entry ceiling is sized for a single container; tune via
     ``_AVATAR_CACHE_MAX`` for higher-density deployments.
     """
@@ -33,18 +33,18 @@ class AvatarCachingMixin(AvatarProtocol):
         self._key_lock = threading.Lock()
 
     def _cache_binary(self, key: str, data: bytes, ttl: int = 3600) -> None:
-        """Cache binary data in Redis.
+        """Cache binary data in Valkey.
 
         TRACK the key in the bounded in-process set so we can later
         prune if the LRU is full.  We do NOT keep the data here —
-        Redis owns the bytes; the in-process set is only a keydir.
+        Valkey owns the bytes; the in-process set is only a keydir.
         """
-        from src.core.database import get_redis_client, redis_available
+        from src.core.database import get_valkey_client, valkey_available
 
-        if not redis_available():
+        if not valkey_available():
             return
         try:
-            client = get_redis_client()
+            client = get_valkey_client()
             if client:
                 client.set_bin(key, data, ttl=ttl)
                 with self._key_lock:
@@ -59,13 +59,13 @@ class AvatarCachingMixin(AvatarProtocol):
             logger.debug(f"Failed to cache binary data for {key}: {e}")
 
     def _get_cached_binary(self, key: str) -> Optional[bytes]:
-        """Get cached binary data from Redis."""
-        from src.core.database import get_redis_client, redis_available
+        """Get cached binary data from Valkey."""
+        from src.core.database import get_valkey_client, valkey_available
 
-        if not redis_available():
+        if not valkey_available():
             return None
         try:
-            client = get_redis_client()
+            client = get_valkey_client()
             if client:
                 return client.get_bin(key)
         except Exception as e:
@@ -73,13 +73,13 @@ class AvatarCachingMixin(AvatarProtocol):
         return None
 
     def _delete_cached_binary(self, key: str) -> None:
-        """Delete cached binary data from Redis."""
-        from src.core.database import get_redis_client, redis_available
+        """Delete cached binary data from Valkey."""
+        from src.core.database import get_valkey_client, valkey_available
 
-        if not redis_available():
+        if not valkey_available():
             return
         try:
-            client = get_redis_client()
+            client = get_valkey_client()
             if client:
                 client.delete(key)
         except Exception as e:

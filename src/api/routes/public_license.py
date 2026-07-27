@@ -50,8 +50,8 @@ class NonceStore:
     mapped to its absolute expiry timestamp; lookups return ``False``
     for unknown, expired, or already-consumed nonces.
 
-    Backed by Redis when available so the store works across multiple
-    API workers. Falls back to an in-process dict when Redis is not
+    Backed by Valkey when available so the store works across multiple
+    API workers. Falls back to an in-process dict when Valkey is not
     configured (single-worker mode only).
     """
 
@@ -61,43 +61,43 @@ class NonceStore:
         self._ttl_seconds = ttl_seconds
         self._lock = threading.Lock()
         self._nonces: Dict[str, float] = {}
-        self._redis = None
-        self._redis_checked = False
+        self._valkey = None
+        self._valkey_checked = False
 
-    def _get_redis(self):
-        """Return the configured Redis client, or ``None`` if unavailable.
+    def _get_valkey(self):
+        """Return the configured Valkey client, or ``None`` if unavailable.
 
         Result is memoized after the first call.
         """
-        if self._redis_checked:
-            return self._redis
-        self._redis_checked = True
+        if self._valkey_checked:
+            return self._valkey
+        self._valkey_checked = True
         try:
-            from src.core.database.redis_client import get_client
+            from src.core.database.valkey_client import get_client
 
-            self._redis = get_client()
+            self._valkey = get_client()
         except Exception as e:
-            logger.debug(f"Redis client unavailable for nonce store: {e}")
-            self._redis = None
-        return self._redis
+            logger.debug(f"Valkey client unavailable for nonce store: {e}")
+            self._valkey = None
+        return self._valkey
 
-    def _redis_key(self, nonce: str) -> str:
+    def _valkey_key(self, nonce: str) -> str:
         return f"{self.NONCE_KEY_PREFIX}{nonce}"
 
     def issue(self) -> Tuple[str, int]:
         """Generate a new nonce, store it, and return ``(nonce, ttl)``."""
         raw = secrets.token_bytes(32)
         nonce = base64.b64encode(raw).decode("ascii")
-        redis_client = self._get_redis()
-        if redis_client is not None:
-            # Fail closed on Redis errors: do NOT fall through to the
+        valkey_client = self._get_valkey()
+        if valkey_client is not None:
+            # Fail closed on Valkey errors: do NOT fall through to the
             # in-process store. A split-brain nonce would let an
             # attacker replay a nonce via a different worker.
             try:
-                redis_client.set(self._redis_key(nonce), "1", ttl=self._ttl_seconds)
+                valkey_client.set(self._valkey_key(nonce), "1", ttl=self._ttl_seconds)
                 return nonce, self._ttl_seconds
             except Exception as e:
-                logger.error(f"Redis SET failed for license nonce: {e}")
+                logger.error(f"Valkey SET failed for license nonce: {e}")
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="License challenge store is unavailable",
@@ -112,15 +112,15 @@ class NonceStore:
         """Atomically validate-and-remove a nonce. Returns True on success."""
         if not nonce:
             return False
-        redis_client = self._get_redis()
-        if redis_client is not None:
+        valkey_client = self._get_valkey()
+        if valkey_client is not None:
             try:
-                result = redis_client.eval_lua(
-                    _CONSUME_LUA, keys=[self._redis_key(nonce)], args=[]
+                result = valkey_client.eval_lua(
+                    _CONSUME_LUA, keys=[self._valkey_key(nonce)], args=[]
                 )
                 return bool(int(result))
             except Exception as e:
-                logger.error(f"Redis EVAL failed for license nonce: {e}")
+                logger.error(f"Valkey EVAL failed for license nonce: {e}")
                 return False
         with self._lock:
             entry = self._nonces.pop(nonce, None)

@@ -11,7 +11,7 @@ import utils.config as config
 def initialize_modules(
     modules_store: dict, worker_id: str
 ) -> Tuple[Any, Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]]:
-    from src.core.database import Database, setup_redis
+    from src.core.database import Database, setup_valkey
     from src.core import (
         auth,
         messaging,
@@ -92,21 +92,21 @@ def initialize_modules(
 
     db.connect()
 
-    redis_config = config.get("redis") or {}
-    if redis_config.get("enabled", False):
-        logger.info("Initializing Redis...")
-        redis_client = setup_redis()
-        if redis_client and redis_client.ping():
-            redis_client.set_worker_id(worker_id)
+    valkey_config = config.get("valkey") or {}
+    if valkey_config.get("enabled", False):
+        logger.info("Initializing Valkey...")
+        valkey_client = setup_valkey()
+        if valkey_client and valkey_client.ping():
+            valkey_client.set_worker_id(worker_id)
             logger.info(
-                f"Connected to Redis at {redis_config.get('host', 'localhost')}:{redis_config.get('port', 6379)} (Worker ID: {worker_id})"
+                f"Connected to Valkey at {valkey_config.get('host', 'localhost')}:{valkey_config.get('port', 6379)} (Worker ID: {worker_id})"
             )
         else:
             logger.warning(
-                "Redis is enabled but connection failed - continuing without Redis"
+                "Valkey is enabled but connection failed - continuing without Valkey"
             )
     else:
-        logger.info("Redis is disabled in configuration")
+        logger.info("Valkey is disabled in configuration")
 
     try:
         from src.utils import encryption
@@ -558,19 +558,19 @@ def initialize_modules(
         try:
             from src.core import ratelimit
             from src.core.ratelimit.storage import (
-                RedisStorage,
+                ValkeyStorage,
                 MemoryStorage,
                 DatabaseStorage,
             )
-            from src.core.database.redis_client import (
-                is_available as redis_is_available,
+            from src.core.database.valkey_client import (
+                is_available as valkey_is_available,
             )
 
             def init_ratelimit():
                 storage = None
-                if redis_is_available():
-                    storage = RedisStorage()
-                    logger.info("Using Redis storage for rate limiting")
+                if valkey_is_available():
+                    storage = ValkeyStorage()
+                    logger.info("Using Valkey storage for rate limiting")
                 elif db:
                     storage = DatabaseStorage(db)
                     db_type = db.type.capitalize()
@@ -590,7 +590,7 @@ def initialize_modules(
                         "independent counters per worker, allowing rate-limit bypass."
                     )
                     logger.warning(
-                        "To fix: Enable Redis or configure a shared database."
+                        "To fix: Enable Valkey or configure a shared database."
                     )
                     logger.warning("=" * 60)
 

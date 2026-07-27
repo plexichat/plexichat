@@ -1616,7 +1616,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "multiprocess: Multiprocess tests")
     config.addinivalue_line("markers", "requires_postgres: Tests requiring PostgreSQL")
     config.addinivalue_line(
-        "markers", "needs_redis: Tests that require a live Redis instance"
+        "markers", "needs_valkey: Tests that require a live Valkey instance"
     )
     config.addinivalue_line(
         "markers", "crypto_heavy: Tests that use real Argon2/HKDF/chain hashing"

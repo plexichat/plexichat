@@ -1,9 +1,9 @@
-"""RedisClient composition class.
+"""ValkeyClient composition class.
 
-Combines all mixins into a single RedisClient class.
+Combines all mixins into a single ValkeyClient class.
 """
 
-from .base import RedisClientBase
+from .base import ValkeyClientBase
 from .basic import BasicMixin
 from .json import JSONMixin
 from .hash import HashMixin
@@ -15,7 +15,7 @@ from .lock import LockMixin
 from .admin import AdminMixin
 
 
-class RedisClient(
+class ValkeyClient(
     BasicMixin,
     JSONMixin,
     HashMixin,
@@ -25,9 +25,9 @@ class RedisClient(
     PubSubMixin,
     LockMixin,
     AdminMixin,
-    RedisClientBase,
+    ValkeyClientBase,
 ):
-    """Redis connection manager with connection pooling and graceful degradation.
+    """Valkey connection manager with connection pooling and graceful degradation.
 
     Composed from domain-specific mixins for maintainability.
     """
