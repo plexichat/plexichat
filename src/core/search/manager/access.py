@@ -108,10 +108,10 @@ class AccessControlMixin(SearchManagerBase):
             return set()
 
     def _get_user_server_ids(self, user_id: int) -> set:
-        from src.core.database import cache_get, cache_set, redis_available
+        from src.core.database import cache_get, cache_set, valkey_available
 
         cache_key = f"user:servers:{int(user_id)}"
-        if redis_available():
+        if valkey_available():
             cached = cache_get(cache_key)
             if isinstance(cached, list):
                 return {int(x) for x in cached}
@@ -119,17 +119,17 @@ class AccessControlMixin(SearchManagerBase):
             "SELECT server_id FROM srv_members WHERE user_id = ?", (user_id,)
         )
         server_ids = [int(row["server_id"]) for row in rows]
-        if redis_available():
+        if valkey_available():
             cache_set(cache_key, server_ids, ttl=300)
         return set(server_ids)
 
     def _get_user_servers_map(self, user_ids: List[int]) -> Dict[int, set]:
-        from src.core.database import cache_get, cache_set, redis_available
+        from src.core.database import cache_get, cache_set, valkey_available
 
         uniq = sorted({int(uid) for uid in user_ids if uid})
         result: Dict[int, set] = {}
         missing: List[int] = []
-        if redis_available():
+        if valkey_available():
             for uid in uniq:
                 cached = cache_get(f"user:servers:{uid}")
                 if isinstance(cached, list):
@@ -152,7 +152,7 @@ class AccessControlMixin(SearchManagerBase):
                 if uid not in result:
                     result[uid] = set()
                 result[uid].add(sid)
-        if redis_available():
+        if valkey_available():
             for uid in missing:
                 cache_set(f"user:servers:{uid}", list(result.get(uid, set())), ttl=300)
         return result

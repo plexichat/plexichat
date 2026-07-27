@@ -85,8 +85,8 @@ class ParticipantService(BaseService):
         self._repo.create_bulk(participants_data)
 
         # ORPHAN-FIX (see add_participant): the ``participant_ids``
-        # Redis pattern eviction was coupled to the dropped @cached
-        # decorator and now hits Redis for nothing reachable. Drop it.
+        # Valkey pattern eviction was coupled to the dropped @cached
+        # decorator and now hits Valkey for nothing reachable. Drop it.
         for cid in conversation_ids:
             self._cache_invalidate((cid, user_id))
 

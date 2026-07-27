@@ -64,7 +64,7 @@ class DocsRouter(
 
         router.get("/config-authentication")(self.docs_config_authentication)
         router.get("/config-database")(self.docs_config_database)
-        router.get("/config-redis")(self.docs_config_redis)
+        router.get("/config-valkey")(self.docs_config_valkey)
         router.get("/config-media")(self.docs_config_media)
         router.get("/config-voice")(self.docs_config_voice)
         router.get("/config-websocket")(self.docs_config_websocket)

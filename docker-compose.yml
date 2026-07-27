@@ -22,17 +22,17 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
+  valkey:
     restart: unless-stopped
     image: valkey/valkey:9.1.1-alpine
     env_file:
       - .env
     command: >
-      sh -c "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""
+      sh -c "redis-server --appendonly yes --requirepass \"$${VALKEY_PASSWORD}\""
     volumes:
-      - redis_data:/data
+      - valkey_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${VALKEY_PASSWORD}\" ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -138,7 +138,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
@@ -198,7 +198,7 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
+  valkey_data:
   minio_data:
   plexichat_home:
   certs:

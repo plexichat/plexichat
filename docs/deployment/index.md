@@ -22,7 +22,7 @@ Detailed configuration for each subsystem:
 - **[Embeds](configuration/config-embeds.md)** - URL preview configuration
 - **[Media](configuration/config-media.md)** - File uploads, S3/MinIO storage
 - **[Rate Limiting](configuration/config-rate-limiting.md)** - API and gateway rate limits
-- **[Redis](configuration/config-redis.md)** - Caching, session storage
+ - **[Valkey](configuration/config-valkey.md)** - Caching, session storage
 - **[Search](configuration/config-search.md)** - Search backends and indexing
 - **[Voice](configuration/config-voice.md)** - WebRTC, STUN/TURN servers
 - **[WebSocket](configuration/config-websocket.md)** - Gateway settings, compression
@@ -88,7 +88,7 @@ python main.py
 Available endpoints for monitoring:
 
 - `GET /health` - Basic health check
-- `GET /api/v1/status` - Detailed status including DB, Redis
+- `GET /api/v1/status` - Detailed status including DB, Valkey
 - `GET /api/v1/version` - Version information
 
 ## Troubleshooting
@@ -100,9 +100,9 @@ Available endpoints for monitoring:
 - Check connection string in config
 - Ensure database exists
 
-**Redis connection failures:**
-- Verify Redis is running
-- Check Redis password if configured
+**Valkey connection failures:**
+- Verify Valkey is running
+- Check Valkey password if configured
 - Review connection pool settings
 
 **WebSocket connection issues:**

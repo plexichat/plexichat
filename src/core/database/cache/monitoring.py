@@ -6,7 +6,7 @@ Provides cache_stats, reset_cache_stats, and cache_health functions.
 
 from typing import Any, Dict
 
-from ..redis_client import get_client, is_available
+from ..valkey_client import get_client, is_available
 from .decorators import get_cache_stats, reset_cache_stats_internal
 
 

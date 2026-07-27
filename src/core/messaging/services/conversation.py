@@ -23,7 +23,7 @@ from src.core.database import (
     invalidate_pattern,
     cache_get,
     cache_set,
-    redis_available,
+    valkey_available,
 )
 import utils.logger as logger
 
@@ -66,11 +66,11 @@ class ConversationService(BaseService):
         # Check if DM already exists (with caching)
         u1, u2 = min(user_id, recipient_id), max(user_id, recipient_id)
         cache_key = f"dm_lookup:{u1}:{u2}"
-        existing_id = cache_get(cache_key) if redis_available() else None
+        existing_id = cache_get(cache_key) if valkey_available() else None
 
         if not existing_id:
             existing_id = self._repo.get_dm_lookup(user_id, recipient_id)
-            if existing_id and redis_available():
+            if existing_id and valkey_available():
                 cache_set(cache_key, existing_id, ttl=3600)
 
         if existing_id:

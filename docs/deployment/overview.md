@@ -6,7 +6,7 @@ Plexichat is a distributed messaging platform that can be deployed in various en
 
 Plexichat supports multiple deployment strategies:
 - **Development**: Local setup with SQLite database
-- **Production**: PostgreSQL with Redis caching and external storage
+- **Production**: PostgreSQL with Valkey caching and external storage
 - **Containerized**: Official Docker Compose stack via standalone deploy scripts (Primary)
 - **Manual/Development**: Direct installation via Git clone
 - **Cloud**: Various cloud provider options
@@ -36,7 +36,7 @@ flowchart TB
 
     subgraph Data["Data tier (internal network only)"]
         PG[("PostgreSQL 16")]:::data
-        RD[("Redis 7<br/>cache + sessions")]:::data
+        RD[("Valkey 7<br/>cache + sessions")]:::data
     end
 
     Bucket["S3-compatible object store<br/>(MinIO in Docker,<br/>AWS S3 in production)"]:::media
@@ -60,7 +60,7 @@ flowchart TB
 2. **Client Interface** (`plexichat-client`): Modern Vite web application served via Nginx
 3. **Shared Utilities** (`common_utils`): Internal helpers bundled at `plexichat/src/utils/common_utils/`, used only by the server. The web client lives in a separate JavaScript repository and does not share this Python package.
 4. **Database**: PostgreSQL (recommended) or SQLite (development only)
-5. **Cache**: Redis (recommended for production)
+5. **Cache**: Valkey (recommended for production)
 6. **Storage**: Local filesystem or S3-compatible (MinIO, AWS S3, etc.) for media attachments
 7. **WebRTC SFU** (`mediasoup` default, `Janus` alternative): Optional signaling peer for voice/video; media plane on UDP 30000-30100
 8. **Reverse proxy / TLS** (`plexichat-client` container Nginx): TLS termination and proxy of `/api/v1` and `/gateway` to the backend
@@ -73,7 +73,7 @@ Before deploying Plexichat, ensure you have:
 - pip (Python package manager)
 - Node.js 16+ (only needed for client testing with Playwright)
 - PostgreSQL 12+ (for production deployments)
-- Redis 6+ (recommended for production)
+- Valkey 6+ (recommended for production)
 
 ## Primary Deployment Flow (Zero-Clone)
 

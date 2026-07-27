@@ -10,11 +10,11 @@ def _check_security_keys() -> None:
     if signing_key in ["", "CHANGE_THIS_SIGNING_KEY", "change-me", "changeme"]:
         warnings.append("media.signing_key is using a default/placeholder value")
 
-    redis_config = config.get("redis", {})
-    if redis_config.get("enabled", False):
-        redis_pass = redis_config.get("password", "")
-        if not redis_pass:
-            warnings.append("redis.password is empty (Redis is enabled)")
+    valkey_config = config.get("valkey", {})
+    if valkey_config.get("enabled", False):
+        valkey_pass = valkey_config.get("password", "")
+        if not valkey_pass:
+            warnings.append("valkey.password is empty (Valkey is enabled)")
 
     db_config = config.get("database", {})
     if db_config.get("type") == "postgres":
