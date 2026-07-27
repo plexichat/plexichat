@@ -104,9 +104,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4g
+          # memory: 4g
         reservations:
-          memory: 2g
+          # memory: 2g
 
   clamav-unofficial-sigs:
     restart: unless-stopped
