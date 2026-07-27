@@ -220,76 +220,51 @@ Key metrics to monitor daily:
 
 ## Backup and Recovery
 
-### Backup Strategy
+The Docker Compose stack includes a **restic-based backup container** (`backup` service)
+that runs automatically on a configurable schedule (default daily at 2 AM).
+See [`docker/README.md`](../../docker/README.md) for full configuration reference.
 
-**Daily Backups**:
-- Database full backup
-- Configuration files
-- Critical user data
-- Audit logs
+### Backup schedule and retention
 
-**Weekly Backups**:
-- Complete system backup
-- Application files
-- Static assets
-- Documentation
+| Frequency | Retention | Managed by |
+|-----------|-----------|------------|
+| Daily (default 2 AM) | 7 daily | `BACKUP_KEEP_DAILY` |
+| Weekly | 4 weekly | `BACKUP_KEEP_WEEKLY` |
+| Monthly | 6 monthly | `BACKUP_KEEP_MONTHLY` |
 
-**Monthly Backups**:
-- Archive backups
-- Long-term retention
-- Offsite storage
-- Disaster recovery testing
+Snapshots are block-level deduplicated — retaining weeks or months of history
+uses minimal extra storage.
 
-### Backup Procedures
+### What is backed up
 
-#### Database Backup
-Use your database management tools to create regular backups:
-- SQLite: Copy the database file to a backup location with date stamp
-- PostgreSQL: Use database dump tools to export data
-- Ensure backups are stored in secure, offsite location
-- Test backup integrity regularly
+Each snapshot contains:
+- `db_dump/plexichat.sql.gz` — full PostgreSQL dump
+- `plexichat-home/` — server config, `.machine_key`, keyrings
+- `minio-data/` — uploaded media and attachments
 
-#### Configuration Backup
-- Export all configuration settings
-- Save to secure location with version control
-- Include environment variables and secrets (securely stored)
-- Document configuration changes
+### Restore procedures
 
-#### Application Backup
-- Backup application files and static assets
-- Include custom modifications and themes
-- Document any custom integrations
-- Store in version control system
+```bash
+# List available snapshots
+docker exec plexichat-backup-1 /scripts/backup.sh list
 
-### Recovery Procedures
+# Restore database from latest
+docker exec plexichat-backup-1 /scripts/backup.sh restore-db latest
 
-#### Database Recovery
-- Select appropriate backup based on recovery point needed
-- Stop application services before restore
-- Restore database using appropriate tools for your database type
-- Verify data integrity after restore
-- Restart services and validate functionality
+# Restore files to /tmp/restore
+docker exec plexichat-backup-1 /scripts/backup.sh restore latest /tmp/restore
+```
 
-#### Configuration Recovery
-- Restore configuration files from backup
-- Update any changed environment variables
-- Verify configuration syntax and validity
-- Restart services with new configuration
-- Test critical functionality
+### Verification
 
-### Backup Testing
+Verify snapshot integrity periodically:
 
-**Monthly Testing**:
-- Test database restoration
-- Verify configuration restore
-- Test application recovery
-- Document test results
+```bash
+docker exec plexichat-backup-1 /scripts/backup.sh check
+```
 
-**Annual Testing**:
-- Full disaster recovery test
-- Offsite recovery test
-- Complete system restoration
-- Update recovery procedures
+Test a full restore on a staging environment before relying on production backups.
+Document test results in your incident-response runbook.
 
 ## Performance Monitoring
 
