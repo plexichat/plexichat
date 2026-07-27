@@ -58,7 +58,9 @@ python main.py migrate-kek --kek-rollback --kek-keyring message_keyring.json
 
 The migration path is:
 
-1. Back up the keyring files
+1. Back up the keyring files (or rely on the daily restic `backup` container
+   snapshot — run `docker exec plexichat-backup-1 /scripts/backup.sh run`
+   immediately before migrating)
 2. Validate the current KEK and the target KEK
 3. Re-encrypt the keyring under the new KEK
 4. Run `python main.py migrate-kek --kek-validate --kek-all`
