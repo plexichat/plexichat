@@ -261,18 +261,32 @@ Keyring files are located in `~/.plexichat/data/`:
 - `message_keyring.json`
 - `file_keyring.json`
 
+The Docker `backup` container (restic-based) automatically includes
+`~/.plexichat/` in every snapshot, providing regular encrypted backups
+of all keyring files. See [`docker/README.md`](../docker/README.md) for
+configuration and restore procedures.
+
 **Backup Strategy**:
 
-1. **Regular backups**: Copy keyring files to a secure, offsite location
-2. **KEK backup**: Securely store KEK values (environment variables) in a password manager
-3. **Migration backups**: The migration tool creates timestamped backups automatically
-4. **Test restores**: Periodically test restoring from backups
+1. **Restic snapshots**: The backup container creates daily snapshots
+   containing the entire `~/.plexichat/` directory (includes keyrings)
+2. **KEK backup**: Securely store KEK values (environment variables) in a
+   password manager — these are **not** inside restic snapshots
+3. **Secondary repository**: Configure `BACKUP_SECONDARY_REPO` for off-site
+   replication of restic snapshots
+4. **Test restores**: Periodically test restoring keyrings from restic snapshots
+5. **Migration backups**: The migration tool creates additional timestamped
+   backups automatically during KEK rotation
 
 **Recovery Procedure**:
 
 If keyrings are corrupted or KEKs are lost:
 
-1. Restore keyring files from backup
+1. Restore keyring files from the latest restic snapshot:
+   ```bash
+   docker exec plexichat-backup-1 /scripts/backup.sh restore-latest /tmp/restore
+   # Copy keyring files from /tmp/restore/plexichat-home/data/
+   ```
 2. Ensure KEK environment variables are set correctly
 3. Run validation: `python main.py migrate-kek --kek-validate --kek-all`
 4. If validation fails, use the migration tool to re-encrypt with current KEKs
