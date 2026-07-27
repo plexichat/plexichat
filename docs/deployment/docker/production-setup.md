@@ -213,26 +213,25 @@ See [Connection Pooling](connection-pooling.md) for guidance.
 
 ### Backups
 
-Automated daily backups recommended:
+The stack includes a `backup` service using **restic** for daily,
+encrypted, deduplicated snapshots. It runs automatically at 2 AM by default
+and backs up the PostgreSQL database, server config/keyrings, and MinIO media.
+
+Configuration via `.env` — see [`docker/README.md`](../../../docker/README.md)
+for all options.
 
 ```bash
-# Create backup directory
-mkdir -p /backups/plexichat
+# Run backup immediately
+docker compose exec backup /scripts/backup.sh run
 
-# Backup script (save as backup.sh)
-#!/bin/bash
-DATE=$(date +%Y-%m-%d_%H-%M-%S)
-docker compose exec -T db pg_dump -U plexichat plexichat | \
-  gzip > /backups/plexichat/backup_$DATE.sql.gz
+# List snapshots
+docker compose exec backup /scripts/backup.sh list
 
-# Schedule with cron (daily at 2 AM)
-0 2 * * * /path/to/backup.sh
-```
+# Restore database from latest snapshot
+docker compose exec backup /scripts/backup.sh restore-db latest
 
-Test backup restoration regularly:
-```bash
-# Restore from backup
-zcat backup.sql.gz | docker compose exec -T db psql -U plexichat plexichat
+# Restore all files to /tmp/restore
+docker compose exec backup /scripts/backup.sh restore latest /tmp/restore
 ```
 
 ### Upgrade Procedure

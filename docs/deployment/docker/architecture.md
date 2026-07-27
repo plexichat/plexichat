@@ -51,7 +51,6 @@ EXTERNAL
 - SQL database engine
 - Connection pooling
 - Query optimization
-- Backup capability
 
 **Data:**
 - User accounts, messages, servers, media metadata
@@ -206,6 +205,38 @@ EXTERNAL
 - HTTP on port 80
 - Interval: 10 seconds
 
+### 8. Backup (Restic)
+
+**Purpose:** Automated encrypted, deduplicated backups
+
+**Services:**
+- Daily scheduled backups via supercronic (default 2 AM)
+- PostgreSQL dump + file backup via restic
+- Snapshot management with configurable retention
+- Optional secondary/off-site repository replication
+
+**Data:**
+- Restic repository: `backup-repo` volume (persistent)
+
+**Dependencies:**
+- Depends on: Database (healthy)
+
+**Volumes (read-only):**
+- `postgres_data` — pg_dump source
+- `plexichat_home` — config, keyrings, `.machine_key`
+- `minio_data` — uploaded media
+
+**Configuration:**
+- All options via `.env` (`BACKUP_*` variables)
+- See [`docker/README.md`](../../../docker/README.md) for full reference
+
+**CLI:**
+```bash
+docker exec backup /scripts/backup.sh list           # list snapshots
+docker exec backup /scripts/backup.sh restore-db      # restore database
+docker exec backup /scripts/backup.sh restore <snap>  # restore files
+```
+
 ## Networks
 
 ### plexichat-backend (Internal)
@@ -215,6 +246,7 @@ EXTERNAL
 - Redis
 - MinIO
 - Backend
+- Backup
 - MinIO-Init
 - Cert-Init
 
@@ -256,10 +288,12 @@ EXTERNAL
 | `backend-temp` | Backend | Temporary files | Yes |
 | `nginx-certs` | Nginx | TLS certificates | Yes |
 | `client-runtime` | Deploy Script | Client JS config | Yes |
+| `backup-repo` | Backup | Restic repository | Yes |
 
 **Data Loss Risk:**
-- `docker compose down -v` deletes ALL volumes
-- Keep regular backups of `db-data` and `minio-data`
+- `docker compose down -v` deletes ALL volumes including the restic repository
+- The restic repo is intended for local fast recovery; configure a
+  `BACKUP_SECONDARY_REPO` for off-site protection
 
 ## Data Flows
 
