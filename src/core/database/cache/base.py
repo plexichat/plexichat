@@ -2,7 +2,7 @@
 Base types and in-memory cache fallback for the cache module.
 
 Provides CacheError exception and in-memory cache dictionary
-used as fallback when Redis is unavailable.
+used as fallback when Valkey is unavailable.
 """
 
 import time

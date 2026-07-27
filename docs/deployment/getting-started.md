@@ -36,7 +36,7 @@ This guide covers installing, configuring, and running Plexichat in production. 
 ### Service Dependencies
 
 - Database: PostgreSQL 12+ (recommended) or SQLite (small/dev deployments only)
-- Cache: Redis 6+ (strongly recommended for production)
+- Cache: Valkey (strongly recommended for production)
 - Reverse Proxy: nginx, Apache, Caddy, or Traefik (for TLS termination)
 - Optional: S3-compatible storage (MinIO, AWS S3, etc.) for media
 
@@ -107,7 +107,7 @@ database:
 
 redis:
   enabled: true
-  password: "${REDIS_PASSWORD}"
+  password: "${VALKEY_PASSWORD}"
 
 logging:
   level: "INFO"
@@ -120,7 +120,7 @@ api:
 Then consult the dedicated config pages for each subsystem you need:
 
 - [Database Configuration](configuration/config-database.md) -- PostgreSQL setup, connection pooling, migrations
-- [Redis Configuration](configuration/config-redis.md) -- caching, sessions, connection pooling
+- [Redis Configuration](configuration/config-valkey.md) -- caching, sessions, connection pooling
 - [Authentication Configuration](configuration/config-authentication.md) -- password policies, 2FA, sessions, account deletion
 - [Media Configuration](configuration/config-media.md) -- storage backends, file limits, processing, security
 - [Voice Configuration](configuration/config-voice.md) -- SFU backends, STUN/TURN, NAT traversal
@@ -143,7 +143,7 @@ export PLEXICHAT_SYSTEM_KEY="your_encryption_key"
 export POSTGRES_PASSWORD="your_secure_password"
 
 # Redis
-export REDIS_PASSWORD="your_redis_password"
+export VALKEY_PASSWORD="your_redis_password"
 
 # S3 (if using external media storage)
 export S3_BUCKET="your-bucket-name"
@@ -180,7 +180,7 @@ docker run -d \
   -p 8000:8000 \
   -e PLEXICHAT_SYSTEM_KEY="your_encryption_key" \
   -e POSTGRES_PASSWORD="your_db_password" \
-  -e REDIS_PASSWORD="your_redis_password" \
+  -e VALKEY_PASSWORD="your_redis_password" \
   -v $(pwd)/config:/app/config \
   -v plexichat_data:/data \
   plexichat:latest
@@ -200,13 +200,13 @@ services:
     environment:
       - PLEXICHAT_SYSTEM_KEY=${PLEXICHAT_SYSTEM_KEY}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD}
     volumes:
       - ./config:/app/config
       - plexichat_data:/data
     depends_on:
       - postgres
-      - redis
+      - valkey
     restart: unless-stopped
     networks:
       - plexichat_network
@@ -226,8 +226,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: plexichat_redis
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    container_name: plexichat_valkey
+    command: redis-server --requirepass ${VALKEY_PASSWORD}
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -266,7 +266,7 @@ Create a `.env` file:
 ```bash
 PLEXICHAT_SYSTEM_KEY=$(openssl rand -hex 32)
 POSTGRES_PASSWORD=$(openssl rand -base64 32)
-REDIS_PASSWORD=$(openssl rand -base64 32)
+VALKEY_PASSWORD=$(openssl rand -base64 32)
 ```
 
 ### Database Migrations in Docker
@@ -363,7 +363,7 @@ For full security guidance, see [Security Best Practices](../security.md).
 # /etc/systemd/system/plexichat.service
 [Unit]
 Description=Plexichat Server
-After=network.target postgresql.service redis.service
+After=network.target postgresql.service valkey.service
 
 [Service]
 Type=notify
@@ -390,13 +390,13 @@ sudo systemctl status plexichat
 
 Calculate workers based on CPU cores: `workers = (2 * CPU cores) + 1`
 
-For multi-worker deployments, Redis is required for shared session state.
+For multi-worker deployments, Valkey is required for shared session state.
 
 ### Horizontal Scaling
 
 For large deployments (>1,000 users), run multiple instances behind a load balancer with:
 - Shared PostgreSQL database
-- Shared Redis instance
+- Shared Valkey instance
 - Shared media storage (S3 or shared filesystem)
 - Sticky sessions for WebSocket connections
 
@@ -429,7 +429,7 @@ curl https://chat.example.com/api/v1/status
 wscat -c wss://chat.example.com/gateway
 ```
 
-### Database and Redis
+### Database and Valkey
 
 ```bash
 psql -h localhost -U plexichat -d plexichat -c "SELECT 1;"
@@ -467,7 +467,7 @@ monitoring:
 - Request rate and response times (P50, P95, P99)
 - HTTP 5xx error rate
 - Database connection pool saturation
-- Redis cache hit/miss rates
+- Valkey cache hit/miss rates
 - WebSocket connection count
 - CPU and memory utilization
 
@@ -545,7 +545,7 @@ sudo journalctl -u plexichat -n 100
 tail -100 ~/.plexichat/logs/plexichat.log
 ```
 
-Common causes: database connection failure, Redis connection failure, config syntax error, port already in use.
+Common causes: database connection failure, Valkey connection failure, config syntax error, port already in use.
 
 ### Database Connection Errors
 
@@ -570,7 +570,7 @@ Verify reverse proxy WebSocket configuration (Upgrade headers), increase proxy t
 - [Default Configuration Reference](../default-config.md) -- every key with defaults
 - [Authentication Configuration](configuration/config-authentication.md) -- password, 2FA, sessions, deletion
 - [Database Configuration](configuration/config-database.md) -- PostgreSQL/SQLite setup
-- [Redis Configuration](configuration/config-redis.md) -- caching and sessions
+- [Redis Configuration](configuration/config-valkey.md) -- caching and sessions
 - [Media Configuration](configuration/config-media.md) -- storage and processing
 - [Voice Configuration](configuration/config-voice.md) -- voice/video setup
 - [Security Best Practices](../security.md) -- production security

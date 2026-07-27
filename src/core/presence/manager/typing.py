@@ -1,15 +1,15 @@
 """Typing indicator operations mixin.
 
 Handles starting, stopping, querying, and clearing typing indicators
-with Redis SETs for high-speed lookups and database persistence as fallback.
+with Valkey SETs for high-speed lookups and database persistence as fallback.
 """
 
 from typing import List
 
 import utils.logger as logger
 from src.core.database import (
-    redis_available,
-    get_redis_client,
+    valkey_available,
+    get_valkey_client,
 )
 
 from .base import PresenceManagerBase
@@ -40,8 +40,8 @@ class TypingMixin(PresenceManagerBase):
         now = self._get_timestamp()
         expires_at = now + self._typing_timeout_ms
 
-        if redis_available():
-            client = get_redis_client()
+        if valkey_available():
+            client = get_valkey_client()
             if client:
                 try:
                     key = f"typing:channel:{channel_id}"
@@ -51,7 +51,7 @@ class TypingMixin(PresenceManagerBase):
                     client.sadd(f"typing:user:{user_id}", str(channel_id))
                     client.expire(f"typing:user:{user_id}", 60)
                 except Exception as e:
-                    logger.debug(f"Redis start_typing failed: {e}")
+                    logger.debug(f"Valkey start_typing failed: {e}")
 
         self._cleanup_expired_typing()
         indicator_id = self._generate_id()
@@ -83,14 +83,14 @@ class TypingMixin(PresenceManagerBase):
         Returns:
             True if successful
         """
-        if redis_available():
-            client = get_redis_client()
+        if valkey_available():
+            client = get_valkey_client()
             if client:
                 try:
                     client.srem(f"typing:channel:{channel_id}", str(user_id))
                     client.srem(f"typing:user:{user_id}", str(channel_id))
                 except Exception as e:
-                    logger.debug(f"Redis stop_typing failed: {e}")
+                    logger.debug(f"Valkey stop_typing failed: {e}")
 
         self._db.execute(
             "DELETE FROM pres_typing WHERE user_id = ? AND channel_id = ?",
@@ -111,8 +111,8 @@ class TypingMixin(PresenceManagerBase):
         Returns:
             List of TypingIndicator objects
         """
-        if redis_available():
-            client = get_redis_client()
+        if valkey_available():
+            client = get_valkey_client()
             if client:
                 try:
                     user_ids = client.smembers(f"typing:channel:{channel_id}")
@@ -128,7 +128,7 @@ class TypingMixin(PresenceManagerBase):
                             for uid in user_ids
                         ]
                 except Exception as e:
-                    logger.debug(f"Redis get_typing_users failed: {e}")
+                    logger.debug(f"Valkey get_typing_users failed: {e}")
 
         self._cleanup_expired_typing()
         rows = self._db.fetch_all(
@@ -175,15 +175,15 @@ class TypingMixin(PresenceManagerBase):
         """
         channels = self.get_user_typing_channels(user_id)
 
-        if redis_available():
-            client = get_redis_client()
+        if valkey_available():
+            client = get_valkey_client()
             if client:
                 try:
                     for cid in channels:
                         client.srem(f"typing:channel:{cid}", str(user_id))
                     client.delete(f"typing:user:{user_id}")
                 except Exception as e:
-                    logger.debug(f"Redis clear_all_typing failed: {e}")
+                    logger.debug(f"Valkey clear_all_typing failed: {e}")
 
         if channels:
             self._db.execute("DELETE FROM pres_typing WHERE user_id = ?", (user_id,))

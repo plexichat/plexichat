@@ -1,7 +1,7 @@
 """Status operations mixin.
 
 Handles setting, getting, and clearing user online status
-with Redis caching for high-speed lookups.
+with Valkey caching for high-speed lookups.
 """
 
 from typing import Union
@@ -9,8 +9,8 @@ from typing import Union
 import utils.logger as logger
 from src.core.database import (
     cache_set,
-    redis_available,
-    get_redis_client,
+    valkey_available,
+    get_valkey_client,
 )
 
 from .base import PresenceManagerBase
@@ -21,12 +21,12 @@ from ..exceptions import InvalidStatusError
 class StatusMixin(PresenceManagerBase):
     """Mixin providing online status operations."""
 
-    def _update_redis_presence(self, user_id: int, status: str) -> None:
-        """Update online users set in Redis for high-speed lookups."""
-        if not redis_available():
+    def _update_valkey_presence(self, user_id: int, status: str) -> None:
+        """Update online users set in Valkey for high-speed lookups."""
+        if not valkey_available():
             return
 
-        client = get_redis_client()
+        client = get_valkey_client()
         if not client:
             return
 
@@ -75,13 +75,13 @@ class StatusMixin(PresenceManagerBase):
             )
 
         presence = self.get_presence(user_id, use_cache=False)
-        if redis_available():
+        if valkey_available():
             cache_set(
                 f"presence:{user_id}",
                 self._presence_to_dict(presence),
                 ttl=self._presence_timeout_ms // 1000,
             )
-            self._update_redis_presence(user_id, status.value)
+            self._update_valkey_presence(user_id, status.value)
 
         logger.debug(f"User {user_id} status set to {status.value}")
         return presence

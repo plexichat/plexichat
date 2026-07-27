@@ -169,11 +169,11 @@ class ProfileMixin(AuthManagerProtocol):
         result = {}
         missing_ids = []
 
-        from src.core.database import cache_get, cache_set, redis_available
+        from src.core.database import cache_get, cache_set, valkey_available
 
         for uid in user_ids:
             cache_key = f"user_profile:{uid}"
-            cached_profile = cache_get(cache_key) if redis_available() else None
+            cached_profile = cache_get(cache_key) if valkey_available() else None
 
             if cached_profile:
                 if isinstance(cached_profile, str):
@@ -224,7 +224,7 @@ class ProfileMixin(AuthManagerProtocol):
                 }
                 result[str(user_id)] = profile
 
-                if redis_available():
+                if valkey_available():
                     cache_set(f"user_profile:{user_id}", profile, ttl=300)
 
         return result

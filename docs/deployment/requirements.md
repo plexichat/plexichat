@@ -28,7 +28,7 @@ This document outlines the system requirements for running Plexichat in differen
 - **Extensions**: pg_trgm (for text search), uuid-ossp (for UUID generation)
 
 ### Cache (Strongly Recommended)
-- **Redis**: 6+ (for shared state, sessions, and rate limiting)
+- **Valkey**: 6+ (for shared state, sessions, and rate limiting)
 - **Persistence**: AOF or RDB enabled for durability
 
 ### Storage
@@ -75,7 +75,7 @@ This document outlines the system requirements for running Plexichat in differen
 - **Growth**: Depends on message volume, user count, and retention settings
 - **Recommended**: Monitor and plan for 20% monthly growth as baseline
 
-### Redis (if used)
+### Valkey (if used)
 - **Memory**: 50-150MB base + ~1KB per active session
 - **Persistence**: RDB snapshots every 5-15 minutes or AOF logging
 
@@ -86,7 +86,7 @@ This document outlines the system requirements for running Plexichat in differen
 - **Application Server**: 8000 (configurable, typically behind proxy)
 - **Client Server**: 80/443 (served by Nginx static container)
 - **PostgreSQL**: 5432 (default)
-- **Redis**: 6379 (default)
+- **Valkey**: 6379 (default)
 
 ### Bandwidth
 - **Minimum**: 10Mbps for basic usage
@@ -143,7 +143,7 @@ All required Python packages are available on PyPI for:
 
 ### Horizontal Scaling
 - **Stateless API**: Multiple workers behind load balancer
-- **Shared State**: Redis required for session sharing and rate limiting
+- **Shared State**: Valkey required for session sharing and rate limiting
 - **Database**: PostgreSQL handles concurrent connections well
 - **Media Storage**: Shared filesystem or S3-compatible service required
 
@@ -159,7 +159,7 @@ All required Python packages are available on PyPI for:
 - **Application**: `~/.plexichat/logs/` (rotated automatically)
 - **System**: `/var/log/` for system services
 - **Database**: PostgreSQL logs in `pg_log/` directory
-- **Redis**: Redis logs in configured log file
+- **Valkey**: Valkey logs in configured log file
 
 ### Diagnostic Commands
 ```bash

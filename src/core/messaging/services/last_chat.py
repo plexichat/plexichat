@@ -97,7 +97,7 @@ class LastChatService:
                 ),
             )
 
-        # Save to Redis with TTL
+        # Save to Valkey with TTL
         cache_key = f"last_chat:{user_id}"
         cache_data = {
             "conversation_id": conversation_id,

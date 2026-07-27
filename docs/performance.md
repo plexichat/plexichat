@@ -139,12 +139,12 @@ See [Database Configuration](deployment/configuration/config-database.md) for de
 
 ---
 
-### Redis Caching
+### Valkey Caching
 
 **Configuration Impact**
 
 ```yaml
-redis:
+valkey:
   enabled: false              # Enable for multi-worker or high-scale
   connection_pool:
     max_connections: 50
@@ -155,7 +155,7 @@ redis:
     cache: 60
 ```
 
-**When to Enable Redis**
+**When to Enable Valkey**
 
 - Single worker, <100 users: No
 - Multiple workers: Yes (shared state)
@@ -165,7 +165,7 @@ redis:
 
 Without Redis, session and rate-limit state is stored in-process memory. This works for single-worker deployments but is lost on restart and cannot be shared across workers.
 
-See [Redis Configuration](deployment/configuration/config-redis.md) for detailed setup guidance.
+See [Valkey Configuration](deployment/configuration/config-valkey.md) for detailed setup guidance.
 
 ---
 
@@ -273,10 +273,10 @@ server:
 
 **Tuning Recommendations**
 
-- Scale: <100 users | Workers: 1 | Redis: No | Notes: Simplest setup
-- Scale: 100-500 users | Workers: 1-2 | Redis: Recommended | Notes: Redis for session sharing
-- Scale: 500-2,000 users | Workers: 2-4 | Redis: Required | Notes: Multiple workers must share state
-- Scale: 2,000+ users | Workers: 4+ | Redis: Required | Notes: Add workers for CPU-bound workloads
+- Scale: <100 users | Workers: 1 | Valkey: No | Notes: Simplest setup
+- Scale: 100-500 users | Workers: 1-2 | Valkey: Recommended | Notes: Valkey for session sharing
+- Scale: 500-2,000 users | Workers: 2-4 | Valkey: Required | Notes: Multiple workers must share state
+- Scale: 2,000+ users | Workers: 4+ | Valkey: Required | Notes: Add workers for CPU-bound workloads
 
 **Important**: Multiple workers require Redis for shared session state, rate limit counters, and presence tracking. Without Redis, each worker maintains independent state, leading to inconsistent behavior.
 
@@ -386,7 +386,7 @@ monitoring:
 ## Related Documentation
 
 - [Database Configuration](deployment/configuration/config-database.md) - PostgreSQL/SQLite setup and connection pooling
-- [Redis Configuration](deployment/configuration/config-redis.md) - Caching, session storage, and scaling
+ - [Valkey Configuration](deployment/configuration/config-valkey.md) - Caching, session storage, and scaling
 - [WebSocket Configuration](deployment/configuration/config-websocket.md) - Gateway tuning for concurrent connections
 - [Search Configuration](deployment/configuration/config-search.md) - Search backend and indexing performance
 - [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) - Rate limit tuning

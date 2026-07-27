@@ -164,7 +164,7 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
             "default-config": "/default-config",
             "config-authentication": "/config-authentication",
             "config-database": "/config-database",
-            "config-redis": "/config-redis",
+            "config-valkey": "/config-valkey",
             "config-media": "/config-media",
             "config-voice": "/config-voice",
             "config-websocket": "/config-websocket",

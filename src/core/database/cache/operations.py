@@ -7,10 +7,10 @@ Provides cache_get, cache_set, cache_delete, invalidate_pattern functions.
 from typing import Any, Optional
 
 import utils.logger as logger
-from ..redis_client import (
+from ..valkey_client import (
     get_client,
     is_available,
-    RedisOperationError,
+    ValkeyOperationError,
 )
 from .base import (
     mem_cache_clear_pattern,
@@ -37,7 +37,7 @@ def cache_get(key: str) -> Optional[Any]:
                 stats["misses"] += 1
                 logger.debug(f"Cache GET MISS: {key}")
             return value
-        except RedisOperationError as e:
+        except ValkeyOperationError as e:
             stats["errors"] += 1
             logger.warning(f"Cache GET failed for {key}: {e}")
     return mem_cache_get(key)
@@ -54,7 +54,7 @@ def cache_set(key: str, value: Any, ttl: Optional[int] = None) -> bool:
             client.set_json(key, serializable_value, ttl=cache_ttl)
             logger.debug(f"Cache SET: {key} (ttl={cache_ttl})")
             stored = True
-        except RedisOperationError as e:
+        except ValkeyOperationError as e:
             stats = get_cache_stats()
             stats["errors"] += 1
             logger.warning(f"Cache SET failed for {key}: {e}")
@@ -73,7 +73,7 @@ def cache_delete(key: str) -> bool:
             client.delete(key)
             logger.debug(f"Cache DELETE: {key}")
             deleted = True
-        except RedisOperationError as e:
+        except ValkeyOperationError as e:
             stats = get_cache_stats()
             stats["errors"] += 1
             logger.warning(f"Cache DELETE failed for {key}: {e}")
@@ -91,9 +91,9 @@ def cache_get_many(keys):
     """Bulk-fetch many cache keys in a single round-trip when possible.
 
     ``N+1 FIX``: callers that previously did ``for k in keys: cache_get(k)``
-    can use this to issue a single Redis MGET (cheap), or fall back to
+    can use this to issue a single Valkey MGET (cheap), or fall back to
     looping through ``cache_get`` (the in-memory cache path also returns
-    directly without a per-key round-trip to Redis, so the loop is
+    directly without a per-key round-trip to Valkey, so the loop is
     cheap on the fallback path). Returns ``{key: value}``; missing
     keys are absent (callers should use ``.get(k)`` semantics).
 
@@ -111,10 +111,10 @@ def cache_get_many(keys):
                 if v is not None:
                     out[k] = reconstruct_object(v)
             return out
-        except RedisOperationError as exc:  # noqa: BLE001
+        except ValkeyOperationError as exc:  # noqa: BLE001
             logger.warning(f"Cache GET_MANY failed (falling back): {exc}")
     # Fallback path: loop through cache_get (uses mem tier or
-    # individual Redis GETs).  Acceptable because callers using
+    # individual Valkey GETs).  Acceptable because callers using
     # this helper have already collapsed an N+1 pattern in their
     # own code; the upstream speedup is what we care about.
     for k in keys:
@@ -137,11 +137,11 @@ def invalidate_pattern(pattern: str) -> int:
         if keys:
             count = client.delete(*keys)
             logger.debug(
-                f"Cache INVALIDATE pattern '{pattern}': {count} keys from Redis, {mem_count} from Memory"
+                f"Cache INVALIDATE pattern '{pattern}': {count} keys from Valkey, {mem_count} from Memory"
             )
             return count + mem_count
         return mem_count
-    except RedisOperationError as e:
+    except ValkeyOperationError as e:
         stats = get_cache_stats()
         stats["errors"] += 1
         logger.warning(f"Cache INVALIDATE pattern failed for {pattern}: {e}")

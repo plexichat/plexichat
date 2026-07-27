@@ -1,5 +1,5 @@
 """
-Cache module - Provides caching layer using Redis with in-memory fallback.
+Cache module - Provides caching layer using Valkey with in-memory fallback.
 
 This module provides decorator-based caching and manual cache operations
 for frequently accessed data like user profiles, server info, and sessions.
@@ -9,7 +9,7 @@ Features:
     - Manual cache get/set/invalidate
     - Automatic key generation from function arguments
     - TTL support with configurable defaults
-    - Graceful fallback when Redis is unavailable
+    - Graceful fallback when Valkey is unavailable
     - Cache statistics and monitoring
 """
 

@@ -1,29 +1,33 @@
 """
-Redis storage backend for rate limiting.
+Valkey storage backend for rate limiting.
 Distributed implementation for multi-instance deployments.
 """
 
 import time
 from typing import Optional, List, Dict, Any, cast
 
-from src.core.database.redis_client import get_client, is_available, RedisOperationError
+from src.core.database.valkey_client import (
+    get_client,
+    is_available,
+    ValkeyOperationError,
+)
 from .base import RateLimitStorage
 
 
-class RedisStorage(RateLimitStorage):
-    """Distributed Redis storage for rate limit buckets."""
+class ValkeyStorage(RateLimitStorage):
+    """Distributed Valkey storage for rate limit buckets."""
 
     def __init__(self, key_prefix: str = "ratelimit"):
         """
-        Initialize Redis storage.
+        Initialize Valkey storage.
 
         Args:
-            key_prefix: Prefix for all rate limit keys in Redis.
+            key_prefix: Prefix for all rate limit keys in Valkey.
         """
         self._key_prefix = key_prefix
 
     def _get_key(self, key: str) -> str:
-        """Get full Redis key."""
+        """Get full Valkey key."""
         return f"{self._key_prefix}:{key}"
 
     def get_bucket(self, key: str) -> Optional[Dict[str, Any]]:
@@ -35,7 +39,7 @@ class RedisStorage(RateLimitStorage):
         full_key = self._get_key(key)
         try:
             return cast(Optional[Dict[str, Any]], client.get_json(full_key))
-        except RedisOperationError:
+        except ValkeyOperationError:
             return None
 
     def set_bucket(
@@ -48,11 +52,11 @@ class RedisStorage(RateLimitStorage):
 
         full_key = self._get_key(key)
         try:
-            # Redis TTL is usually an int (seconds), but can be float in some clients (miliseconds)
-            # RedisClient.set_json expects Optional[int]
+            # Valkey TTL is usually an int (seconds), but can be float in some clients (miliseconds)
+            # ValkeyClient.set_json expects Optional[int]
             int_ttl = int(ttl) if ttl is not None else None
             client.set_json(full_key, state, ttl=int_ttl)
-        except RedisOperationError:
+        except ValkeyOperationError:
             pass
 
     def delete_bucket(self, key: str) -> bool:
@@ -64,7 +68,7 @@ class RedisStorage(RateLimitStorage):
         full_key = self._get_key(key)
         try:
             return client.delete(full_key) > 0
-        except RedisOperationError:
+        except ValkeyOperationError:
             return False
 
     def get_keys_by_prefix(self, prefix: str) -> List[str]:
@@ -79,7 +83,7 @@ class RedisStorage(RateLimitStorage):
             # client.keys returns keys relative to client.key_prefix
             keys = client.keys(f"{full_prefix}*")
             return keys
-        except RedisOperationError:
+        except ValkeyOperationError:
             return []
 
     def delete_by_prefix(self, prefix: str) -> int:
@@ -93,11 +97,11 @@ class RedisStorage(RateLimitStorage):
             # client.keys returns keys relative to its own prefix
             keys = client.keys(f"{full_prefix}*")
             if keys:
-                # RedisClient.delete expects keys WITHOUT its own prefix,
+                # ValkeyClient.delete expects keys WITHOUT its own prefix,
                 # which is what client.keys returns.
                 return client.delete(*keys)
             return 0
-        except RedisOperationError:
+        except ValkeyOperationError:
             return 0
 
     def clear_all(self) -> None:
@@ -120,7 +124,7 @@ class RedisStorage(RateLimitStorage):
                 bucket[field] = new_value
                 client.set_json(full_key, bucket)
                 return new_value
-            except RedisOperationError:
+            except ValkeyOperationError:
                 return 0
             finally:
                 if token:  # Re-check for type narrowing
@@ -142,7 +146,7 @@ class RedisStorage(RateLimitStorage):
                 bucket[field] = value
                 client.set_json(full_key, bucket)
                 return previous
-            except RedisOperationError:
+            except ValkeyOperationError:
                 return default
             finally:
                 if token:  # Re-check for type narrowing
@@ -171,7 +175,7 @@ class RedisStorage(RateLimitStorage):
                 bucket[field] = lst
                 client.set_json(full_key, bucket)
                 return len(lst)
-            except RedisOperationError:
+            except ValkeyOperationError:
                 return 0
             finally:
                 if token:  # Re-check for type narrowing
@@ -197,7 +201,7 @@ class RedisStorage(RateLimitStorage):
                 bucket[field] = lst
                 client.set_json(full_key, bucket)
                 return original_len - len(lst)
-            except RedisOperationError:
+            except ValkeyOperationError:
                 return 0
             finally:
                 if token:  # Re-check for type narrowing
@@ -224,7 +228,7 @@ class RedisStorage(RateLimitStorage):
         """Atomically evaluate a token bucket using Lua."""
         client = get_client()
         if not client or not is_available():
-            # Fallback if Redis fails - fail closed or open?
+            # Fallback if Valkey fails - fail closed or open?
             # Usually rate limiting fails open to avoid blocking traffic,
             # but for safety let's return a default "allowed"
             return True, capacity, 0.0
@@ -277,7 +281,7 @@ class RedisStorage(RateLimitStorage):
         full_key = self._get_key(key)
         try:
             # We use time.time() here because monotonic() isn't shared across machines
-            # and Redis Lua scripts don't have access to non-deterministic TIME unless using specialized commands
+            # and Valkey Lua scripts don't have access to non-deterministic TIME unless using specialized commands
             now = time.time()
             result = client.eval_lua(
                 script, keys=[full_key], args=[capacity, refill_rate, cost, ttl, now]
@@ -291,7 +295,7 @@ class RedisStorage(RateLimitStorage):
         except Exception as exc:
             # SECURITY: the previous ``except Exception: return True``
             # FAIL-OPENED the bucket on backend errors. That turns a
-            # transient Redis outage into an unbounded free-fire
+            # transient Valkey outage into an unbounded free-fire
             # corridor for the attacker. We now FAIL-CLOSED: deny the
             # request and surface the condition to the operator so
             # it can be observed (rate-limit fail mode should never
@@ -313,7 +317,7 @@ class RedisStorage(RateLimitStorage):
                 from utils import logger as _log
 
                 _log.error(
-                    "rate-limit Redis backend error, FAIL-OPEN "
+                    "rate-limit Valkey backend error, FAIL-OPEN "
                     "(insecure). Set "
                     "rate_limiting.fail_open_on_backend_error=false "
                     "or unset PLEXICHAT_REQUIRE_FAIL_CLOSED to keep "
@@ -325,7 +329,7 @@ class RedisStorage(RateLimitStorage):
             from utils import logger as _log
 
             _log.critical(
-                "rate-limit Redis backend error, FAIL-CLOSED (denying request): %s",
+                "rate-limit Valkey backend error, FAIL-CLOSED (denying request): %s",
                 exc,
             )
             return False, 0, 60.0

@@ -9,10 +9,10 @@ import time
 from typing import Any, Dict, Optional
 
 import utils.logger as logger
-from ..redis_client import (
+from ..valkey_client import (
     get_client,
     is_available,
-    RedisOperationError,
+    ValkeyOperationError,
 )
 from .operations import cache_get, cache_delete, invalidate_pattern
 
@@ -41,7 +41,7 @@ def cache_session(
         client.sadd(f"user_sessions:{user_id}", session_id)
         logger.debug(f"Session cached: {session_id} for user {user_id}")
         return True
-    except RedisOperationError as e:
+    except ValkeyOperationError as e:
         logger.warning(f"Failed to cache session {session_id}: {e}")
         return False
 
@@ -63,7 +63,7 @@ def invalidate_session(session_id: str, user_id: Optional[int] = None) -> bool:
             client.srem(f"user_sessions:{user_id}", session_id)
         logger.debug(f"Session invalidated: {session_id}")
         return True
-    except RedisOperationError as e:
+    except ValkeyOperationError as e:
         logger.warning(f"Failed to invalidate session {session_id}: {e}")
         return False
 
@@ -83,7 +83,7 @@ def invalidate_user_sessions(user_id: int) -> int:
             logger.debug(f"Invalidated {len(session_ids)} sessions for user {user_id}")
             return len(session_ids)
         return 0
-    except RedisOperationError as e:
+    except ValkeyOperationError as e:
         logger.warning(f"Failed to invalidate sessions for user {user_id}: {e}")
         return 0
 

@@ -3,14 +3,13 @@ Production Simulation Test Suite
 
 Tests verify system behavior under production-like conditions:
 - Multiple uvicorn workers accessing shared PostgreSQL pool
-- Redis caching enabled with database queries
+- Valkey caching enabled with database queries
 - Worker restart scenarios and graceful shutdown
 - Connection pool utilization monitoring
 
 Requirements:
 - PostgreSQL Docker container (automatically managed by fixtures)
-- fakeredis for Redis simulation (no external Redis required)
-- pytest-xdist for parallel test execution
+- No external Valkey/Valkey required (simulated with inline mock)
 
 Usage:
     # Run all production simulation tests
@@ -31,13 +30,28 @@ from dataclasses import dataclass, asdict
 from multiprocessing import Process, Queue
 from typing import List, Dict, Any, Optional
 
-import fakeredis
 import pytest
 from sqlalchemy import text
 
 from src.core.database.core import Database
 
 logger = logging.getLogger(__name__)
+
+
+class _FakeRedis:
+    """Minimal in-memory Valkey mock for testing cache patterns."""
+
+    def __init__(self):
+        self._data: dict[str, bytes] = {}
+
+    def get(self, key: str) -> bytes | None:
+        return self._data.get(key)
+
+    def set(self, key: str, value: str | bytes, ex: int | None = None) -> None:
+        self._data[key] = value if isinstance(value, bytes) else value.encode()
+
+    def delete(self, key: str) -> None:
+        self._data.pop(key, None)
 
 
 # ============================================================================
@@ -576,13 +590,13 @@ class TestMultiWorkerPostgresPool:
         )
 
 
-class TestRedisWithDatabaseQueries:
-    """Tests for Redis caching layer with database operations."""
+class TestValkeyWithDatabaseQueries:
+    """Tests for Valkey caching layer with database operations."""
 
     @pytest.mark.production_simulation
     def test_redis_cache_with_database_fallback(self, postgres_config):
         """
-        Execute queries with Redis cache, fall back to database on miss.
+        Execute queries with Valkey cache, fall back to database on miss.
 
         Verifies:
         - Cache hit rate improves on subsequent queries
@@ -590,7 +604,7 @@ class TestRedisWithDatabaseQueries:
         - Cache is properly populated
         """
         # Use fakeredis for testing without external dependency
-        fake_redis = fakeredis.FakeRedis()
+        fake_valkey = _FakeRedis()
         db = Database(postgres_config)
 
         try:
@@ -600,7 +614,7 @@ class TestRedisWithDatabaseQueries:
             test_key = "test_query_1"
 
             # First query - cache miss, hit database
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             if cached is None:
                 cache_misses += 1
                 with db.get_session() as session:
@@ -608,19 +622,19 @@ class TestRedisWithDatabaseQueries:
                     row = result.fetchone()
                     value = row.value if row else None
                 # Populate cache
-                fake_redis.set(test_key, json.dumps({"value": value}), ex=300)
+                fake_valkey.set(test_key, json.dumps({"value": value}), ex=300)
             else:
                 cache_hits += 1
 
             # Second query - cache hit
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             if cached is None:
                 cache_misses += 1
             else:
                 cache_hits += 1
 
             # Third query - cache hit
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             if cached is None:
                 cache_misses += 1
             else:
@@ -636,37 +650,37 @@ class TestRedisWithDatabaseQueries:
     @pytest.mark.production_simulation
     def test_cache_invalidation_with_database_updates(self, postgres_config):
         """
-        Update database records and verify Redis cache invalidation.
+        Update database records and verify Valkey cache invalidation.
 
         Verifies:
         - Cache is invalidated on database updates
         - Write-through pattern works
         - Cache contains current data after update
         """
-        fake_redis = fakeredis.FakeRedis()
+        fake_valkey = _FakeRedis()
         db = Database(postgres_config)
 
         try:
             test_key = "user:1"
 
             # Initial cache set
-            fake_redis.set(test_key, json.dumps({"id": 1, "name": "Original"}), ex=300)
+            fake_valkey.set(test_key, json.dumps({"id": 1, "name": "Original"}), ex=300)
 
             # Simulate database update
             # In real scenario, would execute UPDATE query
 
             # Invalidate cache
-            fake_redis.delete(test_key)
+            fake_valkey.delete(test_key)
 
             # Verify cache is invalidated
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             assert cached is None, "Cache should be invalidated"
 
             # Repopulate cache with new data
-            fake_redis.set(test_key, json.dumps({"id": 1, "name": "Updated"}), ex=300)
+            fake_valkey.set(test_key, json.dumps({"id": 1, "name": "Updated"}), ex=300)
 
             # Verify new data in cache
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             assert cached is not None, "Cache should be repopulated"
             data = json.loads(cached)
             assert data["name"] == "Updated", f"Expected 'Updated', got {data['name']}"
@@ -678,24 +692,24 @@ class TestRedisWithDatabaseQueries:
     @pytest.mark.production_simulation
     def test_redis_failure_graceful_degradation(self, postgres_config):
         """
-        Simulate Redis connection failure and verify database queries continue.
+        Simulate Valkey connection failure and verify database queries continue.
 
         Verifies:
-        - Database queries work when Redis is unavailable
+        - Database queries work when Valkey is unavailable
         - Performance impact is captured
         - Graceful degradation works
         """
         db = Database(postgres_config)
 
         try:
-            # Query with Redis available
+            # Query with Valkey available
             start_time = time.time()
             with db.get_session() as session:
                 result = session.execute(text("SELECT 1"))
                 result.fetchone()
             time_with_redis = time.time() - start_time
 
-            # Simulate Redis failure by not using cache
+            # Simulate Valkey failure by not using cache
             start_time = time.time()
             with db.get_session() as session:
                 result = session.execute(text("SELECT 1"))
@@ -713,14 +727,14 @@ class TestRedisWithDatabaseQueries:
     @pytest.mark.production_simulation
     def test_session_caching_with_database_queries(self, postgres_config):
         """
-        Test session data cached in Redis while user data queries hit PostgreSQL.
+        Test session data cached in Valkey while user data queries hit PostgreSQL.
 
         Verifies:
         - Session cache reduces database load
         - Database queries still work
         - Cache layer is transparent to application
         """
-        fake_redis = fakeredis.FakeRedis()
+        fake_valkey = _FakeRedis()
         db = Database(postgres_config)
 
         try:
@@ -728,14 +742,14 @@ class TestRedisWithDatabaseQueries:
             user_id = 456
 
             # Cache session data
-            fake_redis.set(
+            fake_valkey.set(
                 session_id,
                 json.dumps({"user_id": user_id, "login_time": time.time()}),
                 ex=3600,
             )
 
             # Query from cache
-            cached_session = fake_redis.get(session_id)
+            cached_session = fake_valkey.get(session_id)
             assert cached_session is not None, "Session should be cached"
             session_data = json.loads(cached_session)
             assert session_data["user_id"] == user_id

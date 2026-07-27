@@ -1,5 +1,5 @@
 """
-Decorator-based caching with Redis and in-memory fallback.
+Decorator-based caching with Valkey and in-memory fallback.
 
 Provides the @cached decorator that supports both sync and async functions.
 """
@@ -15,10 +15,10 @@ from typing import (
 from functools import wraps
 
 import utils.logger as logger
-from ..redis_client import (
+from ..valkey_client import (
     get_client,
     is_available,
-    RedisOperationError,
+    ValkeyOperationError,
     JsonSerializable,
 )
 from .base import mem_cache_get, mem_cache_set
@@ -33,7 +33,7 @@ def cached(
     key_builder: Optional[Callable[..., str]] = None,
     skip_cache_if: Optional[Callable[..., bool]] = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Decorator to cache function results in Redis with in-memory fallback.
+    """Decorator to cache function results in Valkey with in-memory fallback.
 
     Args:
         ttl: Time-to-live in seconds. Defaults to cache TTL from config.
@@ -54,7 +54,7 @@ def cached(
                 return await async_func(*args, **kwargs)
 
             client = get_client()
-            redis_ready = client is not None and is_available()
+            valkey_ready = client is not None and is_available()
 
             key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
             if key_builder:
@@ -62,15 +62,15 @@ def cached(
             else:
                 cache_key = generate_cache_key(key_prefix, *args, **kwargs)
 
-            if redis_ready:
+            if valkey_ready:
                 assert client is not None
                 try:
                     cached_value = client.get_json(cache_key)
                     if cached_value is not None:
                         _cache_stats["hits"] += 1
-                        logger.debug(f"CACHE HIT (Redis): {cache_key}")
+                        logger.debug(f"CACHE HIT (Valkey): {cache_key}")
                         return reconstruct_object(cached_value)
-                except RedisOperationError:
+                except ValkeyOperationError:
                     _cache_stats["errors"] += 1
             else:
                 cached_value = mem_cache_get(cache_key)
@@ -87,10 +87,10 @@ def cached(
             serializable_result = ensure_serializable(result)
 
             cache_ttl = ttl if ttl is not None else 300
-            if redis_ready and client is not None:
+            if valkey_ready and client is not None:
                 cache_ttl = ttl if ttl is not None else client.ttl_cache
 
-            if redis_ready:
+            if valkey_ready:
                 assert client is not None
                 try:
                     client.set_json(
@@ -98,7 +98,7 @@ def cached(
                         cast(JsonSerializable, serializable_result),
                         ttl=cache_ttl,
                     )
-                except RedisOperationError as e:
+                except ValkeyOperationError as e:
                     _cache_stats["errors"] += 1
                     logger.warning(f"Failed to cache result for {cache_key}: {e}")
 
@@ -113,7 +113,7 @@ def cached(
                 return func(*args, **kwargs)
 
             client = get_client()
-            redis_ready = client is not None and is_available()
+            valkey_ready = client is not None and is_available()
 
             key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
             if key_builder:
@@ -121,15 +121,15 @@ def cached(
             else:
                 cache_key = generate_cache_key(key_prefix, *args, **kwargs)
 
-            if redis_ready:
+            if valkey_ready:
                 assert client is not None
                 try:
                     cached_value = client.get_json(cache_key)
                     if cached_value is not None:
                         _cache_stats["hits"] += 1
-                        logger.debug(f"CACHE HIT (Redis): {cache_key}")
+                        logger.debug(f"CACHE HIT (Valkey): {cache_key}")
                         return reconstruct_object(cached_value)
-                except RedisOperationError:
+                except ValkeyOperationError:
                     _cache_stats["errors"] += 1
             else:
                 cached_value = mem_cache_get(cache_key)
@@ -145,10 +145,10 @@ def cached(
             serializable_result = ensure_serializable(result)
 
             cache_ttl = ttl if ttl is not None else 300
-            if redis_ready and client is not None:
+            if valkey_ready and client is not None:
                 cache_ttl = ttl if ttl is not None else client.ttl_cache
 
-            if redis_ready:
+            if valkey_ready:
                 assert client is not None
                 try:
                     client.set_json(
@@ -156,7 +156,7 @@ def cached(
                         cast(JsonSerializable, serializable_result),
                         ttl=cache_ttl,
                     )
-                except RedisOperationError as e:
+                except ValkeyOperationError as e:
                     _cache_stats["errors"] += 1
                     logger.warning(f"Failed to cache result for {cache_key}: {e}")
 
@@ -181,8 +181,8 @@ def cached(
 
 
 def get_cache_stats() -> dict:
-    """Get cache statistics dict."""
-    return _cache_stats.copy()
+    """Get cache statistics dict (mutable reference for internal use)."""
+    return _cache_stats
 
 
 def reset_cache_stats_internal() -> None:

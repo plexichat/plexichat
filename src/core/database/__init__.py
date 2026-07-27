@@ -1,12 +1,12 @@
 from .core import Database
-from .redis_client import (
-    RedisClient,
-    RedisError,
-    RedisConnectionError,
-    RedisOperationError,
-    setup as setup_redis,
-    get_client as get_redis_client,
-    is_available as redis_available,
+from .valkey_client import (
+    ValkeyClient,
+    ValkeyError,
+    ValkeyConnectionError,
+    ValkeyOperationError,
+    setup as setup_valkey,
+    get_client as get_valkey_client,
+    is_available as valkey_available,
 )
 from .cache import (
     cached,
@@ -43,13 +43,13 @@ from .ram_cache import (
 
 __all__ = [
     "Database",
-    "RedisClient",
-    "RedisError",
-    "RedisConnectionError",
-    "RedisOperationError",
-    "setup_redis",
-    "get_redis_client",
-    "redis_available",
+    "ValkeyClient",
+    "ValkeyError",
+    "ValkeyConnectionError",
+    "ValkeyOperationError",
+    "setup_valkey",
+    "get_valkey_client",
+    "valkey_available",
     "cached",
     "cache_get",
     "cache_set",
