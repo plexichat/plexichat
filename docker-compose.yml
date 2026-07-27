@@ -101,12 +101,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
-    deploy:
-      resources:
-        limits:
-          # memory: 4g
-        reservations:
-          # memory: 2g
 
   clamav-unofficial-sigs:
     restart: unless-stopped
