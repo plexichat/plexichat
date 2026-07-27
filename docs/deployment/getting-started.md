@@ -277,8 +277,8 @@ Plexichat automatically runs pending migrations on startup. To run them manually
 # Run migrations
 docker compose exec plexichat python -m src.core.migrations.cli apply_migrations
 
-# Create a backup
-docker compose exec postgres pg_dump -U plexichat plexichat > backup.sql
+# Create a backup via backup container
+docker compose exec backup /scripts/backup.sh run
 ```
 
 ### Health Checks
