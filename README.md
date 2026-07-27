@@ -265,19 +265,27 @@ See root README.md for full configuration options.
 
 **Losing the encryption key files will make ALL encrypted data permanently unrecoverable.** The server will refuse to start if keyring decryption fails.
 
-You **must** regularly back up these files from `~/.plexichat/data/`:
+The Docker Compose stack includes a **restic-based backup container** (`backup` service)
+that automatically creates daily, encrypted, deduplicated snapshots of:
 
-| File | What it protects |
-|------|-----------------|
-| `.machine_key` | Root KEK -- decrypts all keyrings. **Lose this = lose everything.** |
-| `system_keyring.json` | Admin TOTP, API tokens, encrypted user fields |
-| `file_keyring.json` | Media files at rest (avatars, attachments) |
-| `message_keyring.json` | Message content (when `encrypt_messages: true`) |
-| `plexichat.db` | All database content |
+| Component | What it protects |
+|-----------|-----------------|
+| PostgreSQL dump | All database content |
+| `~/.plexichat` | `.machine_key`, keyrings, config — **lose this = lose everything** |
+| MinIO data | Uploaded media, avatars, attachments |
 
-**Always stop the server before copying these files** to ensure consistent backups.
+The backup container runs daily at 2 AM by default. Restore with:
+
+```bash
+docker exec plexichat-backup-1 /scripts/backup.sh restore-db latest   # database
+docker exec plexichat-backup-1 /scripts/backup.sh list                 # list snapshots
+```
+
+See [`docker/README.md`](docker/README.md) for full configuration
+(schedule, retention, secondary/off-site repos, restore procedures).
+
 For production, use `PLEXICHAT_SYSTEM_KEY` env var instead of `.machine_key`.
-See [SECURITY.md](SECURITY.md) for full details.
+See [SECURITY.md](docs/security.md) for full details.
 
 ## Testing
 
