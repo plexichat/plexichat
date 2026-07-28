@@ -751,7 +751,7 @@ class ArtifactsTester:
                 f"POST failed: {resp.status_code}",
             )
 
-            server_id = self.ctx.test_server_id or 1
+            server_id = str(self.ctx.test_server_id or 1)
             resp = self.ctx.session.post(
                 self.ctx.base_url + "/api/v1/admin/artifacts/retention/server",
                 json={"server_id": server_id},

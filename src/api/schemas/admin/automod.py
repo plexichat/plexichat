@@ -38,7 +38,7 @@ class AutomodRuleResponse(BaseModel):
 class AutomodRuleCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    server_id: int
+    server_id: str
     name: str = Field(..., min_length=1, max_length=100)
     rule_type: str
     config: Dict[str, Any]
