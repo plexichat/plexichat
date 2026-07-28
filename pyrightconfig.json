@@ -16,7 +16,6 @@
   ],
   "pythonVersion": "3.14",
   "typeCheckingMode": "standard",
-  "indexLibs": false,
   "useLibraryCodeForTypes": true,
   "reportMissingImports": "error",
   "reportOptionalMemberAccess": "error",
