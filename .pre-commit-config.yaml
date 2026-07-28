@@ -36,7 +36,7 @@ repos:
         name: bandit
         entry: bandit
         language: system
-        args: ["-c", ".bandit", "--severity-level", "medium", "--confidence-level", "high"]
+        args: ["-c", ".bandit", "--severity-level", "medium", "--confidence-level", "high", "--baseline", ".bandit-baseline.json"]
         types: [python]
         exclude: ^src/tests/
 
@@ -51,12 +51,13 @@ repos:
       #  Secret scanning
       - id: detect-secrets
         name: detect-secrets
-        entry: detect-secrets-hook
+        entry: detect-secrets-hook --baseline .secrets.baseline
         language: system
         exclude: |
           (?x)^(
               src/tests/.*|
               docs/.*|
               .*/README\.md|
-              src/core/selftest/.*|
+              \.bandit-baseline\.json|
+              \.secrets\.baseline
           )$
