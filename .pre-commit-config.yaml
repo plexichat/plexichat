@@ -1,27 +1,28 @@
-default_language_version:
-  python: python3.14
-
 repos:
-  #  Ruff
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.10
+  - repo: local
     hooks:
+      #  Ruff
       - id: ruff
-        pass_filenames: false
+        name: ruff
         entry: ruff check --fix .
+        language: system
+        pass_filenames: false
         args: [
           "--extend-exclude",
           ".venv,venv,.pytest_cache,cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,media,config,logs,src/utils/common_utils,src/tests"
         ]
       - id: ruff-format
-        pass_filenames: false
+        name: ruff-format
         entry: ruff format .
+        language: system
+        pass_filenames: false
 
-  #  Type checking
-  - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.409
-    hooks:
+      #  Type checking
       - id: pyright
+        name: pyright
+        entry: pyright
+        language: system
+        types: [python]
         exclude: |
           (?x)^(
               src/core/migrations/cloner\.py|
@@ -29,62 +30,29 @@ repos:
               src/core/media/deduplication/.*\.py|
               src/api/routes/docs/.*\.py
           )$
-        additional_dependencies:
-          - fastapi
-          - pydantic>=2.0.0
-          - uvicorn[standard]
-          - starlette
-          - httpx
-          - aiohttp
-          - websockets
-          - cryptography
-          - pyotp
-          - pillow
-          # valkey-glide-sync omitted — no Windows wheels on PyPI.
-          # Imports use # pyright: ignore[reportMissingImports].
-          - cachetools
-          - pytest
-          - qrcode[pil]
-          - xxhash
-          - websocket-client
-          - PyYAML
-          - imagehash
-          - boto3
-          - google-re2
-          - email-validator
-          - python-multipart
-          - python-dotenv
-          - python-dateutil
-          - sqlalchemy
-          - requests
-          - types-PyYAML
-          - types-requests
-          - types-python-dateutil
 
-  #  Basic security
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.8
-    hooks:
+      #  Basic security
       - id: bandit
+        name: bandit
+        entry: bandit
+        language: system
         args: ["-c", ".bandit", "--severity-level", "medium", "--confidence-level", "high"]
+        types: [python]
         exclude: ^src/tests/
 
-  #  Semgrep
-  # Disabled on Windows due to Unicode encoding issues in console
-  # - repo: local
-  #   hooks:
-  #     - id: semgrep
-  #       name: semgrep
-  #       entry: semgrep
-  #       language: system
-  #       types: [python]
-  #       args: ["--config=auto", "--quiet"]
+      #  Semgrep disabled on Windows (Unicode encoding issues)
+      # - id: semgrep
+      #   name: semgrep
+      #   entry: semgrep
+      #   language: system
+      #   types: [python]
+      #   args: ["--config=auto", "--quiet"]
 
-  #  Secret scanning
-  - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.4.0
-    hooks:
+      #  Secret scanning
       - id: detect-secrets
+        name: detect-secrets
+        entry: detect-secrets-hook
+        language: system
         exclude: |
           (?x)^(
               src/tests/.*|
