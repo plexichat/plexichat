@@ -40,7 +40,8 @@ repos:
           - cryptography
           - pyotp
           - pillow
-          - valkey-glide-sync
+          # valkey-glide-sync omitted — no Windows wheels on PyPI.
+          # Imports use # pyright: ignore[reportMissingImports].
           - cachetools
           - pytest
           - qrcode[pil]

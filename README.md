@@ -94,16 +94,17 @@ python main.py --help
 
 For full CLI reference, see [docs/cli/overview.md](docs/cli/overview.md).
 
-### Pre-commit Hooks (Windows)
+### Windows Development
 
-The pre-commit hook for `pyright` requires `valkey-glide-sync`, which needs `protoc` (Protocol Buffers compiler) to build its native extension from source on Windows. Normal `pip install` uses a pre-built wheel, but pre-commit's isolated environment builds from the source distribution.
+Plexichat's Valkey client uses `valkey-glide-sync`, which has **no Windows wheels on PyPI** and cannot be built from source on Windows (the native Rust library relies on Unix Domain Sockets). This means Valkey-dependent features are unavailable on native Windows.
 
-Install `protoc` and ensure `protoc.exe` is on your `PATH`:
+**For full Plexichat development on Windows, use WSL 2.**
 
-- **Chocolatey**: `choco install protoc`
-- **Manual**: Download from [Protocol Buffers releases](https://github.com/protocolbuffers/protobuf/releases) (`protoc-<version>-win64.zip`), extract, and add the `bin\` directory to your `PATH`.
+### Pre-commit Hooks
 
-The CI pipeline and Docker builds on Linux are unaffected — they use pre-built manylinux wheels.
+The `pyright` pre-commit hook no longer depends on `valkey-glide-sync` — missing imports are suppressed with `# pyright: ignore[reportMissingImports]`. The hook works on Windows without additional setup.
+
+On Linux/CI, type-checking for Valkey code still applies.
 
 ### Dependency Management
 
