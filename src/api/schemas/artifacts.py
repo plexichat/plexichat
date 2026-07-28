@@ -127,7 +127,7 @@ class RetentionPurgeResponse(BaseModel):
 class ServerRetentionRequest(BaseModel):
     """Request body for setting a per-server retention override."""
 
-    server_id: int = Field(..., description="Target server id")
+    server_id: str = Field(..., description="Target server id")
     retention_days: Optional[int] = Field(
         None,
         description=(
@@ -140,7 +140,7 @@ class ServerRetentionRequest(BaseModel):
 class ServerRetentionResponse(BaseModel):
     """Response for a per-server retention override set/clear."""
 
-    server_id: int = Field(..., description="Server id")
+    server_id: str = Field(..., description="Server id")
     retention_days: Optional[int] = Field(
         None, description="Effective override after the operation (None = cleared)"
     )

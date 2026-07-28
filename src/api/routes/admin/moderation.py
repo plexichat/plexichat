@@ -358,11 +358,11 @@ async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0)
 
     return [
         BlockedUserResponse(
-            user_id=u.user_id,
+            user_id=str(u.user_id),
             username=u.username,
             reason=u.reason,
             blocked_at=u.blocked_at,
-            blocked_by=u.blocked_by,
+            blocked_by=str(u.blocked_by) if u.blocked_by is not None else None,
             expires_at=u.expires_at,
         )
         for u in admin.get_blocked_users(limit, offset)
@@ -379,7 +379,7 @@ async def block_user(block_request: BlockUserRequest, request: Request):
     from src.core import admin
 
     if not admin.block_user(
-        block_request.user_id,
+        int(block_request.user_id),
         block_request.reason,
         admin_id,
         block_request.duration_hours,
@@ -392,7 +392,7 @@ async def block_user(block_request: BlockUserRequest, request: Request):
 
 
 @router.delete("/blocked-users/{user_id}", response_model=SuccessResponse)
-async def unblock_user(user_id: int, request: Request):
+async def unblock_user(user_id: str, request: Request):
     """
     Lift a block or ban from a specific user.
     """
@@ -400,7 +400,7 @@ async def unblock_user(user_id: int, request: Request):
     get_admin_from_token(request)
     from src.core import admin
 
-    if not admin.unblock_user(user_id):
+    if not admin.unblock_user(int(user_id)):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Failed to unblock user"}},
@@ -441,7 +441,7 @@ def _rule_to_response(rule) -> AutomodRuleResponse:
 
 
 @router.get("/automod/rules", response_model=List[AutomodRuleResponse])
-async def get_automod_rules(request: Request, server_id: int):
+async def get_automod_rules(request: Request, server_id: str):
     """
     Retrieve the list of AutoMod rules configured for a specific server.
     """
@@ -450,7 +450,7 @@ async def get_automod_rules(request: Request, server_id: int):
     from src.core import automod
 
     try:
-        rules = automod.get_server_rules(server_id)
+        rules = automod.get_server_rules(int(server_id))
         return [_rule_to_response(r) for r in rules]
     except Exception as e:
         logger.error(f"Automod rules error: {e}", exc_info=True)

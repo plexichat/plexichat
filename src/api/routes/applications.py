@@ -38,7 +38,7 @@ class ApplicationResponse(BaseModel):
     description: Optional[str] = None
     icon_emoji: Optional[str] = None
     icon_url: Optional[str] = None
-    bot_id: Optional[int] = None
+    bot_id: Optional[str] = None
     bot: bool = False
     bot_public: bool = True
     capabilities: Optional[Dict[str, bool]] = None
@@ -71,7 +71,7 @@ class BotTokenResponse(BaseModel):
     """Response schema for bot token."""
 
     token: str
-    bot_id: Optional[int] = None
+    bot_id: Optional[str] = None
 
 
 class InteractionCallbackRequest(BaseModel):
@@ -89,6 +89,7 @@ def _application_to_response(app) -> ApplicationResponse:
     # Application model fields depend on the source
     # Support both dataclass and dict-like objects for safety
     if isinstance(app, dict):
+        raw_bot_id = app.get("bot_id")
         return ApplicationResponse(
             id=app.get("id", 0),
             owner_id=app.get("owner_id", 0),
@@ -96,12 +97,13 @@ def _application_to_response(app) -> ApplicationResponse:
             description=app.get("description"),
             icon_emoji=None,
             icon_url=app.get("icon_url"),
-            bot_id=app.get("bot_id"),
-            bot=app.get("bot_id") is not None,
+            bot_id=str(raw_bot_id) if raw_bot_id is not None else None,
+            bot=raw_bot_id is not None,
             bot_public=app.get("bot_public", True),
             capabilities=None,
             created_at=app.get("created_at", 0),
         )
+    raw_bot_id = getattr(app, "bot_id", None)
     return ApplicationResponse(
         id=getattr(app, "id", 0),
         owner_id=getattr(app, "owner_id", 0),
@@ -109,8 +111,8 @@ def _application_to_response(app) -> ApplicationResponse:
         description=getattr(app, "description", None),
         icon_emoji=None,
         icon_url=getattr(app, "icon_url", None),
-        bot_id=getattr(app, "bot_id", None),
-        bot=getattr(app, "bot_id", None) is not None,
+        bot_id=str(raw_bot_id) if raw_bot_id is not None else None,
+        bot=raw_bot_id is not None,
         bot_public=getattr(app, "bot_public", True),
         capabilities=None,
         created_at=getattr(app, "created_at", 0),
@@ -186,13 +188,13 @@ async def create_application(
     },
 )
 async def get_application(
-    application_id: int,
+    application_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get details of a specific application."""
     try:
         app = applications.get_application(
-            application_id=application_id,
+            application_id=int(application_id),
             user_id=current_user.user_id,
         )
         if not app:
@@ -221,7 +223,7 @@ async def get_application(
     },
 )
 async def update_application(
-    application_id: int,
+    application_id: str,
     body: UpdateApplicationRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
@@ -229,7 +231,7 @@ async def update_application(
     try:
         app = applications.update_application(
             user_id=current_user.user_id,
-            application_id=application_id,
+            application_id=int(application_id),
             name=body.name,
             description=body.description,
             redirect_uris=body.redirect_uris,
@@ -265,14 +267,14 @@ async def update_application(
     },
 )
 async def delete_application(
-    application_id: int,
+    application_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Delete an application."""
     try:
         applications.delete_application(
             user_id=current_user.user_id,
-            application_id=application_id,
+            application_id=int(application_id),
         )
     except ApplicationNotFoundError as e:
         raise HTTPException(
@@ -303,7 +305,7 @@ async def delete_application(
     },
 )
 async def create_bot(
-    application_id: int,
+    application_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Create a bot account for an application and return its token."""
@@ -312,11 +314,12 @@ async def create_bot(
         # In that case, return success with a placeholder message
         result = applications.create_bot_for_application(
             user_id=current_user.user_id,
-            application_id=application_id,
+            application_id=int(application_id),
         )
+        raw_bot_id = result.get("bot_id")
         return BotTokenResponse(
             token=result.get("token", ""),
-            bot_id=result.get("bot_id"),
+            bot_id=str(raw_bot_id) if raw_bot_id is not None else None,
         )
     except ApplicationNotFoundError as e:
         raise HTTPException(
@@ -352,13 +355,13 @@ async def create_bot(
     },
 )
 async def regenerate_secret(
-    application_id: int,
+    application_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Regenerate the client secret for an application."""
     try:
         result = applications.regenerate_client_secret(
-            application_id=application_id,
+            application_id=int(application_id),
             user_id=current_user.user_id,
         )
         return {"secret": result}
