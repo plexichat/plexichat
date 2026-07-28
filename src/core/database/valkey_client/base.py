@@ -108,7 +108,7 @@ class ValkeyClientBase:
             return False
 
         try:
-            from glide_sync import (
+            from glide_sync import (  # pyright: ignore[reportMissingImports]
                 GlideClient,
                 GlideClientConfiguration,
                 NodeAddress,
@@ -184,7 +184,7 @@ class ValkeyClientBase:
         keys: Optional[List[str]] = None,
         args: Optional[List[Any]] = None,
     ) -> Any:
-        from glide_sync import Script
+        from glide_sync import Script  # pyright: ignore[reportMissingImports]
 
         self._ensure_connected()
         client = self._client
