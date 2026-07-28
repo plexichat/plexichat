@@ -96,13 +96,14 @@ For full CLI reference, see [docs/cli/overview.md](docs/cli/overview.md).
 
 ### Pre-commit Hooks (Windows)
 
-The pre-commit hook for `pyright` requires `valkey-glide-sync`, which needs `protoc` (Protocol Buffers compiler) to build its native wheel on Windows. Install it from the [Protocol Buffers releases page](https://github.com/protocolbuffers/protobuf/releases) and ensure `protoc.exe` is on your `PATH`. The CI pipeline on Linux is unaffected.
+The pre-commit hook for `pyright` requires `valkey-glide-sync`, which needs `protoc` (Protocol Buffers compiler) to build its native extension from source on Windows. Normal `pip install` uses a pre-built wheel, but pre-commit's isolated environment builds from the source distribution.
 
-To skip pyright for a single commit (e.g. trivial file renames):
+Install `protoc` and ensure `protoc.exe` is on your `PATH`:
 
-```powershell
-$env:SKIP="pyright"; git commit -m "..."
-```
+- **Chocolatey**: `choco install protoc`
+- **Manual**: Download from [Protocol Buffers releases](https://github.com/protocolbuffers/protobuf/releases) (`protoc-<version>-win64.zip`), extract, and add the `bin\` directory to your `PATH`.
+
+The CI pipeline and Docker builds on Linux are unaffected — they use pre-built manylinux wheels.
 
 ### Dependency Management
 
