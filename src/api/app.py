@@ -32,7 +32,7 @@ import sys  # noqa: E402
 import re  # noqa: E402
 import unicodedata  # noqa: E402
 import threading  # noqa: E402
-from typing import Optional, AsyncGenerator  # noqa: E402
+from typing import Any, Optional, AsyncGenerator  # noqa: E402
 
 import utils.config as global_config  # noqa: E402
 import utils.logger as logger  # noqa: E402
@@ -724,7 +724,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
                 # Helper to correctly slice any stream (file or generator)
                 async def get_response_iterator(
-                    s, skip, limit
+                    s: Any, skip: int, limit: int
                 ) -> AsyncGenerator[bytes, None]:
                     import inspect
                     from starlette.concurrency import (
