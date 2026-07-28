@@ -62,6 +62,8 @@ lint:pre-commit:
   stage: lint
   variables:
     PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.cache/pre-commit"
+    NODE_OPTIONS: "--max-old-space-size=2048"
+    UV_THREADPOOL_SIZE: "4"
   cache:
     key:
       files:
@@ -72,6 +74,7 @@ lint:pre-commit:
     policy: pull-push
   before_script:
     - !reference [.python_base, before_script]
+    - apt-get install -y -qq --no-install-recommends nodejs
     - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit
   script:
     - pre-commit run --all-files --show-diff-on-failure
