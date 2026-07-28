@@ -50,7 +50,7 @@ curl http://localhost:8000/health
 ```json
 {
   "status": "healthy",
-  "version": "a.1.0-117",
+  "version": "a.1.0-118",
   "timestamp": "2024-01-15T10:30:45Z",
   "database": "connected",
   "redis": "connected",
@@ -486,4 +486,5 @@ docker compose exec backend curl -v http://localhost:8000/health
 - [Troubleshooting](troubleshooting.md) - Common issues
 - [Production Setup](production-setup.md) - Production configuration
 - [Configuration](configuration.md) - Configure healthchecks
+
 

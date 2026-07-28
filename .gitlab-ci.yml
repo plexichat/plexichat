@@ -52,6 +52,8 @@ cache:
             safety
       fi
       pip install --upgrade pip
+      # Ensure pre-commit system tools are always installed (cache may be stale)
+      pip install ruff==0.15.10 pyright bandit[toml] detect-secrets
     # common_utils is bundled directly in the repository at src/utils/common_utils/
 
 # =========================================================
