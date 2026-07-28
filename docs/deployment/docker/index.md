@@ -132,7 +132,7 @@ docker compose down -v
 
 For versioned deployment:
 ```bash
-VERSION=a.1.0-116 docker compose up -d
+VERSION=a.1.0-117 docker compose up -d
 ```
 
 See [Quick Start](quick-start.md) for detailed steps.
@@ -183,3 +183,4 @@ Services on the same network can communicate by service name (e.g., `backend` ca
 - [Production Setup](production-setup.md) - Deploy to production
 
 Still have questions? See [Troubleshooting](troubleshooting.md).
+
