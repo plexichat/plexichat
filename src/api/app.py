@@ -344,7 +344,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             logger.warning(f"Failed to load docs config: {e}")
 
         docs_router = create_docs_router()
-        app.include_router(docs_router, prefix=docs_path, tags=["Documentation"])
+        app.include_router(docs_router, prefix=docs_path)
         logger.info(f"Documentation server enabled at {docs_path}")
 
     from .schemas.common import RootResponse, ErrorResponse
