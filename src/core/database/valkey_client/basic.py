@@ -4,11 +4,11 @@ import utils.logger as logger
 
 from .base import ValkeyClientBase, ValkeyOperationError, ValkeyValue
 
-from glide_sync import ExpirySet, ExpiryType
-
 
 class BasicMixin(ValkeyClientBase):
     def set(self, key: str, value: ValkeyValue, ttl: Optional[int] = None) -> bool:
+        from glide_sync import ExpirySet, ExpiryType  # pyright: ignore[reportMissingImports]
+
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
 
@@ -28,6 +28,8 @@ class BasicMixin(ValkeyClientBase):
             raise ValkeyOperationError(f"SET failed: {e}")
 
     def set_bin(self, key: str, value: bytes, ttl: Optional[int] = None) -> bool:
+        from glide_sync import ExpirySet, ExpiryType  # pyright: ignore[reportMissingImports]
+
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
 

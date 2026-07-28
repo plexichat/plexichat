@@ -5,13 +5,14 @@ from typing import Optional
 import utils.logger as logger
 
 from .base import ValkeyClientBase
-from glide_sync import ExpirySet, ExpiryType, ConditionalChange
 
 
 class LockMixin(ValkeyClientBase):
     def acquire_lock(
         self, key: str, timeout: float = 10.0, lock_timeout: int = 30000
     ) -> Optional[str]:
+        from glide_sync import ExpirySet, ExpiryType, ConditionalChange  # pyright: ignore[reportMissingImports]
+
         self._ensure_connected()
         client = self._client
         assert client is not None
