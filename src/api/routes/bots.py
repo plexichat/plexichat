@@ -36,9 +36,9 @@ class ApprovedBotResponse(BaseModel):
     """Response schema for an approved bot."""
 
     id: int
-    server_id: int
-    application_id: int
-    approved_by: int
+    server_id: str
+    application_id: str
+    approved_by: str
     permissions: str
     bot_name: Optional[str] = None
     bot_avatar_url: Optional[str] = None
@@ -52,12 +52,12 @@ class BotRequestResponse(BaseModel):
     """Response schema for a bot request."""
 
     id: int
-    server_id: int
-    application_id: int
-    requester_id: int
+    server_id: str
+    application_id: str
+    requester_id: str
     reason: Optional[str] = None
     status: str
-    reviewed_by: Optional[int] = None
+    reviewed_by: Optional[str] = None
     review_reason: Optional[str] = None
     created_at: int
 
@@ -65,7 +65,7 @@ class BotRequestResponse(BaseModel):
 class BotProfileResponse(BaseModel):
     """Response schema for a bot profile."""
 
-    application_id: int
+    application_id: str
     description: Optional[str] = None
     short_description: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -82,7 +82,7 @@ class AuthorizedAppResponse(BaseModel):
     """Response schema for a user's authorized application."""
 
     id: int
-    application_id: int
+    application_id: str
     application_name: str
     application_icon: Optional[str] = None
     scopes: List[str] = []
@@ -97,7 +97,7 @@ class BotDirectoryEntry(BaseModel):
     name: str
     description: Optional[str] = None
     icon_url: Optional[str] = None
-    bot_id: Optional[int] = None
+    bot_id: Optional[str] = None
     tags: List[str] = []
     nsfw: bool = False
 
@@ -105,7 +105,7 @@ class BotDirectoryEntry(BaseModel):
 class ApproveBotRequest(BaseModel):
     """Request to approve a bot on a server."""
 
-    application_id: int
+    application_id: str
     permissions: str = "{}"
     bot_name: Optional[str] = None
 
@@ -113,7 +113,7 @@ class ApproveBotRequest(BaseModel):
 class RequestBotRequest(BaseModel):
     """Request to request bot approval."""
 
-    application_id: int
+    application_id: str
     reason: Optional[str] = None
 
 
@@ -155,9 +155,9 @@ def _approved_bot_to_response(bot, app_name=None, app_icon=None) -> ApprovedBotR
     """Convert an ApprovedBot model to a response."""
     return ApprovedBotResponse(
         id=bot.id,
-        server_id=bot.server_id,
-        application_id=bot.application_id,
-        approved_by=bot.approved_by,
+        server_id=str(bot.server_id),
+        application_id=str(bot.application_id),
+        approved_by=str(bot.approved_by),
         permissions=bot.permissions,
         bot_name=bot.bot_name,
         bot_avatar_url=bot.bot_avatar_url,
@@ -172,12 +172,12 @@ def _bot_request_to_response(req) -> BotRequestResponse:
     """Convert a BotRequest model to a response."""
     return BotRequestResponse(
         id=req.id,
-        server_id=req.server_id,
-        application_id=req.application_id,
-        requester_id=req.requester_id,
+        server_id=str(req.server_id),
+        application_id=str(req.application_id),
+        requester_id=str(req.requester_id),
         reason=req.reason,
         status=req.status.value if hasattr(req.status, "value") else req.status,
-        reviewed_by=req.reviewed_by,
+        reviewed_by=str(req.reviewed_by) if req.reviewed_by is not None else None,
         review_reason=req.review_reason,
         created_at=req.created_at,
     )
@@ -197,12 +197,14 @@ def _bot_request_to_response(req) -> BotRequestResponse:
     },
 )
 async def list_approved_bots(
-    server_id: int,
+    server_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get all approved bots for a server."""
     try:
-        bots = applications.get_approved_bots(server_id=server_id, status="approved")
+        bots = applications.get_approved_bots(
+            server_id=int(server_id), status="approved"
+        )
         return [_approved_bot_to_response(bot) for bot in bots]
     except Exception as e:
         raise HTTPException(
@@ -226,15 +228,15 @@ async def list_approved_bots(
     },
 )
 async def request_bot(
-    server_id: int,
+    server_id: str,
     body: RequestBotRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Request approval for a bot on a server."""
     try:
         req = applications.request_bot(
-            server_id=server_id,
-            application_id=body.application_id,
+            server_id=int(server_id),
+            application_id=int(body.application_id),
             requester_id=current_user.user_id,
             reason=body.reason,
         )
@@ -267,15 +269,15 @@ async def request_bot(
     },
 )
 async def remove_approved_bot(
-    server_id: int,
-    application_id: int,
+    server_id: str,
+    application_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Remove an approved bot from a server."""
     try:
         applications.remove_approved_bot(
-            server_id=server_id,
-            application_id=application_id,
+            server_id=int(server_id),
+            application_id=int(application_id),
             user_id=current_user.user_id,
         )
     except PermissionDeniedError as e:
@@ -306,14 +308,14 @@ async def remove_approved_bot(
     },
 )
 async def disable_bot(
-    bot_id: int,
+    bot_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Disable a bot owned by the current user."""
     from src.core import auth
 
     try:
-        auth.disable_bot(owner_id=current_user.user_id, bot_id=bot_id)
+        auth.disable_bot(owner_id=current_user.user_id, bot_id=int(bot_id))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -332,14 +334,14 @@ async def disable_bot(
     },
 )
 async def enable_bot(
-    bot_id: int,
+    bot_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Enable a bot owned by the current user."""
     from src.core import auth
 
     try:
-        auth.enable_bot(owner_id=current_user.user_id, bot_id=bot_id)
+        auth.enable_bot(owner_id=current_user.user_id, bot_id=int(bot_id))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -360,14 +362,14 @@ async def enable_bot(
     },
 )
 async def list_bot_requests(
-    server_id: int,
+    server_id: str,
     status_filter: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get bot requests for a server."""
     try:
         requests = applications.get_bot_requests(
-            server_id=server_id,
+            server_id=int(server_id),
             status=status_filter,
         )
         return [_bot_request_to_response(req) for req in requests]
@@ -394,15 +396,15 @@ async def list_bot_requests(
     },
 )
 async def approve_bot(
-    server_id: int,
+    server_id: str,
     body: ApproveBotRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Approve a bot for installation on a server."""
     try:
         bot = applications.approve_bot(
-            server_id=server_id,
-            application_id=body.application_id,
+            server_id=int(server_id),
+            application_id=int(body.application_id),
             approved_by=current_user.user_id,
             permissions=body.permissions,
             bot_name=body.bot_name,
@@ -459,7 +461,7 @@ async def approve_bot(
     },
 )
 async def review_bot_request(
-    server_id: int,
+    server_id: str,
     request_id: int,
     body: ReviewBotRequest,
     current_user: TokenInfo = Depends(get_current_user),
@@ -467,7 +469,7 @@ async def review_bot_request(
     """Review a bot request (approve or deny)."""
     try:
         req = applications.review_bot_request(
-            server_id=server_id,
+            server_id=int(server_id),
             request_id=request_id,
             reviewer_id=current_user.user_id,
             approve=body.approve,
@@ -503,17 +505,17 @@ async def review_bot_request(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_bot_profile(application_id: int):
+async def get_bot_profile(application_id: str):
     """Get a bot's public profile."""
     try:
-        profile = applications.get_bot_profile(application_id)
+        profile = applications.get_bot_profile(int(application_id))
         if not profile:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"error": {"code": 404, "message": "Bot profile not found"}},
             )
         return BotProfileResponse(
-            application_id=profile.application_id,
+            application_id=str(profile.application_id),
             description=profile.description,
             short_description=profile.short_description,
             avatar_url=profile.avatar_url,
@@ -545,14 +547,14 @@ async def get_bot_profile(application_id: int):
     },
 )
 async def update_bot_profile(
-    application_id: int,
+    application_id: str,
     body: UpdateBotProfileRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Update a bot's public profile."""
     try:
         profile = applications.update_bot_profile(
-            application_id=application_id,
+            application_id=int(application_id),
             user_id=current_user.user_id,
             description=body.description,
             short_description=body.short_description,
@@ -566,7 +568,7 @@ async def update_bot_profile(
             private=body.private,
         )
         return BotProfileResponse(
-            application_id=profile.application_id,
+            application_id=str(profile.application_id),
             description=profile.description,
             short_description=profile.short_description,
             avatar_url=profile.avatar_url,
@@ -607,7 +609,7 @@ async def update_bot_profile(
     },
 )
 async def list_bot_directory(
-    server_id: Optional[int] = None,
+    server_id: Optional[str] = None,
     q: Optional[str] = None,
     tag: Optional[str] = None,
     limit: int = 50,
@@ -618,14 +620,24 @@ async def list_bot_directory(
         if limit > 100:
             limit = 100
         result = applications.get_bot_directory(
-            server_id=server_id,
+            server_id=int(server_id) if server_id is not None else None,
             include_public=True,
             limit=limit,
             offset=offset,
             q=q,
             tag=tag,
         )
-        entries = [BotDirectoryEntry(**bot) for bot in result["bot_list"]]
+        entries = [
+            BotDirectoryEntry(
+                **{
+                    **bot,
+                    "bot_id": str(bot["bot_id"])
+                    if bot.get("bot_id") is not None
+                    else None,
+                }
+            )
+            for bot in result["bot_list"]
+        ]
         return BotDirectoryResponse(
             bots=entries,
             total=result["total"],
@@ -660,7 +672,7 @@ async def list_authorized_apps(
         return [
             AuthorizedAppResponse(
                 id=app.id,
-                application_id=app.application_id,
+                application_id=str(app.application_id),
                 application_name=app.application_name,
                 application_icon=app.application_icon,
                 scopes=app.scopes,

@@ -16,7 +16,7 @@ class AdminMixin(EndpointTesterBase):
     """Tests admin-related API endpoints."""
 
     def test_migration_endpoints(self) -> None:
-        """Test migration apply and rollback using the 037 selftest no-op migration."""
+        """Test migration apply and rollback using the 001 selftest no-op migration."""
         if not self.ctx.standalone_mode:
             return
         if not self.ctx.session.headers.get("Authorization"):
@@ -24,14 +24,14 @@ class AdminMixin(EndpointTesterBase):
             return
 
         session = self.ctx.session
-        mig_path_apply = "/api/v1/admin/database/migrations/apply/037"
-        mig_path_rollback = "/api/v1/admin/database/migrations/rollback/037"
+        mig_path_apply = "/api/v1/admin/database/migrations/apply/001"
+        mig_path_rollback = "/api/v1/admin/database/migrations/rollback/001"
 
-        # Migration 037 may already be applied during server startup.
+        # Migration 001 may already be applied during server startup.
         # Rollback first so we can test apply; then rollback again to leave
         # the DB in the same state we found it.
         logger.info(
-            "Testing POST /api/v1/admin/database/migrations/rollback/037 (pre-test)..."
+            "Testing POST /api/v1/admin/database/migrations/rollback/001 (pre-test)..."
         )
         rb1_start = time.time()
         resp = session.post(
@@ -51,17 +51,17 @@ class AdminMixin(EndpointTesterBase):
         )
         if rb1_ok:
             logger.info(
-                f"Migration rollback 037 (pre-test) PASSED -> {resp.status_code}"
+                f"Migration rollback 001 (pre-test) PASSED -> {resp.status_code}"
             )
         else:
             logger.debug(
-                f"Migration rollback 037 (pre-test) -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration rollback 001 (pre-test) -> {resp.status_code}: {resp.text[:200]}"
             )
 
         time.sleep(0.05)
 
-        # --- Apply migration 037 ---
-        logger.info("Testing POST /api/v1/admin/database/migrations/apply/037...")
+        # --- Apply migration 001 ---
+        logger.info("Testing POST /api/v1/admin/database/migrations/apply/001...")
         mig_apply_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_apply}",
@@ -80,16 +80,16 @@ class AdminMixin(EndpointTesterBase):
             }
         )
         if success:
-            logger.info(f"Migration apply 037 PASSED -> {resp.status_code}")
+            logger.info(f"Migration apply 001 PASSED -> {resp.status_code}")
         else:
             logger.warning(
-                f"Migration apply 037 -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration apply 001 -> {resp.status_code}: {resp.text[:200]}"
             )
 
         time.sleep(0.05)
 
-        # --- Rollback migration 037 ---
-        logger.info("Testing POST /api/v1/admin/database/migrations/rollback/037...")
+        # --- Rollback migration 001 ---
+        logger.info("Testing POST /api/v1/admin/database/migrations/rollback/001...")
         mig_rollback_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_rollback}",
@@ -108,10 +108,10 @@ class AdminMixin(EndpointTesterBase):
             }
         )
         if success:
-            logger.info(f"Migration rollback 037 PASSED -> {resp.status_code}")
+            logger.info(f"Migration rollback 001 PASSED -> {resp.status_code}")
         else:
             logger.warning(
-                f"Migration rollback 037 -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration rollback 001 -> {resp.status_code}: {resp.text[:200]}"
             )
 
     def test_access_token_rotate(self) -> None:
@@ -587,11 +587,11 @@ class AdminMixin(EndpointTesterBase):
             return
 
         session = self.ctx.session
-        mig_run = "/api/v1/admin/migrations/037/run"
-        mig_rollback = "/api/v1/admin/migrations/037/rollback"
+        mig_run = "/api/v1/admin/migrations/001/run"
+        mig_rollback = "/api/v1/admin/migrations/001/rollback"
 
-        # --- Run (apply) migration 037 via new endpoint ---
-        logger.info("Testing POST /api/v1/admin/migrations/037/run (apply)...")
+        # --- Run (apply) migration 001 via new endpoint ---
+        logger.info("Testing POST /api/v1/admin/migrations/001/run (apply)...")
         run_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_run}",
@@ -611,16 +611,16 @@ class AdminMixin(EndpointTesterBase):
             }
         )
         if success:
-            logger.info(f"Migration apply 037 PASSED -> {resp.status_code}")
+            logger.info(f"Migration apply 001 PASSED -> {resp.status_code}")
         else:
             logger.warning(
-                f"Migration apply 037 -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration apply 001 -> {resp.status_code}: {resp.text[:200]}"
             )
 
         time.sleep(0.05)
 
-        # --- Rollback 037 via new endpoint ---
-        logger.info("Testing POST /api/v1/admin/migrations/037/rollback...")
+        # --- Rollback 001 via new endpoint ---
+        logger.info("Testing POST /api/v1/admin/migrations/001/rollback...")
         rb_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_rollback}",
@@ -639,8 +639,8 @@ class AdminMixin(EndpointTesterBase):
             }
         )
         if success:
-            logger.info(f"Migration rollback 037 PASSED -> {resp.status_code}")
+            logger.info(f"Migration rollback 001 PASSED -> {resp.status_code}")
         else:
             logger.warning(
-                f"Migration rollback 037 -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration rollback 001 -> {resp.status_code}: {resp.text[:200]}"
             )

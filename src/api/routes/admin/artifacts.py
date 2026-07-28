@@ -170,8 +170,8 @@ async def admin_set_server_retention(
 
     try:
         manager = _get_manager()
-        manager.set_server_retention_days(body.server_id, body.retention_days)
-        effective = manager.get_server_retention_days(body.server_id)
+        manager.set_server_retention_days(int(body.server_id), body.retention_days)
+        effective = manager.get_server_retention_days(int(body.server_id))
         return ServerRetentionResponse(
             server_id=body.server_id, retention_days=effective, success=True
         )

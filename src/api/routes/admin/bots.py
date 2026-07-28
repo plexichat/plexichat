@@ -42,7 +42,7 @@ class AdminBotEntry(BaseModel):
     id: int
     name: str
     owner_id: int
-    bot_id: Optional[int] = None
+    bot_id: Optional[str] = None
     icon_url: Optional[str] = None
     approved_servers: int = 0
     pending_requests: int = 0
@@ -53,9 +53,9 @@ class AdminBotRequestEntry(BaseModel):
     """A bot request in the admin panel."""
 
     id: int
-    application_id: int
+    application_id: str
     application_name: str
-    server_id: int
+    server_id: str
     requester_id: int
     reason: Optional[str] = None
     status: str

@@ -84,7 +84,7 @@ class BlockUserRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    user_id: int = Field(..., description="User ID to block")
+    user_id: str = Field(..., description="User ID to block")
     reason: str = Field(
         ..., min_length=1, max_length=500, description="Reason for blocking"
     )
@@ -98,11 +98,11 @@ class BlockedUserResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    user_id: int = Field(..., description="User ID")
+    user_id: str = Field(..., description="User ID")
     username: Optional[str] = Field(default=None, description="Username")
     reason: str = Field(..., description="Reason for blocking")
     blocked_at: int = Field(..., description="Block timestamp")
-    blocked_by: Optional[int] = Field(default=None, description="Admin ID who blocked")
+    blocked_by: Optional[str] = Field(default=None, description="Admin ID who blocked")
     expires_at: Optional[int] = Field(default=None, description="Expiration timestamp")
 
 
@@ -112,4 +112,4 @@ class BlockUserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether block was successful")
-    user_id: int = Field(..., description="User ID")
+    user_id: str = Field(..., description="User ID")
