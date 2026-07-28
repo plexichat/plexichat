@@ -46,7 +46,6 @@ PyYAML==6.0.3
 
 # HTTP Client (for webhooks, etc.)
 requests==2.34.2
-urllib3==2.7.0
 httpx==0.28.1
 # aiohttp pinned to 3.14.1+ clears CVE-2026-54273..54280 (8 CVEs from pip-audit)
 aiohttp==3.14.3
@@ -62,7 +61,6 @@ aiortc==1.15.0
 # python-multipart pinned to 0.0.32 clears CVE-2026-53538, CVE-2026-53539,
 # CVE-2026-53540 (pip-audit)
 python-multipart==0.0.32
-python-dotenv==1.2.2
 python-dateutil==2.9.0.post0
 mistune==3.3.4
 markdown==3.10.2
@@ -96,4 +94,4 @@ pytest-cov==7.1.0
 pytest-timeout==2.4.0
 psutil==7.2.2
 hypothesis==6.161.6
-pyasn1>=0.6.4
+
