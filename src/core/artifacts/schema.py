@@ -78,6 +78,18 @@ CREATE TABLE IF NOT EXISTS artifact_ops (
 -- Artifact ops indexes
 CREATE INDEX IF NOT EXISTS idx_artifact_ops_artifact ON artifact_ops(artifact_id);
 CREATE INDEX IF NOT EXISTS idx_artifact_ops_artifact_seq ON artifact_ops(artifact_id, seq);
+
+-- Per-server artifact settings (048)
+CREATE TABLE IF NOT EXISTS server_artifact_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id INTEGER NOT NULL UNIQUE,
+    retention_days INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_server_artifact_settings_server
+    ON server_artifact_settings(server_id);
 """
 
 
