@@ -102,9 +102,13 @@ Plexichat's Valkey client uses `valkey-glide-sync`, which has **no Windows wheel
 
 ### Pre-commit Hooks
 
-The `pyright` pre-commit hook no longer depends on `valkey-glide-sync` — missing imports are suppressed with `# pyright: ignore[reportMissingImports]`. The hook works on Windows without additional setup.
+The pre-commit hooks use `language: system` — they run your locally-installed tools rather than isolated environments. Ensure these are installed in your active environment:
 
-On Linux/CI, type-checking for Valkey code still applies.
+```bash
+pip install ruff pyright bandit[toml] detect-secrets pre-commit
+```
+
+The CI image installs these automatically. Windows users: note that `valkey-glide-sync` has no Windows wheels, so Valkey-related pyright diagnostics are suppressed with `# pyright: ignore[reportMissingImports]`.
 
 ### Dependency Management
 
