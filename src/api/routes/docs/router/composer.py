@@ -34,8 +34,8 @@ class DocsRouter(
     DocsRouterBase,
 ):
     def register_routes(self, router: APIRouter) -> None:
-        router.get("")(self.docs_index)
-        router.get("/")(self.docs_index)
+        router.get("", include_in_schema=False)(self.docs_index)
+        router.get("/", include_in_schema=False)(self.docs_index)
 
         router.get("/getting-started")(self.docs_getting_started)
 
