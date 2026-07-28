@@ -30,7 +30,7 @@ VERSION=latest docker compose up -d
 
 For a specific version:
 ```bash
-VERSION=a.1.0-117 docker compose up -d
+VERSION=a.1.0-118 docker compose up -d
 ```
 
 This command:
@@ -48,7 +48,7 @@ Watch the logs. You should see:
 backend    | INFO: Application startup complete
 backend    | +==============================================================+
 backend    | |                    Plexichat API Server                      |
-backend    | |                      Version a.1.0-117                       |
+backend    | |                      Version a.1.0-118                       |
 backend    | +==============================================================+
 client     | healthy
 db         | healthy
@@ -93,7 +93,7 @@ Expected response:
 ```json
 {
   "status": "healthy",
-  "version": "a.1.0-117",
+  "version": "a.1.0-118",
   "timestamp": "2024-01-15T10:30:45Z"
 }
 ```
@@ -203,4 +203,5 @@ To customize, see [Configuration](configuration.md).
 - [Development Workflow](development-workflow.md) - Hot reload, testing
 - [Troubleshooting](troubleshooting.md) - Solve common problems
 - [Production Setup](production-setup.md) - Deploy to production
+
 
