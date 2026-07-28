@@ -94,6 +94,16 @@ python main.py --help
 
 For full CLI reference, see [docs/cli/overview.md](docs/cli/overview.md).
 
+### Pre-commit Hooks (Windows)
+
+The pre-commit hook for `pyright` requires `valkey-glide-sync`, which needs `protoc` (Protocol Buffers compiler) to build its native wheel on Windows. Install it from the [Protocol Buffers releases page](https://github.com/protocolbuffers/protobuf/releases) and ensure `protoc.exe` is on your `PATH`. The CI pipeline on Linux is unaffected.
+
+To skip pyright for a single commit (e.g. trivial file renames):
+
+```powershell
+$env:SKIP="pyright"; git commit -m "..."
+```
+
 ### Dependency Management
 
 Direct dependencies are listed in `requirements.in`. The `requirements.txt` file is auto-generated with pinned transitive dependencies and integrity hashes.
