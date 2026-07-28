@@ -44,17 +44,14 @@ cache:
         pip install --upgrade pip
         pip install --require-hashes -r requirements.txt
         pip install \
-            ruff==0.15.10 \
-            pyright \
-            bandit[toml] \
-            detect-secrets \
             pip-audit \
             safety
       fi
-      pip install --upgrade pip
-      # Ensure pre-commit system tools are always installed (cache may be stale)
-      pip install ruff==0.15.10 pyright bandit[toml] detect-secrets
     # common_utils is bundled directly in the repository at src/utils/common_utils/
+  after_script:
+    # Free disk space — remove temp files but keep cached .venv and pip
+    - rm -rf .plexichat/logs .plexichat/data .plexichat/media .plexichat/temp 2>/dev/null || true
+    - docker system prune -f --volumes 2>/dev/null || true
 
 # =========================================================
 # LINT STAGE (Consolidated via pre-commit)
@@ -73,8 +70,10 @@ lint:pre-commit:
     paths:
       - .cache/pre-commit
     policy: pull-push
+  before_script:
+    - !reference [.python_base, before_script]
+    - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit
   script:
-    - pip install pre-commit
     - pre-commit run --all-files --show-diff-on-failure
   resource_group: plexichat-ci
 
