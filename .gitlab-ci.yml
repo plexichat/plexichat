@@ -270,7 +270,7 @@ create_merge_request:
         --data "title=Automated Release Merge" \
         --data "merge_when_pipeline_succeeds=true" \
         --data "remove_source_branch=false" \
-        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/merge_requests"
+        "$(echo "${CI_API_V4_URL}" | sed 's|https://|http://|')/projects/${CI_PROJECT_ID}/merge_requests"
   rules:
     - if: $CI_COMMIT_BRANCH == "dev"
   resource_group: plexichat-ci
