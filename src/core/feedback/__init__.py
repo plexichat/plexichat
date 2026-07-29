@@ -65,6 +65,8 @@ def create_tables(db: Any) -> None:
         resolved_at INTEGER,
         resolved_by INTEGER,
         internal_notes TEXT,
+        internal_notes_encrypted TEXT,
+        internal_notes_format TEXT DEFAULT 'plain',
         FOREIGN KEY (user_id) REFERENCES auth_users(id)
     )
     """
