@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS msg_messages (
     deleted_at INTEGER,
     reply_to_id INTEGER,
     webhook_id INTEGER,
+    ratchet_interval_id BIGINT,
     metadata TEXT,
     FOREIGN KEY (conversation_id) REFERENCES msg_conversations(id) ON DELETE CASCADE,
     FOREIGN KEY (author_id) REFERENCES auth_users(id) ON DELETE CASCADE,
