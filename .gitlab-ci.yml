@@ -14,14 +14,14 @@ variables:
   PYTHONDONTWRITEBYTECODE: "1"
 
 cache:
-  key:
-    files:
-      - requirements.txt
-    prefix: ${CI_COMMIT_REF_SLUG}
-  paths:
-    - .cache/pip
-    - .venv/
-  policy: pull-push
+  - key:
+      files:
+        - requirements.txt
+      prefix: ${CI_JOB_STAGE}
+    paths:
+      - .venv/
+      - .cache/pip
+    policy: pull-push
 
 # =========================================================
 # BASE PYTHON ENV (shared)
@@ -65,16 +65,22 @@ lint:pre-commit:
     NODE_OPTIONS: "--max-old-space-size=2048"
     UV_THREADPOOL_SIZE: "4"
   cache:
-    key:
-      files:
-        - .pre-commit-config.yaml
-        - requirements.txt
-      prefix: pre-commit-${CI_COMMIT_REF_SLUG}
-    paths:
-      - .venv/
-      - .cache/pip
-      - .cache/pre-commit
-    policy: pull-push
+    - key:
+        files:
+          - requirements.txt
+        prefix: ${CI_JOB_STAGE}
+      paths:
+        - .venv/
+        - .cache/pip
+      policy: pull-push
+    - key:
+        files:
+          - .pre-commit-config.yaml
+          - requirements.txt
+        prefix: precommit-tools-${CI_COMMIT_REF_SLUG}
+      paths:
+        - .cache/pre-commit
+      policy: pull-push
   before_script:
     - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git libatomic1 nodejs
     - |
