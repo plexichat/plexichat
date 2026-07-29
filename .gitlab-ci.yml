@@ -14,14 +14,13 @@ variables:
   PYTHONDONTWRITEBYTECODE: "1"
 
 cache:
-  - key:
-      files:
-        - requirements.txt
-      prefix: ${CI_JOB_STAGE}
-    paths:
-      - .venv/
-      - .cache/pip
-    policy: pull-push
+  key:
+    files:
+      - requirements.txt
+  paths:
+    - .venv/
+    - .cache/pip
+  policy: pull-push
 
 # =========================================================
 # BASE PYTHON ENV (shared)
@@ -43,10 +42,8 @@ cache:
         source .venv/bin/activate
         pip install --upgrade pip
         pip install --require-hashes -r requirements.txt
-        pip install \
-            pip-audit \
-            safety
       fi
+      pip install pip-audit safety
     # common_utils is bundled directly in the repository at src/utils/common_utils/
   after_script:
     # Free disk space — remove temp files but keep cached .venv and pip
@@ -68,7 +65,6 @@ lint:pre-commit:
     - key:
         files:
           - requirements.txt
-        prefix: ${CI_JOB_STAGE}
       paths:
         - .venv/
         - .cache/pip
@@ -288,18 +284,44 @@ create_merge_request:
   stage: request-merge
   image: alpine:latest
   before_script:
-    - apk add --no-cache curl
+    - apk add --no-cache curl jq
   script:
-    - echo "Dev branch pipeline succeeded. Opening merge request to master with auto-merge enabled..."
     - |
-      curl --request POST \
-        --header "PRIVATE-TOKEN: ${PLEXICHAT_MR_PAT}" \
+      API="$(echo "${CI_API_V4_URL}" | sed 's|https://|http://|')/projects/${CI_PROJECT_ID}"
+      AUTH="PRIVATE-TOKEN: ${PLEXICHAT_MR_PAT}"
+      
+      echo "Creating merge request from dev to master..."
+      RESPONSE=$(curl --silent --request POST \
+        --header "$AUTH" \
         --data "source_branch=dev" \
         --data "target_branch=master" \
         --data "title=Automated Release Merge" \
-        --data "merge_when_pipeline_succeeds=true" \
         --data "remove_source_branch=false" \
-        "$(echo "${CI_API_V4_URL}" | sed 's|https://|http://|')/projects/${CI_PROJECT_ID}/merge_requests"
+        "${API}/merge_requests")
+      
+      MR_IID=$(echo "$RESPONSE" | jq -r '.iid // empty')
+      
+      if [ -z "$MR_IID" ]; then
+        echo "MR creation returned: $(echo "$RESPONSE" | jq -r '.message // .')"
+        echo "Checking for existing MR from dev to master..."
+        EXISTING=$(curl --silent --header "$AUTH" \
+          "${API}/merge_requests?source_branch=dev&target_branch=master&state=opened")
+        MR_IID=$(echo "$EXISTING" | jq -r '.[0].iid // empty')
+        if [ -z "$MR_IID" ]; then
+          echo "No existing MR found. Cannot set auto-merge."
+          exit 0
+        fi
+        echo "Found existing MR !$MR_IID"
+      else
+        echo "MR created: !$MR_IID"
+      fi
+      
+      echo "Setting auto-merge (merge when pipeline succeeds)..."
+      curl --request PUT \
+        --header "$AUTH" \
+        --data "merge_when_pipeline_succeeds=true" \
+        --data "should_remove_source_branch=false" \
+        "${API}/merge_requests/${MR_IID}/merge" | jq '.'
   rules:
     - if: $CI_COMMIT_BRANCH == "dev"
   resource_group: plexichat-ci
