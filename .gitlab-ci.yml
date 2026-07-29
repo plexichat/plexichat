@@ -33,19 +33,17 @@ cache:
   before_script:
     - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git libatomic1
     - |
-      if [ -d ".venv" ]; then
-        echo "Using cached virtual environment"
-        source .venv/bin/activate
-      else
-        echo "Creating new virtual environment"
-        python -m venv .venv
-        source .venv/bin/activate
-        pip install --upgrade pip
-        pip install --require-hashes -r requirements.txt
-        pip install \
-            pip-audit \
-            safety
-      fi
+    if [ -d ".venv" ]; then
+      echo "Using cached virtual environment"
+      source .venv/bin/activate
+    else
+      echo "Creating new virtual environment"
+      python -m venv .venv
+      source .venv/bin/activate
+      pip install --upgrade pip
+      pip install --require-hashes -r requirements.txt
+    fi
+    pip install pip-audit safety
     # common_utils is bundled directly in the repository at src/utils/common_utils/
   after_script:
     # Free disk space — remove temp files but keep cached .venv and pip
