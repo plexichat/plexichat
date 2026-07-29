@@ -754,7 +754,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                             if hasattr(s, "close"):
                                 await run_in_threadpool(s.close)
                         else:
+                            from typing import cast
+
                             async for chunk in iterate_in_threadpool(s):
+                                chunk = cast(bytes, chunk)
                                 chunk_len = len(chunk)
                                 if count + chunk_len <= skip:
                                     count += chunk_len
