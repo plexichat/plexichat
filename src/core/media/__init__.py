@@ -13,7 +13,13 @@ Usage:
     result = media.upload_file(user_id=1, file_data=data, filename="image.jpg")
 """
 
-from typing import Optional, Dict, Any, BinaryIO, Tuple
+from typing import Optional, Dict, Any, BinaryIO, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .manager import MediaManager
+    from .deduplication import DeduplicationManager
+    from .compression import CompressionManager
+    from .chunked import ChunkedUploadManager
 
 from .models import (
     MediaFile,
@@ -170,7 +176,7 @@ def setup(db: Any, messaging_module: Optional[Any] = None) -> None:
     _setup_complete = True
 
 
-def _get_manager():
+def _get_manager() -> MediaManager:
     """Get the manager instance, raising if not setup."""
     if not _setup_complete or _manager is None:
         raise RuntimeError("Media module not initialized. Call media.setup(db) first.")
