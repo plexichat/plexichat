@@ -23,6 +23,7 @@ from .services.data import DataGenerator
 from .services.discovery import RouteDiscovery
 from .services.endpoints import EndpointTester
 from .services.websocket import WebSocketTester
+from .services.artifacts import ArtifactsTester
 from .services.ratelimit import RateLimitTester
 from .services.static_client import StaticClientTester
 from .services.docs import DocsTester
@@ -51,6 +52,7 @@ class SelfTestRunner:
         self.setup = SetupService(self.ctx)
         self.endpoints = EndpointTester(self.ctx)
         self.ws = WebSocketTester(self.ctx)
+        self.artifacts = ArtifactsTester(self.ctx)
         self.ratelimit = RateLimitTester(self.ctx)
         self.static_client = StaticClientTester(self.ctx)
         self.docs = DocsTester(self.ctx)
@@ -63,6 +65,7 @@ class SelfTestRunner:
         self.ctx.setup = self.setup
         self.ctx.endpoints = self.endpoints
         self.ctx.ws = self.ws
+        self.ctx.artifacts = self.artifacts
         self.ctx.ratelimit = self.ratelimit
         self.ctx.static_client = self.static_client
         self.ctx.docs = self.docs
@@ -91,6 +94,10 @@ class SelfTestRunner:
 
         # 3. WebSocket Test
         self.ws.test_websocket()
+
+        # 3b. Artifacts feature self-test suites (lifecycle, capabilities,
+        #     retention + privacy, and the WSS artifact-op round-trip harness).
+        self.artifacts.test_artifacts()
 
         # 4. Static client smoke tests (no-op when feature is disabled)
         self.static_client.test_static_client()
@@ -203,6 +210,13 @@ class SelfTestRunner:
             "/api/v1/admin/admin-users/{user_id}/toggle-status",
             "/api/v1/admin/users/{user_id}/force-purge",
             "/api/v1/admin/users/{user_id}/force-username-change",
+            # Clear-reactions is deferred (auto-fired in the destructive phase);
+            # it only removes reactions and is safe to exercise generally.
+            "DELETE:/api/v1/channels/{channel_id}/messages/{message_id}/reactions",
+            # Bulk-delete is a destructive batch operation that removes the tracked
+            # test message; deferred so it runs after the message is no longer
+            # needed by other tests, then the delete_batch phase validates it.
+            "POST:/api/v1/channels/{channel_id}/messages/bulk-delete",
         }
 
         if not self.ctx.standalone_mode:
@@ -340,6 +354,7 @@ class SelfTestRunner:
             self.endpoints.test_password_reset_confirm()
             self.endpoints.test_media_upload_complete()
             self.endpoints.test_dsar()
+            self.endpoints.test_transcript_export()
             # Poll vote must run before poll close
             self.endpoints.test_poll_vote()
             self.endpoints.test_poll_close()
@@ -350,6 +365,7 @@ class SelfTestRunner:
             self.endpoints.test_user_2fa_flow()
             self.endpoints.test_admin_2fa_flow()
             self.endpoints.test_interaction_callback()
+            self.endpoints.test_bulk_delete_messages()
         else:
             logger.info(
                 "Skipping standalone-specific endpoint tests (not in standalone mode)"

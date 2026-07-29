@@ -108,7 +108,7 @@ Print the current Plexichat server version and exit.
 
 ```bash
 python main.py version
-# Output: Plexichat Server a.1.0-59
+# Output: Plexichat Server a.1.0-127
 ```
 
 ---
@@ -225,3 +225,5 @@ python main.py migrate-kek --kek-keyring message_keyring.json \
     --kek-new-env PLEXICHAT_MESSAGE_KEY \
     --kek-dry-run
 ```
+
+

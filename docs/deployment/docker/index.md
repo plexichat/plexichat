@@ -19,7 +19,7 @@ Plexichat is a multi-container application stack:
 
 - **Backend** (FastAPI) - REST API, WebSocket gateway, business logic
 - **Database** (PostgreSQL) - User data, messages, servers
-- **Cache** (Redis) - Sessions, rate limiting, WebSocket state
+ - **Cache** (Valkey) - Sessions, rate limiting, WebSocket state
 - **Storage** (MinIO) - Media files (avatars, attachments)
 - **Frontend** (Nginx + Vue) - Web client, reverse proxy, TLS termination
 
@@ -119,7 +119,7 @@ docker compose down -v
 | WebSocket | ws://localhost:8000/gateway | Real-time messaging |
 | Frontend | http://localhost | Web client |
 | MinIO Console | http://localhost:9001 | Object storage management |
-| Redis | localhost:6379 | Cache (CLI tools) |
+| Valkey | localhost:6379 | Cache (Valkey CLI) |
 | PostgreSQL | localhost:5432 | Database (CLI tools) |
 
 ## First-Time Setup
@@ -132,7 +132,7 @@ docker compose down -v
 
 For versioned deployment:
 ```bash
-VERSION=a.1.0-53 docker compose up -d
+VERSION=a.1.0-127 docker compose up -d
 ```
 
 See [Quick Start](quick-start.md) for detailed steps.
@@ -158,7 +158,7 @@ See [Production Setup](production-setup.md#security) for hardening guidelines.
 All data is stored in named Docker volumes:
 
 - `db-data` - PostgreSQL database
-- `redis-data` - Redis cache
+- `valkey-data` - Valkey cache
 - `minio-data` - Media files
 - `backend-data` - Application state
 - `backend-logs` - Log files
@@ -171,7 +171,7 @@ Volumes survive container restarts but are deleted with `docker compose down -v`
 
 Docker Compose creates two networks:
 
-- **plexichat-backend** - Database, Redis, MinIO, Backend (internal)
+- **plexichat-backend** - Database, Valkey, MinIO, Backend (internal)
 - **plexichat-frontend** - Backend, Client (external HTTP/HTTPS)
 
 Services on the same network can communicate by service name (e.g., `backend` can reach `db` as `http://db:5432`).
@@ -183,3 +183,5 @@ Services on the same network can communicate by service name (e.g., `backend` ca
 - [Production Setup](production-setup.md) - Deploy to production
 
 Still have questions? See [Troubleshooting](troubleshooting.md).
+
+

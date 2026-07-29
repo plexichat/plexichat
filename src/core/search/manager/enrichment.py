@@ -70,7 +70,7 @@ class EnrichmentMixin(SearchManagerBase):
     ) -> Dict[int, str]:
         # N+1 FIX: previously, this method did one cache lookup + one
         # SQL fetch per id.  We collapse both into single bulk calls:
-        # Redis MGET for cache, single ``WHERE id IN (...)`` for the
+        # Valkey MGET for cache, single ``WHERE id IN (...)`` for the
         # SQL fallback.  Same external contract: a dict ``{id: name}``
         # containing only ids we could resolve (callers use
         # ``.get(i)`` for safe misses).
@@ -78,7 +78,7 @@ class EnrichmentMixin(SearchManagerBase):
             cache_set,
             cache_get_many,  # type: ignore[attr-defined]  # duck-typed on cache backend
             dialect,
-            redis_available,
+            valkey_available,
         )
 
         safe_table = dialect.sanitize_identifier(table, self._db.type)
@@ -91,7 +91,7 @@ class EnrichmentMixin(SearchManagerBase):
         cached: Dict[int, str] = {}
         missing: List[int] = []
 
-        if redis_available():
+        if valkey_available():
             # Bulk cache read: single MGET round-trip instead of N
             # individual cache_get calls.
             keys = [f"{cache_prefix}:{i}" for i in uniq]
@@ -122,6 +122,6 @@ class EnrichmentMixin(SearchManagerBase):
                     i_val = int(row["id"])
                     n_val = row["name"]
                     cached[i_val] = n_val
-                    if redis_available():
+                    if valkey_available():
                         cache_set(f"{cache_prefix}:{i_val}", n_val, ttl=ttl)
         return cached

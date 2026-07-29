@@ -1,7 +1,7 @@
 import time
 
 
-from src.core.database import cache_get, cache_set, redis_available
+from src.core.database import cache_get, cache_set, valkey_available
 from .base import SearchManagerBase
 from ..exceptions import SearchRateLimitError
 
@@ -12,7 +12,7 @@ class RateLimitMixin(SearchManagerBase):
         if not rate_limit:
             return
 
-        if not redis_available():
+        if not valkey_available():
             now = time.time() * 1000
             window_start = self._search_rate_window_started_ms.get(user_id)
             if window_start is None or now - window_start >= 60_000:

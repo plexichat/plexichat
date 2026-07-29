@@ -276,7 +276,7 @@ class SendMixin(BaseService, MessageServiceProtocol):
         cache_set(f"msg:obj:{msg_id}", msg, ttl=3600)
 
         try:
-            from src.core.database import get_redis_client as get_client
+            from src.core.database import get_valkey_client as get_client
 
             client = get_client()
             if client:

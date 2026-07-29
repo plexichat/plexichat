@@ -15,7 +15,7 @@ from ..exceptions import (
     InvalidRoleNameError,
 )
 from src.core.database import cached
-from ..permissions import (
+from ..permission_utils import (
     calculate_base_permissions,
     apply_channel_overrides,
     has_permission as check_permission,
@@ -498,7 +498,7 @@ class RoleHandler:
         server_id: SnowflakeID,
         channel_id: Optional[SnowflakeID] = None,
     ) -> Dict[str, bool]:
-        """Get all permissions for a user in a server/channel (cached in Redis)."""
+        """Get all permissions for a user in a server/channel (cached in Valkey)."""
         cache_key = f"perms:{user_id}:{server_id}:{channel_id or 0}"
 
         # 1. Try internal memory first
@@ -508,16 +508,16 @@ class RoleHandler:
         if mem_cached is not None:
             return mem_cached
 
-        # 2. Try Redis
-        from src.core.database import cache_get, cache_set, redis_available
+        # 2. Try Valkey
+        from src.core.database import cache_get, cache_set, valkey_available
 
-        if redis_available():
-            redis_cached = cache_get(cache_key)
-            if redis_cached is not None:
-                if isinstance(redis_cached, str):
-                    perms = json.loads(redis_cached)
+        if valkey_available():
+            valkey_cached = cache_get(cache_key)
+            if valkey_cached is not None:
+                if isinstance(valkey_cached, str):
+                    perms = json.loads(valkey_cached)
                 else:
-                    perms = redis_cached
+                    perms = valkey_cached
                 self.manager._cache_set(
                     self.manager._permission_cache_prefix, cache_key, perms
                 )
@@ -598,7 +598,7 @@ class RoleHandler:
         self.manager._cache_set(
             self.manager._permission_cache_prefix, cache_key, result
         )
-        if redis_available():
+        if valkey_available():
             cache_set(cache_key, result, ttl=60)
 
         return result

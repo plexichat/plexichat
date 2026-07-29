@@ -24,7 +24,7 @@ This portal documents the Plexichat backend: the REST API, the WebSocket gateway
 - [Default Configuration Reference](default-config.md) -- complete config reference with all defaults
 - [Authentication](deployment/configuration/config-authentication.md) -- password policies, sessions, 2FA, OAuth, account deletion, age gate
 - [Database](deployment/configuration/config-database.md) -- PostgreSQL/SQLite setup, connection pooling, migrations
-- [Redis](deployment/configuration/config-redis.md) -- caching, session storage, connection pooling
+- [Valkey](deployment/configuration/config-valkey.md) -- caching, session storage, connection pooling
 - [Media](deployment/configuration/config-media.md) -- file uploads, storage backends, processing, security
 - [Voice](deployment/configuration/config-voice.md) -- WebRTC signaling, SFU backends, STUN/TURN
 - [WebSocket](deployment/configuration/config-websocket.md) -- gateway settings, compression, rate limits, origins

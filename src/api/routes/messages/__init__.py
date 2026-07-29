@@ -22,6 +22,7 @@ from .pins import router as pins_router
 from .search import router as search_router
 from .read_receipts import router as read_receipts_router
 from .typing import router as typing_router
+from .export import router as export_router
 from .messages import get_msg_id
 
 # Create main router and include all sub-routers
@@ -34,5 +35,6 @@ router.include_router(crud_router)
 router.include_router(list_router)
 router.include_router(pins_router)
 router.include_router(typing_router)
+router.include_router(export_router)
 
 __all__ = ["router", "get_msg_id"]

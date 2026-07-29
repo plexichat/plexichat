@@ -97,3 +97,9 @@ class MessagesCRUDRouter(
             summary="Delete message",
             responses=_delete_responses,
         )(self.delete_message)
+
+        router.post(
+            "/channels/{channel_id}/messages/bulk-delete",
+            response_model=SuccessResponse,
+            summary="Bulk-delete messages",
+        )(self.bulk_delete_messages)

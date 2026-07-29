@@ -196,7 +196,7 @@ async def apply_onboarding_preset(
     if not db:
         raise_internal("Database not available")
 
-    from src.core.servers.onboarding import OnboardingManager
+    from src.core.servers.manager.onboarding_ops import OnboardingManager
 
     onboarding_mgr = OnboardingManager(db, servers_mod)
 

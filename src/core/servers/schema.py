@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS srv_channels (
     nsfw INTEGER DEFAULT 0,
     slowmode_seconds INTEGER DEFAULT 0,
     read_receipts_enabled INTEGER DEFAULT 1,
+    transcript_export_enabled INTEGER DEFAULT 1,
     conversation_id INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,

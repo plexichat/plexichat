@@ -9,7 +9,7 @@ from typing import Optional, Dict, Union
 import utils.logger as logger
 from src.core.database import (
     cache_set,
-    redis_available,
+    valkey_available,
 )
 
 from .base import PresenceManagerBase
@@ -120,7 +120,7 @@ class ActivityMixin(PresenceManagerBase):
             "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?", (now, user_id)
         )
 
-        if redis_available():
+        if valkey_available():
             presence = self.get_presence(user_id, use_cache=False)
             cache_set(
                 f"presence:{user_id}",
@@ -168,7 +168,7 @@ class ActivityMixin(PresenceManagerBase):
             "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?", (now, user_id)
         )
 
-        if redis_available():
+        if valkey_available():
             presence = self.get_presence(user_id, use_cache=False)
             cache_set(
                 f"presence:{user_id}",

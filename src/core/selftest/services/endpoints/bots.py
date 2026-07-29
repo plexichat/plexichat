@@ -44,7 +44,7 @@ class BotMixin(EndpointTesterBase):
 
         logger.info("Testing bot server integration (request -> approve)...")
 
-        req_body = {"application_id": int(self.ctx.test_application_id)}
+        req_body = {"application_id": str(self.ctx.test_application_id)}
         req_path = f"/api/v1/bots/servers/{self.ctx.test_server_id}/request"
         start = time.time()
         request_succeeded = False

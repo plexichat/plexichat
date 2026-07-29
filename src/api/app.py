@@ -32,7 +32,7 @@ import sys  # noqa: E402
 import re  # noqa: E402
 import unicodedata  # noqa: E402
 import threading  # noqa: E402
-from typing import Optional, AsyncGenerator  # noqa: E402
+from typing import Any, Optional, AsyncGenerator  # noqa: E402
 
 import utils.config as global_config  # noqa: E402
 import utils.logger as logger  # noqa: E402
@@ -344,7 +344,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             logger.warning(f"Failed to load docs config: {e}")
 
         docs_router = create_docs_router()
-        app.include_router(docs_router, prefix=docs_path, tags=["Documentation"])
+        app.include_router(docs_router, prefix=docs_path)
         logger.info(f"Documentation server enabled at {docs_path}")
 
     from .schemas.common import RootResponse, ErrorResponse
@@ -724,7 +724,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
                 # Helper to correctly slice any stream (file or generator)
                 async def get_response_iterator(
-                    s, skip, limit
+                    s: Any, skip: int, limit: int
                 ) -> AsyncGenerator[bytes, None]:
                     import inspect
                     from starlette.concurrency import (
@@ -754,7 +754,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                             if hasattr(s, "close"):
                                 await run_in_threadpool(s.close)
                         else:
+                            from typing import cast
+
                             async for chunk in iterate_in_threadpool(s):
+                                chunk = cast(bytes, chunk)
                                 chunk_len = len(chunk)
                                 if count + chunk_len <= skip:
                                     count += chunk_len

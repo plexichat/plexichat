@@ -19,15 +19,15 @@ import hmac
 def extract_ip(request: Request) -> Optional[str]:
     """
     Extract client IP address from request.
-    Uses consolidated logic from utils.net for security.
+
+    Uses the consolidated, trusted-proxy-aware logic from utils.net so the
+    rate limiter keys on the real client IP (from X-Forwarded-For when the
+    direct peer is a trusted proxy) rather than the proxy/relay IP.
     """
     try:
-        headers = getattr(request, "headers", None) or {}
-        if isinstance(headers, dict):
-            xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
-            if xff:
-                ip = str(xff).split(",")[0].strip()
-                return ip or None
+        ip = get_client_ip(request)
+        if ip:
+            return ip
     except Exception:
         pass
 
@@ -39,10 +39,7 @@ def extract_ip(request: Request) -> Optional[str]:
     except Exception:
         pass
 
-    try:
-        return get_client_ip(request)
-    except Exception:
-        return None
+    return None
 
 
 def get_user_info_from_request(request: Request) -> Dict[str, Any]:

@@ -35,6 +35,12 @@ from src.core.avatars import create_tables as create_avatars_tables  # noqa: E40
 from src.core.telemetry import create_tables as create_telemetry_tables  # noqa: E402
 from src.core.search.schema import create_tables as create_search_tables  # noqa: E402
 from src.core.automod.schema import create_tables as create_automod_tables  # noqa: E402
+from src.core.plexijoin.schema import create_tables as create_plexijoin_tables  # noqa: E402
+from src.core.dsar.schema import create_tables as create_dsar_tables  # noqa: E402
+from src.core.artifacts.schema import create_tables as create_artifacts_tables  # noqa: E402
+from src.core.admin.schema import create_admin_tables  # noqa: E402
+from src.core.dmspam.schema import create_dmspam_tables  # noqa: E402
+from src.core.chat_tracking.schema import create_chat_tracking_tables  # noqa: E402
 
 
 def up(db):
@@ -73,6 +79,12 @@ def up(db):
         ("telemetry", create_telemetry_tables),
         ("search", create_search_tables),
         ("automod", create_automod_tables),
+        ("plexijoin", create_plexijoin_tables),
+        ("dsar", create_dsar_tables),
+        ("artifacts", create_artifacts_tables),
+        ("admin", create_admin_tables),
+        ("dmspam", create_dmspam_tables),
+        ("chat_tracking", create_chat_tracking_tables),
     ]
 
     for name, creator in schema_creators:

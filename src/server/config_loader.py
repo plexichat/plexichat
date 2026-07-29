@@ -260,6 +260,34 @@ def _apply_env_overrides() -> None:
         log_config["level"] = log_level.upper()
         config.set("logging", log_config)
 
+    media_config = config.get("media", {})
+
+    scanner_enabled = os.getenv("SCANNER_ENABLED")
+    if scanner_enabled:
+        media_config["scanner_enabled"] = scanner_enabled.lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+
+    scanner_host = os.getenv("SCANNER_HOST")
+    if scanner_host:
+        media_config["scanner_host"] = scanner_host
+
+    scanner_port = os.getenv("SCANNER_PORT")
+    if scanner_port:
+        try:
+            port_val = int(scanner_port)
+            if port_val < 1 or port_val > 65535:
+                raise ValueError(f"Port must be between 1 and 65535, got {port_val}")
+            media_config["scanner_port"] = port_val
+        except ValueError as e:
+            logger.warning(
+                f"Invalid SCANNER_PORT value: {scanner_port}, using default: {e}"
+            )
+
+    config.set("media", media_config)
+
 
 def setup_config(
     project_root: str, default_config: dict, config_path_arg: Optional[str] = None

@@ -225,6 +225,12 @@ class SessionMixin(AuthManagerProtocol):
                 (lock_until, user_id),
             )
             self._log_audit(AuditEventType.ACCOUNT_LOCKED, user_id, True, ip_address)
+            try:
+                from src.core.events.gateway_emit import emit_security_alert
+
+                emit_security_alert(user_id, "account_locked")
+            except Exception:
+                pass
 
         invalidate_pattern("user_data:*")
 
@@ -494,6 +500,12 @@ class SessionMixin(AuthManagerProtocol):
                     "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND id != ?",
                     (user_id, parsed["id"]),
                 )
+                try:
+                    from src.core.events.gateway_emit import emit_security_alert
+
+                    emit_security_alert(user_id, "session_revoked")
+                except Exception:
+                    pass
                 return count_row["cnt"] if count_row else 0
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND revoked = 0",
@@ -502,6 +514,12 @@ class SessionMixin(AuthManagerProtocol):
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
         )
+        try:
+            from src.core.events.gateway_emit import emit_security_alert
+
+            emit_security_alert(user_id, "session_revoked")
+        except Exception:
+            pass
         return count_row["cnt"] if count_row else 0
 
     def logout_all_users(self) -> int:
@@ -557,5 +575,11 @@ class SessionMixin(AuthManagerProtocol):
         )
         if cursor.rowcount > 0:
             self._log_audit(AuditEventType.SESSION_REVOKED, user_id, True)
+            try:
+                from src.core.events.gateway_emit import emit_security_alert
+
+                emit_security_alert(user_id, "session_revoked")
+            except Exception:
+                pass
             return True
         return False

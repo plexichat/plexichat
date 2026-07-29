@@ -2,7 +2,7 @@
 
 Handles fetching full presence information (including joined custom status
 and activity), batch presence queries, last-seen updates, and transient
-focused-channel state in Redis.
+focused-channel state in Valkey.
 """
 
 from typing import Any, Dict, List, Optional, cast
@@ -11,9 +11,9 @@ import utils.logger as logger
 from src.core.database import (
     cache_set,
     cache_delete,
-    redis_available,
+    valkey_available,
     get_cached_presence,
-    get_redis_client,
+    get_valkey_client,
 )
 
 from .base import PresenceManagerBase
@@ -25,7 +25,7 @@ class PresenceMixin(PresenceManagerBase):
 
     def get_presence(self, user_id: int, use_cache: bool = True) -> Presence:
         """Get full presence information for a user with optimized database access."""
-        if use_cache and redis_available():
+        if use_cache and valkey_available():
             cached = get_cached_presence(user_id)
             if cached:
                 return self._dict_to_presence(cached)
@@ -88,8 +88,8 @@ class PresenceMixin(PresenceManagerBase):
                 updated_at=row["updated_at"],
             )
 
-        if redis_available():
-            client = get_redis_client()
+        if valkey_available():
+            client = get_valkey_client()
             if client:
                 try:
                     focus = client.hgetall(f"presence:focus:{user_id}")
@@ -108,7 +108,7 @@ class PresenceMixin(PresenceManagerBase):
                 except Exception:
                     pass
 
-        if use_cache and redis_available() and row:
+        if use_cache and valkey_available() and row:
             try:
                 cache_set(
                     f"presence:{user_id}",
@@ -121,14 +121,14 @@ class PresenceMixin(PresenceManagerBase):
         return presence
 
     def get_presences(self, user_ids: List[int]) -> List[Presence]:
-        """Get presence information for multiple users efficiently with batch queries and Redis caching."""
+        """Get presence information for multiple users efficiently with batch queries and Valkey caching."""
         if not user_ids:
             return []
 
         results_map: Dict[int, Presence] = {}
         missing_ids = list(user_ids)
 
-        if redis_available():
+        if valkey_available():
             try:
                 from src.core.database.cache import get_bulk_presence
 
@@ -140,7 +140,7 @@ class PresenceMixin(PresenceManagerBase):
                     except Exception:
                         pass
             except Exception as e:
-                logger.warning(f"Failed to fetch bulk presence from Redis: {e}")
+                logger.warning(f"Failed to fetch bulk presence from Valkey: {e}")
 
         if not missing_ids:
             return [results_map[uid] for uid in user_ids]
@@ -219,7 +219,7 @@ class PresenceMixin(PresenceManagerBase):
 
             results_map[uid] = presence
 
-            if redis_available() and pres_row:
+            if valkey_available() and pres_row:
                 cache_set(
                     f"presence:{uid}",
                     self._presence_to_dict(presence),
@@ -262,12 +262,12 @@ class PresenceMixin(PresenceManagerBase):
     ) -> bool:
         """
         Set user's currently focused channel/server for notification suppression.
-        This is transient state stored ONLY in Redis.
+        This is transient state stored ONLY in Valkey.
         """
-        if not redis_available():
+        if not valkey_available():
             return False
 
-        client = get_redis_client()
+        client = get_valkey_client()
         if not client:
             return False
 
@@ -283,5 +283,5 @@ class PresenceMixin(PresenceManagerBase):
             cache_delete(f"presence:{user_id}")
             return True
         except Exception as e:
-            logger.debug(f"Failed to set focused channel in Redis: {e}")
+            logger.debug(f"Failed to set focused channel in Valkey: {e}")
             return False

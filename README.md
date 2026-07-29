@@ -1,5 +1,11 @@
 # Plexichat Server
 
+[![dev pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/badges/dev/pipeline.svg)](https://gitlab.plexichat.com/plexichat/plexichat/-/pipelines)
+[![master pipeline status](https://gitlab.plexichat.com/plexichat/plexichat/badges/master/pipeline.svg)](https://gitlab.plexichat.com/plexichat/plexichat/-/pipelines)
+[![tag](https://img.shields.io/gitlab/v/tag/plexichat%2Fplexichat?gitlab_url=https://gitlab.plexichat.com)](https://gitlab.plexichat.com/plexichat/plexichat/-/tags)
+[![issues](https://img.shields.io/gitlab/issues/open/plexichat%2Fplexichat?gitlab_url=https://gitlab.plexichat.com)](https://gitlab.plexichat.com/plexichat/plexichat/-/issues)
+[![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](https://gitlab.plexichat.com/plexichat/plexichat/-/blob/master/LICENSE)
+
 A real-time messaging platform server with REST API and WebSocket gateway.
 
 ## Installation
@@ -87,6 +93,22 @@ python main.py --help
 ```
 
 For full CLI reference, see [docs/cli/overview.md](docs/cli/overview.md).
+
+### Windows Development
+
+Plexichat's Valkey client uses `valkey-glide-sync`, which has **no Windows wheels on PyPI** and cannot be built from source on Windows (the native Rust library relies on Unix Domain Sockets). This means Valkey-dependent features are unavailable on native Windows.
+
+**For full Plexichat development on Windows, use WSL 2.**
+
+### Pre-commit Hooks
+
+The pre-commit hooks use `language: system` — they run your locally-installed tools rather than isolated environments. Ensure these are installed in your active environment:
+
+```bash
+pip install ruff pyright bandit[toml] detect-secrets pre-commit
+```
+
+The CI image installs these automatically. Windows users: note that `valkey-glide-sync` has no Windows wheels, so Valkey-related pyright diagnostics are suppressed with `# pyright: ignore[reportMissingImports]`.
 
 ### Dependency Management
 
@@ -259,19 +281,27 @@ See root README.md for full configuration options.
 
 **Losing the encryption key files will make ALL encrypted data permanently unrecoverable.** The server will refuse to start if keyring decryption fails.
 
-You **must** regularly back up these files from `~/.plexichat/data/`:
+The Docker Compose stack includes a **restic-based backup container** (`backup` service)
+that automatically creates daily, encrypted, deduplicated snapshots of:
 
-| File | What it protects |
-|------|-----------------|
-| `.machine_key` | Root KEK -- decrypts all keyrings. **Lose this = lose everything.** |
-| `system_keyring.json` | Admin TOTP, API tokens, encrypted user fields |
-| `file_keyring.json` | Media files at rest (avatars, attachments) |
-| `message_keyring.json` | Message content (when `encrypt_messages: true`) |
-| `plexichat.db` | All database content |
+| Component | What it protects |
+|-----------|-----------------|
+| PostgreSQL dump | All database content |
+| `~/.plexichat` | `.machine_key`, keyrings, config — **lose this = lose everything** |
+| MinIO data | Uploaded media, avatars, attachments |
 
-**Always stop the server before copying these files** to ensure consistent backups.
+The backup container runs daily at 2 AM by default. Restore with:
+
+```bash
+docker exec plexichat-backup-1 /scripts/backup.sh restore-db latest   # database
+docker exec plexichat-backup-1 /scripts/backup.sh list                 # list snapshots
+```
+
+See [`docker/README.md`](docker/README.md) for full configuration
+(schedule, retention, secondary/off-site repos, restore procedures).
+
 For production, use `PLEXICHAT_SYSTEM_KEY` env var instead of `.machine_key`.
-See [SECURITY.md](SECURITY.md) for full details.
+See [SECURITY.md](docs/security.md) for full details.
 
 ## Testing
 
@@ -304,4 +334,6 @@ pytest src/tests
 
 ## Version
 
-Current version: `a.1.0-65` (Alpha)
+Current version: `a.1.0-127` (Alpha)
+
+

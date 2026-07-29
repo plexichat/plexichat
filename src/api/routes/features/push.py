@@ -5,7 +5,7 @@ from typing import Optional
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
-from .common import parse_id, raise_bad_request
+from .common import raise_bad_request
 
 router = APIRouter()
 
@@ -46,19 +46,33 @@ async def register_push_token(
         raise_bad_request(str(e))
 
 
-@router.delete(
-    "/push/tokens/{token_id}",
-    summary="Unregister push token",
+@router.get(
+    "/push/tokens",
+    summary="List registered push tokens",
     responses={401: {"model": ErrorResponse}},
 )
-async def unregister_push_token(
-    token_id: str, current_user: TokenInfo = Depends(get_current_user)
+async def list_push_tokens(
+    current_user: TokenInfo = Depends(get_current_user),
 ):
-    tid = parse_id(token_id, "token ID")
-
     db = api.get_db()
     from src.core.push.manager import PushManager
 
     svc = PushManager(db)
-    svc.unregister_token(current_user.user_id, str(tid))
+    tokens = svc.get_user_tokens(current_user.user_id)
+    return {"tokens": tokens}
+
+
+@router.delete(
+    "/push/tokens/{token_value}",
+    summary="Unregister push token",
+    responses={401: {"model": ErrorResponse}},
+)
+async def unregister_push_token(
+    token_value: str, current_user: TokenInfo = Depends(get_current_user)
+):
+    db = api.get_db()
+    from src.core.push.manager import PushManager
+
+    svc = PushManager(db)
+    svc.unregister_token(current_user.user_id, token_value)
     return {"success": True}

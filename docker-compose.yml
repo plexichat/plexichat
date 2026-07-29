@@ -1,12 +1,13 @@
 name: plexichat
 
 # Version to deploy (e.g., a.1.0-55)
-# Set via: VERSION=a.1.0-55 docker compose up -d
+# Set via: BACKEND_VERSION=X CLIENT_VERSION=Y docker compose up -d
 # Defaults to latest if not specified
 
 services:
   db:
-    image: postgres:16-alpine
+    restart: unless-stopped
+    image: postgres:18-alpine
     env_file:
       - .env
     environment:
@@ -21,21 +22,23 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
+  valkey:
+    restart: unless-stopped
+    image: valkey/valkey:9.1.1-alpine
     env_file:
       - .env
     command: >
-      sh -c "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""
+      sh -c "redis-server --appendonly yes --requirepass \"$${VALKEY_PASSWORD}\""
     volumes:
-      - redis_data:/data
+      - valkey_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${VALKEY_PASSWORD}\" ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
 
   minio:
+    restart: unless-stopped
     image: minio/minio:latest
     env_file:
       - .env
@@ -60,12 +63,15 @@ services:
       /bin/sh -c "
       until mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\"; do sleep 2; done;
       mc mb -p local/$${S3_BUCKET} || true;
-      mc anonymous set download local/$${S3_BUCKET} || true;
-      "
+        mc anonymous set download local/$${S3_BUCKET} || true;
+        "
+    # One-shot init job: run once, exit 0, then stop. MUST NOT restart,
+    # otherwise `backend` (which waits on service_completed_successfully)
+    # would block forever because the container loops instead of completing.
     restart: "no"
 
   cert-init:
-    image: alpine:3.20
+    image: alpine:3.24
     volumes:
       - certs:/certs
     entrypoint: >
@@ -77,8 +83,39 @@ services:
       "
     restart: "no"
 
+  clamav:
+    restart: unless-stopped
+    image: clamav/clamav:latest
+    environment:
+      CLAMD_CONF_StreamMaxLength: "600M"
+      CLAMD_CONF_MaxScanSize: "600M"
+      CLAMD_CONF_MaxFileSize: "600M"
+      CLAMD_CONF_MaxScanTime: "300000"
+    volumes:
+      - clamav_db:/var/lib/clamav
+    expose:
+      - "3310"
+    healthcheck:
+      test: ["CMD-SHELL", "echo PING | nc -w 2 localhost 3310 | grep PONG"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  clamav-unofficial-sigs:
+    restart: unless-stopped
+    image: ghcr.io/extremeshok/clamav-unofficial-sigs:latest
+    environment:
+      CUS_MODE: updater
+      CUS_UPDATE_HOURS: "2"
+    volumes:
+      - clamav_db:/var/lib/clamav
+    depends_on:
+      - clamav
+
   backend:
-    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${VERSION:-latest}
+    restart: unless-stopped
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:-latest}
     env_file:
       - .env
     environment:
@@ -86,16 +123,21 @@ services:
       PLEXICHAT_SMTP_PASSWORD: ${PLEXICHAT_SMTP_PASSWORD:-}
       PLEXICHAT_PUBLIC_SERVER_URL: ${PLEXICHAT_PUBLIC_SERVER_URL:-http://localhost:8000}
       NO_STRICT_CONFIG: "false"
+      SCANNER_ENABLED: "true"
+      SCANNER_HOST: clamav
+      SCANNER_PORT: "3310"
     volumes:
       - ./config/docker-config.yaml:/app/config/docker-config.yaml:ro
       - plexichat_home:/root/.plexichat
     depends_on:
       db:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
     expose:
       - "8000"
     ports:
@@ -103,7 +145,8 @@ services:
       - "30000-30100:30000-30100/udp"
 
   client:
-    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${VERSION:-latest}
+    restart: unless-stopped
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${CLIENT_VERSION:-latest}
     env_file:
       - .env
     depends_on:
@@ -119,9 +162,24 @@ services:
       - "443:443"
 
   backup:
-    image: postgres:16-alpine
+    image: registry.plexichat.com/plexichat/plexichat/backup:${BACKEND_VERSION:-latest}
     env_file:
       - .env
+    environment:
+      RESTIC_REPOSITORY: /repo
+      RESTIC_PASSWORD: ${BACKUP_RESTIC_PASSWORD:-}
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 2 * * *}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-7}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-6}
+      BACKUP_KEEP_YEARLY: ${BACKUP_KEEP_YEARLY:-0}
+      BACKUP_INCLUDE_DB: ${BACKUP_INCLUDE_DB:-true}
+      BACKUP_INCLUDE_HOME: ${BACKUP_INCLUDE_HOME:-true}
+      BACKUP_INCLUDE_MINIO: ${BACKUP_INCLUDE_MINIO:-true}
+      BACKUP_SECONDARY_REPO: ${BACKUP_SECONDARY_REPO:-}
+      BACKUP_SECONDARY_PASSWORD: ${BACKUP_SECONDARY_PASSWORD:-}
+      BACKUP_SUCCESS_HOOK: ${BACKUP_SUCCESS_HOOK:-}
+      BACKUP_FAILURE_HOOK: ${BACKUP_FAILURE_HOOK:-}
     depends_on:
       db:
         condition: service_healthy
@@ -129,14 +187,14 @@ services:
       - postgres_data:/var/lib/postgresql/data:ro
       - plexichat_home:/plexichat-home:ro
       - minio_data:/minio-data:ro
-      - ./backups:/backups
-      - ./docker/backup/backup.sh:/backup.sh:ro
-    entrypoint: ["sh", "/backup.sh"]
+      - backup_repo:/repo
     restart: unless-stopped
 
 volumes:
   postgres_data:
-  redis_data:
+  valkey_data:
   minio_data:
   plexichat_home:
   certs:
+  backup_repo:
+  clamav_db:

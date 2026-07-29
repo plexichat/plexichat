@@ -1140,3 +1140,66 @@ input[type="checkbox"] {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
+
+/* Artifacts admin: capability banners */
+.artifacts-banner {
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    background: var(--secondary);
+    color: var(--foreground);
+}
+
+.artifacts-banner:last-child { margin-bottom: 0; }
+
+.artifacts-banner-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.artifacts-banner-title {
+    font-weight: 600;
+    font-size: 13px;
+    font-family: monospace;
+}
+
+.artifacts-banner-state {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid currentColor;
+}
+
+.artifacts-banner-msg {
+    font-size: 12px;
+    color: var(--muted-foreground);
+}
+
+.banner-available {
+    background: color-mix(in oklch, var(--success) 12%, transparent);
+    border-color: color-mix(in oklch, var(--success) 35%, transparent);
+}
+.banner-available .artifacts-banner-state { color: var(--success); }
+
+.banner-disabled-config {
+    background: color-mix(in oklch, var(--warning) 12%, transparent);
+    border-color: color-mix(in oklch, var(--warning) 35%, transparent);
+}
+.banner-disabled-config .artifacts-banner-state { color: var(--warning); }
+
+.banner-disabled-license,
+.banner-dependency-missing,
+.banner-misconfigured {
+    background: color-mix(in oklch, var(--destructive) 12%, transparent);
+    border-color: color-mix(in oklch, var(--destructive) 35%, transparent);
+}
+.banner-disabled-license .artifacts-banner-state,
+.banner-dependency-missing .artifacts-banner-state,
+.banner-misconfigured .artifacts-banner-state { color: var(--destructive); }

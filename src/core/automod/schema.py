@@ -97,20 +97,24 @@ def create_tables(db):
         for table, columns in tables_to_fix:
             if table not in allowed_tables:
                 continue
+            if not db.table_exists(table):
+                continue
             for col in columns:
                 if not re.match(r"^[a-zA-Z0-9_]+$", col):
                     continue
                 try:
-                    # Use USING clause with safe conversion: valid integers are
-                    # cast to BIGINT; non-numeric garbage (e.g. leaked column names)
-                    # is set to NULL instead of failing the entire ALTER TABLE.
+                    # Cast column to text before applying regex (~ operator)
+                    # to avoid "operator does not exist: bigint ~ unknown" on PG16.
+                    # On a fresh DB the columns are already BIGINT — the ALTER is
+                    # a no-op but the USING clause must still be syntactically valid.
+                    # Cast column to text before using the ~ regex operator;
+                    # PostgreSQL 16 rejects "operator does not exist: bigint ~ unknown".
                     db.execute(
                         f'ALTER TABLE {table} ALTER COLUMN "{col}" TYPE BIGINT '
-                        f"USING CASE WHEN \"{col}\" ~ '^[0-9]+$' "
+                        f"USING CASE WHEN (\"{col}\"::text) ~ '^[0-9]+$' "
                         f'THEN "{col}"::bigint ELSE NULL END'
                     )
                 except Exception:
-                    # Column may already be BIGINT or contain incompatible data
                     pass
 
     db.execute("""

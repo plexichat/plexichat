@@ -1,117 +1,88 @@
 # Servers Module
 
-Mixin-based server management with unified `ServersManager` interface.
+Modular server management package with thin re-exports in `__init__.py`.
 
-## Architecture
+## Structure
 
 ```
 servers/
-├── __init__.py          # Public exports (re-exports from composer)
-├── base.py               # ServersManagerBase (holds 4 manager instances)
-├── composer.py           # ServersManager (MRO of all mixins)
-├── server_mixin.py       # Server CRUD operations
-├── channel_mixin.py      # Channel operations
-├── role_mixin.py         # Role operations
-├── member_mixin.py       # Member operations
-├── role_assignment_mixin.py  # Role assignment operations
-├── permission_mixin.py   # Permission operations
-├── invite_mixin.py       # Invite operations
-├── messaging_mixin.py    # Channel messaging operations
-├── audit_mixin.py       # Audit log operations
-├── event_mixin.py       # Scheduled event operations
-├── template_mixin.py    # Template operations
-├── welcome_mixin.py     # Welcome screen operations
-├── onboarding_mixin.py  # Onboarding operations
-├── models.py            # Data models
+├── __init__.py          # Thin re-exports, setup(), _get_manager(), server ops
+├── channels.py          # create/get/update/delete/move channels & categories
+├── roles.py             # create/get/update/delete/move roles
+├── members.py           # add/get/update/remove members, kick/ban/unban, role assignment
+├── invites.py           # create/get/use/delete invites
+├── events.py            # scheduled events: create/get/update/delete, RSVP
+├── templates.py         # templates: create/get/update/delete/apply/preview
+├── onboarding.py        # welcome screen, onboarding steps & progress
+├── messages.py          # send/get channel messages, audit log
+├── permissions.py       # has_permission, get_permissions, require_permission, channel overrides
+├── models.py            # Data models (Server, Channel, Role, Member, etc.)
 ├── exceptions.py        # Exception classes
-├── permissions.py       # Permission checking utilities
-├── events.py            # ScheduledEventManager (standalone)
-├── templates.py         # TemplateManager (standalone)
-└── onboarding.py       # OnboardingManager (standalone)
+├── composer.py          # ServersManager (MRO of all mixins)
+├── base.py              # ServersManagerBase (holds sub-managers)
+├── *_mixin.py           # Mixins for each domain
+├── events.py (legacy)   # ScheduledEventManager implementation
+├── templates.py (legacy) # TemplateManager implementation
+├── onboarding.py (legacy) # OnboardingManager implementation
+└── permissions.py (legacy) # Permission utilities
 ```
-
-## Design
-
-The module uses a mixin-based architecture where `ServersManager` combines functionality from four underlying managers:
-
-- **ServerManager** (`manager/base.py`): Core server, channel, role, member operations via mixins
-- **ScheduledEventManager** (`events.py`): Scheduled event operations with RSVP
-- **TemplateManager** (`templates.py`): Server template operations
-- **OnboardingManager** (`onboarding.py`): Welcome screen and onboarding flow operations
 
 ## Usage
 
 ```python
-from src.core.servers import ServersManager
+# Setup once in main.py
+from src.core import servers
+servers.setup(db, auth, messaging)
 
-# Create manager instance
-servers = ServersManager(db, auth_module, messaging_module)
+# Use anywhere via direct imports
+from src.core.servers import (
+    create_server,
+    create_channel,
+    add_member,
+    create_invite,
+    has_permission,
+)
 
-# Server operations
-server = servers.create_server(owner_id=1, name="My Server")
-servers.update_server(user_id=1, server_id=server.id, name="New Name")
-
-# Channel operations
-channel = servers.create_channel(user_id=1, server_id=server.id, name="general")
-
-# Member operations
-member = servers.add_member(server_id=server.id, user_id=2)
-
-# Event operations
-event = servers.create_scheduled_event(user_id=1, server_id=server.id, name="Meeting", start_time=1234567890)
+server = create_server(owner_id=1, name="My Server")
+channel = create_channel(user_id=1, server_id=server.id, name="general")
+add_member(server_id=server.id, user_id=2)
+invite = create_invite(user_id=1, channel_id=channel.id)
 ```
 
-## Mixins
+## API Modules
 
-Each mixin provides methods for a specific domain, delegating to the appropriate underlying manager:
+| Module | Operations |
+|--------|------------|
+| `channels.py` | `create_channel`, `create_category`, `get_channel`, `channel_exists`, `get_channels`, `update_channel`, `delete_channel`, `move_channel` |
+| `roles.py` | `create_role`, `get_role`, `get_roles`, `update_role`, `delete_role`, `move_role` |
+| `members.py` | `add_member`, `get_member`, `get_members`, `get_member_user_ids`, `get_all_shared_member_ids`, `update_member`, `remove_member`, `leave_server`, `kick_member`, `ban_member`, `unban_member`, `get_bans`, `assign_role`, `remove_role`, `get_member_roles` |
+| `invites.py` | `create_invite`, `get_invite`, `get_invites`, `use_invite`, `delete_invite` |
+| `events.py` | `create_scheduled_event`, `get_scheduled_event`, `get_scheduled_events`, `update_scheduled_event`, `delete_scheduled_event`, `rsvp_event`, `remove_rsvp`, `get_event_rsvps`, `generate_recurring_instances` |
+| `templates.py` | `create_template`, `get_template`, `get_template_by_id`, `get_user_templates`, `get_public_templates`, `preview_template`, `apply_template`, `delete_template`, `update_template` |
+| `onboarding.py` | `set_welcome_screen`, `get_welcome_screen`, `delete_welcome_screen`, `create_onboarding_step`, `get_onboarding_step`, `get_onboarding_steps`, `update_onboarding_step`, `delete_onboarding_step`, `start_onboarding`, `complete_onboarding_step`, `get_onboarding_progress`, `reset_onboarding_progress` |
+| `messages.py` | `send_channel_message`, `get_channel_messages`, `get_audit_log` |
+| `permissions.py` | `get_channel_override`, `set_channel_override`, `delete_channel_override`, `has_permission`, `get_permissions`, `require_permission` |
 
-| Mixin | Underlying Manager | Domain |
-|-------|-------------------|--------|
-| ServerMixin | ServerManager | Server CRUD |
-| ChannelMixin | ServerManager | Channel operations |
-| RoleMixin | ServerManager | Role operations |
-| MemberMixin | ServerManager | Member operations |
-| RoleAssignmentMixin | ServerManager | Role assignment |
-| PermissionMixin | ServerManager | Permissions |
-| InviteMixin | ServerManager | Invites |
-| MessagingMixin | ServerManager | Messaging |
-| AuditMixin | ServerManager | Audit log |
-| EventMixin | ScheduledEventManager | Scheduled events |
-| TemplateMixin | TemplateManager | Templates |
-| WelcomeMixin | OnboardingManager | Welcome screens |
-| OnboardingMixin | OnboardingManager | Onboarding flows |
+## Core Server Operations (in `__init__.py`)
 
-## MRO
+| Function | Description |
+|----------|-------------|
+| `create_server` | Create a new server |
+| `get_server` | Get server by ID (with access check) |
+| `get_servers` | Get all servers for a user |
+| `server_exists` | Check if server exists (no permission check) |
+| `update_server` | Update server settings |
+| `delete_server` | Delete server (owner only) |
+| `transfer_ownership` | Transfer server ownership |
 
-`ServersManager` uses C3 linearization for method resolution:
-
-```
-ServersManager
-├── ServerMixin
-├── ChannelMixin
-├── RoleMixin
-├── MemberMixin
-├── RoleAssignmentMixin
-├── PermissionMixin
-├── InviteMixin
-├── MessagingMixin
-├── AuditMixin
-├── EventMixin
-├── TemplateMixin
-├── WelcomeMixin
-├── OnboardingMixin
-└── ServersManagerBase
-    └── BaseManager
-```
-
-## Backward Compatibility
-
-The existing `manager/` subpackage remains available for direct usage:
+## Setup
 
 ```python
-from src.core.servers.manager.base import ServerManager
+from src.core.servers import setup, ServersManager
 
-manager = ServerManager(db, auth_module, messaging_module)
+# Module-level setup (for functional API)
+setup(db, auth_module, messaging_module)
+
+# Or direct manager instantiation (for OO API)
+manager = ServersManager(db, auth_module, messaging_module)
 ```
-
-The `ServersManager` class provides a unified interface that combines all four managers.

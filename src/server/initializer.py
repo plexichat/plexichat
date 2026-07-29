@@ -11,7 +11,7 @@ import utils.config as config
 def initialize_modules(
     modules_store: dict, worker_id: str
 ) -> Tuple[Any, Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]]:
-    from src.core.database import Database, setup_redis
+    from src.core.database import Database, setup_valkey
     from src.core import (
         auth,
         messaging,
@@ -92,21 +92,21 @@ def initialize_modules(
 
     db.connect()
 
-    redis_config = config.get("redis") or {}
-    if redis_config.get("enabled", False):
-        logger.info("Initializing Redis...")
-        redis_client = setup_redis()
-        if redis_client and redis_client.ping():
-            redis_client.set_worker_id(worker_id)
+    valkey_config = config.get("valkey") or {}
+    if valkey_config.get("enabled", False):
+        logger.info("Initializing Valkey...")
+        valkey_client = setup_valkey()
+        if valkey_client and valkey_client.ping():
+            valkey_client.set_worker_id(worker_id)
             logger.info(
-                f"Connected to Redis at {redis_config.get('host', 'localhost')}:{redis_config.get('port', 6379)} (Worker ID: {worker_id})"
+                f"Connected to Valkey at {valkey_config.get('host', 'localhost')}:{valkey_config.get('port', 6379)} (Worker ID: {worker_id})"
             )
         else:
             logger.warning(
-                "Redis is enabled but connection failed - continuing without Redis"
+                "Valkey is enabled but connection failed - continuing without Valkey"
             )
     else:
-        logger.info("Redis is disabled in configuration")
+        logger.info("Valkey is disabled in configuration")
 
     try:
         from src.utils import encryption
@@ -258,6 +258,30 @@ def initialize_modules(
                     logger.info("DSAR Harvester background worker started")
         except Exception as e:
             logger.error(f"Failed to start DSAR Harvester: {e}")
+
+        # Artifact retention cleanup job (scheduled purge of expired artifacts)
+        try:
+            from src.core.artifacts.retention import RetentionCleanupJob
+
+            artifacts_cfg = config.get("artifacts", {}) or {}
+            retention_cfg = artifacts_cfg.get("retention", {}) or {}
+            cleanup_interval = retention_cfg.get("run_cleanup_interval_minutes", 60)
+            try:
+                cleanup_interval = int(cleanup_interval)
+            except (TypeError, ValueError):
+                cleanup_interval = 60
+            if cleanup_interval > 0:
+                artifact_retention = RetentionCleanupJob(db, artifacts_cfg)
+                artifact_retention.start()
+                modules_store["artifact_retention"] = artifact_retention
+                logger.info("Artifact retention cleanup job started")
+            else:
+                logger.info(
+                    "Artifact retention cleanup disabled "
+                    "(run_cleanup_interval_minutes <= 0)"
+                )
+        except Exception as e:
+            logger.error(f"Failed to start artifact retention job: {e}")
 
         def init_presence():
             timed_init(
@@ -412,6 +436,71 @@ def initialize_modules(
         logger.warning(f"Failed to initialize voice module: {e}")
         failed_modules.append("voice")
 
+    if "voice" not in failed_modules:
+        try:
+            from src.core.artifacts.manager import ArtifactManager
+            from src.core.artifacts.voice_calls import VoiceCallManager
+
+            artifacts_cfg = config.get("artifacts", {}) or {}
+            artifact_manager = ArtifactManager(db, artifacts_cfg)
+            voice_call_manager = VoiceCallManager(db, artifact_manager, artifacts_cfg)
+            voice.set_voice_call_manager(voice_call_manager)
+            try:
+                from src.core.artifacts.transcription.worker import (
+                    ensure_transcription_drainer,
+                )
+
+                ensure_transcription_drainer()
+            except Exception as e:
+                logger.debug(f"Failed to start transcription drainer: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to attach voice call manager: {e}")
+
+    # Federation bridge for artifacts (PlexiJoin). Built only when the
+    # PlexiJoin feature is licensed and its encryption service is available,
+    # mirroring how the PlexiJoin admin routes construct the manager. When
+    # federation is unavailable the WS artifact layer simply skips forwarding;
+    # local relay is never affected.
+    try:
+        from utils import licensing as license_module
+
+        if license_module.has_feature("plexijoin", default=False):
+            try:
+                import utils.encryption as enc_mod
+
+                class _PlexiJoinEncryptionService:
+                    @staticmethod
+                    def encrypt(data: str) -> str:
+                        return enc_mod.encrypt_data(data)
+
+                    @staticmethod
+                    def decrypt(data: str) -> str:
+                        return enc_mod.decrypt_data(data)
+
+                encryption_service = _PlexiJoinEncryptionService()
+            except Exception:
+                encryption_service = None
+
+            if encryption_service is not None and db is not None:
+                from src.core.plexijoin import PlexiJoinManager
+                from src.core.admin.logging import get_admin_logger
+                from src.core.artifacts.federation import (
+                    FederationArtifactBridge,
+                    set_artifact_federation_bridge,
+                )
+
+                plexijoin_manager = PlexiJoinManager(
+                    db=db,
+                    admin_logger=get_admin_logger(),
+                    encryption_service=encryption_service,
+                )
+                federation_bridge = FederationArtifactBridge(db, plexijoin_manager)
+                set_artifact_federation_bridge(federation_bridge)
+                modules_store["artifact_federation"] = federation_bridge
+                logger.info("Federation (PlexiJoin) artifact bridge initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize artifact federation bridge: {e}")
+
     voice_config = config.get("voice") or {}
     if voice_config.get("enabled", False):
         try:
@@ -469,19 +558,19 @@ def initialize_modules(
         try:
             from src.core import ratelimit
             from src.core.ratelimit.storage import (
-                RedisStorage,
+                ValkeyStorage,
                 MemoryStorage,
                 DatabaseStorage,
             )
-            from src.core.database.redis_client import (
-                is_available as redis_is_available,
+            from src.core.database.valkey_client import (
+                is_available as valkey_is_available,
             )
 
             def init_ratelimit():
                 storage = None
-                if redis_is_available():
-                    storage = RedisStorage()
-                    logger.info("Using Redis storage for rate limiting")
+                if valkey_is_available():
+                    storage = ValkeyStorage()
+                    logger.info("Using Valkey storage for rate limiting")
                 elif db:
                     storage = DatabaseStorage(db)
                     db_type = db.type.capitalize()
@@ -501,7 +590,7 @@ def initialize_modules(
                         "independent counters per worker, allowing rate-limit bypass."
                     )
                     logger.warning(
-                        "To fix: Enable Redis or configure a shared database."
+                        "To fix: Enable Valkey or configure a shared database."
                     )
                     logger.warning("=" * 60)
 

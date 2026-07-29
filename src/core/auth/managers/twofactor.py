@@ -215,6 +215,12 @@ class TwoFactorMixin(AuthManagerProtocol):
             "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?", (user_id,)
         )
         self._log_audit(AuditEventType.TWO_FACTOR_ENABLED, user_id, True)
+        try:
+            from src.core.events.gateway_emit import emit_security_alert
+
+            emit_security_alert(user_id, "two_factor_enabled")
+        except Exception:
+            pass
         invalidate_pattern("user_data:*")
         return True
 
@@ -243,6 +249,12 @@ class TwoFactorMixin(AuthManagerProtocol):
             (user_id,),
         )
         invalidate_pattern("user_data:*")
+        try:
+            from src.core.events.gateway_emit import emit_security_alert
+
+            emit_security_alert(user_id, "two_factor_disabled")
+        except Exception:
+            pass
         return True
 
     def regenerate_backup_codes(self, user_id: int, password: str) -> List[str]:

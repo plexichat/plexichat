@@ -21,7 +21,7 @@ from ..exceptions import (
     InviteExpiredError,
     InviteMaxUsesError,
 )
-from ..permissions import can_manage_member
+from ..permission_utils import can_manage_member
 from src.core.database import cache_delete
 from src.core.database.cache import cached, invalidate_pattern
 from ..manager.converters import _row_to_member, _row_to_ban, _row_to_invite
@@ -47,7 +47,7 @@ class MemberHandler:
                 return code
 
     def is_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> bool:
-        """Check if user is a member of server (cached in Redis)."""
+        """Check if user is a member of server (cached in Valkey)."""
         try:
             sid = int(server_id)
             uid = int(user_id)
@@ -63,13 +63,13 @@ class MemberHandler:
         if mem_cached is not None:
             return mem_cached
 
-        # 2. Try Redis
-        from src.core.database import cache_get, cache_set, redis_available
+        # 2. Try Valkey
+        from src.core.database import cache_get, cache_set, valkey_available
 
-        if redis_available():
-            redis_cached = cache_get(cache_key)
-            if redis_cached is not None:
-                is_member = bool(int(redis_cached))
+        if valkey_available():
+            valkey_cached = cache_get(cache_key)
+            if valkey_cached is not None:
+                is_member = bool(int(valkey_cached))
                 self.manager._cache_set(
                     self.manager._member_cache_prefix, cache_key, is_member
                 )
@@ -78,9 +78,9 @@ class MemberHandler:
         # 3. Check if user is the owner
         owner_id = self.manager._cache_get(self.manager._server_owner_cache_prefix, sid)
         if owner_id is None:
-            # Check Redis for owner
+            # Check Valkey for owner
             owner_cache_key = f"server_owner:{sid}"
-            if redis_available():
+            if valkey_available():
                 owner_id_cached = cache_get(owner_cache_key)
                 if owner_id_cached:
                     owner_id = int(owner_id_cached)
@@ -98,12 +98,12 @@ class MemberHandler:
                     self.manager._cache_set(
                         self.manager._server_owner_cache_prefix, sid, owner_id
                     )
-                    if redis_available():
+                    if valkey_available():
                         cache_set(owner_cache_key, str(owner_id), ttl=3600)
 
         if owner_id == uid:
             self.manager._cache_set(self.manager._member_cache_prefix, cache_key, True)
-            if redis_available():
+            if valkey_available():
                 cache_set(cache_key, "1", ttl=300)
             return True
 
@@ -115,7 +115,7 @@ class MemberHandler:
 
         # Cache result
         self.manager._cache_set(self.manager._member_cache_prefix, cache_key, is_member)
-        if redis_available():
+        if valkey_available():
             cache_set(cache_key, "1" if is_member else "0", ttl=300)
 
         return is_member
@@ -208,7 +208,7 @@ class MemberHandler:
             self.manager._member_cache_prefix, (server_id, user_id)
         )
 
-        # Invalidate Redis
+        # Invalidate Valkey
         from src.core.database import cache_delete, invalidate_pattern
 
         cache_delete(f"is_member:{server_id}:{user_id}")
@@ -392,7 +392,7 @@ class MemberHandler:
             self.manager._permission_cache_prefix, (member_user_id, server_id, None)
         )
 
-        # Invalidate Redis
+        # Invalidate Valkey
         from src.core.database import cache_delete, invalidate_pattern
 
         cache_delete(f"is_member:{server_id}:{member_user_id}")

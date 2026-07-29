@@ -14,9 +14,9 @@ from ..exceptions import (
     ServerAccessDeniedError,
     ServerNotFoundError,
 )
-from ..permissions import has_permission as check_permission
+from ..permission_utils import has_permission as check_permission
 from ..manager.converters import _row_to_channel, _row_to_category
-from src.core.database import cache_delete, redis_available
+from src.core.database import cache_delete, valkey_available
 from src.core.database.cache import cached, invalidate_pattern
 
 
@@ -173,7 +173,7 @@ class ChannelHandler:
             channel_id,
         )
 
-        if redis_available():
+        if valkey_available():
             cache_delete(f"server_channels:{server_id}")
         invalidate_pattern(f"server_channels:*{server_id}*")
 
@@ -405,7 +405,7 @@ class ChannelHandler:
         )
 
         self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
-        if redis_available():
+        if valkey_available():
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
         invalidate_pattern(f"server_channels:*{channel.server_id}*")
@@ -436,7 +436,7 @@ class ChannelHandler:
         )
 
         self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
-        if redis_available():
+        if valkey_available():
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
 

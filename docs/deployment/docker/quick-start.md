@@ -30,7 +30,7 @@ VERSION=latest docker compose up -d
 
 For a specific version:
 ```bash
-VERSION=a.1.0-53 docker compose up -d
+VERSION=a.1.0-127 docker compose up -d
 ```
 
 This command:
@@ -48,11 +48,11 @@ Watch the logs. You should see:
 backend    | INFO: Application startup complete
 backend    | +==============================================================+
 backend    | |                    Plexichat API Server                      |
-backend    | |                      Version a.1.0-53                        |
+backend    | |                      Version a.1.0-127                       |
 backend    | +==============================================================+
 client     | healthy
 db         | healthy
-redis      | healthy
+valkey     | healthy
 minio      | healthy
 ```
 
@@ -65,7 +65,7 @@ Expected output:
 ```
 NAME       IMAGE           STATUS           PORTS
 db         postgres:16     Up 2 min (healthy)   5432/tcp
-redis      redis:7         Up 2 min (healthy)   6379/tcp
+valkey     valkey/valkey:9.1.1-alpine    Up 2 min (healthy)   6379/tcp
 minio      minio:latest    Up 2 min (healthy)   9000/tcp, 9001/tcp
 backend    plexichat:dev   Up 1 min (healthy)   0.0.0.0:8000->8000/tcp
 client     nginx:latest    Up 1 min (healthy)   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
@@ -93,7 +93,7 @@ Expected response:
 ```json
 {
   "status": "healthy",
-  "version": "a.1.0-53",
+  "version": "a.1.0-127",
   "timestamp": "2024-01-15T10:30:45Z"
 }
 ```
@@ -203,3 +203,5 @@ To customize, see [Configuration](configuration.md).
 - [Development Workflow](development-workflow.md) - Hot reload, testing
 - [Troubleshooting](troubleshooting.md) - Solve common problems
 - [Production Setup](production-setup.md) - Deploy to production
+
+

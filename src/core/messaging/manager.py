@@ -41,8 +41,6 @@ from .services import (
     UserSettingsService,
     ContentFilterService,
 )
-from .events import MessagingEventBus, get_event_bus
-
 from . import exceptions as _exc
 from . import models as _models
 
@@ -129,22 +127,12 @@ class MessagingManager(BaseManager):
 
         self._pin_svc = PinService(db, self._participant_svc)
 
-        # Event bus for reliable event delivery
-        self._event_bus = get_event_bus()
-
         logger.info("Messaging module initialized")
 
     def _is_participant(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> bool:
         return self.is_participant(conversation_id, user_id)
-
-    # === Event Bus Access ===
-
-    @property
-    def event_bus(self) -> MessagingEventBus:
-        """Get the event bus for subscribing to messaging events."""
-        return self._event_bus
 
     # === Conversations ===
 
@@ -513,6 +501,27 @@ class MessagingManager(BaseManager):
         """Delete a message."""
         return self._message_svc.delete_message(user_id, message_id, hard_delete)
 
+    def delete_messages_bulk(
+        self,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
+        message_ids: List[SnowflakeID],
+    ) -> List[int]:
+        """Bulk-delete messages from a channel.
+
+        Only messages the caller is permitted to delete (author or channel
+        moderator) are removed. Returns the list of message IDs that were
+        actually deleted so the caller can broadcast a precise event.
+
+        Delegates to the message service's bulk-delete (which skips messages
+        the caller may not delete and missing messages) rather than looping
+        the single-delete path that raises on the first failure.
+        """
+        requested = [int(m) for m in message_ids]
+        result = self._message_svc.delete_messages_bulk(user_id, requested)
+        failed = {int(f) for f in result.get("failed_ids", [])}
+        return [mid for mid in requested if mid not in failed]
+
     def get_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID
     ) -> Optional[Message]:
@@ -621,6 +630,31 @@ class MessagingManager(BaseManager):
         return self._message_status_svc.mark_read(
             user_id, conversation_id, up_to_message_id
         )
+
+    def get_last_read(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+    ) -> Dict[str, Any]:
+        """Get the last read position for a user in a conversation."""
+        return self._message_status_svc.get_last_read(user_id, conversation_id)
+
+    def mark_unread(
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        up_to_message_id: Optional[SnowflakeID] = None,
+    ) -> int:
+        """Mark messages as unread."""
+        return self._message_status_svc.mark_unread(
+            user_id, conversation_id, up_to_message_id
+        )
+
+    def mark_all_server_read(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+    ) -> int:
+        """Mark all channels in a server as read."""
+        return self._message_status_svc.mark_all_server_read(user_id, server_id)
 
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: Optional[SnowflakeID] = None

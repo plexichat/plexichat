@@ -25,6 +25,7 @@ class EventType(Enum):
     TYPING_STOP = "TYPING_STOP"
     USER_UPDATE = "USER_UPDATE"
     SECURITY_LOGOUT = "SECURITY_LOGOUT"
+    SECURITY_ALERT = "SECURITY_ALERT"
 
     CHANNEL_CREATE = "CHANNEL_CREATE"
     CHANNEL_UPDATE = "CHANNEL_UPDATE"
@@ -68,6 +69,14 @@ class EventType(Enum):
 
     RATCHET_UPDATE = "RATCHET_UPDATE"
 
+    MESSAGE_BOOKMARK_ADD = "MESSAGE_BOOKMARK_ADD"
+    MESSAGE_BOOKMARK_REMOVE = "MESSAGE_BOOKMARK_REMOVE"
+
+    ARTIFACT_CREATE = "ARTIFACT_CREATE"
+    ARTIFACT_UPDATE = "ARTIFACT_UPDATE"
+    ARTIFACT_DELETE = "ARTIFACT_DELETE"
+    ARTIFACT_OP = "ARTIFACT_OP"
+
 
 class GatewayIntent(IntFlag):
     """Gateway intents for filtering events."""
@@ -92,6 +101,7 @@ class GatewayIntent(IntFlag):
     THREADS = 1 << 17
     AUTOMOD = 1 << 18
     AUDIT_LOG = 1 << 19
+    ARTIFACTS = 1 << 20
 
     @classmethod
     def all_intents(cls) -> int:
@@ -113,6 +123,9 @@ class GatewayIntent(IntFlag):
             | cls.DIRECT_MESSAGE_REACTIONS
             | cls.DIRECT_MESSAGE_TYPING
             | cls.MESSAGE_CONTENT
+            | cls.AUTOMOD
+            | cls.AUDIT_LOG
+            | cls.ARTIFACTS
         )
 
     @classmethod
@@ -132,6 +145,7 @@ class GatewayIntent(IntFlag):
             | cls.DIRECT_MESSAGES
             | cls.DIRECT_MESSAGE_REACTIONS
             | cls.DIRECT_MESSAGE_TYPING
+            | cls.ARTIFACTS
         )
 
     @classmethod

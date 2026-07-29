@@ -33,7 +33,9 @@ Some migrations are marked as **irreversible** and cannot be rolled back via the
 - **Migration 027** (Migrate encrypted data): Transforms data between columns -- once run, original column data is no longer source of truth.
 
 **To rollback an irreversible migration:**
-1. Restore the database from a backup taken *before* the migration was applied.
+1. Restore the database from a backup taken *before* the migration was applied
+   (use `docker exec plexichat-backup-1 /scripts/backup.sh restore-db <snapshot>`
+   if using the restic backup container).
 2. Manually remove the migration record from the `schema_migrations` table.
 3. Re-apply any dependent migrations that reference the restored schema.
 
@@ -77,6 +79,8 @@ If you encounter issues during migration:
 ## Best Practices
 
 1. **Always backup before running migrations** -- especially for irreversible migrations.
+   Run `docker exec plexichat-backup-1 /scripts/backup.sh run` to create a restic
+   snapshot immediately before migrating.
 2. **Test migrations in a staging environment first** before applying to production.
 3. **Run migrations during maintenance windows** for large or high-risk migrations.
 4. **Monitor logs** after migration to ensure data integrity.

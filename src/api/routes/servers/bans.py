@@ -10,6 +10,7 @@ from src.api.schemas.servers import (
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 
 import utils.logger as logger
+from src.core.events.gateway_emit import emit_guild_ban_add, emit_guild_ban_remove
 
 router = APIRouter()
 
@@ -120,6 +121,7 @@ async def ban_member(
             reason=reason,
             delete_message_days=delete_message_days,
         )
+        emit_guild_ban_add(sid, uid, reason=reason)
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
@@ -176,6 +178,7 @@ async def unban_member(
             )
 
         servers_mod.unban_member(current_user.user_id, sid, uid)
+        emit_guild_ban_remove(sid, uid)
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise

@@ -31,6 +31,13 @@ All routes in this section are relative to `https://api.plexichat.com`.
 - [Emojis](emojis.md): custom emoji management
 - [Features](features.md): public feature visibility plus admin-controlled tiers/badges
 
+## Artifacts Capability Endpoints
+
+- `GET /api/v1/capabilities` (auth required): per-feature artifacts availability
+  state (`{feature: {state, message, details}}`) for client availability banners.
+- `GET /api/v1/admin/capabilities` (admin guarded): same breakdown plus a
+  top-level `summary` (counts and `by_state` grouping) for the admin panel.
+
 ## Additional Route Groups
 
 - [Search](search.md): `/search/messages`, `/search/users`, `/search/servers`

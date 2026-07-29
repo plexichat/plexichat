@@ -44,6 +44,9 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
         )
         _sync_password_to_auth_users(db, "admin", password_hash)
         _save_admin_credentials(password)
+
+        _seed_default_admin_roles(db, admin_id, now)
+
         import utils.logger as logger
 
         logger.info("Created admin user with random password using Argon2id")
@@ -215,3 +218,29 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
             requires_otp_verify=True,
             challenge_token=_create_otp_challenge(admin_id, is_setup=False),
         )
+
+
+def _seed_default_admin_roles(db, admin_id: int, now: int) -> None:
+    """Create the super_admin role and assign it to the first admin."""
+    import json
+    import utils.logger as logger
+    from src.utils.encryption import generate_snowflake_id
+
+    existing = db.fetch_one("SELECT COUNT(*) as c FROM admin_roles")
+    if existing and existing.get("c", 0) > 0:
+        return
+
+    super_admin_id = generate_snowflake_id()
+    db.execute(
+        """INSERT INTO admin_roles (id, name, description, permissions, created_at, created_by, is_system, position)
+           VALUES (?, 'super_admin', 'Full system access with all permissions', ?, ?, ?, 1, 100)""",
+        (super_admin_id, json.dumps({"*": True}), now, admin_id),
+    )
+
+    db.execute(
+        """INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by)
+           VALUES (?, ?, ?, ?)""",
+        (admin_id, super_admin_id, now, admin_id),
+    )
+
+    logger.info(f"Created super_admin role and assigned to admin {admin_id}")

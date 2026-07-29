@@ -47,9 +47,9 @@ class ServersManagerBase(BaseManager):
         super().__init__(db, auth_module)
 
         from .manager.base import ServerManager
-        from .events import ScheduledEventManager
-        from .templates import TemplateManager
-        from .onboarding import OnboardingManager
+        from .manager.scheduled_event_ops import ScheduledEventManager
+        from .manager.template_ops import TemplateManager
+        from .manager.onboarding_ops import OnboardingManager
 
         self._manager = ServerManager(db, auth_module, messaging_module)
         self._event_manager = ScheduledEventManager(

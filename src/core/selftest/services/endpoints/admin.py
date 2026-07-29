@@ -16,7 +16,7 @@ class AdminMixin(EndpointTesterBase):
     """Tests admin-related API endpoints."""
 
     def test_migration_endpoints(self) -> None:
-        """Test migration apply and rollback using the 037 selftest no-op migration."""
+        """Test migration apply and rollback using the 001 selftest no-op migration."""
         if not self.ctx.standalone_mode:
             return
         if not self.ctx.session.headers.get("Authorization"):
@@ -24,14 +24,14 @@ class AdminMixin(EndpointTesterBase):
             return
 
         session = self.ctx.session
-        mig_path_apply = "/api/v1/admin/database/migrations/apply/037"
-        mig_path_rollback = "/api/v1/admin/database/migrations/rollback/037"
+        mig_path_apply = "/api/v1/admin/database/migrations/apply/001"
+        mig_path_rollback = "/api/v1/admin/database/migrations/rollback/001"
 
-        # Migration 037 may already be applied during server startup.
+        # Migration 001 may already be applied during server startup.
         # Rollback first so we can test apply; then rollback again to leave
         # the DB in the same state we found it.
         logger.info(
-            "Testing POST /api/v1/admin/database/migrations/rollback/037 (pre-test)..."
+            "Testing POST /api/v1/admin/database/migrations/rollback/001 (pre-test)..."
         )
         rb1_start = time.time()
         resp = session.post(
@@ -51,17 +51,17 @@ class AdminMixin(EndpointTesterBase):
         )
         if rb1_ok:
             logger.info(
-                f"Migration rollback 037 (pre-test) PASSED -> {resp.status_code}"
+                f"Migration rollback 001 (pre-test) PASSED -> {resp.status_code}"
             )
         else:
             logger.debug(
-                f"Migration rollback 037 (pre-test) -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration rollback 001 (pre-test) -> {resp.status_code}: {resp.text[:200]}"
             )
 
         time.sleep(0.05)
 
-        # --- Apply migration 037 ---
-        logger.info("Testing POST /api/v1/admin/database/migrations/apply/037...")
+        # --- Apply migration 001 ---
+        logger.info("Testing POST /api/v1/admin/database/migrations/apply/001...")
         mig_apply_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_apply}",
@@ -80,16 +80,16 @@ class AdminMixin(EndpointTesterBase):
             }
         )
         if success:
-            logger.info(f"Migration apply 037 PASSED -> {resp.status_code}")
+            logger.info(f"Migration apply 001 PASSED -> {resp.status_code}")
         else:
             logger.warning(
-                f"Migration apply 037 -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration apply 001 -> {resp.status_code}: {resp.text[:200]}"
             )
 
         time.sleep(0.05)
 
-        # --- Rollback migration 037 ---
-        logger.info("Testing POST /api/v1/admin/database/migrations/rollback/037...")
+        # --- Rollback migration 001 ---
+        logger.info("Testing POST /api/v1/admin/database/migrations/rollback/001...")
         mig_rollback_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_rollback}",
@@ -108,10 +108,10 @@ class AdminMixin(EndpointTesterBase):
             }
         )
         if success:
-            logger.info(f"Migration rollback 037 PASSED -> {resp.status_code}")
+            logger.info(f"Migration rollback 001 PASSED -> {resp.status_code}")
         else:
             logger.warning(
-                f"Migration rollback 037 -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration rollback 001 -> {resp.status_code}: {resp.text[:200]}"
             )
 
     def test_access_token_rotate(self) -> None:
@@ -233,15 +233,6 @@ class AdminMixin(EndpointTesterBase):
                     "label": "other_user_self_delete",
                 }
             )
-            if success:
-                logger.info(f"Other user delete PASSED -> {resp.status_code}")
-            else:
-                logger.warning(
-                    f"Other user delete -> {resp.status_code}: {resp.text[:200]}"
-                )
-
-        time.sleep(0.05)
-
         # --- Delay deletion ---
         future_deletion_at = int(time.time()) + 86400
         logger.info(f"Testing POST /api/v1/admin/users/{other_id}/delay-deletion...")
@@ -267,6 +258,165 @@ class AdminMixin(EndpointTesterBase):
             logger.info(f"Delay deletion PASSED -> {resp.status_code}")
         else:
             logger.warning(f"Delay deletion -> {resp.status_code}: {resp.text[:200]}")
+
+    def test_transcript_export(self) -> None:
+        """Test the full transcript export workflow for a server channel.
+
+        Steps (chaining the created export_id from the POST into the GETs):
+            1. Ensure the test channel has a message (send one if needed).
+            2. POST a transcript export request -> capture export_id.
+            3. GET the export status using the real export_id.
+            4. GET the export download using the real export_id.
+        """
+        if not self.ctx.standalone_mode:
+            return
+        if not self.ctx.session.headers.get("Authorization"):
+            logger.debug("Skipping transcript export tests (no auth token)")
+            return
+        if not self.ctx.test_channel_id or not self.ctx.test_server_id:
+            logger.debug("Skipping transcript export tests (no test channel)")
+            return
+
+        session = self.ctx.session
+        channel_id = self.ctx.test_channel_id
+
+        # Step 1: Guarantee the channel has at least one message to export.
+        time.sleep(0.05)
+        msg_start = time.time()
+        msg_resp = session.post(
+            f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages",
+            json={"content": f"self-test export message {secrets.token_hex(4)}"},
+            timeout=10,
+        )
+        msg_duration = (time.time() - msg_start) * 1000
+        msg_ok = 200 <= msg_resp.status_code < 300
+        self.ctx.results.append(
+            {
+                "method": "POST",
+                "path": f"/api/v1/channels/{channel_id}/messages",
+                "status_code": msg_resp.status_code,
+                "duration_ms": msg_duration,
+                "success": msg_ok,
+                "label": "transcript_export_seed_message",
+            }
+        )
+        if not msg_ok:
+            logger.warning(
+                f"Transcript export seed message -> {msg_resp.status_code}: "
+                f"{msg_resp.text[:200]}"
+            )
+            return
+
+        time.sleep(0.05)
+
+        # Step 2: Request the transcript export.
+        logger.info(
+            f"Testing POST /api/v1/channels/{channel_id}/messages/export (request)..."
+        )
+        req_start = time.time()
+        resp = session.post(
+            f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages/export",
+            json={"format": "json"},
+            timeout=30,
+        )
+        req_duration = (time.time() - req_start) * 1000
+        req_ok = 200 <= resp.status_code < 300
+        self.ctx.results.append(
+            {
+                "method": "POST",
+                "path": f"/api/v1/channels/{channel_id}/messages/export",
+                "status_code": resp.status_code,
+                "duration_ms": req_duration,
+                "success": req_ok,
+                "label": "transcript_export_request",
+            }
+        )
+        if not req_ok:
+            logger.warning(
+                f"Transcript export request -> {resp.status_code}: {resp.text[:200]}"
+            )
+            return
+
+        export_id = None
+        try:
+            data = resp.json()
+            export_id = data.get("export_id")
+            if export_id:
+                self.ctx.test_export_id = str(export_id)
+                logger.debug(f"Captured transcript export id: {export_id}")
+        except Exception:
+            pass
+
+        if not export_id:
+            logger.warning("Transcript export response missing export_id")
+            return
+
+        time.sleep(0.05)
+
+        # Step 3: Fetch the export status using the real export_id.
+        logger.info(
+            f"Testing GET /api/v1/channels/{channel_id}/messages/export/"
+            f"{export_id} (status)..."
+        )
+        status_start = time.time()
+        resp = session.get(
+            f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages/export/"
+            f"{export_id}",
+            timeout=10,
+        )
+        status_duration = (time.time() - status_start) * 1000
+        status_ok = 200 <= resp.status_code < 300
+        self.ctx.results.append(
+            {
+                "method": "GET",
+                "path": f"/api/v1/channels/{channel_id}/messages/export/{export_id}",
+                "status_code": resp.status_code,
+                "duration_ms": status_duration,
+                "success": status_ok,
+                "label": "transcript_export_status",
+            }
+        )
+        if status_ok:
+            logger.info(f"Transcript export status PASSED -> {resp.status_code}")
+        else:
+            logger.warning(
+                f"Transcript export status -> {resp.status_code}: {resp.text[:200]}"
+            )
+
+        time.sleep(0.05)
+
+        # Step 4: Download the export using the real export_id.
+        logger.info(
+            f"Testing GET /api/v1/channels/{channel_id}/messages/export/"
+            f"{export_id}/download (download)..."
+        )
+        dl_start = time.time()
+        resp = session.get(
+            f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages/export/"
+            f"{export_id}/download",
+            timeout=30,
+        )
+        dl_duration = (time.time() - dl_start) * 1000
+        dl_ok = 200 <= resp.status_code < 300
+        self.ctx.results.append(
+            {
+                "method": "GET",
+                "path": (
+                    f"/api/v1/channels/{channel_id}/messages/export/"
+                    f"{export_id}/download"
+                ),
+                "status_code": resp.status_code,
+                "duration_ms": dl_duration,
+                "success": dl_ok,
+                "label": "transcript_export_download",
+            }
+        )
+        if dl_ok:
+            logger.info(f"Transcript export download PASSED -> {resp.status_code}")
+        else:
+            logger.warning(
+                f"Transcript export download -> {resp.status_code}: {resp.text[:200]}"
+            )
 
     def test_dsar(self) -> None:
         """Test the full user-facing data export (DSAR) workflow.
@@ -437,11 +587,11 @@ class AdminMixin(EndpointTesterBase):
             return
 
         session = self.ctx.session
-        mig_run = "/api/v1/admin/migrations/037/run"
-        mig_rollback = "/api/v1/admin/migrations/037/rollback"
+        mig_run = "/api/v1/admin/migrations/001/run"
+        mig_rollback = "/api/v1/admin/migrations/001/rollback"
 
-        # --- Run (apply) migration 037 via new endpoint ---
-        logger.info("Testing POST /api/v1/admin/migrations/037/run (apply)...")
+        # --- Run (apply) migration 001 via new endpoint ---
+        logger.info("Testing POST /api/v1/admin/migrations/001/run (apply)...")
         run_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_run}",
@@ -461,16 +611,16 @@ class AdminMixin(EndpointTesterBase):
             }
         )
         if success:
-            logger.info(f"Migration apply 037 PASSED -> {resp.status_code}")
+            logger.info(f"Migration apply 001 PASSED -> {resp.status_code}")
         else:
             logger.warning(
-                f"Migration apply 037 -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration apply 001 -> {resp.status_code}: {resp.text[:200]}"
             )
 
         time.sleep(0.05)
 
-        # --- Rollback 037 via new endpoint ---
-        logger.info("Testing POST /api/v1/admin/migrations/037/rollback...")
+        # --- Rollback 001 via new endpoint ---
+        logger.info("Testing POST /api/v1/admin/migrations/001/rollback...")
         rb_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_rollback}",
@@ -489,8 +639,8 @@ class AdminMixin(EndpointTesterBase):
             }
         )
         if success:
-            logger.info(f"Migration rollback 037 PASSED -> {resp.status_code}")
+            logger.info(f"Migration rollback 001 PASSED -> {resp.status_code}")
         else:
             logger.warning(
-                f"Migration rollback 037 -> {resp.status_code}: {resp.text[:200]}"
+                f"Migration rollback 001 -> {resp.status_code}: {resp.text[:200]}"
             )

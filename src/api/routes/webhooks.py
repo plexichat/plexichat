@@ -186,6 +186,15 @@ async def create_webhook(
             )
             # Invalidate webhook cache for this server
             invalidate_pattern("webhooks:*")
+            try:
+                from src.core.events.gateway_emit import emit_webhooks_update
+
+                emit_webhooks_update(
+                    getattr(webhook, "server_id", None) or 0,
+                    channel_id=getattr(webhook, "channel_id", None) or cid,
+                )
+            except Exception as ge:
+                logger.debug(f"emit_webhooks_update failed: {ge}")
             return _webhook_to_response(webhook, include_token=True)
         except Exception as e:
             exc_name = type(e).__name__
@@ -373,6 +382,15 @@ async def update_webhook(
             logger.info(f"User {current_user.user_id} updated webhook {wid}")
             # Invalidate webhook cache for this server
             invalidate_pattern("webhooks:*")
+            try:
+                from src.core.events.gateway_emit import emit_webhooks_update
+
+                emit_webhooks_update(
+                    getattr(webhook, "server_id", None) or 0,
+                    channel_id=getattr(webhook, "channel_id", None),
+                )
+            except Exception as ge:
+                logger.debug(f"emit_webhooks_update failed: {ge}")
             return _webhook_to_response(webhook)
         except Exception as e:
             exc_name = type(e).__name__
@@ -465,6 +483,12 @@ async def delete_webhook(
             logger.info(f"User {current_user.user_id} deleted webhook {wid}")
             # Invalidate webhook cache for this server
             invalidate_pattern("webhooks:*")
+            try:
+                from src.core.events.gateway_emit import emit_webhooks_update
+
+                emit_webhooks_update(0, channel_id=None)
+            except Exception as ge:
+                logger.debug(f"emit_webhooks_update failed: {ge}")
             return SuccessResponse(success=True, message=None)
         except Exception as e:
             exc_name = type(e).__name__

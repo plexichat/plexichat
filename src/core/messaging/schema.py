@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS msg_messages (
     deleted_at INTEGER,
     reply_to_id INTEGER,
     webhook_id INTEGER,
+    ratchet_interval_id BIGINT,
     metadata TEXT,
     FOREIGN KEY (conversation_id) REFERENCES msg_conversations(id) ON DELETE CASCADE,
     FOREIGN KEY (author_id) REFERENCES auth_users(id) ON DELETE CASCADE,
@@ -218,6 +219,17 @@ CREATE TABLE IF NOT EXISTS msg_edit_history (
     FOREIGN KEY (editor_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
+-- Channel ratchet intervals (045)
+CREATE TABLE IF NOT EXISTS channel_ratchet_intervals (
+    interval_id BIGINT PRIMARY KEY,
+    conversation_id BIGINT NOT NULL,
+    start_message_id BIGINT NOT NULL,
+    end_message_id BIGINT,
+    start_key_wrapped TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    last_message_at BIGINT NOT NULL
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_msg_conversations_owner ON msg_conversations(owner_id);
 CREATE INDEX IF NOT EXISTS idx_msg_conversations_updated ON msg_conversations(updated_at);
@@ -243,6 +255,11 @@ CREATE INDEX IF NOT EXISTS idx_msg_edit_history_message ON msg_edit_history(mess
 CREATE INDEX IF NOT EXISTS idx_msg_edit_history_editor ON msg_edit_history(editor_id);
 
 CREATE INDEX IF NOT EXISTS idx_msg_dm_lookup_users ON msg_dm_lookup(user1_id, user2_id);
+
+CREATE INDEX IF NOT EXISTS idx_channel_ratchet_intervals_conversation
+    ON channel_ratchet_intervals(conversation_id, start_message_id);
+CREATE INDEX IF NOT EXISTS idx_channel_ratchet_intervals_open
+    ON channel_ratchet_intervals(conversation_id, end_message_id);
 
 -- Additional performance indexes for read receipts and unread counts
 CREATE INDEX IF NOT EXISTS idx_msg_messages_conv_author ON msg_messages(conversation_id, author_id);

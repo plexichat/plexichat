@@ -66,7 +66,7 @@ class DocsTester:
             f"{docs_path}/default-config",
             f"{docs_path}/config-authentication",
             f"{docs_path}/config-database",
-            f"{docs_path}/config-redis",
+            f"{docs_path}/config-valkey",
             f"{docs_path}/config-media",
             f"{docs_path}/config-voice",
             f"{docs_path}/config-websocket",

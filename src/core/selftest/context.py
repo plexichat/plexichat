@@ -34,6 +34,9 @@ class SelfTestContext:
         self.test_channel_id: Optional[int] = None
         self.test_conversation_id: Optional[int] = None
         self.test_message_id: Optional[int] = None
+        self.test_artifact_id: Optional[int] = None
+        self.test_attachment_id: Optional[int] = None
+        self.test_export_id: Optional[str] = None
         self.test_role_id: Optional[int] = None
         self.test_invite_code: Optional[str] = None
         self.test_second_invite_code: Optional[str] = None
@@ -93,6 +96,7 @@ class SelfTestContext:
         self.setup: Any = None
         self.endpoints: Any = None
         self.ws: Any = None
+        self.artifacts: Any = None
         self.ratelimit: Any = None
         self.static_client: Any = None
         self.docs: Any = None

@@ -10,7 +10,11 @@ from fastapi.responses import HTMLResponse
 
 from ..config import _runtime_docs_config, get_docs_config
 from ..renderer import markdown_to_html
-from ..navigation import build_sidebar_html, build_shell_header_html, build_footer_html
+from ..navigation import (
+    build_sidebar_html,
+    build_shell_header_html,
+    build_footer_html,
+)
 from ..theme import build_brand_styles
 
 
@@ -76,14 +80,14 @@ class ServingMixin:
     <div class="docs-layout">
         {sidebar_html}
         <main class="docs-main">
-            {shell_header}
-            <section class="page-card">
+            <div class="docs-content">
+                {shell_header}
                 <div class="content-container">{html_content}</div>
-                {{related_links_html}}
                 {footer_html}
-            </section>
+            </div>
         </main>
     </div>
+    <button class="dark-mode-toggle" onclick="toggleDarkMode()" id="darkModeToggle" aria-label="Toggle dark mode">&#x263E;</button>
     <script>
         document.querySelectorAll('.copy-btn').forEach(btn => {{
             btn.addEventListener('click', async () => {{
@@ -100,6 +104,24 @@ class ServingMixin:
             navList.classList.toggle('collapsed');
             element.classList.toggle('collapsed');
         }}
+
+        function toggleDarkMode() {{
+            var theme = document.documentElement.getAttribute('data-theme');
+            if (theme === 'dark') {{
+                document.documentElement.removeAttribute('data-theme');
+                localStorage.setItem('plexi-docs-theme', 'light');
+            }} else {{
+                document.documentElement.setAttribute('data-theme', 'dark');
+                localStorage.setItem('plexi-docs-theme', 'dark');
+            }}
+        }}
+
+        (function() {{
+            var saved = localStorage.getItem('plexi-docs-theme');
+            if (saved === 'dark') {{
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }}
+        }})();
     </script>
 </body>
 </html>"""

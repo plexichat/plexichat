@@ -257,13 +257,13 @@ docker compose up
 curl http://localhost:8000/api/v1
 ```
 
-### Redis CLI
+### Valkey CLI
 
 ```bash
-docker compose exec redis redis-cli
+docker compose exec valkey redis-cli
 ```
 
-Then use Redis commands:
+Then use Valkey commands:
 ```
 PING                    # Test connection
 KEYS *                  # List all keys

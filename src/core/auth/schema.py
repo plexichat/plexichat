@@ -274,6 +274,7 @@ CREATE TABLE IF NOT EXISTS auth_passkeys (
     sign_count INTEGER DEFAULT 0,
     device_type TEXT,
     device_name TEXT,
+    device_name_encrypted TEXT,
     aaguid TEXT,
     transports TEXT,
     backed_up INTEGER DEFAULT 0,

@@ -51,7 +51,6 @@ EXTERNAL
 - SQL database engine
 - Connection pooling
 - Query optimization
-- Backup capability
 
 **Data:**
 - User accounts, messages, servers, media metadata
@@ -142,7 +141,26 @@ EXTERNAL
 
 **Exit Status:** Success
 
-### 6. Backend (FastAPI Server)
+### 6. ClamAV (Malware Scanner)
+
+**Purpose:** Scan uploaded files for malware using ClamAV
+
+**Services:**
+- `clamd` — anti-virus daemon (TCP 3310)
+- `freshclam` — automatic signature updates (every 2 hours)
+
+**Dependencies:**
+- None (standalone)
+
+**Resources:**
+- RAM: 4 GB limit, 2 GB reservation (signatures spike during daily reload)
+- Volume: `clamav_db` (persists signature databases)
+- Additional sigs via `clamav-unofficial-sigs` sidecar (Sanesecurity, FOXHOLE, URLhaus, etc.)
+
+**Connections:**
+- Backend connects via `clamav:3310` (TCP, internal network)
+
+### 7. Backend (FastAPI Server)
 
 **Purpose:** Core application logic
 
@@ -154,7 +172,7 @@ EXTERNAL
 - Admin UI (`/admin`)
 
 **Dependencies:**
-- Depends on: Database, Redis, MinIO-Init
+- Depends on: Database, Redis, MinIO-Init, ClamAV
 
 **Connections:**
 - Database (pooled): `db:5432`
@@ -176,7 +194,7 @@ EXTERNAL
 - API: 8000/TCP
 - WebRTC: 30000-30100/UDP
 
-### 7. Client (Nginx)
+### 8. Client (Nginx)
 
 **Purpose:** Frontend web server and reverse proxy
 
@@ -206,6 +224,38 @@ EXTERNAL
 - HTTP on port 80
 - Interval: 10 seconds
 
+### 9. Backup (Restic)
+
+**Purpose:** Automated encrypted, deduplicated backups
+
+**Services:**
+- Daily scheduled backups via supercronic (default 2 AM)
+- PostgreSQL dump + file backup via restic
+- Snapshot management with configurable retention
+- Optional secondary/off-site repository replication
+
+**Data:**
+- Restic repository: `backup-repo` volume (persistent)
+
+**Dependencies:**
+- Depends on: Database (healthy)
+
+**Volumes (read-only):**
+- `postgres_data` — pg_dump source
+- `plexichat_home` — config, keyrings, `.machine_key`
+- `minio_data` — uploaded media
+
+**Configuration:**
+- All options via `.env` (`BACKUP_*` variables)
+- See [`docker/README.md`](../../../docker/README.md) for full reference
+
+**CLI:**
+```bash
+docker exec backup /scripts/backup.sh list           # list snapshots
+docker exec backup /scripts/backup.sh restore-db      # restore database
+docker exec backup /scripts/backup.sh restore <snap>  # restore files
+```
+
 ## Networks
 
 ### plexichat-backend (Internal)
@@ -215,6 +265,7 @@ EXTERNAL
 - Redis
 - MinIO
 - Backend
+- Backup
 - MinIO-Init
 - Cert-Init
 
@@ -256,10 +307,12 @@ EXTERNAL
 | `backend-temp` | Backend | Temporary files | Yes |
 | `nginx-certs` | Nginx | TLS certificates | Yes |
 | `client-runtime` | Deploy Script | Client JS config | Yes |
+| `backup-repo` | Backup | Restic repository | Yes |
 
 **Data Loss Risk:**
-- `docker compose down -v` deletes ALL volumes
-- Keep regular backups of `db-data` and `minio-data`
+- `docker compose down -v` deletes ALL volumes including the restic repository
+- The restic repo is intended for local fast recovery; configure a
+  `BACKUP_SECONDARY_REPO` for off-site protection
 
 ## Data Flows
 

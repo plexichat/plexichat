@@ -2,7 +2,7 @@
 Message schemas - Request/response models for message endpoints.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
@@ -47,6 +47,16 @@ class MessageUpdateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     content: str = Field(..., max_length=4000, description="New message content")
+
+
+class BulkDeleteRequest(BaseModel):
+    """Bulk-delete messages request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    message_ids: List[SnowflakeID] = Field(
+        ..., description="Message IDs to delete", max_length=100
+    )
 
 
 class AttachmentResponse(BaseModel):
@@ -212,3 +222,87 @@ class AckResponse(BaseModel):
 
     success: bool = Field(True, description="Whether operation was successful")
     messages_marked: int = Field(..., description="Number of messages marked as read")
+
+
+class LastReadResponse(BaseModel):
+    """Last read message position response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    channel_id: SnowflakeID = Field(..., description="Channel ID")
+    last_read_message_id: Optional[SnowflakeID] = Field(
+        None, description="ID of the last read message"
+    )
+    last_read_at: Optional[int] = Field(None, description="Timestamp of last read")
+
+
+class MarkUnreadRequest(BaseModel):
+    """Mark unread request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    message_id: Optional[SnowflakeID] = Field(
+        None, description="Mark as unread from this message onwards"
+    )
+
+
+class MarkUnreadResponse(BaseModel):
+    """Mark unread response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    success: bool = Field(True, description="Whether operation was successful")
+    unread_count: int = Field(..., description="New unread count")
+
+
+class TranscriptExportRequest(BaseModel):
+    """Transcript export request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    format: Literal["json", "csv", "txt", "html"] = Field(
+        "json",
+        description="Export format: json, csv, txt, html",
+    )
+    from_date: Optional[str] = Field(None, description="Start date (ISO 8601)")
+    to_date: Optional[str] = Field(None, description="End date (ISO 8601)")
+    timezone: str = Field("UTC", description="Timezone for dates")
+
+
+class TranscriptExportResponse(BaseModel):
+    """Transcript export response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    export_id: str = Field(..., description="Export ID")
+    status: str = Field(
+        "pending", description="Export status: pending, generating, ready, failed"
+    )
+    message_count: int = Field(0, description="Number of messages exported")
+    file_url: Optional[str] = Field(
+        None, description="Download URL for the export file"
+    )
+    expires_at: Optional[int] = Field(None, description="When the download expires")
+    error: Optional[str] = Field(None, description="Error message if failed")
+
+
+class TranscriptExportStatusResponse(BaseModel):
+    """Transcript export status response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    export_id: str = Field(..., description="Export ID")
+    status: str = Field(..., description="Export status")
+    message_count: int = Field(0, description="Number of messages exported")
+    file_url: Optional[str] = Field(None, description="Download URL")
+    expires_at: Optional[int] = Field(None, description="Expiry timestamp")
+    error: Optional[str] = Field(None, description="Error message if failed")
+
+
+class BulkReadResponse(BaseModel):
+    """Bulk read response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    success: bool = Field(True, description="Whether operation was successful")
+    channels_marked: int = Field(..., description="Number of channels marked as read")

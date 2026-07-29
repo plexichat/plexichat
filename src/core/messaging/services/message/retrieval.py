@@ -66,7 +66,7 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
 
         if not before_id and not after_id:
             try:
-                from src.core.database import get_redis_client as get_client
+                from src.core.database import get_valkey_client as get_client
 
                 client = get_client()
                 if client:
@@ -114,12 +114,12 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
         if not before_id and not after_id:
             try:
                 from src.core.database import (
-                    get_redis_client as get_client,
-                    redis_available,
+                    get_valkey_client as get_client,
+                    valkey_available,
                 )
 
                 client = get_client()
-                if client and redis_available():
+                if client and valkey_available():
                     list_key = f"msg:recent:{conversation_id}"
                     client.delete(list_key)
                     if messages:
