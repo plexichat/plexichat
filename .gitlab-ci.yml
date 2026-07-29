@@ -68,17 +68,40 @@ lint:pre-commit:
     key:
       files:
         - .pre-commit-config.yaml
+        - requirements.txt
       prefix: pre-commit-${CI_COMMIT_REF_SLUG}
     paths:
+      - .venv/
+      - .cache/pip
       - .cache/pre-commit
     policy: pull-push
   before_script:
-    - !reference [.python_base, before_script]
-    - apt-get install -y -qq --no-install-recommends nodejs
+    - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git libatomic1 nodejs
+    - |
+      if [ -d ".venv" ]; then
+        echo "Using cached virtual environment"
+        source .venv/bin/activate
+      else
+        echo "Creating new virtual environment"
+        python -m venv .venv
+        source .venv/bin/activate
+        pip install --upgrade pip
+        pip install --require-hashes -r requirements.txt
+      fi
     - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit
   script:
-    - pre-commit run --all-files --show-diff-on-failure
-  resource_group: plexichat-ci
+    - |
+      if [ -n "$CI_COMMIT_TAG" ] || [ -n "$CI_MERGE_REQUEST_IID" ]; then
+        echo "Tag/MR pipeline — running pre-commit on all files"
+        pre-commit run --all-files --show-diff-on-failure
+      else
+        FROM_REF="${CI_COMMIT_BEFORE_SHA}"
+        if [ "$FROM_REF" = "0000000000000000000000000000000000000000" ] || [ -z "$FROM_REF" ]; then
+          FROM_REF="origin/dev"
+        fi
+        echo "Branch pipeline — running pre-commit on changed files (from $FROM_REF)"
+        pre-commit run --from-ref "$FROM_REF" --to-ref "$CI_COMMIT_SHA" --show-diff-on-failure
+      fi
 
 # =========================================================
 # SECURITY STAGE (FULL COVERAGE)
