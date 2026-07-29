@@ -293,7 +293,7 @@ create_merge_request:
     - echo "Dev branch pipeline succeeded. Opening merge request to master with auto-merge enabled..."
     - |
       curl --request POST \
-        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --header "PRIVATE-TOKEN: ${PLEXICHAT_MR_PAT}" \
         --data "source_branch=dev" \
         --data "target_branch=master" \
         --data "title=Automated Release Merge" \
