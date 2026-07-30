@@ -7,15 +7,20 @@ edit/delete/manage_retention`); for DM/group conversations (no server) the
 caller must be a participant/owner of the conversation.
 """
 
+import html as _html
+from io import BytesIO
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
 import utils.config as config
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, Query, status
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import ErrorResponse, SuccessResponse, SnowflakeID
+from fpdf import FPDF
+from odf.opendocument import OpenDocumentText
+from odf.text import P
 from src.core.artifacts.models import ArtifactType, ArtifactStatus
 from src.api.schemas.artifacts import (
     ArtifactCreateRequest,
@@ -23,6 +28,7 @@ from src.api.schemas.artifacts import (
     ArtifactResponse,
     ArtifactListResponse,
     ConvertUploadRequest,
+    ArtifactExportResponse,
 )
 
 router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
@@ -376,10 +382,10 @@ async def get_artifact(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get artifact {artifact_id}: {e}", exc_info=True)
+        logger.error(f"Failed to fetch artifact {artifact_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+            detail={"error": {"code": 500, "message": f"Fetch failed: {e}"}},
         )
 
 
@@ -605,16 +611,13 @@ async def convert_upload(
 
         source_conv_id = msg_data["conversation_id"]
         messaging_mod = api.get_messaging()
-        if not _is_conversation_member(
+        if source_conv_id is not None and not _is_conversation_member(
             messaging_mod, source_conv_id, current_user.user_id
         ):
-            if not _require_server_permission(
-                current_user.user_id, server_id, "artifact.create"
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": "Not authorized"}},
-                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": 403, "message": "Not authorized"}},
+            )
 
         manager = _get_manager()
         artifact = manager.convert_upload_to_artifact(
@@ -640,4 +643,200 @@ async def convert_upload(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.get(
+    "/{artifact_id}/export",
+    response_model=ArtifactExportResponse,
+    summary="Export an artifact",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid format"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Not authorized"},
+        404: {"model": ErrorResponse, "description": "Artifact not found"},
+        500: {"model": ErrorResponse, "description": "Export failed"},
+    },
+)
+async def export_artifact(
+    artifact_id: str,
+    export_format: str = Query("html", alias="export_format"),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> ArtifactExportResponse:
+    """Export an artifact in the requested format.
+
+    Supported formats: html, pdf, md, odt, txt, plexiscribe (native)
+
+    For plexiscribe artifacts, exports the document in the requested format.
+    For other artifact types, returns the payload as-is in the requested format.
+    """
+    try:
+        try:
+            aid = int(artifact_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
+            )
+
+        valid_formats = {
+            "html",
+            "pdf",
+            "md",
+            "odt",
+            "txt",
+            "plexiscribe",
+            "plexiscript",
+            "plexiboard",
+        }
+        if export_format not in valid_formats:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": f"Unsupported format '{export_format}'. Supported: {', '.join(sorted(valid_formats))}",
+                    }
+                },
+            )
+
+        manager = _get_manager()
+        artifact = manager.get(aid)
+        if artifact is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Artifact not found"}},
+            )
+
+        _authorize_scope(
+            current_user.user_id,
+            artifact.conversation_id,
+            artifact.server_id,
+            "artifact.view",
+        )
+
+        # Build export response
+        mime_map = {
+            "html": "text/html",
+            "pdf": "application/pdf",
+            "md": "text/markdown",
+            "odt": "application/vnd.oasis.opendocument.text",
+            "txt": "text/plain",
+            "plexiscribe": "application/vnd.plexichat.plexiscribe",
+            "plexiscript": "application/vnd.plexichat.plexiscript",
+            "plexiboard": "application/vnd.plexichat.plexiboard",
+        }
+
+        title_slug = (
+            artifact.title.lower().replace(" ", "-")[:50]
+            if artifact.title
+            else "export"
+        )
+        filename = f"{title_slug}.{export_format}"
+
+        payload = artifact.payload or {}
+
+        if (
+            export_format == "plexiscribe"
+            and artifact.artifact_type.value == "plexiscribe"
+        ):
+            data = payload.get("document") or "{}"
+        elif (
+            export_format == "plexiscript"
+            and artifact.artifact_type.value == "plexiscript"
+        ):
+            data = payload.get("source") or payload.get("content") or "{}"
+        elif (
+            export_format == "plexiboard"
+            and artifact.artifact_type.value == "whiteboard"
+        ):
+            data = payload.get("board") or "{}"
+        elif export_format == "txt":
+            data = (
+                payload.get("content") or payload.get("text") or artifact.summary or ""
+            )
+        elif export_format == "md":
+            data = f"# {_html.escape(artifact.title)}\n\n{_html.escape(artifact.summary or '')}\n\n```\n{_html.escape(payload.get('content', ''))}\n```"
+        elif export_format == "html":
+            content = payload.get("content", "")
+            data = f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{_html.escape(artifact.title or '')}</title></head><body><h1>{_html.escape(artifact.title or '')}</h1><pre>{_html.escape(str(content))}</pre></body></html>"
+        elif export_format == "pdf":
+            pdf = FPDF()
+            pdf.set_auto_page_break(auto=True, margin=2.0)
+            pdf.add_page()
+            pdf.set_font("Helvetica", "", 11)
+            title = artifact.title or "Document"
+            text = ""
+            if artifact.artifact_type.value == "plexiscribe":
+                text = (
+                    payload.get("content_html", "") or payload.get("document", "") or ""
+                )
+            elif artifact.artifact_type.value == "plexiscript":
+                text = payload.get("source") or payload.get("content") or ""
+            elif artifact.artifact_type.value == "whiteboard":
+                text = payload.get("board", "")
+            else:
+                text = (
+                    payload.get("content")
+                    or payload.get("text")
+                    or artifact.summary
+                    or ""
+                )
+            pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(2)
+            pdf.set_font("Helvetica", "", 10)
+            for line in (text or "").splitlines():
+                pdf.multi_cell(0, 6, line)
+            pdf_bytes = pdf.output()
+            if isinstance(pdf_bytes, bytearray):
+                data = bytes(pdf_bytes)
+            else:
+                data = bytes(pdf_bytes) if pdf_bytes else b""
+        elif export_format == "odt":
+            doc = OpenDocumentText()
+            title = artifact.title or "Document"
+            doc_text = getattr(doc, "text")
+            doc_text.addElement(P(text=title))
+            doc_text.addElement(P(text=""))
+            text = ""
+            if artifact.artifact_type.value == "plexiscribe":
+                text = (
+                    payload.get("content_html", "") or payload.get("document", "") or ""
+                )
+            elif artifact.artifact_type.value == "plexiscript":
+                text = payload.get("source") or payload.get("content") or ""
+            elif artifact.artifact_type.value == "whiteboard":
+                text = payload.get("board", "")
+            else:
+                text = (
+                    payload.get("content")
+                    or payload.get("text")
+                    or artifact.summary
+                    or ""
+                )
+            for line in (text or "").splitlines():
+                doc_text.addElement(P(text=line))
+            buf = BytesIO()
+            doc.save(buf)
+            data = buf.getvalue()
+        else:
+            data = str(payload)
+
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+
+        return ArtifactExportResponse(
+            artifact_id=SnowflakeID(str(aid)),
+            format=export_format,
+            filename=filename,
+            content_type=mime_map.get(export_format, "application/octet-stream"),
+            data=data,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export artifact {artifact_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "Export failed"},
         )
