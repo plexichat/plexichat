@@ -37,6 +37,8 @@ __all__ = [
     "start_cross_worker_listener",
     "stop_cross_worker_listener",
     "cross_worker_listener_status",
+    "get_poll_tuning",
+    "update_poll_tuning",
     "GatewayOpcode",
     "GatewayCloseCode",
     "Connection",
@@ -68,6 +70,7 @@ _HEARTBEAT_INTERVAL_POLLS: int = 300
 _MAX_BACKOFF_SEC: float = 60.0
 _BACKOFF_RESET_AFTER_POLLS: int = 600  # ~60 s at 100 ms poll interval
 _INITIAL_BACKOFF_SEC: float = 1.0
+_GLIDE_REQUEST_TIMEOUT_MS: int = 5000
 
 # Observable listener health — updated by the poll loop, read by /health.
 _listener_status: str = "disabled"
@@ -115,6 +118,14 @@ def cross_worker_listener_status() -> dict:
             "poll_count": _listener_poll_count,
             "running": _cross_worker_task is not None and not _cross_worker_task.done(),
             "worker_id": _get_worker_id(),
+            "tuning": {
+                "poll_interval_sec": _POLL_INTERVAL_SEC,
+                "heartbeat_interval_polls": _HEARTBEAT_INTERVAL_POLLS,
+                "max_backoff_sec": _MAX_BACKOFF_SEC,
+                "backoff_reset_after_polls": _BACKOFF_RESET_AFTER_POLLS,
+                "initial_backoff_sec": _INITIAL_BACKOFF_SEC,
+                "glide_request_timeout_ms": _GLIDE_REQUEST_TIMEOUT_MS,
+            },
         }
 
 
@@ -437,7 +448,7 @@ def _create_pubsub_client(valkey_cfg: dict) -> Any | None:
         if password:
             kwargs["credentials"] = ServerCredentials(password)
         kwargs["database_id"] = db
-        kwargs["request_timeout"] = 5000
+        kwargs["request_timeout"] = _GLIDE_REQUEST_TIMEOUT_MS
 
         glide_config = GlideClientConfiguration(**kwargs)
         client = GlideClient.create(glide_config)
@@ -492,3 +503,70 @@ async def stop_cross_worker_listener() -> None:
     _cross_worker_task = None
     _update_listener_status("disabled")
     logger.info("Cross-worker listener stopped")
+
+
+def get_poll_tuning() -> dict:
+    """Return the current poll-loop tuning constants.
+
+    These values are read live from the running poll loop (via module
+    globals) and can be changed at runtime with ``update_poll_tuning``.
+    """
+    return {
+        "poll_interval_sec": _POLL_INTERVAL_SEC,
+        "heartbeat_interval_polls": _HEARTBEAT_INTERVAL_POLLS,
+        "max_backoff_sec": _MAX_BACKOFF_SEC,
+        "backoff_reset_after_polls": _BACKOFF_RESET_AFTER_POLLS,
+        "initial_backoff_sec": _INITIAL_BACKOFF_SEC,
+        "glide_request_timeout_ms": _GLIDE_REQUEST_TIMEOUT_MS,
+    }
+
+
+def update_poll_tuning(updates: dict) -> dict:
+    """Hot-reload poll-loop tuning constants at runtime.
+
+    Only the keys present in ``updates`` are changed; omitted keys
+    keep their current value.  Returns the full tuning dict after
+    the update.  Validation: each value must be a positive number;
+    invalid keys are silently ignored.
+
+    Safe to call from any thread — C{*ylon} GIL makes assignments
+    to these simple types atomic.
+    """
+    global _POLL_INTERVAL_SEC, _HEARTBEAT_INTERVAL_POLLS
+    global _MAX_BACKOFF_SEC, _BACKOFF_RESET_AFTER_POLLS, _INITIAL_BACKOFF_SEC
+
+    _ALLOWED_KEYS = {
+        "poll_interval_sec",
+        "heartbeat_interval_polls",
+        "max_backoff_sec",
+        "backoff_reset_after_polls",
+        "initial_backoff_sec",
+        "glide_request_timeout_ms",
+    }
+
+    _INT_KEYS = {"heartbeat_interval_polls", "backoff_reset_after_polls"}
+
+    for key, value in updates.items():
+        if key not in _ALLOWED_KEYS:
+            logger.debug("update_poll_tuning: unknown key '%s'", key)
+            continue
+        if not isinstance(value, (int, float)) or value <= 0:
+            logger.debug("update_poll_tuning: invalid value for '%s': %s", key, value)
+            continue
+
+        if key == "poll_interval_sec":
+            _POLL_INTERVAL_SEC = float(value)
+        elif key == "heartbeat_interval_polls":
+            _HEARTBEAT_INTERVAL_POLLS = int(value)
+        elif key == "max_backoff_sec":
+            _MAX_BACKOFF_SEC = float(value)
+        elif key == "backoff_reset_after_polls":
+            _BACKOFF_RESET_AFTER_POLLS = int(value)
+        elif key == "initial_backoff_sec":
+            _INITIAL_BACKOFF_SEC = float(value)
+        elif key == "glide_request_timeout_ms":
+            _GLIDE_REQUEST_TIMEOUT_MS = int(value)
+
+        logger.info("Cross-worker tuning updated: %s = %s", key, value)
+
+    return get_poll_tuning()
