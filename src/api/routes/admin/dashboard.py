@@ -2,6 +2,8 @@
 Admin dashboard and system metrics routes.
 """
 
+import json
+
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel as _BaseModel
 from src.api.schemas.admin import (
@@ -156,21 +158,128 @@ async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
 
     Only the keys provided (non-null) are updated; omitted keys keep
     their current value.  Returns the full tuning dict after the
-    change, with ``applied`` and ``rejected`` lists so the caller
-    knows exactly what took effect.
+    change.  Every hot-reload event is recorded in the admin audit
+    log (old → new values, admin ID, IP).
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
 
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No tuning keys provided")
 
+    # Snapshot old values for the audit trail *before* applying changes.
+    old_tuning: dict = {}
+    try:
+        from src.api.websocket import get_poll_tuning
+
+        old_tuning = get_poll_tuning()
+    except Exception:
+        pass  # audit best-effort — don't block the update
+
     try:
         from src.api.websocket import update_poll_tuning
 
         result = update_poll_tuning(updates)
-        return result
     except Exception as e:
         logger.warning(f"Cross-worker tuning update error: {e}")
         raise HTTPException(status_code=500, detail="Failed to update tuning")
+
+    # Audit log — best-effort, must not affect the response.
+    try:
+        import src.api as _api
+
+        db = _api.get_db()
+        if db is not None:
+            ip = request.client.host if request.client else "unknown"
+            from src.core.admin.logging import AdminLogEntry, get_admin_logger
+
+            # Resolve admin username for the audit trail.
+            username = None
+            try:
+                row = db.fetch_one(
+                    "SELECT username FROM admin_users WHERE id = ?", (admin_id,)
+                )
+                if row:
+                    username = row.get("username") if isinstance(row, dict) else row[0]
+            except Exception:
+                pass
+
+            changes = {
+                k: {"old": old_tuning.get(k), "new": result.get(k)} for k in updates
+            }
+            entry = AdminLogEntry(
+                admin_id=admin_id,
+                action="cross_worker_tuning_update",
+                target_type="system",
+                details=json.dumps(changes),
+                ip_address=ip,
+                user_agent=request.headers.get("user-agent"),
+                metadata={"admin_username": username} if username else None,
+            )
+            get_admin_logger().log_action(db, entry)
+    except Exception:
+        logger.debug("Cross-worker tuning audit log write failed (non-fatal)")
+
+    return result
+
+
+@router.get("/dashboard/cross-worker-tuning/audit")
+async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
+    """Return recent cross-worker tuning audit log entries."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+
+    try:
+        import src.api as _api
+
+        db = _api.get_db()
+        if db is None:
+            raise HTTPException(status_code=500, detail="Database not available")
+
+        rows = db.fetch_all(
+            """
+            SELECT a.id, a.admin_id, u.username, a.details,
+                   a.ip_address, a.status, a.created_at
+            FROM admin_audit_log a
+            LEFT JOIN admin_users u ON a.admin_id = u.id
+            WHERE a.action = 'cross_worker_tuning_update'
+            ORDER BY a.created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+
+        entries = []
+        for row in rows:
+            if isinstance(row, dict):
+                entries.append(
+                    {
+                        "id": row["id"],
+                        "admin_id": row["admin_id"],
+                        "username": row.get("username") or f"admin#{row['admin_id']}",
+                        "details": row.get("details"),
+                        "ip_address": row.get("ip_address"),
+                        "status": row.get("status"),
+                        "created_at": row["created_at"],
+                    }
+                )
+            else:
+                entries.append(
+                    {
+                        "id": row[0],
+                        "admin_id": row[1],
+                        "username": row[2] or f"admin#{row[1]}",
+                        "details": row[3],
+                        "ip_address": row[4],
+                        "status": row[5],
+                        "created_at": row[6],
+                    }
+                )
+
+        return {"entries": entries}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Cross-worker tuning audit query error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to query audit log")
