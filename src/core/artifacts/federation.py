@@ -19,10 +19,12 @@ the integration HOOKS:
   connections via ``PlexiJoinManager.record_traffic`` so federation accounting
   stays accurate.
 
-The default transport is REAL: it accounts for the artifact op traffic over the
-link (and logs) rather than being a no-op stub. A deployment that wires up the
-real external transport calls ``set_federation_transport(...)`` so the actual
-bytes get shipped to the remote instance.
+The default transport logs the forwarding intent and records outbound traffic
+accounting against the federation link; it does NOT ship bytes to the remote
+instance. A deployment that wires up the real external transport calls
+``set_federation_transport(...)`` so the actual bytes get shipped. When the
+default transport is in use with active federation connections a one-time
+warning is emitted to remind operators to register a real transport.
 
 IMPORTANT (permissions): the bridge only FORWARDS ops/events. It never
 auto-grants local permissions to remote participants. Remote participants are not
@@ -50,21 +52,32 @@ from src.core.artifacts.repository import get_artifact
 FederationTransport = Callable[[int, Dict[str, Any], int, List[int]], None]
 
 
+_default_transport_warned = False
+
+
 def _default_transport(
     artifact_id: int,
     payload: Dict[str, Any],
     actor_id: int,
     connection_ids: List[int],
 ) -> None:
-    """Default transport: logs the forwarding intent but does not ship bytes.
+    """Default transport: logs the forwarding intent and warns, but does not ship bytes.
 
     The bridge accounts for traffic separately via
     ``PlexiJoinManager.record_traffic`` in the calling method, not here.
     A deployed external transport replaces this function to actually deliver
     the payload to each remote instance.
     """
+    global _default_transport_warned
     if not connection_ids:
         return
+    if not _default_transport_warned:
+        _default_transport_warned = True
+        logger.warning(
+            "FederationArtifactBridge: using default (log-only) transport — "
+            "no bytes are being shipped to remote instances. Call "
+            "set_federation_transport() to register a real transport."
+        )
     logger.info(
         "FederationArtifactBridge: forwarding artifact %s op from actor %s "
         "to %d federation connection(s): %s",
@@ -73,9 +86,6 @@ def _default_transport(
         len(connection_ids),
         connection_ids,
     )
-    # The bridge itself records traffic against each connection after calling
-    # this transport; the default transport therefore only needs to surface the
-    # intent. A deployed transport would perform the actual network send here.
 
 
 class FederationArtifactBridge:
