@@ -478,3 +478,79 @@ def update_voice_call(db, call_id: SnowflakeID, **fields: Any) -> Optional[Voice
         params,
     )
     return get_voice_call(db, call_id)
+
+
+# === Per-feature server settings (server_artifact_feature_settings table) ===
+
+
+def get_feature_settings(db, server_id: SnowflakeID, feature: str) -> Dict[str, str]:
+    """Return all setting key-value pairs for a feature on a server."""
+    try:
+        rows = db.fetch_all(
+            "SELECT setting_key, setting_value FROM server_artifact_feature_settings "
+            "WHERE server_id = ? AND feature = ?",
+            (server_id, feature),
+        )
+        return (
+            {row["setting_key"]: row["setting_value"] for row in rows} if rows else {}
+        )
+    except Exception:
+        return {}
+
+
+def set_feature_setting(
+    db, server_id: SnowflakeID, feature: str, key: str, value: Optional[str]
+) -> None:
+    """Set or clear a single feature setting for a server.
+
+    Pass value=None to delete the setting (revert to default).
+    """
+    now = int(time.time() * 1000)
+    if value is None:
+        db.execute(
+            "DELETE FROM server_artifact_feature_settings "
+            "WHERE server_id = ? AND feature = ? AND setting_key = ?",
+            (server_id, feature, key),
+        )
+        return
+
+    existing = db.fetch_one(
+        "SELECT id FROM server_artifact_feature_settings "
+        "WHERE server_id = ? AND feature = ? AND setting_key = ?",
+        (server_id, feature, key),
+    )
+    if existing:
+        db.execute(
+            "UPDATE server_artifact_feature_settings SET setting_value = ?, updated_at = ? "
+            "WHERE server_id = ? AND feature = ? AND setting_key = ?",
+            (value, now, server_id, feature, key),
+        )
+    else:
+        db.execute(
+            "INSERT INTO server_artifact_feature_settings "
+            "(server_id, feature, setting_key, setting_value, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (server_id, feature, key, value, now, now),
+        )
+
+
+def set_feature_settings_bulk(
+    db, server_id: SnowflakeID, feature: str, settings: Dict[str, Optional[str]]
+) -> Dict[str, str]:
+    """Set or clear multiple feature settings atomically.
+
+    Returns the full effective settings after the operation.
+    """
+    in_trans = getattr(db, "in_transaction", False)
+    if not in_trans:
+        db.begin_transaction()
+    try:
+        for key, value in settings.items():
+            set_feature_setting(db, server_id, feature, key, value)
+        if not in_trans:
+            db.commit()
+    except Exception:
+        if not in_trans:
+            db.rollback()
+        raise
+    return get_feature_settings(db, server_id, feature)
