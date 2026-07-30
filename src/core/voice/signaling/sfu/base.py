@@ -24,6 +24,26 @@ class MediaKind(Enum):
 
 
 @dataclass
+class AcousticDefenseConfig:
+    """Configuration for acoustic eavesdropping defenses."""
+
+    enabled: bool = False
+    jitter_ms_min: float = 5.0
+    jitter_ms_max: float = 20.0
+    spectral_masking: bool = True
+    spectral_mask_noise_db: float = -40.0
+    spectral_mask_low_hz: float = 1000.0
+    spectral_mask_high_hz: float = 8000.0
+    vad_gating: bool = True
+    vad_speech_threshold: float = 0.02
+    vad_silence_frames: int = 3
+    transient_shaving: bool = True
+    transient_attack_ms: float = 0.5
+    transient_release_ms: float = 5.0
+    transient_ratio: float = 0.3
+
+
+@dataclass
 class SFUTransport:
     """WebRTC transport on the SFU."""
 

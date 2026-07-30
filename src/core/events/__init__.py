@@ -59,6 +59,7 @@ __all__ = [
     "get_required_intent",
     "filter_by_intents",
     "is_setup",
+    "set_worker_id",
     "EventType",
     "GatewayIntent",
     "Event",
@@ -227,3 +228,13 @@ def filter_by_intents(event: Event, intents: int) -> bool:
 def is_setup() -> bool:
     """Check if the events module is initialized."""
     return _setup_complete
+
+
+def set_worker_id(worker_id: str) -> None:
+    """Tag cross-worker events with this worker's identity.
+
+    Must be called after :func:`setup`.  Events published via
+    :func:`dispatch` will include this identity so sibling workers
+    can skip their own echoes.
+    """
+    _get_manager().set_worker_id(worker_id)
