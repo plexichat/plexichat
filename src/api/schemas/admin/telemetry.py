@@ -68,6 +68,10 @@ class AdminDashboardResponse(BaseModel):
         default_factory=dict,
         description="Usage statistics for new features (bookmarks, scheduled, voice, etc.)",
     )
+    worker_health: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Cross-worker event listener health (enabled, status, backoff, poll_count, running, worker_id)",
+    )
 
 
 class TelemetryStatsResponse(BaseModel):

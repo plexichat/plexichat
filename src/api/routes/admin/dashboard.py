@@ -3,6 +3,7 @@ Admin dashboard and system metrics routes.
 """
 
 from fastapi import APIRouter, Request, HTTPException
+from pydantic import BaseModel as _BaseModel
 from src.api.schemas.admin import (
     AdminDashboardResponse,
     TelemetryEndpointStat,
@@ -95,6 +96,15 @@ async def get_dashboard(request: Request):
 
         current_version = version_util.current_string()
 
+        # Cross-worker event listener health
+        worker_health = None
+        try:
+            from src.api.websocket import cross_worker_listener_status
+
+            worker_health = cross_worker_listener_status()
+        except Exception as we:
+            logger.debug(f"Worker health check error: {we}")
+
         return AdminDashboardResponse(
             tickets=ticket_counts,
             telemetry=telemetry_stats,
@@ -105,9 +115,62 @@ async def get_dashboard(request: Request):
             system=system_data,
             server_version=current_version,
             feature_stats=feature_stats,
+            worker_health=worker_health,
         )
     except Exception as e:
         logger.error(f"Dashboard data error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
+
+
+@router.get("/dashboard/cross-worker-tuning")
+async def get_cross_worker_tuning(request: Request):
+    """Return the current poll-loop tuning constants."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+
+    try:
+        from src.api.websocket import get_poll_tuning
+
+        return get_poll_tuning()
+    except Exception as e:
+        logger.debug(f"Cross-worker tuning read error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read tuning")
+
+
+class _TuningPatch(_BaseModel):
+    """Optional overrides for poll-loop tuning."""
+
+    poll_interval_sec: float | None = None
+    heartbeat_interval_polls: int | None = None
+    max_backoff_sec: float | None = None
+    backoff_reset_after_polls: int | None = None
+    initial_backoff_sec: float | None = None
+    glide_request_timeout_ms: int | None = None
+
+
+@router.patch("/dashboard/cross-worker-tuning")
+async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
+    """Hot-reload poll-loop tuning constants at runtime.
+
+    Only the keys provided (non-null) are updated; omitted keys keep
+    their current value.  Returns the full tuning dict after the
+    change, with ``applied`` and ``rejected`` lists so the caller
+    knows exactly what took effect.
+    """
+    check_host_restriction(request)
+    get_admin_from_token(request)
+
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No tuning keys provided")
+
+    try:
+        from src.api.websocket import update_poll_tuning
+
+        result = update_poll_tuning(updates)
+        return result
+    except Exception as e:
+        logger.warning(f"Cross-worker tuning update error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update tuning")
