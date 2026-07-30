@@ -7,6 +7,7 @@ subscribers; subscriber list is bounded and TTL-evicted.
 """
 
 import asyncio
+import json
 import threading
 import time
 from typing import Optional, List, Callable
@@ -16,6 +17,9 @@ from src.core.base import SnowflakeID
 
 from .models import Event
 from .router import EventRouter
+
+# Valkey pub/sub channel used to forward events to sibling workers.
+_CROSS_WORKER_CHANNEL = "events:cross_worker"
 
 
 class EventManager:
@@ -58,8 +62,72 @@ class EventManager:
         # subscriber dict so reads stay consistent with concurrent
         # ``dispatch`` increments from FastAPI's sync threadpool.
         self._dropped_events = 0
+        # Cross-worker event publishing: worker_id is used to tag
+        # each published event so sibling workers can ignore their
+        # own messages (avoids infinite echo loop).
+        self._worker_id: str = "unknown"
+        # Lazy-loaded Valkey client reference for cross-worker pub/sub.
+        # Set via ``set_worker_id`` when the worker identity is known.
+        self._cross_worker_drops: int = 0
 
         logger.info("Events module initialized")
+
+    def set_worker_id(self, worker_id: str) -> None:
+        """Tag events published to Valkey with this worker's identity.
+
+        Must be called after the Valkey client has been assigned its
+        worker ID (usually during server initialisation). Events
+        published before this call will be tagged ``"unknown"`` and
+        will still be received by sibling workers (including this
+        one — harmless re-delivery, but wasteful).
+        """
+        self._worker_id = worker_id
+
+    # ------------------------------------------------------------------
+    # Cross-worker publish helper
+    # ------------------------------------------------------------------
+
+    def _publish_cross_worker(
+        self, event: Event, recipients: List[SnowflakeID]
+    ) -> None:
+        """Publish an event to the cross-worker Valkey channel.
+
+        This is called AFTER local fan-out so local subscribers always
+        receive the event before (or at the same time as) remote
+        workers.
+
+        If Valkey is unavailable this is a silent no-op — the event
+        simply stays local (current single-instance behaviour).
+        """
+        try:
+            from src.core.database import get_valkey_client, valkey_available
+
+            if not valkey_available():
+                return
+            client = get_valkey_client()
+            if client is None:
+                return
+            payload = json.dumps(
+                {
+                    "t": event.event_type.value,
+                    "d": event.data,
+                    "u": [int(uid) for uid in recipients],
+                    "sw": self._worker_id,
+                }
+            )
+            try:
+                client.publish(_CROSS_WORKER_CHANNEL, payload)
+            except Exception:
+                with self._lock:
+                    self._cross_worker_drops += 1
+                logger.debug(
+                    "Cross-worker publish failed for %s (drops: %d)",
+                    event.event_type.value,
+                    self._cross_worker_drops,
+                )
+        except Exception:
+            # Catch-all: import errors (no Valkey package), etc.
+            pass
 
     # === Subscriber lifecycle ===
 
@@ -316,9 +384,15 @@ class EventManager:
                         f"{event.event_type} for {len(recipients)} users "
                         f"(total drops: {dropped})"
                     )
+                    # Cross-worker publish happens even when the
+                    # local async queue is saturated — sibling
+                    # workers may still have capacity.
+                    self._publish_cross_worker(event, recipients)
                     return len(
                         recipients
                     )  # critical already fan-out-ed; queue drop ends dispatch
+                # Cross-worker publish after successful async enqueue.
+                self._publish_cross_worker(event, recipients)
                 return len(
                     recipients
                 )  # sync CTX: regular subscribers will drain via lifespan
@@ -327,6 +401,11 @@ class EventManager:
             # CLI / unit test scaffolding); eager fan-out.
             pass
         self._fan_out(event, recipients, subscribers)
+
+        # Forward to sibling workers via Valkey pub/sub.  Publish
+        # happens *after* local fan-out so local clients always
+        # receive the event without waiting on the Valkey round-trip.
+        self._publish_cross_worker(event, recipients)
 
         logger.debug(f"Dispatched {event.event_type.value} to {len(recipients)} users")
         return len(recipients)

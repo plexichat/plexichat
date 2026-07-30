@@ -23,6 +23,10 @@ from .base import (
     TransportDirection,
     MediaKind,
 )
+from .acoustic_defense import (
+    AcousticDefenseConfig,
+    AudioProcessingTrack,
+)
 from ..exceptions import SFUConnectionError
 
 
@@ -111,13 +115,18 @@ class AiortcAdapter(SFUAdapter):
     It manages peer connections and routes media streams between peers.
     """
 
-    def __init__(self, ice_servers: Optional[List[Dict[str, Any]]] = None):
+    def __init__(
+        self,
+        ice_servers: Optional[List[Dict[str, Any]]] = None,
+        acoustic_defense: Optional[AcousticDefenseConfig] = None,
+    ):
         """
         Initialize the aiortc SFU adapter.
 
         Args:
             ice_servers: List of STUN/TURN server configurations in aiortc format
                 [{"urls": "stun:..."}, {"urls": "turn:...", "username": "...", "credential": "..."}]
+            acoustic_defense: Optional acoustic eavesdropping defense configuration
         """
         if not AIORTC_AVAILABLE:
             raise SFUConnectionError(
@@ -126,6 +135,7 @@ class AiortcAdapter(SFUAdapter):
 
         self._rooms: Dict[str, Dict[str, AiortcPeer]] = {}
         self._ice_servers = ice_servers or []
+        self._acoustic_defense = acoustic_defense or AcousticDefenseConfig()
         self._recordings: Dict[str, Dict[str, Any]] = {}
         if AIORTC_RECORDING_AVAILABLE:
             logger.info("aiortc MediaRecorder available for call recording")
@@ -185,8 +195,13 @@ class AiortcAdapter(SFUAdapter):
 
         @pc.on("track")
         async def on_track(track):
+            processed_track = track
             if track.kind == "audio":
-                peer.incoming_audio_tracks.append(track)
+                if self._acoustic_defense.enabled:
+                    processed_track = AudioProcessingTrack(
+                        track, self._acoustic_defense
+                    )
+                peer.incoming_audio_tracks.append(processed_track)
                 logger.debug(
                     f"Audio track received from peer {peer_id} in room {room_id}"
                 )
@@ -207,7 +222,7 @@ class AiortcAdapter(SFUAdapter):
                     try:
                         assert AIORTC_RECORDING_AVAILABLE
                         recorder = MediaRecorder(filepath)
-                        recorder.addTrack(track)
+                        recorder.addTrack(processed_track)
                         await recorder.start()
                         recording["recorders"].append(
                             {
@@ -400,6 +415,14 @@ class AiortcAdapter(SFUAdapter):
         producer_id = str(uuid.uuid4())
 
         track = self._find_track_by_kind(peer, kind)
+
+        # Wrap audio tracks with acoustic defense processing
+        if (
+            kind == MediaKind.AUDIO
+            and track is not None
+            and self._acoustic_defense.enabled
+        ):
+            track = AudioProcessingTrack(track, self._acoustic_defense)
 
         producer = SFUProducer(
             id=producer_id,

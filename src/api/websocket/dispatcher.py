@@ -129,6 +129,40 @@ class GatewayDispatcher:
 
         return sent_count
 
+    async def dispatch_remote_event(
+        self,
+        event_type: str,
+        event_data: Dict[str, Any],
+        user_ids: List[int],
+    ) -> int:
+        """Dispatch an event received from a sibling worker via Valkey pub/sub.
+
+        Reconstructs an :class:`Event` from the serialized fields,
+        then fans out to local connections exactly like
+        :meth:`dispatch_event`.
+
+        Args:
+            event_type: Event type string (e.g. ``"MESSAGE_CREATE"``).
+            event_data: Event payload dict.
+            user_ids: Target user IDs (already filtered by the
+                      publishing worker's EventRouter).
+
+        Returns:
+            Number of local connections the event was sent to.
+        """
+        from src.core.events.types import EventType
+
+        try:
+            resolved_type = EventType(event_type)
+        except ValueError:
+            logger.debug(
+                "Ignoring cross-worker event with unknown type: %s", event_type
+            )
+            return 0
+
+        event = Event(event_type=resolved_type, data=event_data)
+        return await self.dispatch_event(event, user_ids)
+
     async def dispatch_to_connection(
         self,
         connection: Connection,
