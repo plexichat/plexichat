@@ -16,11 +16,12 @@ from ..exceptions import SFUConnectionError, SFUTimeoutError
 from .base import (
     SFUAdapter,
     SFUTransport,
-    SFUProducer,
-    SFUConsumer,
     RoomInfo,
     TransportDirection,
     MediaKind,
+    AcousticDefenseConfig,
+    SFUProducer,
+    SFUConsumer,
 )
 
 
@@ -31,7 +32,13 @@ class JanusAdapter(SFUAdapter):
     Uses the Janus REST API with the VideoRoom plugin for SFU functionality.
     """
 
-    def __init__(self, api_url: str, timeout: int = 10, api_secret: str = ""):
+    def __init__(
+        self,
+        api_url: str,
+        timeout: int = 10,
+        api_secret: str = "",
+        acoustic_defense: Optional[AcousticDefenseConfig] = None,
+    ):
         """
         Initialize the Janus adapter.
 
@@ -39,6 +46,7 @@ class JanusAdapter(SFUAdapter):
             api_url: Base URL of the Janus API
             timeout: Request timeout in seconds
             api_secret: Optional API secret for authentication
+            acoustic_defense: Optional acoustic eavesdropping defense configuration
         """
         self._api_url = api_url.rstrip("/")
         self._timeout = timeout
@@ -52,6 +60,27 @@ class JanusAdapter(SFUAdapter):
         self._janus_recordings: Dict[
             str, Dict[str, Any]
         ] = {}  # room_id -> recording info
+        self._acoustic_defense = acoustic_defense
+
+    def _acoustic_defense_to_dict(self) -> Dict[str, Any]:
+        if not self._acoustic_defense or not self._acoustic_defense.enabled:
+            return {}
+        return {
+            "enabled": self._acoustic_defense.enabled,
+            "jitter_ms_min": self._acoustic_defense.jitter_ms_min,
+            "jitter_ms_max": self._acoustic_defense.jitter_ms_max,
+            "spectral_masking": self._acoustic_defense.spectral_masking,
+            "spectral_mask_noise_db": self._acoustic_defense.spectral_mask_noise_db,
+            "spectral_mask_low_hz": self._acoustic_defense.spectral_mask_low_hz,
+            "spectral_mask_high_hz": self._acoustic_defense.spectral_mask_high_hz,
+            "vad_gating": self._acoustic_defense.vad_gating,
+            "vad_speech_threshold": self._acoustic_defense.vad_speech_threshold,
+            "vad_silence_frames": self._acoustic_defense.vad_silence_frames,
+            "transient_shaving": self._acoustic_defense.transient_shaving,
+            "transient_attack_ms": self._acoustic_defense.transient_attack_ms,
+            "transient_release_ms": self._acoustic_defense.transient_release_ms,
+            "transient_ratio": self._acoustic_defense.transient_ratio,
+        }
 
     async def _get_session(self):
         """Get or create aiohttp session."""
@@ -192,6 +221,7 @@ class JanusAdapter(SFUAdapter):
                 "videocodec": "vp8,h264",
                 "record": True,
                 "filename": f"/tmp/janus-recordings/{room_id}",
+                "acoustic_defense": self._acoustic_defense_to_dict(),
             },
         )
 
@@ -255,6 +285,7 @@ class JanusAdapter(SFUAdapter):
                 "ptype": "publisher",
                 "id": peer_num,
                 "display": peer_id,
+                "acoustic_defense": self._acoustic_defense_to_dict(),
             },
         )
 

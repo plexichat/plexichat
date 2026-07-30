@@ -109,6 +109,7 @@ def setup(
     turn_ttl: int = 86400,
     turn_username: str = "",
     turn_credential: str = "",
+    acoustic_defense_config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Initialize the signaling module.
@@ -130,6 +131,7 @@ def setup(
         turn_ttl: TURN credential TTL in seconds
         turn_username: Static TURN username (for services like metered.ca)
         turn_credential: Static TURN credential/password
+        acoustic_defense_config: Optional acoustic eavesdropping defense configuration
     """
     global _manager, _setup_complete
 
@@ -148,6 +150,7 @@ def setup(
         turn_ttl=turn_ttl,
         turn_username=turn_username,
         turn_credential=turn_credential,
+        acoustic_defense_config=acoustic_defense_config,
     )
     _setup_complete = True
 

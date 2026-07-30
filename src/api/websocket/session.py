@@ -119,6 +119,11 @@ class SessionManager:
             logger.debug(f"Valkey session unregistration failed: {e}")
 
     @property
+    def worker_id(self) -> str:
+        """The unique identity of this worker instance."""
+        return self._worker_id
+
+    @property
     def heartbeat_interval_ms(self) -> int:
         """Get the heartbeat interval."""
         return self._heartbeat_interval_ms

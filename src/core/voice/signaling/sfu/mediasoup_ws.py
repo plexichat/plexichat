@@ -28,6 +28,7 @@ from .base import (
     RoomInfo,
     TransportDirection,
     MediaKind,
+    AcousticDefenseConfig,
 )
 
 # Deployment-scoped secret used to derive stable peer / room
@@ -153,6 +154,7 @@ class MediasoupWSAdapter(SFUAdapter):
         ws_url: str,
         timeout: int = 10,
         origin: str = "https://localhost:4443",
+        acoustic_defense: Optional[AcousticDefenseConfig] = None,
     ):
         """
         Initialize the mediasoup WebSocket adapter.
@@ -161,6 +163,7 @@ class MediasoupWSAdapter(SFUAdapter):
             ws_url: WebSocket URL of the mediasoup server (e.g., wss://host:4443)
             timeout: Request timeout in seconds
             origin: Origin header to send (must match server config)
+            acoustic_defense: Optional acoustic eavesdropping defense configuration
         """
         self._ws_url = ws_url.rstrip("/")
         self._timeout = timeout
@@ -171,6 +174,27 @@ class MediasoupWSAdapter(SFUAdapter):
         self._quality_mixin: Optional[Any] = None
         self._message_handlers: Dict[str, Callable] = {}
         self._ssl_context = self._create_ssl_context()
+        self._acoustic_defense = acoustic_defense
+
+    def _acoustic_defense_to_dict(self) -> Dict[str, Any]:
+        if not self._acoustic_defense or not self._acoustic_defense.enabled:
+            return {}
+        return {
+            "enabled": self._acoustic_defense.enabled,
+            "jitter_ms_min": self._acoustic_defense.jitter_ms_min,
+            "jitter_ms_max": self._acoustic_defense.jitter_ms_max,
+            "spectral_masking": self._acoustic_defense.spectral_masking,
+            "spectral_mask_noise_db": self._acoustic_defense.spectral_mask_noise_db,
+            "spectral_mask_low_hz": self._acoustic_defense.spectral_mask_low_hz,
+            "spectral_mask_high_hz": self._acoustic_defense.spectral_mask_high_hz,
+            "vad_gating": self._acoustic_defense.vad_gating,
+            "vad_speech_threshold": self._acoustic_defense.vad_speech_threshold,
+            "vad_silence_frames": self._acoustic_defense.vad_silence_frames,
+            "transient_shaving": self._acoustic_defense.transient_shaving,
+            "transient_attack_ms": self._acoustic_defense.transient_attack_ms,
+            "transient_release_ms": self._acoustic_defense.transient_release_ms,
+            "transient_ratio": self._acoustic_defense.transient_ratio,
+        }
 
     def set_quality_mixin(self, quality_mixin: Any) -> None:
         """Set the quality mixin reference for score notifications."""
@@ -458,7 +482,7 @@ class MediasoupWSAdapter(SFUAdapter):
             "data": data or {},
         }
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
 
         pending = PendingRequest(
@@ -558,6 +582,7 @@ class MediasoupWSAdapter(SFUAdapter):
                 "device": {"name": "Plexichat", "version": "1.0"},
                 "rtpCapabilities": rtp_capabilities,
                 "sctpCapabilities": None,
+                "acoustic_defense": self._acoustic_defense_to_dict(),
             },
         )
 
@@ -934,6 +959,7 @@ class MediasoupWSAdapter(SFUAdapter):
             "consumer_ids": consumer_ids,
             "recorder_peer_id": connection.peer_id,
             "file_count": len(consumer_ids),
+            "acoustic_defense": self._acoustic_defense_to_dict(),
         }
         logger.info(
             f"Recording started for room {room_id} (id={recording_id}, "

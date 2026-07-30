@@ -20,6 +20,7 @@ from .base import (
     RoomInfo,
     TransportDirection,
     MediaKind,
+    AcousticDefenseConfig,
 )
 
 
@@ -31,18 +32,45 @@ class MediasoupAdapter(SFUAdapter):
     mediasoup-demo patterns.
     """
 
-    def __init__(self, api_url: str, timeout: int = 10):
+    def __init__(
+        self,
+        api_url: str,
+        timeout: int = 10,
+        acoustic_defense: Optional[AcousticDefenseConfig] = None,
+    ):
         """
         Initialize the mediasoup adapter.
 
         Args:
             api_url: Base URL of the mediasoup API
             timeout: Request timeout in seconds
+            acoustic_defense: Optional acoustic eavesdropping defense configuration
         """
         self._api_url = api_url.rstrip("/")
         self._timeout = timeout
         self._session = None
         self._recordings: Dict[str, Dict] = {}
+        self._acoustic_defense = acoustic_defense
+
+    def _acoustic_defense_to_dict(self) -> Dict[str, Any]:
+        if not self._acoustic_defense or not self._acoustic_defense.enabled:
+            return {}
+        return {
+            "enabled": self._acoustic_defense.enabled,
+            "jitter_ms_min": self._acoustic_defense.jitter_ms_min,
+            "jitter_ms_max": self._acoustic_defense.jitter_ms_max,
+            "spectral_masking": self._acoustic_defense.spectral_masking,
+            "spectral_mask_noise_db": self._acoustic_defense.spectral_mask_noise_db,
+            "spectral_mask_low_hz": self._acoustic_defense.spectral_mask_low_hz,
+            "spectral_mask_high_hz": self._acoustic_defense.spectral_mask_high_hz,
+            "vad_gating": self._acoustic_defense.vad_gating,
+            "vad_speech_threshold": self._acoustic_defense.vad_speech_threshold,
+            "vad_silence_frames": self._acoustic_defense.vad_silence_frames,
+            "transient_shaving": self._acoustic_defense.transient_shaving,
+            "transient_attack_ms": self._acoustic_defense.transient_attack_ms,
+            "transient_release_ms": self._acoustic_defense.transient_release_ms,
+            "transient_ratio": self._acoustic_defense.transient_ratio,
+        }
 
     async def _get_session(self):
         """Get or create aiohttp session."""
@@ -115,7 +143,14 @@ class MediasoupAdapter(SFUAdapter):
 
     async def create_room(self, room_id: str) -> RoomInfo:
         """Create a new room on the mediasoup server."""
-        result = await self._request("POST", "/rooms", {"roomId": room_id})
+        result = await self._request(
+            "POST",
+            "/rooms",
+            {
+                "roomId": room_id,
+                "acoustic_defense": self._acoustic_defense_to_dict(),
+            },
+        )
 
         logger.debug(f"Created mediasoup room: {room_id}")
 
@@ -134,7 +169,12 @@ class MediasoupAdapter(SFUAdapter):
     async def join_room(self, room_id: str, peer_id: str) -> Dict[str, Any]:
         """Join a peer to a room."""
         result = await self._request(
-            "POST", f"/rooms/{room_id}/peers", {"peerId": peer_id}
+            "POST",
+            f"/rooms/{room_id}/peers",
+            {
+                "peerId": peer_id,
+                "acoustic_defense": self._acoustic_defense_to_dict(),
+            },
         )
 
         logger.debug(f"Peer {peer_id} joined room {room_id}")
@@ -341,6 +381,7 @@ class MediasoupAdapter(SFUAdapter):
                 {
                     "outputDir": output_dir,
                     "recordingId": recording_id,
+                    "acoustic_defense": self._acoustic_defense_to_dict(),
                 },
             )
         except SFUConnectionError:
