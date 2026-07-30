@@ -37,7 +37,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "version": version,
             "environment": "development",
         },
-        "server": {"host": "127.0.0.1", "port": 8000, "workers": 1, "reload": False},
+        "server": {"host": "127.0.0.1", "port": 8000, "reload": False},
         "logging": {
             "level": "DEBUG",
             "max_bytes": 10485760,  # 10MB
