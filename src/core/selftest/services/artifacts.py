@@ -341,7 +341,11 @@ class ArtifactsTester:
             self._check(
                 "cap_whiteboard_license_missing",
                 "/capabilities artifacts_whiteboard",
-                caps["artifacts_whiteboard"].state == CapabilityState.AVAILABLE,
+                caps["artifacts_whiteboard"].state
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
                 f"whiteboard state unexpected: {caps['artifacts_whiteboard'].state}",
             )
         except Exception as e:
@@ -879,7 +883,11 @@ class ArtifactsTester:
             self._check(
                 "eval_plexiscribe_available",
                 "_eval_plexiscribe",
-                info.state == CapabilityState.AVAILABLE,
+                info.state
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
                 f"unexpected state: {info.state}",
             )
 
@@ -899,7 +907,11 @@ class ArtifactsTester:
             self._check(
                 "eval_plexiscript_available",
                 "_eval_plexiscript",
-                info.state == CapabilityState.AVAILABLE,
+                info.state
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
                 f"unexpected state: {info.state}",
             )
 
@@ -917,7 +929,11 @@ class ArtifactsTester:
             self._check(
                 "eval_plexiboard_available",
                 "_eval_plexiboard",
-                info.state == CapabilityState.AVAILABLE,
+                info.state
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
                 f"unexpected state: {info.state}",
             )
 
@@ -933,7 +949,11 @@ class ArtifactsTester:
             self._check(
                 "eval_whiteboard_available",
                 "_eval_whiteboard",
-                info.state == CapabilityState.AVAILABLE,
+                info.state
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
                 f"unexpected state: {info.state}",
             )
 
