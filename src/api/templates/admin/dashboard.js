@@ -276,6 +276,22 @@ function updateWorkerHealth(wh) {
     setText('worker-backoff', (wh.backoff_sec || 0).toFixed(1) + 's');
     setText('worker-polls', (wh.poll_count || 0).toLocaleString());
     setText('worker-running', wh.running ? 'Yes' : 'No');
+
+    // Tuning constants
+    const t = wh.tuning;
+    if (t) {
+        const details = document.getElementById('worker-tuning-details');
+        if (details) details.style.display = '';
+        setText('tuning-poll-interval', (t.poll_interval_sec ?? 0).toFixed(3) + 's');
+        setText('tuning-heartbeat', (t.heartbeat_interval_polls ?? 0).toLocaleString() + ' polls');
+        setText('tuning-max-backoff', (t.max_backoff_sec ?? 0).toFixed(0) + 's');
+        setText('tuning-reset-polls', (t.backoff_reset_after_polls ?? 0).toLocaleString() + ' polls');
+        setText('tuning-init-backoff', (t.initial_backoff_sec ?? 0).toFixed(1) + 's');
+        setText('tuning-glide-timeout', (t.glide_request_timeout_ms ?? 0).toLocaleString() + 'ms');
+    } else {
+        const details = document.getElementById('worker-tuning-details');
+        if (details) details.style.display = 'none';
+    }
 }
 
 const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
