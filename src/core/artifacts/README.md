@@ -351,10 +351,9 @@ admin-facing), and `details` (optional extras such as the selected provider).
 
 - **`artifacts`** — master switch; `disabled_by_config` when
   `artifacts.enabled is False`, else `available`.
-- **`artifacts_editor`** — `disabled_by_config` when
-  `artifacts.editor.enabled is False` or `artifacts.enabled is False`.
-- **`artifacts_whiteboard`** — `disabled_by_config` when
-  `artifacts.whiteboard.enabled is False` or `artifacts.enabled is False`;
+- **`plexiscribe`** — `disabled_by_config` when `artifacts.plexiscribe.enabled is False` or `artifacts.enabled is False`; `disabled_by_license` when `has_feature("plexiscribe")` is false; else `available`.
+- **`plexiscript`** — `disabled_by_config` when `artifacts.plexiscript.enabled is False` or `artifacts.enabled is False`; `disabled_by_license` when `has_feature("plexiscript")` is false; else `available`.
+- **`artifacts_whiteboard`** — `disabled_by_config` when `artifacts.whiteboard.enabled is False` or `artifacts.enabled is False`;
   `disabled_by_license` when `has_feature("artifacts_whiteboard")` is false;
   else `available`.
 - **`voice_transcription`** — `disabled_by_config` when

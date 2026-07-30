@@ -305,3 +305,33 @@ class ArtifactManager(BaseManager):
             has_transcript=False,
             payload=payload,
         )
+
+    def get_feature_settings(
+        self, server_id: SnowflakeID, feature: str
+    ) -> Dict[str, str]:
+        """Get all per-server setting overrides for a feature."""
+        from .repository import get_feature_settings as _get
+
+        if self._db is None or server_id is None:
+            return {}
+        return _get(self._db, server_id, feature)
+
+    def set_feature_setting(
+        self, server_id: SnowflakeID, feature: str, key: str, value: Optional[str]
+    ) -> None:
+        """Set or clear a single feature setting override for a server."""
+        from .repository import set_feature_setting as _set
+
+        if self._db is None or server_id is None:
+            raise ValueError("db and server_id are required")
+        _set(self._db, server_id, feature, key, value)
+
+    def set_feature_settings_bulk(
+        self, server_id: SnowflakeID, feature: str, settings: Dict[str, Optional[str]]
+    ) -> Dict[str, str]:
+        """Set multiple feature settings and return the effective result."""
+        from .repository import set_feature_settings_bulk as _bulk
+
+        if self._db is None or server_id is None:
+            raise ValueError("db and server_id are required")
+        return _bulk(self._db, server_id, feature, settings)

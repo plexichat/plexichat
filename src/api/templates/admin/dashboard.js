@@ -250,6 +250,32 @@ function updateOverview(d, s) {
     }
     setText('dash-last-updated', `Last updated: ${new Date().toLocaleTimeString()}`);
     setText('server-version', d.server_version || '');
+    updateWorkerHealth(d.worker_health);
+}
+
+function updateWorkerHealth(wh) {
+    if (!wh || !wh.enabled) {
+        const card = document.getElementById('worker-health-card');
+        if (card) card.style.display = 'none';
+        return;
+    }
+    const card = document.getElementById('worker-health-card');
+    if (card) card.style.display = '';
+    const status = wh.status || 'unknown';
+    const badge = document.getElementById('worker-health-badge');
+    if (badge) {
+        badge.textContent = status;
+        badge.className = 'badge ' + (
+            status === 'connected' ? 'badge-success' :
+            status === 'reconnecting' ? 'badge-warning' :
+            status === 'disconnected' ? 'badge-danger' : 'badge-outline'
+        );
+    }
+    setText('worker-id', wh.worker_id || '—');
+    setText('worker-status', status);
+    setText('worker-backoff', (wh.backoff_sec || 0).toFixed(1) + 's');
+    setText('worker-polls', (wh.poll_count || 0).toLocaleString());
+    setText('worker-running', wh.running ? 'Yes' : 'No');
 }
 
 const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
@@ -1565,6 +1591,7 @@ function artifactsStateLabel(state) {
 
 async function renderArtifacts() {
     await Promise.all([renderArtifactCapabilities(), renderArtifactList()]);
+    renderFeatureSettings();
 }
 
 async function renderArtifactCapabilities() {
@@ -1573,7 +1600,7 @@ async function renderArtifactCapabilities() {
         const container = document.getElementById('artifacts-capabilities');
         if (!container) return;
         const caps = d.capabilities || d;
-        const features = ['artifacts', 'artifacts_editor', 'artifacts_whiteboard', 'voice_transcription', 'voice_recording'];
+        const features = ['artifacts', 'plexiscribe', 'plexiscript', 'plexiboard', 'voice_transcription', 'voice_recording'];
         const rows = features.filter(f => caps[f]).map(f => {
             const info = caps[f];
             const detail = info.details ? ` — ${esc(info.details)}` : '';
@@ -1591,6 +1618,108 @@ async function renderArtifactCapabilities() {
         const container = document.getElementById('artifacts-capabilities');
         if (container) container.innerHTML = `<div class="artifacts-banner banner-misconfigured"><div class="artifacts-banner-msg">Failed to load capabilities: ${esc(e.message || 'unknown error')}</div></div>`;
     }
+}
+
+async function renderFeatureSettings() {
+  const container = document.getElementById('artifact-feature-settings');
+  if (!container) return;
+
+  const features = [
+    { key: 'plexiscribe', label: 'Plexiscribe', icon: 'ph-file-text', defaults: { max_participants: '50', max_document_size_mb: '100' } },
+    { key: 'plexiscript', label: 'Plexiscript', icon: 'ph-code-block', defaults: { max_participants: '50', max_file_size_kb: '2048' } },
+    { key: 'plexiboard', label: 'Plexiboard (Whiteboard)', icon: 'ph-chalkboard', defaults: { max_participants: '50' } },
+  ];
+
+  let html = '<h3>Per-Server Feature Overrides</h3><p>Set per-server overrides for artifact features. Leave blank to use defaults.</p>';
+  features.forEach(f => {
+    html += `
+      <div class="feature-settings-card">
+        <h4><i class="ph ${f.icon}"></i> ${f.label}</h4>
+        <form class="feature-settings-form" data-feature="${f.key}">
+          <div class="feature-setting-row">
+            <label>Server ID</label>
+            <input type="number" class="feature-server-id" placeholder="Server ID (e.g. 1001)" required>
+          </div>
+          <div class="feature-setting-row">
+            <label>Enabled (true/false)</label>
+            <input type="text" class="feature-enabled" placeholder="e.g. true" value="true">
+          </div>
+          ${Object.entries(f.defaults).map(([k, v]) => `
+            <div class="feature-setting-row">
+              <label>${k.replace(/_/g, ' ')}</label>
+              <input type="text" class="feature-setting-${k}" data-setting-key="${k}" placeholder="${v}" value="${v}">
+            </div>
+          `).join('')}
+          <button type="submit" class="btn btn-primary">Save Settings</button>
+          <div class="feature-settings-result"></div>
+        </form>
+        <div class="feature-current-settings">
+          <h5>Current Settings</h5>
+          <div class="feature-current-settings-data" data-feature="${f.key}">
+            <em>Enter a Server ID and click "Load" to see current settings.</em>
+          </div>
+          <button class="btn btn-secondary btn-load-settings" data-feature="${f.key}">Load Settings</button>
+        </div>
+      </div>
+    `;
+  });
+  container.innerHTML = html;
+
+  // Wire form submissions
+  container.querySelectorAll('.feature-settings-form').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const feature = form.dataset.feature;
+      const serverId = form.querySelector('.feature-server-id').value;
+      const settings = {};
+      form.querySelectorAll('input[type="text"]').forEach(input => {
+        if (!input.classList.contains('feature-server-id')) {
+          const key = input.dataset.settingKey;
+          settings[key] = input.value || null;
+        }
+      });
+      try {
+        const result = await api('/api/v1/admin/artifacts/features/' + feature, {
+          method: 'POST',
+          body: JSON.stringify({ server_id: Number(serverId), settings }),
+        });
+        const resultEl = form.querySelector('.feature-settings-result');
+        if (resultEl) {
+          resultEl.innerHTML = '<span class="text-success">Settings saved successfully.</span>';
+          resultEl.style.display = 'block';
+        }
+      } catch (err) {
+        console.error('Save error:', err);
+        const resultEl = form.querySelector('.feature-settings-result');
+        if (resultEl) {
+          resultEl.innerHTML = '<span class="text-error">Error saving settings: ' + (err.message || 'Unknown error') + '</span>';
+          resultEl.style.display = 'block';
+        }
+      }
+    });
+  });
+
+  // Wire load buttons
+  container.querySelectorAll('.btn-load-settings').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const feature = btn.dataset.feature;
+      const form = document.querySelector(`.feature-settings-form[data-feature="${feature}"]`);
+      const serverId = form ? form.querySelector('.feature-server-id').value : '';
+      if (!serverId) { showToast('Enter a Server ID first.', 'error'); return; }
+      try {
+        const result = await api('/api/v1/admin/artifacts/features/' + feature + '?server_id=' + serverId);
+        const dataEl = document.querySelector(`.feature-current-settings-data[data-feature="${feature}"]`);
+        if (dataEl && result.settings) {
+          dataEl.innerHTML = Object.entries(result.settings).map(([k, v]) =>
+            `<div class="setting-item"><strong>${k}:</strong> ${v || '<em>default</em>'}</div>`
+          ).join('') || '<em>No overrides (using defaults).</em>';
+        }
+      } catch (err) {
+        console.error('Save error:', err);
+        showToast('Failed to load settings: ' + (err.message || 'Unknown error'), 'error');
+      }
+    });
+  });
 }
 
 function formatExpires(artifact) {

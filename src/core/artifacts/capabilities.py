@@ -78,22 +78,81 @@ def _eval_artifacts(artifacts: Dict[str, Any]) -> CapabilityInfo:
     )
 
 
-def _eval_editor(artifacts: Dict[str, Any]) -> CapabilityInfo:
+def _eval_plexiscribe(artifacts: Dict[str, Any]) -> CapabilityInfo:
     enabled = artifacts.get("enabled", True)
-    editor = artifacts.get("editor", {}) or {}
-    editor_enabled = editor.get("enabled", True)
-    if enabled is False or editor_enabled is False:
+    ps = artifacts.get("plexiscribe", {}) or {}
+    ps_enabled = ps.get("enabled", True)
+    if enabled is False or ps_enabled is False:
         return CapabilityInfo(
-            feature="artifacts_editor",
+            feature="plexiscribe",
             state=CapabilityState.DISABLED_BY_CONFIG,
-            message=("The artifacts editor is disabled in the server configuration."),
-            details={"artifacts_enabled": enabled, "editor_enabled": editor_enabled},
+            message="Plexiscribe is disabled in the server configuration.",
+            details={"artifacts_enabled": enabled, "plexiscribe_enabled": ps_enabled},
+        )
+    if not _has_feature("plexiscribe"):
+        return CapabilityInfo(
+            feature="plexiscribe",
+            state=CapabilityState.DISABLED_BY_LICENSE,
+            message="Plexiscribe requires a license.",
+            details={},
         )
     return CapabilityInfo(
-        feature="artifacts_editor",
+        feature="plexiscribe",
         state=CapabilityState.AVAILABLE,
-        message="The artifacts editor is enabled.",
-        details={"editor_enabled": editor_enabled},
+        message="Plexiscribe is enabled.",
+        details={"plexiscribe_enabled": ps_enabled},
+    )
+
+
+def _eval_plexiscript(artifacts: Dict[str, Any]) -> CapabilityInfo:
+    enabled = artifacts.get("enabled", True)
+    psc = artifacts.get("plexiscript", {}) or {}
+    psc_enabled = psc.get("enabled", True)
+    if enabled is False or psc_enabled is False:
+        return CapabilityInfo(
+            feature="plexiscript",
+            state=CapabilityState.DISABLED_BY_CONFIG,
+            message="Plexiscript is disabled in the server configuration.",
+            details={"artifacts_enabled": enabled, "plexiscript_enabled": psc_enabled},
+        )
+    if not _has_feature("plexiscript"):
+        return CapabilityInfo(
+            feature="plexiscript",
+            state=CapabilityState.DISABLED_BY_LICENSE,
+            message="Plexiscript requires a license.",
+            details={},
+        )
+    return CapabilityInfo(
+        feature="plexiscript",
+        state=CapabilityState.AVAILABLE,
+        message="Plexiscript is enabled.",
+        details={"plexiscript_enabled": psc_enabled},
+    )
+
+
+def _eval_plexiboard(artifacts: Dict[str, Any]) -> CapabilityInfo:
+    enabled = artifacts.get("enabled", True)
+    wb = artifacts.get("whiteboard", {}) or {}
+    wb_enabled = wb.get("enabled", True)
+    if enabled is False or wb_enabled is False:
+        return CapabilityInfo(
+            feature="plexiboard",
+            state=CapabilityState.DISABLED_BY_CONFIG,
+            message="Plexiboard (whiteboard) is disabled in the server configuration.",
+            details={"artifacts_enabled": enabled, "whiteboard_enabled": wb_enabled},
+        )
+    if not _has_feature("artifacts_whiteboard"):
+        return CapabilityInfo(
+            feature="plexiboard",
+            state=CapabilityState.DISABLED_BY_LICENSE,
+            message="Whiteboard requires a license.",
+            details={},
+        )
+    return CapabilityInfo(
+        feature="plexiboard",
+        state=CapabilityState.AVAILABLE,
+        message="Plexiboard is enabled.",
+        details={"whiteboard_enabled": wb_enabled},
     )
 
 
@@ -251,10 +310,12 @@ def get_artifact_capabilities(
         artifacts = _load_config(config)
         return {
             "artifacts": _eval_artifacts(artifacts),
-            "artifacts_editor": _eval_editor(artifacts),
             "artifacts_whiteboard": _eval_whiteboard(artifacts),
             "voice_transcription": _eval_voice_transcription(artifacts),
             "voice_recording": _eval_voice_recording(artifacts),
+            "plexiscribe": _eval_plexiscribe(artifacts),
+            "plexiscript": _eval_plexiscript(artifacts),
+            "plexiboard": _eval_plexiboard(artifacts),
         }
     except Exception:
         # Last-resort fallback so the endpoint can never crash.
