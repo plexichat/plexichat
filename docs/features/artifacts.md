@@ -229,7 +229,9 @@ features:
 | Feature | Notes |
 | --- | --- |
 | `artifacts` | Master switch. |
-| `artifacts_editor` | In-app editor artifact type. |
+| `plexiscribe` | Collaborative document editor. Requires the `plexiscribe` license feature. |
+| `plexiscript` | Collaborative code editor. Requires the `plexiscript` license feature. |
+| `plexiboard` | Collaborative whiteboard. Requires the `artifacts_whiteboard` license feature. |
 | `artifacts_whiteboard` | Requires the `artifacts_whiteboard` license feature. |
 | `voice_transcription` | Requires the `voice_transcription` license feature; provider-dependent (local Whisper, OpenAI, Azure). |
 | `voice_recording` | Whether voice calls may be recorded. |
@@ -513,8 +515,8 @@ Artifacts subsystem. It uses the existing `api()` fetch helper and `alert()`/
 ### Capabilities banners
 
 `renderArtifactCapabilities()` calls `GET /api/v1/admin/capabilities` and renders
-one banner per feature (`artifacts`, `artifacts_editor`, `artifacts_whiteboard`,
-`voice_transcription`, `voice_recording`). Each banner shows the feature name,
+one banner per feature (`artifacts`, `plexiscribe`, `plexiscript`, `plexiboard`,
+`artifacts_whiteboard`, `voice_transcription`, `voice_recording`). Each banner shows the feature name,
 its availability `state`, and the backend `message` (plus `details` when present).
 Banner color is driven by `state`:
 
@@ -560,7 +562,8 @@ to change artifact behaviour without editing the generated `docker-config.yaml`.
 | Variable | Maps to config key | Notes |
 |---|---|---|
 | `ARTIFACTS_ENABLED` | `artifacts.enabled` | `true` / `false` |
-| `ARTIFACTS_EDITOR_ENABLED` | `artifacts.editor.enabled` | `true` / `false` |
+| `ARTIFACTS_PLEXISCRIBE_ENABLED` | `artifacts.plexiscribe.enabled` | `true` / `false` |
+| `ARTIFACTS_PLEXISCRIPT_ENABLED` | `artifacts.plexiscript.enabled` | `true` / `false` |
 | `ARTIFACTS_WHITEBOARD_ENABLED` | `artifacts.whiteboard.enabled` | `true` / `false` |
 | `ARTIFACTS_VOICE_ALLOW_RECORDING` | `artifacts.voice.allow_recording` | `true` / `false` |
 | `ARTIFACTS_VOICE_TRANSCRIPTION_ENABLED` | `artifacts.voice.transcription.enabled` | `true` / `false` |
@@ -571,7 +574,7 @@ to change artifact behaviour without editing the generated `docker-config.yaml`.
 
 | Variable | Purpose |
 |---|---|
-| `ARTIFACTS_LICENSE_FEATURES` | Comma-separated list of active license features. Accepted values: `artifacts`, `artifacts_whiteboard`, `voice_transcription`, `voice_recording`, `artifacts_editor`. |
+| `ARTIFACTS_LICENSE_FEATURES` | Comma-separated list of active license features. Accepted values: `artifacts`, `artifacts_whiteboard`, `voice_transcription`, `voice_recording`, `plexiscribe`, `plexiscript`. |
 
 Example (bash):
 ```bash

@@ -134,6 +134,87 @@ docker volume inspect plexichat_backend-logs
 
 ## Scaling Considerations
 
+### Cross-Worker Architecture
+
+Plexichat supports horizontal scaling via multiple Uvicorn worker processes
+behind a reverse proxy. Each worker is an independent process running the
+full FastAPI application; the stack's Valkey (Redis-compatible) layer
+coordinates state across workers.
+
+**How it works:**
+
+1. **Session tracking** — each worker registers its WebSocket connections
+   in Valkey using a unique `worker_id`. The `SessionManager` uses Valkey
+   sets (`user:{id}:connections`) and hashes (`conn:{id}:info`) so every
+   worker knows which users are connected *globally* — not just locally.
+
+2. **Event dispatch** — when an event is emitted on Worker A (e.g. a new
+   message), the `EventManager` fans out to **local** connections and then
+   publishes the event to a Valkey pub/sub channel
+   (`plexichat:events:cross_worker`). Every other worker runs a dedicated
+   background task — the **cross-worker listener** — that subscribes to
+   this channel and dispatches incoming events to its own local WebSocket
+   connections.
+
+3. **Event loop avoidance** — each published message is tagged with the
+   publishing worker's ID; the listener skips its own echoes so events
+   are never delivered twice.
+
+4. **Reconnection** — the dedicated pub/sub connection uses exponential
+   backoff (1 s → 60 s cap) if the connection drops, with automatic reset
+   after ~60 s of healthy polls.
+
+**Prerequisites for multi-worker scaling:**
+
+- **Valkey must be enabled** — the cross-worker listener is a no-op without
+  it. Set `valkey.enabled: true` in your config and ensure the Valkey
+  service is healthy.
+- **Rate limiting must use Valkey or Database storage** — in-memory
+  rate limiters have independent counters per worker, allowing bypass.
+  The server logs a prominent warning if it detects this misconfiguration.
+- **Snowflake IDs** — the server's Snowflake generator uses `worker_id`
+  (0–31) and `datacenter_id` to produce globally-unique, time-sortable IDs
+  without coordination.
+
+**Running multiple workers:**
+
+```bash
+# With uvicorn directly
+uvicorn src.api.app:create_app --host 0.0.0.0 --port 8000 --workers 4
+
+# Or via the CLI (passes through to uvicorn)
+python main.py start --host 0.0.0.0 --port 8000
+# Then run additional processes on different ports, routed by nginx
+```
+
+When using Docker Compose, scale the backend service:
+
+```bash
+docker compose up --scale backend=4
+```
+
+Ensure your reverse proxy (Nginx) load-balances WebSocket connections
+across all backend instances using `ip_hash` or `least_conn`:
+
+```nginx
+upstream backend {
+    ip_hash;
+    server backend:8000;
+    # ... additional backend instances
+}
+```
+
+**Monitoring worker health:**
+
+- **Admin Panel** → Dashboard tab shows a "Cross-Worker Event Dispatch"
+  card with the listener status (`connected` / `reconnecting` /
+  `disconnected`), current backoff, poll count, and whether the listener
+  task is running.
+- **`GET /health`** returns `cross_worker_listener` with the same fields
+  plus an `enabled` boolean.
+- **`GET /api/v1/admin/dashboard`** includes `worker_health` in the
+  response body.
+
 ### Single-Host Deployment (Recommended for Proxmox)
 
 Plexichat is designed for single-host deployment. Use:
