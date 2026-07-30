@@ -92,10 +92,6 @@ def cross_worker_mocks():
     _orig_init_backoff = ws_mod._INITIAL_BACKOFF_SEC
     _orig_glide_timeout = ws_mod._GLIDE_REQUEST_TIMEOUT_MS
 
-    # --- save/restore for hot-reload functions (exercise them) ---
-    _orig_get_tuning = ws_mod.get_poll_tuning
-    _orig_update_tuning = ws_mod.update_poll_tuning
-
     # Apply mocks
     ws_mod._session_manager = m_sm
     ws_mod._dispatcher = m_dispatcher
@@ -111,17 +107,6 @@ def cross_worker_mocks():
     ws_mod._HEARTBEAT_INTERVAL_POLLS = 300
     ws_mod._INITIAL_BACKOFF_SEC = 1.0
     ws_mod._GLIDE_REQUEST_TIMEOUT_MS = 5000
-
-    # No-op replacements for hot-reload (tests don't need real updates)
-    ws_mod.get_poll_tuning = lambda: {
-        "poll_interval_sec": ws_mod._POLL_INTERVAL_SEC,
-        "heartbeat_interval_polls": ws_mod._HEARTBEAT_INTERVAL_POLLS,
-        "max_backoff_sec": ws_mod._MAX_BACKOFF_SEC,
-        "backoff_reset_after_polls": ws_mod._BACKOFF_RESET_AFTER_POLLS,
-        "initial_backoff_sec": ws_mod._INITIAL_BACKOFF_SEC,
-        "glide_request_timeout_ms": ws_mod._GLIDE_REQUEST_TIMEOUT_MS,
-    }
-    ws_mod.update_poll_tuning = lambda updates: ws_mod.get_poll_tuning()
 
     # No-op sleep for fast tests
     async def _tiny_sleep(_sec: float) -> None:
@@ -156,9 +141,6 @@ def cross_worker_mocks():
     ws_mod._HEARTBEAT_INTERVAL_POLLS = _orig_heartbeat_polls
     ws_mod._INITIAL_BACKOFF_SEC = _orig_init_backoff
     ws_mod._GLIDE_REQUEST_TIMEOUT_MS = _orig_glide_timeout
-
-    ws_mod.get_poll_tuning = _orig_get_tuning
-    ws_mod.update_poll_tuning = _orig_update_tuning
 
 
 # ── tests ────────────────────────────────────────────────────────────
@@ -417,3 +399,131 @@ class TestCrossWorkerReconnection:
 
         status = ws_mod.cross_worker_listener_status()
         assert status["status"] == "disabled"
+
+
+class TestCrossWorkerTuningEndToEnd:
+    """End-to-end tests of the revert flow: PATCH old values → verify
+    tuning takes effect → verify audit trail records the change."""
+
+    def test_patch_and_verify_tuning_applied(self, cross_worker_mocks):
+        """PATCH new values, then verify they show up in get_poll_tuning."""
+        from src.api.websocket import get_poll_tuning, update_poll_tuning
+
+        old = get_poll_tuning()
+
+        result = update_poll_tuning({"poll_interval_sec": 0.25})
+        assert result["poll_interval_sec"] == 0.25
+        # Other keys unchanged.
+        assert result["max_backoff_sec"] == old["max_backoff_sec"]
+
+        # Revert to original.
+        result = update_poll_tuning({"poll_interval_sec": old["poll_interval_sec"]})
+        assert result["poll_interval_sec"] == old["poll_interval_sec"]
+        assert result == old
+
+    def test_revert_flow_multiple_keys(self, cross_worker_mocks):
+        """Simulate a full revert: change multiple keys, revert all at once."""
+        from src.api.websocket import get_poll_tuning, update_poll_tuning
+
+        old = get_poll_tuning()
+
+        # Change three keys.
+        update_poll_tuning(
+            {
+                "poll_interval_sec": 0.5,
+                "max_backoff_sec": 120.0,
+                "initial_backoff_sec": 3.0,
+            }
+        )
+        mid = get_poll_tuning()
+        assert mid["poll_interval_sec"] == 0.5
+        assert mid["max_backoff_sec"] == 120.0
+        assert mid["initial_backoff_sec"] == 3.0
+
+        # Revert all three back to old values.
+        update_poll_tuning(
+            {
+                "poll_interval_sec": old["poll_interval_sec"],
+                "max_backoff_sec": old["max_backoff_sec"],
+                "initial_backoff_sec": old["initial_backoff_sec"],
+            }
+        )
+        final = get_poll_tuning()
+        assert final["poll_interval_sec"] == old["poll_interval_sec"]
+        assert final["max_backoff_sec"] == old["max_backoff_sec"]
+        assert final["initial_backoff_sec"] == old["initial_backoff_sec"]
+
+    def test_tuning_in_health_status(self, cross_worker_mocks):
+        """cross_worker_listener_status includes the tuning dict."""
+        from src.api.websocket import (
+            cross_worker_listener_status,
+            get_poll_tuning,
+            update_poll_tuning,
+        )
+
+        # Set a known value.
+        update_poll_tuning({"heartbeat_interval_polls": 150})
+
+        status = cross_worker_listener_status()
+        assert status["enabled"] is True
+        tuning = status["tuning"]
+        assert tuning["heartbeat_interval_polls"] == 150
+        # Verify the tuning dict matches get_poll_tuning() exactly.
+        assert tuning == get_poll_tuning()
+
+    def test_invalid_key_silently_ignored(self, cross_worker_mocks):
+        """update_poll_tuning ignores unknown keys without error."""
+        from src.api.websocket import get_poll_tuning, update_poll_tuning
+
+        old = get_poll_tuning()
+        result = update_poll_tuning({"nonexistent_key": 999})
+        # No keys changed — result should match old.
+        assert result == old
+
+    def test_invalid_value_silently_ignored(self, cross_worker_mocks):
+        """update_poll_tuning rejects non-positive values."""
+        from src.api.websocket import get_poll_tuning, update_poll_tuning
+
+        old = get_poll_tuning()
+        result = update_poll_tuning({"poll_interval_sec": -1})
+        assert result["poll_interval_sec"] == old["poll_interval_sec"]
+
+        result = update_poll_tuning({"max_backoff_sec": 0})
+        assert result["max_backoff_sec"] == old["max_backoff_sec"]
+
+    def test_audit_entry_fields_match_tuning_delta(self, cross_worker_mocks):
+        """Verify the audit entry construction logic used by the PATCH
+        route: after update_poll_tuning changes values, the old->new
+        diff is captured correctly and produces a valid AdminLogEntry."""
+        import json as _json
+
+        from src.api.websocket import get_poll_tuning, update_poll_tuning
+        from src.core.admin.logging import AdminLogEntry
+
+        old = get_poll_tuning()
+        updates = {"poll_interval_sec": 0.99, "max_backoff_sec": 120.0}
+        result = update_poll_tuning(updates)
+
+        # Reconstruct the audit entry the same way the PATCH route does.
+        changes = {k: {"old": old.get(k), "new": result.get(k)} for k in updates}
+        entry = AdminLogEntry(
+            admin_id=42,
+            action="cross_worker_tuning_update",
+            target_type="system",
+            details=_json.dumps(changes),
+            ip_address="127.0.0.1",
+            user_agent="test-agent",
+        )
+
+        # Verify the entry fields are correct.
+        assert entry.action == "cross_worker_tuning_update"
+        assert entry.admin_id == 42
+        assert entry.target_type == "system"
+        details = _json.loads(entry.details)
+        assert details["poll_interval_sec"]["old"] == old["poll_interval_sec"]
+        assert details["poll_interval_sec"]["new"] == result["poll_interval_sec"]
+        assert details["max_backoff_sec"]["old"] == old["max_backoff_sec"]
+        assert details["max_backoff_sec"]["new"] == result["max_backoff_sec"]
+
+        # Clean up.
+        update_poll_tuning(old)

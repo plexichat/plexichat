@@ -55,6 +55,10 @@ class CoreMixin(EndpointTesterBase):
             if not use_other and self.ctx.other_session:
                 active_session = self.ctx.other_session
 
+        # Artifact export endpoint requires a valid export_format query param
+        if "/artifacts/" in path and path.endswith("/export"):
+            query_params["export_format"] = "html"
+
         # Relationship POST (send friend request) should use OTHER session
         # since setup sends the request from other_user -> admin user
         if (

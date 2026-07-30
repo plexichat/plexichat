@@ -197,13 +197,6 @@ class SelfTestRunner:
             "POST:/api/v1/applications/interactions/{interaction_token}/callback",
             # Onboarding preset needs valid server+perms (tested in standalone)
             "POST:/api/v1/features/onboarding/apply-preset",
-            # Admin artifact feature settings endpoints require a valid feature
-            # name (not a snowflake ID), tested via standalone artifact suite
-            "GET:/api/v1/admin/artifacts/features/{feature}",
-            "POST:/api/v1/admin/artifacts/features/{feature}",
-            # Artifact export endpoint requires a valid artifact ID and
-            # export_format query param, tested via standalone artifact suite
-            "GET:/api/v1/artifacts/{artifact_id}/export",
         ]:
             excluded.add(_ep)
 

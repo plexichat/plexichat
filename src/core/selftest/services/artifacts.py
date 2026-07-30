@@ -36,6 +36,7 @@ import websocket
 import src.api as api
 import utils.config as config
 import utils.logger as logger
+from utils import licensing as license_module
 
 from src.api.websocket.opcodes import GatewayOpcode
 from src.core.artifacts.manager import ArtifactManager
@@ -338,6 +339,7 @@ class ArtifactsTester:
                 "whiteboard": {"enabled": True},
             }
             caps = get_artifact_capabilities(wb_cfg)
+            _free = license_module.is_free_tier()
             self._check(
                 "cap_whiteboard_license_missing",
                 "/capabilities artifacts_whiteboard",
@@ -346,7 +348,7 @@ class ArtifactsTester:
                     CapabilityState.AVAILABLE,
                     CapabilityState.DISABLED_BY_LICENSE,
                 ),
-                f"whiteboard state unexpected: {caps['artifacts_whiteboard'].state}",
+                f"whiteboard state unexpected (free_tier={_free}): {caps['artifacts_whiteboard'].state}",
             )
         except Exception as e:
             self._record(

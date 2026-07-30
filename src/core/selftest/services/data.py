@@ -197,6 +197,8 @@ class DataGenerator:
             val = str(self.ctx.test_approval_id or _gen_snowflake())
         elif "request_id" in name_low and "data-export" in path:
             val = str(self.ctx.test_dsar_id or _gen_snowflake())
+        elif name_low == "feature" and "/admin/artifacts/features/" in path:
+            val = "plexiscribe"
         elif "report" in name_low:
             if "id" in name_low:
                 if "hash-report" in path or "hash_report" in path:
