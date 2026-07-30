@@ -75,6 +75,10 @@ click==8.3.3
 pillow==12.3.0
 imagehash==4.3.2
 
+# Document Generation
+fpdf2==2.8.7
+odfpy==1.4.1
+
 # Safe Regex (ReDoS protection)
 # google-re2 pinned to date-stamped calver release for strict PEP 440 compliance
 google-re2==1.1.20251105

@@ -3,6 +3,21 @@ name: plexichat
 # Version to deploy (e.g., a.1.0-55)
 # Set via: BACKEND_VERSION=X CLIENT_VERSION=Y docker compose up -d
 # Defaults to latest if not specified
+#
+# Scaling the backend across multiple workers:
+#   docker compose up --scale backend=4
+#
+# When scaling, Valkey is REQUIRED — the cross-worker event dispatch
+# layer (pub/sub on ``plexichat:events:cross_worker``) forwards events
+# between worker processes so all WebSocket clients receive every event
+# regardless of which worker they connected to.  Session tracking,
+# rate limiting, and Snowflake IDs are also Valkey-backed for global
+# consistency across replicas.
+#
+# When scaling >1, comment out the ``ports`` mappings on the backend
+# service (host ports 8000/TCP and 30000-30100/UDP can only bind to
+# one container) and rely on the client nginx proxy at :443 which
+# load-balances to backend:8000 internally via Docker DNS round-robin.
 
 services:
   db:
@@ -126,6 +141,7 @@ services:
       SCANNER_ENABLED: "true"
       SCANNER_HOST: clamav
       SCANNER_PORT: "3310"
+      BACKEND_REPLICAS: ${BACKEND_REPLICAS:-1}
     volumes:
       - ./config/docker-config.yaml:/app/config/docker-config.yaml:ro
       - plexichat_home:/root/.plexichat
@@ -140,9 +156,32 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Host ports are fine for single-instance dev/prod.  When scaling
+    # to multiple replicas (docker compose --scale backend=N or
+    # deploy.replicas below), comment out BOTH port mappings — 8000/TCP
+    # and 30000-30100/UDP can't bind to the host from multiple
+    # containers.  The client nginx at :443 reverse-proxies to
+    # backend:8000 internally regardless.
     ports:
       - "8000:8000"
       - "30000-30100:30000-30100/udp"
+    # For Docker Swarm / stack deploy (has no effect with
+    # ``docker compose up`` — use --scale instead):
+    # deploy:
+    #   replicas: ${BACKEND_REPLICAS:-2}
+    #   resources:
+    #     limits:
+    #       cpus: '2'
+    #       memory: 4G
+    #     reservations:
+    #       cpus: '1'
+    #       memory: 2G
 
   client:
     restart: unless-stopped
