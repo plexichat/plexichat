@@ -42,10 +42,12 @@ from src.core.artifacts.manager import ArtifactManager
 from src.core.artifacts.capabilities import (
     get_artifact_capabilities,
     CapabilityState,
-    _eval_editor,
     _eval_whiteboard,
     _eval_voice_transcription,
     _eval_voice_recording,
+    _eval_plexiscribe,
+    _eval_plexiscript,
+    _eval_plexiboard,
 )
 from src.core.artifacts.federation import FederationArtifactBridge
 from src.core.artifacts.retention import purge_expired
@@ -156,6 +158,8 @@ class ArtifactsTester:
                 "file": ArtifactType.FILE,
                 "transcript": ArtifactType.TRANSCRIPT,
                 "future": ArtifactType.FUTURE,
+                "plexiscribe": ArtifactType.PLEXISCRIBE,
+                "plexiscript": ArtifactType.PLEXISCRIPT,
             }
 
             for name, atype in type_map.items():
@@ -271,20 +275,21 @@ class ArtifactsTester:
                 f"expected disabled_by_config, got {caps['artifacts'].state}",
             )
 
-            # Editor disabled scenario (artifacts enabled, editor off).
-            editor_off_cfg = {"enabled": True, "editor": {"enabled": False}}
-            caps = get_artifact_capabilities(editor_off_cfg)
+            # Plexiscribe disabled scenario (artifacts enabled, plexiscribe off).
+            ps_off_cfg = {"enabled": True, "plexiscribe": {"enabled": False}}
+            caps = get_artifact_capabilities(ps_off_cfg)
             self._check(
-                "cap_editor_disabled",
-                "/capabilities artifacts_editor",
-                caps["artifacts_editor"].state == CapabilityState.DISABLED_BY_CONFIG,
-                f"expected disabled_by_config, got {caps['artifacts_editor'].state}",
+                "cap_plexiscribe_disabled",
+                "/capabilities plexiscribe",
+                caps["plexiscribe"].state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected disabled_by_config, got {caps['plexiscribe'].state}",
             )
 
             # Available baseline scenario.
             enabled_cfg = {
                 "enabled": True,
-                "editor": {"enabled": True},
+                "plexiscribe": {"enabled": True},
+                "plexiscript": {"enabled": True},
                 "whiteboard": {"enabled": True},
                 "voice": {
                     "allow_recording": True,
@@ -336,8 +341,7 @@ class ArtifactsTester:
             self._check(
                 "cap_whiteboard_license_missing",
                 "/capabilities artifacts_whiteboard",
-                caps["artifacts_whiteboard"].state
-                in (CapabilityState.DISABLED_BY_LICENSE, CapabilityState.AVAILABLE),
+                caps["artifacts_whiteboard"].state == CapabilityState.AVAILABLE,
                 f"whiteboard state unexpected: {caps['artifacts_whiteboard'].state}",
             )
         except Exception as e:
@@ -869,18 +873,58 @@ class ArtifactsTester:
 
     def _test_individual_eval(self) -> None:
         try:
-            info = _eval_editor({"enabled": True, "editor": {"enabled": True}})
+            info = _eval_plexiscribe(
+                {"enabled": True, "plexiscribe": {"enabled": True}}
+            )
             self._check(
-                "eval_editor_available",
-                "_eval_editor",
+                "eval_plexiscribe_available",
+                "_eval_plexiscribe",
                 info.state == CapabilityState.AVAILABLE,
-                f"expected AVAILABLE, got {info.state}",
+                f"unexpected state: {info.state}",
             )
 
-            info = _eval_editor({"enabled": True, "editor": {"enabled": False}})
+            info = _eval_plexiscribe(
+                {"enabled": True, "plexiscribe": {"enabled": False}}
+            )
             self._check(
-                "eval_editor_disabled",
-                "_eval_editor",
+                "eval_plexiscribe_disabled",
+                "_eval_plexiscribe",
+                info.state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected DISABLED_BY_CONFIG, got {info.state}",
+            )
+
+            info = _eval_plexiscript(
+                {"enabled": True, "plexiscript": {"enabled": True}}
+            )
+            self._check(
+                "eval_plexiscript_available",
+                "_eval_plexiscript",
+                info.state == CapabilityState.AVAILABLE,
+                f"unexpected state: {info.state}",
+            )
+
+            info = _eval_plexiscript(
+                {"enabled": True, "plexiscript": {"enabled": False}}
+            )
+            self._check(
+                "eval_plexiscript_disabled",
+                "_eval_plexiscript",
+                info.state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected DISABLED_BY_CONFIG, got {info.state}",
+            )
+
+            info = _eval_plexiboard({"enabled": True, "whiteboard": {"enabled": True}})
+            self._check(
+                "eval_plexiboard_available",
+                "_eval_plexiboard",
+                info.state == CapabilityState.AVAILABLE,
+                f"unexpected state: {info.state}",
+            )
+
+            info = _eval_plexiboard({"enabled": True, "whiteboard": {"enabled": False}})
+            self._check(
+                "eval_plexiboard_disabled",
+                "_eval_plexiboard",
                 info.state == CapabilityState.DISABLED_BY_CONFIG,
                 f"expected DISABLED_BY_CONFIG, got {info.state}",
             )
@@ -889,8 +933,7 @@ class ArtifactsTester:
             self._check(
                 "eval_whiteboard_available",
                 "_eval_whiteboard",
-                info.state
-                in (CapabilityState.AVAILABLE, CapabilityState.DISABLED_BY_LICENSE),
+                info.state == CapabilityState.AVAILABLE,
                 f"unexpected state: {info.state}",
             )
 

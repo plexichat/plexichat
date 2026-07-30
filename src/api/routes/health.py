@@ -14,6 +14,25 @@ from src.api.schemas.common import ErrorResponse
 router = APIRouter(tags=["Health"])
 
 
+@router.get(
+    "/ready",
+    response_model=dict,
+    summary="Readiness probe",
+    responses={
+        200: {"description": "Server is alive and accepting requests"},
+    },
+)
+async def readiness_probe() -> dict:
+    """Minimal readiness probe for container orchestrators.
+
+    Returns 200 as soon as the HTTP server is bound.  No database,
+    Valkey, or filesystem checks — this is a pure liveness signal so
+    Docker / Kubernetes can route traffic to the pod.  For deeper
+    health checks (DB, events, cross-worker listener) use ``/health``.
+    """
+    return {"status": "ready"}
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 
@@ -21,6 +40,7 @@ class HealthResponse(BaseModel):
     version: str
     events_metrics: Optional[Dict[str, Any]] = None
     is_queue_recreate_pending: Optional[bool] = None
+    cross_worker_listener: Optional[Dict[str, Any]] = None
 
 
 @router.get(
@@ -93,11 +113,25 @@ async def health_check() -> HealthResponse:
                 exc,
             )
 
+        # Cross-worker listener health — advisory, same contract
+        # as events_metrics.
+        listener_status: Optional[Dict[str, Any]] = None
+        try:
+            from src.api.websocket import cross_worker_listener_status
+
+            listener_status = cross_worker_listener_status()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "Health check: cross_worker_listener_status() failed: %s",
+                exc,
+            )
+
         return HealthResponse(
             status="healthy",
             version=ver,
             events_metrics=events_metrics,
             is_queue_recreate_pending=recreate_pending,
+            cross_worker_listener=listener_status,
         )
     except Exception as e:
         logger.error("Health check failed: %s", e, exc_info=True)
