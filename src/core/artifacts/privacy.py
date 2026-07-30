@@ -94,7 +94,7 @@ def anonymize_user_artifacts(
         artifact_id = row["id"]
         if anonymize:
             new_payload: Optional[str] = None
-            if row.get("artifact_type") == "transcript":
+            if row.get("artifact_type") in ("transcript", "plexiscribe", "plexiscript"):
                 new_payload = _scrub_transcript_text(row.get("payload"))
             try:
                 if new_payload is not None:
