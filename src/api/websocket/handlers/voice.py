@@ -291,9 +291,12 @@ class VoiceHandler:
             if not connection.user_id:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
-            # Use update_quality_hint instead of set_quality
+            # Forward the client-reported quality to the signaling manager.
+            # ``update_quality_hint`` is keyed by (channel_id, peer_id) and
+            # records the metrics into the shared quality_data store used by
+            # the BandwidthEstimator and get_connection_quality().
             signaling.update_quality_hint(
-                connection.user_id, channel_id, quality_level=quality
+                channel_id, connection.user_id, quality_level=quality
             )
         except Exception as e:
             logger.warning(f"Voice quality failed: {e}")

@@ -13,11 +13,12 @@ from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
 import utils.config as config
-from fastapi import APIRouter, HTTPException, Depends, Query, status
+from fastapi import APIRouter, HTTPException, Depends, Query, Response, status
+from fastapi.responses import StreamingResponse
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse, SuccessResponse, SnowflakeID
+from src.api.schemas.common import ErrorResponse, SuccessResponse
 from fpdf import FPDF
 from odf.opendocument import OpenDocumentText
 from odf.text import P
@@ -28,7 +29,6 @@ from src.api.schemas.artifacts import (
     ArtifactResponse,
     ArtifactListResponse,
     ConvertUploadRequest,
-    ArtifactExportResponse,
 )
 
 router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
@@ -385,7 +385,7 @@ async def get_artifact(
         logger.error(f"Failed to fetch artifact {artifact_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": f"Fetch failed: {e}"}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -614,10 +614,16 @@ async def convert_upload(
         if source_conv_id is not None and not _is_conversation_member(
             messaging_mod, source_conv_id, current_user.user_id
         ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": 403, "message": "Not authorized"}},
-            )
+            # Conversation non-members may still convert the upload if they hold
+            # the server-level ``artifact.create`` permission (e.g. a server
+            # admin acting on a channel they don't personally participate in).
+            if not _require_server_permission(
+                current_user.user_id, server_id, "artifact.create"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"error": {"code": 403, "message": "Not authorized"}},
+                )
 
         manager = _get_manager()
         artifact = manager.convert_upload_to_artifact(
@@ -648,8 +654,8 @@ async def convert_upload(
 
 @router.get(
     "/{artifact_id}/export",
-    response_model=ArtifactExportResponse,
     summary="Export an artifact",
+    response_class=Response,
     responses={
         400: {"model": ErrorResponse, "description": "Invalid format"},
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
@@ -662,13 +668,15 @@ async def export_artifact(
     artifact_id: str,
     export_format: str = Query("html", alias="export_format"),
     current_user: TokenInfo = Depends(get_current_user),
-) -> ArtifactExportResponse:
-    """Export an artifact in the requested format.
+) -> Response:
+    """Export an artifact as a downloadable file in the requested format.
 
-    Supported formats: html, pdf, md, odt, txt, plexiscribe (native)
+    Supported formats: html, pdf, md, odt, txt, plexiscribe (native),
+    plexiscript, plexiboard.
 
-    For plexiscribe artifacts, exports the document in the requested format.
-    For other artifact types, returns the payload as-is in the requested format.
+    Returns the rendered bytes directly with the correct ``Content-Type`` and a
+    ``Content-Disposition: attachment`` header so browsers offer a real file
+    download (rather than a base64-encoded JSON envelope).
     """
     try:
         try:
@@ -715,7 +723,6 @@ async def export_artifact(
             "artifact.view",
         )
 
-        # Build export response
         mime_map = {
             "html": "text/html",
             "pdf": "application/pdf",
@@ -732,105 +739,105 @@ async def export_artifact(
             if artifact.title
             else "export"
         )
-        filename = f"{title_slug}.{export_format}"
+        # Ensure the slug is filesystem-safe (strip anything that isn't
+        # alphanumeric, dash, or underscore so the Content-Disposition filename
+        # is valid across platforms).
+        safe_slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in title_slug)
+        filename = f"{safe_slug}.{export_format}"
 
         payload = artifact.payload or {}
+        artifact_type_value = artifact.artifact_type.value
+
+        def _extract_text() -> str:
+            """Pull the human-readable text for export from the artifact payload."""
+            if artifact_type_value == "plexiscribe":
+                return payload.get("content_html") or payload.get("document") or ""
+            if artifact_type_value == "plexiscript":
+                return payload.get("source") or payload.get("content") or ""
+            if artifact_type_value == "whiteboard":
+                return payload.get("board") or ""
+            return (
+                payload.get("content") or payload.get("text") or artifact.summary or ""
+            )
 
         if (
             export_format == "plexiscribe"
             and artifact.artifact_type.value == "plexiscribe"
         ):
-            data = payload.get("document") or "{}"
+            data: bytes = (payload.get("document") or "{}").encode("utf-8", "replace")
         elif (
             export_format == "plexiscript"
             and artifact.artifact_type.value == "plexiscript"
         ):
-            data = payload.get("source") or payload.get("content") or "{}"
+            data = (payload.get("source") or payload.get("content") or "{}").encode(
+                "utf-8", "replace"
+            )
         elif (
             export_format == "plexiboard"
             and artifact.artifact_type.value == "whiteboard"
         ):
-            data = payload.get("board") or "{}"
+            data = (payload.get("board") or "{}").encode("utf-8", "replace")
         elif export_format == "txt":
-            data = (
-                payload.get("content") or payload.get("text") or artifact.summary or ""
-            )
+            data = _extract_text().encode("utf-8", "replace")
         elif export_format == "md":
-            data = f"# {_html.escape(artifact.title)}\n\n{_html.escape(artifact.summary or '')}\n\n```\n{_html.escape(payload.get('content', ''))}\n```"
+            md = (
+                f"# {_html.escape(artifact.title)}\n\n"
+                f"{_html.escape(artifact.summary or '')}\n\n"
+                f"```\n{_html.escape(payload.get('content', ''))}\n```"
+            )
+            data = md.encode("utf-8", "replace")
         elif export_format == "html":
             content = payload.get("content", "")
-            data = f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{_html.escape(artifact.title or '')}</title></head><body><h1>{_html.escape(artifact.title or '')}</h1><pre>{_html.escape(str(content))}</pre></body></html>"
+            html_doc = (
+                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                f"<title>{_html.escape(artifact.title or '')}</title></head>"
+                "<body><h1>"
+                f"{_html.escape(artifact.title or '')}</h1><pre>"
+                f"{_html.escape(str(content))}</pre></body></html>"
+            )
+            data = html_doc.encode("utf-8", "replace")
         elif export_format == "pdf":
             pdf = FPDF()
             pdf.set_auto_page_break(auto=True, margin=2.0)
             pdf.add_page()
             pdf.set_font("Helvetica", "", 11)
-            title = artifact.title or "Document"
-            text = ""
-            if artifact.artifact_type.value == "plexiscribe":
-                text = (
-                    payload.get("content_html", "") or payload.get("document", "") or ""
-                )
-            elif artifact.artifact_type.value == "plexiscript":
-                text = payload.get("source") or payload.get("content") or ""
-            elif artifact.artifact_type.value == "whiteboard":
-                text = payload.get("board", "")
-            else:
-                text = (
-                    payload.get("content")
-                    or payload.get("text")
-                    or artifact.summary
-                    or ""
-                )
-            pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 10, artifact.title or "Document", new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
             pdf.set_font("Helvetica", "", 10)
-            for line in (text or "").splitlines():
+            for line in (_extract_text() or "").splitlines():
                 pdf.multi_cell(0, 6, line)
             pdf_bytes = pdf.output()
-            if isinstance(pdf_bytes, bytearray):
-                data = bytes(pdf_bytes)
-            else:
-                data = bytes(pdf_bytes) if pdf_bytes else b""
+            data = bytes(pdf_bytes) if pdf_bytes else b""
         elif export_format == "odt":
             doc = OpenDocumentText()
-            title = artifact.title or "Document"
             doc_text = getattr(doc, "text")
-            doc_text.addElement(P(text=title))
+            doc_text.addElement(P(text=artifact.title or "Document"))
             doc_text.addElement(P(text=""))
-            text = ""
-            if artifact.artifact_type.value == "plexiscribe":
-                text = (
-                    payload.get("content_html", "") or payload.get("document", "") or ""
-                )
-            elif artifact.artifact_type.value == "plexiscript":
-                text = payload.get("source") or payload.get("content") or ""
-            elif artifact.artifact_type.value == "whiteboard":
-                text = payload.get("board", "")
-            else:
-                text = (
-                    payload.get("content")
-                    or payload.get("text")
-                    or artifact.summary
-                    or ""
-                )
-            for line in (text or "").splitlines():
+            for line in (_extract_text() or "").splitlines():
                 doc_text.addElement(P(text=line))
             buf = BytesIO()
             doc.save(buf)
             data = buf.getvalue()
         else:
-            data = str(payload)
+            data = str(payload).encode("utf-8", "replace")
 
-        if isinstance(data, str):
-            data = data.encode("utf-8")
+        content_type = mime_map.get(export_format, "application/octet-stream")
+        # ASCII-safe fallback filename for the disposition header, plus a
+        # UTF-8 ``filename*`` parameter so non-ASCII titles still resolve.
+        ascii_filename = filename.encode("ascii", "ignore").decode("ascii") or filename
 
-        return ArtifactExportResponse(
-            artifact_id=SnowflakeID(str(aid)),
-            format=export_format,
-            filename=filename,
-            content_type=mime_map.get(export_format, "application/octet-stream"),
-            data=data,
+        def _chunk_iter() -> Any:
+            yield data
+
+        return StreamingResponse(
+            _chunk_iter(),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{ascii_filename}"; '
+                    f"filename*=UTF-8''{filename}"
+                ),
+            },
         )
     except HTTPException:
         raise
@@ -838,5 +845,5 @@ async def export_artifact(
         logger.error(f"Failed to export artifact {artifact_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": "Export failed"},
+            detail={"error": {"code": 500, "message": "Export failed"}},
         )
