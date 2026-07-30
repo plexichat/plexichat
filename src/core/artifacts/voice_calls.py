@@ -54,6 +54,11 @@ class VoiceCallManager(BaseManager):
         super().__init__(db, None)
         self._artifact_manager = artifact_manager
         self._artifacts_config = config if config is not None else {}
+        self._recording_manager: Any = None
+
+    def set_recording_manager(self, recording_manager: Any) -> None:
+        """Attach a RecordingManager (may be ``None`` to disable recording)."""
+        self._recording_manager = recording_manager
 
     # === Config helpers ===
 
@@ -119,6 +124,8 @@ class VoiceCallManager(BaseManager):
                 )
                 artifact_id = None
 
+        recorded = bool(artifact_id is not None and self._allow_recording())
+
         call = VoiceCall(
             id=call_id,
             conversation_id=conversation_id,
@@ -130,9 +137,20 @@ class VoiceCallManager(BaseManager):
             updated_at=now,
             artifact_id=artifact_id,
             participant_count=1,
-            recorded=bool(artifact_id is not None and self._allow_recording()),
+            recorded=recorded,
         )
-        return create_voice_call(self._db, call)
+        result = create_voice_call(self._db, call)
+
+        # Fire-and-forget: start recording via RecordingManager
+        if recorded and self._recording_manager is not None:
+            self._recording_manager.start_call_recording(
+                call_id=call_id,
+                channel_id=channel_id,
+                artifact_id=artifact_id,
+                initiator_id=initiator_id,
+            )
+
+        return result
 
     def end_call(
         self,
@@ -183,6 +201,10 @@ class VoiceCallManager(BaseManager):
                 logger.warning(
                     f"voice_call artifact completion failed (call {call_id}): {exc}"
                 )
+
+        # Fire-and-forget: stop recording via RecordingManager
+        if updated.recorded and self._recording_manager is not None:
+            self._recording_manager.stop_call_recording(call_id)
 
         return updated
 

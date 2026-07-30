@@ -11,7 +11,8 @@ import hmac
 import json
 import os
 import ssl
-from typing import Dict, Optional, Any, Callable, cast
+import time
+from typing import Dict, List, Optional, Any, Callable, cast
 from dataclasses import dataclass, field
 
 import utils.logger as logger
@@ -166,8 +167,14 @@ class MediasoupWSAdapter(SFUAdapter):
         self._origin = origin
         self._connections: Dict[str, PeerConnection] = {}  # peer_id -> connection
         self._rooms: Dict[str, RoomInfo] = {}  # room_id -> info
+        self._recordings: Dict[str, Dict] = {}  # room_id -> recording state
+        self._quality_mixin: Optional[Any] = None
         self._message_handlers: Dict[str, Callable] = {}
         self._ssl_context = self._create_ssl_context()
+
+    def set_quality_mixin(self, quality_mixin: Any) -> None:
+        """Set the quality mixin reference for score notifications."""
+        self._quality_mixin = quality_mixin
 
     def _create_ssl_context(self) -> ssl.SSLContext:
         """Create an SSL context for the mediasoup signaling socket.
@@ -385,11 +392,37 @@ class MediasoupWSAdapter(SFUAdapter):
                 f"Peer left room {connection.room_id}: {notification_data.get('peerId')}"
             )
         elif method == "producerScore":
-            # Producer quality score
-            logger.debug(f"Producer score update: {notification_data}")
+            if self._quality_mixin is not None:
+                peer_id = notification_data.get("peerId") or connection.peer_id
+                score = notification_data.get("score", 0)
+                bitrate = notification_data.get("bitrate", 0)
+                packet_loss = notification_data.get("packetLoss", 0.0)
+                jitter = notification_data.get("jitter", 0.0)
+                self._quality_mixin.update_quality_hint(
+                    connection.room_id,
+                    peer_id,
+                    bitrate=bitrate,
+                    packet_loss=packet_loss,
+                    jitter=jitter,
+                    score=score,
+                )
         elif method == "consumerScore":
-            # Consumer quality score
-            logger.debug(f"Consumer score update: {notification_data}")
+            if self._quality_mixin is not None:
+                peer_id = notification_data.get("peerId") or connection.peer_id
+                score = notification_data.get("score", 0)
+                bitrate = notification_data.get("bitrate", 0)
+                packet_loss = notification_data.get("packetLoss", 0.0)
+                jitter = notification_data.get("jitter", 0.0)
+                rtt = notification_data.get("roundTripTime", 0)
+                self._quality_mixin.update_quality_hint(
+                    connection.room_id,
+                    peer_id,
+                    bitrate=bitrate,
+                    packet_loss=packet_loss,
+                    jitter=jitter,
+                    round_trip_time=rtt,
+                    score=score,
+                )
         elif method == "activeSpeaker":
             # Active speaker changed
             handler_key = f"activeSpeaker:{connection.room_id}"
@@ -840,6 +873,95 @@ class MediasoupWSAdapter(SFUAdapter):
         except Exception as e:
             logger.warning(f"Health check failed: {e}")
             return False
+
+    async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
+        """Start recording by creating a recv transport and consuming all audio."""
+        recording_id = f"rec_{room_id}_{int(time.time())}"
+
+        # Find a peer connection in this room to use for the recorder session
+        key = next(
+            (k for k in self._connections if k.startswith(f"{room_id}:")),
+            None,
+        )
+        if key is None:
+            logger.warning(f"No connections in room {room_id} to attach recorder to")
+            self._recordings[room_id] = {
+                "recording_id": recording_id,
+                "output_dir": output_dir,
+                "file_count": 0,
+                "transport_id": None,
+                "consumer_ids": [],
+                "recorder_peer_id": None,
+            }
+            return {"recording_id": recording_id, "file_count": 0}
+
+        connection = self._connections[key]
+
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except OSError:
+            pass
+
+        transport = await self.create_transport(
+            room_id, connection.peer_id, TransportDirection.RECV
+        )
+        transport_id = transport.id
+        consumer_ids: List[str] = []
+
+        sfu_producers = list(connection.producers.values())
+
+        # Consume each existing audio producer
+        for producer in sfu_producers:
+            if producer.kind == MediaKind.AUDIO:
+                try:
+                    consumer = await self.consume(
+                        room_id,
+                        connection.peer_id,
+                        transport_id,
+                        producer.id,
+                        connection.rtp_capabilities or {},
+                    )
+                    consumer_ids.append(consumer.id)
+                except Exception as exc:
+                    logger.debug(
+                        f"Could not consume producer {producer.id} for recording: {exc}"
+                    )
+
+        self._recordings[room_id] = {
+            "recording_id": recording_id,
+            "output_dir": output_dir,
+            "transport_id": transport_id,
+            "consumer_ids": consumer_ids,
+            "recorder_peer_id": connection.peer_id,
+            "file_count": len(consumer_ids),
+        }
+        logger.info(
+            f"Recording started for room {room_id} (id={recording_id}, "
+            f"consumers={len(consumer_ids)})"
+        )
+        return {"recording_id": recording_id, "file_count": len(consumer_ids)}
+
+    async def stop_recording(self, room_id: str) -> Optional[List[str]]:
+        """Stop recording and return file paths."""
+        info = self._recordings.pop(room_id, None)
+        if info is None:
+            return None
+
+        filepaths: List[str] = []
+        for idx in range(info.get("file_count", 0)):
+            candidate = os.path.join(
+                info["output_dir"],
+                f"{info['recording_id']}_track_{idx}.webm",
+            )
+            if os.path.isfile(candidate):
+                filepaths.append(candidate)
+
+        if not filepaths:
+            fallback = os.path.join(info["output_dir"], f"{info['recording_id']}.webm")
+            filepaths.append(fallback)
+
+        logger.info(f"Recording stopped for room {room_id}, files={len(filepaths)}")
+        return filepaths
 
     async def close(self) -> None:
         """Close all connections."""

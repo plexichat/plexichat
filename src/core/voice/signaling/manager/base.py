@@ -146,4 +146,12 @@ class SignalingManagerBase:
         """Get or create SFU adapter."""
         if self._sfu is None:
             self._sfu = create_adapter(**self._sfu_config)
+            try:
+                if hasattr(self._sfu, "set_quality_mixin"):
+                    from .quality_mixin import QualityMixin
+
+                    if isinstance(self, QualityMixin):
+                        self._sfu.set_quality_mixin(self)
+            except Exception:
+                pass
         return self._sfu

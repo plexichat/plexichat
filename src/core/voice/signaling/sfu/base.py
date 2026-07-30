@@ -310,6 +310,38 @@ class SFUAdapter(ABC):
         pass
 
     @abstractmethod
+    async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
+        """Start recording audio in a room.
+
+        Args:
+            room_id: Room identifier
+            output_dir: Directory to store recording files
+
+        Returns:
+            Dict with recording metadata (e.g. recording_id, file_count)
+        """
+        pass
+
+    @abstractmethod
+    async def stop_recording(self, room_id: str) -> Optional[List[str]]:
+        """Stop recording and return recorded file paths.
+
+        Args:
+            room_id: Room identifier
+
+        Returns:
+            List of recorded file paths, or None if not recording
+        """
+        pass
+
+    @abstractmethod
     async def health_check(self) -> bool:
         """Check if the SFU server is healthy."""
+        pass
+
+    def set_quality_mixin(self, quality_mixin: Any) -> None:
+        """Set the quality mixin reference for score notifications.
+
+        Override in subclasses that support quality reporting.
+        """
         pass

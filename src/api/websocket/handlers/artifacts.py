@@ -4,9 +4,8 @@ Artifact handlers - Handle artifact real-time fabric opcodes.
 Registers handlers for:
 
 - ``ARTIFACT_SUBSCRIBE`` (60): register the connection's user as a subscriber
-  of an artifact. Persistence and full permission checks are deferred to the
-  routes group (group 6); here we only require authentication and optionally
-  send a placeholder snapshot.
+  of an artifact, enforcing RBAC via ``artifact.view`` permission or
+  conversation membership before granting access.
 - ``ARTIFACT_UNSUBSCRIBE`` (61): remove the subscription.
 - ``ARTIFACT_OP`` (62): validate the op payload shape and relay the op to the
   artifact's other subscribers. No persistence happens here.
@@ -71,11 +70,57 @@ class ArtifactHandler:
         if not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
+        db = api.get_db()
+        artifact = get_artifact(db, artifact_id) if db else None
+
+        # RBAC: verify the caller has read access to the artifact's scope.
+        if artifact is not None:
+            server_id = artifact.server_id
+            conversation_id = artifact.conversation_id
+            if server_id is not None:
+                servers_mod = api.get_servers()
+                if servers_mod is not None:
+                    from src.core.servers.exceptions import PermissionDeniedError
+
+                    try:
+                        servers_mod.require_permission(
+                            connection.user_id, server_id, "artifact.view"
+                        )
+                    except PermissionDeniedError:
+                        logger.debug(
+                            f"User {connection.user_id} denied artifact.view "
+                            f"for artifact {artifact_id}"
+                        )
+                        return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            elif conversation_id is not None:
+                messaging_mod = api.get_messaging()
+                if messaging_mod is not None:
+                    try:
+                        if not messaging_mod.is_participant(
+                            conversation_id, connection.user_id
+                        ):
+                            logger.debug(
+                                f"User {connection.user_id} not a participant of "
+                                f"conversation {conversation_id} for artifact {artifact_id}"
+                            )
+                            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+                    except Exception as exc:
+                        logger.debug(
+                            f"Membership check failed for artifact {artifact_id}: {exc}"
+                        )
+                        return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            else:
+                # Personal / notes scope: only the author may subscribe.
+                if connection.user_id != artifact.author_id:
+                    logger.debug(
+                        f"User {connection.user_id} is not the author of "
+                        f"personal artifact {artifact_id}"
+                    )
+                    return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
         self._registry.subscribe(connection.user_id, artifact_id)
         logger.debug(f"User {connection.user_id} subscribed to artifact {artifact_id}")
 
-        db = api.get_db()
-        artifact = get_artifact(db, artifact_id) if db else None
         snapshot = artifact.payload if artifact else {"error": "not_found"}
         try:
             await send_artifact_sync(connection, artifact_id, snapshot)  # type: ignore[arg-type]

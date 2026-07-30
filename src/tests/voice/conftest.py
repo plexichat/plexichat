@@ -2,6 +2,7 @@
 Voice test fixtures.
 """
 
+import os
 import pytest
 import tempfile
 
@@ -19,9 +20,9 @@ DEFAULT_TEST_CONFIG = {
     },
 }
 
-config.setup(
-    config_path=tempfile.mktemp(suffix=".yaml"), default_config=DEFAULT_TEST_CONFIG
-)
+fd, cfg_path = tempfile.mkstemp(suffix=".yaml")
+os.close(fd)
+config.setup(config_path=cfg_path, default_config=DEFAULT_TEST_CONFIG)
 version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
 
 
