@@ -145,3 +145,13 @@ class ServerRetentionResponse(BaseModel):
         None, description="Effective override after the operation (None = cleared)"
     )
     success: bool = Field(True, description="Whether the operation succeeded")
+
+
+class ArtifactExportResponse(BaseModel):
+    """Response containing export data."""
+
+    artifact_id: SnowflakeID
+    format: str
+    filename: str
+    content_type: str
+    data: bytes
