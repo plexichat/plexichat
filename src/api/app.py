@@ -620,6 +620,25 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     detail={"error": {"code": 404, "message": "File not found"}},
                 )
 
+            # Security: block access until malware scan completes or confirms clean
+            scan_row = db.fetch_one(
+                "SELECT scan_status FROM media_files WHERE id = ?",
+                (row["id"],),
+            )
+            scan_status = scan_row["scan_status"] if scan_row else ""
+            if scan_status in ("pending", "infected"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "File not available"
+                            if scan_status == "pending"
+                            else "File blocked by security scan",
+                        }
+                    },
+                )
+
             file_id = row["id"]
             original_filename = row["original_filename"]
             download = request.query_params.get("download", "0") == "1"
