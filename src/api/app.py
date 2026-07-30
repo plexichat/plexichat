@@ -112,9 +112,29 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
         run_static_client_initial_install()
         await start_static_client_service()
+
+        # Start the cross-worker WebSocket event listener so this
+        # worker receives events published by sibling workers via
+        # Valkey pub/sub.
+        try:
+            from src.api.websocket import start_cross_worker_listener
+
+            await start_cross_worker_listener()
+        except Exception as e:
+            logger.warning(f"Cross-worker listener not started: {e}")
+
         try:
             yield
         finally:
+            # Shut down the cross-worker listener before the event
+            # loop stops, ensuring clean unsubscribe + thread join.
+            try:
+                from src.api.websocket import stop_cross_worker_listener
+
+                await stop_cross_worker_listener()
+            except Exception as e:
+                logger.debug(f"Cross-worker listener stop error: {e}")
+
             await stop_static_client_service()
 
     app = FastAPI(

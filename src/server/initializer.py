@@ -394,6 +394,16 @@ def initialize_modules(
     )
     modules_store["events"] = events
 
+    # Tag cross-worker events with this worker's identity so sibling
+    # workers can ignore their own echoes.
+    try:
+        events_mod = modules_store.get("events")
+        if events_mod is not None:
+            events_mod.set_worker_id(worker_id)
+            logger.debug(f"EventManager worker_id set to {worker_id}")
+    except Exception:
+        pass
+
     timed_init(
         "webhooks",
         lambda: webhooks.setup(db, auth, messaging, servers, embeds),
@@ -537,6 +547,7 @@ def initialize_modules(
                     turn_ttl=voice_config.get("turn_ttl", 86400),
                     turn_username=voice_config.get("turn_username", ""),
                     turn_credential=voice_config.get("turn_credential", ""),
+                    acoustic_defense_config=voice_config.get("acoustic_defense", {}),
                 )
 
             timed_init("signaling", init_signaling)
