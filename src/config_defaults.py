@@ -490,7 +490,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "voice": {
             "enabled": True,
-            "sfu_backend": "mediasoup",
+            "sfu_backend": "aiortc",
             "mediasoup_url": "https://localhost:4443",
             "janus_url": "http://localhost:8088/janus",
             "stun_urls": [
@@ -776,6 +776,11 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             },
             "voice": {
                 "allow_recording": True,
+                "recording": {
+                    "output_dir": str(home_dir / "data" / "recordings"),
+                    "max_duration_minutes": 120,
+                    "format": "webm",
+                },
                 "transcription": {
                     "provider": "local_whisper",  # default; active only when enabled:True AND whisper present
                     "enabled": False,  # OFF until explicitly configured

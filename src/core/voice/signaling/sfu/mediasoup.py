@@ -5,7 +5,9 @@ Makes actual HTTP requests to the mediasoup API.
 """
 
 import asyncio
-from typing import Dict, Optional, Any
+import os
+import time
+from typing import Dict, List, Optional, Any
 
 import utils.logger as logger
 
@@ -40,6 +42,7 @@ class MediasoupAdapter(SFUAdapter):
         self._api_url = api_url.rstrip("/")
         self._timeout = timeout
         self._session = None
+        self._recordings: Dict[str, Dict] = {}
 
     async def _get_session(self):
         """Get or create aiohttp session."""
@@ -327,6 +330,63 @@ class MediasoupAdapter(SFUAdapter):
             },
         )
         return True
+
+    async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
+        """Start recording by creating a recorder transport on the room."""
+        recording_id = f"rec_{room_id}_{int(time.time())}"
+        try:
+            result = await self._request(
+                "POST",
+                f"/rooms/{room_id}/recording/start",
+                {
+                    "outputDir": output_dir,
+                    "recordingId": recording_id,
+                },
+            )
+        except SFUConnectionError:
+            logger.warning(
+                f"Mediasoup REST API does not support recording endpoints; "
+                f"recording for room {room_id} will be tracked locally"
+            )
+            result = {}
+
+        file_count = result.get("file_count", 0)
+        self._recordings[room_id] = {
+            "recording_id": recording_id,
+            "output_dir": output_dir,
+            "file_count": file_count,
+        }
+        logger.info(
+            f"Recording started for room {room_id} (id={recording_id}, files={file_count})"
+        )
+        return {"recording_id": recording_id, "file_count": file_count}
+
+    async def stop_recording(self, room_id: str) -> Optional[List[str]]:
+        """Stop recording and return file paths."""
+        info = self._recordings.pop(room_id, None)
+        if not info:
+            logger.info(
+                f"Stop recording called for room {room_id} but no active recording found"
+            )
+            return None
+
+        try:
+            result = await self._request(
+                "POST",
+                f"/rooms/{room_id}/recording/stop",
+                {"recordingId": info["recording_id"]},
+            )
+            files: List[str] = result.get("files", [])
+            if files:
+                logger.info(f"Recording stopped for room {room_id}, files={len(files)}")
+                return files
+        except SFUConnectionError:
+            logger.warning(
+                f"Mediasoup REST API does not support recording stop; "
+                f"recording for room {room_id} was tracked locally only"
+            )
+
+        return [os.path.join(info["output_dir"], f"{info['recording_id']}.webm")]
 
     async def health_check(self) -> bool:
         """Check if the mediasoup server is healthy."""

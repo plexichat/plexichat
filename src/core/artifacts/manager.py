@@ -201,8 +201,7 @@ class ArtifactManager(BaseManager):
         **fields: Any,
     ) -> Optional[Artifact]:
         """Update an artifact's mutable fields."""
-        if "payload" in fields and fields["payload"] is not None:
-            fields.setdefault("updated_at", self._get_timestamp())
+        fields.setdefault("updated_at", self._get_timestamp())
         return update_artifact(self._db, artifact_id, **fields)
 
     def delete(self, artifact_id: SnowflakeID) -> bool:
@@ -266,10 +265,21 @@ class ArtifactManager(BaseManager):
         couple to the media module.
 
         Returns the created artifact.
+
+        Raises:
+            ValueError: when the attachment size exceeds the configured
+                ``max_artifact_size_mb``.
         """
         attachment_id = attachment.get("attachment_id") or attachment.get("id")
         if attachment_id is None:
             raise ValueError("attachment must include an 'attachment_id' or 'id'")
+
+        max_size_mb = (self._artifacts_config or config.get("artifacts", {}) or {}).get(
+            "max_artifact_size_mb", 200
+        )
+        max_size_bytes = max_size_mb * 1024 * 1024
+        if attachment.get("size", 0) > max_size_bytes:
+            raise ValueError(f"Attachment exceeds maximum size of {max_size_mb} MB")
 
         payload: Dict[str, Any] = {
             "attachment_id": attachment_id,

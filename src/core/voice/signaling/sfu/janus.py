@@ -5,9 +5,10 @@ Makes actual HTTP requests to the Janus API.
 """
 
 import asyncio
+import os
 import secrets
 import time
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
 
 import utils.logger as logger
 
@@ -47,6 +48,10 @@ class JanusAdapter(SFUAdapter):
         self._janus_handles: Dict[
             str, Dict[str, int]
         ] = {}  # room_id -> {peer_id -> handle_id}
+        self._producer_kinds: Dict[str, MediaKind] = {}  # producer_id -> MediaKind
+        self._janus_recordings: Dict[
+            str, Dict[str, Any]
+        ] = {}  # room_id -> recording info
 
     async def _get_session(self):
         """Get or create aiohttp session."""
@@ -185,6 +190,8 @@ class JanusAdapter(SFUAdapter):
                 "fir_freq": 10,
                 "audiocodec": "opus",
                 "videocodec": "vp8,h264",
+                "record": True,
+                "filename": f"/tmp/janus-recordings/{room_id}",
             },
         )
 
@@ -344,6 +351,8 @@ class JanusAdapter(SFUAdapter):
 
         producer_id = f"{peer_id}_{kind.value}_{int(time.time() * 1000)}"
 
+        self._producer_kinds[producer_id] = kind
+
         return SFUProducer(
             id=producer_id,
             kind=kind,
@@ -391,8 +400,7 @@ class JanusAdapter(SFUAdapter):
 
         consumer_id = f"{peer_id}_sub_{producer_id}_{int(time.time() * 1000)}"
 
-        # Determine kind from producer_id
-        kind = MediaKind.VIDEO if "video" in producer_id else MediaKind.AUDIO
+        kind = self._producer_kinds.get(producer_id, MediaKind.AUDIO)
 
         return SFUConsumer(
             id=consumer_id,
@@ -413,7 +421,7 @@ class JanusAdapter(SFUAdapter):
         handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
 
         if session_id and handle_id:
-            kind = "video" if "video" in producer_id else "audio"
+            kind = self._producer_kinds.get(producer_id, MediaKind.AUDIO).value
             await self._send_message(
                 session_id,
                 handle_id,
@@ -435,7 +443,7 @@ class JanusAdapter(SFUAdapter):
         handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
 
         if session_id and handle_id:
-            kind = "video" if "video" in producer_id else "audio"
+            kind = self._producer_kinds.get(producer_id, MediaKind.AUDIO).value
             await self._send_message(
                 session_id,
                 handle_id,
@@ -510,6 +518,62 @@ class JanusAdapter(SFUAdapter):
         """Set preferred simulcast layers for a consumer."""
         # Janus VideoRoom handles simulcast differently
         return True
+
+    async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
+        """Start recording in a Janus room.
+
+        Janus VideoRoom records natively when the room was created with
+        ``record: true``. This method stores the recording metadata so
+        :meth:`stop_recording` can return the final file paths.
+        """
+        if room_id not in self._janus_sessions:
+            raise SFUConnectionError(
+                f"Room {room_id} not found", backend="janus", url=self._api_url
+            )
+
+        recording_id = f"janus_rec_{room_id}_{int(time.time())}"
+        self._janus_recordings[room_id] = {
+            "recording_id": recording_id,
+            "output_dir": output_dir,
+            "room_id": room_id,
+        }
+
+        logger.info(
+            f"Started recording room {room_id} via Janus VideoRoom: "
+            f"recording_id={recording_id}"
+        )
+        return {
+            "recording_id": recording_id,
+            "file_count": 1,
+        }
+
+    async def stop_recording(self, room_id: str) -> Optional[List[str]]:
+        """Stop recording and return recorded file paths.
+
+        Janus stores recordings in its configured output directory
+        (typically ``/tmp/janus-recordings/``).  We return the known
+        file paths based on the filename prefix set during room creation.
+        """
+        if room_id not in self._janus_recordings:
+            logger.info(f"Room {room_id} is not recording")
+            return None
+
+        info = self._janus_recordings.pop(room_id)
+        output_dir = info["output_dir"]
+
+        filepaths: List[str] = []
+        mjr_audio = os.path.join(output_dir, f"{room_id}-audio.mjr")
+        mjr_video = os.path.join(output_dir, f"{room_id}-video.mjr")
+        if os.path.exists(mjr_audio):
+            filepaths.append(mjr_audio)
+        if os.path.exists(mjr_video):
+            filepaths.append(mjr_video)
+
+        if not filepaths:
+            filepaths.append(os.path.join(output_dir, f"{room_id}.mjr"))
+
+        logger.info(f"Stopped recording room {room_id}: {len(filepaths)} file(s)")
+        return filepaths if filepaths else None
 
     async def health_check(self) -> bool:
         """Check if the Janus server is healthy."""

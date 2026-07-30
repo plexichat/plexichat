@@ -117,6 +117,11 @@ class LocalWhisperProvider(TranscriptionProvider):
     attempted only when enabled in config/opts *and* a diarization library is
     installed; otherwise every segment is attributed to a single ``"unknown"``
     speaker.
+
+    ``is_available()`` caches the result of a lightweight import + model-size
+    validation. Once ``transcribe()`` succeeds the flag is permanently ``True``;
+    if importing the ``load_model`` attribute fails the flag flips to ``False``
+    so callers (including the capability service) get an accurate picture.
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -126,14 +131,14 @@ class LocalWhisperProvider(TranscriptionProvider):
         self._module_name: Optional[str] = _find_whisper_module()
         self._diarization_module: Optional[str] = None
         self._diarizer: Any = None
+        self._availability: Optional[bool] = None
 
     def is_available(self) -> bool:
+        if self._availability is not None:
+            return self._availability
         if self._module_name is None:
+            self._availability = False
             return False
-        # Able to import does not guarantee able to *run*; the weighted model
-        # download/load is the expensive part and is performed lazily, but we
-        # still validate that the module is importable and the requested model
-        # size is a known value.
         valid_sizes = {
             "tiny",
             "tiny.en",
@@ -148,22 +153,43 @@ class LocalWhisperProvider(TranscriptionProvider):
             "large-v2",
             "large-v3",
         }
-        return self._model_size in valid_sizes
+        if self._model_size not in valid_sizes:
+            self._availability = False
+            return False
+        # Verify the module actually exposes load_model (lightweight, no weights).
+        try:
+            import importlib
+
+            whisper_mod = importlib.import_module(self._module_name)
+            if not hasattr(whisper_mod, "load_model"):
+                self._availability = False
+                return False
+        except Exception:
+            self._availability = False
+            return False
+        self._availability = True
+        return True
 
     def _ensure_model(self) -> Any:
         if self._model is not None:
             return self._model
         if self._module_name is None:
+            self._availability = False
             raise RuntimeError(
                 "Whisper is not installed. Install with: pip install openai-whisper"
             )
         import importlib
 
-        whisper_mod = importlib.import_module(self._module_name)
-        # ``load_model`` downloads the weights on first use; this is the real
-        # runtime cost and deliberately happens here, not at import time.
-        self._model = whisper_mod.load_model(self._model_size)
-        return self._model
+        try:
+            whisper_mod = importlib.import_module(self._module_name)
+            # ``load_model`` downloads the weights on first use; this is the real
+            # runtime cost and deliberately happens here, not at import time.
+            self._model = whisper_mod.load_model(self._model_size)
+            self._availability = True
+            return self._model
+        except Exception:
+            self._availability = False
+            raise
 
     def _ensure_diarizer(self) -> Any:
         if self._diarizer is not None or self._diarization_module is not None:
