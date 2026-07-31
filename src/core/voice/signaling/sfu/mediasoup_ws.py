@@ -20,6 +20,11 @@ import utils.config as _voice_config  # noqa: F401
 
 
 from ..exceptions import SFUConnectionError, SFUTimeoutError
+from .paths import (
+    resolve_recording_dir,
+    ensure_within_recording_dir,
+    safe_filename_component,
+)
 from .base import (
     SFUAdapter,
     SFUTransport,
@@ -171,6 +176,10 @@ class MediasoupWSAdapter(SFUAdapter):
         self._connections: Dict[str, PeerConnection] = {}  # peer_id -> connection
         self._rooms: Dict[str, RoomInfo] = {}  # room_id -> info
         self._recordings: Dict[str, Dict] = {}  # room_id -> recording state
+        # Recording teardown failures encountered during final adapter shutdown
+        # are retained as explicit diagnostics, not as retryable recordings:
+        # shutdown closes the signaling connection and cannot retry afterward.
+        self._recording_teardown_failures: Dict[str, Dict[str, Any]] = {}
         self._quality_mixin: Optional[Any] = None
         self._message_handlers: Dict[str, Callable] = {}
         self._ssl_context = self._create_ssl_context()
@@ -285,7 +294,10 @@ class MediasoupWSAdapter(SFUAdapter):
             return self._connections[key]
 
         # Build WebSocket URL with query parameters
-        ws_url = f"{self._ws_url}/?roomId={room_id}&peerId={peer_id}"
+        # Encode query values so identifiers cannot alter the signaling URL.
+        from urllib.parse import urlencode
+
+        ws_url = f"{self._ws_url}/?{urlencode({'roomId': room_id, 'peerId': peer_id})}"
 
         try:
             websocket = await asyncio.wait_for(
@@ -522,6 +534,38 @@ class MediasoupWSAdapter(SFUAdapter):
 
     async def close_room(self, room_id: str) -> bool:
         """Close a room by disconnecting all peers."""
+        # Close any active recording before removing the room state.
+        if room_id in self._recordings:
+            teardown_error: Optional[Exception] = None
+            try:
+                await self.stop_recording(room_id)
+            except Exception as exc:
+                teardown_error = exc
+                logger.warning(
+                    "Failed to stop mediasoup WebSocket recording for room %s: %s",
+                    room_id,
+                    exc,
+                )
+            # Retry any retained state, including state preserved after an
+            # unexpected cleanup exception, while the connection is available.
+            if room_id in self._recordings:
+                try:
+                    await self.stop_recording(room_id)
+                except Exception as exc:
+                    teardown_error = exc
+                    logger.warning(
+                        "Retry failed for mediasoup WebSocket recording in room %s: %s",
+                        room_id,
+                        exc,
+                    )
+            # The room's signaling connection is about to be destroyed. Do not
+            # leave metadata claiming that a later retry is possible.
+            if room_id in self._recordings:
+                reason = "room closed before recorder teardown completed"
+                if teardown_error is not None:
+                    reason = f"{reason}: {teardown_error}"
+                self._record_recording_teardown_failure(room_id, reason)
+
         # Close all connections in this room
         keys_to_remove = [
             key for key in self._connections if key.startswith(f"{room_id}:")
@@ -901,7 +945,8 @@ class MediasoupWSAdapter(SFUAdapter):
 
     async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
         """Start recording by creating a recv transport and consuming all audio."""
-        recording_id = f"rec_{room_id}_{int(time.time())}"
+        safe_output_dir = resolve_recording_dir(output_dir)
+        recording_id = f"rec_{safe_filename_component(room_id)}_{int(time.time())}"
 
         # Find a peer connection in this room to use for the recorder session
         key = next(
@@ -912,7 +957,7 @@ class MediasoupWSAdapter(SFUAdapter):
             logger.warning(f"No connections in room {room_id} to attach recorder to")
             self._recordings[room_id] = {
                 "recording_id": recording_id,
-                "output_dir": output_dir,
+                "output_dir": str(safe_output_dir),
                 "file_count": 0,
                 "transport_id": None,
                 "consumer_ids": [],
@@ -923,7 +968,7 @@ class MediasoupWSAdapter(SFUAdapter):
         connection = self._connections[key]
 
         try:
-            os.makedirs(output_dir, exist_ok=True)
+            os.makedirs(safe_output_dir, exist_ok=True)
         except OSError:
             pass
 
@@ -968,29 +1013,159 @@ class MediasoupWSAdapter(SFUAdapter):
         return {"recording_id": recording_id, "file_count": len(consumer_ids)}
 
     async def stop_recording(self, room_id: str) -> Optional[List[str]]:
-        """Stop recording and return file paths."""
-        info = self._recordings.pop(room_id, None)
+        """Stop recording, tear down recorder media, and return file paths."""
+        info = self._recordings.get(room_id)
         if info is None:
             return None
+
+        # The recorder uses a real recv transport and one consumer per audio
+        # producer. Removing only the local metadata leaks both resources on
+        # mediasoup. Tear them down before calculating the output paths; each
+        # request is best-effort so one stale consumer cannot prevent cleanup
+        # of the remaining transport.
+        teardown_complete = True
+        recorder_peer_id = info.get("recorder_peer_id")
+        if recorder_peer_id:
+            key = self._get_connection_key(room_id, str(recorder_peer_id))
+            connection = self._connections.get(key)
+            if connection is None:
+                teardown_complete = False
+            else:
+                failed_consumers: List[str] = []
+                for consumer_id in list(info.get("consumer_ids") or []):
+                    consumer_id = str(consumer_id)
+                    try:
+                        await self._request(
+                            connection,
+                            "closeConsumer",
+                            {"consumerId": consumer_id},
+                        )
+                    except Exception as exc:
+                        teardown_complete = False
+                        failed_consumers.append(consumer_id)
+                        logger.debug(
+                            "Failed to close recorder consumer %s in room %s: %s",
+                            consumer_id,
+                            room_id,
+                            exc,
+                        )
+                    else:
+                        # Only remove local state after the SFU confirms the
+                        # close. Failed resources remain retryable.
+                        connection.consumers.pop(consumer_id, None)
+                info["consumer_ids"] = failed_consumers
+
+                transport_id = info.get("transport_id")
+                if transport_id:
+                    transport_id = str(transport_id)
+                    try:
+                        await self._request(
+                            connection,
+                            "closeWebRtcTransport",
+                            {"transportId": transport_id},
+                        )
+                    except Exception as exc:
+                        teardown_complete = False
+                        logger.debug(
+                            "Failed to close recorder transport %s in room %s: %s",
+                            transport_id,
+                            room_id,
+                            exc,
+                        )
+                    else:
+                        # A successfully closed transport must not be retried.
+                        info["transport_id"] = None
+                        if connection.recv_transport_id == transport_id:
+                            connection.recv_transport_id = None
 
         filepaths: List[str] = []
         for idx in range(info.get("file_count", 0)):
             candidate = os.path.join(
-                info["output_dir"],
-                f"{info['recording_id']}_track_{idx}.webm",
+                str(
+                    ensure_within_recording_dir(
+                        os.path.join(
+                            info["output_dir"],
+                            f"{info['recording_id']}_track_{idx}.webm",
+                        ),
+                        info["output_dir"],
+                    )
+                ),
             )
             if os.path.isfile(candidate):
                 filepaths.append(candidate)
 
         if not filepaths:
-            fallback = os.path.join(info["output_dir"], f"{info['recording_id']}.webm")
+            fallback = str(
+                ensure_within_recording_dir(
+                    os.path.join(info["output_dir"], f"{info['recording_id']}.webm"),
+                    info["output_dir"],
+                )
+            )
             filepaths.append(fallback)
 
+        if teardown_complete:
+            self._recordings.pop(room_id, None)
+        else:
+            # Keep the metadata so shutdown or a later lifecycle callback can
+            # retry releasing resources instead of treating partial cleanup as
+            # complete.
+            logger.warning(
+                "Recording media teardown incomplete for room %s; retained for retry",
+                room_id,
+            )
         logger.info(f"Recording stopped for room {room_id}, files={len(filepaths)}")
         return filepaths
 
+    def _record_recording_teardown_failure(self, room_id: str, reason: str) -> None:
+        """Record unrecoverable recorder cleanup after a connection is closed."""
+        info = self._recordings.pop(room_id, None)
+        if info is None:
+            return
+        failures = getattr(self, "_recording_teardown_failures", None)
+        if failures is None:
+            failures = self._recording_teardown_failures = {}
+        failures[room_id] = {
+            "recording_id": info.get("recording_id"),
+            "consumer_ids": list(info.get("consumer_ids") or []),
+            "transport_id": info.get("transport_id"),
+            "reason": reason,
+            "failed_at": time.time(),
+        }
+        logger.error(
+            "Recorder teardown for room %s was incomplete at shutdown: %s",
+            room_id,
+            reason,
+        )
+
     async def close(self) -> None:
-        """Close all connections."""
+        """Stop active recordings and close all signaling connections."""
+        for room_id in list(self._recordings):
+            try:
+                await self.stop_recording(room_id)
+            except Exception as exc:
+                logger.debug(
+                    "Failed to stop mediasoup WebSocket recording for %s: %s",
+                    room_id,
+                    exc,
+                )
+            # Retry retained partial state, including unexpected exceptions,
+            # before the signaling connection is closed.
+            if room_id in self._recordings:
+                try:
+                    await self.stop_recording(room_id)
+                except Exception as exc:
+                    logger.debug(
+                        "Retry failed to stop mediasoup WebSocket recording for %s: %s",
+                        room_id,
+                        exc,
+                    )
+            if room_id in self._recordings:
+                # The connection will be closed below, so this state is no
+                # longer retryable. Preserve an explicit diagnostic instead.
+                self._record_recording_teardown_failure(
+                    room_id, "adapter closed before recorder teardown completed"
+                )
+
         for key in list(self._connections.keys()):
             connection = self._connections.pop(key, None)
             if connection and connection.websocket:
@@ -998,6 +1173,9 @@ class MediasoupWSAdapter(SFUAdapter):
                     await connection.websocket.close()
                 except Exception:
                     pass
+        self._connections.clear()
+        self._rooms.clear()
+        self._message_handlers.clear()
 
     def register_consumer_handler(
         self,

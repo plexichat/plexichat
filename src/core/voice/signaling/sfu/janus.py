@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Any
 import utils.logger as logger
 
 from ..exceptions import SFUConnectionError, SFUTimeoutError
+from .paths import resolve_recording_dir, safe_filename_component, stable_numeric_id
 from .base import (
     SFUAdapter,
     SFUTransport,
@@ -205,7 +206,7 @@ class JanusAdapter(SFUAdapter):
         self._janus_handles[room_id] = {"admin": handle_id}
 
         # Create VideoRoom
-        room_num = abs(hash(room_id)) % (10**9)  # Convert to numeric ID
+        room_num = stable_numeric_id(room_id, "room")  # Stable Janus numeric ID
 
         await self._send_message(
             session_id,
@@ -220,7 +221,7 @@ class JanusAdapter(SFUAdapter):
                 "audiocodec": "opus",
                 "videocodec": "vp8,h264",
                 "record": True,
-                "filename": f"/tmp/janus-recordings/{room_id}",
+                "filename": f"/tmp/janus-recordings/{safe_filename_component(room_id)}",
                 "acoustic_defense": self._acoustic_defense_to_dict(),
             },
         )
@@ -231,13 +232,15 @@ class JanusAdapter(SFUAdapter):
 
     async def close_room(self, room_id: str) -> bool:
         """Close a room on the Janus server."""
+        if room_id in self._janus_recordings:
+            await self.stop_recording(room_id)
         session_id = self._janus_sessions.get(room_id)
         if not session_id:
             return False
 
         handle_id = self._janus_handles.get(room_id, {}).get("admin")
         if handle_id:
-            room_num = abs(hash(room_id)) % (10**9)
+            room_num = stable_numeric_id(room_id, "room")
             await self._send_message(
                 session_id,
                 handle_id,
@@ -272,8 +275,8 @@ class JanusAdapter(SFUAdapter):
             self._janus_handles[room_id] = {}
         self._janus_handles[room_id][peer_id] = handle_id
 
-        room_num = abs(hash(room_id)) % (10**9)
-        peer_num = abs(hash(peer_id)) % (10**9)
+        room_num = stable_numeric_id(room_id, "room")
+        peer_num = stable_numeric_id(peer_id, "peer")
 
         # Join as publisher
         result = await self._send_message(
@@ -410,12 +413,12 @@ class JanusAdapter(SFUAdapter):
         # Create subscriber handle
         handle_id = await self._attach_plugin(session_id)
 
-        room_num = abs(hash(room_id)) % (10**9)
+        room_num = stable_numeric_id(room_id, "room")
 
         # Parse producer_id to get feed ID
         parts = producer_id.split("_")
         feed_peer = parts[0] if parts else producer_id
-        feed_num = abs(hash(feed_peer)) % (10**9)
+        feed_num = stable_numeric_id(feed_peer, "peer")
 
         # Join as subscriber
         await self._send_message(
@@ -507,7 +510,7 @@ class JanusAdapter(SFUAdapter):
         if not session_id or not handle_id:
             return None
 
-        room_num = abs(hash(room_id)) % (10**9)
+        room_num = stable_numeric_id(room_id, "room")
 
         result = await self._send_message(
             session_id,
@@ -562,10 +565,13 @@ class JanusAdapter(SFUAdapter):
                 f"Room {room_id} not found", backend="janus", url=self._api_url
             )
 
-        recording_id = f"janus_rec_{room_id}_{int(time.time())}"
+        safe_output_dir = resolve_recording_dir(output_dir)
+        recording_id = (
+            f"janus_rec_{safe_filename_component(room_id)}_{int(time.time())}"
+        )
         self._janus_recordings[room_id] = {
             "recording_id": recording_id,
-            "output_dir": output_dir,
+            "output_dir": str(safe_output_dir),
             "room_id": room_id,
         }
 
@@ -590,18 +596,19 @@ class JanusAdapter(SFUAdapter):
             return None
 
         info = self._janus_recordings.pop(room_id)
-        output_dir = info["output_dir"]
+        output_dir = str(resolve_recording_dir(info["output_dir"]))
+        safe_room = safe_filename_component(room_id)
 
         filepaths: List[str] = []
-        mjr_audio = os.path.join(output_dir, f"{room_id}-audio.mjr")
-        mjr_video = os.path.join(output_dir, f"{room_id}-video.mjr")
+        mjr_audio = os.path.join(output_dir, f"{safe_room}-audio.mjr")
+        mjr_video = os.path.join(output_dir, f"{safe_room}-video.mjr")
         if os.path.exists(mjr_audio):
             filepaths.append(mjr_audio)
         if os.path.exists(mjr_video):
             filepaths.append(mjr_video)
 
         if not filepaths:
-            filepaths.append(os.path.join(output_dir, f"{room_id}.mjr"))
+            filepaths.append(os.path.join(output_dir, f"{safe_room}.mjr"))
 
         logger.info(f"Stopped recording room {room_id}: {len(filepaths)} file(s)")
         return filepaths if filepaths else None
@@ -615,7 +622,15 @@ class JanusAdapter(SFUAdapter):
             return False
 
     async def close(self) -> None:
-        """Close the HTTP session and cleanup."""
+        """Stop active recordings, then close Janus sessions and HTTP state."""
+        # Stop recordings before destroying their Janus sessions so native
+        # recording metadata is drained rather than orphaned on shutdown.
+        for room_id in list(self._janus_recordings):
+            try:
+                await self.stop_recording(room_id)
+            except Exception as exc:
+                logger.debug("Failed to stop Janus recording for %s: %s", room_id, exc)
+
         # Destroy all sessions
         for room_id, session_id in list(self._janus_sessions.items()):
             try:
@@ -627,6 +642,8 @@ class JanusAdapter(SFUAdapter):
 
         self._janus_sessions.clear()
         self._janus_handles.clear()
+        self._producer_kinds.clear()
+        self._janus_recordings.clear()
 
         if self._session:
             await self._session.close()
