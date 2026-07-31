@@ -34,22 +34,40 @@ class ArtifactSubscriptionRegistry:
 
     def __init__(self) -> None:
         self._subs: Dict[int, Set[int]] = {}
+        # Track subscriptions by connection as well as user. A user may have
+        # multiple tabs, and disconnecting one tab must not revive or remove
+        # subscriptions belonging to another tab.
+        self._connection_subs: Dict[str, Set[int]] = {}
+        self._connection_users: Dict[str, int] = {}
         self._lock = threading.Lock()
 
-    def subscribe(self, user_id: int, artifact_id: int) -> None:
-        """Subscribe a user to an artifact."""
+    def subscribe(
+        self, user_id: int, artifact_id: int, connection_id: Optional[str] = None
+    ) -> None:
+        """Subscribe a user/connection to an artifact."""
         with self._lock:
             self._subs.setdefault(artifact_id, set()).add(user_id)
+            if connection_id:
+                self._connection_subs.setdefault(connection_id, set()).add(artifact_id)
+                self._connection_users[connection_id] = int(user_id)
 
-    def unsubscribe(self, user_id: int, artifact_id: int) -> None:
-        """Unsubscribe a user from an artifact."""
+    def unsubscribe(
+        self, user_id: int, artifact_id: int, connection_id: Optional[str] = None
+    ) -> None:
+        """Unsubscribe a user/connection from an artifact."""
         with self._lock:
             subs = self._subs.get(artifact_id)
-            if subs is None:
-                return
-            subs.discard(user_id)
-            if not subs:
-                self._subs.pop(artifact_id, None)
+            if subs is not None:
+                subs.discard(user_id)
+                if not subs:
+                    self._subs.pop(artifact_id, None)
+            if connection_id:
+                artifacts = self._connection_subs.get(connection_id)
+                if artifacts is not None:
+                    artifacts.discard(artifact_id)
+                    if not artifacts:
+                        self._connection_subs.pop(connection_id, None)
+                        self._connection_users.pop(connection_id, None)
 
     def get_subscribers(self, artifact_id: int) -> Set[int]:
         """Return the set of subscribed user_ids for an artifact (copy)."""
@@ -57,10 +75,41 @@ class ArtifactSubscriptionRegistry:
             return set(self._subs.get(artifact_id, set()))
 
     def unsubscribe_all(self, user_id: int) -> None:
-        """Remove a user from every artifact subscription (on disconnect)."""
+        """Remove a user from every artifact subscription."""
         with self._lock:
-            for subs in self._subs.values():
+            for artifact_id in list(self._subs):
+                subs = self._subs[artifact_id]
                 subs.discard(user_id)
+                if not subs:
+                    self._subs.pop(artifact_id, None)
+            for connection_id, artifacts in list(self._connection_subs.items()):
+                if self._connection_users.get(connection_id) == int(user_id):
+                    self._connection_subs.pop(connection_id, None)
+                    self._connection_users.pop(connection_id, None)
+
+    def unsubscribe_connection(
+        self, connection_id: str, user_id: Optional[int] = None
+    ) -> None:
+        """Remove exactly one connection's subscriptions on WebSocket close."""
+        with self._lock:
+            artifact_ids = self._connection_subs.pop(connection_id, set())
+            tracked_user_id = self._connection_users.pop(connection_id, None)
+            effective_user_id = user_id if user_id is not None else tracked_user_id
+            for artifact_id in artifact_ids:
+                subs = self._subs.get(artifact_id)
+                if subs is None:
+                    continue
+                if effective_user_id is not None:
+                    still_subscribed = any(
+                        artifact_id in other_artifacts
+                        and self._connection_users.get(other_connection)
+                        == int(effective_user_id)
+                        for other_connection, other_artifacts in self._connection_subs.items()
+                    )
+                    if not still_subscribed:
+                        subs.discard(int(effective_user_id))
+                if not subs:
+                    self._subs.pop(artifact_id, None)
 
 
 _artifact_subscription_registry = ArtifactSubscriptionRegistry()
@@ -97,6 +146,21 @@ async def relay_artifact_op(
         Number of connections the op was delivered to.
     """
     registry = get_artifact_subscription_registry()
+    # Subscriptions are only a routing hint. Revalidate the artifact and the
+    # recipient's current capability/scope before every relay so access changes
+    # take effect without waiting for a reconnect.
+    try:
+        import src.api as api
+        from src.core.artifacts.repository import get_artifact
+        from src.core.artifacts.capabilities import capability_allows_artifact
+
+        db = api.get_db()
+        artifact = get_artifact(db, artifact_id) if db is not None else None
+        if artifact is None or not capability_allows_artifact(artifact.artifact_type):
+            return 0
+    except Exception:
+        return 0
+
     subscribers = registry.get_subscribers(artifact_id)
     if exclude_user_id is not None:
         subscribers.discard(exclude_user_id)
@@ -117,7 +181,12 @@ async def relay_artifact_op(
     }
 
     sent = 0
+    from src.api.websocket.handlers.artifacts import ArtifactHandler
+
+    access_checker = ArtifactHandler()
     for conn in connections:
+        if not access_checker._has_artifact_access(conn, artifact, "artifact.view"):
+            continue
         if not (
             hasattr(conn, "is_selftest") and conn.is_selftest
         ) and not conn.check_rate_limit(dispatcher._rate_limit_per_minute):

@@ -329,6 +329,26 @@ def get_artifact_capabilities(
         }
 
 
+def artifact_type_capability(feature_type: Any) -> str:
+    """Return the capability name that gates an artifact type/value."""
+    value = getattr(feature_type, "value", feature_type)
+    return {
+        "whiteboard": "artifacts_whiteboard",
+        "plexiscribe": "plexiscribe",
+        "plexiscript": "plexiscript",
+    }.get(str(value), "artifacts")
+
+
+def capability_allows_artifact(
+    feature_type: Any, config: Optional[Dict[str, Any]] = None
+) -> bool:
+    """Return whether the artifact type is currently available."""
+    return (
+        get_capability(artifact_type_capability(feature_type), config).state
+        == CapabilityState.AVAILABLE
+    )
+
+
 def get_capability(
     feature: str, config: Optional[Dict[str, Any]] = None
 ) -> CapabilityInfo:
@@ -365,5 +385,7 @@ __all__ = [
     "CapabilityInfo",
     "get_artifact_capabilities",
     "get_capability",
+    "artifact_type_capability",
+    "capability_allows_artifact",
     "capability_to_dict",
 ]

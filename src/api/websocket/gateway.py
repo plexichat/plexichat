@@ -227,6 +227,17 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
                 connection.user_id, presence_module, dispatcher
             )
 
+        # Remove only this connection's artifact subscriptions. A user may
+        # have several tabs, so do not clear the user's other subscriptions.
+        try:
+            from .artifacts import get_artifact_subscription_registry
+
+            get_artifact_subscription_registry().unsubscribe_connection(
+                connection_id, connection.user_id
+            )
+        except Exception as exc:
+            logger.debug("Artifact subscription cleanup failed: %s", exc)
+
         connection.set_disconnected()
         session_manager.remove_connection(connection_id)
         logger.debug(f"Connection {connection_id} cleaned up")

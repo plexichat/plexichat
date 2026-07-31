@@ -90,8 +90,28 @@ def anonymize_user_artifacts(
         )
         owned_artifacts = []
 
+    # Use the artifact manager's media/cascade helpers rather than raw deletes.
+    # This keeps voice_calls, artifact_ops, and referenced media consistent
+    # with ordinary artifact deletion.
+    from src.core.artifacts.manager import ArtifactManager
+
+    artifact_manager = ArtifactManager(db, config)
+
     for row in owned_artifacts:
         artifact_id = row["id"]
+        # Anonymization deliberately keeps the artifact/media relationship
+        # intact: the documented policy preserves rows while removing the
+        # user's identity. Hard deletion owns media cleanup through the
+        # manager's cascade path below.
+        if not anonymize:
+            try:
+                owned = artifact_manager.get(artifact_id)
+                if owned is not None:
+                    artifact_manager._purge_artifact_media(owned)
+            except Exception as e:
+                logger.debug(
+                    "Failed to purge media for artifact %s: %s", artifact_id, e
+                )
         if anonymize:
             new_payload: Optional[str] = None
             if row.get("artifact_type") in ("transcript", "plexiscribe", "plexiscript"):
@@ -116,12 +136,8 @@ def anonymize_user_artifacts(
                 logger.error(f"Failed to anonymize artifact {artifact_id}: {e}")
         else:
             try:
-                db.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
-                db.execute(
-                    "DELETE FROM artifact_ops WHERE artifact_id = ?",
-                    (artifact_id,),
-                )
-                touched += 1
+                if artifact_manager.delete(artifact_id, purge_media=True):
+                    touched += 1
             except Exception as e:
                 logger.error(f"Failed to delete artifact {artifact_id}: {e}")
 
@@ -130,7 +146,7 @@ def anonymize_user_artifacts(
     try:
         voice_calls = db.fetch_all(
             """
-            SELECT id, initiator_id, consented_participants
+            SELECT id, artifact_id, initiator_id, consented_participants
             FROM voice_calls
             WHERE initiator_id = ?
                OR (consented_participants IS NOT NULL
@@ -166,7 +182,24 @@ def anonymize_user_artifacts(
                         ),
                     )
                 else:
-                    db.execute("DELETE FROM voice_calls WHERE id = ?", (call_id,))
+                    # The linked artifact cascade owns the voice_calls row.
+                    # If there is no linked artifact, remove the orphan row.
+                    linked = row.get("artifact_id")
+                    if linked:
+                        # The owned-artifact pass may already have cascaded this
+                        # voice_calls row. Only delete a still-existing linked
+                        # artifact; otherwise remove an orphan call directly.
+                        linked_artifact = artifact_manager.get(int(linked))
+                        if linked_artifact is not None:
+                            artifact_manager.delete(int(linked), purge_media=True)
+                        elif db.fetch_one(
+                            "SELECT id FROM voice_calls WHERE id = ?", (call_id,)
+                        ):
+                            db.execute(
+                                "DELETE FROM voice_calls WHERE id = ?", (call_id,)
+                            )
+                    else:
+                        db.execute("DELETE FROM voice_calls WHERE id = ?", (call_id,))
                 touched += 1
             elif new_consented != consented:
                 db.execute(

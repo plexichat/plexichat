@@ -447,7 +447,14 @@ class AzureSpeechProvider(TranscriptionProvider):
         self._locale: str = str(self._config.get("language", "en-US"))
         if self._locale in ("auto", ""):
             self._locale = "en-US"
-        self._sdk_module = importlib.util.find_spec("azure.cognitiveservices.speech")
+        try:
+            self._sdk_module = importlib.util.find_spec(
+                "azure.cognitiveservices.speech"
+            )
+        except ModuleNotFoundError:
+            # Optional SDK dependency: absence of the top-level azure package
+            # means the provider should fall back to its REST implementation.
+            self._sdk_module = None
 
     def is_available(self) -> bool:
         return bool(self._key)
@@ -461,7 +468,11 @@ class AzureSpeechProvider(TranscriptionProvider):
                 "(artifacts.voice.transcription.azure_key)."
             )
 
-        if self._sdk_module is not None:
+        # The SDK AudioConfig accepts a local filename, not a remote URL.
+        # Worker-resolved Azure recordings are HTTPS URLs, so use the REST
+        # batch API for those even when the optional SDK is installed.
+        is_remote_url = urlparse(recording_ref).scheme.lower() in {"http", "https"}
+        if self._sdk_module is not None and not is_remote_url:
             return await asyncio.to_thread(self._transcribe_sdk, recording_ref, opts)
         return await asyncio.to_thread(self._transcribe_rest, recording_ref, opts)
 

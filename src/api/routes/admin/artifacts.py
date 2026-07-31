@@ -52,16 +52,27 @@ async def admin_list_artifacts(request: Request) -> Dict[str, Any]:
             detail={"error": {"code": 403, "message": "Admin token required"}},
         )
 
-    limit = int(request.query_params.get("limit", 100))
-    offset = int(request.query_params.get("offset", 0))
+    try:
+        limit = int(request.query_params.get("limit", 100))
+        offset = int(request.query_params.get("offset", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid pagination"}},
+        )
+    if not 1 <= limit <= 200 or offset < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid pagination"}},
+        )
 
     try:
         manager = _get_manager()
-        artifacts = manager.list_with_filters(
-            filters={"limit": limit, "offset": offset}
-        )
+        filters = {"limit": limit, "offset": offset}
+        artifacts = manager.list_with_filters(filters=filters)
+        total = manager.count(filters)
         return {
-            "total": len(artifacts),
+            "total": total,
             "items": [
                 ArtifactResponse.model_validate(a).model_dump(mode="json")
                 for a in artifacts

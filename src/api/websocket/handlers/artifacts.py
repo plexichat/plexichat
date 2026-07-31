@@ -31,6 +31,7 @@ from src.api.websocket.artifacts import (
     send_artifact_sync,
 )
 from src.core.artifacts.repository import get_artifact
+from src.core.artifacts.capabilities import capability_allows_artifact
 
 if TYPE_CHECKING:
     from src.api.websocket.dispatcher import GatewayDispatcher
@@ -59,6 +60,10 @@ class ArtifactHandler:
         artifact must never implicitly grant mutation rights.
         """
         if not connection.user_id or artifact is None:
+            return False
+        if not capability_allows_artifact(
+            artifact.artifact_type, config.get("artifacts", {}) or {}
+        ):
             return False
 
         server_id = artifact.server_id
@@ -121,19 +126,23 @@ class ArtifactHandler:
         artifact = get_artifact(db, artifact_id) if db else None
 
         # RBAC: verify the caller has read access to the artifact's scope.
-        # A non-existent artifact is allowed as a placeholder subscription
-        # (the sync snapshot carries ``{"error": "not_found"}``), preserving
-        # the original create-then-subscribe flow. Real artifacts are gated.
-        if artifact is not None and not self._has_artifact_access(connection, artifact):
+        # Never register a subscription for an unknown artifact. Otherwise a
+        # later artifact with the same id could inherit an unauthorized stale
+        # subscription.
+        if artifact is None:
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+        if not self._has_artifact_access(connection, artifact):
             logger.debug(
                 f"User {connection.user_id} denied access to artifact {artifact_id}"
             )
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
-        self._registry.subscribe(connection.user_id, artifact_id)
+        self._registry.subscribe(
+            connection.user_id, artifact_id, connection.connection_id
+        )
         logger.debug(f"User {connection.user_id} subscribed to artifact {artifact_id}")
 
-        snapshot = artifact.payload if artifact else {"error": "not_found"}
+        snapshot = artifact.payload
 
         # Replay the artifact's persisted ops so a late joiner can catch up on
         # changes that happened while it was offline. The client may hint at
@@ -144,7 +153,7 @@ class ArtifactHandler:
             base_seq = int(base_seq)
         except (TypeError, ValueError):
             base_seq = 0
-        if artifact is not None and api.get_db() is not None:
+        if api.get_db() is not None:
             try:
                 from src.core.artifacts.manager import ArtifactManager
 
@@ -189,7 +198,9 @@ class ArtifactHandler:
         if not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
-        self._registry.unsubscribe(connection.user_id, artifact_id)
+        self._registry.unsubscribe(
+            connection.user_id, artifact_id, connection.connection_id
+        )
         logger.debug(
             f"User {connection.user_id} unsubscribed from artifact {artifact_id}"
         )
@@ -213,7 +224,15 @@ class ArtifactHandler:
         if artifact_id is None or not isinstance(op, dict):
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
-        if op.get("op_type") is None:
+        op_type = op.get("op_type")
+        if not isinstance(op_type, str) or not op_type or len(op_type) > 64:
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
+        try:
+            import json
+
+            if len(json.dumps(op, ensure_ascii=False).encode("utf-8")) > 256 * 1024:
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+        except (TypeError, ValueError):
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         try:
@@ -225,12 +244,11 @@ class ArtifactHandler:
         if not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
-        # An operation is relayed to the artifact's subscribers. For an existing
-        # artifact the caller must hold edit access; a non-existent artifact
-        # keeps the original placeholder semantics (ops fan out, nothing
-        # persists). The relay itself is what scopes delivery to subscribers.
-        artifact = get_artifact(api.get_db(), artifact_id) if api.get_db() else None
-        if artifact is not None and not self._has_artifact_access(
+        # The artifact must exist and the caller must have edit access. Do not
+        # relay operations against placeholder ids.
+        db = api.get_db()
+        artifact = get_artifact(db, artifact_id) if db else None
+        if artifact is None or not self._has_artifact_access(
             connection, artifact, "artifact.edit"
         ):
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
