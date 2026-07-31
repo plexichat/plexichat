@@ -622,7 +622,9 @@ class ArtifactsTester:
                 # without granting the ordinary subscriber admin permission.
                 conversation_id=self.ctx.test_conversation_id,
                 author_id=self.ctx.test_user_id or 1,
-                artifact_type=ArtifactType.WHITEBOARD,
+                # Use the base-gated upload type so this transport test is
+                # independent of optional whiteboard licensing/configuration.
+                artifact_type=ArtifactType.UPLOAD,
                 title=f"selftest-wss-{_ARTIFACTS_TEST_NONCE}",
                 summary="temporary WSS authorization fixture",
                 server_id=None,

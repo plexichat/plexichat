@@ -76,6 +76,83 @@ class TestJanusAdapter:
             assert room.id == "room_123"
 
     @pytest.mark.asyncio
+    async def test_create_room_uses_configured_recording_prefix(
+        self, mock_aiohttp_session, tmp_path
+    ):
+        """Native Janus recordings use the same configured root as the adapter."""
+        mock_session, mock_response = mock_aiohttp_session
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {"janus": "success"},
+            ]
+        )
+        configured = {"voice": {"recording": {"output_dir": str(tmp_path)}}}
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch(
+                "src.core.voice.signaling.sfu.janus.config.get",
+                return_value=configured,
+            ),
+            patch(
+                "src.core.voice.signaling.sfu.janus.resolve_recording_dir",
+                return_value=tmp_path,
+            ),
+        ):
+            adapter = JanusAdapter(api_url="http://localhost:8088/janus")
+            adapter._session = mock_session
+            await adapter.create_room("room_123")
+
+        create_payload = next(
+            call.kwargs["json"]
+            for call in mock_session.post.call_args_list
+            if call.kwargs.get("json", {}).get("body", {}).get("request") == "create"
+        )
+        filename = create_payload["body"]["filename"]
+        assert filename.startswith(str(tmp_path))
+        assert "/tmp/janus-recordings/" not in filename
+
+    @pytest.mark.asyncio
+    async def test_start_recording_rejects_mismatched_native_root(self, tmp_path):
+        adapter = JanusAdapter(api_url="http://localhost:8088/janus")
+        adapter._janus_sessions["room_123"] = 12345
+        native_root = tmp_path / "native"
+        requested_root = tmp_path / "other"
+        adapter._janus_recording_roots["room_123"] = str(native_root)
+
+        with patch(
+            "src.core.voice.signaling.sfu.janus.resolve_recording_dir",
+            return_value=requested_root,
+        ):
+            with pytest.raises(SFUConnectionError, match="must match"):
+                await adapter.start_recording("room_123", str(requested_root))
+
+    @pytest.mark.asyncio
+    async def test_attach_failure_cleans_up_created_session(self):
+        """A failed plugin attach must destroy the orphaned Janus session."""
+        adapter = JanusAdapter(api_url="http://localhost:8088/janus")
+        destroy = AsyncMock()
+        with (
+            patch.object(adapter, "_create_janus_session", return_value=12345),
+            patch.object(
+                adapter,
+                "_attach_plugin",
+                side_effect=SFUConnectionError(
+                    "attach failed", backend="janus", url=adapter._api_url
+                ),
+            ),
+            patch.object(adapter, "_request", destroy),
+        ):
+            with pytest.raises(SFUConnectionError, match="attach failed"):
+                await adapter.create_room("room_123")
+
+        assert "room_123" not in adapter._janus_sessions
+        assert "room_123" not in adapter._janus_handles
+        assert "room_123" not in adapter._janus_recording_roots
+        destroy.assert_awaited_once_with("/12345", {"janus": "destroy"})
+
+    @pytest.mark.asyncio
     async def test_close_room(self, mock_aiohttp_session):
         """Test closing a room."""
         mock_session, mock_response = mock_aiohttp_session
@@ -368,10 +445,15 @@ class TestJanusAdapter:
         """Test that Janus errors raise SFUConnectionError."""
         mock_session, mock_response = mock_aiohttp_session
         mock_response.json = AsyncMock(
-            return_value={
-                "janus": "error",
-                "error": {"code": 123, "reason": "Test error"},
-            }
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {
+                    "janus": "error",
+                    "error": {"code": 123, "reason": "Test error"},
+                },
+                {"janus": "success"},  # cleanup destroy
+            ]
         )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
@@ -380,6 +462,15 @@ class TestJanusAdapter:
 
             with pytest.raises(SFUConnectionError):
                 await adapter.create_room("room_123")
+
+            assert "room_123" not in adapter._janus_sessions
+            assert "room_123" not in adapter._janus_handles
+            assert "room_123" not in adapter._janus_recording_roots
+            assert any(
+                call.args[0].endswith("/12345")
+                and call.kwargs.get("json", {}).get("janus") == "destroy"
+                for call in mock_session.post.call_args_list
+            )
 
     @pytest.mark.asyncio
     async def test_get_router_capabilities(self, mock_aiohttp_session):
