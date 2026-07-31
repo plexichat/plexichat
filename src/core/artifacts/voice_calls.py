@@ -23,6 +23,7 @@ from .models import (
     VoiceCall,
 )
 from .manager import ArtifactManager
+from .capabilities import CapabilityState, get_capability
 from .repository import (
     create_voice_call,
     get_voice_call,
@@ -112,7 +113,13 @@ class VoiceCallManager(BaseManager):
         call_id = self._generate_id()
 
         artifact_id: Optional[SnowflakeID] = None
-        if self._artifact_manager is not None:
+        artifacts_capability = get_capability(
+            "artifacts", self._artifacts_config or config.get("artifacts", {}) or {}
+        )
+        if (
+            self._artifact_manager is not None
+            and artifacts_capability.state == CapabilityState.AVAILABLE
+        ):
             try:
                 recorded = self._allow_recording()
                 title = "Voice call"

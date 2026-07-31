@@ -21,8 +21,12 @@ loop at schedule time).
 """
 
 import asyncio
+import os
+import shutil
+import tempfile
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, BinaryIO, Dict, List, Optional, Tuple, cast
+from urllib.parse import urljoin, urlparse
 
 import utils.config as config
 import utils.logger as logger
@@ -60,18 +64,183 @@ def _capability_available() -> bool:
     return info.state == CapabilityState.AVAILABLE
 
 
-def _resolve_recording_ref(call_payload: Dict[str, Any]) -> Optional[str]:
-    """Pull a recording reference from the call payload.
+def _public_https_origin() -> Optional[str]:
+    """Return the configured public HTTPS origin used by remote providers."""
+    import os as _os
 
-    Recordings are stored as a reference (absolute path or media URL) under
-    ``recording_ref``. When absent we cannot transcribe.
-    """
-    if not isinstance(call_payload, dict):
+    origin = _os.environ.get("PLEXICHAT_PUBLIC_SERVER_URL")
+    if not origin:
+        try:
+            static_cfg = config.get("static_client", {}) or {}
+            injection = static_cfg.get("config_injection", {}) or {}
+            origin = injection.get("public_server_url")
+        except Exception:
+            origin = None
+    if not origin:
         return None
+    parsed = urlparse(str(origin).strip())
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        return None
+    return f"https://{parsed.netloc}"
+
+
+def _resolve_azure_recording_ref(
+    call_payload: Dict[str, Any],
+) -> Optional[str]:
+    """Resolve a call recording to an HTTPS URL Azure can fetch server-side."""
     ref = call_payload.get("recording_ref")
     if isinstance(ref, str) and ref:
-        return ref
-    return None
+        parsed = urlparse(ref)
+        if parsed.scheme.lower() == "https" and parsed.netloc:
+            return ref
+
+    file_id = call_payload.get("recording_file_id")
+    origin = _public_https_origin()
+    if not file_id or origin is None:
+        logger.warning(
+            "transcription: Azure requires a public HTTPS recording URL; "
+            "no usable URL is configured."
+        )
+        return None
+
+    try:
+        import src.api as api
+
+        media = api.get_media()
+        if media is None or not hasattr(media, "sign_url"):
+            return None
+        signed = media.sign_url(int(file_id))
+        signed_url = getattr(signed, "url", None)
+        if not isinstance(signed_url, str) or not signed_url:
+            return None
+        parsed = urlparse(signed_url)
+        if parsed.scheme.lower() == "https" and parsed.netloc:
+            return signed_url
+        return urljoin(origin + "/", signed_url.lstrip("/"))
+    except Exception as exc:
+        logger.warning(
+            "transcription: could not create Azure recording URL for file %s: %s",
+            file_id,
+            exc,
+        )
+        return None
+
+
+def _resolve_recording_ref(
+    call_payload: Dict[str, Any],
+    db: Any,
+    provider_name: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve a recording reference into the form a provider can consume.
+
+    ``RecordingManager`` stores both the media file id and the relative API URL.
+    Local Whisper and OpenAI require a local filesystem path, so materialize the
+    media object into a temporary file for those providers. Azure requires a
+    public HTTPS URL, so relative references are converted to signed URLs.
+    The returned second value is a temporary path to remove after transcription.
+    """
+    del db  # retained in the private signature for compatibility with callers
+    if not isinstance(call_payload, dict):
+        return None, None
+    ref = call_payload.get("recording_ref")
+    if not isinstance(ref, str) or not ref:
+        return None, None
+
+    if provider_name == "azure":
+        return _resolve_azure_recording_ref(call_payload), None
+    if os.path.isfile(ref):
+        return ref, None
+
+    file_id = call_payload.get("recording_file_id")
+    if not file_id:
+        # Local Whisper/OpenAI cannot consume a relative API URL. Do not
+        # fail open into a provider error; the worker will skip this call.
+        return None, None
+
+    temporary_path: Optional[str] = None
+    try:
+        import src.api as api
+
+        media = api.get_media()
+        if media is None:
+            return None, None
+        suffix = ".bin"
+        stream = None
+        content_type = None
+        try:
+            get_stream = getattr(media, "get_file_stream", None)
+            if callable(get_stream):
+                raw_stream_result = get_stream(int(file_id))
+                if (
+                    not isinstance(raw_stream_result, (tuple, list))
+                    or len(raw_stream_result) != 3
+                ):
+                    raise TypeError("media.get_file_stream returned an invalid result")
+                stream_result = cast(Tuple[Any, Any, Any], raw_stream_result)
+                stream, _size, content_type = stream_result
+                if not hasattr(stream, "read"):
+                    stream = None
+        except Exception:
+            stream = None
+
+        if stream is not None:
+            stream = cast(BinaryIO, stream)
+            try:
+                if isinstance(content_type, str) and "/" in content_type:
+                    suffix = "." + content_type.rsplit("/", 1)[-1].split("+", 1)[0]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+                    temporary_path = handle.name
+                    try:
+                        shutil.copyfileobj(stream, handle)
+                    except Exception:
+                        try:
+                            os.unlink(temporary_path)
+                        except OSError:
+                            pass
+                        temporary_path = None
+                        raise
+                    return handle.name, handle.name
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
+
+        get_data = getattr(media, "get_file_data", None)
+        if not callable(get_data):
+            return None, None
+        raw_data_result = get_data(int(file_id))
+        if not isinstance(raw_data_result, (tuple, list)) or len(raw_data_result) != 2:
+            raise TypeError("media.get_file_data returned an invalid result")
+        data_result = cast(Tuple[Any, Any], raw_data_result)
+        data, content_type = data_result
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise TypeError("media.get_file_data returned non-binary data")
+        if isinstance(content_type, str) and "/" in content_type:
+            suffix = "." + content_type.rsplit("/", 1)[-1].split("+", 1)[0]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+            temporary_path = handle.name
+            try:
+                handle.write(bytes(data))
+            except Exception:
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
+                temporary_path = None
+                raise
+            return handle.name, handle.name
+    except Exception as exc:
+        logger.warning(
+            "transcription: could not materialize recording file %s: %s",
+            file_id,
+            exc,
+        )
+        if temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+        return None, None
 
 
 def _consent_allows(call: Any) -> bool:
@@ -180,11 +349,6 @@ async def transcribe_call(
         # The voice_calls row also carries a payload shadow; the manager stores it
         # on the linked artifact, so prefer that.
 
-        recording_ref = _resolve_recording_ref(call_payload)
-        if recording_ref is None:
-            logger.warning(f"transcription: call {call_id} has no recording_ref; skip.")
-            return None
-
         provider = get_transcription_provider(transcription_cfg)
         if not provider.is_available():
             logger.warning(
@@ -192,12 +356,28 @@ async def transcribe_call(
             )
             return None
 
+        recording_ref, temporary_ref = _resolve_recording_ref(
+            call_payload,
+            db,
+            str(transcription_cfg.get("provider", "local_whisper")),
+        )
+        if recording_ref is None:
+            logger.warning(f"transcription: call {call_id} has no recording_ref; skip.")
+            return None
+
         opts: Dict[str, Any] = {
             "language": transcription_cfg.get("language", "auto"),
             "diarize": transcription_cfg.get("diarize", False),
         }
         logger.info(f"transcription: running provider for call {call_id}...")
-        result: TranscriptionResult = await provider.transcribe(recording_ref, opts)
+        try:
+            result: TranscriptionResult = await provider.transcribe(recording_ref, opts)
+        finally:
+            if temporary_ref:
+                try:
+                    os.unlink(temporary_ref)
+                except OSError:
+                    pass
 
         artifact_manager = ArtifactManager(db, config.get("artifacts", {}) or {})
         voice_manager = VoiceCallManager(

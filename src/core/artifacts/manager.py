@@ -147,6 +147,27 @@ class ArtifactManager(BaseManager):
         if self._db is None or server_id is None:
             raise ValueError("db and server_id are required")
         _set(self._db, server_id, retention_days)
+        # Existing artifacts that inherit retention (no explicit policy) must
+        # follow the new server override immediately. Explicit per-artifact
+        # policies remain authoritative.
+        inherited = (
+            self._db.fetch_all(
+                "SELECT id, created_at FROM artifacts "
+                "WHERE server_id = ? AND retention_policy IS NULL",
+                (server_id,),
+            )
+            or []
+        )
+        effective_days = self._resolve_retention_days(None, server_id)
+        for row in inherited:
+            self._db.execute(
+                "UPDATE artifacts SET expires_at = ?, updated_at = ? WHERE id = ?",
+                (
+                    self.compute_expires_at(effective_days, int(row["created_at"])),
+                    self._get_timestamp(),
+                    int(row["id"]),
+                ),
+            )
 
     # === CRUD ===
 
@@ -190,7 +211,9 @@ class ArtifactManager(BaseManager):
             expires_at=expires_at,
             license_feature=license_feature,
         )
-        return create_artifact(self._db, artifact)
+        created = create_artifact(self._db, artifact)
+        self._emit_lifecycle_event("create", created)
+        return created
 
     def get(self, artifact_id: SnowflakeID) -> Optional[Artifact]:
         """Fetch a single artifact by id."""
@@ -201,9 +224,28 @@ class ArtifactManager(BaseManager):
         artifact_id: SnowflakeID,
         **fields: Any,
     ) -> Optional[Artifact]:
-        """Update an artifact's mutable fields."""
+        """Update an artifact's mutable fields and retention deadline."""
+        existing = get_artifact(self._db, artifact_id)
+        if existing is None:
+            return None
+
+        # Retention is derived data. Recompute it whenever the policy changes;
+        # otherwise changing a policy leaves the old expiry in force forever.
+        if "retention_policy" in fields:
+            policy = fields["retention_policy"]
+            if policy is None:
+                fields["expires_at"] = None
+            else:
+                days = self._resolve_retention_days(policy, existing.server_id)
+                fields["expires_at"] = self.compute_expires_at(
+                    days, existing.created_at
+                )
+
         fields.setdefault("updated_at", self._get_timestamp())
-        return update_artifact(self._db, artifact_id, **fields)
+        updated = update_artifact(self._db, artifact_id, **fields)
+        if updated is not None:
+            self._emit_lifecycle_event("update", updated)
+        return updated
 
     def delete(self, artifact_id: SnowflakeID, purge_media: bool = True) -> bool:
         """Delete an artifact row plus its cascade-linked rows.
@@ -223,7 +265,56 @@ class ArtifactManager(BaseManager):
             artifact = None
         if artifact is not None and purge_media:
             self._purge_artifact_media(artifact)
-        return delete_artifact(self._db, artifact_id)
+        deleted = delete_artifact(self._db, artifact_id)
+        if deleted and artifact is not None:
+            self._emit_lifecycle_event("delete", artifact)
+        return deleted
+
+    def _emit_lifecycle_event(self, action: str, artifact: Artifact) -> None:
+        """Best-effort dispatch of a typed artifact lifecycle event."""
+        try:
+            from src.core import events
+            from src.core.events.models import Event
+            from src.core.events.types import EventType
+
+            if not events.is_setup():
+                return
+            event_type = {
+                "create": EventType.ARTIFACT_CREATE,
+                "update": EventType.ARTIFACT_UPDATE,
+                "delete": EventType.ARTIFACT_DELETE,
+            }[action]
+            event = Event(
+                event_type=event_type,
+                data={
+                    "artifact_id": str(artifact.id),
+                    "artifact_type": artifact.artifact_type.value,
+                    "status": artifact.status.value,
+                    "title": artifact.title,
+                },
+                server_id=artifact.server_id,
+                channel_id=artifact.channel_id,
+            )
+            user_ids = None
+            if artifact.conversation_id is not None:
+                import src.api as api_mod
+
+                messaging = api_mod.get_messaging()
+                if messaging is not None:
+                    user_ids = [
+                        int(uid)
+                        for uid in messaging.get_participant_ids(
+                            artifact.conversation_id
+                        )
+                    ]
+            events.dispatch(
+                event,
+                user_ids=user_ids,
+                server_id=(int(artifact.server_id) if artifact.server_id else None),
+                channel_id=(int(artifact.channel_id) if artifact.channel_id else None),
+            )
+        except Exception as exc:  # lifecycle events must not break persistence
+            logger.debug("Artifact lifecycle event failed: %s", exc)
 
     # === Collaborative ops log ===
 

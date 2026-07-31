@@ -315,6 +315,7 @@ def count_artifacts(db, filters: Optional[Dict[str, Any]] = None) -> int:
 
 # Op types that carry no durable document state and are never persisted.
 _TRANSIENT_OP_TYPES = {"cursor", "snapshot_request", "typing", "selection"}
+_MAX_ARTIFACT_OP_BYTES = 256 * 1024
 
 
 def _fetch_next_seq(db, artifact_id: SnowflakeID) -> int:
@@ -364,6 +365,20 @@ def append_artifact_op(
         data: JSON-serializable op payload.
     """
     if op_type in _TRANSIENT_OP_TYPES:
+        return None
+    try:
+        if (
+            len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+            > _MAX_ARTIFACT_OP_BYTES
+        ):
+            logger.warning(
+                "Artifact op rejected for %s: payload too large", artifact_id
+            )
+            return None
+    except (TypeError, ValueError):
+        logger.warning(
+            "Artifact op rejected for %s: payload is not JSON serializable", artifact_id
+        )
         return None
     if get_artifact(db, artifact_id) is None:
         return None
