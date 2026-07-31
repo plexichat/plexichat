@@ -201,10 +201,18 @@ class CoreMixin(EndpointTesterBase):
 
             traceback_data = None
             if not success and self.ctx.config.get("retry_on_failure", True):
+                # Preserve the original request shape on retry.  The previous
+                # retry dropped form fields, multipart files, and query params,
+                # so a retry could report a different failure (or mutate a
+                # resource with an incomplete body) than the request being
+                # diagnosed.
                 retry_resp = active_session.request(
                     method,
                     f"{self.ctx.base_url}{url_path}",
                     json=json_body,
+                    data=form_data if form_data else None,
+                    files=files,
+                    params=query_params,
                     headers={"X-Plexichat-SelfTest-Debug": "true"},
                     timeout=10,
                 )
