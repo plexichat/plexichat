@@ -9,7 +9,16 @@ authorization (previously always 403'd) and PATCH-style payload merging on
 import pytest
 from fastapi import HTTPException
 
-from src.api.routes.artifacts import _authorize_scope, _deep_merge_payload
+from src.api.routes.artifacts import _authorize_scope, _deep_merge_payload, router
+
+
+def test_literal_artifact_routes_precede_dynamic_route():
+    """Literal artifact subpaths must be declared before the base id route."""
+    names = [route.name for route in router.routes]
+    dynamic_index = names.index("get_artifact")
+    assert names.index("_convert_upload_impl") < dynamic_index
+    assert names.index("_export_artifact_impl") < dynamic_index
+    assert names.index("_list_artifact_ops_impl") < dynamic_index
 
 
 # === _authorize_scope: personal scope ===
