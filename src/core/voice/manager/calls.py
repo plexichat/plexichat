@@ -62,6 +62,11 @@ class CallLifecycleMixin(VoiceProtocol):
                     conversation_id=conversation_id,
                 )
                 logger.info(f"Started voice call {call.id} for channel {channel_id}")
+            else:
+                # Keep the persisted participant count in sync so consent
+                # gating can require every current participant, including a
+                # user joining after the call was created.
+                manager.add_participant(existing.id, user_id)
         except Exception as exc:
             logger.warning(
                 f"Failed to start voice call for channel {channel_id}: {exc}"
@@ -75,6 +80,19 @@ class CallLifecycleMixin(VoiceProtocol):
             existing = manager.get_active_by_channel(channel_id)
             if existing is None:
                 return
+            # Remove the departed identity before evaluating the remaining
+            # members. This ensures a later rejoin is treated as a new
+            # membership and must pass the consent gate again. Keep this hook
+            # optional so older/mock call managers still end calls normally.
+            remove_participant = getattr(manager, "remove_participant", None)
+            if callable(remove_participant):
+                try:
+                    remove_participant(existing.id, user_id)
+                except Exception as exc:
+                    logger.debug(
+                        f"Could not update call participant snapshot for "
+                        f"{existing.id}: {exc}"
+                    )
             remaining = self.get_channel_members(channel_id)
             if not remaining:
                 try:
@@ -89,8 +107,11 @@ class CallLifecycleMixin(VoiceProtocol):
                     logger.debug(
                         f"get_channel_user_count failed for {channel_id}: {exc}"
                     )
-                participant_ids = [user_id]
-                call = manager.end_call(existing.id, participant_ids=participant_ids)
+                # The departing user is the last live member, but the call's
+                # persisted participant_count is the historical count and must
+                # not be overwritten with one merely because this is the final
+                # leave event.
+                call = manager.end_call(existing.id)
                 logger.info(
                     f"Ended voice call {call.id} for channel {channel_id} "
                     f"({call.duration_seconds}s)"

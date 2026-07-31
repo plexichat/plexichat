@@ -50,6 +50,18 @@ class AcousticDefenseConfig:
     transient_release_ms: float = 5.0
     transient_ratio: float = 0.3
 
+    def __post_init__(self) -> None:
+        if self.jitter_ms_min < 0 or self.jitter_ms_max < 0:
+            raise ValueError("jitter bounds must be non-negative")
+        if self.jitter_ms_min > self.jitter_ms_max:
+            raise ValueError("jitter_ms_min cannot exceed jitter_ms_max")
+        if self.vad_silence_frames < 0:
+            raise ValueError("vad_silence_frames must be non-negative")
+        if self.transient_attack_ms < 0 or self.transient_release_ms < 0:
+            raise ValueError("transient timings must be non-negative")
+        if not 0 < self.transient_ratio <= 1:
+            raise ValueError("transient_ratio must be greater than 0 and at most 1")
+
 
 def _generate_noise_frame(
     sample_rate: int,
@@ -218,11 +230,21 @@ class AudioProcessingTrack:
         samples = list(frame.data)
 
         if self._config.transient_shaving:
-            attack_coeff = math.exp(
-                -1.0 / (self._config.transient_attack_ms / 1000.0 * self._sample_rate)
+            attack_coeff = (
+                1.0
+                if self._config.transient_attack_ms == 0
+                else math.exp(
+                    -1.0
+                    / (self._config.transient_attack_ms / 1000.0 * self._sample_rate)
+                )
             )
-            release_coeff = math.exp(
-                -1.0 / (self._config.transient_release_ms / 1000.0 * self._sample_rate)
+            release_coeff = (
+                1.0
+                if self._config.transient_release_ms == 0
+                else math.exp(
+                    -1.0
+                    / (self._config.transient_release_ms / 1000.0 * self._sample_rate)
+                )
             )
             samples = _apply_transient_shaving(
                 samples, attack_coeff, release_coeff, self._config.transient_ratio
@@ -235,7 +257,10 @@ class AudioProcessingTrack:
         if self._config.vad_gating and not has_speech:
             self._silence_frame_count += 1
             if self._silence_frame_count > self._config.vad_silence_frames:
-                return None
+                # Silence is not end-of-stream. Returning None from an aiortc
+                # track read signals EOF and permanently closes the track.
+                # Emit a silent frame instead while keeping the source alive.
+                samples = [0.0] * len(samples)
         else:
             self._silence_frame_count = 0
 
@@ -260,8 +285,15 @@ class AudioProcessingTrack:
             )
             jitter_samples = int(jitter_ms / 1000.0 * self._sample_rate)
             if jitter_samples > 0:
-                # Prepend a vectorised zero pad rather than building a list.
-                samples = np.zeros(jitter_samples, dtype=np.float64).tolist() + samples
+                # Keep the media timestamp/frame duration stable. A variable
+                # length frame breaks packetization; use a bounded in-frame
+                # shift instead of changing the sample count.
+                arr = np.asarray(samples, dtype=np.float64)
+                if arr.size:
+                    shift = min(jitter_samples, arr.size)
+                    samples = np.concatenate(
+                        (np.zeros(shift, dtype=np.float64), arr[:-shift])
+                    ).tolist()
 
         frame.data = samples
         return frame
