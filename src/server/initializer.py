@@ -58,6 +58,17 @@ def initialize_modules(
 
     try:
         migration_result = run_migrations(db)
+
+        # Ensure admin tables (including system_alerts) are created
+        # regardless of migration state — CREATE TABLE IF NOT EXISTS
+        # makes this safe to call on every startup.
+        try:
+            from src.core.admin.schema import create_admin_tables
+
+            create_admin_tables(db)
+        except Exception:
+            pass
+
         if migration_result["success"]:
             logger.info(
                 f"Migrations applied successfully: "
