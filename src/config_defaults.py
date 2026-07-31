@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-130"
+DEFAULT_VERSION = "a.1.0-131"
 
 # License feature flags used by the Artifacts system.
 # Checked at runtime via utils.licensing.has_feature(<name>).
@@ -16,6 +16,8 @@ ARTIFACTS_LICENSE_FEATURES = {
     "artifacts": "Master artifacts feature (any artifact type).",
     "artifacts_whiteboard": "Licensed multi-user live whiteboard artifacts.",
     "voice_transcription": "Licensed automatic voice-call transcription.",
+    "plexiscribe": "Licensed collaborative document editor (Plexiscribe).",
+    "plexiscript": "Licensed collaborative code editor (Plexiscript).",
 }
 
 
@@ -37,7 +39,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "version": version,
             "environment": "development",
         },
-        "server": {"host": "127.0.0.1", "port": 8000, "workers": 1, "reload": False},
+        "server": {"host": "127.0.0.1", "port": 8000, "reload": False},
         "logging": {
             "level": "DEBUG",
             "max_bytes": 10485760,  # 10MB
@@ -490,7 +492,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "voice": {
             "enabled": True,
-            "sfu_backend": "mediasoup",
+            "sfu_backend": "aiortc",
             "mediasoup_url": "https://localhost:4443",
             "janus_url": "http://localhost:8088/janus",
             "stun_urls": [
@@ -505,6 +507,22 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "turn_secret": "",
             "turn_ttl": 86400,
             "log_connections": False,
+            "acoustic_defense": {
+                "enabled": False,
+                "jitter_ms_min": 5.0,
+                "jitter_ms_max": 20.0,
+                "spectral_masking": True,
+                "spectral_mask_noise_db": -40.0,
+                "spectral_mask_low_hz": 1000.0,
+                "spectral_mask_high_hz": 8000.0,
+                "vad_gating": True,
+                "vad_speech_threshold": 0.02,
+                "vad_silence_frames": 3,
+                "transient_shaving": True,
+                "transient_attack_ms": 0.5,
+                "transient_release_ms": 5.0,
+                "transient_ratio": 0.3,
+            },
         },
         "search": {
             "enabled": True,
@@ -750,8 +768,18 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "default_retention_days": None,  # None = artifacts never expire by default
             "allow_per_server_override": True,
             "max_artifact_size_mb": 200,
-            "editor": {
+            "plexiscribe": {
                 "enabled": True,
+                "licensed_feature": "plexiscribe",
+                "max_document_size_mb": 100,
+                "max_participants": 50,
+                "native_format_version": 1,
+            },
+            "plexiscript": {
+                "enabled": True,
+                "licensed_feature": "plexiscript",
+                "max_file_size_kb": 2048,
+                "max_participants": 50,
                 "allowed_languages": [
                     "python",
                     "javascript",
@@ -764,8 +792,90 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                     "yaml",
                     "html",
                     "css",
+                    "cpp",
+                    "c",
+                    "java",
+                    "ruby",
+                    "php",
+                    "bash",
+                    "lua",
+                    "swift",
+                    "kotlin",
+                    "scala",
+                    "r",
+                    "dart",
+                    "graphql",
+                    "dockerfile",
+                    "makefile",
+                    "toml",
+                    "ini",
+                    "protobuf",
+                    "xml",
+                    "csv",
+                    "conf",
                 ],
-                "max_file_size_mb": 50,
+                "allowed_extensions": [
+                    ".py",
+                    ".js",
+                    ".ts",
+                    ".json",
+                    ".md",
+                    ".go",
+                    ".rs",
+                    ".sql",
+                    ".yaml",
+                    ".yml",
+                    ".html",
+                    ".htm",
+                    ".css",
+                    ".scss",
+                    ".less",
+                    ".cpp",
+                    ".c",
+                    ".h",
+                    ".hpp",
+                    ".java",
+                    ".rb",
+                    ".php",
+                    ".sh",
+                    ".bash",
+                    ".lua",
+                    ".swift",
+                    ".kt",
+                    ".scala",
+                    ".r",
+                    ".dart",
+                    ".graphql",
+                    ".dockerfile",
+                    ".makefile",
+                    ".toml",
+                    ".ini",
+                    ".proto",
+                    ".xml",
+                    ".csv",
+                    ".txt",
+                    ".env",
+                    ".cfg",
+                    ".conf",
+                    ".gitignore",
+                    ".editorconfig",
+                ],
+                "blocked_extensions": [
+                    ".exe",
+                    ".dll",
+                    ".dmg",
+                    ".pkg",
+                    ".bin",
+                    ".wasm",
+                    ".so",
+                    ".o",
+                    ".a",
+                    ".class",
+                    ".jar",
+                    ".pyc",
+                    ".pyo",
+                    ".elf",
+                ],
             },
             "whiteboard": {
                 "enabled": False,
@@ -773,9 +883,15 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "max_participants": 50,
                 "persist_ops": True,
                 "op_rate_per_sec": 30,
+                "native_format_version": 2,
             },
             "voice": {
                 "allow_recording": True,
+                "recording": {
+                    "output_dir": str(home_dir / "data" / "recordings"),
+                    "max_duration_minutes": 120,
+                    "format": "webm",
+                },
                 "transcription": {
                     "provider": "local_whisper",  # default; active only when enabled:True AND whisper present
                     "enabled": False,  # OFF until explicitly configured

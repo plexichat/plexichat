@@ -55,6 +55,10 @@ class CoreMixin(EndpointTesterBase):
             if not use_other and self.ctx.other_session:
                 active_session = self.ctx.other_session
 
+        # Artifact export endpoint requires a valid export_format query param
+        if "/artifacts/" in path and path.endswith("/export"):
+            query_params["export_format"] = "html"
+
         # Relationship POST (send friend request) should use OTHER session
         # since setup sends the request from other_user -> admin user
         if (
@@ -197,10 +201,18 @@ class CoreMixin(EndpointTesterBase):
 
             traceback_data = None
             if not success and self.ctx.config.get("retry_on_failure", True):
+                # Preserve the original request shape on retry.  The previous
+                # retry dropped form fields, multipart files, and query params,
+                # so a retry could report a different failure (or mutate a
+                # resource with an incomplete body) than the request being
+                # diagnosed.
                 retry_resp = active_session.request(
                     method,
                     f"{self.ctx.base_url}{url_path}",
                     json=json_body,
+                    data=form_data if form_data else None,
+                    files=files,
+                    params=query_params,
                     headers={"X-Plexichat-SelfTest-Debug": "true"},
                     timeout=10,
                 )

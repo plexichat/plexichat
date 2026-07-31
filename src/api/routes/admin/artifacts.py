@@ -18,7 +18,10 @@ from src.api.schemas.artifacts import (
     ServerRetentionRequest,
     ServerRetentionResponse,
 )
+from src.api.schemas.common import ErrorResponse
 
+
+ALLOWED_FEATURES = {"plexiscribe", "plexiscript", "plexiboard", "whiteboard", "voice"}
 
 router = APIRouter(prefix="/artifacts", tags=["Admin", "Artifacts"])
 
@@ -183,3 +186,64 @@ async def admin_set_server_retention(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
+
+
+@router.get(
+    "/features/{feature}",
+    summary="Get feature settings for a server",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not authorized"},
+    },
+)
+async def admin_get_feature_settings(
+    feature: str,
+    server_id: int,
+    request: Request,
+) -> Dict[str, Any]:
+    """Get per-server override settings for a feature."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    if feature not in ALLOWED_FEATURES:
+        raise HTTPException(status_code=400, detail=f"Unknown feature: {feature}")
+    manager = _get_manager()
+    settings = manager.get_feature_settings(server_id, feature)
+    return {"server_id": server_id, "feature": feature, "settings": settings}
+
+
+@router.post(
+    "/features/{feature}",
+    summary="Set feature settings for a server",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not authorized"},
+    },
+)
+async def admin_set_feature_settings(
+    feature: str,
+    body: Dict[str, Any],
+    request: Request,
+) -> Dict[str, Any]:
+    """Set per-server override settings for a feature.
+
+    Body should be: { "server_id": int, "settings": { "key": "value"|null } }
+    Pass null to clear a setting back to default.
+    """
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    if feature not in ALLOWED_FEATURES:
+        raise HTTPException(status_code=400, detail=f"Unknown feature: {feature}")
+
+    server_id = body.get("server_id")
+    settings = body.get("settings", {})
+    if server_id is None or not isinstance(settings, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {"code": 400, "message": "server_id and settings are required"}
+            },
+        )
+
+    manager = _get_manager()
+    result = manager.set_feature_settings_bulk(server_id, feature, settings)
+    return {"server_id": server_id, "feature": feature, "settings": result}

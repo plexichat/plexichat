@@ -5,10 +5,11 @@ import secrets
 from typing import Any, Dict, Optional
 
 import utils.logger as logger
+import utils.config as _cfg
 
 from ..exceptions import NotConnectedError, SDPError
 from ..models import SDPMessage, SDPType, SignalingState
-from ..sdp import parse_sdp, validate_sdp
+from ..sdp import parse_sdp, validate_sdp, SDPCodecConfig
 from ..sfu.base import TransportDirection
 
 
@@ -127,6 +128,7 @@ class SDPMixin:
         connection.last_activity = self._get_timestamp()
 
         bitrate = 64000
+        codec_cfg = SDPCodecConfig()
         if self._voice:
             channel = self._voice.get_voice_channel(channel_id, user_id)
             if not channel:
@@ -135,7 +137,28 @@ class SDPMixin:
                 )
                 raise NotConnectedError(f"Access denied to channel {channel_id}")
             bitrate = channel.bitrate
+            try:
+                voice_cfg = _cfg.get("voice", {}) or {}
+                codec_section = voice_cfg.get("codec", {}) or {}
+                if codec_section:
+                    codec_cfg = SDPCodecConfig(
+                        opus_fec=codec_section.get("opus_fec", True),
+                        opus_stereo=codec_section.get("opus_stereo", False),
+                        opus_dtx=codec_section.get("opus_dtx", False),
+                        opus_packet_loss_perc=codec_section.get(
+                            "opus_packet_loss_perc", 15
+                        ),
+                        opus_bitrate=codec_section.get("opus_bitrate", bitrate),
+                        opus_application=codec_section.get(
+                            "opus_application", "lowdelay"
+                        ),
+                        video_bitrate=codec_section.get("video_bitrate", 0),
+                        video_codec=codec_section.get("video_codec", "VP8"),
+                    )
+            except Exception:
+                pass
 
+        self._sdp_manipulator.set_codec_config(codec_cfg)
         modified_sdp = self._sdp_manipulator.set_bitrate(sdp, bitrate)
 
         try:
@@ -295,7 +318,16 @@ class SDPMixin:
                         lines.append(f"a=rtpmap:{fmt} {rtpmap}")
                 elif fmt == "111" and media_type == "audio":
                     lines.append("a=rtpmap:111 opus/48000/2")
-                    lines.append("a=fmtp:111 minptime=10;useinbandfec=1")
+                    cfg = self._sdp_manipulator._codec_config
+                    opus_params = (
+                        f"minptime=10;useinbandfec={'1' if cfg.opus_fec else '0'};"
+                        f"stereo={'1' if cfg.opus_stereo else '0'};"
+                        f"dtx={'1' if cfg.opus_dtx else '0'};"
+                        f"maxplaybackrate={cfg.opus_bitrate};"
+                        f"maxaveragebitrate={cfg.opus_bitrate};"
+                        f"ptime=20"
+                    )
+                    lines.append(f"a=fmtp:111 {opus_params}")
 
         return "\r\n".join(lines) + "\r\n"
 
@@ -387,6 +419,15 @@ class SDPMixin:
                         lines.append(f"a=rtpmap:{fmt} {rtpmap}")
                 elif fmt == "111" and media_type == "audio":
                     lines.append("a=rtpmap:111 opus/48000/2")
-                    lines.append("a=fmtp:111 minptime=10;useinbandfec=1")
+                    cfg = self._sdp_manipulator._codec_config
+                    opus_params = (
+                        f"minptime=10;useinbandfec={'1' if cfg.opus_fec else '0'};"
+                        f"stereo={'1' if cfg.opus_stereo else '0'};"
+                        f"dtx={'1' if cfg.opus_dtx else '0'};"
+                        f"maxplaybackrate={cfg.opus_bitrate};"
+                        f"maxaveragebitrate={cfg.opus_bitrate};"
+                        f"ptime=20"
+                    )
+                    lines.append(f"a=fmtp:111 {opus_params}")
 
         return "\r\n".join(lines) + "\r\n"

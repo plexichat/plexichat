@@ -21,10 +21,15 @@ That error is what the capability service turns into a ``misconfigured`` state,
 so the provider selection logic lives here and nowhere else.
 """
 
+import asyncio
 import importlib.util
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
+
+from src.utils.security import URLValidator
 
 
 @dataclass
@@ -117,6 +122,11 @@ class LocalWhisperProvider(TranscriptionProvider):
     attempted only when enabled in config/opts *and* a diarization library is
     installed; otherwise every segment is attributed to a single ``"unknown"``
     speaker.
+
+    ``is_available()`` caches the result of a lightweight import + model-size
+    validation. Once ``transcribe()`` succeeds the flag is permanently ``True``;
+    if importing the ``load_model`` attribute fails the flag flips to ``False``
+    so callers (including the capability service) get an accurate picture.
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -126,14 +136,15 @@ class LocalWhisperProvider(TranscriptionProvider):
         self._module_name: Optional[str] = _find_whisper_module()
         self._diarization_module: Optional[str] = None
         self._diarizer: Any = None
+        self._availability: Optional[bool] = None
+        self._model_lock = threading.Lock()
 
     def is_available(self) -> bool:
+        if self._availability is not None:
+            return self._availability
         if self._module_name is None:
+            self._availability = False
             return False
-        # Able to import does not guarantee able to *run*; the weighted model
-        # download/load is the expensive part and is performed lazily, but we
-        # still validate that the module is importable and the requested model
-        # size is a known value.
         valid_sizes = {
             "tiny",
             "tiny.en",
@@ -148,22 +159,48 @@ class LocalWhisperProvider(TranscriptionProvider):
             "large-v2",
             "large-v3",
         }
-        return self._model_size in valid_sizes
+        if self._model_size not in valid_sizes:
+            self._availability = False
+            return False
+        # Verify the module actually exposes load_model (lightweight, no weights).
+        try:
+            import importlib
+
+            whisper_mod = importlib.import_module(self._module_name)
+            if not hasattr(whisper_mod, "load_model"):
+                self._availability = False
+                return False
+        except Exception:
+            self._availability = False
+            return False
+        self._availability = True
+        return True
 
     def _ensure_model(self) -> Any:
         if self._model is not None:
             return self._model
         if self._module_name is None:
+            self._availability = False
             raise RuntimeError(
                 "Whisper is not installed. Install with: pip install openai-whisper"
             )
-        import importlib
+        # Guard against concurrent lazy loads when transcribe runs in executor
+        # threads (e.g. two calls transcribed at the same time).
+        with self._model_lock:
+            if self._model is not None:
+                return self._model
+            import importlib
 
-        whisper_mod = importlib.import_module(self._module_name)
-        # ``load_model`` downloads the weights on first use; this is the real
-        # runtime cost and deliberately happens here, not at import time.
-        self._model = whisper_mod.load_model(self._model_size)
-        return self._model
+            try:
+                whisper_mod = importlib.import_module(self._module_name)
+                # ``load_model`` downloads the weights on first use; this is the real
+                # runtime cost and deliberately happens here, not at import time.
+                self._model = whisper_mod.load_model(self._model_size)
+                self._availability = True
+                return self._model
+            except Exception:
+                self._availability = False
+                raise
 
     def _ensure_diarizer(self) -> Any:
         if self._diarizer is not None or self._diarization_module is not None:
@@ -190,16 +227,21 @@ class LocalWhisperProvider(TranscriptionProvider):
     async def transcribe(
         self, recording_ref: str, opts: Dict[str, Any]
     ) -> TranscriptionResult:
+        # Whisper's ``transcribe`` (and model loading / diarization) is CPU/GPU
+        # bound and synchronous. Run it in the default executor so the event
+        # loop is never blocked, which is especially important because the
+        # transcription worker schedules these off the request path.
+        return await asyncio.to_thread(self._transcribe_blocking, recording_ref, opts)
+
+    def _transcribe_blocking(
+        self, recording_ref: str, opts: Dict[str, Any]
+    ) -> TranscriptionResult:
         model = self._ensure_model()
         language = self._language(opts)
         decode_options: Dict[str, Any] = {"word_timestamps": True}
         if language and language != "auto":
             decode_options["language"] = language
 
-        # Whisper's ``transcribe`` is CPU/GPU bound and synchronous; we call it
-        # directly inside the task (the worker already runs it off the request
-        # path). The return includes ``segments`` with start/end (seconds) and
-        # ``text`` plus ``language``.
         result = model.transcribe(recording_ref, **decode_options)
         detected_language = str(result.get("language", language or "unknown"))
 
@@ -303,7 +345,13 @@ class OpenAIWhisperProvider(TranscriptionProvider):
                 "OpenAI transcription selected but no API key is configured "
                 "(artifacts.voice.transcription.openai_api_key)."
             )
+        # The multipart upload can take up to 600s; run it in the executor so
+        # the event loop is not blocked for the whole request.
+        return await asyncio.to_thread(self._transcribe_blocking, recording_ref, opts)
 
+    def _transcribe_blocking(
+        self, recording_ref: str, opts: Dict[str, Any]
+    ) -> TranscriptionResult:
         import os
 
         import requests
@@ -367,6 +415,22 @@ class OpenAIWhisperProvider(TranscriptionProvider):
         )
 
 
+def _validate_azure_content_url(value: str) -> str:
+    """Validate a URL before Azure is asked to fetch it.
+
+    Azure batch transcription dereferences ``contentUrls`` server-side.  Only
+    HTTPS URLs resolving to public addresses are accepted; local paths,
+    loopback/link-local/private targets, and non-HTTP schemes are rejected.
+    """
+    if not isinstance(value, str):
+        raise ValueError("Azure recording reference must be a URL")
+    parsed = urlparse(value)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise ValueError("Azure recording reference must be an HTTPS URL")
+    URLValidator().validate_url_for_request(value)
+    return value
+
+
 class AzureSpeechProvider(TranscriptionProvider):
     """Azure Cognitive Services Speech batch transcription.
 
@@ -398,8 +462,8 @@ class AzureSpeechProvider(TranscriptionProvider):
             )
 
         if self._sdk_module is not None:
-            return await self._transcribe_sdk(recording_ref, opts)
-        return await self._transcribe_rest(recording_ref, opts)
+            return await asyncio.to_thread(self._transcribe_sdk, recording_ref, opts)
+        return await asyncio.to_thread(self._transcribe_rest, recording_ref, opts)
 
     def _build_segments_from_results(
         self, phrases: List[Dict[str, Any]]
@@ -429,7 +493,7 @@ class AzureSpeechProvider(TranscriptionProvider):
             text=" ".join(text_parts),
         )
 
-    async def _transcribe_sdk(
+    def _transcribe_sdk(
         self, recording_ref: str, opts: Dict[str, Any]
     ) -> TranscriptionResult:
         if self._sdk_module is None:
@@ -481,7 +545,7 @@ class AzureSpeechProvider(TranscriptionProvider):
 
         return self._build_segments_from_results(phrases)
 
-    async def _transcribe_rest(
+    def _transcribe_rest(
         self, recording_ref: str, opts: Dict[str, Any]
     ) -> TranscriptionResult:
         import requests
@@ -497,10 +561,13 @@ class AzureSpeechProvider(TranscriptionProvider):
         locale = self._locale
         if opts.get("language"):
             locale = str(opts["language"])
+        # Azure fetches this URL from its own network. Never pass an
+        # attacker-controlled local/private URL through to the service.
+        safe_recording_ref = _validate_azure_content_url(recording_ref)
         definition = {
             "displayName": "plexichat-transcription",
             "locale": locale,
-            "contentUrls": [recording_ref],
+            "contentUrls": [safe_recording_ref],
             "properties": {
                 "wordLevelTimestampsEnabled": True,
                 "diarizationEnabled": self._wants_diarize(opts),
@@ -548,7 +615,10 @@ class AzureSpeechProvider(TranscriptionProvider):
         if not content_url:
             raise RuntimeError("Azure transcription content URL not found.")
 
-        content = requests.get(content_url, timeout=120)
+        # Validate provider-returned URLs too; this protects the follow-up
+        # download if a compromised/misconfigured response points elsewhere.
+        safe_content_url = _validate_azure_content_url(content_url)
+        content = requests.get(safe_content_url, timeout=120)
         if content.status_code != 200:
             raise RuntimeError("Azure transcription content download failed.")
         data = content.json()

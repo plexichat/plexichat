@@ -37,28 +37,60 @@ const api = async (p, o = {}) => {
 
 const ts = t => t ? new Date(t).toLocaleString() : '-';
 
+const relTime = unixSec => {
+    if (!unixSec) return '';
+    const diff = Math.abs(Date.now() / 1000 - unixSec);
+    if (diff < 60) return `${Math.floor(diff)}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+    return '';
+};
+
 const pageTitles = {
     dashboard:'Dashboard', users:'User Management', admins:'Admin Management', tickets:'Support Tickets',
     moderation:'Content Moderation', security:'Security', telemetry:'Telemetry & Performance',
     logs:'System Logs', database:'Database Management', approvals:'Approval Workflows',
     audit:'Audit Log', automod:'AutoMod', bots:'Bots', artifacts:'Artifacts', migrations:'Database Migrations',
+    alerts:'System Alerts',
     plexijoin:'PlexiJoin Federation', license:'License', account:'My Account'
 };
 
 // === TAB SYSTEM ===
 const showTab = n => {
+    // Handle compound hashes like 'approval-{id}' and 'user-{id}' —
+    // navigate to the parent tab and schedule a scroll-to after data loads.
+    let subTarget = null;
+    if (n.startsWith('approval-')) {
+        subTarget = n;
+        n = 'approvals';
+    } else if (n.startsWith('user-')) {
+        subTarget = n;
+        n = 'users';
+    }
+
     document.querySelectorAll('.sidebar-nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === n));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${n}`));
     currentTab = n;
     document.getElementById('page-title').textContent = pageTitles[n] || n;
-    window.location.hash = n;
+    _handlingHashChange = true;
+    try {
+        window.location.hash = subTarget || n;
+    } finally {
+        _handlingHashChange = false;
+    }
+    if (subTarget) {
+        const key = subTarget.startsWith('approval-') ? 'plexichat-approval-scroll' : 'plexichat-user-scroll';
+        sessionStorage.setItem(key, subTarget);
+    }
 
     const loads = {
         dashboard:'refreshMetrics', tickets:'loadTickets', users:'loadUsers', admins:'loadAdminUsers',
         moderation:'loadModeration', security:'loadSecurity', telemetry:'refreshTelemetryStats',
         logs:'loadLogs', database:'refreshDatabase', approvals:'loadApprovals', audit:'loadAuditLog',
         automod:'loadAutomodConfig', bots:'refreshAdminBots', artifacts:'renderArtifacts', migrations:'refreshMigrations',
-        plexijoin:'refreshPlexiJoin', license:'loadLicense', account:'loadAccount'
+        plexijoin:'refreshPlexiJoin', license:'loadLicense', account:'loadAccount',
+        alerts:'refreshAlerts'
     };
     if (loads[n]) { const fn = window[loads[n]]; if (fn) fn(); }
 };
@@ -91,6 +123,14 @@ document.addEventListener('click', e => {
     if (tabBtn) {
         e.preventDefault();
         showTab(tabBtn.dataset.tab);
+    }
+});
+
+// === KEYBOARD SHORTCUTS ===
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        const toast = document.body.querySelector('.toast');
+        if (toast) toast.querySelector('.toast-dismiss')?.click();
     }
 });
 
@@ -205,6 +245,8 @@ const actionHandlers = new Map([
     ['runRetentionPurge', runRetentionPurge],
     ['saveServerRetention', saveServerRetention],
     ['forceDeleteArtifact', forceDeleteArtifact],
+    ['revertTuning', revertTuning],
+    ['saveTuning', saveTuning],
 ]);
 document.addEventListener('click', e => {
     const btn = e.target.closest('[data-click]');
@@ -250,9 +292,117 @@ function updateOverview(d, s) {
     }
     setText('dash-last-updated', `Last updated: ${new Date().toLocaleTimeString()}`);
     setText('server-version', d.server_version || '');
+    updateWorkerHealth(d.worker_health);
+}
+
+function updateWorkerHealth(wh) {
+    if (!wh || !wh.enabled) {
+        const card = document.getElementById('worker-health-card');
+        if (card) card.style.display = 'none';
+        return;
+    }
+    const card = document.getElementById('worker-health-card');
+    if (card) card.style.display = '';
+    const status = wh.status || 'unknown';
+    const badge = document.getElementById('worker-health-badge');
+    if (badge) {
+        badge.textContent = status;
+        badge.className = 'badge ' + (
+            status === 'connected' ? 'badge-success' :
+            status === 'reconnecting' ? 'badge-warning' :
+            status === 'disconnected' ? 'badge-danger' : 'badge-outline'
+        );
+    }
+    setText('worker-id', wh.worker_id || '—');
+    setText('worker-status', status);
+    setText('worker-backoff', (wh.backoff_sec || 0).toFixed(1) + 's');
+    setText('worker-polls', (wh.poll_count || 0).toLocaleString());
+    setText('worker-running', wh.running ? 'Yes' : 'No');
+
+    // Tuning constants — populate editable inputs.
+    const t = wh.tuning;
+    if (t) {
+        const details = document.getElementById('worker-tuning-details');
+        if (details) details.style.display = '';
+        setInputVal('tuning-poll-interval', t.poll_interval_sec ?? 0);
+        setInputVal('tuning-heartbeat', t.heartbeat_interval_polls ?? 0);
+        setInputVal('tuning-max-backoff', t.max_backoff_sec ?? 0);
+        setInputVal('tuning-reset-polls', t.backoff_reset_after_polls ?? 0);
+        setInputVal('tuning-init-backoff', t.initial_backoff_sec ?? 0);
+        setInputVal('tuning-glide-timeout', t.glide_request_timeout_ms ?? 0);
+        setInputVal('tuning-heartbeat-alert', t.heartbeat_alert_interval_sec ?? 300);
+    } else {
+        const details = document.getElementById('worker-tuning-details');
+        if (details) details.style.display = 'none';
+    }
+
+    // Refresh the audit list and worker events (best-effort).
+    loadTuningAudit();
+    loadSystemAlerts({ hours: '24', limit: '30' });
 }
 
 const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+const setInputVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+const getInputVal = (id) => { const el = document.getElementById(id); return el ? parseFloat(el.value) || 0 : 0; };
+
+function showToast(message, type = 'info') {
+    // Only one toast at a time — replace any existing one.
+    const existing = document.body.querySelector('.toast');
+    if (existing) existing.remove();
+
+    const VALID_TYPES = { success: 1, warning: 1, error: 1, info: 1 };
+    const safe = type in VALID_TYPES ? type : 'info';
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${safe}`;
+
+    const msg = document.createElement('span');
+    msg.className = 'toast-message';
+    msg.textContent = message;
+    toast.appendChild(msg);
+
+    const dismiss = document.createElement('button');
+    dismiss.className = 'toast-dismiss';
+    dismiss.innerHTML = '&times;';
+    dismiss.setAttribute('aria-label', 'Dismiss');
+    toast.appendChild(dismiss);
+
+    // Warning and error toasts persist until dismissed — important
+    // messages shouldn't auto-vanish.  Success and info toasts get a
+    // progress bar and auto-dismiss after 3s.
+    const isPersistent = safe === 'warning' || safe === 'error';
+    let dismissTimer = null;
+
+    if (!isPersistent) {
+        const progress = document.createElement('div');
+        progress.className = 'toast-progress';
+        progress.innerHTML = '<div class="toast-progress-bar"></div>';
+        toast.appendChild(progress);
+    }
+
+    document.body.appendChild(toast);
+    // Trigger slide-in animation on the next frame.
+    requestAnimationFrame(() => toast.classList.add('toast-visible'));
+
+    if (!isPersistent) {
+        // Auto-dismiss after 3s.  Use transitionend to remove the
+        // element so the timing stays in sync with the CSS transition
+        // duration, with a safety timeout in case transitionend
+        // never fires.
+        dismissTimer = setTimeout(() => {
+            toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+            toast.classList.remove('toast-visible');
+            setTimeout(() => toast.remove(), 400);
+        }, 3000);
+    }
+
+    dismiss.addEventListener('click', () => {
+        if (dismissTimer !== null) clearTimeout(dismissTimer);
+        toast.classList.remove('toast-visible');
+        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+        setTimeout(() => toast.remove(), 400);
+    });
+}
 
 function renderChart(canvasId, type, data, options) {
     const ctx = document.getElementById(canvasId)?.getContext('2d');
@@ -335,6 +485,267 @@ function updateCharts(dash, stats) {
     }
 }
 
+async function revertTuning(btn) {
+    const valuesJson = btn.dataset.values;
+    if (!valuesJson || !confirm('Revert cross-worker tuning to these previous values?')) return;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Reverting...';
+
+    // Apply the revert first — display refresh is best-effort.
+    try {
+        const values = JSON.parse(decodeURIComponent(valuesJson));
+        await api('/api/v1/admin/dashboard/cross-worker-tuning', {
+            method: 'PATCH',
+            body: JSON.stringify(values),
+        });
+    } catch (e) {
+        showToast('Revert failed: ' + (e.message || 'Unknown error'), 'error');
+        btn.disabled = false;
+        btn.textContent = origText;
+        return;
+    }
+
+    // Revert succeeded — refresh the display.  updateWorkerHealth()
+    // calls loadTuningAudit() internally, so the audit list is
+    // refreshed automatically.
+    try {
+        const dash = await api('/api/v1/admin/dashboard');
+        updateWorkerHealth(dash.worker_health);
+        showToast('Tuning reverted successfully', 'success');
+    } catch {
+        // Dashboard fetch failed — restore the button since the
+        // audit list wasn't re-rendered (and thus the disabled
+        // button wasn't replaced).  The revert itself still took
+        // effect, so show a warning toast.
+        btn.disabled = false;
+        btn.textContent = origText;
+        showToast('Tuning reverted, but display refresh failed', 'warning');
+    }
+}
+
+async function saveTuning() {
+    const updates = {
+        poll_interval_sec: getInputVal('tuning-poll-interval'),
+        heartbeat_interval_polls: getInputVal('tuning-heartbeat'),
+        max_backoff_sec: getInputVal('tuning-max-backoff'),
+        backoff_reset_after_polls: getInputVal('tuning-reset-polls'),
+        initial_backoff_sec: getInputVal('tuning-init-backoff'),
+        glide_request_timeout_ms: getInputVal('tuning-glide-timeout'),
+        heartbeat_alert_interval_sec: getInputVal('tuning-heartbeat-alert'),
+    };
+    try {
+        await api('/api/v1/admin/dashboard/cross-worker-tuning', {
+            method: 'PATCH',
+            body: JSON.stringify(updates),
+        });
+        showToast('Tuning updated', 'success');
+        // Refresh the dashboard so the display and audit list are
+        // immediately current.
+        const dash = await api('/api/v1/admin/dashboard');
+        updateWorkerHealth(dash.worker_health);
+    } catch (e) {
+        showToast('Tuning update failed: ' + (e.message || 'Unknown error'), 'error');
+    }
+}
+
+async function loadTuningAudit() {
+    const list = document.getElementById('worker-audit-list');
+    if (!list) return;
+
+    // Show skeleton loader while the request is in flight.
+    list.innerHTML = [1, 2, 3].map(() =>
+        `<div class="skeleton-row" style="padding:4px 0;border-bottom:1px solid var(--border);">
+            <div class="skeleton-bar" style="width:30%;height:10px;margin-bottom:4px;"></div>
+            <div class="skeleton-bar" style="width:70%;height:8px;"></div>
+        </div>`
+    ).join('');
+
+    try {
+        const d = await api('/api/v1/admin/dashboard/cross-worker-tuning/audit?limit=10');
+        if (!d.entries || d.entries.length === 0) {
+            list.innerHTML = '<div class="text-xs text-muted">No tuning changes recorded.</div>';
+            return;
+        }
+        list.innerHTML = d.entries.map((e, i) => {
+            const timestamp = new Date(e.created_at).toLocaleString();
+            const details = e.details ? (() => {
+                try { return JSON.parse(e.details); } catch (_) { return null; }
+            })() : null;
+            // Extract old values for the revert button (all tuning keys are numeric
+            // so JSON.stringify is safe — no single-quote breakouts).
+            const oldValues = details
+                ? Object.fromEntries(Object.entries(details).map(([k, v]) => [k, v.old]))
+                : null;
+            const revertJson = oldValues ? encodeURIComponent(JSON.stringify(oldValues)) : '';
+            const changesHtml = details
+                ? Object.entries(details).map(([k, v]) =>
+                    `<span class="font-mono" style="white-space:nowrap;">${esc(k)}: ${esc(v.old)} → ${esc(v.new)}</span>`
+                ).join(', ')
+                : esc(e.details || '');
+            const revertBtn = oldValues
+                ? `<button class="btn btn-outline btn-sm" style="margin-left:8px;padding:0 6px;font-size:10px;" data-click="revertTuning" data-values="${revertJson}">Revert</button>`
+                : '';
+            return `<div style="padding:4px 0;font-size:11px;border-bottom:1px solid var(--border);${i === 0 ? 'border-top:1px solid var(--border);' : ''}">
+                <span style="font-weight:600;">${esc(e.username)}</span>
+                <span class="text-muted"> · ${timestamp}</span>
+                <span class="text-muted"> · ${esc(e.ip_address)}</span>
+                ${revertBtn}
+                <div style="margin-top:2px;color:var(--muted-foreground);">${changesHtml}</div>
+            </div>`;
+        }).join('');
+    } catch (_) {
+        list.innerHTML = '<div class="text-xs text-muted">Audit log unavailable.</div>';
+    }
+}
+
+async function refreshAlerts() {
+    const source = document.getElementById('alerts-source-filter')?.value || '';
+    const severity = document.getElementById('alerts-severity-filter')?.value || '';
+    const hours = document.getElementById('alerts-hours-filter')?.value || '168';
+    await loadSystemAlerts({ source, severity, hours });
+}
+
+async function loadSystemAlerts(opts = {}) {
+    const list = document.getElementById('alerts-full-list') || document.getElementById('system-alerts-list');
+    if (!list) return;
+
+    const params = new URLSearchParams({ limit: opts.limit || '100' });
+    params.set('hours', opts.hours || '168');
+    if (opts.source) params.set('source', opts.source);
+    if (opts.severity) params.set('severity', opts.severity);
+
+    const sinceHours = parseInt(opts.hours || '168', 10);
+    const sinceLabel = sinceHours >= 168 ? 'last 7d' : sinceHours >= 48 ? `last ${Math.round(sinceHours / 24)}d` : `last ${sinceHours}h`;
+
+    try {
+        const d = await api(`/api/v1/admin/dashboard/system-alerts?${params}`);
+
+        // Always update source counts (even when empty) so stale
+        // counts don't persist across filter changes.
+        const sourceCountsEl = document.getElementById('alerts-source-counts');
+        if (sourceCountsEl && d.entries) {
+            const srcCounts = {};
+            for (const e of d.entries) {
+                srcCounts[e.source] = (srcCounts[e.source] || 0) + 1;
+            }
+            const parts = Object.entries(srcCounts)
+                .sort((a, b) => b[1] - a[1])
+                .map(([k, v]) => {
+                    const srcColor = { cross_worker: 'var(--destructive, #ef4444)', valkey: 'var(--warning, #f59e0b)', db_pool: 'var(--warning, #f59e0b)', approvals: 'var(--success, #22c55e)', admin: 'var(--primary, #6366f1)' }[k] || 'inherit';
+                    return `<span class="source-count-chip" role="button" tabindex="0" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;color:${srcColor};" onclick="var s=document.getElementById('alerts-source-filter');if(s){s.value='${esc(k)}';refreshAlerts();}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Filter to ${esc(k)}">${esc(k)}: ${v}</span>`;
+                });
+            sourceCountsEl.innerHTML = parts.length ? parts.join('  ·  ') : '';
+        }
+
+        // Populate the header label with total count and time window.
+        // Only update when rendering into the full alerts tab list — the
+        // compact dashboard view passes different hours and would flicker
+        // the label with a mismatched time window.
+        const headerLabelEl = document.getElementById('alerts-header-label');
+        if (headerLabelEl && list.id === 'alerts-full-list') {
+            headerLabelEl.textContent = d.entries && d.entries.length ? `${d.entries.length} total · ${sinceLabel}` : `0 total · ${sinceLabel}`;
+        }
+
+        if (!d.entries || d.entries.length === 0) {
+            list.innerHTML = '<div class="text-xs text-muted">No system alerts recorded.</div>';
+            return;
+        }
+        // Build a summary bar showing counts by event_type.
+        const counts = {};
+        for (const e of d.entries) {
+            counts[e.event_type] = (counts[e.event_type] || 0) + 1;
+        }
+        const severityColor = {
+            dead: 'var(--destructive, #ef4444)',
+            disconnected: 'var(--destructive, #ef4444)',
+            reconnecting: 'var(--warning, #f59e0b)',
+            heartbeat: 'var(--success, #22c55e)',
+            connected: 'var(--success, #22c55e)',
+            started: 'var(--success, #22c55e)',
+            connection_failure: 'var(--destructive, #ef4444)',
+            high_utilization: 'var(--warning, #f59e0b)',
+            high_error_rate: 'var(--warning, #f59e0b)',
+            utilization_normal: 'var(--success, #22c55e)',
+            error_rate_normal: 'var(--success, #22c55e)',
+            approval_requested: 'var(--success, #22c55e)',
+            approval_voted: 'var(--success, #22c55e)',
+            approval_approved: 'var(--success, #22c55e)',
+            approval_rejected: 'var(--warning, #f59e0b)',
+            token_revoked: 'var(--warning, #f59e0b)',
+            token_unrevoked: 'var(--success, #22c55e)',
+            token_rotated: 'var(--success, #22c55e)',
+            user_sessions_killed: 'var(--warning, #f59e0b)',
+            user_suspended: 'var(--warning, #f59e0b)',
+            tier_changed: 'var(--success, #22c55e)',
+            user_purged: 'var(--destructive, #ef4444)',
+            global_session_purge: 'var(--destructive, #ef4444)',
+        };
+        const summary = Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([k, v]) => {
+                const color = severityColor[k] || 'inherit';
+                return `<span style="color:${color};font-weight:600;">${v} ${esc(k)}</span>`;
+            })
+            .join(', ');
+        const summaryHtml = `<div class="text-xs" style="padding:6px 0;margin-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;">
+            <span class="summary-toggle" role="button" tabindex="0" aria-expanded="true" style="cursor:pointer;user-select:none;white-space:nowrap;" onclick="var n=this.nextElementSibling;n.hidden=!n.hidden;this.textContent=(n.hidden?'▶':'▼')+' Summary (${sinceLabel})';this.setAttribute('aria-expanded',n.hidden?'false':'true');sessionStorage.setItem('plexichat-summary-collapsed',n.hidden?'1':'0');" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Toggle summary">▼ Summary (${sinceLabel})</span>
+            <span class="summary-items" style="color:var(--muted-foreground);">${summary}</span>
+        </div>`;
+
+        const severityBadge = {
+            info: 'badge-outline',
+            warning: 'badge-warning',
+            error: 'badge-danger',
+            critical: 'badge-danger',
+        };
+        const severityBorder = {
+            error: '3px solid var(--destructive, #ef4444)',
+            critical: '3px solid var(--destructive, #ef4444)',
+            warning: '3px solid var(--warning, #f59e0b)',
+        };
+        list.innerHTML = summaryHtml + d.entries.map((e, i) => {
+            const timestamp = new Date(e.created_at * 1000).toLocaleString();
+            const relativeTime = relTime(e.created_at);
+            const sev = severityBadge[e.severity] || 'badge-outline';
+            const detail = e.details
+                ? (() => { try { return JSON.parse(e.details); } catch (_) { return null; } })()
+                : null;
+            const extra = detail
+                ? Object.entries(detail)
+                    .map(([k, v]) => `${esc(k)}=${esc(String(v))}`)
+                    .join('  ')
+                : '';
+            const jump = e.target_path
+                ? `<a href="${esc(e.target_path)}" class="text-xs" style="margin-left:6px;color:var(--primary);">Jump →</a>`
+                : '';
+            const leftBorder = severityBorder[e.severity] || '';
+            return `<div style="padding:4px 0;padding-left:6px;font-size:11px;border-bottom:1px solid var(--border);${i === 0 ? 'border-top:1px solid var(--border);' : ''}${leftBorder ? `border-left:${leftBorder};` : ''}">
+                <span class="badge ${sev}" style="font-size:10px;">${esc(e.severity)}</span>
+                <span class="badge badge-outline" style="margin-left:4px;font-size:10px;">${esc(e.source)}</span>
+                <span style="margin-left:6px;font-weight:600;">${esc(e.event_type)}</span>
+                <span class="text-muted" style="margin-left:6px;">${timestamp}</span>
+                ${relativeTime ? `<span class="text-muted" style="margin-left:4px;font-size:10px;">${esc(relativeTime)}</span>` : ''}
+                ${jump}
+                ${extra ? `<div class="text-muted" style="margin-top:1px;font-size:10px;">${extra}</div>` : ''}
+            </div>`;
+        }).join('');
+
+        // Restore persisted summary collapse state after re-render.
+        if (sessionStorage.getItem('plexichat-summary-collapsed') === '1') {
+            const toggle = list.querySelector('.summary-toggle');
+            const items = list.querySelector('.summary-items');
+            if (toggle && items) {
+                items.hidden = true;
+                toggle.textContent = `▶ Summary (${sinceLabel})`;
+                toggle.setAttribute('aria-expanded', 'false');
+            }
+        }
+    } catch (_) {
+        list.innerHTML = '<div class="text-xs text-muted">System alerts unavailable.</div>';
+    }
+}
+
 function renderEndpointTable() {
     const tbody = document.getElementById('endpoints-tbody');
     if (!tbody) return;
@@ -384,7 +795,7 @@ async function refreshTelemetryHistory() {
 
 async function resetTelemetry() {
     if (!confirm('Reset all telemetry data?')) return;
-    try { await api('/api/v1/admin/telemetry/reset', {method:'POST'}); refreshMetrics(); } catch(e) { alert('Reset failed'); }
+    try { await api('/api/v1/admin/telemetry/reset', {method:'POST'}); refreshMetrics(); } catch(e) { showToast('Reset failed', 'error'); }
 }
 
 function openExport() { document.getElementById('export-modal').classList.add('active'); }
@@ -396,7 +807,7 @@ async function triggerDownload() {
         const d = await api(`/api/v1/admin/telemetry/export?format=${fmt}`);
         const blob = new Blob([typeof d === 'string' ? d : JSON.stringify(d, null, 2)], {type:'text/plain'});
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `telemetry.${fmt}`; a.click();
-    } catch(e) { alert('Export failed'); }
+    } catch(e) { showToast('Export failed', 'error'); }
     closeExport();
 }
 
@@ -428,7 +839,7 @@ async function viewTicket(btn) {
         document.getElementById('ticket-status-select').value = t.status;
         document.getElementById('ticket-detail').classList.remove('hidden');
         loadTicketNotes(id);
-    } catch(e) { alert('Failed to load ticket'); }
+    } catch(e) { showToast('Failed to load ticket', 'error'); }
 }
 
 function closeTicketDetail() { document.getElementById('ticket-detail').classList.add('hidden'); selectedTicketId = null; }
@@ -449,24 +860,29 @@ async function updateTicketStatus() {
     if (!selectedTicketId) return;
     const status = document.getElementById('ticket-status-select').value;
     if (status === selectedTicketStatus) return;
-    try { await api(`/api/v1/admin/tickets/${selectedTicketId}/status`, {method:'PATCH', body:JSON.stringify({status})}); viewTicket(selectedTicketId); } catch(e) { alert('Update failed'); }
+    try { await api(`/api/v1/admin/tickets/${selectedTicketId}/status`, {method:'PATCH', body:JSON.stringify({status})}); viewTicket(selectedTicketId); } catch(e) { showToast('Update failed', 'error'); }
 }
 
 async function addTicketNote() {
     const content = document.getElementById('new-note-input').value;
     if (!content || !selectedTicketId) return;
-    try { await api(`/api/v1/admin/tickets/${selectedTicketId}/notes`, {method:'POST', body:JSON.stringify({content})}); document.getElementById('new-note-input').value = ''; loadTicketNotes(selectedTicketId); } catch(e) { alert('Failed to add note'); }
+    try { await api(`/api/v1/admin/tickets/${selectedTicketId}/notes`, {method:'POST', body:JSON.stringify({content})}); document.getElementById('new-note-input').value = ''; loadTicketNotes(selectedTicketId); } catch(e) { showToast('Failed to add note', 'error'); }
 }
 
 // === USERS ===
 async function loadUsers() {
     try {
-        const q = document.getElementById('user-search-input')?.value || '';
+        // Bypass search filter when a deep-linked user target is pending —
+        // same pattern as approval status-filter bypass.
+        const userTarget = sessionStorage.getItem('plexichat-user-scroll');
+        const searchInput = document.getElementById('user-search-input');
+        const q = userTarget ? '' : (searchInput?.value || '');
+        if (userTarget && searchInput) searchInput.value = '';
         const url = q ? `/api/v1/admin/users/search?q=${encodeURIComponent(q)}` : '/api/v1/admin/users/search?q=';
         const d = await api(url);
         const users = d.users || [];
         document.getElementById('users-tbody').innerHTML = users.map(u => `
-            <tr>
+            <tr id="user-${esc(u.id)}">
                 <td><div style="display:flex;align-items:center;gap:8px;"><div style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:var(--secondary);font-size:12px;font-weight:600;">${esc((u.username||'?')[0].toUpperCase())}</div><div><span>${esc(u.username)}</span><div class="text-xs text-muted font-mono">${esc(u.id)}</div></div></div></td>
                 <td class="text-muted">${esc(u.email||'')}</td>
                 <td><span class="badge badge-primary">${esc(u.tier||'free')}</span></td>
@@ -476,6 +892,24 @@ async function loadUsers() {
             </tr>
         `).join('');
         document.getElementById('users-count').textContent = `Showing ${users.length} users`;
+
+        // Scroll to a specific user row if navigated via #user-{id}.
+        if (userTarget) {
+            sessionStorage.removeItem('plexichat-user-scroll');
+            const el = document.getElementById(userTarget);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                el.style.transition = 'background-color 2s ease-out';
+                el.style.backgroundColor = 'var(--warning, #fef3c7)';
+                requestAnimationFrame(() => {
+                    el.style.backgroundColor = 'transparent';
+                    setTimeout(() => {
+                        el.style.transition = '';
+                        el.style.backgroundColor = '';
+                    }, 2100);
+                });
+            }
+        }
     } catch(e) { console.error('Users load failed:', e); }
 }
 
@@ -512,7 +946,7 @@ async function manageUser(btn) {
         `;
         document.getElementById('user-tier-select').value = u.tier || 'free';
         loadTierCatalog();
-    } catch(e) { alert('Failed to load user'); }
+    } catch(e) { showToast('Failed to load user', 'error'); }
 }
 
 function closeUserDetail() { document.getElementById('user-detail-panel').innerHTML = ''; selectedUserId = null; }
@@ -527,40 +961,40 @@ async function loadTierCatalog() {
 async function updateUserTier() {
     if (!selectedUserId) return;
     const tier = document.getElementById('user-tier-select').value;
-    try { await api(`/api/v1/admin/users/${selectedUserId}/tier`, {method:'PUT', body:JSON.stringify({tier})}); alert('Tier updated'); } catch(e) { alert('Failed: '+e.message); }
+    try { await api(`/api/v1/admin/users/${selectedUserId}/tier`, {method:'PUT', body:JSON.stringify({tier})}); showToast('Tier updated', 'success'); } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function addUserBadge() {
     const badge = document.getElementById('new-badge-input')?.value;
     if (!badge || !selectedUserId) return;
-    try { await api(`/api/v1/admin/users/${selectedUserId}/badges/${encodeURIComponent(badge)}`, {method:'POST'}); manageUser(selectedUserId); } catch(e) { alert('Failed: '+e.message); }
+    try { await api(`/api/v1/admin/users/${selectedUserId}/badges/${encodeURIComponent(badge)}`, {method:'POST'}); manageUser(selectedUserId); } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function removeUserBadge(btn) {
     const badge = btn.dataset.val;
     if (!badge || !selectedUserId) return;
-    try { await api(`/api/v1/admin/users/${selectedUserId}/badges/${encodeURIComponent(badge)}`, {method:'DELETE'}); manageUser(selectedUserId); } catch(e) { alert('Failed: '+e.message); }
+    try { await api(`/api/v1/admin/users/${selectedUserId}/badges/${encodeURIComponent(badge)}`, {method:'DELETE'}); manageUser(selectedUserId); } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function suspendUser() {
     if (!selectedUserId) return;
-    try { await api(`/api/v1/admin/security/lock-user`, {method:'POST', body:JSON.stringify({user_id:selectedUserId})}); manageUser(selectedUserId); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/security/lock-user`, {method:'POST', body:JSON.stringify({user_id:selectedUserId})}); manageUser(selectedUserId); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function killUserSessions() {
     if (!selectedUserId) return;
-    try { await api('/api/v1/admin/security/force-logout', {method:'POST', body:JSON.stringify({user_id:selectedUserId})}); alert('Sessions killed'); } catch(e) { alert('Failed'); }
+    try { await api('/api/v1/admin/security/force-logout', {method:'POST', body:JSON.stringify({user_id:selectedUserId})}); showToast('Sessions killed', 'success'); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function forceUserRename() {
     if (!selectedUserId) return;
-    try { await api(`/api/v1/admin/users/${selectedUserId}/force-username-change`, {method:'POST'}); alert('Rename forced'); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/users/${selectedUserId}/force-username-change`, {method:'POST'}); showToast('Rename forced', 'success'); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function saveUserNotes() {
     const notes = document.getElementById('user-notes-input')?.value;
     if (!selectedUserId) return;
-    try { await api(`/api/v1/admin/users/${selectedUserId}/notes`, {method:'POST', body:JSON.stringify({notes})}); alert('Notes saved'); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/users/${selectedUserId}/notes`, {method:'POST', body:JSON.stringify({notes})}); showToast('Notes saved', 'success'); } catch(e) { showToast('Failed', 'error'); }
 }
 
 // === INNER TABS ===
@@ -592,12 +1026,12 @@ async function refreshDeletions() {
 
 async function cancelDeletion(btn) {
     if (!confirm('Cancel scheduled deletion?')) return;
-    try { await api(`/api/v1/admin/users/${btn.dataset.id}/cancel-deletion`, {method:'POST'}); refreshDeletions(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/users/${btn.dataset.id}/cancel-deletion`, {method:'POST'}); refreshDeletions(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function forcePurge(btn) {
     if (!confirm('IRREVERSIBLE: Permanently purge this user?')) return;
-    try { await api(`/api/v1/admin/users/${btn.dataset.id}/force-purge`, {method:'POST'}); refreshDeletions(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/users/${btn.dataset.id}/force-purge`, {method:'POST'}); refreshDeletions(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 // === SECURITY ===
@@ -691,27 +1125,27 @@ async function saveAccessTokenSettings() {
         expires_at: document.getElementById('access-token-detail-expires').value ? new Date(document.getElementById('access-token-detail-expires').value).toISOString() : null,
         scope_mode: document.getElementById('access-token-detail-scope-mode').value
     };
-    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}`, {method:'PATCH', body:JSON.stringify(body)}); alert('Saved'); loadAccessTokenDetail(selectedAccessTokenId); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}`, {method:'PATCH', body:JSON.stringify(body)}); showToast('Saved', 'success'); loadAccessTokenDetail(selectedAccessTokenId); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function clearAccessTokenExpiry() {
     if (!selectedAccessTokenId) return;
-    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}`, {method:'PATCH', body:JSON.stringify({expires_at:null})}); loadAccessTokenDetail(selectedAccessTokenId); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}`, {method:'PATCH', body:JSON.stringify({expires_at:null})}); loadAccessTokenDetail(selectedAccessTokenId); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function rotateAccessToken() {
     if (!selectedAccessTokenId || !confirm('Rotate this token? Old token will stop working.')) return;
-    try { const d = await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/rotate`, {method:'POST'}); document.getElementById('access-token-rotated').textContent = `New token: ${d.token || 'rotated'}`; } catch(e) { alert('Failed'); }
+    try { const d = await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/rotate`, {method:'POST'}); document.getElementById('access-token-rotated').textContent = `New token: ${d.token || 'rotated'}`; } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function revokeSelectedAccessToken() {
     if (!selectedAccessTokenId) return;
-    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/revoke`, {method:'POST'}); loadAccessTokenDetail(selectedAccessTokenId); loadSecurity(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/revoke`, {method:'POST'}); loadAccessTokenDetail(selectedAccessTokenId); loadSecurity(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function unrevokeSelectedAccessToken() {
     if (!selectedAccessTokenId) return;
-    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/unrevoke`, {method:'POST'}); loadAccessTokenDetail(selectedAccessTokenId); loadSecurity(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/unrevoke`, {method:'POST'}); loadAccessTokenDetail(selectedAccessTokenId); loadSecurity(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function addAccessTokenScope() {
@@ -719,32 +1153,32 @@ async function addAccessTokenScope() {
     const type = document.getElementById('access-token-scope-type').value;
     const value = document.getElementById('access-token-scope-value').value;
     if (!value) return;
-    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/scopes`, {method:'POST', body:JSON.stringify({scope_type:type, value})}); document.getElementById('access-token-scope-value').value = ''; loadAccessTokenDetail(selectedAccessTokenId); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/scopes`, {method:'POST', body:JSON.stringify({scope_type:type, value})}); document.getElementById('access-token-scope-value').value = ''; loadAccessTokenDetail(selectedAccessTokenId); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function removeAccessTokenScope(btn) {
     if (!selectedAccessTokenId) return;
-    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/scopes/${btn.dataset.id}`, {method:'DELETE'}); loadAccessTokenDetail(selectedAccessTokenId); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(selectedAccessTokenId)}/scopes/${btn.dataset.id}`, {method:'DELETE'}); loadAccessTokenDetail(selectedAccessTokenId); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function unblockIP(btn) {
-    try { await api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(btn.dataset.val)}`, {method:'DELETE'}); loadSecurity(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(btn.dataset.val)}`, {method:'DELETE'}); loadSecurity(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function removeBan(btn) {
-    try { await api(`/api/v1/admin/security/banned-usernames/${btn.dataset.id}`, {method:'DELETE'}); loadSecurity(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/security/banned-usernames/${btn.dataset.id}`, {method:'DELETE'}); loadSecurity(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function changeAdminPassword() {
     const cur = document.getElementById('admin-current-password').value;
     const nw = document.getElementById('admin-new-password').value;
     if (!cur || !nw) return;
-    try { await api('/api/v1/admin/auth/change-password', {method:'POST', body:JSON.stringify({current_password:cur, new_password:nw})}); alert('Password changed'); document.getElementById('admin-current-password').value = ''; document.getElementById('admin-new-password').value = ''; } catch(e) { alert('Failed: '+e.message); }
+    try { await api('/api/v1/admin/auth/change-password', {method:'POST', body:JSON.stringify({current_password:cur, new_password:nw})}); showToast('Password changed', 'success'); document.getElementById('admin-current-password').value = ''; document.getElementById('admin-new-password').value = ''; } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function beginAdminOtpSetup() {
     const pw = document.getElementById('admin-2fa-password').value;
-    if (!pw) { alert('Enter password first'); return; }
+    if (!pw) { showToast('Enter password first', 'warning'); return; }
     try {
         const d = await api('/api/v1/admin/auth/2fa/begin-setup', {method:'POST', body:JSON.stringify({password:pw})});
         adminOtpSetupChallenge = d.challenge_token;
@@ -752,7 +1186,7 @@ async function beginAdminOtpSetup() {
         qr.src = `/api/v1/qr?size=200x200&data=${encodeURIComponent(d.otp_qr_uri)}`;
         document.getElementById('admin-otp-secret').textContent = d.otp_secret;
         document.getElementById('admin-security-otp-setup').classList.remove('hidden');
-    } catch(e) { alert('Failed: '+e.message); }
+    } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function verifyAdminOtpSetup() {
@@ -764,8 +1198,8 @@ async function verifyAdminOtpSetup() {
         document.getElementById('admin-backup-codes-list').textContent = (bc.codes||[]).join('\n');
         document.getElementById('admin-backup-codes').classList.remove('hidden');
         document.getElementById('admin-security-otp-setup').classList.add('hidden');
-        alert('2FA enabled! Backup codes shown below. Store them safely.');
-    } catch(e) { alert('Failed: '+e.message); }
+        showToast('2FA enabled', 'success');
+    } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function regenerateAdminBackupCodes() {
@@ -773,13 +1207,13 @@ async function regenerateAdminBackupCodes() {
         const d = await api('/api/v1/admin/auth/2fa/regenerate-backup-codes', {method:'POST'});
         document.getElementById('admin-backup-codes-list').textContent = (d.codes||[]).join('\n');
         document.getElementById('admin-backup-codes').classList.remove('hidden');
-    } catch(e) { alert('Failed'); }
+    } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function disableAdminOtp() {
     const code = document.getElementById('admin-disable-otp-code').value;
     if (!code) return;
-    try { await api('/api/v1/admin/auth/2fa/disable', {method:'POST', body:JSON.stringify({code})}); alert('2FA disabled'); loadSecurity(); } catch(e) { alert('Failed'); }
+    try { await api('/api/v1/admin/auth/2fa/disable', {method:'POST', body:JSON.stringify({code})}); showToast('2FA disabled', 'success'); loadSecurity(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 function showBlockIPModal() { document.getElementById('block-ip-modal').classList.add('active'); }
@@ -789,7 +1223,7 @@ async function confirmBlockIP() {
     const reason = document.getElementById('block-ip-reason').value;
     const duration = document.getElementById('block-ip-duration').value;
     if (!ip) return;
-    try { await api('/api/v1/admin/security/block-ip', {method:'POST', body:JSON.stringify({ip_address:ip, reason, duration})}); closeBlockIPModal(); loadSecurity(); } catch(e) { alert('Failed'); }
+    try { await api('/api/v1/admin/security/block-ip', {method:'POST', body:JSON.stringify({ip_address:ip, reason, duration})}); closeBlockIPModal(); loadSecurity(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 function showBanUsernameModal() { document.getElementById('ban-username-modal').classList.add('active'); }
@@ -799,13 +1233,13 @@ async function confirmBanUsername() {
     const type = document.getElementById('ban-username-type').value;
     const reason = document.getElementById('ban-username-reason').value;
     if (!pattern) return;
-    try { await api('/api/v1/admin/security/banned-usernames', {method:'POST', body:JSON.stringify({pattern, is_regex: type==='regex', reason})}); closeBanUsernameModal(); loadSecurity(); } catch(e) { alert('Failed'); }
+    try { await api('/api/v1/admin/security/banned-usernames', {method:'POST', body:JSON.stringify({pattern, is_regex: type==='regex', reason})}); closeBanUsernameModal(); loadSecurity(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function globalSessionPurge() {
     if (!confirm('PURGE ALL USER SESSIONS? This will log out every user. Continue?')) return;
     if (!confirm('ARE YOU SURE? This cannot be undone easily.')) return;
-    try { await api('/api/v1/admin/security/logout-all', {method:'POST'}); alert('All sessions purged'); } catch(e) { alert('Failed'); }
+    try { await api('/api/v1/admin/security/logout-all', {method:'POST'}); showToast('All sessions purged', 'success'); } catch(e) { showToast('Failed', 'error'); }
 }
 
 // === ADMIN USERS ===
@@ -866,16 +1300,16 @@ async function saveAdminUser() {
             await api('/api/v1/admin/admin-users', {method:'POST', body:JSON.stringify({username, email, password, role})});
         }
         closeAdminUserModal(); loadAdminUsers();
-    } catch(e) { alert('Failed: '+e.message); }
+    } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function toggleAdminUserStatus(btn) {
-    try { await api(`/api/v1/admin/admin-users/${btn.dataset.id}/toggle-status`, {method:'POST'}); loadAdminUsers(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/admin-users/${btn.dataset.id}/toggle-status`, {method:'POST'}); loadAdminUsers(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function deleteAdminUser(btn) {
     if (!confirm('Delete this admin user?')) return;
-    try { await api(`/api/v1/admin/admin-users/${btn.dataset.id}`, {method:'DELETE'}); loadAdminUsers(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/admin-users/${btn.dataset.id}`, {method:'DELETE'}); loadAdminUsers(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 // === MODERATION ===
@@ -919,7 +1353,7 @@ function renderHashReports(reports) {
 }
 
 async function reviewHashReport(btn) {
-    try { await api(`/api/v1/admin/hash-reports/${btn.dataset.id}/review`, {method:'POST', body:JSON.stringify({action:btn.dataset.action})}); loadModeration(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/hash-reports/${btn.dataset.id}/review`, {method:'POST', body:JSON.stringify({action:btn.dataset.action})}); loadModeration(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 function refreshHashReports() { loadModeration(); }
@@ -928,11 +1362,11 @@ async function blockHash() {
     const hash = document.getElementById('block-hash-val')?.value;
     const reason = document.getElementById('block-hash-reason')?.value;
     if (!hash) return;
-    try { await api('/api/v1/admin/blocked-hashes', {method:'POST', body:JSON.stringify({hash_value:hash, reason})}); document.getElementById('block-hash-val').value = ''; document.getElementById('block-hash-reason').value = ''; loadModeration(); } catch(e) { alert('Failed'); }
+    try { await api('/api/v1/admin/blocked-hashes', {method:'POST', body:JSON.stringify({hash_value:hash, reason})}); document.getElementById('block-hash-val').value = ''; document.getElementById('block-hash-reason').value = ''; loadModeration(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function unblockHash(btn) {
-    try { await api(`/api/v1/admin/blocked-hashes/${encodeURIComponent(btn.dataset.val)}`, {method:'DELETE'}); loadModeration(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/blocked-hashes/${encodeURIComponent(btn.dataset.val)}`, {method:'DELETE'}); loadModeration(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function blockUser() {
@@ -940,11 +1374,11 @@ async function blockUser() {
     const reason = document.getElementById('block-user-reason')?.value;
     const duration = document.getElementById('block-user-duration')?.value;
     if (!id) return;
-    try { await api('/api/v1/admin/blocked-users', {method:'POST', body:JSON.stringify({user_id:id, reason, duration_hours:duration ? parseInt(duration) : null})}); document.getElementById('block-user-id').value = ''; document.getElementById('block-user-reason').value = ''; document.getElementById('block-user-duration').value = ''; loadModeration(); } catch(e) { alert('Failed'); }
+    try { await api('/api/v1/admin/blocked-users', {method:'POST', body:JSON.stringify({user_id:id, reason, duration_hours:duration ? parseInt(duration) : null})}); document.getElementById('block-user-id').value = ''; document.getElementById('block-user-reason').value = ''; document.getElementById('block-user-duration').value = ''; loadModeration(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function unblockUser(btn) {
-    try { await api(`/api/v1/admin/blocked-users/${btn.dataset.val}`, {method:'DELETE'}); loadModeration(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/blocked-users/${btn.dataset.val}`, {method:'DELETE'}); loadModeration(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function loadMessageReports() {
@@ -965,7 +1399,7 @@ async function loadMessageReports() {
 function refreshMessageReports() { loadMessageReports(); }
 
 async function reviewMessageReport(btn) {
-    try { await api(`/api/v1/admin/message-reports/${btn.dataset.id}/review`, {method:'POST', body:JSON.stringify({action:btn.dataset.action})}); loadMessageReports(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/message-reports/${btn.dataset.id}/review`, {method:'POST', body:JSON.stringify({action:btn.dataset.action})}); loadMessageReports(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function loadUserReports() {
@@ -986,7 +1420,7 @@ async function loadUserReports() {
 function refreshUserReports() { loadUserReports(); }
 
 async function reviewUserReport(btn) {
-    try { await api(`/api/v1/admin/user-reports/${btn.dataset.id}/review`, {method:'POST', body:JSON.stringify({action:btn.dataset.action})}); loadUserReports(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/user-reports/${btn.dataset.id}/review`, {method:'POST', body:JSON.stringify({action:btn.dataset.action})}); loadUserReports(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 function renderModCounts(id, counts) {
@@ -1046,7 +1480,7 @@ async function saveAutomodConfig() {
             }
         }
     };
-    try { await api('/api/v1/admin/automod/config', {method:'PUT', body:JSON.stringify(cfg)}); alert('Config saved'); } catch(e) { alert('Failed: '+e.message); }
+    try { await api('/api/v1/admin/automod/config', {method:'PUT', body:JSON.stringify(cfg)}); showToast('Config saved', 'success'); } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function loadAutomodRules() {
@@ -1058,13 +1492,13 @@ async function loadAutomodRules() {
             <tr><td>${esc(r.name)}</td><td>${esc(r.rule_type)}</td><td>${r.enabled ? '<span class="badge badge-success">On</span>' : '<span class="badge badge-danger">Off</span>'}</td><td>${esc(String(r.priority))}</td><td class="text-muted">${esc((r.actions||[]).map(a=>a.action_type).join(', '))}</td>
             <td class="text-right"><button class="btn btn-secondary btn-sm" data-click="editAutomodRule" data-id="${esc(r.id)}">Edit</button> <button class="btn btn-outline btn-sm" data-click="toggleAutomodRule" data-id="${esc(r.id)}" data-enabled="${r.enabled ? 'false' : 'true'}">${r.enabled ? 'Disable' : 'Enable'}</button> <button class="btn btn-danger btn-sm" data-click="deleteAutomodRule" data-id="${esc(r.id)}">Delete</button></td></tr>
         `).join('');
-    } catch(e) { alert('Failed'); }
+    } catch(e) { showToast('Failed', 'error'); }
 }
 
-async function saveAutomodRule() { alert('Rule save requires full implementation - use the API directly'); }
-async function editAutomodRule(btn) { alert('Edit rule #'+btn.dataset.id); }
-async function toggleAutomodRule(btn) { alert('Toggle rule #'+btn.dataset.id); }
-async function deleteAutomodRule(btn) { if (!confirm('Delete this rule?')) return; try { await api(`/api/v1/admin/automod/rules/${btn.dataset.id}`, {method:'DELETE'}); loadAutomodRules(); } catch(e) { alert('Failed'); } }
+async function saveAutomodRule() { showToast('Rule save requires full implementation - use the API directly', 'info'); }
+async function editAutomodRule(btn) { showToast('Edit rule #'+btn.dataset.id, 'info'); }
+async function toggleAutomodRule(btn) { showToast('Toggle rule #'+btn.dataset.id, 'info'); }
+async function deleteAutomodRule(btn) { if (!confirm('Delete this rule?')) return; try { await api(`/api/v1/admin/automod/rules/${btn.dataset.id}`, {method:'DELETE'}); loadAutomodRules(); } catch(e) { showToast('Failed', 'error'); } }
 function resetAutomodRule() {}
 function automodPresetDelete() { document.getElementById('automod-actions-json').value = JSON.stringify([{action_type:'delete_message'}], null, 2); }
 function automodPresetAlert() { document.getElementById('automod-actions-json').value = JSON.stringify([{action_type:'delete_message'},{action_type:'alert_moderators'}], null, 2); }
@@ -1117,7 +1551,7 @@ async function loadRoles() {
 async function createRole() {
     const name = prompt('Enter role name:'); if (!name) return;
     const desc = prompt('Enter description:'); if (!desc) return;
-    try { await api('/api/v1/admin/roles', {method:'POST', body:JSON.stringify({name, description, permissions:{}})}); loadRoles(); } catch(e) { alert('Failed: '+e.message); }
+    try { await api('/api/v1/admin/roles', {method:'POST', body:JSON.stringify({name, description, permissions:{}})}); loadRoles(); } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function editRole(btn) {
@@ -1129,50 +1563,74 @@ async function editRole(btn) {
         document.getElementById('role-detail').classList.remove('hidden');
         document.getElementById('role-detail').dataset.roleId = r.id;
         document.getElementById('role-detail').dataset.isSystem = r.is_system;
-    } catch(e) { alert('Failed: '+e.message); }
+    } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 function closeRoleDetail() { document.getElementById('role-detail').classList.add('hidden'); }
 
 async function updateRole() {
     const id = document.getElementById('role-detail').dataset.roleId;
-    if (document.getElementById('role-detail').dataset.isSystem === 'true') { alert('Cannot modify system roles'); return; }
+    if (document.getElementById('role-detail').dataset.isSystem === 'true') { showToast('Cannot modify system roles', 'error'); return; }
     let perms;
-    try { perms = JSON.parse(document.getElementById('role-permissions-input').value); } catch(e) { alert('Invalid JSON'); return; }
-    try { await api(`/api/v1/admin/roles/${id}`, {method:'PUT', body:JSON.stringify({description:document.getElementById('role-description-input').value, permissions:perms})}); closeRoleDetail(); loadRoles(); } catch(e) { alert('Failed: '+e.message); }
+    try { perms = JSON.parse(document.getElementById('role-permissions-input').value); } catch(e) { showToast('Invalid JSON', 'error'); return; }
+    try { await api(`/api/v1/admin/roles/${id}`, {method:'PUT', body:JSON.stringify({description:document.getElementById('role-description-input').value, permissions:perms})}); closeRoleDetail(); loadRoles(); } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function deleteRole() {
     const id = document.getElementById('role-detail').dataset.roleId;
-    if (document.getElementById('role-detail').dataset.isSystem === 'true') { alert('Cannot delete system roles'); return; }
+    if (document.getElementById('role-detail').dataset.isSystem === 'true') { showToast('Cannot delete system roles', 'error'); return; }
     if (!confirm('Delete this role?')) return;
-    try { await api(`/api/v1/admin/roles/${id}`, {method:'DELETE'}); closeRoleDetail(); loadRoles(); } catch(e) { alert('Failed: '+e.message); }
+    try { await api(`/api/v1/admin/roles/${id}`, {method:'DELETE'}); closeRoleDetail(); loadRoles(); } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 // === APPROVALS ===
 async function loadApprovals() {
     try {
-        const status = document.getElementById('approval-status-filter')?.value || '';
+        // Bypass the status filter when we have a specific scroll target
+        // pending — the operator explicitly asked to see this approval.
+        const pendingTarget = sessionStorage.getItem('plexichat-approval-scroll');
+        const status = pendingTarget ? '' : (document.getElementById('approval-status-filter')?.value || '');
         const url = status ? `/api/v1/admin/approvals?status=${status}` : '/api/v1/admin/approvals';
         const d = await api(url);
         document.getElementById('approvals-tbody').innerHTML = (d.approvals||[]).map(a => `
-            <tr><td class="font-mono">${esc(a.id)}</td><td>${esc(a.action_type)}</td><td>${esc(a.requested_by)}</td>
+            <tr id="approval-${esc(a.id)}"><td class="font-mono">${esc(a.id)}</td><td>${esc(a.action_type)}</td><td>${esc(a.requested_by)}</td>
             <td><span class="badge ${a.status==='approved'?'badge-success':a.status==='rejected'?'badge-danger':'badge-warning'}">${esc(a.status)}</span></td>
             <td>${a.current_approvals}/${a.required_approvals}</td><td class="text-muted">${ts(a.created_at)}</td>
             <td class="text-right">${a.status==='pending' ? `<button class="btn btn-primary btn-sm" data-click="approveRequest" data-id="${esc(a.id)}">Approve</button> <button class="btn btn-danger btn-sm" data-click="rejectRequest" data-id="${esc(a.id)}">Reject</button>` : '-'}</td></tr>
         `).join('');
+
+        // Scroll to a specific approval row if navigated via #approval-{id}.
+        const targetId = sessionStorage.getItem('plexichat-approval-scroll');
+        if (targetId) {
+            sessionStorage.removeItem('plexichat-approval-scroll');
+            const el = document.getElementById(targetId);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Highlight the row with a 2-second yellow fade so the
+                // operator can visually identify which row they landed on.
+                el.style.transition = 'background-color 2s ease-out';
+                el.style.backgroundColor = 'var(--warning, #fef3c7)';
+                requestAnimationFrame(() => {
+                    el.style.backgroundColor = 'transparent';
+                    setTimeout(() => {
+                        el.style.transition = '';
+                        el.style.backgroundColor = '';
+                    }, 2100);
+                });
+            }
+        }
     } catch(e) { console.error('Approvals load failed'); }
 }
 
 function refreshApprovals() { loadApprovals(); }
 
 async function approveRequest(btn) {
-    try { await api(`/api/v1/admin/approvals/${btn.dataset.id}/approve`, {method:'POST'}); loadApprovals(); } catch(e) { alert('Failed: '+e.message); }
+    try { await api(`/api/v1/admin/approvals/${btn.dataset.id}/approve`, {method:'POST'}); loadApprovals(); } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function rejectRequest(btn) {
     const reason = prompt('Rejection reason:'); if (!reason) return;
-    try { await api(`/api/v1/admin/approvals/${btn.dataset.id}/reject`, {method:'POST', body:JSON.stringify({decision:'reject', reason})}); loadApprovals(); } catch(e) { alert('Failed: '+e.message); }
+    try { await api(`/api/v1/admin/approvals/${btn.dataset.id}/reject`, {method:'POST', body:JSON.stringify({decision:'reject', reason})}); loadApprovals(); } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 // === DATABASE ===
@@ -1256,9 +1714,9 @@ async function confirmRunMigration() {
                 confirmation_text: currentMigration.is_irreversible && !currentMigration.dry_run ? document.getElementById('migration-confirmation-text')?.value : null
             })
         });
-        alert(currentMigration.dry_run ? 'Dry run completed' : 'Migration completed');
+        showToast(currentMigration.dry_run ? 'Dry run completed' : 'Migration completed', 'error');
         closeMigrationModal(); refreshMigrations();
-    } catch(e) { alert('Failed: '+(e.message||'Unknown')); }
+    } catch(e) { showToast('Failed: '+(e.message||'Unknown'), 'error'); }
     btn.disabled = false; btn.textContent = 'Run Migration';
 }
 
@@ -1279,7 +1737,7 @@ async function showMigrationDetails(btn) {
                 ${(d.logs||[]).length === 0 ? '<p class="text-muted">No logs</p>' : d.logs.map(l => `<div style="padding:2px 0;color:${l.level==='ERROR'?'var(--destructive)':l.level==='WARNING'?'var(--warning)':'var(--muted-foreground)'};">[${l.timestamp}] ${l.level}: ${esc(l.message)}</div>`).join('')}
             </div>`;
         document.getElementById('migration-details-modal').classList.add('active');
-    } catch(e) { alert('Failed to load details'); }
+    } catch(e) { showToast('Failed to load details', 'error'); }
 }
 
 function showEmergencyModal() { document.getElementById('migration-emergency-modal').classList.add('active'); }
@@ -1287,12 +1745,12 @@ function showEmergencyModal() { document.getElementById('migration-emergency-mod
 async function generateEmergencyToken() {
     const reason = document.getElementById('migration-emergency-reason').value;
     const expires = document.getElementById('migration-emergency-expires').value;
-    if (!reason) { alert('Enter a reason'); return; }
+    if (!reason) { showToast('Enter a reason', 'error'); return; }
     try {
         const d = await api('/api/v1/admin/migrations/emergency-override', {method:'POST', body:JSON.stringify({reason, expires_minutes:parseInt(expires)})});
-        alert(`Emergency token:\n\n${d.token}\n\nExpires: ${d.expires_at}`);
+        showToast(`Emergency token:\n\n${d.token}\n\nExpires: ${d.expires_at}`, 'info');
         closeMigrationModal();
-    } catch(e) { alert('Failed'); }
+    } catch(e) { showToast('Failed', 'error'); }
 }
 
 function closeMigrationModal() {
@@ -1354,7 +1812,7 @@ async function exportAuditLog() {
         const d = await api('/api/v1/admin/audit/logs/export?format=csv');
         const blob = new Blob([typeof d === 'string' ? d : JSON.stringify(d, null, 2)], {type:'text/csv'});
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'audit-log.csv'; a.click();
-    } catch(e) { alert('Export failed'); }
+    } catch(e) { showToast('Export failed', 'error'); }
 }
 
 // === PLEXIJOIN ===
@@ -1396,16 +1854,16 @@ async function confirmCreateConnection() {
     const name = document.getElementById('create-conn-name').value;
     const key = document.getElementById('create-conn-key').value;
     if (!url) return;
-    try { await api('/api/v1/admin/plexijoin/connections', {method:'POST', body:JSON.stringify({instance_url:url, display_name:name, api_key:key})}); closeCreateConnectionModal(); refreshPlexiJoin(); } catch(e) { alert('Failed'); }
+    try { await api('/api/v1/admin/plexijoin/connections', {method:'POST', body:JSON.stringify({instance_url:url, display_name:name, api_key:key})}); closeCreateConnectionModal(); refreshPlexiJoin(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function deleteConnection(btn) {
     if (!confirm('Delete this connection?')) return;
-    try { await api(`/api/v1/admin/plexijoin/connections/${btn.dataset.id}`, {method:'DELETE'}); refreshPlexiJoin(); } catch(e) { alert('Failed'); }
+    try { await api(`/api/v1/admin/plexijoin/connections/${btn.dataset.id}`, {method:'DELETE'}); refreshPlexiJoin(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function testConnection(btn) {
-    try { const d = await api(`/api/v1/admin/plexijoin/connections/${btn.dataset.id}/test`, {method:'POST'}); alert(d.message||'Connection test complete'); } catch(e) { alert('Test failed: '+e.message); }
+    try { const d = await api(`/api/v1/admin/plexijoin/connections/${btn.dataset.id}/test`, {method:'POST'}); showToast(d.message||'Connection test complete', 'error'); } catch(e) { showToast('Test failed: '+e.message, 'error'); }
 }
 
 // === LICENSE ===
@@ -1456,13 +1914,13 @@ async function loadLicense() {
 }
 
 async function reloadLicense() {
-    try { await api('/api/v1/admin/license/reload', {method:'POST'}); alert('License reloaded'); loadLicense(); } catch(e) { alert('Failed'); }
+    try { await api('/api/v1/admin/license/reload', {method:'POST'}); showToast('License reloaded', 'error'); loadLicense(); } catch(e) { showToast('Failed', 'error'); }
 }
 
 async function applyLicense() {
     const input = document.getElementById('license-apply-input');
     const key = input?.value?.trim();
-    if (!key) { alert('Paste a license key first'); return; }
+    if (!key) { showToast('Paste a license key first', 'error'); return; }
     const diffEl = document.getElementById('license-diff');
     try {
         const resp = await api('/api/v1/admin/license/apply', {
@@ -1506,7 +1964,7 @@ async function applyLicense() {
             diffEl.classList.remove('hidden');
         }
     } catch(e) {
-        alert('Failed to apply license: '+(e.message||e));
+        showToast('Failed to apply license: '+(e.message||e), 'error');
     }
 }
 
@@ -1530,7 +1988,7 @@ async function changeOwnPassword() {
     const cur = document.getElementById('account-current-password')?.value;
     const nw = document.getElementById('account-new-password')?.value;
     if (!cur || !nw) return;
-    try { await api('/api/v1/admin/auth/change-password', {method:'POST', body:JSON.stringify({current_password:cur, new_password:nw})}); alert('Password changed'); document.getElementById('account-current-password').value = ''; document.getElementById('account-new-password').value = ''; } catch(e) { alert('Failed: '+e.message); }
+    try { await api('/api/v1/admin/auth/change-password', {method:'POST', body:JSON.stringify({current_password:cur, new_password:nw})}); showToast('Password changed', 'success'); document.getElementById('account-current-password').value = ''; document.getElementById('account-new-password').value = ''; } catch(e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 // === LOGOUT ===
@@ -1565,6 +2023,7 @@ function artifactsStateLabel(state) {
 
 async function renderArtifacts() {
     await Promise.all([renderArtifactCapabilities(), renderArtifactList()]);
+    renderFeatureSettings();
 }
 
 async function renderArtifactCapabilities() {
@@ -1573,7 +2032,7 @@ async function renderArtifactCapabilities() {
         const container = document.getElementById('artifacts-capabilities');
         if (!container) return;
         const caps = d.capabilities || d;
-        const features = ['artifacts', 'artifacts_editor', 'artifacts_whiteboard', 'voice_transcription', 'voice_recording'];
+        const features = ['artifacts', 'plexiscribe', 'plexiscript', 'plexiboard', 'voice_transcription', 'voice_recording'];
         const rows = features.filter(f => caps[f]).map(f => {
             const info = caps[f];
             const detail = info.details ? ` — ${esc(info.details)}` : '';
@@ -1591,6 +2050,108 @@ async function renderArtifactCapabilities() {
         const container = document.getElementById('artifacts-capabilities');
         if (container) container.innerHTML = `<div class="artifacts-banner banner-misconfigured"><div class="artifacts-banner-msg">Failed to load capabilities: ${esc(e.message || 'unknown error')}</div></div>`;
     }
+}
+
+async function renderFeatureSettings() {
+  const container = document.getElementById('artifact-feature-settings');
+  if (!container) return;
+
+  const features = [
+    { key: 'plexiscribe', label: 'Plexiscribe', icon: 'ph-file-text', defaults: { max_participants: '50', max_document_size_mb: '100' } },
+    { key: 'plexiscript', label: 'Plexiscript', icon: 'ph-code-block', defaults: { max_participants: '50', max_file_size_kb: '2048' } },
+    { key: 'plexiboard', label: 'Plexiboard (Whiteboard)', icon: 'ph-chalkboard', defaults: { max_participants: '50' } },
+  ];
+
+  let html = '<h3>Per-Server Feature Overrides</h3><p>Set per-server overrides for artifact features. Leave blank to use defaults.</p>';
+  features.forEach(f => {
+    html += `
+      <div class="feature-settings-card">
+        <h4><i class="ph ${f.icon}"></i> ${f.label}</h4>
+        <form class="feature-settings-form" data-feature="${f.key}">
+          <div class="feature-setting-row">
+            <label>Server ID</label>
+            <input type="number" class="feature-server-id" placeholder="Server ID (e.g. 1001)" required>
+          </div>
+          <div class="feature-setting-row">
+            <label>Enabled (true/false)</label>
+            <input type="text" class="feature-enabled" placeholder="e.g. true" value="true">
+          </div>
+          ${Object.entries(f.defaults).map(([k, v]) => `
+            <div class="feature-setting-row">
+              <label>${k.replace(/_/g, ' ')}</label>
+              <input type="text" class="feature-setting-${k}" data-setting-key="${k}" placeholder="${v}" value="${v}">
+            </div>
+          `).join('')}
+          <button type="submit" class="btn btn-primary">Save Settings</button>
+          <div class="feature-settings-result"></div>
+        </form>
+        <div class="feature-current-settings">
+          <h5>Current Settings</h5>
+          <div class="feature-current-settings-data" data-feature="${f.key}">
+            <em>Enter a Server ID and click "Load" to see current settings.</em>
+          </div>
+          <button class="btn btn-secondary btn-load-settings" data-feature="${f.key}">Load Settings</button>
+        </div>
+      </div>
+    `;
+  });
+  container.innerHTML = html;
+
+  // Wire form submissions
+  container.querySelectorAll('.feature-settings-form').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const feature = form.dataset.feature;
+      const serverId = form.querySelector('.feature-server-id').value;
+      const settings = {};
+      form.querySelectorAll('input[type="text"]').forEach(input => {
+        if (!input.classList.contains('feature-server-id')) {
+          const key = input.dataset.settingKey;
+          settings[key] = input.value || null;
+        }
+      });
+      try {
+        const result = await api('/api/v1/admin/artifacts/features/' + feature, {
+          method: 'POST',
+          body: JSON.stringify({ server_id: Number(serverId), settings }),
+        });
+        const resultEl = form.querySelector('.feature-settings-result');
+        if (resultEl) {
+          resultEl.innerHTML = '<span class="text-success">Settings saved successfully.</span>';
+          resultEl.style.display = 'block';
+        }
+      } catch (err) {
+        console.error('Save error:', err);
+        const resultEl = form.querySelector('.feature-settings-result');
+        if (resultEl) {
+          resultEl.innerHTML = '<span class="text-error">Error saving settings: ' + (err.message || 'Unknown error') + '</span>';
+          resultEl.style.display = 'block';
+        }
+      }
+    });
+  });
+
+  // Wire load buttons
+  container.querySelectorAll('.btn-load-settings').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const feature = btn.dataset.feature;
+      const form = document.querySelector(`.feature-settings-form[data-feature="${feature}"]`);
+      const serverId = form ? form.querySelector('.feature-server-id').value : '';
+      if (!serverId) { showToast('Enter a Server ID first.', 'error'); return; }
+      try {
+        const result = await api('/api/v1/admin/artifacts/features/' + feature + '?server_id=' + serverId);
+        const dataEl = document.querySelector(`.feature-current-settings-data[data-feature="${feature}"]`);
+        if (dataEl && result.settings) {
+          dataEl.innerHTML = Object.entries(result.settings).map(([k, v]) =>
+            `<div class="setting-item"><strong>${k}:</strong> ${v || '<em>default</em>'}</div>`
+          ).join('') || '<em>No overrides (using defaults).</em>';
+        }
+      } catch (err) {
+        console.error('Save error:', err);
+        showToast('Failed to load settings: ' + (err.message || 'Unknown error'), 'error');
+      }
+    });
+  });
 }
 
 function formatExpires(artifact) {
@@ -1636,9 +2197,9 @@ async function renderArtifactList() {
 async function refreshArtifacts() {
     try {
         await renderArtifacts();
-        alert('Artifacts refreshed');
+        showToast('Artifacts refreshed', 'error');
     } catch (e) {
-        alert('Refresh failed: ' + (e.message || 'unknown error'));
+        showToast('Refresh failed: ' + (e.message || 'unknown error'), 'error');
     }
 }
 
@@ -1647,10 +2208,10 @@ async function forceDeleteArtifact(btn) {
     if (!confirm(`IRREVERSIBLE: Permanently delete artifact ${id}?`)) return;
     try {
         await api(`/api/v1/admin/artifacts/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        alert('Artifact deleted');
+        showToast('Artifact deleted', 'error');
         await renderArtifactList();
     } catch (e) {
-        alert('Failed: ' + (e.message || 'unknown error'));
+        showToast('Failed: ' + (e.message || 'unknown error'), 'error');
     }
 }
 
@@ -1658,10 +2219,10 @@ async function runRetentionPurge() {
     if (!confirm('Purge all artifacts whose retention window has expired?')) return;
     try {
         const d = await api('/api/v1/admin/artifacts/retention/purge', { method: 'POST' });
-        alert(`Retention purge complete — ${d.purged ?? 0} artifact(s) removed`);
+        showToast(`Retention purge complete — ${d.purged ?? 0} artifact(s) removed`, 'success');
         await renderArtifactList();
     } catch (e) {
-        alert('Purge failed: ' + (e.message || 'unknown error'));
+        showToast('Purge failed: ' + (e.message || 'unknown error'), 'error');
     }
 }
 
@@ -1673,26 +2234,42 @@ async function saveServerRetention(e) {
     if (!idEl || !daysEl) return;
     const serverId = idEl.value.trim();
     const daysRaw = daysEl.value.trim();
-    if (serverId === '') { alert('Server ID is required'); return; }
+    if (serverId === '') { showToast('Server ID is required', 'error'); return; }
     const body = { server_id: Number(serverId), retention_days: daysRaw === '' ? null : Number(daysRaw) };
-    if (Number.isNaN(body.server_id)) { alert('Server ID must be a number'); return; }
-    if (daysRaw !== '' && Number.isNaN(body.retention_days)) { alert('Retention days must be a number'); return; }
+    if (Number.isNaN(body.server_id)) { showToast('Server ID must be a number', 'error'); return; }
+    if (daysRaw !== '' && Number.isNaN(body.retention_days)) { showToast('Retention days must be a number', 'error'); return; }
     try {
         const d = await api('/api/v1/admin/artifacts/retention/server', { method: 'POST', body: JSON.stringify(body) });
         const effective = d.retention_days == null ? 'cleared (use global default)' : `${esc(d.retention_days)} days`;
         if (resultEl) resultEl.innerHTML = `<span style="color:var(--success);">Server ${esc(d.server_id)} override ${effective}.</span>`;
-        alert('Server retention override saved');
+        showToast('Server retention override saved', 'error');
         await renderArtifactList();
     } catch (err) {
         if (resultEl) resultEl.innerHTML = `<span style="color:var(--destructive);">Failed: ${esc(err.message || 'unknown error')}</span>`;
-        alert('Failed: ' + (err.message || 'unknown error'));
+        showToast('Failed: ' + (err.message || 'unknown error', 'error'));
     }
 }
+
+// === HASH-BASED NAVIGATION (back/forward buttons + bookmarks) ===
+let _handlingHashChange = false;
+window.addEventListener('hashchange', () => {
+    if (_handlingHashChange) return;
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    _handlingHashChange = true;
+    try {
+        // showTab already handles compound hashes like 'approval-{id}'.
+        showTab(hash);
+    } finally {
+        _handlingHashChange = false;
+    }
+});
 
 // === SIDEBAR TOGGLE INIT ===
 document.addEventListener('DOMContentLoaded', () => {
     const hash = window.location.hash.slice(1);
-    if (hash && pageTitles[hash]) showTab(hash);
+    const isKnownTab = hash && (pageTitles[hash] || hash.startsWith('approval-') || hash.startsWith('user-'));
+    if (isKnownTab) showTab(hash);
     else showTab('dashboard');
     refreshMetrics();
 

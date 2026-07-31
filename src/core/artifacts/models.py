@@ -23,6 +23,8 @@ class ArtifactType(Enum):
     FILE = "file"
     TRANSCRIPT = "transcript"
     FUTURE = "future"
+    PLEXISCRIBE = "plexiscribe"
+    PLEXISCRIPT = "plexiscript"
 
 
 class ArtifactStatus(Enum):

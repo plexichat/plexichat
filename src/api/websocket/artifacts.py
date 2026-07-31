@@ -166,6 +166,7 @@ async def send_artifact_sync(
     connection: Connection,
     artifact_id: int,
     snapshot: Dict[str, object],
+    ops: Optional[list] = None,
 ) -> bool:
     """
     Send an ARTIFACT_SYNC full snapshot to a single connection.
@@ -175,10 +176,15 @@ async def send_artifact_sync(
     only builds and emits the gateway payload through the connection's own
     send path, respecting its rate limit.
 
+    ``ops`` is an optional list of persisted operations (in ``seq`` order)
+    for late-joiner replay. Each entry is ``{seq, op_type, actor_id,
+    created_at, op}``.
+
     Args:
         connection: Target connection.
         artifact_id: Artifact the snapshot belongs to.
         snapshot: Full snapshot payload (caller-provided).
+        ops: Optional persisted ops to replay to the joiner.
 
     Returns:
         True if the frame was sent successfully.
@@ -196,6 +202,7 @@ async def send_artifact_sync(
         "d": {
             "artifact_id": int(artifact_id),
             "snapshot": snapshot,
+            "ops": ops or [],
         },
     }
     try:

@@ -196,27 +196,19 @@ class _UploadMixin:
             except Exception as e:
                 logger.warning(f"Fast dedup check failed: {e}")
 
-        # Malware scan
-        scan_status = ScanStatus.SKIPPED
-        scan_result = None
-        if self._scanner and self._scanner.is_available():
-            try:
-                scan_status, scan_result = self._scanner.scan_bytes(file_data)
-                if scan_status == ScanStatus.INFECTED:
-                    raise FileUploadError(f"Malware detected: {scan_result}", filename)
-            except Exception as e:
-                logger.warning(f"Scan failed: {e}")
-                scan_status = ScanStatus.ERROR
-                scan_result = str(e)
+        # Compression (submitted to threadpool to avoid blocking the request thread)
+        compression_future = None
+        if self._compression_manager and self._compression_manager.is_enabled():
+            compression_future = self._executor.submit(
+                self._compression_manager.compress, file_data, content_type
+            )
 
-        # Compression
+        # Collect compression result
         compressed_data = file_data
         compression_applied = False
-        if self._compression_manager and self._compression_manager.is_enabled():
+        if compression_future is not None:
             try:
-                compression_result = self._compression_manager.compress(
-                    file_data, content_type
-                )
+                compression_result = compression_future.result()
                 if compression_result.success and compression_result.data:
                     if compression_result.compressed_size < file_size:
                         compressed_data = compression_result.data
@@ -254,6 +246,7 @@ class _UploadMixin:
 
         metadata_json = json.dumps(metadata) if metadata else None
 
+        # Store file with scan_status=PENDING — scan runs in background
         self._db.execute(
             """INSERT INTO media_files
                (id, filename, original_filename, content_type, size, media_type,
@@ -273,10 +266,13 @@ class _UploadMixin:
                 user_id,
                 now,
                 metadata_json,
-                (scan_status.value if scan_status else ""),
-                scan_result,
+                ScanStatus.PENDING.value,
+                None,
             ),
         )
+
+        # Background malware scan — fire-and-forget
+        self._executor.submit(self._background_scan, file_id, file_data, user_id)
 
         # Background dedup registration (fire-and-forget)
         if dedup_result and self._dedup_manager is not None:
@@ -440,37 +436,36 @@ class _UploadMixin:
                 except Exception as e:
                     logger.warning(f"Fast dedup check failed: {e}")
 
-            # ── Fire-and-forget malware scan in parallel with compression ──
-            scan_future = None
-            if self._scanner and self._scanner.is_available():
-                if use_memory and file_data is not None:
-                    scan_future = self._executor.submit(
-                        self._scanner.scan_bytes, file_data
-                    )
-                else:
-                    assert temp_path is not None
-                    scan_future = self._executor.submit(
-                        self._scanner.scan_file, temp_path
-                    )
-
             # Load file_data for compression/metadata if not already in memory
             if file_data is None and file_size <= max_in_memory and temp_path:
                 with open(temp_path, "rb") as f:
                     file_data = f.read()
 
-            # Compression (CPU-bound)
-            final_data = None
-            compression_applied = False
+            # Compression (CPU-bound — submitted to threadpool)
+            compression_future = None
             if (
                 self._compression_manager
                 and self._compression_manager.is_enabled()
                 and file_size <= max_in_memory
                 and file_data is not None
             ):
+                compression_future = self._executor.submit(
+                    self._compression_manager.compress,
+                    file_data,
+                    content_type,
+                )
+
+            # Metadata extraction (CPU-bound)
+            metadata = self._extract_metadata(
+                file_data, filename, media_type, content_type, temp_path
+            )
+
+            # Collect compression result
+            final_data = None
+            compression_applied = False
+            if compression_future is not None:
                 try:
-                    compression_result = self._compression_manager.compress(
-                        file_data, content_type
-                    )
+                    compression_result = compression_future.result()
                     if compression_result.success and compression_result.data:
                         if compression_result.compressed_size < file_size:
                             final_data = compression_result.data
@@ -480,28 +475,6 @@ class _UploadMixin:
                                 media_type = self._detect_media_type(content_type)
                 except Exception as e:
                     logger.warning(f"Compression failed, using original: {e}")
-
-            # Metadata extraction (CPU-bound)
-            metadata = self._extract_metadata(
-                file_data, filename, media_type, content_type, temp_path
-            )
-
-            # Collect malware scan result (ran in parallel)
-            scan_status = ScanStatus.SKIPPED
-            scan_result = None
-            if scan_future is not None:
-                try:
-                    scan_status, scan_result = scan_future.result()
-                    if scan_status == ScanStatus.INFECTED:
-                        raise FileUploadError(
-                            f"Malware detected: {scan_result}", filename
-                        )
-                except FileUploadError:
-                    raise
-                except Exception as e:
-                    logger.warning(f"Scan failed: {e}")
-                    scan_status = ScanStatus.ERROR
-                    scan_result = str(e)
 
             # Storage
             stored_data_size = file_size
@@ -527,6 +500,7 @@ class _UploadMixin:
             now = self._get_timestamp()
             metadata_json = json.dumps(metadata) if metadata else None
 
+            # Store file with scan_status=PENDING — scan runs in background
             self._db.execute(
                 """INSERT INTO media_files
                    (id, filename, original_filename, content_type, size, media_type,
@@ -546,10 +520,16 @@ class _UploadMixin:
                     user_id,
                     now,
                     metadata_json,
-                    (scan_status.value if scan_status else ""),
-                    scan_result,
+                    ScanStatus.PENDING.value,
+                    None,
                 ),
             )
+
+            # Background malware scan — fire-and-forget
+            if file_data is not None:
+                self._executor.submit(
+                    self._background_scan, file_id, file_data, user_id
+                )
 
             # Background dedup registration
             if dedup_result and self._dedup_manager is not None:

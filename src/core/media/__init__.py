@@ -17,9 +17,6 @@ from typing import Optional, Dict, Any, BinaryIO, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .manager import MediaManager
-    from .deduplication import DeduplicationManager
-    from .compression import CompressionManager
-    from .chunked import ChunkedUploadManager
 
 from .models import (
     MediaFile,

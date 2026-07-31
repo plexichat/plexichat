@@ -173,6 +173,25 @@ CREATE TABLE IF NOT EXISTS admin_approval_comments (
 -- Admin approval comments indexes
 CREATE INDEX IF NOT EXISTS idx_admin_approval_comments_approval ON admin_approval_comments(approval_id);
 CREATE INDEX IF NOT EXISTS idx_admin_approval_comments_admin ON admin_approval_comments(admin_id);
+
+-- System alerts table — unified feed for cross-worker lifecycle events,
+-- Valkey connection issues, DB pool alerts, approval requests, and
+-- other system-level warnings that operators need visibility into.
+-- Displayed in the "Alerts" tab of the admin dashboard.
+CREATE TABLE IF NOT EXISTS system_alerts (
+    id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    details TEXT,
+    target_path TEXT,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_alerts_source ON system_alerts(source);
+CREATE INDEX IF NOT EXISTS idx_system_alerts_severity ON system_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_system_alerts_type ON system_alerts(event_type);
+CREATE INDEX IF NOT EXISTS idx_system_alerts_created ON system_alerts(created_at);
 """
 
 

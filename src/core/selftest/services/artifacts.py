@@ -36,16 +36,19 @@ import websocket
 import src.api as api
 import utils.config as config
 import utils.logger as logger
+from utils import licensing as license_module
 
 from src.api.websocket.opcodes import GatewayOpcode
 from src.core.artifacts.manager import ArtifactManager
 from src.core.artifacts.capabilities import (
     get_artifact_capabilities,
     CapabilityState,
-    _eval_editor,
     _eval_whiteboard,
     _eval_voice_transcription,
     _eval_voice_recording,
+    _eval_plexiscribe,
+    _eval_plexiscript,
+    _eval_plexiboard,
 )
 from src.core.artifacts.federation import FederationArtifactBridge
 from src.core.artifacts.retention import purge_expired
@@ -156,6 +159,8 @@ class ArtifactsTester:
                 "file": ArtifactType.FILE,
                 "transcript": ArtifactType.TRANSCRIPT,
                 "future": ArtifactType.FUTURE,
+                "plexiscribe": ArtifactType.PLEXISCRIBE,
+                "plexiscript": ArtifactType.PLEXISCRIPT,
             }
 
             for name, atype in type_map.items():
@@ -271,20 +276,21 @@ class ArtifactsTester:
                 f"expected disabled_by_config, got {caps['artifacts'].state}",
             )
 
-            # Editor disabled scenario (artifacts enabled, editor off).
-            editor_off_cfg = {"enabled": True, "editor": {"enabled": False}}
-            caps = get_artifact_capabilities(editor_off_cfg)
+            # Plexiscribe disabled scenario (artifacts enabled, plexiscribe off).
+            ps_off_cfg = {"enabled": True, "plexiscribe": {"enabled": False}}
+            caps = get_artifact_capabilities(ps_off_cfg)
             self._check(
-                "cap_editor_disabled",
-                "/capabilities artifacts_editor",
-                caps["artifacts_editor"].state == CapabilityState.DISABLED_BY_CONFIG,
-                f"expected disabled_by_config, got {caps['artifacts_editor'].state}",
+                "cap_plexiscribe_disabled",
+                "/capabilities plexiscribe",
+                caps["plexiscribe"].state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected disabled_by_config, got {caps['plexiscribe'].state}",
             )
 
             # Available baseline scenario.
             enabled_cfg = {
                 "enabled": True,
-                "editor": {"enabled": True},
+                "plexiscribe": {"enabled": True},
+                "plexiscript": {"enabled": True},
                 "whiteboard": {"enabled": True},
                 "voice": {
                     "allow_recording": True,
@@ -333,12 +339,16 @@ class ArtifactsTester:
                 "whiteboard": {"enabled": True},
             }
             caps = get_artifact_capabilities(wb_cfg)
+            _free = license_module.is_free_tier()
             self._check(
                 "cap_whiteboard_license_missing",
                 "/capabilities artifacts_whiteboard",
                 caps["artifacts_whiteboard"].state
-                in (CapabilityState.DISABLED_BY_LICENSE, CapabilityState.AVAILABLE),
-                f"whiteboard state unexpected: {caps['artifacts_whiteboard'].state}",
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
+                f"whiteboard state unexpected (free_tier={_free}): {caps['artifacts_whiteboard'].state}",
             )
         except Exception as e:
             self._record(
@@ -512,11 +522,13 @@ class ArtifactsTester:
 
         sub_ws = None
         actor_ws = None
+        db = api.get_db()
+        temporary_artifact_id: Optional[int] = None
         try:
             # Subscriber connection (other_user) -- the client that should
             # receive the relayed op.
             sub_ws = websocket.create_connection(ws_url, timeout=5, header=headers)
-            hello = json.loads(sub_ws.recv())
+            hello = _recv_required_json(sub_ws, "subscriber HELLO")
             if hello.get("op") != int(GatewayOpcode.HELLO):
                 self._record(
                     "WS",
@@ -542,7 +554,7 @@ class ArtifactsTester:
                     }
                 )
             )
-            sub_ready = json.loads(sub_ws.recv())
+            sub_ready = _recv_required_json(sub_ws, "subscriber READY")
             if sub_ready.get("t") != "READY":
                 self._record(
                     "WS",
@@ -555,7 +567,7 @@ class ArtifactsTester:
 
             # Actor connection (main user) -- sends the ARTIFACT_OP.
             actor_ws = websocket.create_connection(ws_url, timeout=5, header=headers)
-            hello2 = json.loads(actor_ws.recv())
+            hello2 = _recv_required_json(actor_ws, "actor HELLO")
             if hello2.get("op") != int(GatewayOpcode.HELLO):
                 self._record(
                     "WS",
@@ -581,7 +593,7 @@ class ArtifactsTester:
                     }
                 )
             )
-            actor_ready = json.loads(actor_ws.recv())
+            actor_ready = _recv_required_json(actor_ws, "actor READY")
             if actor_ready.get("t") != "READY":
                 self._record(
                     "WS",
@@ -592,9 +604,33 @@ class ArtifactsTester:
                 )
                 return
 
-            # Choose an artifact id for the round-trip (use a deterministic,
-            # unlikely-to-exist id; relay only fans out, no persistence).
-            artifact_id = _ARTIFACTS_TEST_NONCE * 1000 + 1
+            # Use a real temporary artifact so the WSS test exercises the
+            # same existence and authorization checks as production. Both
+            # self-test users must share the setup conversation; otherwise
+            # this fixture would silently fall back to an unauthorized scope.
+            if db is None:
+                raise RuntimeError("Database unavailable for artifact WSS fixture")
+            if self.ctx.test_conversation_id is None:
+                raise RuntimeError(
+                    "artifact WSS fixture requires a shared test conversation"
+                )
+            artifact_manager = ArtifactManager(db, config.get("artifacts", {}) or {})
+            temporary_artifact = artifact_manager.create(
+                # Use the shared test conversation rather than a server-scoped
+                # artifact. Both self-test users are participants there, so the
+                # WSS fixture exercises the same membership authorization path
+                # without granting the ordinary subscriber admin permission.
+                conversation_id=self.ctx.test_conversation_id,
+                author_id=self.ctx.test_user_id or 1,
+                artifact_type=ArtifactType.WHITEBOARD,
+                title=f"selftest-wss-{_ARTIFACTS_TEST_NONCE}",
+                summary="temporary WSS authorization fixture",
+                server_id=None,
+                status=ArtifactStatus.LIVE,
+                payload={"selftest": True},
+            )
+            temporary_artifact_id = int(temporary_artifact.id)
+            artifact_id = temporary_artifact_id
 
             # Subscriber subscribes to the artifact.
             sub_ws.send(
@@ -606,7 +642,7 @@ class ArtifactsTester:
                 )
             )
             # Subscribe replies with an ARTIFACT_SYNC placeholder snapshot.
-            sub_msg = json.loads(sub_ws.recv())
+            sub_msg = _recv_required_json(sub_ws, "subscriber ARTIFACT_SYNC")
             if (
                 sub_msg.get("op") != int(GatewayOpcode.ARTIFACT_SYNC)
                 or sub_msg.get("d", {}).get("artifact_id") != artifact_id
@@ -691,6 +727,15 @@ class ArtifactsTester:
                         sock.close()
                     except Exception:
                         pass
+            if db is not None and temporary_artifact_id is not None:
+                try:
+                    delete_artifact(db, temporary_artifact_id)
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to clean temporary WSS artifact %s: %s",
+                        temporary_artifact_id,
+                        exc,
+                    )
 
     # === 5. admin REST endpoints ===
 
@@ -869,18 +914,70 @@ class ArtifactsTester:
 
     def _test_individual_eval(self) -> None:
         try:
-            info = _eval_editor({"enabled": True, "editor": {"enabled": True}})
+            info = _eval_plexiscribe(
+                {"enabled": True, "plexiscribe": {"enabled": True}}
+            )
             self._check(
-                "eval_editor_available",
-                "_eval_editor",
-                info.state == CapabilityState.AVAILABLE,
-                f"expected AVAILABLE, got {info.state}",
+                "eval_plexiscribe_available",
+                "_eval_plexiscribe",
+                info.state
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
+                f"unexpected state: {info.state}",
             )
 
-            info = _eval_editor({"enabled": True, "editor": {"enabled": False}})
+            info = _eval_plexiscribe(
+                {"enabled": True, "plexiscribe": {"enabled": False}}
+            )
             self._check(
-                "eval_editor_disabled",
-                "_eval_editor",
+                "eval_plexiscribe_disabled",
+                "_eval_plexiscribe",
+                info.state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected DISABLED_BY_CONFIG, got {info.state}",
+            )
+
+            info = _eval_plexiscript(
+                {"enabled": True, "plexiscript": {"enabled": True}}
+            )
+            self._check(
+                "eval_plexiscript_available",
+                "_eval_plexiscript",
+                info.state
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
+                f"unexpected state: {info.state}",
+            )
+
+            info = _eval_plexiscript(
+                {"enabled": True, "plexiscript": {"enabled": False}}
+            )
+            self._check(
+                "eval_plexiscript_disabled",
+                "_eval_plexiscript",
+                info.state == CapabilityState.DISABLED_BY_CONFIG,
+                f"expected DISABLED_BY_CONFIG, got {info.state}",
+            )
+
+            info = _eval_plexiboard({"enabled": True, "whiteboard": {"enabled": True}})
+            self._check(
+                "eval_plexiboard_available",
+                "_eval_plexiboard",
+                info.state
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
+                f"unexpected state: {info.state}",
+            )
+
+            info = _eval_plexiboard({"enabled": True, "whiteboard": {"enabled": False}})
+            self._check(
+                "eval_plexiboard_disabled",
+                "_eval_plexiboard",
                 info.state == CapabilityState.DISABLED_BY_CONFIG,
                 f"expected DISABLED_BY_CONFIG, got {info.state}",
             )
@@ -890,7 +987,10 @@ class ArtifactsTester:
                 "eval_whiteboard_available",
                 "_eval_whiteboard",
                 info.state
-                in (CapabilityState.AVAILABLE, CapabilityState.DISABLED_BY_LICENSE),
+                in (
+                    CapabilityState.AVAILABLE,
+                    CapabilityState.DISABLED_BY_LICENSE,
+                ),
                 f"unexpected state: {info.state}",
             )
 
@@ -948,6 +1048,24 @@ class ArtifactsTester:
             )
         except Exception as e:
             self._record("EVAL", "_eval_*", False, "individual_eval_error", str(e))
+
+
+def _recv_required_json(sock: Any, label: str) -> Dict[str, Any]:
+    """Receive and decode one required JSON gateway frame with context."""
+    try:
+        raw = sock.recv()
+    except Exception as exc:
+        raise RuntimeError(f"{label}: websocket receive failed: {exc}") from exc
+    if raw in (None, "", b""):
+        raise RuntimeError(f"{label}: websocket closed without a JSON frame")
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        preview = repr(raw[:200] if isinstance(raw, (str, bytes)) else raw)
+        raise RuntimeError(f"{label}: invalid frame {preview}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{label}: expected JSON object, got {type(value).__name__}")
+    return value
 
 
 def _recv_json_with_timeout(sock: Any, timeout: float) -> Optional[Dict[str, Any]]:

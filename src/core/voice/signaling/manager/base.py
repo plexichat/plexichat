@@ -39,6 +39,7 @@ class SignalingManagerBase:
         turn_ttl: int = 86400,
         turn_username: str = "",
         turn_credential: str = "",
+        acoustic_defense_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the signaling manager.
@@ -56,6 +57,7 @@ class SignalingManagerBase:
             turn_ttl: TURN credential TTL in seconds
             turn_username: Static TURN username (for services like metered.ca)
             turn_credential: Static TURN credential/password
+            acoustic_defense_config: Optional acoustic eavesdropping defense configuration
         """
         from ..ice import ICECandidateManager
         from ..sdp import SDPManipulator
@@ -65,6 +67,7 @@ class SignalingManagerBase:
         self._events = events_module
         self._sfu_backend = sfu_backend
         self._mediasoup_origin = mediasoup_origin
+        self._acoustic_defense_config = acoustic_defense_config or {}
 
         if sfu_backend == "aiortc":
             ice_servers = []
@@ -145,5 +148,20 @@ class SignalingManagerBase:
     def _get_sfu(self) -> SFUAdapter:
         """Get or create SFU adapter."""
         if self._sfu is None:
-            self._sfu = create_adapter(**self._sfu_config)
+            sfu_kwargs = dict(self._sfu_config)
+            if self._acoustic_defense_config:
+                from ..sfu.acoustic_defense import AcousticDefenseConfig
+
+                sfu_kwargs["acoustic_defense"] = AcousticDefenseConfig(
+                    **self._acoustic_defense_config
+                )
+            self._sfu = create_adapter(**sfu_kwargs)
+            try:
+                if hasattr(self._sfu, "set_quality_mixin"):
+                    from .quality_mixin import QualityMixin
+
+                    if isinstance(self, QualityMixin):
+                        self._sfu.set_quality_mixin(self)
+            except Exception:
+                pass
         return self._sfu

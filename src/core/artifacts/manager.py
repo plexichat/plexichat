@@ -13,6 +13,7 @@ groups). Permission/visibility checks are performed by the route layer.
 from typing import Any, Dict, List, Optional
 
 import utils.config as config
+import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
 from .models import (
     Artifact,
@@ -201,19 +202,94 @@ class ArtifactManager(BaseManager):
         **fields: Any,
     ) -> Optional[Artifact]:
         """Update an artifact's mutable fields."""
-        if "payload" in fields and fields["payload"] is not None:
-            fields.setdefault("updated_at", self._get_timestamp())
+        fields.setdefault("updated_at", self._get_timestamp())
         return update_artifact(self._db, artifact_id, **fields)
 
-    def delete(self, artifact_id: SnowflakeID) -> bool:
-        """Delete an artifact row.
+    def delete(self, artifact_id: SnowflakeID, purge_media: bool = True) -> bool:
+        """Delete an artifact row plus its cascade-linked rows.
 
-        NOTE: this only removes the metadata row. Actual media purge (for
-        uploads/files) and cascade cleanup of linked ``voice_calls`` /
-        ``artifact_ops`` rows are handled by later groups; callers should purge
-        the referenced media after a successful delete.
+        Removes the metadata row, the ordered operations log (``artifact_ops``),
+        and linked ``voice_calls`` rows. When ``purge_media`` is set, any media
+        files referenced by the artifact payload (e.g. voice-call recordings)
+        are soft-deleted through the media module as a best-effort cleanup —
+        media errors never fail the delete.
+
+        Returns ``True`` when the metadata row was removed.
         """
+        artifact = None
+        try:
+            artifact = get_artifact(self._db, artifact_id)
+        except Exception:  # pragma: no cover - defensive
+            artifact = None
+        if artifact is not None and purge_media:
+            self._purge_artifact_media(artifact)
         return delete_artifact(self._db, artifact_id)
+
+    # === Collaborative ops log ===
+
+    def append_op(
+        self,
+        artifact_id: SnowflakeID,
+        op_type: str,
+        actor_id: Optional[int],
+        data: Any,
+    ) -> Optional[int]:
+        """Persist a realtime op to the artifact's ops log.
+
+        Returns the assigned ``seq`` or ``None`` when persistence was skipped
+        (transient op type, missing artifact, or storage failure).
+        """
+        from .repository import append_artifact_op
+
+        return append_artifact_op(self._db, artifact_id, op_type, actor_id, data)
+
+    def list_ops(
+        self,
+        artifact_id: SnowflakeID,
+        after_seq: int = 0,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Return the artifact's persisted ops ordered by ``seq``.
+
+        ``after_seq`` filters to ops strictly newer than that sequence, which
+        lets a late joiner replay only what it has not yet seen.
+        """
+        from .repository import list_artifact_ops
+
+        return list_artifact_ops(self._db, artifact_id, after_seq, limit)
+
+    # === Media cleanup ===
+
+    def _purge_artifact_media(self, artifact: Artifact) -> None:
+        """Best-effort soft-delete of media files referenced by the payload."""
+        payload = artifact.payload or {}
+        if not isinstance(payload, dict):
+            return
+        file_ids: List[int] = []
+        if payload.get("recording_file_id"):
+            file_ids.append(payload["recording_file_id"])
+        for fid in payload.get("recording_file_ids") or []:
+            file_ids.append(fid)
+        if not file_ids:
+            return
+        media_module = self._get_media_module()
+        if media_module is None or not hasattr(media_module, "delete_file"):
+            return
+        author_id = int(artifact.author_id or 0)
+        for fid in file_ids:
+            try:
+                media_module.delete_file(author_id, int(fid))
+            except Exception as e:  # pragma: no cover - media is best-effort
+                logger.debug(f"Media purge skipped for artifact {artifact.id}: {e}")
+
+    @staticmethod
+    def _get_media_module():
+        try:
+            import src.api as api_mod
+
+            return api_mod.get_media()
+        except Exception:  # pragma: no cover - defensive
+            return None
 
     def list_with_filters(
         self,
@@ -266,10 +342,21 @@ class ArtifactManager(BaseManager):
         couple to the media module.
 
         Returns the created artifact.
+
+        Raises:
+            ValueError: when the attachment size exceeds the configured
+                ``max_artifact_size_mb``.
         """
         attachment_id = attachment.get("attachment_id") or attachment.get("id")
         if attachment_id is None:
             raise ValueError("attachment must include an 'attachment_id' or 'id'")
+
+        max_size_mb = (self._artifacts_config or config.get("artifacts", {}) or {}).get(
+            "max_artifact_size_mb", 200
+        )
+        max_size_bytes = max_size_mb * 1024 * 1024
+        if attachment.get("size", 0) > max_size_bytes:
+            raise ValueError(f"Attachment exceeds maximum size of {max_size_mb} MB")
 
         payload: Dict[str, Any] = {
             "attachment_id": attachment_id,
@@ -295,3 +382,33 @@ class ArtifactManager(BaseManager):
             has_transcript=False,
             payload=payload,
         )
+
+    def get_feature_settings(
+        self, server_id: SnowflakeID, feature: str
+    ) -> Dict[str, str]:
+        """Get all per-server setting overrides for a feature."""
+        from .repository import get_feature_settings as _get
+
+        if self._db is None or server_id is None:
+            return {}
+        return _get(self._db, server_id, feature)
+
+    def set_feature_setting(
+        self, server_id: SnowflakeID, feature: str, key: str, value: Optional[str]
+    ) -> None:
+        """Set or clear a single feature setting override for a server."""
+        from .repository import set_feature_setting as _set
+
+        if self._db is None or server_id is None:
+            raise ValueError("db and server_id are required")
+        _set(self._db, server_id, feature, key, value)
+
+    def set_feature_settings_bulk(
+        self, server_id: SnowflakeID, feature: str, settings: Dict[str, Optional[str]]
+    ) -> Dict[str, str]:
+        """Set multiple feature settings and return the effective result."""
+        from .repository import set_feature_settings_bulk as _bulk
+
+        if self._db is None or server_id is None:
+            raise ValueError("db and server_id are required")
+        return _bulk(self._db, server_id, feature, settings)

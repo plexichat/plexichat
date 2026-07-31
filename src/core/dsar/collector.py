@@ -189,7 +189,7 @@ class DataCollector:
             result = self._db.fetch_one(
                 """
                 SELECT COUNT(*) as count FROM artifacts
-                WHERE author_id = ? AND artifact_type = 'transcript'
+                WHERE author_id = ? AND artifact_type IN ('transcript', 'plexiscribe', 'plexiscript')
                 """,
                 (user_id,),
             )

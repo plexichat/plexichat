@@ -109,6 +109,7 @@ def setup(
     turn_ttl: int = 86400,
     turn_username: str = "",
     turn_credential: str = "",
+    acoustic_defense_config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Initialize the signaling module.
@@ -130,6 +131,7 @@ def setup(
         turn_ttl: TURN credential TTL in seconds
         turn_username: Static TURN username (for services like metered.ca)
         turn_credential: Static TURN credential/password
+        acoustic_defense_config: Optional acoustic eavesdropping defense configuration
     """
     global _manager, _setup_complete
 
@@ -148,6 +150,7 @@ def setup(
         turn_ttl=turn_ttl,
         turn_username=turn_username,
         turn_credential=turn_credential,
+        acoustic_defense_config=acoustic_defense_config,
     )
     _setup_complete = True
 
@@ -243,11 +246,31 @@ def update_quality_hint(
     channel_id: int,
     target_bitrate: Optional[int] = None,
     quality_level: Optional[str] = None,
+    **metrics: Any,
 ) -> bool:
-    """Update quality hints for a connection."""
-    return _get_manager().update_quality_hint(
-        user_id, channel_id, target_bitrate, quality_level
-    )
+    """Update quality hints / metrics for a connection.
+
+    Args:
+        user_id: User ID (mapped to peer_id internally)
+        channel_id: Voice channel ID
+        target_bitrate: Target bitrate in bps (legacy)
+        quality_level: Quality level name (legacy)
+        **metrics: Additional metrics (bitrate, packet_loss, jitter,
+                   round_trip_time, score)
+    """
+    m = _get_manager()
+    kwargs: Dict[str, Any] = {}
+    if target_bitrate is not None:
+        kwargs["target_bitrate"] = target_bitrate
+    if quality_level is not None:
+        kwargs["quality_level"] = quality_level
+    kwargs.update(metrics)
+    return m.update_quality_hint(channel_id, user_id, **kwargs)
+
+
+def get_quality_stats(channel_id: int) -> list:
+    """Get per-peer quality stats for a channel."""
+    return _get_manager().get_quality_stats(channel_id)
 
 
 def get_active_connections(channel_id: int) -> List[Dict[str, Any]]:

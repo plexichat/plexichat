@@ -5,10 +5,25 @@ Implements SDP parsing per RFC 4566 and WebRTC extensions.
 """
 
 import re
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 
 from .models import SDPType, SDPMessage
 from .exceptions import SDPParseError, SDPValidationError
+
+
+@dataclass
+class SDPCodecConfig:
+    """Configurable Opus and video codec parameters for SDP answers."""
+
+    opus_fec: bool = True
+    opus_stereo: bool = False
+    opus_dtx: bool = False
+    opus_packet_loss_perc: int = 15
+    opus_bitrate: int = 64000
+    opus_application: str = "lowdelay"
+    video_bitrate: int = 0
+    video_codec: str = "VP8"
 
 
 # SDP line patterns
@@ -310,9 +325,15 @@ class SDPValidator:
 class SDPManipulator:
     """Manipulate SDP messages for WebRTC compatibility."""
 
+    def __init__(self, codec_config: Optional[SDPCodecConfig] = None):
+        self._codec_config = codec_config or SDPCodecConfig()
+
+    def set_codec_config(self, config: SDPCodecConfig) -> None:
+        self._codec_config = config
+
     def set_bitrate(self, sdp: str, bitrate: int, media_type: str = "audio") -> str:
         """
-        Set bandwidth limit in SDP.
+        Set bandwidth limit in SDP and apply codec config.
 
         Args:
             sdp: Original SDP string
@@ -322,6 +343,7 @@ class SDPManipulator:
         Returns:
             Modified SDP string
         """
+        cfg = self._codec_config
         lines = sdp.split("\n")
         result = []
         in_target_media = False
@@ -335,14 +357,53 @@ class SDPManipulator:
                 bandwidth_added = False
 
             if in_target_media and line.startswith("b="):
-                result.append(f"b=AS:{bitrate // 1000}")
+                if media_type == "audio":
+                    result.append(f"b=AS:{cfg.opus_bitrate // 1000}")
+                else:
+                    vb = cfg.video_bitrate or bitrate
+                    result.append(f"b=AS:{vb // 1000}" if vb > 0 else line)
                 bandwidth_added = True
                 continue
+
+            # Rewrite audio fmtp line with configurable parameters
+            if in_target_media and media_type == "audio" and "a=fmtp:" in line:
+                fmtp_match = re.match(r"^(a=fmtp:\d+\s+)(.*)$", line)
+                if fmtp_match:
+                    prefix = fmtp_match.group(1)
+                    params = fmtp_match.group(2)
+                    param_dict = {}
+                    for p in params.split(";"):
+                        p = p.strip()
+                        if "=" in p:
+                            k, v = p.split("=", 1)
+                            param_dict[k] = v
+                        else:
+                            param_dict[p] = None
+                    param_dict["minptime"] = "10"
+                    param_dict["useinbandfec"] = "1" if cfg.opus_fec else "0"
+                    param_dict["stereo"] = "1" if cfg.opus_stereo else "0"
+                    param_dict["dtx"] = "1" if cfg.opus_dtx else "0"
+                    param_dict["maxplaybackrate"] = str(cfg.opus_bitrate)
+                    param_dict["maxaveragebitrate"] = str(cfg.opus_bitrate)
+                    param_dict["ptime"] = "20"
+                    new_params = ";".join(
+                        f"{k}={v}" if v is not None else k
+                        for k, v in param_dict.items()
+                    )
+                    result.append(f"{prefix}{new_params}")
+                    continue
 
             result.append(line)
 
             if in_target_media and line.startswith("c=") and not bandwidth_added:
-                result.append(f"b=AS:{bitrate // 1000}")
+                if media_type == "audio":
+                    result.append(f"b=AS:{cfg.opus_bitrate // 1000}")
+                else:
+                    vb = cfg.video_bitrate or bitrate
+                    if vb > 0:
+                        result.append(f"b=AS:{vb // 1000}")
+                    else:
+                        bandwidth_added = True
                 bandwidth_added = True
 
         return "\n".join(result)

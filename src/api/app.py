@@ -112,9 +112,29 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
         run_static_client_initial_install()
         await start_static_client_service()
+
+        # Start the cross-worker WebSocket event listener so this
+        # worker receives events published by sibling workers via
+        # Valkey pub/sub.
+        try:
+            from src.api.websocket import start_cross_worker_listener
+
+            await start_cross_worker_listener()
+        except Exception as e:
+            logger.warning(f"Cross-worker listener not started: {e}")
+
         try:
             yield
         finally:
+            # Shut down the cross-worker listener before the event
+            # loop stops, ensuring clean unsubscribe + thread join.
+            try:
+                from src.api.websocket import stop_cross_worker_listener
+
+                await stop_cross_worker_listener()
+            except Exception as e:
+                logger.debug(f"Cross-worker listener stop error: {e}")
+
             await stop_static_client_service()
 
     app = FastAPI(
@@ -618,6 +638,25 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "File not found"}},
+                )
+
+            # Security: block access until malware scan completes or confirms clean
+            scan_row = db.fetch_one(
+                "SELECT scan_status FROM media_files WHERE id = ?",
+                (row["id"],),
+            )
+            scan_status = scan_row["scan_status"] if scan_row else ""
+            if scan_status in ("pending", "infected"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "File not available"
+                            if scan_status == "pending"
+                            else "File blocked by security scan",
+                        }
+                    },
                 )
 
             file_id = row["id"]

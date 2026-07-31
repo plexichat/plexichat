@@ -7,15 +7,21 @@ edit/delete/manage_retention`); for DM/group conversations (no server) the
 caller must be a participant/owner of the conversation.
 """
 
+import html as _html
+from io import BytesIO
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
 import utils.config as config
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, Query, Response, status
+from fastapi.responses import StreamingResponse
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SuccessResponse
+from fpdf import FPDF
+from odf.opendocument import OpenDocumentText
+from odf.text import P
 from src.core.artifacts.models import ArtifactType, ArtifactStatus
 from src.api.schemas.artifacts import (
     ArtifactCreateRequest,
@@ -75,11 +81,18 @@ def _authorize_scope(
     conversation_id: Optional[int],
     server_id: Optional[int],
     permission: str,
+    author_id: Optional[int] = None,
 ) -> None:
-    """Authorize a server-scoped or conversation-scoped action.
+    """Authorize a server-scoped, conversation-scoped, or personal action.
 
-    Raises HTTPException(403) when the caller has neither the server permission
-    nor conversation membership.
+    Raises HTTPException(403) when the caller has neither the server permission,
+    conversation membership, nor (for personal/notes-scope artifacts) authored
+    the artifact.
+
+    ``author_id`` is the id of the artifact's author (or the caller's own id
+    when creating/listings their personal scope). A personal scope (both
+    ``server_id`` and ``conversation_id`` are ``None``) is only accessible to
+    the author, matching the WebSocket subscribe handler's behavior.
     """
     if _require_server_permission(user_id, server_id, permission):
         return
@@ -87,16 +100,36 @@ def _authorize_scope(
     if _is_conversation_member(messaging_mod, conversation_id, user_id):
         return
     if server_id is None and conversation_id is None:
-        # Personal / notes-style scope: only the author may act. Callers that
-        # already validated author_id should pass it through; here we deny.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": "Not authorized"}},
-        )
+        # Personal / notes-style scope: only the author may act.
+        if author_id is not None and int(author_id) == int(user_id):
+            return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail={"error": {"code": 403, "message": "Not authorized"}},
     )
+
+
+def _deep_merge_payload(
+    base: Optional[Dict[str, Any]], patch: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Merge ``patch`` into ``base`` (both dicts) with PATCH semantics.
+
+    Nested dicts are merged recursively; lists and scalars replace the base
+    value wholesale; an explicit ``None`` value deletes the key from the
+    result. This lets editors persist a partial payload (e.g. only ``content``)
+    without clobbering concurrently-updated keys such as ``rev``/``language``.
+    """
+    result = dict(base or {})
+    if not isinstance(patch, dict):
+        return result
+    for key, value in patch.items():
+        if value is None:
+            result.pop(key, None)
+        elif isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge_payload(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 # === Manager access ===
@@ -200,7 +233,11 @@ async def create_artifact(
         server_id = int(body.server_id) if body.server_id is not None else None
 
         _authorize_scope(
-            current_user.user_id, conversation_id, server_id, "artifact.create"
+            current_user.user_id,
+            conversation_id,
+            server_id,
+            "artifact.create",
+            author_id=current_user.user_id,
         )
 
         manager = _get_manager()
@@ -273,7 +310,13 @@ async def list_artifacts(
         srv_id = int(server_id) if server_id is not None else None
         auth_id = int(author_id) if author_id is not None else None
 
-        _authorize_scope(current_user.user_id, conv_id, srv_id, "artifact.view")
+        _authorize_scope(
+            current_user.user_id,
+            conv_id,
+            srv_id,
+            "artifact.view",
+            author_id=current_user.user_id,
+        )
 
         manager = _get_manager()
 
@@ -370,13 +413,14 @@ async def get_artifact(
             artifact.conversation_id,
             artifact.server_id,
             "artifact.view",
+            author_id=artifact.author_id,
         )
 
         return ArtifactResponse.model_validate(artifact)
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get artifact {artifact_id}: {e}", exc_info=True)
+        logger.error(f"Failed to fetch artifact {artifact_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Internal server error"}},
@@ -439,7 +483,15 @@ async def update_artifact(
         if body.status is not None:
             update_fields["status"] = ArtifactStatus(body.status.value)
         if body.payload is not None:
-            update_fields["payload"] = body.payload
+            # Merge (not replace) so a partial payload no longer clobbers
+            # concurrently-updated keys. Editors that send the full payload
+            # dict are unaffected (a superset merge is a no-op replacement).
+            existing_payload = (
+                artifact.payload if isinstance(artifact.payload, dict) else {}
+            )
+            update_fields["payload"] = _deep_merge_payload(
+                existing_payload, body.payload
+            )
         if body.recorded is not None:
             update_fields["recorded"] = body.recorded
         if body.has_transcript is not None:
@@ -549,7 +601,11 @@ async def convert_upload(
         server_id = int(body.server_id) if body.server_id is not None else None
 
         _authorize_scope(
-            current_user.user_id, conversation_id, server_id, "artifact.create"
+            current_user.user_id,
+            conversation_id,
+            server_id,
+            "artifact.create",
+            author_id=current_user.user_id,
         )
 
         db = api.get_db()
@@ -605,9 +661,12 @@ async def convert_upload(
 
         source_conv_id = msg_data["conversation_id"]
         messaging_mod = api.get_messaging()
-        if not _is_conversation_member(
+        if source_conv_id is not None and not _is_conversation_member(
             messaging_mod, source_conv_id, current_user.user_id
         ):
+            # Conversation non-members may still convert the upload if they hold
+            # the server-level ``artifact.create`` permission (e.g. a server
+            # admin acting on a channel they don't personally participate in).
             if not _require_server_permission(
                 current_user.user_id, server_id, "artifact.create"
             ):
@@ -637,6 +696,268 @@ async def convert_upload(
         raise
     except Exception as e:
         logger.error(f"Failed to convert upload: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.get(
+    "/{artifact_id}/export",
+    summary="Export an artifact",
+    response_class=Response,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid format"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Not authorized"},
+        404: {"model": ErrorResponse, "description": "Artifact not found"},
+        500: {"model": ErrorResponse, "description": "Export failed"},
+    },
+)
+async def export_artifact(
+    artifact_id: str,
+    export_format: str = Query("html", alias="export_format"),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> Response:
+    """Export an artifact as a downloadable file in the requested format.
+
+    Supported formats: html, pdf, md, odt, txt, plexiscribe (native),
+    plexiscript, plexiboard.
+
+    Returns the rendered bytes directly with the correct ``Content-Type`` and a
+    ``Content-Disposition: attachment`` header so browsers offer a real file
+    download (rather than a base64-encoded JSON envelope).
+    """
+    try:
+        try:
+            aid = int(artifact_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
+            )
+
+        valid_formats = {
+            "html",
+            "pdf",
+            "md",
+            "odt",
+            "txt",
+            "plexiscribe",
+            "plexiscript",
+            "plexiboard",
+        }
+        if export_format not in valid_formats:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": f"Unsupported format '{export_format}'. Supported: {', '.join(sorted(valid_formats))}",
+                    }
+                },
+            )
+
+        manager = _get_manager()
+        artifact = manager.get(aid)
+        if artifact is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Artifact not found"}},
+            )
+
+        _authorize_scope(
+            current_user.user_id,
+            artifact.conversation_id,
+            artifact.server_id,
+            "artifact.view",
+            author_id=artifact.author_id,
+        )
+
+        mime_map = {
+            "html": "text/html",
+            "pdf": "application/pdf",
+            "md": "text/markdown",
+            "odt": "application/vnd.oasis.opendocument.text",
+            "txt": "text/plain",
+            "plexiscribe": "application/vnd.plexichat.plexiscribe",
+            "plexiscript": "application/vnd.plexichat.plexiscript",
+            "plexiboard": "application/vnd.plexichat.plexiboard",
+        }
+
+        title_slug = (
+            artifact.title.lower().replace(" ", "-")[:50]
+            if artifact.title
+            else "export"
+        )
+        # Ensure the slug is filesystem-safe (strip anything that isn't
+        # alphanumeric, dash, or underscore so the Content-Disposition filename
+        # is valid across platforms).
+        safe_slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in title_slug)
+        filename = f"{safe_slug}.{export_format}"
+
+        payload = artifact.payload or {}
+        artifact_type_value = artifact.artifact_type.value
+
+        def _extract_text() -> str:
+            """Pull the human-readable text for export from the artifact payload."""
+            if artifact_type_value == "plexiscribe":
+                return payload.get("content_html") or payload.get("document") or ""
+            if artifact_type_value == "plexiscript":
+                return payload.get("source") or payload.get("content") or ""
+            if artifact_type_value == "whiteboard":
+                return payload.get("board") or ""
+            return (
+                payload.get("content") or payload.get("text") or artifact.summary or ""
+            )
+
+        if (
+            export_format == "plexiscribe"
+            and artifact.artifact_type.value == "plexiscribe"
+        ):
+            data: bytes = (payload.get("document") or "{}").encode("utf-8", "replace")
+        elif (
+            export_format == "plexiscript"
+            and artifact.artifact_type.value == "plexiscript"
+        ):
+            data = (payload.get("source") or payload.get("content") or "{}").encode(
+                "utf-8", "replace"
+            )
+        elif (
+            export_format == "plexiboard"
+            and artifact.artifact_type.value == "whiteboard"
+        ):
+            data = (payload.get("board") or "{}").encode("utf-8", "replace")
+        elif export_format == "txt":
+            data = _extract_text().encode("utf-8", "replace")
+        elif export_format == "md":
+            md = (
+                f"# {_html.escape(artifact.title)}\n\n"
+                f"{_html.escape(artifact.summary or '')}\n\n"
+                f"```\n{_html.escape(payload.get('content', ''))}\n```"
+            )
+            data = md.encode("utf-8", "replace")
+        elif export_format == "html":
+            content = payload.get("content", "")
+            html_doc = (
+                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                f"<title>{_html.escape(artifact.title or '')}</title></head>"
+                "<body><h1>"
+                f"{_html.escape(artifact.title or '')}</h1><pre>"
+                f"{_html.escape(str(content))}</pre></body></html>"
+            )
+            data = html_doc.encode("utf-8", "replace")
+        elif export_format == "pdf":
+            pdf = FPDF()
+            pdf.set_auto_page_break(auto=True, margin=2.0)
+            pdf.add_page()
+            pdf.set_font("Helvetica", "", 11)
+            pdf.cell(0, 10, artifact.title or "Document", new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(2)
+            pdf.set_font("Helvetica", "", 10)
+            for line in (_extract_text() or "").splitlines():
+                pdf.multi_cell(0, 6, line)
+            pdf_bytes = pdf.output()
+            data = bytes(pdf_bytes) if pdf_bytes else b""
+        elif export_format == "odt":
+            doc = OpenDocumentText()
+            doc_text = getattr(doc, "text")
+            doc_text.addElement(P(text=artifact.title or "Document"))
+            doc_text.addElement(P(text=""))
+            for line in (_extract_text() or "").splitlines():
+                doc_text.addElement(P(text=line))
+            buf = BytesIO()
+            doc.save(buf)
+            data = buf.getvalue()
+        else:
+            data = str(payload).encode("utf-8", "replace")
+
+        content_type = mime_map.get(export_format, "application/octet-stream")
+        # ASCII-safe fallback filename for the disposition header, plus a
+        # UTF-8 ``filename*`` parameter so non-ASCII titles still resolve.
+        ascii_filename = filename.encode("ascii", "ignore").decode("ascii") or filename
+
+        def _chunk_iter() -> Any:
+            yield data
+
+        return StreamingResponse(
+            _chunk_iter(),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{ascii_filename}"; '
+                    f"filename*=UTF-8''{filename}"
+                ),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export artifact {artifact_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Export failed"}},
+        )
+
+
+@router.get(
+    "/{artifact_id}/ops",
+    response_model=Dict[str, Any],
+    summary="List an artifact's persisted ops",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid artifact ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Not authorized"},
+        404: {"model": ErrorResponse, "description": "Artifact not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def list_artifact_ops_route(
+    artifact_id: str,
+    after_seq: int = Query(0, description="Return only ops with seq > this"),
+    limit: int = Query(500, ge=1, le=2000, description="Max ops to return"),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the ordered ops log for an artifact.
+
+    Lets clients reconnect to a collaborative artifact without a live WebSocket
+    by replaying everything that happened after ``after_seq`` (default: all).
+    Each entry is ``{seq, op_type, actor_id, created_at, op}``, the same wire
+    shape carried inside ``ARTIFACT_SYNC``.
+    """
+    try:
+        try:
+            aid = int(artifact_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
+            )
+
+        manager = _get_manager()
+        artifact = manager.get(aid)
+        if artifact is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Artifact not found"}},
+            )
+
+        _authorize_scope(
+            current_user.user_id,
+            artifact.conversation_id,
+            artifact.server_id,
+            "artifact.view",
+            author_id=artifact.author_id,
+        )
+
+        ops = manager.list_ops(aid, after_seq=max(0, int(after_seq)), limit=int(limit))
+        return {"artifact_id": str(aid), "ops": ops}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to list ops for artifact {artifact_id}: {e}", exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Internal server error"}},

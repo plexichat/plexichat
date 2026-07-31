@@ -90,6 +90,24 @@ CREATE TABLE IF NOT EXISTS server_artifact_settings (
 
 CREATE INDEX IF NOT EXISTS idx_server_artifact_settings_server
     ON server_artifact_settings(server_id);
+
+-- Per-server artifact feature settings (for plexiscribe, plexiscript, whiteboard)
+CREATE TABLE IF NOT EXISTS server_artifact_feature_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id INTEGER NOT NULL,
+    feature TEXT NOT NULL,
+    setting_key TEXT NOT NULL,
+    setting_value TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(server_id, feature, setting_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_server_feature_settings_server
+    ON server_artifact_feature_settings(server_id);
+
+CREATE INDEX IF NOT EXISTS idx_server_feature_settings_feature
+    ON server_artifact_feature_settings(server_id, feature);
 """
 
 

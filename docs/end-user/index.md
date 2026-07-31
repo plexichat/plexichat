@@ -6,6 +6,7 @@ This section provides guidance for end-users of the Plexichat platform.
 
 - **[Password Guidance](password-guidance.md)** - Creating strong passwords, using password managers, and enabling 2FA based on NIST guidelines
 - **[Two-Factor Authentication](two-factor-authentication.md)** - Setting up and using 2FA, managing sessions, and troubleshooting
+- **[Acoustic Eavesdropping Defense](acoustic-defense.md)** - Protecting against AI keystroke eavesdropping in voice calls
 
 ## User Guides
 

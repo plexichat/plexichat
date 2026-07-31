@@ -22,7 +22,11 @@ class Session:
     sequence: int = 0
     intents: int = 0
     created_at: float = field(default_factory=time.monotonic)
+    created_at_epoch: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.monotonic)
+    # Wall-clock timestamp is persisted so a session can be resumed by a
+    # different worker. ``last_activity`` remains monotonic for local checks.
+    last_activity_epoch: float = field(default_factory=time.time)
     connection_id: Optional[str] = None
     replay_events: List[Dict[str, Any]] = field(default_factory=list)
     max_replay_events: int = 100
@@ -38,8 +42,9 @@ class Session:
         return [e for e in self.replay_events if e.get("s", 0) > after_sequence]
 
     def update_activity(self) -> None:
-        """Update last activity timestamp."""
+        """Update local and cross-worker activity timestamps."""
         self.last_activity = time.monotonic()
+        self.last_activity_epoch = time.time()
 
 
 class SessionManager:
@@ -73,6 +78,71 @@ class SessionManager:
         client = get_valkey_client()
         if client:
             self._worker_id = client.worker_id
+
+    def _session_key(self, session_id: str) -> str:
+        return f"gateway:session:{session_id}"
+
+    def _session_to_payload(self, session: Session) -> Dict[str, Any]:
+        return {
+            "session_id": session.session_id,
+            "user_id": session.user_id,
+            "sequence": session.sequence,
+            "intents": session.intents,
+            "created_at_epoch": session.created_at_epoch,
+            "last_activity_epoch": session.last_activity_epoch,
+            "replay_events": session.replay_events[-session.max_replay_events :],
+        }
+
+    def _persist_session(self, session: Session) -> None:
+        """Persist resumable identity and replay state for sibling workers."""
+        if not valkey_available():
+            return
+        client = get_valkey_client()
+        if not client or not hasattr(client, "set_json"):
+            return
+        try:
+            client.set_json(
+                self._session_key(session.session_id),
+                self._session_to_payload(session),
+                ttl=max(1, int(self._session_timeout_ms / 1000)),
+            )
+        except Exception as exc:
+            logger.debug(f"Valkey session persistence failed: {exc}")
+
+    def _load_shared_session(self, session_id: str) -> Optional[Session]:
+        """Hydrate a session created by another worker, if it is still valid."""
+        if not valkey_available():
+            return None
+        client = get_valkey_client()
+        if not client or not hasattr(client, "get_json"):
+            return None
+        try:
+            raw = client.get_json(self._session_key(session_id))
+            if not isinstance(raw, dict):
+                return None
+            last_epoch = float(raw.get("last_activity_epoch", 0))
+            if time.time() - last_epoch > self._session_timeout_ms / 1000:
+                return None
+            session = Session(
+                session_id=str(raw["session_id"]),
+                user_id=int(raw["user_id"]),
+                sequence=int(raw.get("sequence", 0)),
+                intents=int(raw.get("intents", 0)),
+                created_at_epoch=float(raw.get("created_at_epoch", last_epoch)),
+                last_activity_epoch=last_epoch,
+                replay_events=list(raw.get("replay_events") or [])[-100:],
+            )
+            # Hydration must not refresh activity: merely probing a session
+            # must not extend its resume TTL. Activity is refreshed only after
+            # a successful resume or event dispatch.
+            session.last_activity = time.monotonic()
+            return session
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            logger.debug(f"Invalid shared gateway session {session_id}: {exc}")
+            return None
+        except Exception as exc:
+            logger.debug(f"Valkey session hydration failed: {exc}")
+            return None
 
     def _valkey_register_connection(self, user_id: int, connection_id: str) -> None:
         """Register a connection in Valkey for global tracking."""
@@ -117,6 +187,11 @@ class SessionManager:
             client.delete(f"conn:{connection_id}:info")
         except Exception as e:
             logger.debug(f"Valkey session unregistration failed: {e}")
+
+    @property
+    def worker_id(self) -> str:
+        """The unique identity of this worker instance."""
+        return self._worker_id
 
     @property
     def heartbeat_interval_ms(self) -> int:
@@ -238,18 +313,34 @@ class SessionManager:
 
         # Register in Valkey since we now know the user_id
         self._valkey_register_connection(user_id, connection.connection_id)
+        self._persist_session(session)
 
         connection.set_identified(user_id, session_id, intents)
         return session
 
     def get_session(self, session_id: str) -> Optional[Session]:
-        """Get a session by ID."""
-        return self._sessions.get(session_id)
+        """Get a local or cross-worker session by ID."""
+        session = self._sessions.get(session_id)
+        if session is not None:
+            return session
+        shared = self._load_shared_session(session_id)
+        if shared is not None:
+            with self._lock:
+                self._sessions[session_id] = shared
+        return shared
 
     def remove_session(self, session_id: str) -> Optional[Session]:
-        """Remove a session."""
+        """Remove a local and shared session."""
         with self._lock:
-            return self._sessions.pop(session_id, None)
+            session = self._sessions.pop(session_id, None)
+        if valkey_available():
+            client = get_valkey_client()
+            if client:
+                try:
+                    client.delete(self._session_key(session_id))
+                except Exception as exc:
+                    logger.debug(f"Valkey session removal failed: {exc}")
+        return session
 
     def can_resume_session(self, session_id: str, user_id: int) -> bool:
         """
@@ -262,16 +353,15 @@ class SessionManager:
         Returns:
             True if session can be resumed
         """
-        session = self._sessions.get(session_id)
+        session = self.get_session(session_id)
         if not session:
             return False
 
         if session.user_id != user_id:
             return False
 
-        now = time.monotonic()
         timeout_seconds = self._session_timeout_ms / 1000
-        if now - session.last_activity > timeout_seconds:
+        if time.time() - session.last_activity_epoch > timeout_seconds:
             self.remove_session(session_id)
             return False
 
@@ -294,7 +384,7 @@ class SessionManager:
         Returns:
             Resumed session or None
         """
-        session = self._sessions.get(session_id)
+        session = self.get_session(session_id)
         if not session:
             return None
 
@@ -305,6 +395,10 @@ class SessionManager:
                 old_conn.set_disconnected()
 
             session.connection_id = connection.connection_id
+            # The client may have received fewer events than this worker has
+            # persisted. Never move the session sequence backwards during a
+            # cross-worker resume; the next dispatch must remain monotonic.
+            session.sequence = max(session.sequence, int(sequence))
             session.update_activity()
 
             user_conns = self._user_connections.setdefault(session.user_id, set())
@@ -313,7 +407,8 @@ class SessionManager:
             user_conns.add(connection.connection_id)
 
         connection.set_identified(session.user_id, session_id, session.intents)
-        connection.sequence = sequence
+        connection.sequence = session.sequence
+        self._persist_session(session)
         return session
 
     def record_event(self, session_id: str, event: Dict[str, Any]) -> None:
@@ -324,10 +419,14 @@ class SessionManager:
             session_id: Session ID
             event: Event data with sequence number
         """
-        session = self._sessions.get(session_id)
+        session = self.get_session(session_id)
         if session:
             session.add_replay_event(event)
+            event_sequence = event.get("s")
+            if isinstance(event_sequence, (int, float)):
+                session.sequence = max(session.sequence, int(event_sequence))
             session.update_activity()
+            self._persist_session(session)
 
     def get_replay_events(
         self, session_id: str, after_sequence: int
@@ -342,7 +441,7 @@ class SessionManager:
         Returns:
             List of events to replay
         """
-        session = self._sessions.get(session_id)
+        session = self.get_session(session_id)
         if not session:
             return []
         return session.get_replay_events(after_sequence)

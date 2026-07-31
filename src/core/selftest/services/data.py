@@ -197,6 +197,8 @@ class DataGenerator:
             val = str(self.ctx.test_approval_id or _gen_snowflake())
         elif "request_id" in name_low and "data-export" in path:
             val = str(self.ctx.test_dsar_id or _gen_snowflake())
+        elif name_low == "feature" and "/admin/artifacts/features/" in path:
+            val = "plexiscribe"
         elif "report" in name_low:
             if "id" in name_low:
                 if "hash-report" in path or "hash_report" in path:
@@ -329,6 +331,15 @@ class DataGenerator:
             if "auth/login" in path:
                 body["username"] = user_config.get("username", "selftest_admin")
                 body["password"] = test_pass
+
+            # The admin artifact feature-settings route intentionally accepts
+            # a generic Dict[str, Any], so OpenAPI cannot describe its body
+            # fields and schema-driven generation produces {}.  Supply the
+            # route's documented contract explicitly so the self-test exercises
+            # the database write instead of failing its manual 400 validation.
+            if "/admin/artifacts/features/" in path and method == "POST":
+                body["server_id"] = int(self.ctx.test_server_id or 1)
+                body["settings"] = {"selftest": "enabled"}
 
             if "auth/register" in path:
                 body["username"] = f"user_{random.randint(10000, 99999)}"

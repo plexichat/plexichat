@@ -24,6 +24,26 @@ class MediaKind(Enum):
 
 
 @dataclass
+class AcousticDefenseConfig:
+    """Configuration for acoustic eavesdropping defenses."""
+
+    enabled: bool = False
+    jitter_ms_min: float = 5.0
+    jitter_ms_max: float = 20.0
+    spectral_masking: bool = True
+    spectral_mask_noise_db: float = -40.0
+    spectral_mask_low_hz: float = 1000.0
+    spectral_mask_high_hz: float = 8000.0
+    vad_gating: bool = True
+    vad_speech_threshold: float = 0.02
+    vad_silence_frames: int = 3
+    transient_shaving: bool = True
+    transient_attack_ms: float = 0.5
+    transient_release_ms: float = 5.0
+    transient_ratio: float = 0.3
+
+
+@dataclass
 class SFUTransport:
     """WebRTC transport on the SFU."""
 
@@ -310,6 +330,38 @@ class SFUAdapter(ABC):
         pass
 
     @abstractmethod
+    async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
+        """Start recording audio in a room.
+
+        Args:
+            room_id: Room identifier
+            output_dir: Directory to store recording files
+
+        Returns:
+            Dict with recording metadata (e.g. recording_id, file_count)
+        """
+        pass
+
+    @abstractmethod
+    async def stop_recording(self, room_id: str) -> Optional[List[str]]:
+        """Stop recording and return recorded file paths.
+
+        Args:
+            room_id: Room identifier
+
+        Returns:
+            List of recorded file paths, or None if not recording
+        """
+        pass
+
+    @abstractmethod
     async def health_check(self) -> bool:
         """Check if the SFU server is healthy."""
+        pass
+
+    def set_quality_mixin(self, quality_mixin: Any) -> None:
+        """Set the quality mixin reference for score notifications.
+
+        Override in subclasses that support quality reporting.
+        """
         pass

@@ -58,6 +58,17 @@ def initialize_modules(
 
     try:
         migration_result = run_migrations(db)
+
+        # Ensure admin tables (including system_alerts) are created
+        # regardless of migration state — CREATE TABLE IF NOT EXISTS
+        # makes this safe to call on every startup.
+        try:
+            from src.core.admin.schema import create_admin_tables
+
+            create_admin_tables(db)
+        except Exception:
+            pass
+
         if migration_result["success"]:
             logger.info(
                 f"Migrations applied successfully: "
@@ -394,6 +405,16 @@ def initialize_modules(
     )
     modules_store["events"] = events
 
+    # Tag cross-worker events with this worker's identity so sibling
+    # workers can ignore their own echoes.
+    try:
+        events_mod = modules_store.get("events")
+        if events_mod is not None:
+            events_mod.set_worker_id(worker_id)
+            logger.debug(f"EventManager worker_id set to {worker_id}")
+    except Exception:
+        pass
+
     timed_init(
         "webhooks",
         lambda: webhooks.setup(db, auth, messaging, servers, embeds),
@@ -436,15 +457,23 @@ def initialize_modules(
         logger.warning(f"Failed to initialize voice module: {e}")
         failed_modules.append("voice")
 
+    # voice_call_manager / artifact_manager are stored globally so the
+    # recording manager can be wired in after signaling initialises.
+    _voice_call_manager = None
+    _artifact_manager = None
+    _artifacts_cfg: Dict[str, Any] = {}
+
     if "voice" not in failed_modules:
         try:
             from src.core.artifacts.manager import ArtifactManager
             from src.core.artifacts.voice_calls import VoiceCallManager
 
-            artifacts_cfg = config.get("artifacts", {}) or {}
-            artifact_manager = ArtifactManager(db, artifacts_cfg)
-            voice_call_manager = VoiceCallManager(db, artifact_manager, artifacts_cfg)
-            voice.set_voice_call_manager(voice_call_manager)
+            _artifacts_cfg = config.get("artifacts", {}) or {}
+            _artifact_manager = ArtifactManager(db, _artifacts_cfg)
+            _voice_call_manager = VoiceCallManager(
+                db, _artifact_manager, _artifacts_cfg
+            )
+            voice.set_voice_call_manager(_voice_call_manager)
             try:
                 from src.core.artifacts.transcription.worker import (
                     ensure_transcription_drainer,
@@ -529,6 +558,7 @@ def initialize_modules(
                     turn_ttl=voice_config.get("turn_ttl", 86400),
                     turn_username=voice_config.get("turn_username", ""),
                     turn_credential=voice_config.get("turn_credential", ""),
+                    acoustic_defense_config=voice_config.get("acoustic_defense", {}),
                 )
 
             timed_init("signaling", init_signaling)
@@ -552,6 +582,29 @@ def initialize_modules(
             failed_modules.append("signaling")
     else:
         logger.info("Voice module disabled in configuration")
+
+    # --- Recording manager (after signaling is ready) ---
+    if _voice_call_manager is not None and modules_store.get("signaling") is not None:
+        try:
+            from src.core.artifacts.recording import RecordingManager
+
+            voice_cfg = _artifacts_cfg.get("voice", {}) or {}
+            recording_cfg = voice_cfg.get("recording", {}) or {}
+            sfu_adapter = modules_store["signaling"]._get_manager()._get_sfu()
+            if sfu_adapter is not None:
+                recording_mgr = RecordingManager(
+                    db=db,
+                    media_module=media,
+                    artifact_manager=_artifact_manager,
+                    sfu_adapter=sfu_adapter,
+                    recording_config=recording_cfg,
+                )
+                _voice_call_manager.set_recording_manager(recording_mgr)
+                logger.info("Recording manager initialized and attached")
+            else:
+                logger.info("Recording manager disabled (SFU adapter returned None)")
+        except Exception as exc:
+            logger.warning(f"Recording manager init skipped: {exc}")
 
     rate_limit_settings = config.get("rate_limiting", {})
     if rate_limit_settings.get("enabled", True):

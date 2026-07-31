@@ -96,8 +96,10 @@ class MediaManager(
         self._scanner = self._init_scanner()
         self._proxy = self._init_proxy()
 
-        # Thread pool (10 workers)
-        self._executor = ThreadPoolExecutor(max_workers=10)
+        # Thread pool for CPU-bound background work (compression, thumbnails,
+        # dedup scanning, pHash computation). Sized for concurrent upload
+        # throughput on a single-process deployment.
+        self._executor = ThreadPoolExecutor(max_workers=32)
 
         # Deduplication (imported here to avoid circular imports)
         from .deduplication import setup as dedup_setup, DeduplicationManager
