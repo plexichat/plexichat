@@ -25,6 +25,9 @@ class DatabaseMonitor:
         self._periodic_logging_thread = None
         self._stop_logging = False
 
+        # Rate-limited alert state (record only on state transitions).
+        self._alert_state: dict[str, bool] = {}  # alert_key → currently_firing
+
         # Configuration
         monitoring_config = config.get("monitoring", {})
         alert_thresholds = monitoring_config.get("alert_thresholds", {})
@@ -219,11 +222,91 @@ class DatabaseMonitor:
                     logger.warning(
                         f"High pool utilization detected {self._format_log_context(utilization_percent=f'{util:.1f}', threshold=self._pool_saturation_threshold_percent)}"
                     )
+                    # Only record on transition (healthy → warning).
+                    if not self._alert_state.get("high_utilization"):
+                        self._alert_state["high_utilization"] = True
+                        try:
+                            from src.utils.system_alerts import record_system_alert
+
+                            record_system_alert(
+                                "high_utilization",
+                                {
+                                    "utilization_percent": round(util, 1),
+                                    "threshold_percent": self._pool_saturation_threshold_percent,
+                                    "active_connections": stats.get(
+                                        "active_connections"
+                                    ),
+                                    "max_connections": stats.get("max_connections"),
+                                },
+                                source="db_pool",
+                                severity="warning",
+                                target_path="#alerts",
+                            )
+                        except Exception:
+                            pass
+                elif isinstance(util, (int, float)) and self._alert_state.get(
+                    "high_utilization"
+                ):
+                    # Utilization dropped below threshold — record recovery.
+                    self._alert_state["high_utilization"] = False
+                    try:
+                        from src.utils.system_alerts import record_system_alert
+
+                        record_system_alert(
+                            "utilization_normal",
+                            {
+                                "utilization_percent": round(util, 1),
+                                "threshold_percent": self._pool_saturation_threshold_percent,
+                            },
+                            source="db_pool",
+                            severity="info",
+                            target_path="#alerts",
+                        )
+                    except Exception:
+                        pass
 
                 if error_rate > self._error_rate_threshold:
                     logger.warning(
                         f"High error rate detected {self._format_log_context(error_rate=f'{error_rate:.2f}', threshold=self._error_rate_threshold)}"
                     )
+                    # Only record on transition (healthy → warning).
+                    if not self._alert_state.get("high_error_rate"):
+                        self._alert_state["high_error_rate"] = True
+                        try:
+                            from src.utils.system_alerts import record_system_alert
+
+                            record_system_alert(
+                                "high_error_rate",
+                                {
+                                    "error_rate_per_minute": round(error_rate, 2),
+                                    "threshold": self._error_rate_threshold,
+                                },
+                                source="db_pool",
+                                severity="warning",
+                                target_path="#alerts",
+                            )
+                        except Exception:
+                            pass
+                elif isinstance(error_rate, (int, float)) and self._alert_state.get(
+                    "high_error_rate"
+                ):
+                    # Error rate dropped below threshold — record recovery.
+                    self._alert_state["high_error_rate"] = False
+                    try:
+                        from src.utils.system_alerts import record_system_alert
+
+                        record_system_alert(
+                            "error_rate_normal",
+                            {
+                                "error_rate_per_minute": round(error_rate, 2),
+                                "threshold": self._error_rate_threshold,
+                            },
+                            source="db_pool",
+                            severity="info",
+                            target_path="#alerts",
+                        )
+                    except Exception:
+                        pass
 
                 # Old connections warning
                 for old in stats.get("old_connections", []):

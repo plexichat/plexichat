@@ -61,7 +61,7 @@ class ManagementMixin(AdminUsersRouterProtocol):
         Change the account tier (e.g., standard, premium) for a user.
         """
         check_host_restriction(request)
-        require_admin_permission(request, "users.tier")
+        admin_id = require_admin_permission(request, "users.tier")
 
         from src.core import admin
 
@@ -72,6 +72,24 @@ class ManagementMixin(AdminUsersRouterProtocol):
                     status_code=404,
                     detail={"error": {"code": 404, "message": "User not found"}},
                 )
+
+            try:
+                from src.utils.system_alerts import record_system_alert
+
+                record_system_alert(
+                    "tier_changed",
+                    {
+                        "user_id": str(uid),
+                        "new_tier": update.tier,
+                        "changed_by": admin_id,
+                    },
+                    source="admin",
+                    severity="info",
+                    target_path=f"#user-{uid}",
+                )
+            except Exception:
+                pass
+
             return SuccessResponse(
                 success=True, message="User tier updated successfully"
             )

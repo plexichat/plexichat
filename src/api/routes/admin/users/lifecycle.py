@@ -132,6 +132,20 @@ class LifecycleMixin(AdminUsersRouterProtocol):
             uid = self._parse_user_id(user_id)
             auth.force_purge_account(uid, admin_id=int(admin_id))
             logger.warning(f"Admin {admin_id} force-purged user {uid}")
+
+            try:
+                from src.utils.system_alerts import record_system_alert
+
+                record_system_alert(
+                    "user_purged",
+                    {"user_id": str(uid), "purged_by": admin_id},
+                    source="admin",
+                    severity="warning",
+                    target_path="#users",
+                )
+            except Exception:
+                pass
+
             return SuccessResponse(success=True, message="Account purged successfully")
         except Exception as e:
             logger.error(f"Admin failed to force purge {user_id}: {e}")
