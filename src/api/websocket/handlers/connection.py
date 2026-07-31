@@ -100,12 +100,23 @@ class ConnectionHandler:
         # Dispatch online presence to friends
         await self._dispatch_online_presence(user_id)
 
+        ready_payload = {
+            "op": int(GatewayOpcode.DISPATCH),
+            "t": "READY",
+            "s": connection.increment_sequence(),
+            "d": ready_data,
+        }
+        # Persist the initial gateway sequence and replay frame before this
+        # worker can be replaced. Without this, a sibling worker could hydrate
+        # sequence 0 while the client has already acknowledged READY at 1.
+        self._session_manager.record_event(session.session_id, ready_payload)
+
         return (
             int(GatewayOpcode.DISPATCH),
             {
-                "t": "READY",
-                "s": connection.increment_sequence(),
-                "d": ready_data,
+                "t": ready_payload["t"],
+                "s": ready_payload["s"],
+                "d": ready_payload["d"],
             },
             None,
         )
@@ -121,9 +132,14 @@ class ConnectionHandler:
 
         token = data.get("token")
         session_id = data.get("session_id")
-        seq = data.get("seq", 0)
+        raw_seq = data.get("seq", 0)
 
         if not token or not session_id:
+            return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
+        if isinstance(raw_seq, bool) or not isinstance(raw_seq, int):
+            return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
+        seq = raw_seq
+        if seq < 0:
             return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 
         user_id = await self._verify_token(token, is_selftest=connection.is_selftest)

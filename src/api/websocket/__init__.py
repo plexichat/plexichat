@@ -15,6 +15,7 @@ Usage:
 
 import asyncio
 import json
+import math
 import threading
 from typing import Any, Optional
 
@@ -24,6 +25,7 @@ from .opcodes import GatewayOpcode, GatewayCloseCode
 from .connection import Connection, ConnectionState
 from .session import SessionManager
 from .dispatcher import GatewayDispatcher
+from src.utils.system_alerts import record_system_alert as _record_system_alert
 
 __all__ = [
     "setup",
@@ -71,6 +73,7 @@ _MAX_BACKOFF_SEC: float = 60.0
 _BACKOFF_RESET_AFTER_POLLS: int = 600  # ~60 s at 100 ms poll interval
 _INITIAL_BACKOFF_SEC: float = 1.0
 _GLIDE_REQUEST_TIMEOUT_MS: int = 5000
+_HEARTBEAT_ALERT_INTERVAL_SEC: float = 300.0  # record a heartbeat alert every 5 min
 
 # Observable listener health — updated by the poll loop, read by /health.
 _listener_status: str = "disabled"
@@ -125,6 +128,7 @@ def cross_worker_listener_status() -> dict:
                 "backoff_reset_after_polls": _BACKOFF_RESET_AFTER_POLLS,
                 "initial_backoff_sec": _INITIAL_BACKOFF_SEC,
                 "glide_request_timeout_ms": _GLIDE_REQUEST_TIMEOUT_MS,
+                "heartbeat_alert_interval_sec": _HEARTBEAT_ALERT_INTERVAL_SEC,
             },
         }
 
@@ -332,14 +336,26 @@ async def _cross_worker_poll_loop() -> None:
     full_channel = f"{key_prefix}{_CROSS_WORKER_CHANNEL}"
 
     backoff_sec = _INITIAL_BACKOFF_SEC
+    dead_recorded = False  # only fire one "dead" event per reconnection cycle
 
     async def _delay_and_backoff() -> None:
-        """Sleep for ``backoff_sec`` then double it (capped)."""
-        nonlocal backoff_sec
+        """Sleep for ``backoff_sec`` then double it (capped).
+
+        When backoff reaches the cap the worker is effectively dead
+        — record a ``dead`` event so operators can investigate.
+        """
+        nonlocal backoff_sec, dead_recorded
+        prev = backoff_sec
         _update_listener_status("reconnecting", backoff_sec=backoff_sec)
         await asyncio.sleep(min(backoff_sec, _MAX_BACKOFF_SEC))
         backoff_sec = min(backoff_sec * 2, _MAX_BACKOFF_SEC)
         _update_listener_status("reconnecting", backoff_sec=backoff_sec)
+        if prev >= _MAX_BACKOFF_SEC and backoff_sec >= _MAX_BACKOFF_SEC:
+            if not dead_recorded:
+                dead_recorded = True
+                _record_system_alert(
+                    "dead", {"backoff_sec": backoff_sec}, severity="error"
+                )
 
     while not _cross_worker_stop.is_set():
         pubsub_client = _create_pubsub_client(valkey_cfg)
@@ -355,6 +371,10 @@ async def _cross_worker_poll_loop() -> None:
                 full_channel,
             )
             _update_listener_status("connected", backoff_sec=backoff_sec, poll_count=0)
+            _record_system_alert(
+                "connected", {"channel": full_channel, "backoff_sec": backoff_sec}
+            )
+            dead_recorded = False  # reset on successful reconnect
         except Exception as e:
             logger.warning("Cross-worker listener subscribe failed: %s", e)
             _close_pubsub_client(pubsub_client)
@@ -364,6 +384,7 @@ async def _cross_worker_poll_loop() -> None:
         poll_count = 0
         healthy_polls = 0
         reconnect = False
+        last_heartbeat = asyncio.get_event_loop().time()
 
         try:
             while not _cross_worker_stop.is_set():
@@ -385,6 +406,16 @@ async def _cross_worker_poll_loop() -> None:
                     backoff_sec = _INITIAL_BACKOFF_SEC
                     healthy_polls = 0
 
+                # Record a periodic heartbeat alert so operators can see
+                # healthy worker activity in the Alerts tab timeline.
+                now = asyncio.get_event_loop().time()
+                if now - last_heartbeat >= _HEARTBEAT_ALERT_INTERVAL_SEC:
+                    last_heartbeat = now
+                    _record_system_alert(
+                        "heartbeat",
+                        {"poll_count": poll_count, "backoff_sec": backoff_sec},
+                    )
+
                 if poll_count % _HEARTBEAT_INTERVAL_POLLS == 0:
                     _update_listener_status(
                         "connected",
@@ -396,6 +427,11 @@ async def _cross_worker_poll_loop() -> None:
             raise
         except Exception as e:
             reconnect = True
+            _record_system_alert(
+                "disconnected",
+                {"error": str(e), "backoff_sec": backoff_sec, "poll_count": poll_count},
+                severity="warning",
+            )
             logger.warning(
                 "Cross-worker listener disconnected: %s — reconnecting in %.1fs",
                 e,
@@ -414,6 +450,7 @@ async def _cross_worker_poll_loop() -> None:
 
     _update_listener_status("disconnected")
     _cross_worker_stop.clear()
+    _record_system_alert("stopped", {"poll_count": -1})
     logger.info("Cross-worker listener stopped")
 
 
@@ -481,6 +518,7 @@ async def start_cross_worker_listener() -> None:
 
     _cross_worker_stop.clear()
     _update_listener_status("disconnected")
+    _record_system_alert("started")
     _cross_worker_task = asyncio.create_task(_cross_worker_poll_loop())
     logger.info("Cross-worker listener started")
 
@@ -518,6 +556,7 @@ def get_poll_tuning() -> dict:
         "backoff_reset_after_polls": _BACKOFF_RESET_AFTER_POLLS,
         "initial_backoff_sec": _INITIAL_BACKOFF_SEC,
         "glide_request_timeout_ms": _GLIDE_REQUEST_TIMEOUT_MS,
+        "heartbeat_alert_interval_sec": _HEARTBEAT_ALERT_INTERVAL_SEC,
     }
 
 
@@ -532,8 +571,9 @@ def update_poll_tuning(updates: dict) -> dict:
     Safe to call from any thread — C{*ylon} GIL makes assignments
     to these simple types atomic.
     """
-    global _POLL_INTERVAL_SEC, _HEARTBEAT_INTERVAL_POLLS
+    global _POLL_INTERVAL_SEC, _HEARTBEAT_INTERVAL_POLLS, _GLIDE_REQUEST_TIMEOUT_MS
     global _MAX_BACKOFF_SEC, _BACKOFF_RESET_AFTER_POLLS, _INITIAL_BACKOFF_SEC
+    global _HEARTBEAT_ALERT_INTERVAL_SEC
 
     _ALLOWED_KEYS = {
         "poll_interval_sec",
@@ -542,15 +582,36 @@ def update_poll_tuning(updates: dict) -> dict:
         "backoff_reset_after_polls",
         "initial_backoff_sec",
         "glide_request_timeout_ms",
+        "heartbeat_alert_interval_sec",
     }
 
-    _INT_KEYS = {"heartbeat_interval_polls", "backoff_reset_after_polls"}
+    _INT_KEYS = {
+        "heartbeat_interval_polls",
+        "backoff_reset_after_polls",
+        "glide_request_timeout_ms",
+    }
 
     for key, value in updates.items():
         if key not in _ALLOWED_KEYS:
             logger.debug("update_poll_tuning: unknown key '%s'", key)
             continue
-        if not isinstance(value, (int, float)) or value <= 0:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            logger.debug("update_poll_tuning: invalid value for '%s': %s", key, value)
+            continue
+        if isinstance(value, float):
+            if not math.isfinite(value) or value <= 0:
+                logger.debug(
+                    "update_poll_tuning: invalid value for '%s': %s", key, value
+                )
+                continue
+            if key in _INT_KEYS and not value.is_integer():
+                logger.debug(
+                    "update_poll_tuning: integer value required for '%s': %s",
+                    key,
+                    value,
+                )
+                continue
+        elif value <= 0:
             logger.debug("update_poll_tuning: invalid value for '%s': %s", key, value)
             continue
 
@@ -566,6 +627,8 @@ def update_poll_tuning(updates: dict) -> dict:
             _INITIAL_BACKOFF_SEC = float(value)
         elif key == "glide_request_timeout_ms":
             _GLIDE_REQUEST_TIMEOUT_MS = int(value)
+        elif key == "heartbeat_alert_interval_sec":
+            _HEARTBEAT_ALERT_INTERVAL_SEC = float(value)
 
         logger.info("Cross-worker tuning updated: %s = %s", key, value)
 

@@ -161,6 +161,60 @@ class TestResumeHandler:
 
         assert close_code == GatewayCloseCode.DECODE_ERROR
 
+    @pytest.mark.asyncio
+    async def test_resume_rejects_malformed_sequence(self, opcode_handler, connection):
+        """Malformed sequence values must not escape the gateway handler."""
+        response_op, response_data, close_code = await opcode_handler.handle(
+            connection,
+            GatewayOpcode.RESUME,
+            {
+                "token": "test_token",
+                "session_id": "session",
+                "seq": "not-a-number",
+            },
+        )
+
+        assert response_op == GatewayOpcode.INVALID_SESSION
+        assert response_data["d"] is False
+        assert close_code is None
+
+    @pytest.mark.asyncio
+    async def test_resume_rejects_negative_sequence(self, opcode_handler, connection):
+        """Negative sequence values are invalid resume cursors."""
+        response_op, response_data, close_code = await opcode_handler.handle(
+            connection,
+            GatewayOpcode.RESUME,
+            {
+                "token": "test_token",
+                "session_id": "session",
+                "seq": -1,
+            },
+        )
+
+        assert response_op == GatewayOpcode.INVALID_SESSION
+        assert response_data["d"] is False
+        assert close_code is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("invalid_seq", ["1", 1.5, True])
+    async def test_resume_rejects_non_integer_sequence(
+        self, opcode_handler, connection, invalid_seq
+    ):
+        """Resume cursors must remain JSON integers for replay safety."""
+        response_op, response_data, close_code = await opcode_handler.handle(
+            connection,
+            GatewayOpcode.RESUME,
+            {
+                "token": "test_token",
+                "session_id": "session",
+                "seq": invalid_seq,
+            },
+        )
+
+        assert response_op == GatewayOpcode.INVALID_SESSION
+        assert response_data["d"] is False
+        assert close_code is None
+
 
 class TestSessionManagement:
     """Tests for session management."""

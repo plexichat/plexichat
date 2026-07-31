@@ -491,6 +491,17 @@ class TestCrossWorkerTuningEndToEnd:
         result = update_poll_tuning({"max_backoff_sec": 0})
         assert result["max_backoff_sec"] == old["max_backoff_sec"]
 
+        # Integer-valued settings must reject fractions and booleans rather
+        # than silently truncating them to zero or one.
+        result = update_poll_tuning({"heartbeat_interval_polls": 0.5})
+        assert result["heartbeat_interval_polls"] == old["heartbeat_interval_polls"]
+        result = update_poll_tuning({"glide_request_timeout_ms": True})
+        assert result["glide_request_timeout_ms"] == old["glide_request_timeout_ms"]
+        result = update_poll_tuning({"heartbeat_interval_polls": 150.0})
+        assert result["heartbeat_interval_polls"] == 150
+        result = update_poll_tuning({"poll_interval_sec": float("nan")})
+        assert result["poll_interval_sec"] == old["poll_interval_sec"]
+
     def test_audit_entry_fields_match_tuning_delta(self, cross_worker_mocks):
         """Verify the audit entry construction logic used by the PATCH
         route: after update_poll_tuning changes values, the old->new
