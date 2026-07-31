@@ -37,28 +37,60 @@ const api = async (p, o = {}) => {
 
 const ts = t => t ? new Date(t).toLocaleString() : '-';
 
+const relTime = unixSec => {
+    if (!unixSec) return '';
+    const diff = Math.abs(Date.now() / 1000 - unixSec);
+    if (diff < 60) return `${Math.floor(diff)}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+    return '';
+};
+
 const pageTitles = {
     dashboard:'Dashboard', users:'User Management', admins:'Admin Management', tickets:'Support Tickets',
     moderation:'Content Moderation', security:'Security', telemetry:'Telemetry & Performance',
     logs:'System Logs', database:'Database Management', approvals:'Approval Workflows',
     audit:'Audit Log', automod:'AutoMod', bots:'Bots', artifacts:'Artifacts', migrations:'Database Migrations',
+    alerts:'System Alerts',
     plexijoin:'PlexiJoin Federation', license:'License', account:'My Account'
 };
 
 // === TAB SYSTEM ===
 const showTab = n => {
+    // Handle compound hashes like 'approval-{id}' and 'user-{id}' —
+    // navigate to the parent tab and schedule a scroll-to after data loads.
+    let subTarget = null;
+    if (n.startsWith('approval-')) {
+        subTarget = n;
+        n = 'approvals';
+    } else if (n.startsWith('user-')) {
+        subTarget = n;
+        n = 'users';
+    }
+
     document.querySelectorAll('.sidebar-nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === n));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${n}`));
     currentTab = n;
     document.getElementById('page-title').textContent = pageTitles[n] || n;
-    window.location.hash = n;
+    _handlingHashChange = true;
+    try {
+        window.location.hash = subTarget || n;
+    } finally {
+        _handlingHashChange = false;
+    }
+    if (subTarget) {
+        const key = subTarget.startsWith('approval-') ? 'plexichat-approval-scroll' : 'plexichat-user-scroll';
+        sessionStorage.setItem(key, subTarget);
+    }
 
     const loads = {
         dashboard:'refreshMetrics', tickets:'loadTickets', users:'loadUsers', admins:'loadAdminUsers',
         moderation:'loadModeration', security:'loadSecurity', telemetry:'refreshTelemetryStats',
         logs:'loadLogs', database:'refreshDatabase', approvals:'loadApprovals', audit:'loadAuditLog',
         automod:'loadAutomodConfig', bots:'refreshAdminBots', artifacts:'renderArtifacts', migrations:'refreshMigrations',
-        plexijoin:'refreshPlexiJoin', license:'loadLicense', account:'loadAccount'
+        plexijoin:'refreshPlexiJoin', license:'loadLicense', account:'loadAccount',
+        alerts:'refreshAlerts'
     };
     if (loads[n]) { const fn = window[loads[n]]; if (fn) fn(); }
 };
@@ -91,6 +123,14 @@ document.addEventListener('click', e => {
     if (tabBtn) {
         e.preventDefault();
         showTab(tabBtn.dataset.tab);
+    }
+});
+
+// === KEYBOARD SHORTCUTS ===
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        const toast = document.body.querySelector('.toast');
+        if (toast) toast.querySelector('.toast-dismiss')?.click();
     }
 });
 
@@ -290,10 +330,15 @@ function updateWorkerHealth(wh) {
         setInputVal('tuning-reset-polls', t.backoff_reset_after_polls ?? 0);
         setInputVal('tuning-init-backoff', t.initial_backoff_sec ?? 0);
         setInputVal('tuning-glide-timeout', t.glide_request_timeout_ms ?? 0);
+        setInputVal('tuning-heartbeat-alert', t.heartbeat_alert_interval_sec ?? 300);
     } else {
         const details = document.getElementById('worker-tuning-details');
         if (details) details.style.display = 'none';
     }
+
+    // Refresh the audit list and worker events (best-effort).
+    loadTuningAudit();
+    loadSystemAlerts({ hours: '24', limit: '30' });
 }
 
 const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
@@ -322,21 +367,37 @@ function showToast(message, type = 'info') {
     dismiss.setAttribute('aria-label', 'Dismiss');
     toast.appendChild(dismiss);
 
+    // Warning and error toasts persist until dismissed — important
+    // messages shouldn't auto-vanish.  Success and info toasts get a
+    // progress bar and auto-dismiss after 3s.
+    const isPersistent = safe === 'warning' || safe === 'error';
+    let dismissTimer = null;
+
+    if (!isPersistent) {
+        const progress = document.createElement('div');
+        progress.className = 'toast-progress';
+        progress.innerHTML = '<div class="toast-progress-bar"></div>';
+        toast.appendChild(progress);
+    }
+
     document.body.appendChild(toast);
     // Trigger slide-in animation on the next frame.
     requestAnimationFrame(() => toast.classList.add('toast-visible'));
 
-    // Auto-dismiss after 3s.  Use transitionend to remove the element
-    // so the timing stays in sync with the CSS transition duration,
-    // with a safety timeout in case transitionend never fires.
-    let dismissTimer = setTimeout(() => {
-        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
-        toast.classList.remove('toast-visible');
-        setTimeout(() => toast.remove(), 400);
-    }, 3000);
+    if (!isPersistent) {
+        // Auto-dismiss after 3s.  Use transitionend to remove the
+        // element so the timing stays in sync with the CSS transition
+        // duration, with a safety timeout in case transitionend
+        // never fires.
+        dismissTimer = setTimeout(() => {
+            toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+            toast.classList.remove('toast-visible');
+            setTimeout(() => toast.remove(), 400);
+        }, 3000);
+    }
 
     dismiss.addEventListener('click', () => {
-        clearTimeout(dismissTimer);
+        if (dismissTimer !== null) clearTimeout(dismissTimer);
         toast.classList.remove('toast-visible');
         toast.addEventListener('transitionend', () => toast.remove(), { once: true });
         setTimeout(() => toast.remove(), 400);
@@ -471,6 +532,7 @@ async function saveTuning() {
         backoff_reset_after_polls: getInputVal('tuning-reset-polls'),
         initial_backoff_sec: getInputVal('tuning-init-backoff'),
         glide_request_timeout_ms: getInputVal('tuning-glide-timeout'),
+        heartbeat_alert_interval_sec: getInputVal('tuning-heartbeat-alert'),
     };
     try {
         await api('/api/v1/admin/dashboard/cross-worker-tuning', {
@@ -534,6 +596,153 @@ async function loadTuningAudit() {
         }).join('');
     } catch (_) {
         list.innerHTML = '<div class="text-xs text-muted">Audit log unavailable.</div>';
+    }
+}
+
+async function refreshAlerts() {
+    const source = document.getElementById('alerts-source-filter')?.value || '';
+    const severity = document.getElementById('alerts-severity-filter')?.value || '';
+    const hours = document.getElementById('alerts-hours-filter')?.value || '168';
+    await loadSystemAlerts({ source, severity, hours });
+}
+
+async function loadSystemAlerts(opts = {}) {
+    const list = document.getElementById('alerts-full-list') || document.getElementById('system-alerts-list');
+    if (!list) return;
+
+    const params = new URLSearchParams({ limit: opts.limit || '100' });
+    params.set('hours', opts.hours || '168');
+    if (opts.source) params.set('source', opts.source);
+    if (opts.severity) params.set('severity', opts.severity);
+
+    const sinceHours = parseInt(opts.hours || '168', 10);
+    const sinceLabel = sinceHours >= 168 ? 'last 7d' : sinceHours >= 48 ? `last ${Math.round(sinceHours / 24)}d` : `last ${sinceHours}h`;
+
+    try {
+        const d = await api(`/api/v1/admin/dashboard/system-alerts?${params}`);
+
+        // Always update source counts (even when empty) so stale
+        // counts don't persist across filter changes.
+        const sourceCountsEl = document.getElementById('alerts-source-counts');
+        if (sourceCountsEl && d.entries) {
+            const srcCounts = {};
+            for (const e of d.entries) {
+                srcCounts[e.source] = (srcCounts[e.source] || 0) + 1;
+            }
+            const parts = Object.entries(srcCounts)
+                .sort((a, b) => b[1] - a[1])
+                .map(([k, v]) => {
+                    const srcColor = { cross_worker: 'var(--destructive, #ef4444)', valkey: 'var(--warning, #f59e0b)', db_pool: 'var(--warning, #f59e0b)', approvals: 'var(--success, #22c55e)', admin: 'var(--primary, #6366f1)' }[k] || 'inherit';
+                    return `<span class="source-count-chip" role="button" tabindex="0" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;color:${srcColor};" onclick="var s=document.getElementById('alerts-source-filter');if(s){s.value='${esc(k)}';refreshAlerts();}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Filter to ${esc(k)}">${esc(k)}: ${v}</span>`;
+                });
+            sourceCountsEl.innerHTML = parts.length ? parts.join('  ·  ') : '';
+        }
+
+        // Populate the header label with total count and time window.
+        // Only update when rendering into the full alerts tab list — the
+        // compact dashboard view passes different hours and would flicker
+        // the label with a mismatched time window.
+        const headerLabelEl = document.getElementById('alerts-header-label');
+        if (headerLabelEl && list.id === 'alerts-full-list') {
+            headerLabelEl.textContent = d.entries && d.entries.length ? `${d.entries.length} total · ${sinceLabel}` : `0 total · ${sinceLabel}`;
+        }
+
+        if (!d.entries || d.entries.length === 0) {
+            list.innerHTML = '<div class="text-xs text-muted">No system alerts recorded.</div>';
+            return;
+        }
+        // Build a summary bar showing counts by event_type.
+        const counts = {};
+        for (const e of d.entries) {
+            counts[e.event_type] = (counts[e.event_type] || 0) + 1;
+        }
+        const severityColor = {
+            dead: 'var(--destructive, #ef4444)',
+            disconnected: 'var(--destructive, #ef4444)',
+            reconnecting: 'var(--warning, #f59e0b)',
+            heartbeat: 'var(--success, #22c55e)',
+            connected: 'var(--success, #22c55e)',
+            started: 'var(--success, #22c55e)',
+            connection_failure: 'var(--destructive, #ef4444)',
+            high_utilization: 'var(--warning, #f59e0b)',
+            high_error_rate: 'var(--warning, #f59e0b)',
+            utilization_normal: 'var(--success, #22c55e)',
+            error_rate_normal: 'var(--success, #22c55e)',
+            approval_requested: 'var(--success, #22c55e)',
+            approval_voted: 'var(--success, #22c55e)',
+            approval_approved: 'var(--success, #22c55e)',
+            approval_rejected: 'var(--warning, #f59e0b)',
+            token_revoked: 'var(--warning, #f59e0b)',
+            token_unrevoked: 'var(--success, #22c55e)',
+            token_rotated: 'var(--success, #22c55e)',
+            user_sessions_killed: 'var(--warning, #f59e0b)',
+            user_suspended: 'var(--warning, #f59e0b)',
+            tier_changed: 'var(--success, #22c55e)',
+            user_purged: 'var(--destructive, #ef4444)',
+            global_session_purge: 'var(--destructive, #ef4444)',
+        };
+        const summary = Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([k, v]) => {
+                const color = severityColor[k] || 'inherit';
+                return `<span style="color:${color};font-weight:600;">${v} ${esc(k)}</span>`;
+            })
+            .join(', ');
+        const summaryHtml = `<div class="text-xs" style="padding:6px 0;margin-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;">
+            <span class="summary-toggle" role="button" tabindex="0" aria-expanded="true" style="cursor:pointer;user-select:none;white-space:nowrap;" onclick="var n=this.nextElementSibling;n.hidden=!n.hidden;this.textContent=(n.hidden?'▶':'▼')+' Summary (${sinceLabel})';this.setAttribute('aria-expanded',n.hidden?'false':'true');sessionStorage.setItem('plexichat-summary-collapsed',n.hidden?'1':'0');" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Toggle summary">▼ Summary (${sinceLabel})</span>
+            <span class="summary-items" style="color:var(--muted-foreground);">${summary}</span>
+        </div>`;
+
+        const severityBadge = {
+            info: 'badge-outline',
+            warning: 'badge-warning',
+            error: 'badge-danger',
+            critical: 'badge-danger',
+        };
+        const severityBorder = {
+            error: '3px solid var(--destructive, #ef4444)',
+            critical: '3px solid var(--destructive, #ef4444)',
+            warning: '3px solid var(--warning, #f59e0b)',
+        };
+        list.innerHTML = summaryHtml + d.entries.map((e, i) => {
+            const timestamp = new Date(e.created_at * 1000).toLocaleString();
+            const relativeTime = relTime(e.created_at);
+            const sev = severityBadge[e.severity] || 'badge-outline';
+            const detail = e.details
+                ? (() => { try { return JSON.parse(e.details); } catch (_) { return null; } })()
+                : null;
+            const extra = detail
+                ? Object.entries(detail)
+                    .map(([k, v]) => `${esc(k)}=${esc(String(v))}`)
+                    .join('  ')
+                : '';
+            const jump = e.target_path
+                ? `<a href="${esc(e.target_path)}" class="text-xs" style="margin-left:6px;color:var(--primary);">Jump →</a>`
+                : '';
+            const leftBorder = severityBorder[e.severity] || '';
+            return `<div style="padding:4px 0;padding-left:6px;font-size:11px;border-bottom:1px solid var(--border);${i === 0 ? 'border-top:1px solid var(--border);' : ''}${leftBorder ? `border-left:${leftBorder};` : ''}">
+                <span class="badge ${sev}" style="font-size:10px;">${esc(e.severity)}</span>
+                <span class="badge badge-outline" style="margin-left:4px;font-size:10px;">${esc(e.source)}</span>
+                <span style="margin-left:6px;font-weight:600;">${esc(e.event_type)}</span>
+                <span class="text-muted" style="margin-left:6px;">${timestamp}</span>
+                ${relativeTime ? `<span class="text-muted" style="margin-left:4px;font-size:10px;">${esc(relativeTime)}</span>` : ''}
+                ${jump}
+                ${extra ? `<div class="text-muted" style="margin-top:1px;font-size:10px;">${extra}</div>` : ''}
+            </div>`;
+        }).join('');
+
+        // Restore persisted summary collapse state after re-render.
+        if (sessionStorage.getItem('plexichat-summary-collapsed') === '1') {
+            const toggle = list.querySelector('.summary-toggle');
+            const items = list.querySelector('.summary-items');
+            if (toggle && items) {
+                items.hidden = true;
+                toggle.textContent = `▶ Summary (${sinceLabel})`;
+                toggle.setAttribute('aria-expanded', 'false');
+            }
+        }
+    } catch (_) {
+        list.innerHTML = '<div class="text-xs text-muted">System alerts unavailable.</div>';
     }
 }
 
@@ -663,12 +872,17 @@ async function addTicketNote() {
 // === USERS ===
 async function loadUsers() {
     try {
-        const q = document.getElementById('user-search-input')?.value || '';
+        // Bypass search filter when a deep-linked user target is pending —
+        // same pattern as approval status-filter bypass.
+        const userTarget = sessionStorage.getItem('plexichat-user-scroll');
+        const searchInput = document.getElementById('user-search-input');
+        const q = userTarget ? '' : (searchInput?.value || '');
+        if (userTarget && searchInput) searchInput.value = '';
         const url = q ? `/api/v1/admin/users/search?q=${encodeURIComponent(q)}` : '/api/v1/admin/users/search?q=';
         const d = await api(url);
         const users = d.users || [];
         document.getElementById('users-tbody').innerHTML = users.map(u => `
-            <tr>
+            <tr id="user-${esc(u.id)}">
                 <td><div style="display:flex;align-items:center;gap:8px;"><div style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:var(--secondary);font-size:12px;font-weight:600;">${esc((u.username||'?')[0].toUpperCase())}</div><div><span>${esc(u.username)}</span><div class="text-xs text-muted font-mono">${esc(u.id)}</div></div></div></td>
                 <td class="text-muted">${esc(u.email||'')}</td>
                 <td><span class="badge badge-primary">${esc(u.tier||'free')}</span></td>
@@ -678,6 +892,24 @@ async function loadUsers() {
             </tr>
         `).join('');
         document.getElementById('users-count').textContent = `Showing ${users.length} users`;
+
+        // Scroll to a specific user row if navigated via #user-{id}.
+        if (userTarget) {
+            sessionStorage.removeItem('plexichat-user-scroll');
+            const el = document.getElementById(userTarget);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                el.style.transition = 'background-color 2s ease-out';
+                el.style.backgroundColor = 'var(--warning, #fef3c7)';
+                requestAnimationFrame(() => {
+                    el.style.backgroundColor = 'transparent';
+                    setTimeout(() => {
+                        el.style.transition = '';
+                        el.style.backgroundColor = '';
+                    }, 2100);
+                });
+            }
+        }
     } catch(e) { console.error('Users load failed:', e); }
 }
 
@@ -1354,15 +1586,39 @@ async function deleteRole() {
 // === APPROVALS ===
 async function loadApprovals() {
     try {
-        const status = document.getElementById('approval-status-filter')?.value || '';
+        // Bypass the status filter when we have a specific scroll target
+        // pending — the operator explicitly asked to see this approval.
+        const pendingTarget = sessionStorage.getItem('plexichat-approval-scroll');
+        const status = pendingTarget ? '' : (document.getElementById('approval-status-filter')?.value || '');
         const url = status ? `/api/v1/admin/approvals?status=${status}` : '/api/v1/admin/approvals';
         const d = await api(url);
         document.getElementById('approvals-tbody').innerHTML = (d.approvals||[]).map(a => `
-            <tr><td class="font-mono">${esc(a.id)}</td><td>${esc(a.action_type)}</td><td>${esc(a.requested_by)}</td>
+            <tr id="approval-${esc(a.id)}"><td class="font-mono">${esc(a.id)}</td><td>${esc(a.action_type)}</td><td>${esc(a.requested_by)}</td>
             <td><span class="badge ${a.status==='approved'?'badge-success':a.status==='rejected'?'badge-danger':'badge-warning'}">${esc(a.status)}</span></td>
             <td>${a.current_approvals}/${a.required_approvals}</td><td class="text-muted">${ts(a.created_at)}</td>
             <td class="text-right">${a.status==='pending' ? `<button class="btn btn-primary btn-sm" data-click="approveRequest" data-id="${esc(a.id)}">Approve</button> <button class="btn btn-danger btn-sm" data-click="rejectRequest" data-id="${esc(a.id)}">Reject</button>` : '-'}</td></tr>
         `).join('');
+
+        // Scroll to a specific approval row if navigated via #approval-{id}.
+        const targetId = sessionStorage.getItem('plexichat-approval-scroll');
+        if (targetId) {
+            sessionStorage.removeItem('plexichat-approval-scroll');
+            const el = document.getElementById(targetId);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Highlight the row with a 2-second yellow fade so the
+                // operator can visually identify which row they landed on.
+                el.style.transition = 'background-color 2s ease-out';
+                el.style.backgroundColor = 'var(--warning, #fef3c7)';
+                requestAnimationFrame(() => {
+                    el.style.backgroundColor = 'transparent';
+                    setTimeout(() => {
+                        el.style.transition = '';
+                        el.style.backgroundColor = '';
+                    }, 2100);
+                });
+            }
+        }
     } catch(e) { console.error('Approvals load failed'); }
 }
 
@@ -1994,10 +2250,26 @@ async function saveServerRetention(e) {
     }
 }
 
+// === HASH-BASED NAVIGATION (back/forward buttons + bookmarks) ===
+let _handlingHashChange = false;
+window.addEventListener('hashchange', () => {
+    if (_handlingHashChange) return;
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    _handlingHashChange = true;
+    try {
+        // showTab already handles compound hashes like 'approval-{id}'.
+        showTab(hash);
+    } finally {
+        _handlingHashChange = false;
+    }
+});
+
 // === SIDEBAR TOGGLE INIT ===
 document.addEventListener('DOMContentLoaded', () => {
     const hash = window.location.hash.slice(1);
-    if (hash && pageTitles[hash]) showTab(hash);
+    const isKnownTab = hash && (pageTitles[hash] || hash.startsWith('approval-') || hash.startsWith('user-'));
+    if (isKnownTab) showTab(hash);
     else showTab('dashboard');
     refreshMetrics();
 

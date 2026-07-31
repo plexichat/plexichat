@@ -39,6 +39,7 @@
                     <li><button class="sidebar-nav-item" data-tab="bots"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg><span>Bots</span></button></li>
                     <li><button class="sidebar-nav-item" data-tab="artifacts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg><span>Artifacts</span></button></li>
                     <li><button class="sidebar-nav-item" data-tab="migrations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span>Migrations</span></button></li>
+                    <li><button class="sidebar-nav-item" data-tab="alerts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span>Alerts</span></button></li>
                 </ul>
                 <div style="padding:8px 12px 4px;">
                     <div style="height:1px;background:var(--sidebar-border);margin:8px 0;"></div>
@@ -172,12 +173,19 @@
                                     <div><div class="text-xs text-muted">RESET AFTER (polls)</div><input class="tuning-input font-mono text-xs" id="tuning-reset-polls" type="number" step="1" min="1" placeholder="—" style="width:100%;box-sizing:border-box;"></div>
                                     <div><div class="text-xs text-muted">INITIAL BACKOFF (s)</div><input class="tuning-input font-mono text-xs" id="tuning-init-backoff" type="number" step="any" min="0.001" placeholder="—" style="width:100%;box-sizing:border-box;"></div>
                                     <div><div class="text-xs text-muted">GLIDE TIMEOUT (ms)</div><input class="tuning-input font-mono text-xs" id="tuning-glide-timeout" type="number" step="any" min="1" placeholder="—" style="width:100%;box-sizing:border-box;"></div>
+                                    <div><div class="text-xs text-muted">ALERT HEARTBEAT (s)</div><input class="tuning-input font-mono text-xs" id="tuning-heartbeat-alert" type="number" step="any" min="10" placeholder="—" style="width:100%;box-sizing:border-box;"></div>
                                 </div>
                                 <button class="btn btn-primary btn-sm" style="margin-top:8px;" data-click="saveTuning">Save Tuning</button>
                             </details>
                             <details style="margin-top:12px;" id="worker-audit-details">
                                 <summary class="text-xs" style="cursor:pointer;font-weight:600;color:var(--muted-foreground);">Recent Tuning Changes</summary>
                                 <div style="margin-top:8px;max-height:200px;overflow-y:auto;" id="worker-audit-list">
+                                    <div class="text-xs text-muted">Loading...</div>
+                                </div>
+                            </details>
+                            <details style="margin-top:12px;" id="worker-events-details">
+                                <summary class="text-xs" style="cursor:pointer;font-weight:600;color:var(--muted-foreground);">System Alerts</summary>
+                                <div style="margin-top:8px;max-height:200px;overflow-y:auto;" id="system-alerts-list">
                                     <div class="text-xs text-muted">Loading...</div>
                                 </div>
                             </details>
@@ -1033,6 +1041,45 @@
             <div class="modal-footer"><button class="btn btn-secondary" data-click="closeCreateConnectionModal">Cancel</button><button class="btn btn-primary" data-click="confirmCreateConnection">Add Connection</button></div>
         </div>
     </div>
+
+                <!-- ===== ALERTS TAB ===== -->
+                <div class="tab-content" id="tab-alerts">
+                    <div class="card">
+                        <div class="card-header"><span class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> System Alerts</span></div>
+                        <div class="card-content">
+                            <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+                                <select id="alerts-source-filter" style="width:140px;" onchange="refreshAlerts()">
+                                    <option value="">All Sources</option>
+                                    <option value="cross_worker">Cross-Worker</option>
+                                    <option value="valkey">Valkey</option>
+                                    <option value="db_pool">DB Pool</option>
+                                    <option value="approvals">Approvals</option>
+                                    <option value="admin">Admin</option>
+                                </select>
+                                <select id="alerts-severity-filter" style="width:130px;" onchange="refreshAlerts()">
+                                    <option value="">All Severities</option>
+                                    <option value="info">Info</option>
+                                    <option value="warning">Warning</option>
+                                    <option value="error">Error</option>
+                                    <option value="critical">Critical</option>
+                                </select>
+                                <select id="alerts-hours-filter" style="width:120px;" onchange="refreshAlerts()">
+                                    <option value="1">Last 1h</option>
+                                    <option value="24">Last 24h</option>
+                                    <option value="168" selected>Last 7d</option>
+                                    <option value="720">Last 30d</option>
+                                </select>
+                                <button class="btn btn-outline btn-sm" onclick="refreshAlerts()">Refresh</button>
+                                <button class="btn btn-outline btn-sm" onclick="document.getElementById('alerts-hours-filter').value='168';refreshAlerts();" title="Reset to default 7-day window">Reset</button>
+                                <span id="alerts-header-label" class="text-xs" style="margin-left:12px;color:var(--muted-foreground);font-weight:500;"></span>
+                            </div>
+                            <div id="alerts-source-counts" class="text-xs" style="padding:4px 0;color:var(--muted-foreground);"></div>
+                            <div style="max-height:600px;overflow-y:auto;" id="alerts-full-list">
+                                <div class="text-sm text-muted">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
     <script src="/api/v1/admin/static/dashboard.js" nonce="{{ csp_nonce }}"></script>
     <script nonce="{{ csp_nonce }}">

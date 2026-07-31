@@ -1289,6 +1289,7 @@ input[type="checkbox"] {
   gap: 10px;
   padding: 10px 12px 10px 20px;
   border-radius: 8px;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 500;
   color: #fff;
@@ -1311,6 +1312,29 @@ input[type="checkbox"] {
   transition: opacity 0.15s;
 }
 .toast-dismiss:hover { opacity: 1; }
+
+/* Progress bar that counts down the 3s auto-dismiss. */
+.toast-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgb(255 255 255 / 0.15);
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+}
+.toast-progress-bar {
+  height: 100%;
+  width: 100%;
+  background: rgb(255 255 255 / 0.5);
+  animation: toast-progress-shrink 3s linear forwards;
+  animation-delay: 0.25s;
+}
+@keyframes toast-progress-shrink {
+  from { width: 100%; }
+  to { width: 0%; }
+}
 .toast-visible { opacity: 1; transform: translateY(0); }
 .toast-success { background: oklch(0.55 0.18 165); }
 .toast-warning { background: oklch(0.6 0.18 75); }

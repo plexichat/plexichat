@@ -157,6 +157,19 @@ class ValkeyClientBase:
         except Exception as e:
             logger.error(f"Failed to connect to Valkey: {e}")
             self._connected = False
+            # Record the connection failure as a system alert.
+            try:
+                from src.utils.system_alerts import record_system_alert
+
+                record_system_alert(
+                    "connection_failure",
+                    {"host": self.host, "port": self.port, "error": str(e)},
+                    source="valkey",
+                    severity="error",
+                    target_path="#alerts",
+                )
+            except Exception:
+                pass
             raise ValkeyConnectionError(f"Failed to connect to Valkey: {e}")
 
     def set_worker_id(self, worker_id: str) -> None:

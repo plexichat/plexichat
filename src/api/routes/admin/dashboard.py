@@ -283,3 +283,122 @@ async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
     except Exception as e:
         logger.warning(f"Cross-worker tuning audit query error: {e}")
         raise HTTPException(status_code=500, detail="Failed to query audit log")
+
+
+@router.get("/dashboard/system-alerts")
+async def get_system_alerts(
+    request: Request,
+    limit: int = 50,
+    hours: int = 24,
+    source: str | None = None,
+    severity: str | None = None,
+):
+    """Return recent system alerts across all subsystems."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+
+    try:
+        import src.api as _api
+        import time
+
+        db = _api.get_db()
+        if db is None:
+            raise HTTPException(status_code=500, detail="Database not available")
+
+        cutoff = int(time.time()) - (hours * 3600)
+        where = ["created_at >= ?"]
+        params: list = [cutoff]
+        if source:
+            where.append("source = ?")
+            params.append(source)
+        if severity:
+            where.append("severity = ?")
+            params.append(severity)
+        params.append(limit)
+
+        rows = db.fetch_all(
+            f"SELECT id, source, event_type, severity, details, target_path, created_at "
+            f"FROM system_alerts "
+            f"WHERE {' AND '.join(where)} "
+            f"ORDER BY created_at DESC LIMIT ?",
+            tuple(params),
+        )
+
+        entries: list[dict] = []
+        for row in rows:
+            if isinstance(row, dict):
+                entries.append(
+                    {
+                        "id": row["id"],
+                        "source": row["source"],
+                        "event_type": row["event_type"],
+                        "severity": row["severity"],
+                        "details": row.get("details"),
+                        "target_path": row.get("target_path"),
+                        "created_at": row["created_at"],
+                    }
+                )
+            else:
+                entries.append(
+                    {
+                        "id": row[0],
+                        "source": row[1],
+                        "event_type": row[2],
+                        "severity": row[3],
+                        "details": row[4],
+                        "target_path": row[5],
+                        "created_at": row[6],
+                    }
+                )
+
+        return {"entries": entries}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"System alerts query error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to query system alerts")
+
+
+@router.get("/dashboard/system-alerts/stats")
+async def get_system_alert_stats(
+    request: Request,
+    hours: int = 168,
+):
+    """Return alert counts grouped by source and severity."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+
+    try:
+        import src.api as _api
+        import time
+
+        db = _api.get_db()
+        if db is None:
+            raise HTTPException(status_code=500, detail="Database not available")
+
+        cutoff = int(time.time()) - (hours * 3600)
+        rows = db.fetch_all(
+            "SELECT source, severity, COUNT(*) as cnt "
+            "FROM system_alerts "
+            "WHERE created_at >= ? "
+            "GROUP BY source, severity "
+            "ORDER BY source, severity",
+            (cutoff,),
+        )
+
+        stats: dict[str, dict[str, int]] = {}
+        total = 0
+        for row in rows:
+            if isinstance(row, dict):
+                src, sev, cnt = row["source"], row["severity"], row["cnt"]
+            else:
+                src, sev, cnt = row[0], row[1], row[2]
+            stats.setdefault(src, {})[sev] = cnt
+            total += cnt
+
+        return {"hours": hours, "total": total, "by_source": stats}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"System alert stats error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to query alert stats")
