@@ -81,11 +81,18 @@ def _authorize_scope(
     conversation_id: Optional[int],
     server_id: Optional[int],
     permission: str,
+    author_id: Optional[int] = None,
 ) -> None:
-    """Authorize a server-scoped or conversation-scoped action.
+    """Authorize a server-scoped, conversation-scoped, or personal action.
 
-    Raises HTTPException(403) when the caller has neither the server permission
-    nor conversation membership.
+    Raises HTTPException(403) when the caller has neither the server permission,
+    conversation membership, nor (for personal/notes-scope artifacts) authored
+    the artifact.
+
+    ``author_id`` is the id of the artifact's author (or the caller's own id
+    when creating/listings their personal scope). A personal scope (both
+    ``server_id`` and ``conversation_id`` are ``None``) is only accessible to
+    the author, matching the WebSocket subscribe handler's behavior.
     """
     if _require_server_permission(user_id, server_id, permission):
         return
@@ -93,16 +100,36 @@ def _authorize_scope(
     if _is_conversation_member(messaging_mod, conversation_id, user_id):
         return
     if server_id is None and conversation_id is None:
-        # Personal / notes-style scope: only the author may act. Callers that
-        # already validated author_id should pass it through; here we deny.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": "Not authorized"}},
-        )
+        # Personal / notes-style scope: only the author may act.
+        if author_id is not None and int(author_id) == int(user_id):
+            return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail={"error": {"code": 403, "message": "Not authorized"}},
     )
+
+
+def _deep_merge_payload(
+    base: Optional[Dict[str, Any]], patch: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Merge ``patch`` into ``base`` (both dicts) with PATCH semantics.
+
+    Nested dicts are merged recursively; lists and scalars replace the base
+    value wholesale; an explicit ``None`` value deletes the key from the
+    result. This lets editors persist a partial payload (e.g. only ``content``)
+    without clobbering concurrently-updated keys such as ``rev``/``language``.
+    """
+    result = dict(base or {})
+    if not isinstance(patch, dict):
+        return result
+    for key, value in patch.items():
+        if value is None:
+            result.pop(key, None)
+        elif isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge_payload(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 # === Manager access ===
@@ -206,7 +233,11 @@ async def create_artifact(
         server_id = int(body.server_id) if body.server_id is not None else None
 
         _authorize_scope(
-            current_user.user_id, conversation_id, server_id, "artifact.create"
+            current_user.user_id,
+            conversation_id,
+            server_id,
+            "artifact.create",
+            author_id=current_user.user_id,
         )
 
         manager = _get_manager()
@@ -279,7 +310,13 @@ async def list_artifacts(
         srv_id = int(server_id) if server_id is not None else None
         auth_id = int(author_id) if author_id is not None else None
 
-        _authorize_scope(current_user.user_id, conv_id, srv_id, "artifact.view")
+        _authorize_scope(
+            current_user.user_id,
+            conv_id,
+            srv_id,
+            "artifact.view",
+            author_id=current_user.user_id,
+        )
 
         manager = _get_manager()
 
@@ -376,6 +413,7 @@ async def get_artifact(
             artifact.conversation_id,
             artifact.server_id,
             "artifact.view",
+            author_id=artifact.author_id,
         )
 
         return ArtifactResponse.model_validate(artifact)
@@ -445,7 +483,15 @@ async def update_artifact(
         if body.status is not None:
             update_fields["status"] = ArtifactStatus(body.status.value)
         if body.payload is not None:
-            update_fields["payload"] = body.payload
+            # Merge (not replace) so a partial payload no longer clobbers
+            # concurrently-updated keys. Editors that send the full payload
+            # dict are unaffected (a superset merge is a no-op replacement).
+            existing_payload = (
+                artifact.payload if isinstance(artifact.payload, dict) else {}
+            )
+            update_fields["payload"] = _deep_merge_payload(
+                existing_payload, body.payload
+            )
         if body.recorded is not None:
             update_fields["recorded"] = body.recorded
         if body.has_transcript is not None:
@@ -555,7 +601,11 @@ async def convert_upload(
         server_id = int(body.server_id) if body.server_id is not None else None
 
         _authorize_scope(
-            current_user.user_id, conversation_id, server_id, "artifact.create"
+            current_user.user_id,
+            conversation_id,
+            server_id,
+            "artifact.create",
+            author_id=current_user.user_id,
         )
 
         db = api.get_db()
@@ -721,6 +771,7 @@ async def export_artifact(
             artifact.conversation_id,
             artifact.server_id,
             "artifact.view",
+            author_id=artifact.author_id,
         )
 
         mime_map = {
@@ -846,4 +897,68 @@ async def export_artifact(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Export failed"}},
+        )
+
+
+@router.get(
+    "/{artifact_id}/ops",
+    response_model=Dict[str, Any],
+    summary="List an artifact's persisted ops",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid artifact ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Not authorized"},
+        404: {"model": ErrorResponse, "description": "Artifact not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def list_artifact_ops_route(
+    artifact_id: str,
+    after_seq: int = Query(0, description="Return only ops with seq > this"),
+    limit: int = Query(500, ge=1, le=2000, description="Max ops to return"),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the ordered ops log for an artifact.
+
+    Lets clients reconnect to a collaborative artifact without a live WebSocket
+    by replaying everything that happened after ``after_seq`` (default: all).
+    Each entry is ``{seq, op_type, actor_id, created_at, op}``, the same wire
+    shape carried inside ``ARTIFACT_SYNC``.
+    """
+    try:
+        try:
+            aid = int(artifact_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
+            )
+
+        manager = _get_manager()
+        artifact = manager.get(aid)
+        if artifact is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Artifact not found"}},
+            )
+
+        _authorize_scope(
+            current_user.user_id,
+            artifact.conversation_id,
+            artifact.server_id,
+            "artifact.view",
+            author_id=artifact.author_id,
+        )
+
+        ops = manager.list_ops(aid, after_seq=max(0, int(after_seq)), limit=int(limit))
+        return {"artifact_id": str(aid), "ops": ops}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to list ops for artifact {artifact_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

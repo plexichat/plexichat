@@ -11,6 +11,8 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
+import utils.logger as logger
+
 from src.core.base import SnowflakeID
 from .models import (
     Artifact,
@@ -177,8 +179,32 @@ def update_artifact(db, artifact_id: SnowflakeID, **fields: Any) -> Optional[Art
     return get_artifact(db, artifact_id)
 
 
+def delete_artifact_cascade(db, artifact_id: SnowflakeID) -> bool:
+    """Delete an artifact row and all rows that reference it.
+
+    Removes the artifact's metadata row plus its ordered operations log
+    (``artifact_ops``) and any voice-call records linked via
+    ``voice_calls.artifact_id``. Media purges are the caller's responsibility
+    (the repository deliberately does not couple to the media module).
+
+    Args:
+        db: Database connection.
+        artifact_id: The ID of the artifact to delete.
+
+    Returns:
+        ``True`` if the metadata row was removed, ``False`` otherwise.
+    """
+    try:
+        db.execute("DELETE FROM artifact_ops WHERE artifact_id = ?", (artifact_id,))
+        db.execute("DELETE FROM voice_calls WHERE artifact_id = ?", (artifact_id,))
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"Cascade cleanup failed for artifact {artifact_id}: {e}")
+    cursor = db.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
+    return bool(getattr(cursor, "rowcount", 0) > 0)
+
+
 def delete_artifact(db, artifact_id: SnowflakeID) -> bool:
-    """Delete an artifact row.
+    """Delete an artifact row and its cascade-linked rows.
 
     Args:
         db: Database connection.
@@ -187,8 +213,7 @@ def delete_artifact(db, artifact_id: SnowflakeID) -> bool:
     Returns:
         ``True`` if a row was removed, ``False`` otherwise.
     """
-    cursor = db.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
-    return bool(getattr(cursor, "rowcount", 0) > 0)
+    return delete_artifact_cascade(db, artifact_id)
 
 
 def _build_where(filters: Dict[str, Any]) -> tuple[str, List[Any]]:
@@ -284,6 +309,125 @@ def count_artifacts(db, filters: Optional[Dict[str, Any]] = None) -> int:
         f"SELECT COUNT(*) AS count FROM artifacts a{where}", tuple(params)
     )
     return int(row["count"]) if row else 0
+
+
+# === Artifact ops log (artifact_ops table) ===
+
+# Op types that carry no durable document state and are never persisted.
+_TRANSIENT_OP_TYPES = {"cursor", "snapshot_request", "typing", "selection"}
+
+
+def _fetch_next_seq(db, artifact_id: SnowflakeID) -> int:
+    """Return the next per-artifact sequence number (MAX(seq) + 1).
+
+    Uses ``db.execute`` directly (not ``fetch_one``) so the result is never
+    served from the query cache: a just-inserted op must be visible.
+    """
+    try:
+        row = db.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq "
+            "FROM artifact_ops WHERE artifact_id = ?",
+            (artifact_id,),
+        ).fetchone()
+    except Exception:
+        return 1
+    if not row:
+        return 1
+    try:
+        return int(row["next_seq"])
+    except (KeyError, TypeError, IndexError):
+        try:
+            return int(row[0])
+        except (TypeError, IndexError):
+            return 1
+
+
+def append_artifact_op(
+    db,
+    artifact_id: SnowflakeID,
+    op_type: str,
+    actor_id: Optional[int],
+    data: Any,
+) -> Optional[int]:
+    """Append an op to an artifact's ordered operations log.
+
+    Returns the assigned ``seq``, or ``None`` when the artifact does not exist
+    or the op could not be persisted. ``seq`` is allocated as ``MAX(seq) + 1``
+    and the ``UNIQUE(artifact_id, seq)`` constraint is used to detect races:
+    on a collision the insert is retried with a fresh sequence number.
+
+    Args:
+        db: Database connection.
+        artifact_id: Target artifact.
+        op_type: Op kind (e.g. ``edit``, ``stroke``).
+        actor_id: User that produced the op (nullable).
+        data: JSON-serializable op payload.
+    """
+    if op_type in _TRANSIENT_OP_TYPES:
+        return None
+    if get_artifact(db, artifact_id) is None:
+        return None
+    now = int(time.time() * 1000)
+    data_json = _json_dumps(data)
+    for _ in range(8):
+        seq = _fetch_next_seq(db, artifact_id)
+        try:
+            cursor = db.execute(
+                "INSERT INTO artifact_ops "
+                "(artifact_id, seq, op_type, actor_id, data, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (artifact_id, seq, op_type, actor_id, data_json, now),
+            )
+        except Exception as e:
+            # Retry only on unique/integrity collisions; anything else surfaces.
+            lowered = str(e).lower()
+            if "unique" in lowered or "integrity" in lowered:
+                continue
+            logger.warning(f"Failed to persist artifact op for {artifact_id}: {e}")
+            return None
+        if getattr(cursor, "rowcount", 0):
+            return seq
+    logger.warning(f"Failed to persist artifact op for {artifact_id}: seq contention")
+    return None
+
+
+def list_artifact_ops(
+    db,
+    artifact_id: SnowflakeID,
+    after_seq: int = 0,
+    limit: int = 500,
+) -> List[Dict[str, Any]]:
+    """Return ops for an artifact ordered by ``seq`` ascending.
+
+    Each entry carries ``seq``, ``op_type``, ``actor_id``, ``created_at``, and
+    the original op payload under ``op`` (the same shape used on the
+    ``ARTIFACT_SYNC`` wire format for late-joiner replay).
+    """
+    try:
+        rows = db.fetch_all(
+            "SELECT seq, op_type, actor_id, data, created_at "
+            "FROM artifact_ops WHERE artifact_id = ? AND seq > ? "
+            "ORDER BY seq ASC LIMIT ?",
+            (artifact_id, int(after_seq), int(limit)),
+        )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"Failed to list artifact ops for {artifact_id}: {e}")
+        return []
+    ops: List[Dict[str, Any]] = []
+    for row in rows:
+        try:
+            ops.append(
+                {
+                    "seq": int(row["seq"]),
+                    "op_type": row["op_type"],
+                    "actor_id": row.get("actor_id"),
+                    "created_at": row.get("created_at"),
+                    "op": _json_loads(row.get("data")),
+                }
+            )
+        except Exception:  # pragma: no cover - defensive
+            continue
+    return ops
 
 
 # === Voice calls (voice_calls table) ===

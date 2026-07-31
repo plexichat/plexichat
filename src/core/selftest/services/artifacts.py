@@ -522,11 +522,13 @@ class ArtifactsTester:
 
         sub_ws = None
         actor_ws = None
+        db = api.get_db()
+        temporary_artifact_id: Optional[int] = None
         try:
             # Subscriber connection (other_user) -- the client that should
             # receive the relayed op.
             sub_ws = websocket.create_connection(ws_url, timeout=5, header=headers)
-            hello = json.loads(sub_ws.recv())
+            hello = _recv_required_json(sub_ws, "subscriber HELLO")
             if hello.get("op") != int(GatewayOpcode.HELLO):
                 self._record(
                     "WS",
@@ -552,7 +554,7 @@ class ArtifactsTester:
                     }
                 )
             )
-            sub_ready = json.loads(sub_ws.recv())
+            sub_ready = _recv_required_json(sub_ws, "subscriber READY")
             if sub_ready.get("t") != "READY":
                 self._record(
                     "WS",
@@ -565,7 +567,7 @@ class ArtifactsTester:
 
             # Actor connection (main user) -- sends the ARTIFACT_OP.
             actor_ws = websocket.create_connection(ws_url, timeout=5, header=headers)
-            hello2 = json.loads(actor_ws.recv())
+            hello2 = _recv_required_json(actor_ws, "actor HELLO")
             if hello2.get("op") != int(GatewayOpcode.HELLO):
                 self._record(
                     "WS",
@@ -591,7 +593,7 @@ class ArtifactsTester:
                     }
                 )
             )
-            actor_ready = json.loads(actor_ws.recv())
+            actor_ready = _recv_required_json(actor_ws, "actor READY")
             if actor_ready.get("t") != "READY":
                 self._record(
                     "WS",
@@ -602,9 +604,33 @@ class ArtifactsTester:
                 )
                 return
 
-            # Choose an artifact id for the round-trip (use a deterministic,
-            # unlikely-to-exist id; relay only fans out, no persistence).
-            artifact_id = _ARTIFACTS_TEST_NONCE * 1000 + 1
+            # Use a real temporary artifact so the WSS test exercises the
+            # same existence and authorization checks as production. Both
+            # self-test users must share the setup conversation; otherwise
+            # this fixture would silently fall back to an unauthorized scope.
+            if db is None:
+                raise RuntimeError("Database unavailable for artifact WSS fixture")
+            if self.ctx.test_conversation_id is None:
+                raise RuntimeError(
+                    "artifact WSS fixture requires a shared test conversation"
+                )
+            artifact_manager = ArtifactManager(db, config.get("artifacts", {}) or {})
+            temporary_artifact = artifact_manager.create(
+                # Use the shared test conversation rather than a server-scoped
+                # artifact. Both self-test users are participants there, so the
+                # WSS fixture exercises the same membership authorization path
+                # without granting the ordinary subscriber admin permission.
+                conversation_id=self.ctx.test_conversation_id,
+                author_id=self.ctx.test_user_id or 1,
+                artifact_type=ArtifactType.WHITEBOARD,
+                title=f"selftest-wss-{_ARTIFACTS_TEST_NONCE}",
+                summary="temporary WSS authorization fixture",
+                server_id=None,
+                status=ArtifactStatus.LIVE,
+                payload={"selftest": True},
+            )
+            temporary_artifact_id = int(temporary_artifact.id)
+            artifact_id = temporary_artifact_id
 
             # Subscriber subscribes to the artifact.
             sub_ws.send(
@@ -616,7 +642,7 @@ class ArtifactsTester:
                 )
             )
             # Subscribe replies with an ARTIFACT_SYNC placeholder snapshot.
-            sub_msg = json.loads(sub_ws.recv())
+            sub_msg = _recv_required_json(sub_ws, "subscriber ARTIFACT_SYNC")
             if (
                 sub_msg.get("op") != int(GatewayOpcode.ARTIFACT_SYNC)
                 or sub_msg.get("d", {}).get("artifact_id") != artifact_id
@@ -701,6 +727,15 @@ class ArtifactsTester:
                         sock.close()
                     except Exception:
                         pass
+            if db is not None and temporary_artifact_id is not None:
+                try:
+                    delete_artifact(db, temporary_artifact_id)
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to clean temporary WSS artifact %s: %s",
+                        temporary_artifact_id,
+                        exc,
+                    )
 
     # === 5. admin REST endpoints ===
 
@@ -1013,6 +1048,24 @@ class ArtifactsTester:
             )
         except Exception as e:
             self._record("EVAL", "_eval_*", False, "individual_eval_error", str(e))
+
+
+def _recv_required_json(sock: Any, label: str) -> Dict[str, Any]:
+    """Receive and decode one required JSON gateway frame with context."""
+    try:
+        raw = sock.recv()
+    except Exception as exc:
+        raise RuntimeError(f"{label}: websocket receive failed: {exc}") from exc
+    if raw in (None, "", b""):
+        raise RuntimeError(f"{label}: websocket closed without a JSON frame")
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        preview = repr(raw[:200] if isinstance(raw, (str, bytes)) else raw)
+        raise RuntimeError(f"{label}: invalid frame {preview}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{label}: expected JSON object, got {type(value).__name__}")
+    return value
 
 
 def _recv_json_with_timeout(sock: Any, timeout: float) -> Optional[Dict[str, Any]]:
