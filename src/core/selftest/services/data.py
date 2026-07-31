@@ -106,6 +106,8 @@ class DataGenerator:
                 )
             else:
                 val = str(self.ctx.test_user_id)
+        elif name_low in ("conversation_id", "conversationid"):
+            val = str(self.ctx.test_conversation_id or _gen_snowflake())
         elif "server" in name_low or "guild" in name_low:
             val = str(self.ctx.test_server_id)
         elif "channel" in name_low:
@@ -343,6 +345,20 @@ class DataGenerator:
 
             if "auth/register" in path:
                 body["username"] = f"user_{random.randint(10000, 99999)}"
+
+            # Artifact CRUD must use the real setup scope. Schema-driven
+            # generation otherwise invents a conversation id, which the route
+            # correctly rejects after scope validation.
+            if path == "/api/v1/artifacts" and method == "POST":
+                if self.ctx.test_conversation_id:
+                    body["conversation_id"] = str(self.ctx.test_conversation_id)
+                if self.ctx.test_channel_id:
+                    body["channel_id"] = str(self.ctx.test_channel_id)
+                if self.ctx.test_server_id:
+                    body["server_id"] = str(self.ctx.test_server_id)
+                body["title"] = "Self-test artifact"
+                body["artifact_type"] = "upload"
+                body["status"] = "completed"
                 body["password"] = test_pass
                 if "email" in body:
                     body["email"] = f"test_{random.randint(10000, 99999)}@example.com"
@@ -654,6 +670,12 @@ class DataGenerator:
                         if self.ctx.test_attachment_id
                         else self.generate_snowflake()
                     )
+                if self.ctx.test_conversation_id:
+                    body["conversation_id"] = str(self.ctx.test_conversation_id)
+                if self.ctx.test_channel_id:
+                    body["channel_id"] = str(self.ctx.test_channel_id)
+                if self.ctx.test_server_id:
+                    body["server_id"] = str(self.ctx.test_server_id)
 
             if "status" in body:
                 if "tickets" in path:
