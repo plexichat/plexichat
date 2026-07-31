@@ -243,6 +243,18 @@ async def rotate_access_token(
             status_code=404,
             detail={"error": {"code": 404, "message": "Access token not found"}},
         )
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "token_rotated",
+            {"token_id": token_id, "rotated_by": admin_id},
+            source="admin",
+            severity="info",
+        )
+    except Exception:
+        pass
+
     return AccessTokenCreateResponse(
         token=token.token or "", access_token=_serialize_access_token(token)
     )
@@ -318,6 +330,20 @@ async def revoke_access_token(request: Request, token_id: int):
             status_code=404,
             detail={"error": {"code": 404, "message": "Access token not found"}},
         )
+
+    # Record as a system alert.
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "token_revoked",
+            {"token_id": token_id, "revoked_by": admin_id},
+            source="admin",
+            severity="warning",
+        )
+    except Exception:
+        pass
+
     return SuccessResponse(success=True, message=None)
 
 
@@ -343,6 +369,20 @@ async def unrevoke_access_token(request: Request, token_id: int):
                 }
             },
         )
+
+    # Record as a system alert.
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "token_unrevoked",
+            {"token_id": token_id, "unrevoked_by": admin_id},
+            source="admin",
+            severity="info",
+        )
+    except Exception:
+        pass
+
     return SuccessResponse(success=True, message=None)
 
 
@@ -408,7 +448,7 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
     Immediately invalidate all active sessions for a specific user.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
     try:
         uid = int(body.user_id)
         from src.core import auth
@@ -430,6 +470,20 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
             logger.warning(
                 "Failed to broadcast force-logout WebSocket event", exc_info=True
             )
+
+        try:
+            from src.utils.system_alerts import record_system_alert
+
+            record_system_alert(
+                "user_sessions_killed",
+                {"user_id": str(uid), "initiated_by": admin_id},
+                source="admin",
+                severity="warning",
+                target_path=f"#user-{uid}",
+            )
+        except Exception:
+            pass
+
         return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
@@ -444,7 +498,7 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
     Lock a user account, preventing all access for a specified duration.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
     try:
         uid = int(body.user_id)
         from src.core import admin
@@ -466,6 +520,24 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
             logger.warning(
                 "Failed to broadcast lock-user WebSocket event", exc_info=True
             )
+
+        try:
+            from src.utils.system_alerts import record_system_alert
+
+            record_system_alert(
+                "user_suspended",
+                {
+                    "user_id": str(uid),
+                    "duration_seconds": body.duration_seconds,
+                    "suspended_by": admin_id,
+                },
+                source="admin",
+                severity="warning",
+                target_path=f"#user-{uid}",
+            )
+        except Exception:
+            pass
+
         return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
@@ -500,7 +572,7 @@ async def logout_all_users(request: Request):
     Invalidate all active sessions for every user on the platform.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = get_admin_from_token(request)
     from src.core import auth
 
     auth.logout_all_users()
@@ -515,4 +587,17 @@ async def logout_all_users(request: Request):
         logger.warning(
             "Failed to close WebSocket connections on logout-all", exc_info=True
         )
+
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "global_session_purge",
+            {"initiated_by": admin_id},
+            source="admin",
+            severity="warning",
+        )
+    except Exception:
+        pass
+
     return SuccessResponse(success=True, message=None)

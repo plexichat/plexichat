@@ -293,6 +293,24 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
         request.client.host if request.client else "unknown",
     )
 
+    # Record as a system alert for the Alerts tab.
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "approval_requested",
+            {
+                "approval_id": str(approval_id),
+                "action_type": approval_data.action_type,
+                "requested_by": admin_id,
+            },
+            source="approvals",
+            severity="info",
+            target_path=f"#approval-{approval_id}",
+        )
+    except Exception:
+        pass
+
     return SuccessResponse(
         success=True, message=f"Approval request created: {approval_id}"
     )
@@ -412,6 +430,41 @@ async def approve_request(request: Request, approval_id: int):
         request.client.host if request.client else "unknown",
     )
 
+    # Record as a system alert for the Alerts tab.
+    # Only emit "approval_approved" when the threshold is reached;
+    # intermediate votes use "approval_voted".
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        if new_status == "approved":
+            record_system_alert(
+                "approval_approved",
+                {
+                    "approval_id": str(approval_id),
+                    "approved_by": admin_id,
+                    "current_approvals": new_current_approvals,
+                    "required_approvals": required_approvals,
+                },
+                source="approvals",
+                severity="info",
+                target_path=f"#approval-{approval_id}",
+            )
+        else:
+            record_system_alert(
+                "approval_voted",
+                {
+                    "approval_id": str(approval_id),
+                    "voted_by": admin_id,
+                    "current_approvals": new_current_approvals,
+                    "required_approvals": required_approvals,
+                },
+                source="approvals",
+                severity="info",
+                target_path=f"#approval-{approval_id}",
+            )
+    except Exception:
+        pass
+
     return SuccessResponse(success=True, message="Approval recorded")
 
 
@@ -489,6 +542,24 @@ async def reject_request(
         {"reason": decision.reason, "approval_id": str(approval_id)},
         request.client.host if request.client else "unknown",
     )
+
+    # Record as a system alert for the Alerts tab.
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "approval_rejected",
+            {
+                "approval_id": str(approval_id),
+                "rejected_by": admin_id,
+                "reason": decision.reason,
+            },
+            source="approvals",
+            severity="warning",
+            target_path=f"#approval-{approval_id}",
+        )
+    except Exception:
+        pass
 
     return SuccessResponse(success=True, message="Approval request rejected")
 
