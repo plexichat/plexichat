@@ -12,6 +12,12 @@ from typing import Dict, List, Optional, Any
 import utils.logger as logger
 
 from ..exceptions import SFUConnectionError, SFUTimeoutError
+from .paths import (
+    path_segment,
+    resolve_recording_dir,
+    ensure_within_recording_dir,
+    safe_filename_component,
+)
 from .base import (
     SFUAdapter,
     SFUTransport,
@@ -162,7 +168,9 @@ class MediasoupAdapter(SFUAdapter):
 
     async def close_room(self, room_id: str) -> bool:
         """Close a room on the mediasoup server."""
-        await self._request("DELETE", f"/rooms/{room_id}")
+        if room_id in self._recordings:
+            await self.stop_recording(room_id)
+        await self._request("DELETE", f"/rooms/{path_segment(room_id, 'room_id')}")
         logger.debug(f"Closed mediasoup room: {room_id}")
         return True
 
@@ -170,7 +178,7 @@ class MediasoupAdapter(SFUAdapter):
         """Join a peer to a room."""
         result = await self._request(
             "POST",
-            f"/rooms/{room_id}/peers",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers",
             {
                 "peerId": peer_id,
                 "acoustic_defense": self._acoustic_defense_to_dict(),
@@ -187,7 +195,10 @@ class MediasoupAdapter(SFUAdapter):
 
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """Remove a peer from a room."""
-        await self._request("DELETE", f"/rooms/{room_id}/peers/{peer_id}")
+        await self._request(
+            "DELETE",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}",
+        )
         logger.debug(f"Peer {peer_id} left room {room_id}")
         return True
 
@@ -200,7 +211,7 @@ class MediasoupAdapter(SFUAdapter):
         """Create a WebRTC transport for a peer."""
         result = await self._request(
             "POST",
-            f"/rooms/{room_id}/peers/{peer_id}/transports",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/transports",
             {
                 "direction": direction.value,
                 "sctpCapabilities": None,
@@ -230,7 +241,7 @@ class MediasoupAdapter(SFUAdapter):
         """Connect a transport with DTLS parameters."""
         await self._request(
             "POST",
-            f"/rooms/{room_id}/peers/{peer_id}/transports/{transport_id}/connect",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/transports/{path_segment(transport_id, 'transport_id')}/connect",
             {"dtlsParameters": dtls_parameters},
         )
 
@@ -248,7 +259,7 @@ class MediasoupAdapter(SFUAdapter):
         """Create a producer to send media."""
         result = await self._request(
             "POST",
-            f"/rooms/{room_id}/peers/{peer_id}/transports/{transport_id}/produce",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/transports/{path_segment(transport_id, 'transport_id')}/produce",
             {
                 "kind": kind.value,
                 "rtpParameters": rtp_parameters,
@@ -277,7 +288,7 @@ class MediasoupAdapter(SFUAdapter):
         """Create a consumer to receive media."""
         result = await self._request(
             "POST",
-            f"/rooms/{room_id}/peers/{peer_id}/transports/{transport_id}/consume",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/transports/{path_segment(transport_id, 'transport_id')}/consume",
             {
                 "producerId": producer_id,
                 "rtpCapabilities": rtp_capabilities,
@@ -305,7 +316,7 @@ class MediasoupAdapter(SFUAdapter):
         """Pause a producer."""
         await self._request(
             "POST",
-            f"/rooms/{room_id}/peers/{peer_id}/producers/{producer_id}/pause",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/producers/{path_segment(producer_id, 'producer_id')}/pause",
         )
         return True
 
@@ -318,7 +329,7 @@ class MediasoupAdapter(SFUAdapter):
         """Resume a producer."""
         await self._request(
             "POST",
-            f"/rooms/{room_id}/peers/{peer_id}/producers/{producer_id}/resume",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/producers/{path_segment(producer_id, 'producer_id')}/resume",
         )
         return True
 
@@ -331,14 +342,16 @@ class MediasoupAdapter(SFUAdapter):
         """Close a producer."""
         await self._request(
             "DELETE",
-            f"/rooms/{room_id}/peers/{peer_id}/producers/{producer_id}",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/producers/{path_segment(producer_id, 'producer_id')}",
         )
         return True
 
     async def get_room_info(self, room_id: str) -> Optional[RoomInfo]:
         """Get information about a room."""
         try:
-            result = await self._request("GET", f"/rooms/{room_id}")
+            result = await self._request(
+                "GET", f"/rooms/{path_segment(room_id, 'room_id')}"
+            )
             return RoomInfo(
                 id=room_id,
                 peers=result.get("peers", []),
@@ -349,7 +362,9 @@ class MediasoupAdapter(SFUAdapter):
 
     async def get_router_capabilities(self, room_id: str) -> Dict[str, Any]:
         """Get RTP capabilities for a room's router."""
-        result = await self._request("GET", f"/rooms/{room_id}/routerCapabilities")
+        result = await self._request(
+            "GET", f"/rooms/{path_segment(room_id, 'room_id')}/routerCapabilities"
+        )
         return result.get("rtpCapabilities", {})
 
     async def set_preferred_layers(
@@ -363,7 +378,7 @@ class MediasoupAdapter(SFUAdapter):
         """Set preferred simulcast layers for a consumer."""
         await self._request(
             "POST",
-            f"/rooms/{room_id}/peers/{peer_id}/consumers/{consumer_id}/preferredLayers",
+            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/consumers/{path_segment(consumer_id, 'consumer_id')}/preferredLayers",
             {
                 "spatialLayer": spatial_layer,
                 "temporalLayer": temporal_layer,
@@ -373,13 +388,14 @@ class MediasoupAdapter(SFUAdapter):
 
     async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
         """Start recording by creating a recorder transport on the room."""
-        recording_id = f"rec_{room_id}_{int(time.time())}"
+        safe_output_dir = resolve_recording_dir(output_dir)
+        recording_id = f"rec_{safe_filename_component(room_id)}_{int(time.time())}"
         try:
             result = await self._request(
                 "POST",
-                f"/rooms/{room_id}/recording/start",
+                f"/rooms/{path_segment(room_id, 'room_id')}/recording/start",
                 {
-                    "outputDir": output_dir,
+                    "outputDir": str(safe_output_dir),
                     "recordingId": recording_id,
                     "acoustic_defense": self._acoustic_defense_to_dict(),
                 },
@@ -394,7 +410,7 @@ class MediasoupAdapter(SFUAdapter):
         file_count = result.get("file_count", 0)
         self._recordings[room_id] = {
             "recording_id": recording_id,
-            "output_dir": output_dir,
+            "output_dir": str(safe_output_dir),
             "file_count": file_count,
         }
         logger.info(
@@ -414,7 +430,7 @@ class MediasoupAdapter(SFUAdapter):
         try:
             result = await self._request(
                 "POST",
-                f"/rooms/{room_id}/recording/stop",
+                f"/rooms/{path_segment(room_id, 'room_id')}/recording/stop",
                 {"recordingId": info["recording_id"]},
             )
             files: List[str] = result.get("files", [])
@@ -427,7 +443,11 @@ class MediasoupAdapter(SFUAdapter):
                 f"recording for room {room_id} was tracked locally only"
             )
 
-        return [os.path.join(info["output_dir"], f"{info['recording_id']}.webm")]
+        fallback = ensure_within_recording_dir(
+            os.path.join(info["output_dir"], f"{info['recording_id']}.webm"),
+            info["output_dir"],
+        )
+        return [str(fallback)]
 
     async def health_check(self) -> bool:
         """Check if the mediasoup server is healthy."""
@@ -438,7 +458,15 @@ class MediasoupAdapter(SFUAdapter):
             return False
 
     async def close(self) -> None:
-        """Close the HTTP session."""
+        """Stop active recordings before closing the HTTP session."""
+        for room_id in list(self._recordings):
+            try:
+                await self.stop_recording(room_id)
+            except Exception as exc:
+                logger.debug(
+                    "Failed to stop mediasoup recording for %s: %s", room_id, exc
+                )
+        self._recordings.clear()
         if self._session:
             await self._session.close()
             self._session = None
