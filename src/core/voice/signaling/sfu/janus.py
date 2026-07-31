@@ -10,6 +10,7 @@ import secrets
 import time
 from typing import Dict, List, Optional, Any
 
+import utils.config as config
 import utils.logger as logger
 
 from ..exceptions import SFUConnectionError, SFUTimeoutError
@@ -61,6 +62,7 @@ class JanusAdapter(SFUAdapter):
         self._janus_recordings: Dict[
             str, Dict[str, Any]
         ] = {}  # room_id -> recording info
+        self._janus_recording_roots: Dict[str, str] = {}
         self._acoustic_defense = acoustic_defense
 
     def _acoustic_defense_to_dict(self) -> Dict[str, Any]:
@@ -200,33 +202,59 @@ class JanusAdapter(SFUAdapter):
         """Create a new room on the Janus server."""
         # Create Janus session for this room
         session_id = await self._create_janus_session()
-        handle_id = await self._attach_plugin(session_id)
+        try:
+            handle_id = await self._attach_plugin(session_id)
 
-        self._janus_sessions[room_id] = session_id
-        self._janus_handles[room_id] = {"admin": handle_id}
+            self._janus_sessions[room_id] = session_id
+            self._janus_handles[room_id] = {"admin": handle_id}
 
-        # Create VideoRoom
-        room_num = stable_numeric_id(room_id, "room")  # Stable Janus numeric ID
+            # Create VideoRoom. Janus stores native recordings using this prefix;
+            # keep it under the same configured root returned by start_recording().
+            room_num = stable_numeric_id(room_id, "room")  # Stable Janus numeric ID
+            recording_root = (
+                config.get("artifacts", {})
+                .get("voice", {})
+                .get("recording", {})
+                .get("output_dir", "/tmp/janus-recordings")
+            )
+            safe_recording_root = resolve_recording_dir(str(recording_root))
+            recording_prefix = safe_recording_root / safe_filename_component(room_id)
 
-        await self._send_message(
-            session_id,
-            handle_id,
-            {
-                "request": "create",
-                "room": room_num,
-                "description": room_id,
-                "publishers": 100,
-                "bitrate": 128000,
-                "fir_freq": 10,
-                "audiocodec": "opus",
-                "videocodec": "vp8,h264",
-                "record": True,
-                "filename": f"/tmp/janus-recordings/{safe_filename_component(room_id)}",
-                "acoustic_defense": self._acoustic_defense_to_dict(),
-            },
-        )
+            await self._send_message(
+                session_id,
+                handle_id,
+                {
+                    "request": "create",
+                    "room": room_num,
+                    "description": room_id,
+                    "publishers": 100,
+                    "bitrate": 128000,
+                    "fir_freq": 10,
+                    "audiocodec": "opus",
+                    "videocodec": "vp8,h264",
+                    "record": True,
+                    "filename": str(recording_prefix),
+                    "acoustic_defense": self._acoustic_defense_to_dict(),
+                },
+            )
+            # Do not retain a native root until Janus confirms room creation.
+            self._janus_recording_roots[room_id] = str(safe_recording_root)
 
-        logger.debug(f"Created Janus room: {room_id} (numeric: {room_num})")
+            logger.debug(f"Created Janus room: {room_id} (numeric: {room_num})")
+        except Exception:
+            self._janus_sessions.pop(room_id, None)
+            self._janus_handles.pop(room_id, None)
+            self._janus_recording_roots.pop(room_id, None)
+            try:
+                await self._request(f"/{session_id}", {"janus": "destroy"})
+            except Exception as cleanup_exc:
+                logger.debug(
+                    "Failed to clean up Janus session %s after room creation "
+                    "failure: %s",
+                    session_id,
+                    cleanup_exc,
+                )
+            raise
 
         return RoomInfo(id=room_id, peers=[], producers=[])
 
@@ -236,6 +264,9 @@ class JanusAdapter(SFUAdapter):
             await self.stop_recording(room_id)
         session_id = self._janus_sessions.get(room_id)
         if not session_id:
+            self._janus_sessions.pop(room_id, None)
+            self._janus_handles.pop(room_id, None)
+            self._janus_recording_roots.pop(room_id, None)
             return False
 
         handle_id = self._janus_handles.get(room_id, {}).get("admin")
@@ -256,6 +287,7 @@ class JanusAdapter(SFUAdapter):
         del self._janus_sessions[room_id]
         if room_id in self._janus_handles:
             del self._janus_handles[room_id]
+        self._janus_recording_roots.pop(room_id, None)
 
         logger.debug(f"Closed Janus room: {room_id}")
         return True
@@ -566,6 +598,14 @@ class JanusAdapter(SFUAdapter):
             )
 
         safe_output_dir = resolve_recording_dir(output_dir)
+        native_root = self._janus_recording_roots.get(room_id)
+        if native_root is not None and str(safe_output_dir) != native_root:
+            raise SFUConnectionError(
+                "Janus recording output directory must match the room's "
+                "configured native recording directory",
+                backend="janus",
+                url=self._api_url,
+            )
         recording_id = (
             f"janus_rec_{safe_filename_component(room_id)}_{int(time.time())}"
         )
@@ -644,6 +684,7 @@ class JanusAdapter(SFUAdapter):
         self._janus_handles.clear()
         self._producer_kinds.clear()
         self._janus_recordings.clear()
+        self._janus_recording_roots.clear()
 
         if self._session:
             await self._session.close()
