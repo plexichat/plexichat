@@ -1,13 +1,14 @@
 """
 Artifact retention - background cleanup of expired artifact rows.
 
-Implements the minimal, real retention behavior referenced by the admin REST
-endpoint: delete every artifact whose ``expires_at`` is set and already in the
-past. A scheduled background job (``RetentionCleanupJob``) runs this on a
-configured interval, applying the per-server retention window to artifacts that
-have a retention policy but no ``expires_at`` yet, then purging the expired
-rows. Media/linked-row cascade cleanup is intentionally out of scope here
-(matching the manager's `delete` semantics) and is handled by later groups.
+Implements the real retention behavior referenced by the admin REST endpoint:
+delete every artifact whose ``expires_at`` is set and already in the past. A
+scheduled background job (``RetentionCleanupJob``) runs this on a configured
+interval, applying the per-server retention window to artifacts that have a
+retention policy but no ``expires_at`` yet, then purging the expired rows.
+Purges cascade through the artifact's linked rows (``artifact_ops`` and
+``voice_calls``); media purges follow the same best-effort semantics as the
+manager's ``delete``.
 """
 
 import json
@@ -46,17 +47,35 @@ def purge_expired(db: Any, config: Optional[Dict[str, Any]] = None) -> int:
         return 0
     try:
         now = _now_ms()
-        cursor = db.execute(
-            "DELETE FROM artifacts WHERE expires_at IS NOT NULL AND expires_at <= ?",
+        rows = db.fetch_all(
+            "SELECT id FROM artifacts WHERE expires_at IS NOT NULL AND expires_at <= ?",
             (now,),
         )
-        removed = int(getattr(cursor, "rowcount", 0) or 0)
+        removed = 0
+        for row in rows:
+            if _delete_artifact_cascade(db, row["id"]):
+                removed += 1
         if removed:
             logger.info(f"Purged {removed} expired artifact(s)")
         return removed
     except Exception as e:  # pragma: no cover - defensive
         logger.error(f"Failed to purge expired artifacts: {e}", exc_info=True)
         return 0
+
+
+def _delete_artifact_cascade(db: Any, artifact_id: int) -> bool:
+    """Remove an artifact and its cascade-linked rows (ops, voice_calls).
+
+    Reuses the repository's cascade delete so retention, the REST delete, and
+    the admin force-delete all follow the same cleanup semantics.
+    """
+    try:
+        from .repository import delete_artifact_cascade
+
+        return delete_artifact_cascade(db, artifact_id)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"Failed to cascade-delete artifact {artifact_id}: {e}")
+        return False
 
 
 def _now_ms() -> int:
