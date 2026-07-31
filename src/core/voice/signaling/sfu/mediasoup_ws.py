@@ -999,7 +999,7 @@ class MediasoupWSAdapter(SFUAdapter):
 
         self._recordings[room_id] = {
             "recording_id": recording_id,
-            "output_dir": output_dir,
+            "output_dir": str(safe_output_dir),
             "transport_id": transport_id,
             "consumer_ids": consumer_ids,
             "recorder_peer_id": connection.peer_id,
