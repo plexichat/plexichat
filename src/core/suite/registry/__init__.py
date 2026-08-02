@@ -1,0 +1,1 @@
+"""PlexiSuite app registry contracts."""

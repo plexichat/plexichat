@@ -1,0 +1,456 @@
+"""Authenticated read-only PlexiSuite registry and universal-home routes.
+
+This is the first runtime integration for the suite scaffold. It exposes the
+server-authoritative app catalog and a bounded personal recent-artifacts feed.
+Stash mutations and Sum workbook persistence remain separate domains and are not
+silently routed through the generic artifact payload.
+"""
+
+from typing import Any, Dict, Iterable, List
+
+from fastapi import APIRouter, Depends, Query
+
+from src.api.middleware.authentication import TokenInfo, get_current_user
+from src.api.routes.artifacts import _get_manager, _require_server_permission
+from src.core.artifacts.capabilities import (
+    CapabilityState,
+    capability_allows_artifact,
+    capability_to_dict,
+    get_artifact_capabilities,
+    get_capability,
+)
+from src.core.artifacts.models import Artifact
+from src.core.suite.registry.schema import AppManifest
+from src.core.suite.stash import StashManager
+from src.core.suite.sum.manager import SumManager
+
+router = APIRouter(prefix="/suite", tags=["PlexiSuite"])
+
+
+_SUITE_MANIFESTS = (
+    AppManifest(
+        app_id="plexichat",
+        label="Plexichat",
+        icon="ph-chat-circle",
+        color_token="chat",
+        scopes=["personal", "conversation", "server"],
+        supports_embedded=False,
+        supports_offline=True,
+    ),
+    AppManifest(
+        app_id="plexiscribe",
+        label="PlexiScribe",
+        icon="ph-notebook",
+        color_token="scribe",
+        artifact_types=["plexiscribe"],
+        capability="plexiscribe",
+        scopes=["personal", "conversation", "server"],
+        supports_embedded=True,
+        supports_offline=True,
+    ),
+    AppManifest(
+        app_id="plexiscript",
+        label="PlexiScript",
+        icon="ph-code",
+        color_token="script",
+        artifact_types=["plexiscript"],
+        capability="plexiscript",
+        scopes=["personal", "conversation", "server"],
+        supports_embedded=True,
+        supports_offline=True,
+    ),
+    AppManifest(
+        app_id="plexiboard",
+        label="PlexiBoard",
+        icon="ph-chalkboard",
+        color_token="board",
+        artifact_types=["whiteboard"],
+        capability="artifacts_whiteboard",
+        scopes=["conversation", "server"],
+        supports_embedded=True,
+        supports_offline=False,
+    ),
+    AppManifest(
+        app_id="plexistash",
+        label="PlexiStash",
+        icon="ph-vault",
+        color_token="stash",
+        artifact_types=["stash"],
+        capability="plexistash",
+        scopes=["personal", "server"],
+        supports_embedded=True,
+        supports_offline=True,
+    ),
+    AppManifest(
+        app_id="plexisum",
+        label="PlexiSum",
+        icon="ph-table",
+        color_token="sum",
+        artifact_types=["sum"],
+        capability="plexisum",
+        scopes=["personal", "server"],
+        supports_embedded=False,
+        supports_offline=True,
+    ),
+)
+
+_CONTRACT_ONLY_CAPABILITIES = set()
+_ARTIFACT_APP_IDS = {
+    "plexiscribe": "plexiscribe",
+    "plexiscript": "plexiscript",
+    "whiteboard": "plexiboard",
+}
+
+
+def _manifest_dict(
+    manifest: AppManifest, capabilities: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Serialize a manifest without leaking implementation-only state."""
+    capability = capabilities.get(manifest.capability) if manifest.capability else None
+    result = {
+        "id": manifest.app_id,
+        "label": manifest.label,
+        "icon": manifest.icon,
+        "color": manifest.color_token,
+        "artifactTypes": list(manifest.artifact_types),
+        "capability": manifest.capability,
+        "scopes": list(manifest.scopes),
+        "supportsEmbedded": manifest.supports_embedded,
+        "supportsOffline": manifest.supports_offline,
+        "availability": "available",
+    }
+    if manifest.app_id in _CONTRACT_ONLY_CAPABILITIES:
+        # Reserved for future suite apps whose backend is not yet available.
+        result["availability"] = "contract_only"
+        result["backendPhase"] = "contract_only"
+    elif capability is not None:
+        result["capabilityState"] = capability_to_dict(capability)
+        result["availability"] = capability.state.value
+    return result
+
+
+def _artifact_home_item(artifact: Artifact) -> Dict[str, Any]:
+    """Return the small, launcher-safe projection of an artifact."""
+    return {
+        "id": str(artifact.id),
+        "appId": _ARTIFACT_APP_IDS.get(artifact.artifact_type.value, "plexichat"),
+        "artifactType": artifact.artifact_type.value,
+        "title": artifact.title,
+        "summary": artifact.summary,
+        "status": artifact.status.value,
+        "scope": {
+            "conversationId": str(artifact.conversation_id)
+            if artifact.conversation_id is not None
+            else None,
+            "channelId": str(artifact.channel_id)
+            if artifact.channel_id is not None
+            else None,
+            "serverId": str(artifact.server_id)
+            if artifact.server_id is not None
+            else None,
+        },
+        "createdAt": artifact.created_at,
+        "updatedAt": artifact.updated_at,
+    }
+
+
+def _stash_home_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Project Stash metadata without exposing storage references."""
+    return {
+        "id": str(item["id"]),
+        "appId": "plexistash",
+        "artifactType": "stash",
+        "title": item.get("title") or "Untitled item",
+        "summary": item.get("description"),
+        "status": "active",
+        "pinned": bool(item.get("pinned", False)),
+        "scope": {
+            "serverId": str(item["server_id"]) if item.get("server_id") else None
+        },
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at"),
+    }
+
+
+def _sum_home_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Project workbook metadata into the shared launcher contract."""
+    return {
+        "id": str(item["id"]),
+        "appId": "plexisum",
+        "artifactType": "sum",
+        "title": item.get("title") or "Untitled workbook",
+        "summary": f"Revision {int(item.get('current_revision', 0))}",
+        "status": "active",
+        "scope": {
+            "serverId": str(item["server_id"]) if item.get("server_id") else None
+        },
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at"),
+    }
+
+
+def _sort_and_bound(
+    items: Iterable[Dict[str, Any]], limit: int
+) -> List[Dict[str, Any]]:
+    """Sort a bounded scatter/gather result without trusting client data."""
+    return sorted(
+        items,
+        key=lambda item: int(item.get("updatedAt") or item.get("createdAt") or 0),
+        reverse=True,
+    )[:limit]
+
+
+def _domain_available(capability: str) -> bool:
+    """Fail closed when a licensed suite domain is unavailable or unlicensed."""
+    return get_capability(capability).state == CapabilityState.AVAILABLE
+
+
+def _suite_managers() -> tuple[StashManager, SumManager]:
+    """Return initialized managers, with a fixture-safe fallback."""
+    import src.api as api
+    from src.core.suite import stash as stash_domain
+    from src.core.suite import sum as sum_domain
+
+    db = api.get_db()
+    if db is None:
+        raise RuntimeError("Database unavailable")
+    try:
+        stash_manager = stash_domain.get_manager()
+    except RuntimeError:
+        stash_manager = StashManager(db, servers_module=api.get_servers())
+    try:
+        sum_manager = sum_domain.get_manager()
+    except RuntimeError:
+        sum_manager = SumManager(db, servers_module=api.get_servers())
+    return stash_manager, sum_manager
+
+
+def _member_server_ids(user_id: int, limit: int = 100) -> List[int]:
+    """Return only servers the caller belongs to, bounded for scatter/gather."""
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        return []
+    rows = db.fetch_all(
+        "SELECT server_id FROM srv_members WHERE user_id = ? LIMIT ?",
+        (int(user_id), int(limit)),
+    )
+    return [int(row["server_id"]) for row in rows]
+
+
+def _shared_artifacts(
+    user_id: int, server_ids: List[int], limit: int
+) -> List[Dict[str, Any]]:
+    """Gather server artifacts only where the existing RBAC boundary permits view."""
+    manager = _get_manager()
+    results: List[Dict[str, Any]] = []
+    for server_id in server_ids:
+        if not _require_server_permission(user_id, server_id, "artifact.view"):
+            continue
+        artifacts = manager.list_with_filters(
+            filters={"sort_by": "updated_at", "sort_order": "desc", "limit": limit},
+            server_id=server_id,
+        )
+        results.extend(
+            _artifact_home_item(artifact)
+            for artifact in artifacts
+            if capability_allows_artifact(artifact.artifact_type)
+        )
+    return _sort_and_bound(results, limit)
+
+
+def _shared_items(user_id: int, limit: int) -> List[Dict[str, Any]]:
+    """Gather server-scoped Stash, Sum, and authorized artifact items."""
+    stash_manager, sum_manager = _suite_managers()
+    server_ids = _member_server_ids(user_id)
+    items: List[Dict[str, Any]] = []
+    if _domain_available("plexistash"):
+        stash_items, _ = stash_manager.list_items(user_id, limit=limit, scope="server")
+        items.extend(_stash_home_item(item) for item in stash_items)
+    if _domain_available("plexisum"):
+        sum_items, _ = sum_manager.list_workbooks(user_id, limit=limit, offset=0)
+        items.extend(
+            _sum_home_item(item) for item in sum_items if item.get("scope") == "server"
+        )
+    items.extend(_shared_artifacts(user_id, server_ids, limit))
+    return _sort_and_bound(items, limit)
+
+
+@router.get("/apps", summary="List PlexiSuite apps and capabilities")
+async def list_suite_apps(
+    current_user: TokenInfo = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the capability-aware app catalog for the authenticated user."""
+    del current_user  # Authentication is the visibility boundary for this catalog.
+    capabilities = get_artifact_capabilities()
+    return {
+        "schemaVersion": 1,
+        "apps": [
+            _manifest_dict(manifest, capabilities) for manifest in _SUITE_MANIFESTS
+        ],
+    }
+
+
+@router.get("/home/recent", summary="List recent personal PlexiSuite items")
+async def list_recent_suite_items(
+    limit: int = Query(24, ge=1, le=50),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return only the caller's bounded recent artifacts.
+
+    This endpoint deliberately uses the existing artifact repository and
+    personal author scope. Shared/server recent activity will be added only with
+    explicit scope authorization and pagination tests.
+    """
+    manager = _get_manager()
+    filters = {
+        "sort_by": "updated_at",
+        "sort_order": "desc",
+        "limit": int(limit),
+        "offset": 0,
+        "author_id": current_user.user_id,
+    }
+    items: List[Dict[str, Any]] = [
+        _artifact_home_item(artifact)
+        for artifact in manager.list_with_filters(
+            filters=filters, author_id=current_user.user_id
+        )
+    ]
+    stash_manager, sum_manager = _suite_managers()
+    if _domain_available("plexistash"):
+        stash_items, _ = stash_manager.list_items(current_user.user_id, limit=limit)
+        items.extend(_stash_home_item(item) for item in stash_items)
+    if _domain_available("plexisum"):
+        sum_items, _ = sum_manager.list_workbooks(
+            current_user.user_id, limit=limit, offset=0
+        )
+        items.extend(_sum_home_item(item) for item in sum_items)
+    bounded_items = _sort_and_bound(items, int(limit))
+    return {
+        "schemaVersion": 1,
+        "items": bounded_items,
+        "total": len(bounded_items),
+        "hasMore": len(items) > len(bounded_items),
+    }
+
+
+@router.get("/home/pinned", summary="List pinned PlexiSuite items")
+async def list_pinned_suite_items(
+    limit: int = Query(24, ge=1, le=50),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return pinned Stash items visible to the caller."""
+    if not _domain_available("plexistash"):
+        return {"schemaVersion": 1, "items": [], "total": 0, "hasMore": False}
+    stash_manager, _ = _suite_managers()
+    items, total = stash_manager.list_items(
+        current_user.user_id, limit=limit, pinned=True
+    )
+    bounded_items = [_stash_home_item(item) for item in items]
+    return {
+        "schemaVersion": 1,
+        "items": bounded_items,
+        "total": total,
+        "hasMore": total > len(bounded_items),
+    }
+
+
+@router.get("/home/shared", summary="List shared PlexiSuite items")
+async def list_shared_suite_items(
+    limit: int = Query(24, ge=1, le=50),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return server-scoped items after each domain's authorization checks."""
+    items = _shared_items(current_user.user_id, int(limit))
+    return {"schemaVersion": 1, "items": items, "total": len(items), "hasMore": False}
+
+
+@router.get("/home/activity", summary="List the caller's Suite activity")
+async def list_suite_activity(
+    limit: int = Query(24, ge=1, le=50),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the caller's Suite audit activity, never another user's events."""
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise RuntimeError("Database unavailable")
+    rows = db.fetch_all(
+        "SELECT id, domain, action, resource_type, resource_id, details_json, created_at "
+        "FROM suite_audit_log WHERE actor_id = ? ORDER BY created_at DESC LIMIT ?",
+        (int(current_user.user_id), int(limit)),
+    )
+    items = [
+        {
+            "id": str(row["id"]),
+            "appId": "plexistash" if row["domain"] == "stash" else "plexisum",
+            "artifactType": row["domain"],
+            "title": f"{row['action']} {row['resource_type']}",
+            "summary": row.get("details_json"),
+            "status": "activity",
+            "resourceId": str(row["resource_id"]) if row.get("resource_id") else None,
+            "createdAt": row["created_at"],
+            "updatedAt": row["created_at"],
+        }
+        for row in rows
+    ]
+    return {"schemaVersion": 1, "items": items, "total": len(items), "hasMore": False}
+
+
+@router.get("/search", summary="Search visible PlexiSuite metadata")
+async def search_suite(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(24, ge=1, le=50),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Search bounded metadata through existing per-domain visibility rules."""
+    query = q.strip()
+    if not query:
+        return {"schemaVersion": 1, "items": [], "total": 0, "hasMore": False}
+    manager = _get_manager()
+    artifacts = manager.list_with_filters(
+        filters={
+            "search": query,
+            "sort_by": "updated_at",
+            "sort_order": "desc",
+            "limit": limit,
+        },
+        author_id=current_user.user_id,
+    )
+    items = [_artifact_home_item(artifact) for artifact in artifacts]
+    stash_manager, sum_manager = _suite_managers()
+    lowered = query.lower()
+    if _domain_available("plexistash"):
+        stash_items, _ = stash_manager.list_items(
+            current_user.user_id, limit=limit, search=query
+        )
+        items.extend(_stash_home_item(item) for item in stash_items)
+    if _domain_available("plexisum"):
+        sum_items, _ = sum_manager.list_workbooks(
+            current_user.user_id, limit=limit, offset=0
+        )
+        items.extend(
+            _sum_home_item(item)
+            for item in sum_items
+            if lowered in str(item.get("title", "")).lower()
+        )
+    bounded_items = _sort_and_bound(items, int(limit))
+    return {
+        "schemaVersion": 1,
+        "items": bounded_items,
+        "total": len(bounded_items),
+        "hasMore": len(items) > len(bounded_items),
+    }
+
+
+__all__ = [
+    "router",
+    "list_suite_apps",
+    "list_recent_suite_items",
+    "list_pinned_suite_items",
+    "list_shared_suite_items",
+    "list_suite_activity",
+    "search_suite",
+]
