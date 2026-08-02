@@ -26,8 +26,14 @@ class BandwidthEstimator:
         self._task: Optional[asyncio.Task] = None
 
     def start(self) -> None:
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._run())
+        if self._task is not None and not self._task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("BandwidthEstimator start deferred: no running event loop")
+            return
+        self._task = loop.create_task(self._run())
 
     def stop(self) -> None:
         if self._task and not self._task.done():
@@ -106,7 +112,9 @@ class QualityMixin:
     def _get_sfu(self): ...
 
     def init_bandwidth_estimator(self) -> None:
-        """Start the bandwidth estimator background task."""
+        """Start the bandwidth estimator background task (idempotent)."""
+        if self._bandwidth_estimator is not None:
+            return
         try:
             sfu = self._get_sfu()
             est = BandwidthEstimator(self._quality_data, sfu)
@@ -128,6 +136,7 @@ class QualityMixin:
         quality_level: Optional[str] = None,
         **metrics: Any,
     ) -> bool:
+        self.init_bandwidth_estimator()
         cid = int(channel_id) if not isinstance(channel_id, int) else channel_id
         pid = int(peer_id) if not isinstance(peer_id, int) else peer_id
         now = int(time.time())

@@ -2,8 +2,6 @@
 
 from typing import Any
 
-import utils.logger as logger
-
 from .base import SignalingManagerBase
 from .connection_mixin import ConnectionManagementMixin
 from .sdp_mixin import SDPMixin
@@ -26,7 +24,6 @@ class SignalingManager(
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        try:
-            self.init_bandwidth_estimator()
-        except Exception as exc:
-            logger.debug(f"Bandwidth estimator init deferred: {exc}")
+        # The estimator is started lazily from update_quality_hint(), where an
+        # event loop is guaranteed to be active.  SignalingManager construction
+        # may occur synchronously during application bootstrap.
