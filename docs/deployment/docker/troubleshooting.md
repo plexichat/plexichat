@@ -58,7 +58,7 @@ Create volumes:
 ```bash
 docker volume create plexichat_db-data
 docker volume create plexichat_redis-data
-docker volume create plexichat_minio-data
+docker volume create plexichat_rustfs-data
 ```
 
 Or remove and recreate:
@@ -132,44 +132,47 @@ ERROR: Failed to connect to valkey at valkey:6379
 
 **Fix:**
 
-Verify Redis is running:
+Verify Valkey is running:
 ```bash
-docker compose exec redis redis-cli ping
+docker compose exec valkey redis-cli ping
 ```
 
 Should return `PONG`
 
 If failed, restart:
 ```bash
-docker compose restart redis
+docker compose restart valkey
 ```
 
 Check password:
 ```bash
-grep REDIS_PASSWORD .env.generated
+grep VALKEY_PASSWORD .env.generated
 ```
 
 Ensure it matches in docker-compose.yml
 
-### Error: "MinIO bucket creation failed"
+### Error: "RustFS bucket creation failed"
 
 **Message:**
 ```
-ERROR: Failed to create bucket plexichat-media in MinIO
+ERROR: Failed to create bucket plexichat-media in RustFS
 ```
 
-**Cause:** MinIO not ready or bucket already exists
+**Cause:** RustFS not ready or bucket already exists
 
 **Fix:**
 
-Check MinIO:
+Check RustFS:
 ```bash
-curl http://localhost:9000/minio/health/live
+curl http://localhost:9000/health
 ```
 
-Manually create bucket:
+Manually create bucket and set public read:
 ```bash
-docker compose exec minio /usr/bin/mc mb minio/plexichat-media --ignore-existing
+docker compose run --rm --entrypoint /bin/sh rustfs-init -c \
+  'rc alias set local http://rustfs:9000 "$S3_ACCESS_KEY" "$S3_SECRET_KEY" && \
+   rc mb local/plexichat-media --ignore-existing || true && \
+   rc anonymous set download local/plexichat-media'
 ```
 
 ## Database Issues
@@ -550,7 +553,7 @@ Remove everything and start fresh:
 ```bash
 docker compose down -v
 docker system prune -a
-docker compose --profile dev up
+docker compose up
 ```
 
 ### Restore from backup

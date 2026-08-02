@@ -4,12 +4,12 @@ This compose file lives in the `plexichat` repo and orchestrates:
 - backend (FastAPI server)
 - db (PostgreSQL)
 - redis (Valkey)
-- minio (S3-compatible storage + bucket init)
+- rustfs (S3-compatible object storage + bucket init)
 - client (Nginx serving Vite-built static assets)
 - cert-init (self-signed TLS certificate generation)
 - **clamav** (ClamAV malware scanning daemon)
 - **clamav-unofficial-sigs** (third-party signature updater sidecar)
-- **backup** (restic-based automated backup — DB, files, MinIO)
+- **backup** (restic-based automated backup — DB, files, RustFS)
 
 ## Quick Deploy
 
@@ -76,15 +76,15 @@ ClamAV database updates (official + unofficial) are automatic. The `clamav_db` v
 The `backup` container uses **restic** for block-level deduplicated,
 encrypted backups. On each run it creates a single snapshot containing:
 
-- `db_dump/plexichat.sql.gz` — PostgreSQL dump
+- `tmp/backup/db/plexichat.sql.gz` — PostgreSQL dump
 - `plexichat-home/` — server config, keyrings, encryption keys
-- `minio-data/` — all uploaded media and attachments
+- `rustfs-data/` — all uploaded media and attachments
 
 ### Configuration (via `.env`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BACKUP_RESTIC_PASSWORD` | *(auto-generated)* | restic repository encryption password |
+| `BACKUP_RESTIC_PASSWORD` | *(required)* | restic repository encryption password. Must be set or the repo fails to initialise |
 | `BACKUP_SCHEDULE` | `0 2 * * *` | Cron expression for daily backups |
 | `BACKUP_KEEP_DAILY` | `7` | Daily snapshots to retain |
 | `BACKUP_KEEP_WEEKLY` | `4` | Weekly snapshots to retain |
@@ -92,7 +92,7 @@ encrypted backups. On each run it creates a single snapshot containing:
 | `BACKUP_KEEP_YEARLY` | `0` | Yearly snapshots to retain |
 | `BACKUP_INCLUDE_DB` | `true` | Include PostgreSQL dump |
 | `BACKUP_INCLUDE_HOME` | `true` | Include `/plexichat-home` (config + keyrings) |
-| `BACKUP_INCLUDE_MINIO` | `true` | Include `/minio-data` (file uploads) |
+| `BACKUP_INCLUDE_MEDIA` | `true` | Include `/rustfs-data` (file uploads) |
 | `BACKUP_SECONDARY_REPO` | *(empty)* | Secondary restic repo URI (e.g. `s3:...`) |
 | `BACKUP_SECONDARY_PASSWORD` | *(empty)* | Password for secondary repo |
 | `BACKUP_SUCCESS_HOOK` | *(empty)* | Command/URL on success |

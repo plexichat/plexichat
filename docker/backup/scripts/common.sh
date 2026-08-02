@@ -14,7 +14,7 @@ BACKUP_KEEP_YEARLY="${BACKUP_KEEP_YEARLY:-0}"
 
 BACKUP_INCLUDE_DB="${BACKUP_INCLUDE_DB:-true}"
 BACKUP_INCLUDE_HOME="${BACKUP_INCLUDE_HOME:-true}"
-BACKUP_INCLUDE_MINIO="${BACKUP_INCLUDE_MINIO:-true}"
+BACKUP_INCLUDE_MEDIA="${BACKUP_INCLUDE_MEDIA:-true}"
 
 BACKUP_SECONDARY_REPO="${BACKUP_SECONDARY_REPO:-}"
 BACKUP_SECONDARY_PASSWORD="${BACKUP_SECONDARY_PASSWORD:-}"
@@ -87,8 +87,8 @@ run_backup_to_repo() {
     RESTIC_ARGS+=(/plexichat-home)
   fi
 
-  if [ "$BACKUP_INCLUDE_MINIO" = "true" ]; then
-    RESTIC_ARGS+=(/minio-data)
+  if [ "$BACKUP_INCLUDE_MEDIA" = "true" ]; then
+    RESTIC_ARGS+=(/rustfs-data)
   fi
 
   log_info "Running restic backup to $label..."

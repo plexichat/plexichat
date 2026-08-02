@@ -35,8 +35,8 @@ EXTERNAL
                     | Cache  |
                     +--------+
                     |
-                    +------> +---------+
-                             | MinIO   |
+                     +------> +---------+
+                             | RustFS  |
                              | Storage |
                              +---------+
 ```
@@ -54,7 +54,7 @@ EXTERNAL
 
 **Data:**
 - User accounts, messages, servers, media metadata
-- Volume: `db-data` (persistent)
+- Volume: `postgres_data` (persistent)
 
 **Connections:**
 - Backend (pooled: 5-20 development, 20-100 production)
@@ -77,7 +77,7 @@ EXTERNAL
 
 **Data:**
 - Sessions, presence status, pending events
-- Volume: `redis-data` (persistent)
+- Volume: `valkey_data` (persistent)
 - TTL: Keys expire automatically
 
 **Connections:**
@@ -88,7 +88,7 @@ EXTERNAL
 - `redis-cli ping` command
 - Returns `PONG` when healthy
 
-### 3. MinIO (Object Storage)
+### 3. RustFS (Object Storage)
 
 **Purpose:** S3-compatible storage for media files
 
@@ -100,28 +100,28 @@ EXTERNAL
 
 **Data:**
 - Uploaded files, media metadata
-- Volume: `minio-data` (persistent)
+- Volume: `rustfs-data` (persistent)
 
 **Connections:**
 - Backend (HTTP to port 9000)
 - Network: `plexichat-backend`
 
 **Health Check:**
-- HTTP health endpoint
-- Interval: 10 seconds
+- `curl /health` (S3) and `/rustfs/console/health` (Console)
+- Interval: 15 seconds
 
-### 4. MinIO-Init (One-time setup)
+### 4. RustFS-Init (One-time setup)
 
-**Purpose:** Create S3 buckets
+**Purpose:** Create S3 buckets and set anonymous access
 
 **Services:**
-- Waits for MinIO to be ready
+- Waits for RustFS to be healthy
 - Creates `plexichat-media` bucket
-- Sets bucket policies
+- Sets anonymous public read policy
 - Exits when complete
 
 **Dependencies:**
-- Depends on: MinIO healthcheck
+- Depends on: RustFS healthcheck
 - Waits for: `service_completed_successfully`
 
 **Exit Status:** Success
@@ -137,7 +137,7 @@ EXTERNAL
 - Exits when complete
 
 **Data:**
-- Volume: `nginx-certs` (persistent)
+- Volume: `certs` (persistent)
 
 **Exit Status:** Success
 
@@ -172,18 +172,17 @@ EXTERNAL
 - Admin UI (`/admin`)
 
 **Dependencies:**
-- Depends on: Database, Redis, MinIO-Init, ClamAV
+- Depends on: Database, Valkey, RustFS-Init, ClamAV
 
 **Connections:**
 - Database (pooled): `db:5432`
-- Redis: `redis:6379`
-- MinIO: `minio:9000`
-- Networks: `plexichat-backend`, `plexichat-frontend`
+- Valkey: `valkey:6379`
+- RustFS: `rustfs:9000`
+- Networks: default bridge network (single network in `docker-compose.yml`)
 
 **Volumes:**
-- Config: `./config/docker-config.yaml` (mounted)
-- Source code: `./src` (mounted for hot reload)
-- Data: `backend-data`, `backend-logs`, `backend-media`, `backend-temp`
+- Config: `./config/docker-config.yaml` (mounted read-only)
+- Data: `plexichat_home`, `postgres_data`, `valkey_data`, `rustfs_data`, `certs`, `backup_repo`
 
 **Health Check:**
 - `curl http://localhost:8000/health`
@@ -209,12 +208,12 @@ EXTERNAL
 
 **Connections:**
 - Backend: `http://backend:8000/api`
-- Networks: `plexichat-frontend`
+- Networks: default bridge network
 
 **Volumes:**
-- TLS certs: `nginx-certs` (read-only)
+- TLS certs: `certs` (read-only)
 - Config: `docker/nginx/default.conf`
-- Client runtime config: `client-runtime`
+- Client runtime config: `client-config.js`
 
 **Ports:**
 - HTTP: 80/TCP
@@ -243,7 +242,7 @@ EXTERNAL
 **Volumes (read-only):**
 - `postgres_data` — pg_dump source
 - `plexichat_home` — config, keyrings, `.machine_key`
-- `minio_data` — uploaded media
+- `rustfs_data` — uploaded media
 
 **Configuration:**
 - All options via `.env` (`BACKUP_*` variables)
@@ -263,10 +262,10 @@ docker exec backup /scripts/backup.sh restore <snap>  # restore files
 **Services:**
 - Database
 - Redis
-- MinIO
+- RustFS
 - Backend
 - Backup
-- MinIO-Init
+- RustFS-Init
 - Cert-Init
 
 **Purpose:** Isolated internal network for data tier
@@ -298,14 +297,13 @@ docker exec backup /scripts/backup.sh restore <snap>  # restore files
 
 | Volume | Owner | Purpose | Persistent |
 |--------|-------|---------|-----------|
-| `db-data` | PostgreSQL | Database files | Yes |
-| `redis-data` | Redis | Cache dump | Yes |
-| `minio-data` | MinIO | Media files | Yes |
-| `backend-data` | Backend | Application state | Yes |
-| `backend-logs` | Backend | Log files | Yes |
-| `backend-media` | Backend | Uploaded media cache | Yes |
-| `backend-temp` | Backend | Temporary files | Yes |
-| `nginx-certs` | Nginx | TLS certificates | Yes |
+| `postgres_data` | PostgreSQL | Database files | Yes |
+| `valkey_data` | Valkey | Cache dump | Yes |
+| `rustfs_data` | RustFS | Media files | Yes |
+| `plexichat_home` | Backend | Application state | Yes |
+| `certs` | Nginx | TLS certificates | Yes |
+| `backup_repo` | Backup | restic repository | Yes |
+| `clamav_db` | ClamAV | Signature database | Yes |
 | `client-runtime` | Deploy Script | Client JS config | Yes |
 | `backup-repo` | Backup | Restic repository | Yes |
 
@@ -379,10 +377,10 @@ Nginx (Reverse Proxy)
 Backend (Media Handler)
   |
   | 1. Validate & encrypt
-  | 2. Store in MinIO
+  | 2. Store in RustFS
   | 3. Save metadata in DB
   v
-MinIO (Object Storage)
+RustFS (Object Storage)
   |
   | File stored
   v
@@ -418,8 +416,8 @@ User C (receives via WebSocket)
 
 1. Deploy script generates `.env`, `docker-config.yaml`, and `client-config.js`
 2. Docker Compose parses configuration
-3. Database, Redis, MinIO services start in parallel
-4. MinIO-Init waits for MinIO health, creates bucket, exits
+3. Database, Redis, RustFS services start in parallel
+4. RustFS-Init waits for RustFS health, creates bucket, exits
 5. Cert-Init generates TLS certs, exits
 6. Backend waits for all dependencies to be healthy, then starts
 7. Client waits for Backend to be healthy, then starts
@@ -435,7 +433,7 @@ User C (receives via WebSocket)
 - Database: 200MB-1GB
 - Redis: 100MB-500MB
 - Client: 20MB
-- MinIO: 100MB
+- RustFS: 100MB
 
 **Total:** 1-4GB typical
 
@@ -447,7 +445,7 @@ User C (receives via WebSocket)
 ### Disk
 
 - Database: Grows with messages, files, activity
-- MinIO: Grows with uploaded files
+- RustFS: Grows with uploaded files
 - Typical: 10GB-100GB+
 
 ## Security Model
@@ -455,7 +453,7 @@ User C (receives via WebSocket)
 ### Network Isolation
 
 - External internet can only reach ports 80, 443
-- Database, Redis, MinIO are on internal network only
+- Database, Redis, RustFS are on internal network only
 - Services communicate by hostname (DNS resolution in docker network)
 
 ### Authentication
@@ -463,7 +461,7 @@ User C (receives via WebSocket)
 - Frontend -> Backend: JWT token in header/cookie
 - Backend -> Database: Username/password (hardcoded in config)
 - Backend -> Redis: Password (in config)
-- Backend -> MinIO: Access key/secret (in config)
+- Backend -> RustFS: Access key/secret (in config)
 
 ### Encryption
 
@@ -477,8 +475,8 @@ User C (receives via WebSocket)
 
 - Backend: `GET /health`
 - Database: `pg_isready`
-- Redis: `redis-cli ping`
-- MinIO: HTTP health endpoint
+- Valkey: `redis-cli ping`
+- RustFS: HTTP health endpoint
 
 ### Metrics
 

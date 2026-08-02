@@ -20,7 +20,7 @@ Plexichat is a multi-container application stack:
 - **Backend** (FastAPI) - REST API, WebSocket gateway, business logic
 - **Database** (PostgreSQL) - User data, messages, servers
  - **Cache** (Valkey) - Sessions, rate limiting, WebSocket state
-- **Storage** (MinIO) - Media files (avatars, attachments)
+- **Storage** (RustFS) - Media files (avatars, attachments)
 - **Frontend** (Nginx + Vue) - Web client, reverse proxy, TLS termination
 
 All services run in isolated containers with automatic health monitoring and dependency management.
@@ -33,35 +33,30 @@ All services run in isolated containers with automatic health monitoring and dep
 - 10GB free disk space
 - Linux, macOS, or Windows (with Docker Desktop)
 
-## Profiles
-
-Three pre-configured profiles for different use cases:
-
-| Profile | Use Case | Services | Config |
-|---------|----------|----------|--------|
-| `dev` | Local development | All services | Hot reload, debug logging, bind mounts |
-| `prod` | Production deployment | All services | Hardened defaults, TLS, security configs |
-| `test` | CI/testing | Backend only + SQLite | Lightweight, no external deps |
-
 ## Startup Options
 
 ### Development (Local)
 ```bash
-docker compose --profile dev up
+docker compose up
 ```
-All services start with debug logging and code hot-reload.
+All services start with fresh debug-style `.env` defaults; adjust `LOG_LEVEL`
+in `.env` for verbose logging.
 
 ### Production (Self-hosted)
 ```bash
-docker compose --profile prod up -d
+docker compose up -d
 ```
-Services start in background with hardened security settings.
+Services start in the background with the `.env` settings you configure.
 
 ### Testing (CI)
-```bash
-docker compose --profile test up
-```
-Lightweight setup for automated tests.
+Set `NO_STRICT_CONFIG=false` and run the backend test-suite against a scratch
+database; the packaged `up` stack targets Postgres/Valkey/RustFS/ClamAV and is
+not needed for isolated unit tests.
+
+> Note: the compose stack no longer uses `--profile` flags. Whether a service
+> starts is controlled purely by its presence in `docker-compose.yml` and the
+> standard `.env` variables, so pinned versions (see below) and LOG_LEVEL are
+> set there rather than through a provider footprint flag.
 
 ## Status Checking
 
@@ -118,7 +113,7 @@ docker compose down -v
 | API Docs | http://localhost:8000/docs | Interactive OpenAPI explorer |
 | WebSocket | ws://localhost:8000/gateway | Real-time messaging |
 | Frontend | http://localhost | Web client |
-| MinIO Console | http://localhost:9001 | Object storage management |
+| RustFS Console | http://localhost:9001 | Object storage management |
 | Valkey | localhost:6379 | Cache (Valkey CLI) |
 | PostgreSQL | localhost:5432 | Database (CLI tools) |
 
@@ -159,7 +154,7 @@ All data is stored in named Docker volumes:
 
 - `db-data` - PostgreSQL database
 - `valkey-data` - Valkey cache
-- `minio-data` - Media files
+- `rustfs-data` - Media files
 - `backend-data` - Application state
 - `backend-logs` - Log files
 - `backend-media` - Uploaded files
@@ -171,7 +166,7 @@ Volumes survive container restarts but are deleted with `docker compose down -v`
 
 Docker Compose creates two networks:
 
-- **plexichat-backend** - Database, Valkey, MinIO, Backend (internal)
+- **plexichat-backend** - Database, Valkey, RustFS, Backend (internal)
 - **plexichat-frontend** - Backend, Client (external HTTP/HTTPS)
 
 Services on the same network can communicate by service name (e.g., `backend` can reach `db` as `http://db:5432`).

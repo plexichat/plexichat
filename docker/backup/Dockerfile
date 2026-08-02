@@ -17,6 +17,6 @@ RUN curl -fsSL \
 COPY scripts/ /scripts/
 RUN chmod +x /scripts/*.sh
 
-VOLUME ["/repo", "/plexichat-home", "/minio-data"]
+VOLUME ["/repo", "/plexichat-home", "/rustfs-data"]
 
 ENTRYPOINT ["/scripts/entrypoint.sh"]

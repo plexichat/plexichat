@@ -86,7 +86,7 @@ google-re2==1.1.20251105
 # QR Code Generation
 qrcode[pil]==8.2
 
-# S3/MinIO Storage (optional)
+# S3-compatible Storage (optional)
 boto3==1.43.56
 # msgpack pinned to 1.2.1+ clears GHSA-xxxx (pip-audit)
 msgpack==1.2.1

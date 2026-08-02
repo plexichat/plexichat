@@ -238,9 +238,9 @@ uses minimal extra storage.
 ### What is backed up
 
 Each snapshot contains:
-- `db_dump/plexichat.sql.gz` — full PostgreSQL dump
+- `tmp/backup/db/plexichat.sql.gz` — full PostgreSQL dump
 - `plexichat-home/` — server config, `.machine_key`, keyrings
-- `minio-data/` — uploaded media and attachments
+- `rustfs-data/` — uploaded media and attachments
 
 ### Restore procedures
 

@@ -87,7 +87,7 @@ The storage backend determines scalability, cost structure, performance characte
 - AWS S3
 - Google Cloud Storage
 - Azure Blob Storage
-- MinIO (self-hosted S3-compatible)
+- RustFS (self-hosted S3-compatible)
 - Wasabi, Backblaze B2, and other S3-compatible providers
 
 **Database Storage**
@@ -192,7 +192,7 @@ media:
 **Endpoint URL**
 
 - **AWS S3**: Leave empty to use default AWS endpoint
-- **MinIO**: Specify your MinIO server URL (e.g., `https://minio.example.com`)
+- **RustFS**: Specify your RustFS server URL (e.g., `https://rustfs.example.com`)
 - **Other Providers**: Specify custom endpoint for S3-compatible services (Wasabi, Backblaze B2, etc.)
 
 **Public URL**
@@ -279,7 +279,7 @@ media:
 
 - **AWS S3 Standard**: ~$0.023/GB/month
 - **Google Cloud Storage**: ~$0.020/GB/month
-- **MinIO**: Cost of your storage hardware
+- **RustFS**: Cost of your storage hardware
 - **Formula**: `users * avg_storage_per_user * cost_per_gb = monthly_cost`
 
 Consider [Database Configuration](deployment/configuration/config-database.md) for database storage costs as part of total TCO.

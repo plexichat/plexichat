@@ -52,34 +52,57 @@ services:
       timeout: 5s
       retries: 10
 
-  minio:
-    restart: unless-stopped
-    image: minio/minio:latest
-    env_file:
-      - .env
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+  rustfs-perms:
+    image: alpine:3.24
+    user: root
     volumes:
-      - minio_data:/data
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      - rustfs_data:/data
+    # RustFS runs as non-root UID/GID 10001:10001, so the data volume must be
+    # writable by that user before the server starts.
+    command: chown -R 10001:10001 /data
+    restart: "no"
 
-  minio-init:
-    image: minio/mc:latest
+  rustfs:
+    restart: unless-stopped
+    image: rustfs/rustfs:latest
     env_file:
       - .env
     depends_on:
-      minio:
-        condition: service_started
+      rustfs-perms:
+        condition: service_completed_successfully
+    environment:
+      RUSTFS_ADDRESS: ${RUSTFS_ADDRESS:-0.0.0.0:9000}
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ${RUSTFS_CONSOLE_ADDRESS:-0.0.0.0:9001}
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:-plexichat}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:-plexichat-secret}
+      RUSTFS_VOLUMES: ${RUSTFS_VOLUMES:-/data/rustfs}
+      RUSTFS_CORS_ALLOWED_ORIGINS: ${RUSTFS_CORS_ALLOWED_ORIGINS:-*}
+    volumes:
+      - rustfs_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:9000/health && curl -f http://127.0.0.1:9001/rustfs/console/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+
+  rustfs-init:
+    image: rustfs/rc:latest
+    env_file:
+      - .env
+    depends_on:
+      rustfs:
+        condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      until mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\"; do sleep 2; done;
-      mc mb -p local/$${S3_BUCKET} || true;
-        mc anonymous set download local/$${S3_BUCKET} || true;
-        "
+      until rc alias set local http://rustfs:9000 \"$${S3_ACCESS_KEY}\" \"$${S3_SECRET_KEY}\"; do sleep 2; done;
+      rc mb local/$${S3_BUCKET} || true;
+      rc anonymous set download local/$${S3_BUCKET} || true;
+      "
     # One-shot init job: run once, exit 0, then stop. MUST NOT restart,
     # otherwise `backend` (which waits on service_completed_successfully)
     # would block forever because the container loops instead of completing.
@@ -150,7 +173,7 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
-      minio-init:
+      rustfs-init:
         condition: service_completed_successfully
       clamav:
         condition: service_healthy
@@ -214,7 +237,7 @@ services:
       BACKUP_KEEP_YEARLY: ${BACKUP_KEEP_YEARLY:-0}
       BACKUP_INCLUDE_DB: ${BACKUP_INCLUDE_DB:-true}
       BACKUP_INCLUDE_HOME: ${BACKUP_INCLUDE_HOME:-true}
-      BACKUP_INCLUDE_MINIO: ${BACKUP_INCLUDE_MINIO:-true}
+      BACKUP_INCLUDE_MEDIA: ${BACKUP_INCLUDE_MEDIA:-true}
       BACKUP_SECONDARY_REPO: ${BACKUP_SECONDARY_REPO:-}
       BACKUP_SECONDARY_PASSWORD: ${BACKUP_SECONDARY_PASSWORD:-}
       BACKUP_SUCCESS_HOOK: ${BACKUP_SUCCESS_HOOK:-}
@@ -225,14 +248,14 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data:ro
       - plexichat_home:/plexichat-home:ro
-      - minio_data:/minio-data:ro
+      - rustfs_data:/rustfs-data:ro
       - backup_repo:/repo
     restart: unless-stopped
 
 volumes:
   postgres_data:
   valkey_data:
-  minio_data:
+  rustfs_data:
   plexichat_home:
   certs:
   backup_repo:

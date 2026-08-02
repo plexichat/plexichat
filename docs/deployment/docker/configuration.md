@@ -48,8 +48,8 @@ DB_POOL_MAX_CONNECTIONS=20
 # Redis
 VALKEY_PASSWORD=your-valkey-password
 
-# MinIO
-MINIO_ROOT_PASSWORD=your-minio-password
+# RustFS
+S3_SECRET_KEY=your-rustfs-secret-key
 
 # Logging
 LOG_LEVEL=DEBUG
@@ -119,15 +119,13 @@ See [Connection Pooling](connection-pooling.md) for tuning guidance.
 | `VALKEY_ENABLED` | true | Enable Valkey caching |
 | `VALKEY_CONNECTION_POOL` | 50 | Max Valkey connections |
 
-### MinIO / S3 Storage
+### RustFS / S3 Storage
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MINIO_ROOT_USER` | `plexichat` | MinIO admin username |
-| `MINIO_ROOT_PASSWORD` | auto-generated | MinIO admin password (CHANGE THIS) |
 | `S3_BUCKET` | `plexichat-media` | S3 bucket name |
 | `S3_REGION` | `us-east-1` | S3 region |
-| `S3_ENDPOINT` | `http://minio:9000` | S3 endpoint URL |
+| `S3_ENDPOINT` | `http://rustfs:9000` | S3 endpoint URL |
 | `S3_ACCESS_KEY` | `plexichat` | S3 access key |
 | `S3_SECRET_KEY` | auto-generated | S3 secret key |
 | `S3_PUBLIC_URL` | empty | Public URL for media access |
@@ -219,7 +217,7 @@ Result: Backend will use **40** (system env wins)
 ```bash
 POSTGRES_PASSWORD=your-strong-password
 VALKEY_PASSWORD=your-valkey-password
-MINIO_ROOT_PASSWORD=your-strong-password
+S3_SECRET_KEY=your-strong-password
 
 DB_POOL_MIN_CONNECTIONS=20
 DB_POOL_MAX_CONNECTIONS=150

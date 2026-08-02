@@ -15,12 +15,12 @@ Before deploying, ensure:
 - [ ] Monitoring and alerting are configured
 - [ ] Team has access to `.env` (securely stored, never in git)
 
-## Production Profile
+## Production Startup
 
-Use the `prod` profile for hardened defaults:
+Set hardened defaults in `.env`, then start the stack:
 
 ```bash
-docker compose --profile prod up -d
+docker compose up -d
 ```
 
 ## Security Hardening
@@ -35,8 +35,7 @@ openssl rand -base64 32
 Update `.env`:
 ```bash
 POSTGRES_PASSWORD=<your-32-char-password>
-REDIS_PASSWORD=<your-32-char-password>
-MINIO_ROOT_PASSWORD=<your-32-char-password>
+VALKEY_PASSWORD=<your-32-char-password>
 S3_SECRET_KEY=<your-32-char-key>
 ```
 
@@ -70,7 +69,7 @@ cp /etc/letsencrypt/live/yourdomain.com/privkey.pem /etc/nginx/certs/
 
 Services communicate only within their networks:
 
-- **plexichat-backend** (internal) - Database, Redis, MinIO, Backend
+- **plexichat-backend** (internal) - Database, Redis, RustFS, Backend
 - **plexichat-frontend** (external) - Client, Backend
 
 External traffic only reaches:
@@ -86,12 +85,13 @@ iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 iptables -A INPUT -p tcp --dport 8000 -j DROP
 ```
 
-### 4. Non-Root User
+### 4. Backend User
 
-Backend runs as non-root user (uid 1000). Verify:
+The backend container currently runs as `root` (the image does not yet drop
+privileges). For hardened production, add a non-root user in the Dockerfile
+and adjust the `plexichat_home` volume ownership. Verify the current user:
 ```bash
 docker compose exec backend id
-# uid=1000(plexichat) gid=1000(plexichat) groups=1000(plexichat)
 ```
 
 ### 5. Resource Limits
@@ -220,7 +220,7 @@ upstream backend {
 Plexichat is designed for single-host deployment. Use:
 
 ```bash
-docker compose --profile prod up -d
+docker compose up -d
 ```
 
 This works well for:
@@ -268,7 +268,7 @@ docker buildx build --platform linux/arm64 -t plexichat:latest .
 
 Or let Docker auto-detect platform:
 ```bash
-docker compose --profile prod up
+docker compose up
 # Automatically uses appropriate arch
 ```
 
@@ -296,7 +296,7 @@ See [Connection Pooling](connection-pooling.md) for guidance.
 
 The stack includes a `backup` service using **restic** for daily,
 encrypted, deduplicated snapshots. It runs automatically at 2 AM by default
-and backs up the PostgreSQL database, server config/keyrings, and MinIO media.
+and backs up the PostgreSQL database, server config/keyrings, and RustFS media.
 
 Configuration via `.env` — see [`docker/README.md`](../../../docker/README.md)
 for all options.
@@ -341,7 +341,7 @@ docker compose build --no-cache
 
 5. Start with migrations:
 ```bash
-docker compose --profile prod up
+docker compose up
 # Migrations run automatically
 ```
 

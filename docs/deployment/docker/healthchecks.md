@@ -25,8 +25,8 @@ Expected output:
 NAME       STATUS              HEALTH
 backend    Up 5 minutes        healthy
 db         Up 5 minutes        healthy
-redis      Up 5 minutes        healthy
-minio      Up 5 minutes        healthy
+valkey     Up 5 minutes        healthy
+rustfs     Up 5 minutes        healthy
 client     Up 5 minutes        healthy
 ```
 
@@ -53,7 +53,7 @@ curl http://localhost:8000/health
   "version": "a.1.0-131",
   "timestamp": "2024-01-15T10:30:45Z",
   "database": "connected",
-  "redis": "connected",
+  "valkey": "connected",
   "storage": "connected"
 }
 ```
@@ -117,26 +117,27 @@ Retries: 3
 Start period: 10 seconds
 ```
 
-### MinIO Healthcheck
+### RustFS Healthcheck
 
-**Endpoint:** Health endpoint
+**Endpoints:** `GET /health` (S3 API) and `GET /rustfs/console/health` (Console)
 
 **Manual Test:**
 ```bash
-curl http://localhost:9000/minio/health/live
+curl http://localhost:9000/health
+curl http://localhost:9001/rustfs/console/health
 ```
 
 **Expected Response (200 OK):**
 ```
-MinIO OK
+OK
 ```
 
 **Healthcheck Settings:**
 ```
-Interval: 10 seconds
-Timeout: 5 seconds
-Retries: 3
-Start period: 10 seconds
+Interval: 15 seconds
+Timeout: 10 seconds
+Retries: 10
+Start period: 40 seconds
 ```
 
 ### Client (Nginx) Healthcheck
@@ -170,7 +171,7 @@ WARNING backend is unhealthy
 **Possible Causes:**
 1. Database connection failed
 2. Valkey connection failed
-3. MinIO connection failed
+3. RustFS connection failed
 4. Application crashed
 
 **Debug Steps:**
@@ -180,8 +181,8 @@ docker compose logs backend --tail 50
 
 # Check dependencies
 docker compose exec backend curl http://db:5432    # Should fail (not HTTP)
-docker compose exec backend redis-cli -h redis ping # Should return PONG
-docker compose exec backend curl http://minio:9000  # Should redirect
+docker compose exec backend redis-cli -h valkey ping # Should return PONG
+docker compose exec backend curl http://rustfs:9000/health  # Should return OK
 ```
 
 **Fix:**
@@ -235,7 +236,7 @@ docker compose up
 
 **Log:**
 ```
-WARNING redis is unhealthy
+WARNING valkey is unhealthy
 ```
 
 **Possible Causes:**
@@ -246,54 +247,58 @@ WARNING redis is unhealthy
 **Debug Steps:**
 ```bash
 # View logs
-docker compose logs redis --tail 50
+docker compose logs valkey --tail 50
 
 # Test connection
-docker compose exec redis redis-cli ping
+docker compose exec valkey redis-cli ping
 
 # Check memory
-docker compose exec redis redis-cli INFO memory
+docker compose exec valkey redis-cli INFO memory
 ```
 
 **Fix:**
 ```bash
 # Restart
-docker compose restart redis
+docker compose restart valkey
 
 # If out of memory, clear cache
-docker compose exec redis redis-cli FLUSHALL
+docker compose exec valkey redis-cli FLUSHALL
 
 # Increase memory limit in docker-compose.yml
 ```
 
-### MinIO unhealthy
+### RustFS unhealthy
 
 **Log:**
 ```
-WARNING minio is unhealthy
+WARNING rustfs is unhealthy
 ```
 
 **Possible Causes:**
-1. MinIO failed to start
-2. Disk full
+1. RustFS failed to start
+2. Disk full or data volume not writable by UID 10001
 3. Port 9000 conflict
 
 **Debug Steps:**
 ```bash
 # View logs
-docker compose logs minio --tail 50
+docker compose logs rustfs --tail 50
 
 # Test health endpoint
-curl http://localhost:9000/minio/health/live
+curl http://localhost:9000/health
+curl http://localhost:9001/rustfs/console/health
 
 # Check disk usage
-docker compose exec minio df -h
+docker compose exec rustfs df -h
+
+# Verify data volume ownership (RustFS runs as UID 10001)
+docker compose run --rm rustfs-perms
 ```
 
 **Fix:**
 ```bash
 # Restart
-docker compose restart minio
+docker compose restart rustfs
 
 # If disk full, remove old volumes and restart
 docker volume prune
@@ -305,15 +310,15 @@ docker compose up
 Services wait for dependencies to be healthy before starting:
 
 ```
-minio-init -> minio
-backend -> db, redis, minio-init
+rustfs-init -> rustfs
+backend -> db, valkey, rustfs-init
 client -> backend, cert-init
 ```
 
 **Example timeline:**
 1. Deploy script generates config files (`.env`, `docker-config.yaml`, `client-config.js`)
-2. `db`, `redis`, `minio` start in parallel
-3. `minio-init` waits for `minio` to be healthy, then initializes buckets
+2. `db`, `valkey`, `rustfs` start in parallel
+3. `rustfs-init` waits for `rustfs` to be healthy, then initializes buckets
 4. `backend` waits for all above to be healthy before starting
 5. `client` waits for `backend` to be healthy before starting
 
@@ -332,15 +337,15 @@ backend:
   depends_on:
     db:
       condition: service_healthy
-    redis:
+    valkey:
       condition: service_healthy
-    minio-init:
+    rustfs-init:
       condition: service_completed_successfully
 ```
 
 Conditions:
 - `service_healthy` - Wait for healthcheck to pass
-- `service_completed_successfully` - Wait for service to finish and exit (for one-time tasks like minio-init)
+- `service_completed_successfully` - Wait for service to finish and exit (for one-time tasks like rustfs-init)
 - `service_started` - Don't wait (service just needs to be running)
 
 ## Healthcheck Interval Tuning
@@ -361,7 +366,7 @@ backend:
 **For fast services**, decrease interval:
 
 ```yaml
-redis:
+valkey:
   healthcheck:
     interval: 5s  # Check every 5 seconds instead of 10
 ```
@@ -405,10 +410,10 @@ echo "Database health..."
 docker compose exec db pg_isready -U plexichat || echo "FAILED"
 
 echo "Valkey health..."
-docker compose exec redis redis-cli ping || echo "FAILED"
+docker compose exec valkey redis-cli ping || echo "FAILED"
 
-echo "MinIO health..."
-curl -f http://localhost:9000/minio/health/live || echo "FAILED"
+echo "RustFS health..."
+curl -f http://localhost:9000/health || echo "FAILED"
 
 echo "Frontend health..."
 curl -f http://localhost/ > /dev/null || echo "FAILED"

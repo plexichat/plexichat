@@ -54,7 +54,8 @@ case "$COMMAND" in
     SNAPSHOT="${1:-latest}"
     log_info "Restoring database from snapshot $SNAPSHOT..."
     export PGPASSWORD="${POSTGRES_PASSWORD}"
-    restic dump "$SNAPSHOT" /db_dump/plexichat.sql.gz 2>/dev/null \
+    DB_DUMP_IN_REPO="${BACKUP_DB_DUMP_PATH#/}/plexichat.sql.gz"
+    restic dump "$SNAPSHOT" "$DB_DUMP_IN_REPO" 2>/dev/null \
       | gunzip \
       | psql -h db -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER}" -d "${POSTGRES_DBNAME}" --quiet
     log_info "Database restore complete"

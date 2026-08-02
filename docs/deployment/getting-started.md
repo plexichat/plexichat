@@ -38,7 +38,7 @@ This guide covers installing, configuring, and running Plexichat in production. 
 - Database: PostgreSQL 12+ (recommended) or SQLite (small/dev deployments only)
 - Cache: Valkey (strongly recommended for production)
 - Reverse Proxy: nginx, Apache, Caddy, or Traefik (for TLS termination)
-- Optional: S3-compatible storage (MinIO, AWS S3, etc.) for media
+- Optional: S3-compatible storage (RustFS, AWS S3, etc.) for media
 
 For detailed requirements, see [System Requirements](requirements.md).
 

@@ -52,7 +52,7 @@ git clone https://gitlab.plexichat.com/plexichat/plexichat.git
   - Role-based access control (RBAC) with granular permissions
   - Audit logging for server moderation
 - **Media & Content**:
-  - File attachments and media uploads with S3/MinIO support
+  - File attachments and media uploads with S3/RustFS support
   - User avatars and server icons
   - Auto-moderation with built-in content filtering
 - **Voice & Video**:
@@ -288,7 +288,7 @@ that automatically creates daily, encrypted, deduplicated snapshots of:
 |-----------|-----------------|
 | PostgreSQL dump | All database content |
 | `~/.plexichat` | `.machine_key`, keyrings, config — **lose this = lose everything** |
-| MinIO data | Uploaded media, avatars, attachments |
+| RustFS data | Uploaded media, avatars, attachments |
 
 The backup container runs daily at 2 AM by default. Restore with:
 

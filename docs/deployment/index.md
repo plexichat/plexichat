@@ -20,7 +20,7 @@ Detailed configuration for each subsystem:
 - **[Database](configuration/config-database.md)** - PostgreSQL/SQLite, connection pooling, migrations
 - **[Email](configuration/config-email.md)** - SMTP settings for notifications
 - **[Embeds](configuration/config-embeds.md)** - URL preview configuration
-- **[Media](configuration/config-media.md)** - File uploads, S3/MinIO storage
+- **[Media](configuration/config-media.md)** - File uploads, S3/RustFS storage
 - **[Rate Limiting](configuration/config-rate-limiting.md)** - API and gateway rate limits
  - **[Valkey](configuration/config-valkey.md)** - Caching, session storage
 - **[Search](configuration/config-search.md)** - Search backends and indexing

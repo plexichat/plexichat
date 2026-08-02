@@ -5,7 +5,7 @@ Local development setup with hot reload, testing, and debugging.
 ## Start Development Environment
 
 ```bash
-docker compose --profile dev up
+docker compose up
 ```
 
 This starts all services with development defaults:
@@ -13,14 +13,16 @@ This starts all services with development defaults:
 - Debug logging (LOG_LEVEL=DEBUG)
 - Auto-restart on failure
 
-## Hot Code Reload
+## Code Changes
 
-Backend code changes auto-reload without restarting the container.
+The packaged `docker compose up` stack runs the published backend image and mounts
+only the config file — it does **not** bind-mount `./src`, so backend edits require
+rebuilding the image (`docker compose build backend && docker compose up -d`).
 
 ### Editing Backend Code
 
-1. Edit any file in `./src`
-2. Uvicorn detects changes and auto-reloads
+1. Edit files in `src/`
+2. Rebuild: `docker compose build backend && docker compose up -d`
 3. Refresh browser to see changes
 
 Example:
@@ -28,23 +30,23 @@ Example:
 # Terminal 1: Watch logs
 docker compose logs -f backend
 
-# Terminal 2: Edit code
+# Terminal 2: Edit code, then rebuild
 nano src/api/app.py
-
-# Result: Backend auto-reloads, new code runs immediately
+docker compose build backend && docker compose up -d
 ```
 
 ### Editing Frontend Code
 
-Frontend is also bind-mounted for development:
+The `client` container serves the published nginx build and mounts only its
+runtime `client-config.js`; it does not bind-mount the client source. To iterate
+on client code, run the Vite dev server locally and point it at the stack:
+
 ```bash
-# Terminal 1: Watch frontend
-docker compose logs -f client
+# Terminal 1: Run Vite dev server locally
+npm run dev
 
-# Terminal 2: Edit code
-nano ../plexichat-client/src/App.vue
-
-# Result: Vite rebuilds and browser hot-reloads
+# Terminal 2: Reverse-proxy the stack in production mode when ready
+docker compose up -d
 ```
 
 ## Viewing Logs
@@ -66,7 +68,7 @@ docker compose logs -f
 
 Specific service:
 ```bash
-docker compose logs -f redis
+docker compose logs -f valkey
 docker compose logs -f db
 ```
 
@@ -271,13 +273,13 @@ GET key_name            # Get value
 DEL key_name            # Delete key
 ```
 
-### MinIO Console
+### RustFS Console
 
 Open browser: http://localhost:9001
 
 Login with credentials from `.env.generated`:
 ```bash
-grep MINIO .env.generated
+grep S3_ .env.generated
 ```
 
 ### PostgreSQL CLI
@@ -347,7 +349,7 @@ Manual health check:
 ```bash
 curl http://localhost:8000/health
 docker exec plexichat-db-1 pg_isready -U plexichat
-docker exec plexichat-redis-1 redis-cli ping
+docker exec plexichat-valkey-1 redis-cli ping
 ```
 
 ## Next Steps

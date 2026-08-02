@@ -53,7 +53,7 @@ backend    | +==============================================================+
 client     | healthy
 db         | healthy
 valkey     | healthy
-minio      | healthy
+rustfs     | healthy
 ```
 
 All services should report `healthy` in `docker compose ps`:
@@ -66,7 +66,7 @@ Expected output:
 NAME       IMAGE           STATUS           PORTS
 db         postgres:16     Up 2 min (healthy)   5432/tcp
 valkey     valkey/valkey:9.1.1-alpine    Up 2 min (healthy)   6379/tcp
-minio      minio:latest    Up 2 min (healthy)   9000/tcp, 9001/tcp
+rustfs     rustfs/rustfs:latest    Up 2 min (healthy)   9000/tcp, 9001/tcp
 backend    plexichat:dev   Up 1 min (healthy)   0.0.0.0:8000->8000/tcp
 client     nginx:latest    Up 1 min (healthy)   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
 ```
@@ -80,7 +80,7 @@ Open your browser:
 | Web Client | http://localhost |
 | API Docs (Swagger UI) | http://localhost:8000/docs |
 | ReDoc | http://localhost:8000/redoc |
-| MinIO Console | http://localhost:9001 |
+| RustFS Console | http://localhost:9001 |
 
 ## Step 5: Verify Backend Health
 
@@ -176,7 +176,7 @@ Full wipe (removes all data):
 ```bash
 docker compose down -v
 docker system prune -a
-docker compose --profile dev up
+docker compose up
 ```
 
 ## Configuration
@@ -184,7 +184,7 @@ docker compose --profile dev up
 Default dev setup uses:
 - Database: PostgreSQL (auto-initialized)
 - Cache: Redis
-- Storage: MinIO (local)
+- Storage: RustFS (local)
 - API Port: 8000
 - Frontend Port: 80/443
 

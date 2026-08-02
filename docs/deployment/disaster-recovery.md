@@ -43,9 +43,9 @@ Each backup run creates a single encrypted snapshot containing:
 
 | Path in snapshot | Source | Contents |
 |------------------|--------|----------|
-| `db_dump/plexichat.sql.gz` | PostgreSQL via `pg_dump` | All database tables |
+| `tmp/backup/db/plexichat.sql.gz` | PostgreSQL via `pg_dump` | All database tables |
 | `plexichat-home/` | `~/.plexichat` volume | Config, keyrings, `.machine_key` |
-| `minio-data/` | MinIO data volume | Uploaded media, avatars, attachments |
+| `rustfs-data/` | RustFS data volume | Uploaded media, avatars, attachments |
 
 ### Configuration
 
@@ -60,7 +60,7 @@ BACKUP_KEEP_MONTHLY=6
 BACKUP_KEEP_YEARLY=0
 BACKUP_INCLUDE_DB=true
 BACKUP_INCLUDE_HOME=true
-BACKUP_INCLUDE_MINIO=true
+BACKUP_INCLUDE_MEDIA=true
 BACKUP_SECONDARY_REPO=
 BACKUP_SECONDARY_PASSWORD=
 ```

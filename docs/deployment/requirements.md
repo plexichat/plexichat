@@ -33,7 +33,7 @@ This document outlines the system requirements for running Plexichat in differen
 
 ### Storage
 - **Primary**: Local filesystem with adequate permissions
-- **Optional**: S3-compatible service (AWS S3, MinIO, Ceph, etc.) for media attachments
+- **Optional**: S3-compatible service (AWS S3, RustFS, Ceph, etc.) for media attachments
 - **Bucket**: Dedicated bucket with proper CORS configuration if using S3
 
 ### Reverse Proxy (Recommended)

@@ -39,7 +39,7 @@ flowchart TB
         RD[("Valkey 7<br/>cache + sessions")]:::data
     end
 
-    Bucket["S3-compatible object store<br/>(MinIO in Docker,<br/>AWS S3 in production)"]:::media
+    Bucket["S3-compatible object store<br/>(RustFS in Docker,<br/>AWS S3 in production)"]:::media
     SFU["mediasoup / Janus<br/>WebRTC SFU<br/>UDP 30000-30100"]:::media
 
     Browser -->|HTTPS 443| CF
@@ -61,7 +61,7 @@ flowchart TB
 3. **Shared Utilities** (`common_utils`): Internal helpers bundled at `plexichat/src/utils/common_utils/`, used only by the server. The web client lives in a separate JavaScript repository and does not share this Python package.
 4. **Database**: PostgreSQL (recommended) or SQLite (development only)
 5. **Cache**: Valkey (recommended for production)
-6. **Storage**: Local filesystem or S3-compatible (MinIO, AWS S3, etc.) for media attachments
+6. **Storage**: Local filesystem or S3-compatible (RustFS, AWS S3, etc.) for media attachments
 7. **WebRTC SFU** (`mediasoup` default, `Janus` alternative): Optional signaling peer for voice/video; media plane on UDP 30000-30100
 8. **Reverse proxy / TLS** (`plexichat-client` container Nginx): TLS termination and proxy of `/api/v1` and `/gateway` to the backend
 
