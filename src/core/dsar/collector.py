@@ -29,6 +29,7 @@ from .collectors import (
     SessionsCollector,
     SoundboardCollector,
     StickersCollector,
+    SuiteCollector,
     VoiceCollector,
 )
 
@@ -64,6 +65,7 @@ class DataCollector:
             "stickers": StickersCollector(db),
             "soundboard": SoundboardCollector(db),
             "media": MediaCollector(db),
+            "suite": SuiteCollector(db),
         }
 
     def collect_all(self, user_id: int) -> Dict[str, Any]:
@@ -165,6 +167,45 @@ class DataCollector:
                         if isinstance(result, dict)
                         else result[0]
                     )
+            except Exception as e:
+                import utils.logger as logger
+
+                logger.debug(f"Could not count {table}: {e}")
+
+        # Suite tables use ownership, actor, or subject columns rather than a
+        # uniform user_id column. Keep their preview counts explicit and
+        # schema-tolerant, matching SuiteCollector's export semantics.
+        suite_count_queries = {
+            "stash_items": ("owner_id = ?", (user_id,)),
+            "stash_collections": ("owner_id = ?", (user_id,)),
+            "stash_versions": ("created_by = ?", (user_id,)),
+            "stash_grants": (
+                "created_by = ? OR (subject_type = 'user' AND subject_id = ?)",
+                (user_id, str(user_id)),
+            ),
+            "stash_download_tickets": ("subject_id = ?", (user_id,)),
+            "sum_workbooks": ("owner_id = ?", (user_id,)),
+            "sum_sheets": (
+                "workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (user_id,),
+            ),
+            "sum_cells": (
+                "workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (user_id,),
+            ),
+            "sum_operations": (
+                "actor_id = ? OR workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (user_id, user_id),
+            ),
+            "suite_audit_log": ("actor_id = ?", (user_id,)),
+        }
+        for table, (where, params) in suite_count_queries.items():
+            try:
+                row = self._db.fetch_one(
+                    f"SELECT COUNT(*) AS count FROM {table} WHERE {where}", params
+                )
+                if row:
+                    counts[f"suite_{table}"] = int(row.get("count", 0))
             except Exception as e:
                 import utils.logger as logger
 

@@ -49,6 +49,7 @@ from .presence import PresenceCollector
 from .stickers import StickersCollector
 from .soundboard import SoundboardCollector
 from .media import MediaCollector
+from .suite import SuiteCollector
 
 __all__ = [
     "IdentityCollector",
@@ -72,4 +73,5 @@ __all__ = [
     "StickersCollector",
     "SoundboardCollector",
     "MediaCollector",
+    "SuiteCollector",
 ]

@@ -406,11 +406,11 @@ class DSARManager:
         Called from cancel, expiry, and any other path that
         transitions a request to a state where its export must no
         longer exist on disk. We try to delete from the configured
-        storage backend (local, S3, or MinIO) and log the outcome.
+        storage backend (local, S3, or RustFS) and log the outcome.
 
         The ``storage_backend`` value is consumed below when we
         decide between local-fallback (``os.remove``) and the
-        remote-object delete path (S3/MinIO via the configured
+        remote-object delete path (S3/RustFS via the configured
         storage client). Reading the value up-front also lets the
         operator inspect logs about which backend was used.
         """
@@ -444,10 +444,10 @@ class DSARManager:
                         f"request {request.get('id')}: {e}"
                     )
             # Fall back to a best-effort local removal. Note: when
-            # ``storage_backend`` indicates S3 / MinIO neither the
+            # ``storage_backend`` indicates S3 / RustFS neither the
             # media backend nor ``os.remove`` will reach the object -
             # we attempt a remote delete via the configured S3 /
-            # MinIO client first, and only log if neither succeeds.
+            # RustFS client first, and only log if neither succeeds.
             import os
 
             try:
@@ -458,7 +458,7 @@ class DSARManager:
                         f"for request {request.get('id')} at "
                         f"{storage_path}"
                     )
-                elif request.get("storage_backend") in {"s3", "minio", "remote"}:
+                elif request.get("storage_backend") in {"s3", "rustfs", "remote"}:
                     logger.warning(
                         "DSAR: remote storage_backend delete not "
                         "yet implemented; object remains in remote "
@@ -473,11 +473,11 @@ class DSARManager:
                 )
 
             # Remote-object deletion: if configured storage is S3
-            # or MinIO, attempt a direct delete via the configured
+            # or RustFS, attempt a direct delete via the configured
             # client. Plexichat's media module ships an S3 client
             # wrapper; reach for it lazily and only on the relevant
             # backends.
-            if storage_backend in {"s3", "minio"}:
+            if storage_backend in {"s3", "rustfs"}:
                 try:
                     import src.api as _dsar_api
 
