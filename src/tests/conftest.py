@@ -199,22 +199,14 @@ def _test_always_valid_email(email, _orig=_original_validate_email):
     return False
 
 
-def _test_always_valid_username(username):
-    """Fixture-friendly username validator: any non-empty string with no whitespace."""
-    if not isinstance(username, str) or not username.strip():
-        return False, ["Username required"]
-    if any(c.isspace() for c in username):
-        return False, ["Username may not contain whitespace"]
-    return True, []
-
-
-# Apply at module import time so every test sees the bypass without
-# depending on autouse-fixture ordering, which is fragile for fixtures
-# that register users inside their setup phase (e.g. ``dm_with_message``).
+# Apply the email-only test accommodation at module import time so every
+# fixture sees it without depending on autouse-fixture ordering. Username
+# validation deliberately remains the production implementation: globally
+# bypassing it made the property-based security tests test the fixture rather
+# than the validator.
 _auth_passwords.validate_email = _test_always_valid_email
-_auth_passwords.validate_username = _test_always_valid_username
 _reg_module.validate_email = _test_always_valid_email
-_reg_module.validate_username = _test_always_valid_username
+_reg_module.validate_username = _auth_passwords.validate_username
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -1621,6 +1613,14 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "crypto_heavy: Tests that use real Argon2/HKDF/chain hashing"
     )
+    config.addinivalue_line(
+        "markers", "migrations: Tests for the migration runner and trackers"
+    )
+    config.addinivalue_line(
+        "markers", "database_integration: Tests requiring a real database backend"
+    )
+    config.addinivalue_line("markers", "benchmark: Performance benchmark tests")
+    config.addinivalue_line("markers", "postgres: Tests requiring PostgreSQL/Docker")
 
 
 def pytest_collection_modifyitems(config, items):
