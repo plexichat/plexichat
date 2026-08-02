@@ -19,6 +19,7 @@ from typing import Optional, Dict, Any
 
 import utils.logger as logger
 import utils.config as config
+from .processing.video import resolve_ffprobe_path
 
 
 class CompressionQuality(Enum):
@@ -114,8 +115,14 @@ class ImageCompressor:
         if importlib.util.find_spec("PIL") is not None:
             return True
         else:
-            logger.warning("Pillow not installed - image compression unavailable")
+            logger.debug(
+                "Optional dependency Pillow is unavailable; image compression is disabled"
+            )
             return False
+
+    def dependency_available(self) -> bool:
+        """Return whether Pillow is installed, independent of configuration."""
+        return self._available
 
     def is_available(self) -> bool:
         """Check if compression is available."""
@@ -285,8 +292,14 @@ class VideoCompressor:
             if os.path.exists(path):
                 return path
 
-        logger.warning("ffmpeg not found - video compression unavailable")
+        logger.debug(
+            "Optional dependency ffmpeg is unavailable; video compression is disabled"
+        )
         return None
+
+    def dependency_available(self) -> bool:
+        """Return whether ffmpeg is installed, independent of configuration."""
+        return self._ffmpeg_path is not None
 
     def is_available(self) -> bool:
         """Check if compression is available."""
@@ -451,6 +464,15 @@ class CompressionManager:
         self._image_compressor = ImageCompressor()
         self._video_compressor = VideoCompressor()
         self._config = self._load_config()
+        # Keep this probe consistent with ``VideoProcessor``: deployments may
+        # provide ffprobe outside PATH through media.video_processing.ffprobe_path.
+        # Resolve it once at manager construction so status requests remain cheap.
+        self._ffprobe_path = resolve_ffprobe_path()
+        self._ffprobe_available = self._ffprobe_path is not None
+
+    def get_ffprobe_path(self) -> Optional[str]:
+        """Return the resolved ffprobe path used for capability reporting."""
+        return self._ffprobe_path
 
     def _load_config(self) -> dict:
         """Load compression configuration."""
@@ -501,10 +523,18 @@ class CompressionManager:
                 compressed_size=len(file_data),
             )
 
+    def _video_processor_available(self) -> bool:
+        """Return the cached ffprobe availability result."""
+        return self._ffprobe_available
+
     def get_status(self) -> Dict[str, Any]:
-        """Get compression system status."""
+        """Get compression and optional media dependency status."""
         return {
             "enabled": self.is_enabled(),
             "image_compression": self._image_compressor.is_available(),
             "video_compression": self._video_compressor.is_available(),
+            "pillow_available": self._image_compressor.dependency_available(),
+            "ffmpeg_available": self._video_compressor.dependency_available(),
+            "ffprobe_available": self._video_processor_available(),
+            "ffprobe_path": self.get_ffprobe_path(),
         }

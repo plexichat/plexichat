@@ -478,6 +478,9 @@ async def get_compression_status(
             enabled=status_data["enabled"],
             image_compression=status_data["image_compression"],
             video_compression=status_data["video_compression"],
+            pillow_available=status_data["pillow_available"],
+            ffmpeg_available=status_data["ffmpeg_available"],
+            ffprobe_available=status_data["ffprobe_available"],
         )
     except Exception as e:
         logger.error(

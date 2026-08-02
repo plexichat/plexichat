@@ -33,6 +33,25 @@ def _get_video_config() -> dict:
         return {}
 
 
+def resolve_ffprobe_path(candidate: Optional[str] = None) -> Optional[str]:
+    """Resolve a configured ffprobe executable, falling back to PATH."""
+    configured_path = candidate or _get_video_config().get("ffprobe_path")
+    if configured_path:
+        resolved = shutil.which(configured_path)
+        if resolved:
+            logger.debug("Found configured ffprobe at %s", resolved)
+            return resolved
+        logger.debug(
+            "Configured ffprobe_path is not executable or not found: %s",
+            configured_path,
+        )
+
+    path = shutil.which("ffprobe")
+    if path:
+        logger.debug("Found ffprobe at %s", path)
+    return path
+
+
 class VideoProcessor:
     """Video metadata extraction using ffprobe with security limits."""
 
@@ -62,7 +81,7 @@ class VideoProcessor:
             timeout: Timeout in seconds for ffprobe (default: 30)
             max_size_for_metadata: Max file size to extract metadata from (default: 500MB)
         """
-        self._ffprobe_path = ffprobe_path or self._find_ffprobe()
+        self._ffprobe_path = resolve_ffprobe_path(ffprobe_path)
 
         # Load config with fallbacks
         video_config = _get_video_config()
@@ -74,14 +93,9 @@ class VideoProcessor:
         )
 
         if not self._ffprobe_path:
-            logger.warning("ffprobe not found - video metadata extraction disabled")
-
-    def _find_ffprobe(self) -> Optional[str]:
-        """Find ffprobe executable in PATH."""
-        path = shutil.which("ffprobe")
-        if path:
-            logger.debug(f"Found ffprobe at {path}")
-        return path
+            logger.debug(
+                "Optional dependency ffprobe is unavailable; video metadata extraction is disabled"
+            )
 
     def is_available(self) -> bool:
         """Check if ffprobe is available."""

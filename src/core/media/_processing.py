@@ -25,7 +25,9 @@ class _ProcessingMixin:
                 optimize=self._config.get("image_optimize", True),
             )
         except ImageProcessingError:
-            logger.warning("Image processing unavailable - Pillow not installed")
+            logger.debug(
+                "Optional dependency Pillow is unavailable; image processing is disabled"
+            )
             return None
 
     def _init_video_processor(self) -> VideoProcessor:
@@ -33,7 +35,9 @@ class _ProcessingMixin:
             ffprobe_path=self._config.get("ffprobe_path"),
         )
         if not processor.is_available():
-            logger.warning("Video processing unavailable - ffprobe not found")
+            logger.debug(
+                "Optional dependency ffprobe is unavailable; video processing is disabled"
+            )
         return processor
 
     # ── public API ─────────────────────────────────────────────────────────────

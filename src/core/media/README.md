@@ -246,12 +246,12 @@ media:
   local_path: ~/.plexichat/media
   local_url: /media
   
-  # S3/MinIO storage settings
+  # S3/RustFS storage settings
   s3_bucket: my-bucket
   s3_access_key: AKIAIOSFODNN7EXAMPLE
   s3_secret_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
   s3_region: us-east-1
-  s3_endpoint: ""           # Custom endpoint for MinIO
+  s3_endpoint: ""           # Custom endpoint for RustFS / SeaweedFS / etc.
   s3_public_url: ""         # Public URL prefix
   
   # In-memory processing (files ≤ this size skip temp-file disk I/O)
@@ -367,7 +367,7 @@ media:
 
 1. **Change signing key**: Replace `CHANGE_THIS_SIGNING_KEY` with a secure random string
 2. **Set up encryption keys**: Configure `PLEXICHAT_MEDIA_KEY` environment variable
-3. **Configure storage**: Set up S3/MinIO for scalable storage
+3. **Configure storage**: Set up S3/RustFS for scalable storage
 4. **Review size limits**: Adjust based on your use case
 5. **Enable rate limiting**: Protect against abuse
 6. **Consider malware scanning**: Enable ClamAV for user uploads

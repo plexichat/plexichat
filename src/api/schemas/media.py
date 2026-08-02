@@ -100,6 +100,15 @@ class CompressionStatusResponse(BaseModel):
     video_compression: bool = Field(
         ..., description="Whether video compression is enabled"
     )
+    pillow_available: bool = Field(
+        False, description="Whether the optional Pillow dependency is installed"
+    )
+    ffmpeg_available: bool = Field(
+        False, description="Whether the optional ffmpeg dependency is installed"
+    )
+    ffprobe_available: bool = Field(
+        False, description="Whether the optional ffprobe dependency is installed"
+    )
 
 
 class HashStatusResponse(BaseModel):

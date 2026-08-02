@@ -17,7 +17,7 @@ from ..exceptions import (
 
 
 class S3Storage(StorageBackendBase):
-    """S3-compatible storage backend (AWS S3, MinIO, etc.)."""
+    """S3-compatible storage backend (AWS S3, RustFS, SeaweedFS, etc.)."""
 
     def __init__(
         self,
@@ -38,7 +38,7 @@ class S3Storage(StorageBackendBase):
             access_key: AWS access key ID
             secret_key: AWS secret access key
             region: AWS region
-            endpoint_url: Custom endpoint URL (for MinIO, etc.)
+            endpoint_url: Custom endpoint URL (for RustFS, SeaweedFS, etc.)
             use_ssl: Use HTTPS
             public_url: Public URL prefix for serving files
             path_prefix: Prefix for all stored paths
