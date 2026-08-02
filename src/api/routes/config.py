@@ -13,6 +13,7 @@ router = APIRouter(tags=["System"])
 
 @router.get(
     "/capabilities",
+    operation_id="get_server_capabilities",
     response_model=ServerCapabilitiesResponse,
     summary="Get server capabilities",
     responses={

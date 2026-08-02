@@ -428,10 +428,15 @@ class TestPathTraversalPrevention:
 class TestBufferOverflowPrevention:
     """Tests for buffer overflow prevention."""
 
-    @given(st.text(min_size=4001, max_size=10000))
+    @given(
+        st.builds(
+            lambda prefix: prefix + "a" * (4001 - len(prefix)),
+            st.text(min_size=0, max_size=4000),
+        )
+    )
     @settings(max_examples=20, deadline=None)
     def test_very_long_messages(self, content):
-        """Test very long message content."""
+        """Test very long message content with varied prefixes."""
         result = validate_content(content, max_length=4000)
         # Should reject content over limit
         if len(content) > 4000:
@@ -456,7 +461,13 @@ class TestBufferOverflowPrevention:
 class TestNullBytes:
     """Tests for null byte and special character handling."""
 
-    @given(st.text(min_size=1, max_size=50).filter(lambda x: "\x00" in x))
+    @given(
+        st.builds(
+            lambda prefix, suffix: prefix + "\x00" + suffix,
+            st.text(max_size=24),
+            st.text(max_size=25),
+        )
+    )
     @settings(max_examples=50)
     def test_null_bytes_in_content(self, content):
         """Test null bytes in content."""

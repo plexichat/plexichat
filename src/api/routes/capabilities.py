@@ -17,11 +17,12 @@ from src.core.artifacts.capabilities import (
     capability_to_dict,
 )
 
-router = APIRouter(prefix="/capabilities", tags=["Capabilities"])
+router = APIRouter(prefix="/capabilities/artifacts", tags=["Capabilities"])
 
 
 @router.get(
     "",
+    operation_id="get_artifact_capabilities_route",
     summary="Get artifact feature capabilities",
     responses={
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},

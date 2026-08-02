@@ -31,6 +31,9 @@ class SecurityHeadersMiddleware:
                 path = scope.get("path", "")
                 is_api = path.startswith("/api/v1/")
                 is_media = path.startswith("/api/v1/media/")
+                # User-facing HTML help pages carry inline <style> blocks
+                # and must not inherit the strict API-only CSP.
+                is_help = path.startswith("/api/v1/help/")
 
                 # Security Headers
                 security_headers = [
@@ -39,7 +42,7 @@ class SecurityHeadersMiddleware:
                     (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
                     (b"X-Permitted-Cross-Domain-Policies", b"none"),
                 ]
-                if is_api and not is_media:
+                if is_api and not is_media and not is_help:
                     # Strict CSP for API responses. They should never
                     # be rendered as HTML; default-src 'none' makes
                     # any accidental script-injection inert.
@@ -100,18 +103,6 @@ class SecurityHeadersMiddleware:
                 # Add X-Frame-Options: SAMEORIGIN only if not a media request and not present
                 if not is_media and b"x-frame-options" not in present_names:
                     final_headers.append((b"X-Frame-Options", b"SAMEORIGIN"))
-
-                # Relax CSP for media to allow embedding
-                if is_media and b"content-security-policy" not in present_names:
-                    final_headers.append(
-                        (
-                            b"Content-Security-Policy",
-                            b"default-src 'self'; "
-                            b"img-src 'self' data: blob: *; "
-                            b"media-src 'self' *; "
-                            b"frame-ancestors *",
-                        )
-                    )
 
                 message["headers"] = final_headers
 

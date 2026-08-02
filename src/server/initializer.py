@@ -103,6 +103,19 @@ def initialize_modules(
 
     db.connect()
 
+    # PlexiSuite domain schemas are startup-owned and idempotent. Stash keeps
+    # metadata here while file bytes remain in the existing media subsystem.
+    try:
+        from src.core.suite.stash import create_tables as create_stash_tables
+        from src.core.suite.sum.schema import create_tables as create_sum_tables
+
+        create_stash_tables(db)
+        create_sum_tables(db)
+        logger.info("PlexiStash and PlexiSum metadata tables initialized")
+    except Exception as exc:
+        logger.error(f"Failed to initialize PlexiSuite domain tables: {exc}")
+        raise
+
     valkey_config = config.get("valkey") or {}
     if valkey_config.get("enabled", False):
         logger.info("Initializing Valkey...")

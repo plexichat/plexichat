@@ -35,7 +35,7 @@ class TestDefaultRouteConfigs:
         """Test messages route config."""
         config = get_route_config("POST /channels/{id}/messages")
         assert config is not None
-        assert config.requests == 5
+        assert config.requests == 10
         assert config.window_seconds == 5.0
         assert config.algorithm == RateLimitAlgorithm.TOKEN_BUCKET
 

@@ -117,6 +117,42 @@ class CleanupService:
                 db.execute("PRAGMA foreign_keys=ON")
 
     def delete_all_for_user(self, db: Any, uid: int) -> None:
+        # PlexiSuite resources are user-owned metadata. Delete children before
+        # parents so this remains safe when foreign keys are enabled, while
+        # tolerating installations created before the suite tables existed.
+        for statement, params in (
+            ("DELETE FROM sum_operations WHERE actor_id = ?", (uid,)),
+            (
+                "DELETE FROM sum_operations WHERE workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (uid,),
+            ),
+            (
+                "DELETE FROM sum_cells WHERE workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (uid,),
+            ),
+            (
+                "DELETE FROM sum_sheets WHERE workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (uid,),
+            ),
+            ("DELETE FROM sum_workbooks WHERE owner_id = ?", (uid,)),
+            ("DELETE FROM suite_audit_log WHERE actor_id = ?", (uid,)),
+            ("DELETE FROM stash_download_tickets WHERE subject_id = ?", (uid,)),
+            (
+                "DELETE FROM stash_grants WHERE created_by = ? OR (subject_type = 'user' AND subject_id = ?) OR item_id IN (SELECT id FROM stash_items WHERE owner_id = ?)",
+                (uid, str(uid), uid),
+            ),
+            (
+                "DELETE FROM stash_versions WHERE created_by = ? OR item_id IN (SELECT id FROM stash_items WHERE owner_id = ?)",
+                (uid, uid),
+            ),
+            ("DELETE FROM stash_items WHERE owner_id = ?", (uid,)),
+            ("DELETE FROM stash_collections WHERE owner_id = ?", (uid,)),
+        ):
+            try:
+                db.execute(statement, params)
+            except Exception as exc:
+                logger.debug("Optional PlexiSuite cleanup skipped: %s", exc)
+
         db.execute(
             "DELETE FROM message_reports WHERE reporter_id = ? OR reported_user_id = ?",
             (uid, uid),

@@ -164,8 +164,9 @@ class AccountReaper:
         now = int(time.time())
         batch_size = self._reaper_config.get("batch_size", 50)
 
-        # Clean up expired passkey challenges
+        # Clean up expired passkey challenges and Suite download tickets.
         self._cleanup_passkey_challenges()
+        self._cleanup_suite_tickets()
 
         # Find users ready for purge
         purge_list = self._db.fetch_all(
@@ -181,6 +182,18 @@ class AccountReaper:
         for user in purge_list:
             self.purge_user(user["id"], user["username"])
 
+    def _cleanup_suite_tickets(self):
+        """Remove redeemed/expired PlexiStash tickets when Suite is installed."""
+        try:
+            from src.core.suite.stash import StashManager
+
+            removed = StashManager(self._db).cleanup_expired_tickets()
+            if removed:
+                logger.debug("Reaper: Cleaned up %d expired Suite ticket(s)", removed)
+        except Exception as exc:
+            # Suite is optional and its tables may not exist on older databases.
+            logger.debug("Reaper: Suite ticket cleanup skipped: %s", exc)
+
     def _cleanup_passkey_challenges(self):
         """Clean up expired passkey challenges."""
         try:
@@ -195,6 +208,58 @@ class AccountReaper:
                 )
         except Exception as e:
             logger.error(f"Reaper: Failed to cleanup passkey challenges: {e}")
+
+    def _purge_suite_data(self, user_id: int) -> None:
+        """Erase user-owned Suite rows before removing the auth user.
+
+        Suite tables are optional on older databases, so each statement is
+        isolated. Child rows are removed before their parents for PostgreSQL
+        installations with foreign keys enabled.
+        """
+        statements = (
+            ("DELETE FROM suite_audit_log WHERE actor_id = ?", (user_id,)),
+            (
+                "DELETE FROM suite_audit_log WHERE resource_id IN "
+                "(SELECT id FROM stash_items WHERE owner_id = ?) OR resource_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (user_id, user_id),
+            ),
+            ("DELETE FROM stash_download_tickets WHERE subject_id = ?", (user_id,)),
+            (
+                "DELETE FROM stash_grants WHERE created_by = ? OR "
+                "(subject_type = 'user' AND subject_id = ?) OR item_id IN "
+                "(SELECT id FROM stash_items WHERE owner_id = ?)",
+                (user_id, str(user_id), user_id),
+            ),
+            (
+                "DELETE FROM stash_versions WHERE created_by = ? OR item_id IN "
+                "(SELECT id FROM stash_items WHERE owner_id = ?)",
+                (user_id, user_id),
+            ),
+            (
+                "DELETE FROM sum_operations WHERE actor_id = ? OR workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (user_id, user_id),
+            ),
+            (
+                "DELETE FROM sum_cells WHERE workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (user_id,),
+            ),
+            (
+                "DELETE FROM sum_sheets WHERE workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (user_id,),
+            ),
+            ("DELETE FROM sum_workbooks WHERE owner_id = ?", (user_id,)),
+            ("DELETE FROM stash_items WHERE owner_id = ?", (user_id,)),
+            ("DELETE FROM stash_collections WHERE owner_id = ?", (user_id,)),
+        )
+        for query, params in statements:
+            try:
+                self._db.execute(query, params)
+            except Exception as exc:
+                logger.debug("Reaper: optional Suite purge skipped: %s", exc)
 
     def purge_user(self, user_id: int, username: str):
         """
@@ -236,7 +301,8 @@ class AccountReaper:
                 )
 
             # 3. Final Database Erasure
-            # Order matters: child tables before parent tables to respect FK constraints
+            # Order matters: child tables before parent tables to respect FK constraints.
+            self._purge_suite_data(user_id)
             self._db.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
             self._db.execute("DELETE FROM auth_devices WHERE user_id = ?", (user_id,))
             self._db.execute(
@@ -314,6 +380,7 @@ class AccountReaper:
             self._db.execute(
                 "DELETE FROM media_hash_reports WHERE reporter_id = ?", (user_id,)
             )
+            self._purge_suite_data(user_id)
             self._db.execute("DELETE FROM auth_users WHERE id = ?", (user_id,))
             self._db.execute(
                 "DELETE FROM auth_deletion_records WHERE user_id = ?", (user_id,)

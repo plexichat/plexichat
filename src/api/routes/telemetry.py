@@ -18,6 +18,10 @@ from src.core import ratelimit
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
 
+# CSP reports are unauthenticated browser callbacks. Keep malformed or hostile
+# clients from forcing an unbounded request body allocation.
+_MAX_CSP_REPORT_BYTES = 64 * 1024
+
 
 @router.post(
     "/response-times",
@@ -131,15 +135,27 @@ async def submit_csp_report(
     The browser sends this data when a CSP violation occurs.
     """
     try:
-        # CSP reports use application/csp-report or application/json
-        body = await request.body()
+        # CSP reports use application/csp-report or application/json. Read the
+        # stream with a hard cap because Content-Length is optional and can be
+        # forged by chunked clients.
+        body_parts = []
+        body_size = 0
+        async for chunk in request.stream():
+            body_size += len(chunk)
+            if body_size > _MAX_CSP_REPORT_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="CSP report exceeds the maximum size",
+                )
+            body_parts.append(chunk)
+        body = b"".join(body_parts)
         try:
             report = json.loads(body)
         except Exception:
             report = {"raw": body.decode(errors="ignore")}
 
         client_ip = request.client.host if request.client else "unknown"
-        logger.warning(f"CSP Violation reported from {client_ip}: {json.dumps(report)}")
+        logger.info("CSP report received from %s: %s", client_ip, json.dumps(report))
 
         # Optionally record this in telemetry
         from src.api import get_telemetry
@@ -148,6 +164,8 @@ async def submit_csp_report(
         if telemetry and hasattr(telemetry, "record_csp_violation"):
             telemetry.record_csp_violation(report, client_ip)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error processing CSP report: {e}")
 

@@ -356,6 +356,24 @@ class RetentionCleanupJob:
         """
         target_db = db if db is not None else self._db
         applied = _apply_retention_windows(target_db, self._config)
+        suite_tickets = 0
+        suite_purged = 0
+        try:
+            # Reuse this existing scheduled cleanup worker rather than creating
+            # a second daemon solely for Stash tickets. Missing Suite tables are
+            # expected on older installations and are handled as a no-op.
+            from src.core.suite.stash import StashManager
+
+            stash = StashManager(target_db)
+            suite_tickets = stash.cleanup_expired_tickets()
+            retention_cfg = (
+                _get_artifacts_config(self._config).get("retention", {}) or {}
+            )
+            suite_purged = stash.purge_deleted_items(
+                retention_cfg.get("suite_deleted_retention_days", 30)
+            )
+        except Exception as exc:
+            logger.debug("Suite ticket cleanup skipped: %s", exc)
         purged = 0
         if self._purge_enabled():
             purged = purge_expired(target_db, self._config)
@@ -364,7 +382,12 @@ class RetentionCleanupJob:
                 "Retention purge disabled (purge_expired=False): "
                 "skipping deletion, only applying windows"
             )
-        return {"applied": applied, "purged": purged}
+        return {
+            "applied": applied,
+            "purged": purged,
+            "suite_tickets": suite_tickets,
+            "suite_purged": suite_purged,
+        }
 
     def _run_forever(self) -> None:
         interval = self._interval_seconds()

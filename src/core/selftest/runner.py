@@ -133,6 +133,12 @@ class SelfTestRunner:
         excluded.add("PUT:/api/v1/bots/servers/{server_id}/requests/{request_id}")
         excluded.add("POST:/api/v1/bots/servers/{server_id}/requests/{request_id}")
 
+        # PlexiStash and PlexiSum are stateful domains. Their routes require
+        # IDs and revisions returned by earlier requests, so they are exercised
+        # by test_suite_domains() rather than the generic OpenAPI fuzzer.
+        excluded.add("/api/v1/suite/stash")
+        excluded.add("/api/v1/suite/sum")
+
         # These are exercised during setup (other_user joins via invite,
         # other_user sends friend request) so we avoid double-testing
         # and spurious 409/404 failures in the auto-loop.
@@ -229,11 +235,20 @@ class SelfTestRunner:
 
         deferred_destructive = []
 
+        stateful_suite_prefixes = (
+            "/api/v1/suite/stash",
+            "/api/v1/suite/sum",
+        )
+
         for route in routes:
             path = route["path"]
             method = route["method"]
 
-            if path in excluded or f"{method}:{path}" in excluded:
+            if (
+                path in excluded
+                or f"{method}:{path}" in excluded
+                or path.startswith(stateful_suite_prefixes)
+            ):
                 logger.debug(f"Skipping excluded endpoint: {method} {path}")
                 continue
 
@@ -365,6 +380,7 @@ class SelfTestRunner:
             self.endpoints.test_user_2fa_flow()
             self.endpoints.test_admin_2fa_flow()
             self.endpoints.test_interaction_callback()
+            self.endpoints.test_suite_domains()
             self.endpoints.test_bulk_delete_messages()
         else:
             logger.info(

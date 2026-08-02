@@ -493,8 +493,10 @@ async def delete_webhook(
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
-                logger.warning(
-                    f"Webhook {wid} not found for deletion by user {current_user.user_id}"
+                logger.debug(
+                    "Webhook %s was already absent during deletion by user %s",
+                    wid,
+                    current_user.user_id,
                 )
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,

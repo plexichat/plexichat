@@ -102,13 +102,16 @@ class ReportGenerator:
             status = r.get("status_code", 0)
             success = "OK" if r["success"] else "FAIL"
             label = r.get("label", r.get("path", ""))
+            expected = (
+                f" expected={r['expected_denial']}" if r.get("expected_denial") else ""
+            )
             logger.info(
-                f"  {dur:>8.1f}ms | {success:<4} | {r['method']:<6} {label[:45]:<45} ({status})"
+                f"  {dur:>8.1f}ms | {success:<4} | {r['method']:<6} {label[:45]:<45} ({status}){expected}"
             )
         logger.info("=" * 60)
 
         if failed > 0:
-            logger.error("Failed Endpoints (Non-2xx Responses):")
+            logger.error("Failed endpoint checks:")
             for r in self.ctx.results:
                 if not r["success"]:
                     label = r.get("label", r.get("path", ""))

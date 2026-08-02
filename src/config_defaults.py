@@ -18,6 +18,8 @@ ARTIFACTS_LICENSE_FEATURES = {
     "voice_transcription": "Licensed automatic voice-call transcription.",
     "plexiscribe": "Licensed collaborative document editor (Plexiscribe).",
     "plexiscript": "Licensed collaborative code editor (Plexiscript).",
+    "plexistash": "Licensed PlexiStash metadata vault.",
+    "plexisum": "Licensed PlexiSum collaborative workbooks.",
 }
 
 
@@ -877,6 +879,14 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                     ".elf",
                 ],
             },
+            "plexistash": {
+                "enabled": True,
+                "licensed_feature": "plexistash",
+            },
+            "plexisum": {
+                "enabled": True,
+                "licensed_feature": "plexisum",
+            },
             "whiteboard": {
                 "enabled": False,
                 "licensed_feature": "artifacts_whiteboard",
@@ -909,6 +919,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "retention": {
                 "run_cleanup_interval_minutes": 60,
                 "purge_expired": True,
+                "suite_deleted_retention_days": 30,
             },
         },
         "bots": {

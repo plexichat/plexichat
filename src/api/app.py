@@ -92,6 +92,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
     from .middleware import (
         AuthenticationMiddleware,
+        SecurityHeadersMiddleware,
         setup_exception_handlers,
         create_rate_limit_middleware,
     )
@@ -172,6 +173,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             return render_redoc_page(request, config.title, openapi_url)
 
     app.add_middleware(AuthenticationMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     if enable_rate_limiting:
         from src.core import ratelimit

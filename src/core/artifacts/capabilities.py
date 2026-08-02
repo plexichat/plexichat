@@ -270,6 +270,35 @@ def _eval_voice_transcription(artifacts: Dict[str, Any]) -> CapabilityInfo:
     )
 
 
+def _eval_suite_feature(
+    artifacts: Dict[str, Any], feature: str, label: str
+) -> CapabilityInfo:
+    """Evaluate a Suite domain capability using the artifacts license boundary."""
+    enabled = artifacts.get("enabled", True)
+    suite_config = artifacts.get(feature, {}) or {}
+    feature_enabled = suite_config.get("enabled", True)
+    if enabled is False or feature_enabled is False:
+        return CapabilityInfo(
+            feature=feature,
+            state=CapabilityState.DISABLED_BY_CONFIG,
+            message=f"{label} is disabled in the server configuration.",
+            details={"artifacts_enabled": enabled, "feature_enabled": feature_enabled},
+        )
+    if not _has_feature(feature):
+        return CapabilityInfo(
+            feature=feature,
+            state=CapabilityState.DISABLED_BY_LICENSE,
+            message=f"{label} requires a license.",
+            details={"licensed_feature": feature},
+        )
+    return CapabilityInfo(
+        feature=feature,
+        state=CapabilityState.AVAILABLE,
+        message=f"{label} is enabled.",
+        details={"feature_enabled": feature_enabled},
+    )
+
+
 def _eval_voice_recording(artifacts: Dict[str, Any]) -> CapabilityInfo:
     enabled = artifacts.get("enabled", True)
     voice = artifacts.get("voice", {}) or {}
@@ -316,6 +345,8 @@ def get_artifact_capabilities(
             "plexiscribe": _eval_plexiscribe(artifacts),
             "plexiscript": _eval_plexiscript(artifacts),
             "plexiboard": _eval_plexiboard(artifacts),
+            "plexistash": _eval_suite_feature(artifacts, "plexistash", "PlexiStash"),
+            "plexisum": _eval_suite_feature(artifacts, "plexisum", "PlexiSum"),
         }
     except Exception:
         # Last-resort fallback so the endpoint can never crash.

@@ -43,6 +43,9 @@ from .help import router as help_router, robots_router
 from .config import router as config_router
 from .capabilities import router as capabilities_router
 from .artifacts import router as artifacts_router
+from .suite.registry import router as suite_router
+from .suite.stash import router as stash_router
+from .suite.sum import router as sum_router
 
 import utils.config as config
 
@@ -54,6 +57,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(health_router)
     api_router.include_router(version_router)
     api_router.include_router(config_router)
+    api_router.include_router(capabilities_router)
     api_router.include_router(auth_router, prefix="/auth")
     api_router.include_router(users_router, prefix="/users")
     api_router.include_router(servers_router, prefix="/servers")
@@ -105,11 +109,15 @@ def create_api_router() -> APIRouter:
     # Include feature expansion routes under /features prefix
     api_router.include_router(feature_expansion_router, prefix="/features")
 
-    # Include capabilities router (artifact feature availability state)
-    api_router.include_router(capabilities_router)
-
     # Include artifacts router (artifact CRUD + inline transcript emission)
     api_router.include_router(artifacts_router)
+
+    # Include the authenticated PlexiSuite registry and universal-home feed.
+    api_router.include_router(suite_router)
+    # PlexiStash owns its metadata and authorization boundary; binary content
+    # continues to use the existing media routes.
+    api_router.include_router(stash_router)
+    api_router.include_router(sum_router)
 
     return api_router
 

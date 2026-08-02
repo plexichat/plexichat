@@ -57,6 +57,60 @@ ROUTE_PATTERNS = [
     (re.compile(r"^/api/v\d+/webhooks$"), "POST /webhooks"),
     (re.compile(r"^/api/v\d+/webhooks/(\d+)$"), "{method} /webhooks/{id}"),
     (re.compile(r"^/api/v\d+/webhooks/(\d+)/([^/]+)$"), "POST /webhooks/{id}/{token}"),
+    (re.compile(r"^/api/v\d+/suite/stash/items$"), "{method} /suite/stash/items"),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/versions$"),
+        "{method} /suite/stash/items/{id}/versions",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/pin$"),
+        "{method} /suite/stash/items/{id}/pin",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/grants$"),
+        "{method} /suite/stash/items/{id}/grants",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/download-ticket$"),
+        "{method} /suite/stash/items/{id}/download-ticket",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/restore$"),
+        "{method} /suite/stash/items/{id}/restore",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)$"),
+        "{method} /suite/stash/items/{id}",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/download-ticket/redeem$"),
+        "{method} /suite/stash/download-ticket/redeem",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/grants/(\d+)$"),
+        "{method} /suite/stash/grants/{id}",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/collections$"),
+        "{method} /suite/stash/collections",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/sum/workbooks/(\d+)/sheets/(\d+)/viewport$"),
+        "{method} /suite/sum/workbooks/{id}/sheets/{sheet_id}/viewport",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/sum/workbooks/(\d+)/sheets/(\d+)/operations$"),
+        "{method} /suite/sum/workbooks/{id}/sheets/{sheet_id}/operations",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/sum/workbooks/(\d+)/restore$"),
+        "{method} /suite/sum/workbooks/{id}/restore",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/sum/workbooks/(\d+)$"),
+        "{method} /suite/sum/workbooks/{id}",
+    ),
+    (re.compile(r"^/api/v\d+/suite/sum/workbooks$"), "{method} /suite/sum/workbooks"),
     (re.compile(r"^/api/v\d+/telemetry/response-times$"), "POST /telemetry"),
 ]
 
