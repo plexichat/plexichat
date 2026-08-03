@@ -61,6 +61,7 @@ __all__ = [
     "create_poll",
     "get_poll",
     "vote",
+    "change_vote",
     "get_results",
     "close_poll",
     "delete_poll",
@@ -123,6 +124,11 @@ def get_poll(poll_id: int, user_id: int) -> Optional[Poll]:
 def vote(user_id: int, poll_id: int, option_ids: List[int]) -> PollResults:
     """Vote on a poll."""
     return _get_manager().vote(user_id, poll_id, option_ids)
+
+
+def change_vote(user_id: int, poll_id: int, option_ids: List[int]) -> PollResults:
+    """Revise an existing vote on a poll."""
+    return _get_manager().change_vote(user_id, poll_id, option_ids)
 
 
 def get_results(poll_id: int, user_id: int) -> PollResults:

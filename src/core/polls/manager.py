@@ -19,6 +19,7 @@ from .models import (
     PollVote,
 )
 from .exceptions import (
+    PollError,
     AlreadyVotedError,
     PollNotFoundError,
     PollOptionNotFoundError,
@@ -207,12 +208,18 @@ class PollManager(BaseManager):
         try:
             self._db.begin_transaction()
 
-            # Encrypt question if enabled
+            # Encrypt question if enabled.  When encryption is on we must
+            # NOT store the plaintext in the NOT NULL ``question`` column --
+            # that would defeat encryption-at-rest entirely (the raw text
+            # would remain readable in the DB).  We write an empty marker
+            # instead and the ciphertext lives only in ``question_encrypted``.
             question_encrypted = None
+            stored_question = question
             if self._encrypt_polls:
                 from src.utils.encryption import encrypt_data
 
                 question_encrypted = encrypt_data(question)
+                stored_question = ""
 
             self._db.execute(
                 """INSERT INTO poll_polls 
@@ -222,7 +229,7 @@ class PollManager(BaseManager):
                 (
                     poll_id,
                     message_id,
-                    question,
+                    stored_question,
                     question_encrypted,
                     user_id,
                     now,
@@ -235,16 +242,19 @@ class PollManager(BaseManager):
 
             for i, option_text in enumerate(validated_options):
                 option_id = self._generate_id()
-                # Encrypt option if enabled
+                # Encrypt option if enabled (same at-rest confidentiality
+                # rule as the question: never persist the plaintext).
                 option_encrypted = None
+                stored_option = option_text
                 if self._encrypt_polls:
                     from src.utils.encryption import encrypt_data
 
                     option_encrypted = encrypt_data(option_text)
+                    stored_option = ""
                 self._db.execute(
                     """INSERT INTO poll_options (id, poll_id, text, text_encrypted, position)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (option_id, poll_id, option_text, option_encrypted, i),
+                    (option_id, poll_id, stored_option, option_encrypted, i),
                     auto_commit=False,
                 )
 
@@ -256,7 +266,8 @@ class PollManager(BaseManager):
         logger.debug(f"Created poll {poll_id} on message {message_id}")
 
         result = self.get_poll(poll_id, user_id)
-        assert result is not None  # Should exist since we just created it
+        if result is None:
+            raise PollError("Failed to create poll: poll not found after insert")
         return result
 
     def get_poll(self, poll_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Poll]:
@@ -272,7 +283,49 @@ class PollManager(BaseManager):
             if not msg:
                 return None
 
-        return self._row_to_poll(row)
+        poll = self._row_to_poll(row)
+
+        # Whatever the visibility setting, ``_row_to_poll`` never fills in
+        # aggregate vote totals; that is reconciled here against the
+        # requesting user.  A user who is not entitled to see the results
+        # (e.g. has not voted on an ``AFTER_VOTE`` poll) must not receive
+        # the voter headcount, so it is suppressed.
+        user_voted = self._has_voted(user_id, poll_id)
+        if self._can_view_results(poll, user_voted):
+            poll.total_votes = self._voter_count(poll_id)
+        else:
+            poll.total_votes = None
+
+        return poll
+
+    def _has_voted(self, user_id: SnowflakeID, poll_id: SnowflakeID) -> bool:
+        """True if ``user_id`` is registered as a voter on ``poll_id``."""
+        if not poll_id or not user_id:
+            return False
+        row = self._db.fetch_one(
+            "SELECT 1 FROM poll_voters WHERE poll_id = ? AND user_id = ? LIMIT 1",
+            (poll_id, user_id),
+        )
+        return bool(row)
+
+    def _voter_count(self, poll_id: SnowflakeID) -> int:
+        """Number of distinct voters on a poll."""
+        row = self._db.fetch_one(
+            "SELECT COUNT(*) AS count FROM poll_voters WHERE poll_id = ?",
+            (poll_id,),
+        )
+        return int(row["count"]) if row else 0
+
+    def _can_view_results(self, poll: Poll, user_voted: bool) -> bool:
+        """Whether ``user_voted``'s owner may see this poll's results now."""
+        visibility = poll.results_visibility
+        if visibility == PollResultsVisibility.AFTER_VOTE:
+            return bool(user_voted)
+        if visibility == PollResultsVisibility.AFTER_END:
+            return poll.is_ended or bool(
+                poll.ends_at and self._get_timestamp() >= poll.ends_at
+            )
+        return True  # ALWAYS or unknown -> visible
 
     def vote(
         self, user_id: SnowflakeID, poll_id: SnowflakeID, option_ids: List[SnowflakeID]
@@ -326,20 +379,12 @@ class PollManager(BaseManager):
                 "One or more selected options are invalid for this poll"
             )
 
-        # CORRECTNESS FIX: the previous implementation always
-        # ``DELETE``d any prior vote before ``INSERT``ing, so a user
-        # could re-vote on the same poll indefinitely even though
-        # :class:`AlreadyVotedError` was documented in
-        # ``polls/exceptions.py``. We now enforce one vote per user
-        # per poll **explicitly**, falling back to the database's
-        # ``UNIQUE(poll_id, user_id)`` constraint where present.
-        # ``change_vote`` is a separate dedicated endpoint for users
-        # who want to revise their selection.
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM poll_votes WHERE poll_id = ? AND user_id = ? LIMIT 1",
-            (poll_id, user_id),
-        )
-        if existing:
+        # One vote per user per poll.  The pre-check is a fast path; the
+        # authoritative guard is the ``UNIQUE(poll_id, user_id)`` constraint
+        # on ``poll_voters``, inserted in the SAME transaction so two racing
+        # requests cannot both pass the check and both commit.  ``change_vote``
+        # is the dedicated endpoint for users who want to revise a selection.
+        if self._has_voted(user_id, poll_id):
             raise AlreadyVotedError(
                 "User has already voted on this poll; "
                 "call change_vote() to revise the selection"
@@ -349,6 +394,13 @@ class PollManager(BaseManager):
 
         try:
             self._db.begin_transaction()
+
+            self._db.execute(
+                """INSERT INTO poll_voters (poll_id, user_id, voted_at)
+                   VALUES (?, ?, ?)""",
+                (poll_id, user_id, now),
+                auto_commit=False,
+            )
 
             for option_id in unique_option_ids:
                 vote_id = self._generate_id()
@@ -361,19 +413,105 @@ class PollManager(BaseManager):
             self._db.commit()
         except Exception as exc:
             self._db.rollback()
-            # CORRECTNESS FIX: pre-INSERT existence check above is
-            # the primary guard; the DB-level UNIQUE(poll_id,
-            # user_id) constraint remains authoritative for the
-            # expensive inter-thread race window.
-            # ``_is_unique_violation`` matches driver-typed errors
-            # (sqlite3.IntegrityError / psycopg2.errors.UniqueViolation)
-            # before falling back to textual sniffing of "unique" /
-            # "duplicate" so wrapped drivers still match.
+            # A UNIQUE violation on ``poll_voters`` (poll_id, user_id) means
+            # a concurrent request already claimed this voter slot.
             if _is_unique_violation(exc):
                 raise AlreadyVotedError("User has already voted on this poll") from exc
             raise
 
         logger.debug(f"User {user_id} voted on poll {poll_id}")
+
+        return self.get_results(poll_id, user_id)
+
+    def change_vote(
+        self, user_id: SnowflakeID, poll_id: SnowflakeID, option_ids: List[SnowflakeID]
+    ) -> PollResults:
+        """
+        Revise a user's existing vote on a poll (replace previous selection).
+
+        The ``poll_voters`` registration row is preserved (the user has
+        still voted); only the per-option ``poll_votes`` rows are replaced
+        atomically.
+
+        Raises:
+            PollNotFoundError: Poll not found
+            PollEndedError: Poll has been closed/expired
+            PollOptionNotFoundError: Option not valid for this poll
+            MultipleVoteNotAllowedError: Multiple options on single-choice poll
+        """
+        if not option_ids:
+            raise InvalidPollOptionError("At least one option must be selected")
+
+        poll = self.get_poll(poll_id, user_id)
+        if not poll:
+            raise PollNotFoundError("Poll not found")
+
+        if poll.is_ended or (poll.ends_at and self._get_timestamp() >= poll.ends_at):
+            if not poll.is_ended:
+                self._end_poll(poll_id)
+            raise PollEndedError("Poll has ended")
+
+        unique_option_ids = list(set(option_ids))
+        if not poll.allow_multiple_choice and len(unique_option_ids) > 1:
+            raise MultipleVoteNotAllowedError(
+                "This poll does not allow multiple choice voting"
+            )
+
+        placeholders = ",".join("?" * len(unique_option_ids))
+        valid_options = self._db.fetch_all(
+            f"SELECT id FROM poll_options WHERE poll_id = ? AND id IN ({placeholders})",
+            (poll_id, *unique_option_ids),
+        )
+        if len(valid_options) != len(unique_option_ids):
+            raise PollOptionNotFoundError(
+                "One or more selected options are invalid for this poll"
+            )
+
+        now = self._get_timestamp()
+
+        try:
+            self._db.begin_transaction()
+
+            # Replace the user's previous per-option selections.
+            self._db.execute(
+                "DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?",
+                (poll_id, user_id),
+                auto_commit=False,
+            )
+
+            # Keep the voter registration row in sync (a user revising a
+            # vote is still a voter); insert only when absent so the
+            # UNIQUE(poll_id, user_id) constraint is never hit.
+            existing_voter = self._db.fetch_one(
+                "SELECT 1 FROM poll_voters WHERE poll_id = ? AND user_id = ?",
+                (poll_id, user_id),
+            )
+            if not existing_voter:
+                self._db.execute(
+                    """INSERT INTO poll_voters (poll_id, user_id, voted_at)
+                       VALUES (?, ?, ?)""",
+                    (poll_id, user_id, now),
+                    auto_commit=False,
+                )
+
+            for option_id in unique_option_ids:
+                vote_id = self._generate_id()
+                self._db.execute(
+                    """INSERT INTO poll_votes (id, poll_id, option_id, user_id, voted_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (vote_id, poll_id, option_id, user_id, now),
+                    auto_commit=False,
+                )
+            self._db.commit()
+        except Exception as exc:
+            self._db.rollback()
+            if _is_unique_violation(exc):
+                raise AlreadyVotedError(
+                    "User already voted; call change_vote() to revise the selection"
+                ) from exc
+            raise
+
+        logger.debug(f"User {user_id} changed vote on poll {poll_id}")
 
         return self.get_results(poll_id, user_id)
 
@@ -404,13 +542,7 @@ class PollManager(BaseManager):
         user_vote_ids = [v["option_id"] for v in user_votes]
 
         # Check visibility
-        can_see_results = True
-        if poll.results_visibility == PollResultsVisibility.AFTER_VOTE:
-            can_see_results = user_voted
-        elif poll.results_visibility == PollResultsVisibility.AFTER_END:
-            can_see_results = poll.is_ended or (
-                poll.ends_at and self._get_timestamp() >= poll.ends_at
-            )
+        can_see_results = self._can_view_results(poll, user_voted)
 
         # Fetch all vote counts in a single query (optimized)
         vote_counts = {}
@@ -435,12 +567,10 @@ class PollManager(BaseManager):
                 )
             )
 
-        # Total votes = number of unique participants
-        voter_count_row = self._db.fetch_one(
-            "SELECT COUNT(DISTINCT user_id) as count FROM poll_votes WHERE poll_id = ?",
-            (poll_id,),
-        )
-        total_voters = voter_count_row["count"] if voter_count_row else 0
+        # Total votes = number of unique participants.  This aggregate is
+        # just as privacy-sensitive as the per-option counts, so it is only
+        # reported when the caller is entitled to see the results.
+        total_voters = self._voter_count(poll_id) if can_see_results else None
 
         return PollResults(
             poll=poll,
@@ -481,7 +611,8 @@ class PollManager(BaseManager):
         logger.debug(f"Poll {poll_id} closed by user {user_id}")
 
         result = self.get_poll(poll_id, user_id)
-        assert result is not None  # Should exist since we just updated it
+        if result is None:
+            raise PollError("Failed to fetch poll after closing")
         return result
 
     def has_voted(self, user_id: SnowflakeID, poll_id: SnowflakeID) -> bool:
@@ -493,11 +624,7 @@ class PollManager(BaseManager):
         """
         if not poll_id or not user_id:
             return False
-        row = self._db.fetch_one(
-            "SELECT 1 FROM poll_votes WHERE poll_id = ? AND user_id = ? LIMIT 1",
-            (poll_id, user_id),
-        )
-        return bool(row)
+        return self._has_voted(user_id, poll_id)
 
     def remove_vote(self, user_id: SnowflakeID, poll_id: SnowflakeID) -> bool:
         """Remove every vote `user_id` previously cast on `poll_id`.
@@ -523,6 +650,12 @@ class PollManager(BaseManager):
             cursor.close()
         except Exception:
             pass
+
+        # De-register the voter slot so the user can vote again on this poll.
+        self._db.execute(
+            "DELETE FROM poll_voters WHERE poll_id = ? AND user_id = ?",
+            (poll_id, user_id),
+        )
 
         logger.debug(
             "User %s vote(s) on poll %s cleared (%d row(s))",
@@ -562,7 +695,9 @@ class PollManager(BaseManager):
         except (TypeError, ValueError):
             is_creator = False
         if not is_creator and not self._has_admin_poll_voters_perm(user_id):
-            return []
+            raise PermissionDeniedError(
+                "Only the poll creator (or a moderator) can view the voter roster"
+            )
 
         if poll.results_visibility == PollResultsVisibility.AFTER_VOTE:
             return []
@@ -574,7 +709,7 @@ class PollManager(BaseManager):
                 return []
 
         rows = self._db.fetch_all(
-            "SELECT DISTINCT user_id FROM poll_votes WHERE poll_id = ? ORDER BY user_id",
+            "SELECT user_id FROM poll_voters WHERE poll_id = ? ORDER BY user_id",
             (poll_id,),
         )
         return [int(row["user_id"]) for row in rows]
@@ -633,6 +768,7 @@ class PollManager(BaseManager):
             raise PermissionDeniedError("Only poll creator can delete the poll")
 
         self._db.execute("DELETE FROM poll_votes WHERE poll_id = ?", (poll_id,))
+        self._db.execute("DELETE FROM poll_voters WHERE poll_id = ?", (poll_id,))
         self._db.execute("DELETE FROM poll_options WHERE poll_id = ?", (poll_id,))
         self._db.execute("DELETE FROM poll_polls WHERE id = ?", (poll_id,))
 
@@ -730,11 +866,10 @@ class PollManager(BaseManager):
                 )
             )
 
-        total_votes_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM poll_votes WHERE poll_id = ?", (poll_id,)
-        )
-        total_votes = total_votes_row["count"] if total_votes_row else 0
-
+        # Aggregate vote totals are intentionally NOT computed here.  They
+        # are reconciled in ``get_poll`` / ``get_results`` against the
+        # requesting user's visibility rights so that hidden results can
+        # never leak a voter headcount through a plain ``get_poll`` call.
         is_ended = row["ended_at"] is not None
         if not is_ended and row["ends_at"]:
             is_ended = self._get_timestamp() >= row["ends_at"]
@@ -750,6 +885,6 @@ class PollManager(BaseManager):
             allow_multiple_choice=bool(row["allow_multiple_choice"]),
             results_visibility=PollResultsVisibility(row["results_visibility"]),
             options=options,
-            total_votes=total_votes,
+            total_votes=None,
             is_ended=is_ended,
         )

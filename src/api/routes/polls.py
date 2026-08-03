@@ -123,7 +123,9 @@ async def create_poll(
 
         if messaging:
             try:
-                messaging.update_message_metadata(poll.message_id, {"poll_id": poll.id})
+                messaging.update_message_metadata(
+                    current_user.user_id, poll.message_id, {"poll_id": poll.id}
+                )
             except Exception:
                 logger.debug("Failed to update poll metadata on message")
 
@@ -302,6 +304,7 @@ async def vote_on_poll(
         PollEndedError,
         AlreadyVotedError,
         MultipleVoteNotAllowedError,
+        InvalidPollOptionError,
     ) as e:
         raise HTTPException(
             status_code=400, detail={"error": {"code": 400, "message": str(e)}}
@@ -318,6 +321,69 @@ async def vote_on_poll(
         raise
     except Exception as e:
         logger.error(f"Failed to vote on poll {poll_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.put(
+    "/{poll_id}/vote",
+    response_model=PollResultsResponse,
+    summary="Change vote on poll",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid poll vote"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        404: {"model": ErrorResponse, "description": "Poll not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def change_vote_on_poll(
+    poll_id: str,
+    body: PollVoteRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> PollResultsResponse:
+    """
+    Replace the current user's existing vote on a poll with a new selection.
+    """
+    polls_module = api.get_polls()
+    if not polls_module:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Polls module not available"}},
+        )
+    try:
+        pid = int(poll_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
+        )
+
+    try:
+        results = polls_module.change_vote(
+            user_id=current_user.user_id,
+            poll_id=pid,
+            option_ids=[int(x) for x in body.option_ids],
+        )
+        return _results_to_response(results)
+    except (
+        PollOptionNotFoundError,
+        PollEndedError,
+        MultipleVoteNotAllowedError,
+        InvalidPollOptionError,
+    ) as e:
+        raise HTTPException(
+            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+        )
+    except PollNotFoundError as e:
+        raise HTTPException(
+            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to change vote on poll {poll_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},

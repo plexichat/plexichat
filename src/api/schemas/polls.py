@@ -79,7 +79,7 @@ class PollResponse(BaseModel):
     options: List[PollOptionResponse] = Field(
         default_factory=list, description="Poll options"
     )
-    total_votes: int = Field(0, description="Total votes")
+    total_votes: Optional[int] = Field(None, description="Total votes")
     is_ended: bool = Field(False, description="Whether poll has ended")
 
 
@@ -92,7 +92,7 @@ class PollResultsResponse(BaseModel):
     options: List[PollOptionResponse] = Field(
         default_factory=list, description="Options with counts"
     )
-    total_votes: int = Field(0, description="Total votes")
+    total_votes: Optional[int] = Field(None, description="Total votes")
     user_voted: bool = Field(False, description="Whether user voted")
     user_votes: List[SnowflakeID] = Field(
         default_factory=list, description="Option IDs voted by user"
