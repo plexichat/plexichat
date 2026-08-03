@@ -8,6 +8,7 @@ from ..exceptions import (
     ChannelTypeError,
     ChannelFullError,
     UserNotInChannelError,
+    UserAlreadyInChannelError,
 )
 
 
@@ -36,7 +37,10 @@ class ChannelOpsMixin(VoiceProtocol):
         existing = self.get_voice_state(user_id)
         if existing:
             if existing.channel_id == channel_id:
-                return existing
+                raise UserAlreadyInChannelError(
+                    f"User {user_id} is already in channel {channel_id}",
+                    channel_id=channel_id,
+                )
             self.leave_channel(user_id)
 
         settings = self._get_channel_settings(channel_id)
@@ -121,7 +125,12 @@ class ChannelOpsMixin(VoiceProtocol):
                 return None
 
         settings = self._get_channel_settings(channel_id)
-        return self._row_to_voice_channel(channel, settings)
+        count_row = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM voice_states WHERE channel_id = ?",
+            (channel_id,),
+        )
+        prefetched_counts = {channel_id: int(count_row["count"]) if count_row else 0}
+        return self._row_to_voice_channel(channel, settings, prefetched_counts)
 
     def get_voice_channels(
         self, user_id: SnowflakeID, server_id: SnowflakeID
@@ -159,7 +168,7 @@ class ChannelOpsMixin(VoiceProtocol):
         for row in visible_rows:
             settings = self._get_channel_settings(row["id"])
             channels.append(
-                self._row_to_voice_channel(row, settings, prefetched_counts)  # type: ignore[call-arg]  # positional arg signed different from caller
+                self._row_to_voice_channel(row, settings, prefetched_counts)
             )
 
         return channels

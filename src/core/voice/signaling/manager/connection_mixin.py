@@ -1,7 +1,7 @@
 """Connection management mixin for SignalingManager."""
 
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
 
 import utils.logger as logger
 
@@ -12,16 +12,17 @@ from ..models import SignalingState, VoiceServerInfo, VoiceConnection
 class ConnectionManagementMixin:
     """Mixin handling connection lifecycle methods."""
 
+    if TYPE_CHECKING:
+
+        def _generate_session_id(self) -> str: ...
+        def _get_timestamp(self) -> int: ...
+
     _voice: Optional[Any]
     _connections: Dict[int, VoiceConnection]
     _ice_manager: Any
     _sfu_config: Dict[str, Any]
     _ice_builder: Any
     _get_sfu: Any
-
-    def _get_timestamp(self) -> int: ...
-
-    def _generate_session_id(self) -> str: ...
 
     def get_voice_server_info(self, user_id: int, channel_id: int) -> VoiceServerInfo:
         """
@@ -125,18 +126,15 @@ class ConnectionManagementMixin:
             True if disconnected
         """
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(self.disconnect_voice_async(user_id, channel_id))
-                return True
-            else:
-                return loop.run_until_complete(
-                    self.disconnect_voice_async(user_id, channel_id)
-                )
-        except RuntimeError as e:
-            logger.debug(f"Disconnect voice async failed, using sync cleanup: {e}")
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
 
-        return self._cleanup_local_connection(user_id, channel_id)
+        if loop and loop.is_running():
+            asyncio.create_task(self.disconnect_voice_async(user_id, channel_id))
+            return True
+
+        return asyncio.run(self.disconnect_voice_async(user_id, channel_id))
 
     async def disconnect_voice_async(
         self, user_id: int, channel_id: Optional[int] = None

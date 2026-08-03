@@ -36,6 +36,12 @@ class StageOpsMixin(VoiceProtocol):
         server_id = channel["server_id"]
         self._require_permission(user_id, server_id, "voice.speak", channel_id)
 
+        state = self.get_voice_state(user_id)
+        if not state or state.channel_id != channel_id:
+            raise UserNotInChannelError(
+                f"User {user_id} is not in channel {channel_id}"
+            )
+
         existing = self.get_stage(channel_id)
         if existing:
             raise VoiceError("Stage already active in this channel")
@@ -67,6 +73,12 @@ class StageOpsMixin(VoiceProtocol):
         stage = self.get_stage(channel_id)
         if not stage:
             raise StageNotFoundError(f"No active stage in channel {channel_id}")
+
+        state = self.get_voice_state(user_id)
+        if not state or state.channel_id != channel_id:
+            raise UserNotInChannelError(
+                f"User {user_id} is not in channel {channel_id}"
+            )
 
         channel = self._get_server_channel(channel_id)
         server_id = channel["server_id"] if channel else stage.server_id

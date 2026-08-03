@@ -249,6 +249,8 @@ class SDPValidator:
         self._validate_origin(parsed_sdp)
         self._validate_ice_credentials(parsed_sdp)
         self._validate_fingerprint(parsed_sdp)
+        self._validate_candidates(parsed_sdp)
+        self._validate_crypto(parsed_sdp)
         self._validate_media(parsed_sdp, sdp_type)
 
     def _validate_version(self, parsed_sdp: Dict[str, Any]) -> None:
@@ -260,9 +262,18 @@ class SDPValidator:
 
     def _validate_origin(self, parsed_sdp: Dict[str, Any]) -> None:
         """Validate origin line."""
-        if not parsed_sdp.get("origin"):
+        origin = parsed_sdp.get("origin")
+        if not origin:
             raise SDPValidationError(
                 "Missing origin", field="origin", reason="Origin line is required"
+            )
+
+        username = origin.get("username", "")
+        if "<" in username or ">" in username or any(ord(c) < 32 for c in username):
+            raise SDPValidationError(
+                "Invalid origin username",
+                field="origin",
+                reason="Origin username contains forbidden characters",
             )
 
     def _validate_ice_credentials(self, parsed_sdp: Dict[str, Any]) -> None:
@@ -320,6 +331,59 @@ class SDPValidator:
                     field="media",
                     reason="Offer must include audio or video",
                 )
+
+    def _validate_candidates(self, parsed_sdp: Dict[str, Any]) -> None:
+        """Validate embedded ICE candidates in SDP attributes."""
+        from .ice import ICECandidateError, ICECandidateParser, ICECandidateValidator
+
+        parser = ICECandidateParser()
+        validator = ICECandidateValidator()
+
+        attr_sources: List[Dict[str, Any]] = [parsed_sdp.get("attributes", {})]
+        attr_sources.extend(
+            media.get("attributes", {}) for media in parsed_sdp.get("media", [])
+        )
+
+        for attrs in attr_sources:
+            raw = attrs.get("candidate")
+            if raw is None:
+                continue
+            values = raw if isinstance(raw, list) else [raw]
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                try:
+                    parsed = parser.parse(f"candidate:{value}")
+                    validator.validate(parsed)
+                except ICECandidateError as exc:
+                    raise SDPValidationError(
+                        "Invalid ICE candidate in SDP",
+                        field="candidate",
+                        reason=str(exc),
+                    ) from exc
+
+    def _validate_crypto(self, parsed_sdp: Dict[str, Any]) -> None:
+        """Reject deprecated NULL_CIPHER SDES crypto attributes."""
+        attr_sources: List[Dict[str, Any]] = [parsed_sdp.get("attributes", {})]
+        attr_sources.extend(
+            media.get("attributes", {}) for media in parsed_sdp.get("media", [])
+        )
+
+        for attrs in attr_sources:
+            raw = attrs.get("crypto")
+            if raw is None:
+                continue
+            values = raw if isinstance(raw, list) else [raw]
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                parts = value.split()
+                if len(parts) >= 2 and parts[1].upper() == "NULL_CIPHER":
+                    raise SDPValidationError(
+                        "Weak SDES crypto cipher rejected",
+                        field="crypto",
+                        reason="NULL_CIPHER does not provide media encryption",
+                    )
 
 
 class SDPManipulator:
@@ -488,6 +552,9 @@ def validate_sdp(sdp: str, sdp_type: SDPType) -> None:
 def create_sdp_message(
     sdp: str, sdp_type: SDPType, session_id: Optional[str] = None
 ) -> SDPMessage:
-    """Create an SDPMessage from raw SDP."""
-    validate_sdp(sdp, sdp_type)
+    """Create an SDPMessage from raw SDP.
+
+    Validation is performed by SDPMessage.__post_init__ at construction,
+    so no separate validation call is required here.
+    """
     return SDPMessage(sdp_type=sdp_type, sdp=sdp, session_id=session_id)

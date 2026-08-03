@@ -27,7 +27,7 @@ class VoiceChannelInfoResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    channel_id: str = Field(..., description="The ID of the voice channel")
+    channel_id: int = Field(..., description="The ID of the voice channel")
     session_id: str = Field(..., description="The session ID for the voice connection")
     ice_servers: List[ICEServerConfig] = Field(
         ..., description="List of ICE server configurations"

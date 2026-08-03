@@ -48,7 +48,7 @@ from src.core.voice.signaling.sfu.janus import JanusAdapter
 from src.core.voice.signaling.sfu.mediasoup import MediasoupAdapter
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def security_setup(db_and_modules):
     """Setup signaling module for security tests."""
     db, auth, servers, relationships, presence, voice = db_and_modules
@@ -64,6 +64,42 @@ def security_setup(db_and_modules):
     )
 
     return voice
+
+
+@pytest.fixture
+def mock_janus_session():
+    """Create a mock Janus session (module-level so all classes can use it)."""
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    mock_response.json = AsyncMock(return_value={"janus": "success"})
+
+    mock_context = AsyncMock()
+    mock_context.__aenter__ = AsyncMock(return_value=mock_response)
+    mock_context.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=mock_context)
+    mock_session.close = AsyncMock()
+
+    return mock_session, mock_response
+
+
+@pytest.fixture
+def mock_mediasoup_session():
+    """Create a mock mediasoup session (module-level so all classes can use it)."""
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    mock_response.json = AsyncMock(return_value={})
+    mock_response.text = AsyncMock(return_value="")
+    mock_response.content_type = "application/json"
+
+    mock_session = MagicMock()
+    mock_session.request = MagicMock(
+        return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response))
+    )
+    mock_session.close = AsyncMock()
+
+    return mock_session, mock_response
 
 
 class TestWebRTCExploitation:
@@ -165,9 +201,11 @@ class TestSignalingManipulation:
         info1 = create_voice_connection(member1.id, voice_channel.id)
         session_id = info1.session_id
 
-        with pytest.raises((NotConnectedError, ValueError)):
-            info2 = get_voice_server_info(member2.id, voice_channel.id)
-            assert info2.session_id != session_id
+        # Session hijacking prevention: a different user must receive a
+        # distinct session id, never the connecting user's session.
+        info2 = get_voice_server_info(member2.id, voice_channel.id)
+        assert info2 is not None
+        assert info2.session_id != session_id
 
         disconnect_voice(member1.id)
 
@@ -515,23 +553,6 @@ a=rtpmap:0 PCMU/8000
 class TestJanusSFUSecurity:
     """Security tests specific to Janus SFU implementation."""
 
-    @pytest.fixture
-    def mock_janus_session(self):
-        """Create a mock Janus session."""
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={"janus": "success"})
-
-        mock_context = AsyncMock()
-        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_context.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post = MagicMock(return_value=mock_context)
-        mock_session.close = AsyncMock()
-
-        return mock_session, mock_response
-
     @pytest.mark.asyncio
     async def test_janus_unauthorized_room_access(self, mock_janus_session):
         """Test prevention of unauthorized room access in Janus."""
@@ -561,8 +582,9 @@ class TestJanusSFUSecurity:
 
             mock_response.json = AsyncMock(
                 side_effect=[
-                    {"janus": "success", "data": {"id": 12345}},
-                    {"janus": "success", "data": {"id": 67890}},
+                    {"janus": "success", "data": {"id": 12345}},  # session
+                    {"janus": "success", "data": {"id": 67890}},  # attach
+                    {"janus": "success", "data": {}},  # videoroom create
                 ]
             )
 
@@ -572,6 +594,8 @@ class TestJanusSFUSecurity:
             mock_response.json = AsyncMock(
                 side_effect=[
                     {"janus": "success", "data": {"id": 54321}},
+                    {"janus": "success", "data": {"id": 99999}},
+                    {"janus": "success", "data": {}},
                 ]
             )
 
@@ -678,23 +702,6 @@ class TestJanusSFUSecurity:
 
 class TestMediasoupSFUSecurity:
     """Security tests specific to mediasoup SFU implementation."""
-
-    @pytest.fixture
-    def mock_mediasoup_session(self):
-        """Create a mock mediasoup session."""
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={})
-        mock_response.text = AsyncMock(return_value="")
-        mock_response.content_type = "application/json"
-
-        mock_session = MagicMock()
-        mock_session.request = MagicMock(
-            return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response))
-        )
-        mock_session.close = AsyncMock()
-
-        return mock_session, mock_response
 
     @pytest.mark.asyncio
     async def test_mediasoup_router_capabilities_tampering(

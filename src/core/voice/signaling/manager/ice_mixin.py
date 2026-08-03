@@ -1,6 +1,6 @@
 """ICE handling mixin for SignalingManager."""
 
-from typing import Dict, Optional, Any
+from typing import TYPE_CHECKING, Dict, Optional, Any
 
 import utils.logger as logger
 
@@ -12,10 +12,12 @@ from ..models import SignalingState
 class ICEMixin:
     """Mixin handling ICE candidate methods."""
 
+    if TYPE_CHECKING:
+
+        def _get_timestamp(self) -> int: ...
+
     _connections: Dict[int, Any]
     _ice_manager: Any
-
-    def _get_timestamp(self) -> int: ...
 
     def handle_ice_candidate(
         self,

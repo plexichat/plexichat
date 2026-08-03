@@ -16,7 +16,7 @@ from src.core.voice.signaling import (
 from src.core.voice.signaling.models import ScreenShareState
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def signaling_setup(db_and_modules):
     """Setup signaling module for tests."""
     db, auth, servers, relationships, presence, voice = db_and_modules

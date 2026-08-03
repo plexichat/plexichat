@@ -126,13 +126,12 @@ async def get_voice_channel_info(
                 f"User {current_user.user_id} requested voice info for channel {cid}"
             )
             return VoiceChannelInfoResponse(
-                channel_id=channel_id,
+                channel_id=cid,
                 session_id=info.session_id,
                 ice_servers=ice_servers,
                 bitrate=info.bitrate,
             )
         except (RuntimeError, Exception) as e:
-            exc_name = type(e).__name__
             if isinstance(e, RuntimeError) and "not initialized" in str(e):
                 logger.error(
                     f"Voice signaling service unavailable for user {current_user.user_id}: {e}"
@@ -146,22 +145,25 @@ async def get_voice_channel_info(
                         }
                     },
                 )
-            if "NotFound" in exc_name:
-                logger.warning(
-                    f"Voice channel {cid} not found for user {current_user.user_id}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Channel not found"}},
-                )
-            if "NotConnected" in exc_name:
-                logger.warning(
-                    f"User {current_user.user_id} not connected to voice channel {cid}: {e}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": str(e)}},
-                )
+            if isinstance(e, Exception):
+                from src.core.voice.exceptions import ChannelNotFoundError
+
+                if isinstance(e, ChannelNotFoundError):
+                    logger.warning(
+                        f"Voice channel {cid} not found for user {current_user.user_id}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail={"error": {"code": 404, "message": "Channel not found"}},
+                    )
+                if "NotConnected" in type(e).__name__:
+                    logger.warning(
+                        f"User {current_user.user_id} not connected to voice channel {cid}: {e}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={"error": {"code": 403, "message": str(e)}},
+                    )
 
             logger.error(
                 f"Unexpected error in get_voice_channel_info for channel {cid} (user: {current_user.user_id}): {e}",

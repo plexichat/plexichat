@@ -221,7 +221,7 @@ async def disconnect_voice_async(
     return await _get_manager().disconnect_voice_async(user_id, channel_id)
 
 
-def get_turn_credentials(user_id: int) -> TURNCredentials:
+def get_turn_credentials(user_id: int) -> Optional[TURNCredentials]:
     """Get TURN server credentials for a user."""
     return _get_manager().get_turn_credentials(user_id)
 

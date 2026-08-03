@@ -1,6 +1,6 @@
 """Screen share handling mixin for SignalingManager."""
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import utils.logger as logger
 
@@ -11,10 +11,12 @@ from ..models import ScreenShareState
 class ScreenShareMixin:
     """Mixin handling screen share methods."""
 
+    if TYPE_CHECKING:
+
+        def _get_timestamp(self) -> int: ...
+
     _voice: Optional[Any]
     _connections: Dict[int, Any]
-
-    def _get_timestamp(self) -> int: ...
 
     def start_screen_share(self, user_id: int, channel_id: int) -> ScreenShareState:
         """

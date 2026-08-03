@@ -54,6 +54,7 @@ class JanusAdapter(SFUAdapter):
         self._timeout = timeout
         self._api_secret = api_secret
         self._session = None
+        self._session_id = None  # Latest created session id (fixation tracking)
         self._janus_sessions: Dict[str, int] = {}  # room_id -> session_id
         self._janus_handles: Dict[
             str, Dict[str, int]
@@ -165,7 +166,9 @@ class JanusAdapter(SFUAdapter):
     async def _create_janus_session(self) -> int:
         """Create a Janus session."""
         result = await self._request("", {"janus": "create"})
-        return result["data"]["id"]
+        session_id = result["data"]["id"]
+        self._session_id = session_id
+        return session_id
 
     async def _attach_plugin(
         self, session_id: int, plugin: str = "janus.plugin.videoroom"

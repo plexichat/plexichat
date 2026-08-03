@@ -2,7 +2,7 @@
 
 import asyncio
 import secrets
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import utils.logger as logger
 import utils.config as _cfg
@@ -12,21 +12,26 @@ from ..models import SDPMessage, SDPType, SignalingState
 from ..sdp import parse_sdp, validate_sdp, SDPCodecConfig
 from ..sfu.base import TransportDirection
 
+if TYPE_CHECKING:
+    from ..models import VoiceServerInfo
+
 
 class SDPMixin:
     """Mixin handling SDP offer/answer methods."""
+
+    if TYPE_CHECKING:
+
+        def create_voice_connection(
+            self, user_id: int, channel_id: int
+        ) -> VoiceServerInfo: ...
+        def _get_timestamp(self) -> int: ...
+        def _get_room_id(self, channel_id: int) -> str: ...
 
     _voice: Optional[Any]
     _connections: Dict[int, Any]
     _sdp_manipulator: Any
     _ice_builder: Any
     _get_sfu: Any
-
-    def _get_timestamp(self) -> int: ...
-
-    def _get_room_id(self, channel_id: int) -> str: ...
-
-    def create_voice_connection(self, user_id: int, channel_id: int) -> Any: ...
 
     def handle_sdp_offer(
         self,
@@ -48,50 +53,18 @@ class SDPMixin:
             SDPMessage with answer
         """
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(
-                    self.handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
-                )
-                raise RuntimeError("Use handle_sdp_offer_async in async context")
-            else:
-                return loop.run_until_complete(
-                    self.handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
-                )
-        except RuntimeError as e:
-            logger.debug(f"SDP offer async handle failed, using sync fallback: {e}")
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
 
-        connection = self._connections.get(user_id)
-        if not connection:
-            self.create_voice_connection(user_id, channel_id)
-            connection = self._connections[user_id]
+        if loop and loop.is_running():
+            loop.create_task(
+                self.handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
+            )
+            raise RuntimeError("Use handle_sdp_offer_async in async context")
 
-        try:
-            parsed_type = SDPType(sdp_type)
-            validate_sdp(sdp, parsed_type)
-        except Exception as e:
-            raise SDPError(f"Invalid SDP: {e}")
-
-        connection.remote_sdp = sdp
-        connection.last_activity = self._get_timestamp()
-
-        bitrate = 64000
-        if self._voice:
-            channel = self._voice.get_voice_channel(channel_id, user_id)
-            if channel:
-                bitrate = channel.bitrate
-
-        modified_sdp = self._sdp_manipulator.set_bitrate(sdp, bitrate)
-        answer_sdp = self._generate_answer_sdp(modified_sdp, connection.session_id)
-        connection.local_sdp = answer_sdp
-        connection.state = SignalingState.CONNECTING
-
-        logger.debug(f"Processed SDP offer from user {user_id} (sync fallback)")
-
-        return SDPMessage(
-            sdp_type=SDPType.ANSWER,
-            sdp=answer_sdp,
-            session_id=connection.session_id,
+        return asyncio.run(
+            self.handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
         )
 
     async def handle_sdp_offer_async(

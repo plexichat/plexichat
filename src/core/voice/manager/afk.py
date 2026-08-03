@@ -35,10 +35,10 @@ class AfkMixin(VoiceProtocol):
                 raise ChannelNotFoundError(
                     f"Channel {channel_id} not found in server {server_id}"
                 )
-            if channel["channel_type"] != "voice":
+            if channel["channel_type"] not in ("voice", "stage"):
                 raise ChannelTypeError(
-                    "AFK channel must be a standard voice channel",
-                    expected="voice",
+                    "AFK channel must be a voice or stage channel",
+                    expected="voice or stage",
                     actual=channel["channel_type"],
                 )
 
@@ -99,7 +99,17 @@ class AfkMixin(VoiceProtocol):
             logger.info(
                 f"User {user_id} timed out, moving to AFK channel {settings['afk_channel_id']}"
             )
-            self.move_member(user_id, user_id, settings["afk_channel_id"])
+            self._db.execute(
+                "DELETE FROM voice_speaker_requests WHERE user_id = ?", (user_id,)
+            )
+            self._db.execute("DELETE FROM voice_states WHERE user_id = ?", (user_id,))
+            now2 = self._get_timestamp()
+            self._db.execute(
+                """INSERT INTO voice_states
+                   (user_id, channel_id, server_id, suppress, joined_at, last_activity)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (user_id, settings["afk_channel_id"], state.server_id, 1, now2, now2),
+            )
             return self.get_voice_state(user_id)
 
         return None

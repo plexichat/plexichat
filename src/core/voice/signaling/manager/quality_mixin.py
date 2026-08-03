@@ -2,12 +2,16 @@
 
 import asyncio
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import utils.logger as logger
 
 from ..exceptions import NotConnectedError
-from ..models import ConnectionQuality, QualityLevel
+from ..models import (
+    ConnectionQuality,
+    QualityLevel,
+    QUALITY_BITRATE_THRESHOLDS,
+)
 
 
 class BandwidthEstimator:
@@ -48,7 +52,8 @@ class BandwidthEstimator:
                 for key, metrics in list(self._quality_data.items()):
                     if now - metrics.get("_ts", now) > 30:
                         continue
-                    channel_id_str, peer_id = key
+                    channel_id, peer_id = key
+                    channel_id_str = str(channel_id)
                     packet_loss = metrics.get("packet_loss", 0) or 0
                     jitter = metrics.get("jitter", 0) or 0
                     degraded = packet_loss > 5.0 or jitter > 100.0
@@ -98,18 +103,19 @@ class BandwidthEstimator:
 class QualityMixin:
     """Mixin handling quality monitoring methods."""
 
+    if TYPE_CHECKING:
+
+        def _get_timestamp(self) -> int: ...
+
     _connections: Dict[int, Any]
     _quality_data: Dict[Tuple[int, int], Dict]
     _bandwidth_estimator: Optional[BandwidthEstimator]
+    _get_sfu: Any
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._quality_data = {}
         self._bandwidth_estimator = None
-
-    def _get_timestamp(self) -> int: ...
-
-    def _get_sfu(self): ...
 
     def init_bandwidth_estimator(self) -> None:
         """Start the bandwidth estimator background task (idempotent)."""
@@ -139,12 +145,28 @@ class QualityMixin:
         self.init_bandwidth_estimator()
         cid = int(channel_id) if not isinstance(channel_id, int) else channel_id
         pid = int(peer_id) if not isinstance(peer_id, int) else peer_id
+
+        # Reject hints for peers with no active connection.
+        if pid not in self._connections:
+            return False
+
         now = int(time.time())
         entry: Dict[str, Any] = {"_ts": now}
         if target_bitrate is not None:
             entry["bitrate"] = target_bitrate
         if quality_level is not None:
-            entry["quality_level"] = quality_level
+            try:
+                level = QualityLevel(str(quality_level))
+            except ValueError:
+                level = None
+            if level is not None:
+                entry["quality_level"] = level
+                # Derive a suggested bitrate from the level when the caller
+                # did not supply one explicitly.
+                if "bitrate" not in entry:
+                    thresholds = QUALITY_BITRATE_THRESHOLDS.get(level)
+                    if thresholds:
+                        entry["bitrate"] = thresholds["max"]
         for k in ("bitrate", "packet_loss", "jitter", "round_trip_time", "score"):
             if k in metrics:
                 entry[k] = metrics[k]
@@ -155,6 +177,32 @@ class QualityMixin:
             conn.last_activity = now
 
         return True
+
+    def _compute_quality_level(self, metrics: Dict[str, Any]) -> QualityLevel:
+        # Honor an explicit quality level hint when the caller supplied one.
+        explicit = metrics.get("quality_level")
+        if explicit is not None:
+            try:
+                return (
+                    explicit
+                    if isinstance(explicit, QualityLevel)
+                    else QualityLevel(str(explicit))
+                )
+            except ValueError:
+                pass  # Invalid hint → fall through to metric-based computation.
+
+        packet_loss = metrics.get("packet_loss", 0) or 0
+        jitter = metrics.get("jitter", 0) or 0
+        bitrate = metrics.get("bitrate", 64000)
+        if packet_loss > 5.0 or jitter > 100.0 or bitrate < 16000:
+            return QualityLevel.CRITICAL
+        if packet_loss > 2.0 or jitter > 50.0 or bitrate < 32000:
+            return QualityLevel.POOR
+        if packet_loss > 1.0 or jitter > 20.0 or bitrate < 64000:
+            return QualityLevel.FAIR
+        if bitrate < 128000:
+            return QualityLevel.GOOD
+        return QualityLevel.EXCELLENT
 
     def get_connection_quality(
         self, user_id: int, channel_id: int
@@ -168,10 +216,11 @@ class QualityMixin:
         key = (channel_id, user_id)
         stored = self._quality_data.get(key)
         if stored:
+            quality_level = self._compute_quality_level(stored)
             return ConnectionQuality(
                 user_id=user_id,
                 channel_id=channel_id,
-                quality_level=QualityLevel.GOOD,
+                quality_level=quality_level,
                 bitrate=stored.get("bitrate", 64000),
                 packet_loss=stored.get("packet_loss", 0.0),
                 jitter=stored.get("jitter", 0.0),

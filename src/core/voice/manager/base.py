@@ -8,8 +8,21 @@ from ..models import (
     VoiceChannelType,
 )
 from ..exceptions import (
+    AlreadySpeakerError,
+    ChannelAccessDeniedError,
+    ChannelFullError,
+    ChannelNotFoundError,
+    ChannelTypeError,
+    InvalidVoiceStateError,
+    NotSpeakerError,
     PermissionDeniedError,
+    SpeakerRequestExistsError,
+    SpeakerRequestNotFoundError,
+    StageNotFoundError,
+    UserAlreadyInChannelError,
+    UserNotInChannelError,
     UserNotFoundError,
+    VoiceError,
 )
 from ..queries import (
     is_user_in_voice as _is_user_in_voice,
@@ -26,6 +39,7 @@ from .calls import CallLifecycleMixin
 
 
 class VoiceManager(
+    BaseManager,
     ChannelOpsMixin,
     StateMixin,
     ModerationMixin,
@@ -33,8 +47,26 @@ class VoiceManager(
     SettingsMixin,
     AfkMixin,
     CallLifecycleMixin,
-    BaseManager,
 ):
+    # Exception classes re-exported on the manager so callers (and tests) can
+    # reference ``voice.ChannelNotFoundError`` etc. without importing the
+    # exceptions module directly.
+    AlreadySpeakerError = AlreadySpeakerError
+    ChannelAccessDeniedError = ChannelAccessDeniedError
+    ChannelFullError = ChannelFullError
+    ChannelNotFoundError = ChannelNotFoundError
+    ChannelTypeError = ChannelTypeError
+    InvalidVoiceStateError = InvalidVoiceStateError
+    NotSpeakerError = NotSpeakerError
+    PermissionDeniedError = PermissionDeniedError
+    SpeakerRequestExistsError = SpeakerRequestExistsError
+    SpeakerRequestNotFoundError = SpeakerRequestNotFoundError
+    StageNotFoundError = StageNotFoundError
+    UserAlreadyInChannelError = UserAlreadyInChannelError
+    UserNotInChannelError = UserNotInChannelError
+    UserNotFoundError = UserNotFoundError
+    VoiceError = VoiceError
+
     def __init__(
         self,
         db,

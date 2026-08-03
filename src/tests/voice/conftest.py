@@ -34,3 +34,33 @@ def mock_voice_config():
         "janus_url": "http://localhost:8088/janus",
         "turn_servers": [],
     }
+
+
+@pytest.fixture
+def voice_manager(db, auth_manager, server_manager, rel_manager):
+    """Build a VoiceManager on the shared test managers.
+
+    Required by the root ``server_with_voice`` / ``server_with_moderator``
+    fixtures; the signaling ``setup(voice_module=...)`` calls in the voice
+    tests invoke manager methods (get_voice_channel, set_streaming, ...).
+    """
+    from src.core.voice.manager import VoiceManager
+
+    return VoiceManager(
+        db,
+        auth_module=auth_manager,
+        servers_module=server_manager,
+        relationships_module=rel_manager,
+        presence_module=None,
+    )
+
+
+@pytest.fixture
+def db_and_modules(db, auth_manager, server_manager, voice_manager):
+    """Voice-tests override of the root ``db_and_modules``.
+
+    The voice tests unpack ``(db, auth, servers, relationships, presence,
+    voice)`` from this tuple and hand ``voice`` to the signaling setup; the
+    root fixture returns a different, messaging-oriented shape.
+    """
+    return db, auth_manager, server_manager, None, None, voice_manager

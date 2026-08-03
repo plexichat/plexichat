@@ -261,8 +261,23 @@ class VoiceHandler:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         try:
-            # set_speaking not implemented in signaling module yet
-            pass
+            from src.core import voice
+
+            channel_id = data.get("channel_id")
+            if not channel_id:
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
+            if not connection.user_id:
+                return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+            state = voice.get_voice_state(connection.user_id)
+            if state and state.channel_id == channel_id:
+                await self._dispatch_voice_state_update(
+                    user_id=connection.user_id,
+                    channel_id_for_recipients=channel_id,
+                    event_channel_id=channel_id,
+                    voice_state=state,
+                )
         except Exception as e:
             logger.warning(f"Voice speaking failed: {e}")
 

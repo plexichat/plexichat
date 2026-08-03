@@ -365,7 +365,7 @@ class MediasoupAdapter(SFUAdapter):
         result = await self._request(
             "GET", f"/rooms/{path_segment(room_id, 'room_id')}/routerCapabilities"
         )
-        return result.get("rtpCapabilities", {})
+        return result.get("rtpCapabilities", result)
 
     async def set_preferred_layers(
         self,
