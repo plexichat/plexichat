@@ -293,6 +293,7 @@ class WebhookRetryQueue:
                  AND updated_at < ?""",
             (cutoff,),
         )
+        deleted = self._db.rowcount
 
         # Auto-abandon stuck retrying records
         self._db.execute(
@@ -302,9 +303,10 @@ class WebhookRetryQueue:
                  AND created_at < ?""",
             (now, cutoff),
         )
+        abandoned = self._db.rowcount
 
         logger.debug("Cleaned up expired webhook retry records")
-        return 1
+        return deleted + abandoned
 
     def get_stats(self, webhook_id: Optional[int] = None) -> Dict[str, int]:
         """Get retry queue statistics."""

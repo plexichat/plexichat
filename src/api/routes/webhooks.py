@@ -569,15 +569,27 @@ async def execute_webhook(
     try:
         try:
             wid = int(webhook_id)
-            tid = int(thread_id) if thread_id else None
         except ValueError:
             logger.warning(
-                f"Invalid ID format in execute_webhook: webhook_id={webhook_id}, thread_id={thread_id}"
+                f"Invalid webhook ID format in execute_webhook: {webhook_id}"
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid ID format"}},
+                detail={"error": {"code": 400, "message": "Invalid webhook ID"}},
             )
+
+        tid = int(thread_id) if thread_id else None
+        if tid is None and body.thread_id:
+            try:
+                tid = int(body.thread_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid thread ID format in execute_webhook: {body.thread_id}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+                )
 
         try:
             message = webhooks.execute_webhook(
@@ -587,7 +599,7 @@ async def execute_webhook(
                 username=body.username,
                 avatar_url=body.avatar_url,
                 embeds=body.embeds,
-                thread_id=tid or (int(body.thread_id) if body.thread_id else None),
+                thread_id=tid,
                 wait=wait,
             )
 
@@ -621,15 +633,14 @@ async def execute_webhook(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={"error": {"code": 404, "message": "Webhook not found"}},
                 )
-            elif "InvalidWebhookToken" in exc_name or "InvalidToken" in exc_name:
+            elif "InvalidWebhookToken" in exc_name:
                 logger.warning(f"Invalid token provided for webhook {wid} execution")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail={"error": {"code": 401, "message": "Invalid webhook token"}},
                 )
             elif (
-                "Validation" in exc_name
-                or "Empty" in exc_name
+                "InvalidContent" in exc_name
                 or "Content" in exc_name
                 or "Embed" in exc_name
             ):

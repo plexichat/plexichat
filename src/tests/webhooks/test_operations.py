@@ -113,7 +113,7 @@ class TestWebhookErrors:
     def test_execute_webhook_invalid_token(self, webhook_manager):
         """Cannot execute with invalid token."""
         with pytest.raises(InvalidWebhookTokenError):
-            webhook_manager.execute_webhook("invalid", {"content": "test"})
+            webhook_manager.execute_webhook(999999, "invalid", content="test")
 
     def test_execute_webhook_empty_content(self, webhook_manager, test_db):
         """Cannot execute with empty content."""
@@ -127,13 +127,13 @@ class TestWebhookErrors:
         webhook = webhook_manager.create_webhook(1, 1, "Test")
 
         with pytest.raises(InvalidWebhookContentError):
-            webhook_manager.execute_webhook(webhook.token, {"content": ""})
+            webhook_manager.execute_webhook(webhook.id, webhook.token, content="")
 
     def test_execute_webhook_content_too_long(
         self, webhook_manager, test_db, monkeypatch
     ):
         """Cannot execute with content exceeding limit."""
-        monkeypatch.setitem(webhook_manager._config, "max_content_length", 100)
+        monkeypatch.setitem(webhook_manager._config, "max_message_length", 100)
 
         test_db.execute(
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
@@ -145,7 +145,9 @@ class TestWebhookErrors:
         webhook = webhook_manager.create_webhook(1, 1, "Test")
 
         with pytest.raises(ContentTooLongError):
-            webhook_manager.execute_webhook(webhook.token, {"content": "x" * 101})
+            webhook_manager.execute_webhook(
+                webhook.id, webhook.token, content="x" * 101
+            )
 
     def test_execute_webhook_rate_limit(self, webhook_manager, test_db, monkeypatch):
         """Webhook execution is rate limited."""
@@ -160,10 +162,10 @@ class TestWebhookErrors:
 
         webhook = webhook_manager.create_webhook(1, 1, "Test")
 
-        webhook_manager.execute_webhook(webhook.token, {"content": "test1"})
+        webhook_manager.execute_webhook(webhook.id, webhook.token, content="test1")
 
         with pytest.raises(RateLimitError):
-            webhook_manager.execute_webhook(webhook.token, {"content": "test2"})
+            webhook_manager.execute_webhook(webhook.id, webhook.token, content="test2")
 
     def test_get_webhook_not_found(self, webhook_manager):
         """Get nonexistent webhook."""
@@ -212,7 +214,10 @@ class TestWebhookErrors:
         webhook = webhook_manager.create_webhook(1, 1, "Test")
 
         result = webhook_manager.execute_webhook(
-            webhook.token, {"content": "test", "username": "Custom Name"}
+            webhook.id,
+            webhook.token,
+            content="test",
+            username="Custom Name",
         )
         assert result is not None
 
@@ -228,8 +233,10 @@ class TestWebhookErrors:
         webhook = webhook_manager.create_webhook(1, 1, "Test")
 
         result = webhook_manager.execute_webhook(
+            webhook.id,
             webhook.token,
-            {"content": "test", "avatar_url": "https://example.com/avatar.png"},
+            content="test",
+            avatar_url="https://example.com/avatar.png",
         )
         assert result is not None
 
@@ -245,17 +252,16 @@ class TestWebhookErrors:
         webhook = webhook_manager.create_webhook(1, 1, "Test")
 
         result = webhook_manager.execute_webhook(
+            webhook.id,
             webhook.token,
-            {
-                "content": "test",
-                "embeds": [{"title": "Test Embed", "description": "Test"}],
-            },
+            content="test",
+            embeds=[{"title": "Test Embed", "description": "Test"}],
         )
         assert result is not None
 
     def test_execute_too_many_embeds(self, webhook_manager, test_db, monkeypatch):
         """Cannot exceed embed limit."""
-        monkeypatch.setitem(webhook_manager._config, "max_embeds", 1)
+        monkeypatch.setitem(webhook_manager._config, "max_embeds_per_message", 1)
 
         test_db.execute(
             "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
@@ -268,9 +274,8 @@ class TestWebhookErrors:
 
         with pytest.raises(EmbedLimitError):
             webhook_manager.execute_webhook(
+                webhook.id,
                 webhook.token,
-                {
-                    "content": "test",
-                    "embeds": [{"title": "Embed 1"}, {"title": "Embed 2"}],
-                },
+                content="test",
+                embeds=[{"title": "Embed 1"}, {"title": "Embed 2"}],
             )

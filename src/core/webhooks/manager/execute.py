@@ -12,6 +12,7 @@ from src.core.webhooks.exceptions import (
     EmbedLimitError,
     InvalidContentError,
     InvalidWebhookTokenError,
+    WebhookNotFoundError,
 )
 
 from .base import WebhookManagerTrait
@@ -46,7 +47,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         )
 
         if not row:
-            raise InvalidWebhookTokenError("Webhook not found")
+            raise WebhookNotFoundError("Webhook not found")
 
         if not self._verify_token(parsed["secret"], row["token_hash"]):
             raise InvalidWebhookTokenError("Invalid webhook token")
@@ -65,6 +66,8 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                 )
 
         if embeds:
+            if not isinstance(embeds, list):
+                raise InvalidContentError("Embeds must be a list", ["invalid_embeds"])
             max_embeds = self._config.get(
                 "max_embeds_per_message", MAX_EMBEDS_PER_MESSAGE
             )
@@ -94,6 +97,14 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         if channel_row and channel_row["conversation_id"]:
             conversation_id = channel_row["conversation_id"]
 
+        if thread_id:
+            thread_row = self._db.fetch_one(
+                "SELECT conversation_id FROM srv_channels WHERE id = ?",
+                (thread_id,),
+            )
+            if thread_row and thread_row["conversation_id"]:
+                conversation_id = thread_row["conversation_id"]
+
         now = self._get_timestamp()
         message_id = self._generate_id()
 
@@ -114,6 +125,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                 logger.error(
                     f"Failed to send webhook message via messaging module: {e}"
                 )
+                fallback_id = self._generate_id()
                 try:
                     self._db.execute(
                         """INSERT INTO msg_messages
@@ -121,7 +133,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                             deleted, edited, webhook_id)
                            VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
                         (
-                            message_id,
+                            fallback_id,
                             conversation_id,
                             row["creator_id"],
                             content or "",
@@ -130,21 +142,10 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                             webhook_id,
                         ),
                     )
-                except Exception:
-                    self._db.execute(
-                        """INSERT INTO msg_messages
-                           (id, conversation_id, author_id, content, created_at, updated_at,
-                            deleted, edited)
-                           VALUES (?, ?, ?, ?, ?, ?, 0, 0)""",
-                        (
-                            message_id,
-                            conversation_id,
-                            row["creator_id"],
-                            content or "",
-                            now,
-                            now,
-                        ),
-                    )
+                    message_id = fallback_id
+                except Exception as fe:
+                    logger.error(f"Fallback webhook message insert also failed: {fe}")
+                    raise
 
         self._db.execute(
             """INSERT INTO webhook_messages
@@ -201,7 +202,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         wait: bool = False,
     ) -> Optional[WebhookMessage]:
         """Execute a webhook using its URL."""
-        match = re.match(r"^/?webhooks/(\d+)/(.+)$", webhook_url)
+        match = re.match(r"^/?webhooks/(\d+)/([A-Za-z0-9_-]+)$", webhook_url)
         if not match:
             raise InvalidWebhookTokenError("Invalid webhook URL format")
 

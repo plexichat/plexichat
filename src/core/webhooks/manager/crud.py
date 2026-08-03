@@ -257,6 +257,14 @@ class WebhookCRUDMixin(WebhookManagerTrait):
             params.append(channel_id)
 
         if not updates:
+            now = self._get_timestamp()
+            self._db.execute(
+                "UPDATE webhook_webhooks SET updated_at = ? WHERE id = ?",
+                (now, webhook_id),
+            )
+            row = self._db.fetch_one(
+                "SELECT * FROM webhook_webhooks WHERE id = ?", (webhook_id,)
+            )
             return self._row_to_webhook(row, include_token=False)
 
         now = self._get_timestamp()
@@ -266,10 +274,6 @@ class WebhookCRUDMixin(WebhookManagerTrait):
 
         allowed_columns = {
             "name",
-            "url",
-            "secret",
-            "events",
-            "enabled",
             "avatar_url",
             "channel_id",
         }
@@ -381,7 +385,10 @@ class WebhookCRUDMixin(WebhookManagerTrait):
             (token_hash, now, webhook_id),
         )
 
-        webhook = self._row_to_webhook(row, include_token=False)
+        fresh_row = self._db.fetch_one(
+            "SELECT * FROM webhook_webhooks WHERE id = ?", (webhook_id,)
+        )
+        webhook = self._row_to_webhook(fresh_row, include_token=False)
         webhook.token = full_token
         webhook.updated_at = now
         return webhook
