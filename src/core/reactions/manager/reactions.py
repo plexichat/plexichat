@@ -42,13 +42,18 @@ class ReactionOpsMixin(ReactionProtocol):
 
         is_custom, custom_emoji_id, normalized_emoji = self._validate_emoji(emoji)
 
-        if is_custom and channel:
+        if is_custom:
             if custom_emoji_id is None:
-                raise CustomEmojiNotFoundError("Custom emoji not found in this server")
-            if not self._validate_custom_emoji_for_server(
-                custom_emoji_id, channel["server_id"]
-            ):
-                raise CustomEmojiNotFoundError("Custom emoji not found in this server")
+                raise CustomEmojiNotFoundError("Custom emoji not found")
+            if not self._validate_custom_emoji_exists(custom_emoji_id):
+                raise CustomEmojiNotFoundError("Custom emoji not found")
+            if channel:
+                if not self._validate_custom_emoji_for_server(
+                    custom_emoji_id, channel["server_id"]
+                ):
+                    raise CustomEmojiNotFoundError(
+                        "Custom emoji not found in this server"
+                    )
 
         existing = self._db.fetch_one(
             "SELECT 1 FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
@@ -132,8 +137,10 @@ class ReactionOpsMixin(ReactionProtocol):
         except ReactionExistsError:
             self._db.rollback()
             raise
-        except Exception:
+        except Exception as e:
             self._db.rollback()
+            if self._is_unique_violation(e):
+                raise ReactionExistsError("You have already reacted with this emoji")
             raise
 
         logger.debug(
@@ -170,10 +177,13 @@ class ReactionOpsMixin(ReactionProtocol):
         if not existing:
             raise PermissionDeniedError("Cannot remove reaction added by someone else")
 
-        self._db.execute(
+        cursor = self._db.execute(
             "DELETE FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
             (message_id, user_id, normalized_emoji),
         )
+
+        if getattr(cursor, "rowcount", 1) == 0:
+            raise ReactionNotFoundError("Reaction not found")
 
         logger.debug(f"Reaction removed from message {message_id} by user {user_id}")
 
@@ -435,8 +445,21 @@ class ReactionOpsMixin(ReactionProtocol):
                            MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
                     FROM react_reactions r
                     LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
-                    WHERE r.message_id IN ({placeholders})"""
-        params = [user_id] + list(message_ids)
+                    WHERE r.message_id IN ({placeholders})
+                      AND (
+                        r.message_id IN (
+                            SELECT m.id FROM msg_messages m
+                            JOIN msg_participants p ON m.conversation_id = p.conversation_id
+                            WHERE p.user_id = ?
+                        )
+                        OR r.message_id IN (
+                            SELECT m.id FROM msg_messages m
+                            JOIN srv_channels sc ON m.conversation_id = sc.conversation_id
+                            JOIN srv_members sm ON sc.server_id = sm.server_id
+                            WHERE sm.user_id = ?
+                        )
+                      )"""
+        params = [user_id] + list(message_ids) + [user_id, user_id]
 
         if blocked_users:
             blocked_placeholders = ",".join("?" * len(blocked_users))
@@ -503,12 +526,14 @@ class ReactionOpsMixin(ReactionProtocol):
         return [row["message_id"] for row in rows]
 
     def get_users_who_reacted(
-        self, message_id: SnowflakeID, emoji: str
+        self, user_id: int, message_id: SnowflakeID, emoji: str
     ) -> List[SnowflakeID]:
-        users = self.get_reaction_users(user_id=1, message_id=message_id, emoji=emoji)
+        users = self.get_reaction_users(
+            user_id=user_id, message_id=message_id, emoji=emoji
+        )
         return [u.user_id for u in users]
 
     def get_reactions_bulk(
-        self, message_ids: List[int]
+        self, user_id: int, message_ids: List[int]
     ) -> Dict[int, List[Dict[str, Any]]]:
-        return self.get_reactions_batch(user_id=1, message_ids=message_ids)
+        return self.get_reactions_batch(user_id=user_id, message_ids=message_ids)

@@ -10,13 +10,26 @@ import uuid
 
 @pytest.fixture
 def sample_image():
-    """Generate a minimal valid PNG image."""
-    return (
-        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00"
-        b"\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc"
-        b"\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND"
-        b"\xaeB`\x82"
+    """Generate a minimal valid PNG image (1x1 transparent pixel)."""
+    import struct
+    import zlib
+
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr_data = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
+    ihdr = struct.pack(">I", 13) + b"IHDR" + ihdr_data + struct.pack(">I", ihdr_crc)
+    raw = b"\x00\x00\x00\x00\x00"
+    compressed = zlib.compress(raw)
+    idat_crc = zlib.crc32(b"IDAT" + compressed) & 0xFFFFFFFF
+    idat = (
+        struct.pack(">I", len(compressed))
+        + b"IDAT"
+        + compressed
+        + struct.pack(">I", idat_crc)
     )
+    iend_crc = zlib.crc32(b"IEND") & 0xFFFFFFFF
+    iend = struct.pack(">I", 0) + b"IEND" + struct.pack(">I", iend_crc)
+    return sig + ihdr + idat + iend
 
 
 @pytest.fixture

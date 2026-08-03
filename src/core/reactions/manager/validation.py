@@ -98,6 +98,13 @@ class ReactionValidationMixin(ReactionProtocol):
 
         return True
 
+    def _validate_custom_emoji_exists(self, custom_emoji_id: SnowflakeID) -> bool:
+        row = self._db.fetch_one(
+            "SELECT 1 FROM react_custom_emoji WHERE id = ? AND available = 1",
+            (custom_emoji_id,),
+        )
+        return row is not None
+
     def _validate_custom_emoji_for_server(
         self, custom_emoji_id: SnowflakeID, server_id: SnowflakeID
     ) -> bool:

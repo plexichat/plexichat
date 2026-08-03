@@ -63,6 +63,12 @@ class ReactionBase(BaseManager):
         )
         return row["count"] if row else 0
 
+    def _is_unique_violation(self, e: Exception) -> bool:
+        if type(e).__name__ == "IntegrityError":
+            return True
+        message = str(e).lower()
+        return "unique constraint" in message or "duplicate entry" in message
+
     def _row_to_reaction(self, row) -> Reaction:
         return Reaction(
             id=row["id"],

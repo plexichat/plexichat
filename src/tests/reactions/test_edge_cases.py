@@ -272,13 +272,15 @@ class TestDataIntegrity:
             reaction = reaction_manager.add_reaction(user1.id, msg.id, emoji)
             assert reaction.emoji == emoji
 
-    def test_custom_emoji_id_preserved(self, users_with_server):
+    def test_custom_emoji_id_preserved(self, users_with_server, sample_image):
         """Test custom emoji ID is preserved correctly."""
         owner, member, server, group, msg, server_manager, reaction_manager = (
             users_with_server
         )
 
-        emoji = reaction_manager.create_custom_emoji(owner.id, server.id, "preserve_id")
+        emoji = reaction_manager.create_custom_emoji(
+            owner.id, server.id, "preserve_id", sample_image, "image/png"
+        )
         custom_str = f"<:preserve_id:{emoji.id}>"
 
         reaction = reaction_manager.add_reaction(owner.id, msg.id, custom_str)

@@ -31,6 +31,9 @@ class ReactionProtocol:
     def _get_unique_emoji_count(self, message_id: SnowflakeID) -> int:
         return super()._get_unique_emoji_count(message_id)  # type: ignore[misc]
 
+    def _is_unique_violation(self, e: Exception) -> bool:
+        return super()._is_unique_violation(e)  # type: ignore[misc]
+
     def _get_channel_for_conversation(
         self, conversation_id: SnowflakeID
     ) -> Optional[Dict]:
@@ -57,6 +60,9 @@ class ReactionProtocol:
 
     def _validate_emoji(self, emoji: str) -> tuple[bool, Optional[int], str]:
         return super()._validate_emoji(emoji)  # type: ignore[misc]
+
+    def _validate_custom_emoji_exists(self, custom_emoji_id: SnowflakeID) -> bool:
+        return super()._validate_custom_emoji_exists(custom_emoji_id)  # type: ignore[misc]
 
     def _validate_custom_emoji_for_server(
         self, custom_emoji_id: SnowflakeID, server_id: SnowflakeID
