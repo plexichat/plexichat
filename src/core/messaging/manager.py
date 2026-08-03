@@ -489,11 +489,14 @@ class MessagingManager(BaseManager):
 
     def update_message_metadata(
         self,
+        user_id: SnowflakeID,
         message_id: SnowflakeID,
         metadata: Optional[Dict[str, Any]],
         merge: bool = True,
     ) -> Message:
-        return self._message_svc.update_message_metadata(message_id, metadata, merge)
+        return self._message_svc.update_message_metadata(
+            user_id, message_id, metadata, merge
+        )
 
     def delete_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
@@ -519,8 +522,7 @@ class MessagingManager(BaseManager):
         """
         requested = [int(m) for m in message_ids]
         result = self._message_svc.delete_messages_bulk(user_id, requested)
-        failed = {int(f) for f in result.get("failed_ids", [])}
-        return [mid for mid in requested if mid not in failed]
+        return result.get("deleted_ids", [])
 
     def get_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID

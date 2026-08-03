@@ -86,6 +86,15 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         self._repo.update_content(
             message_id, final_content, now, content_index=content_idx
         )
+        # Rebuild the per-word search blind indexes for the new plaintext so
+        # substring search keeps working after edits (see send path).
+        try:
+            token_indexes = self._repo.content_token_indexes(
+                content_result.sanitized_content
+            )
+            self._repo.set_content_tokens(message_id, token_indexes)
+        except Exception as exc:
+            logger.debug(f"Failed to refresh search tokens for {message_id}: {exc}")
 
         try:
             search_index_message(
@@ -112,6 +121,7 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
 
     def update_message_metadata(
         self,
+        user_id: SnowflakeID,
         message_id: SnowflakeID,
         metadata: Optional[Dict[str, Any]],
         merge: bool = True,
@@ -120,6 +130,9 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         msg_row = self._repo.get_by_id(message_id)
         if not msg_row or msg_row.get("deleted"):
             raise MessageNotFoundError("Message not found")
+
+        if msg_row["author_id"] != user_id:
+            raise MessageAccessDeniedError("Can only update metadata on own messages")
 
         existing_metadata = (
             self._repo._json_loads(msg_row["metadata"])
@@ -138,7 +151,7 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
 
         cache_delete(f"msg:obj:{message_id}")
 
-        msg = self.get_message(msg_row["author_id"], message_id)
+        msg = self.get_message(user_id, message_id)
         if msg is None:
             raise MessageNotFoundError("Failed to retrieve updated message")
         cache_set(f"msg:obj:{message_id}", msg, ttl=3600)
@@ -233,6 +246,7 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
     ) -> Dict[str, Any]:
         """Delete multiple messages in bulk."""
         success_count = 0
+        deleted_ids: List[SnowflakeID] = []
         failed_ids: List[SnowflakeID] = []
         now = self._get_timestamp()
 
@@ -259,26 +273,27 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                     continue
 
                 if hard_delete:
+                    try:
+                        from src.core import search as search_module
+
+                        search_module.remove_from_index(int(message_id))
+                    except Exception:
+                        pass
                     self._repo.hard_delete(message_id)
                 else:
                     self._repo.soft_delete(message_id, now)
 
                 cache_delete(f"msg:obj:{message_id}")
 
-                try:
-                    from src.core import search as search_module
-
-                    search_module.remove_from_index(int(message_id))
-                except Exception:
-                    pass
-
                 success_count += 1
+                deleted_ids.append(message_id)
             except Exception as e:
                 logger.error(f"Failed to delete message {message_id}: {e}")
                 failed_ids.append(message_id)
 
         return {
             "success_count": success_count,
+            "deleted_ids": deleted_ids,
             "failed_count": len(failed_ids),
             "failed_ids": failed_ids,
         }

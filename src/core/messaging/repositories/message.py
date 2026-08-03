@@ -2,6 +2,7 @@
 Message repository - Data access for messages.
 """
 
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -10,6 +11,31 @@ from ..models import Message, MessageType
 from .base import BaseRepository
 from src.core.base import SnowflakeID
 from src.utils.encryption import decrypt_message, is_message_encrypted, decrypt_data
+
+_MAX_SEARCH_TOKENS = 64
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def tokenize_search_words(text: str) -> List[str]:
+    """Split text into lowercased, de-duplicated search words (max 64).
+
+    Matches the tokenization used at write time so read-side queries line up
+    with the stored blind indexes.
+    """
+    seen: set = set()
+    tokens: List[str] = []
+    for word in _TOKEN_RE.findall(text.lower()):
+        if word not in seen:
+            seen.add(word)
+            tokens.append(word)
+            if len(tokens) >= _MAX_SEARCH_TOKENS:
+                break
+    return tokens
+
+
+def _escape_like(text: str) -> str:
+    """Escape LIKE wildcards so user input matches literally."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class MessageRepository(BaseRepository[Message]):
@@ -123,35 +149,114 @@ class MessageRepository(BaseRepository[Message]):
         before_id: Optional[SnowflakeID] = None,
         after_id: Optional[SnowflakeID] = None,
     ) -> List[Dict[str, Any]]:
-        """Search messages in a conversation."""
-        # If it looks like an exact match search for a single word, try blind index
-        use_blind_index = " " not in search_query.strip()
+        """Search messages in a conversation.
 
-        if use_blind_index:
-            from src.utils.encryption import blind_index
+        Plaintext messages match via ``content LIKE``; encrypted messages match
+        via the per-token blind indexes written at send/edit time, so substring
+        search keeps working without exposing plaintext to the query. Falls back
+        to plaintext-only matching on databases that predate the token table.
+        """
+        query_text = (search_query or "").strip()
+        if not query_text:
+            return []
+        like_pattern = f"%{_escape_like(query_text)}%"
 
-            query_index = blind_index(search_query, "message_content")
-            query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0 AND (content_index = ? OR content LIKE ?)"
-            params: List[Any] = [conversation_id, query_index, f"%{search_query}%"]
-        else:
-            query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0 AND content LIKE ?"
-            params: List[Any] = [conversation_id, f"%{search_query}%"]
+        from src.utils.encryption import blind_index
 
+        token_indexes = [
+            blind_index(token, "message_content")
+            for token in tokenize_search_words(query_text)
+        ]
+
+        if token_indexes:
+            placeholders = ", ".join("?" for _ in token_indexes)
+            match_clause = (
+                "  m.content LIKE ? ESCAPE '\\' "
+                "  OR ("
+                "    SELECT COUNT(DISTINCT t.token_index) FROM msg_message_tokens t "
+                "    WHERE t.message_id = m.id AND t.token_index IN ("
+                + placeholders
+                + ")"
+                "  ) = ?"
+            )
+            params: List[Any] = [
+                conversation_id,
+                like_pattern,
+                *token_indexes,
+                len(token_indexes),
+            ]
+            try:
+                return self._search_matching(
+                    conversation_id, match_clause, params, limit, before_id, after_id
+                )
+            except Exception:
+                # Older databases without msg_message_tokens: fall back to
+                # plaintext-only matching rather than failing the search.
+                pass
+
+        match_clause = "  m.content LIKE ? ESCAPE '\\'"
+        params = [conversation_id, like_pattern]
+        return self._search_matching(
+            conversation_id, match_clause, params, limit, before_id, after_id
+        )
+
+    def _search_matching(
+        self,
+        conversation_id: SnowflakeID,
+        match_clause: str,
+        params: List[Any],
+        limit: int,
+        before_id: Optional[SnowflakeID],
+        after_id: Optional[SnowflakeID],
+    ) -> List[Dict[str, Any]]:
+        """Run a search query with shared ordering/pagination, ``m`` aliased."""
+        query = (
+            "SELECT m.* FROM msg_messages m "
+            "WHERE m.conversation_id = ? AND m.deleted = 0 AND (" + match_clause + ")"
+        )
+        bound: List[Any] = list(params)
         if before_id:
-            query += " AND id < ?"
-            params.append(before_id)
-            query += " ORDER BY id DESC"
+            query += " AND m.id < ?"
+            bound.append(before_id)
+            query += " ORDER BY m.id DESC"
         elif after_id:
-            query += " AND id > ?"
-            params.append(after_id)
-            query += " ORDER BY id ASC"
+            query += " AND m.id > ?"
+            bound.append(after_id)
+            query += " ORDER BY m.id ASC"
         else:
-            query += " ORDER BY id DESC"
-
+            query += " ORDER BY m.id DESC"
         query += " LIMIT ?"
-        params.append(limit)
+        bound.append(limit)
+        return self._fetch_all(query, tuple(bound))
 
-        return self._fetch_all(query, tuple(params))
+    def content_token_indexes(self, content: str) -> List[str]:
+        """Blind-index each searchable word of plaintext content."""
+        from src.utils.encryption import blind_index
+
+        return [
+            blind_index(token, "message_content")
+            for token in tokenize_search_words(content)
+        ]
+
+    def set_content_tokens(
+        self,
+        msg_id: SnowflakeID,
+        token_indexes: List[str],
+        auto_commit: bool = True,
+    ) -> None:
+        """Replace the per-token search blind indexes for a message."""
+        self._execute(
+            "DELETE FROM msg_message_tokens WHERE message_id = ?",
+            (msg_id,),
+            auto_commit=auto_commit,
+        )
+        for position, token_index in enumerate(token_indexes):
+            self._execute(
+                "INSERT OR IGNORE INTO msg_message_tokens "
+                "(message_id, token_index, position) VALUES (?, ?, ?)",
+                (msg_id, token_index, position),
+                auto_commit=auto_commit,
+            )
 
     def update_content(
         self,

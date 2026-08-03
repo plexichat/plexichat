@@ -132,13 +132,11 @@ class BookmarkService:
             data = dict(row)
             if self._messaging:
                 try:
-                    msg = self._messaging._message_svc.get_message_raw(
-                        data["message_id"]
-                    )
+                    msg = self._messaging.get_message(user_id, data["message_id"])
                     if msg:
-                        data["content_preview"] = (msg.get("content", "") or "")[:200]
-                        data["author_id"] = msg.get("author_id")
-                        data["message_created_at"] = msg.get("created_at")
+                        data["content_preview"] = (msg.content or "")[:200]
+                        data["author_id"] = msg.author_id
+                        data["message_created_at"] = msg.created_at
                 except Exception:
                     pass
             results.append(data)

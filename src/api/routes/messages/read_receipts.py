@@ -82,7 +82,7 @@ async def get_unread_count(
             messaging.get_unread_count, current_user.user_id, conv_id
         )
         return UnreadCountResponse(
-            channel_id=SnowflakeID(channel_id), unread_count=counts.get(cid, 0)
+            channel_id=SnowflakeID(channel_id), unread_count=counts.get(conv_id, 0)
         )
     except HTTPException:
         raise

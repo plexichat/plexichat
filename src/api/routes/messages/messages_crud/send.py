@@ -202,7 +202,7 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     if messaging and poll:
                         try:
                             msg = messaging.update_message_metadata(
-                                msg_id, {"poll_id": poll.id}
+                                current_user.user_id, msg_id, {"poll_id": poll.id}
                             )
                         except Exception:
                             pass

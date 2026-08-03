@@ -78,7 +78,11 @@ class ConversationRepository(BaseRepository[Conversation]):
 
         if conversation_type:
             query += " AND c.conversation_type = ?"
-            params.append(conversation_type.value)
+            params.append(
+                conversation_type.value
+                if hasattr(conversation_type, "value")
+                else conversation_type
+            )
 
         if before_id:
             query += " AND c.id < ?"

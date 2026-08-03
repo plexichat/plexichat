@@ -75,6 +75,22 @@ CREATE TABLE IF NOT EXISTS msg_messages (
     FOREIGN KEY (reply_to_id) REFERENCES msg_messages(id) ON DELETE SET NULL
 );
 
+-- Message search tokens
+-- Each whitespace-delimited word of a message's plaintext is blind-indexed
+-- here at send/edit time so server-side substring search keeps working even
+-- when ``content`` holds an ENC: envelope (the whole-content ``content_index``
+-- only supports exact equality). token_index values are keyed hashes; the
+-- plaintext is never stored, preserving the search-privacy contract.
+CREATE TABLE IF NOT EXISTS msg_message_tokens (
+    message_id INTEGER NOT NULL,
+    token_index TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (message_id, position),
+    FOREIGN KEY (message_id) REFERENCES msg_messages(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_msg_message_tokens_token ON msg_message_tokens(token_index);
+
 -- Forwarded messages (019)
 CREATE TABLE IF NOT EXISTS msg_forwarded (
     id INTEGER PRIMARY KEY,

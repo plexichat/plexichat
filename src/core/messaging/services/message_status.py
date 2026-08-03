@@ -46,10 +46,13 @@ class MessageStatusService(BaseService):
         now = self._get_timestamp()
 
         # Filter to messages user can access and didn't author
+        # Also skip system messages (author_id == 0)
         valid_ids: List[SnowflakeID] = []
         for msg_id in message_ids:
             msg_row = self._message_repo.get_by_id(msg_id)
             if not msg_row or msg_row["author_id"] == user_id:
+                continue
+            if msg_row["author_id"] == 0:
                 continue
             if not self._participant_svc.is_participant(
                 msg_row["conversation_id"], user_id
@@ -141,12 +144,14 @@ class MessageStatusService(BaseService):
                     invalidate_pattern("msg_reader_ids:*")
                     invalidate_pattern("msg_status_batch:*")
 
-                    # ALSO invalidate the individual message object caches since they contain read counts and status
-                    invalidate_pattern("msg:obj:*")
+                    # Invalidate the individual message object caches for
+                    # messages in this conversation only
+                    invalidate_pattern(f"msg:obj:*:{conversation_id}:*")
                     # And the recent messages list cache
                     invalidate_pattern(f"msg:recent:{conversation_id}")
 
-                    # ALSO invalidate the message list caches for the API and internal repo
+                    # ALSO invalidate the message list caches for the API
+                    # and internal repo
                     self._message_repo.invalidate_conversation_cache(conversation_id)
                 except Exception:
                     pass
@@ -155,14 +160,6 @@ class MessageStatusService(BaseService):
         self._participant_repo.update_last_read(
             conversation_id, user_id, target_msg_id, now
         )
-
-        # Invalidate unread counts cache
-        try:
-            # from src.core.database import invalidate_cached
-            self.get_unread_count.invalidate(self, user_id, conversation_id)  # type: ignore
-            self.get_unread_count.invalidate(self, user_id, None)  # type: ignore
-        except Exception:
-            pass
 
         return count
 
@@ -235,7 +232,7 @@ class MessageStatusService(BaseService):
             return {}
 
         # Get message rows to verify ownership
-        msg_rows = self._message_repo.get_batch_by_ids(message_ids)
+        msg_rows = self._message_repo.get_batch_by_ids(list(message_ids))
 
         # Filter for messages where user is the author
         owned_message_ids = [
@@ -376,13 +373,6 @@ class MessageStatusService(BaseService):
 
         # Recalculate unread count
         new_count = self._repo.get_unread_count(user_id, conversation_id)
-
-        # Invalidate caches
-        try:
-            self.get_unread_count.invalidate(self, user_id, conversation_id)  # type: ignore
-            self.get_unread_count.invalidate(self, user_id, None)  # type: ignore
-        except Exception:
-            pass
 
         return new_count
 

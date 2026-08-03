@@ -68,6 +68,7 @@ class MessageServiceProtocol(Protocol):
 
     def update_message_metadata(
         self,
+        user_id: SnowflakeID,
         message_id: SnowflakeID,
         metadata: Optional[Dict[str, Any]],
         merge: bool = True,

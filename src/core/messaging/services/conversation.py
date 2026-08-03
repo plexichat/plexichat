@@ -414,10 +414,14 @@ class ConversationService(BaseService):
         if conv_type == ConversationType.DM.value:
             self._repo.delete_dm_lookup(conversation_id)
             # Invalidate DM lookup cache
-            if conv.metadata and "recipient_id" in conv.metadata:
-                # We need user_id and recipient_id. If not in metadata, we might need to fetch participants.
-                # But soft delete already handles lookup table.
-                pass
+            u1, u2 = (
+                min(user_id, conv.owner_id or user_id),
+                max(user_id, conv.owner_id or user_id),
+            )
+            # NOTE: no local import here — ``invalidate_pattern`` is already
+            # imported at module level; a local import would shadow it for the
+            # whole function and raise UnboundLocalError above.
+            invalidate_pattern(f"dm_lookup:{u1}:{u2}")
 
         logger.debug(f"Deleted conversation {conversation_id}")
         return True

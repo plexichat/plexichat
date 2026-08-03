@@ -2,7 +2,6 @@
 Send message operations mixin for the MessageService.
 """
 
-import urllib.parse
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
@@ -17,6 +16,7 @@ from src.utils.encryption import (
 from ...models import Message, MessageType, Attachment, MessageStatusType
 from ...exceptions import (
     ConversationAccessDeniedError,
+    ConversationNotFoundError,
     MessageNotFoundError,
     InvalidContentError,
     ContentTooLongError,
@@ -75,6 +75,9 @@ class SendMixin(BaseService, MessageServiceProtocol):
                 raise MessageNotFoundError(
                     "Reply target message not found in this conversation"
                 )
+            reply_row = self._repo.get_by_id(reply_to_id)
+            if reply_row and reply_row.get("deleted"):
+                raise MessageNotFoundError("Reply target message has been deleted")
 
         if attachments:
             max_attachments = (
@@ -146,6 +149,14 @@ class SendMixin(BaseService, MessageServiceProtocol):
                 last_message_at=now,
                 auto_commit=False,
             )
+
+            # Store per-word blind indexes so substring search keeps working
+            # for encrypted messages (content holds the ENC envelope; the
+            # whole-content content_index only supports exact equality).
+            token_indexes = self._repo.content_token_indexes(
+                content_result.sanitized_content
+            )
+            self._repo.set_content_tokens(msg_id, token_indexes, auto_commit=False)
 
             status_id = self._generate_id()
             self._status_repo.create(
@@ -292,12 +303,6 @@ class SendMixin(BaseService, MessageServiceProtocol):
     def _normalize_url(self, url: str) -> str:
         if not url:
             return url
-        if url.startswith("http://") or url.startswith("https://"):
-            parsed = urllib.parse.urlsplit(url)
-            path = parsed.path or ""
-            if parsed.query:
-                path = f"{path}?{parsed.query}"
-            return path or url
         return url
 
     def send_system_message(
@@ -308,6 +313,10 @@ class SendMixin(BaseService, MessageServiceProtocol):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Message:
         """Send a system message."""
+        conv_row = self._conversation_repo.get_by_id(conversation_id)
+        if not conv_row or conv_row.get("deleted"):
+            raise ConversationNotFoundError("Conversation not found")
+
         now = self._get_timestamp()
         msg_id = self._generate_id()
 
