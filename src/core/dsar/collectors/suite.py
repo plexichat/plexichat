@@ -1,8 +1,11 @@
 """PlexiSuite metadata collector for DSAR exports.
 
 Only metadata owned by, granted to, or created by the requesting user is
-returned. Binary content remains in the media subsystem and is not copied into
-an export by this collector.
+returned. Workbook cell data lives inside ``.plexisum`` blob files on the
+storage adapter (not the main database); blob content is not copied into an
+export by this collector, matching the media collector's metadata-only
+semantics. The main-database tables that exist are ``sum_workbooks``,
+``sum_grants``, ``sum_range_permissions``, and ``sum_snapshots``.
 """
 
 from typing import Any, Dict, List
@@ -39,21 +42,19 @@ class SuiteCollector(BaseCollector):
             "sum_workbooks": self._optional_rows(
                 "SELECT * FROM sum_workbooks WHERE owner_id = ?", (user_id,)
             ),
-            "sum_sheets": self._optional_rows(
-                """SELECT s.* FROM sum_sheets s
-                   JOIN sum_workbooks w ON w.id = s.workbook_id
+            "sum_grants": self._optional_rows(
+                """SELECT * FROM sum_grants WHERE created_by = ? OR subject_id = ?""",
+                (user_id, user_id),
+            ),
+            "sum_range_permissions": self._optional_rows(
+                """SELECT rp.* FROM sum_range_permissions rp
+                   JOIN sum_workbooks w ON w.id = rp.workbook_id
                    WHERE w.owner_id = ?""",
                 (user_id,),
             ),
-            "sum_cells": self._optional_rows(
-                """SELECT c.* FROM sum_cells c
-                   JOIN sum_workbooks w ON w.id = c.workbook_id
-                   WHERE w.owner_id = ?""",
-                (user_id,),
-            ),
-            "sum_operations": self._optional_rows(
-                """SELECT * FROM sum_operations
-                   WHERE actor_id = ? OR workbook_id IN
+            "sum_snapshots": self._optional_rows(
+                """SELECT * FROM sum_snapshots
+                   WHERE created_by = ? OR workbook_id IN
                      (SELECT id FROM sum_workbooks WHERE owner_id = ?)""",
                 (user_id, user_id),
             ),
@@ -64,9 +65,8 @@ class SuiteCollector(BaseCollector):
                       OR resource_id IN (SELECT id FROM stash_collections WHERE owner_id = ?)
                       OR resource_id IN (SELECT id FROM stash_versions WHERE created_by = ?)
                       OR resource_id IN (SELECT id FROM stash_grants WHERE created_by = ?)
-                      OR resource_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)
-                      OR resource_id IN (SELECT id FROM sum_operations WHERE actor_id = ?)""",
-                (user_id, user_id, user_id, user_id, user_id, user_id, user_id),
+                      OR resource_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)""",
+                (user_id, user_id, user_id, user_id, user_id, user_id),
             ),
         }
 

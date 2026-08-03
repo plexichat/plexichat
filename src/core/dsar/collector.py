@@ -5,6 +5,7 @@ Composes domain-specific collectors to assemble complete user data exports
 for GDPR Article 20 Right to Data Portability compliance.
 """
 
+import json
 import time
 from typing import Any, Dict
 
@@ -185,16 +186,13 @@ class DataCollector:
             ),
             "stash_download_tickets": ("subject_id = ?", (user_id,)),
             "sum_workbooks": ("owner_id = ?", (user_id,)),
-            "sum_sheets": (
+            "sum_grants": ("created_by = ? OR subject_id = ?", (user_id, user_id)),
+            "sum_range_permissions": (
                 "workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
                 (user_id,),
             ),
-            "sum_cells": (
-                "workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
-                (user_id,),
-            ),
-            "sum_operations": (
-                "actor_id = ? OR workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+            "sum_snapshots": (
+                "created_by = ? OR workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
                 (user_id, user_id),
             ),
             "suite_audit_log": ("actor_id = ?", (user_id,)),
@@ -244,22 +242,34 @@ class DataCollector:
             logger.debug(f"Could not count transcripts: {e}")
 
         try:
-            result = self._db.fetch_one(
+            rows = self._db.fetch_all(
                 """
-                SELECT COUNT(*) as count FROM voice_calls
-                WHERE initiator_id = ?
-                   OR (consented_participants IS NOT NULL
-                       AND EXISTS (SELECT 1 FROM json_each(consented_participants) WHERE value = ?))
+                SELECT id, initiator_id, consented_participants
+                FROM voice_calls
+                WHERE initiator_id = ? OR consented_participants IS NOT NULL
                 """,
-                (user_id, user_id),
+                (user_id,),
             )
-            if result:
-                counts["voice_voice_calls"] = (
-                    result.get("count", 0) if isinstance(result, dict) else result[0]
-                )
+            count = 0
+            for row in rows or []:
+                if int(row.get("initiator_id") or 0) == user_id:
+                    count += 1
+                    continue
+                consented = row.get("consented_participants")
+                try:
+                    parsed = (
+                        json.loads(consented)
+                        if isinstance(consented, str)
+                        else consented
+                    )
+                except (ValueError, TypeError):
+                    parsed = None
+                if isinstance(parsed, list) and user_id in parsed:
+                    count += 1
+            counts["voice_voice_calls"] = count
         except Exception as e:
             import utils.logger as logger
 
-            logger.debug(f"Could not count voice_calls: {e}")
+            logger.debug(f"Could not count voice calls: {e}")
 
         return counts
