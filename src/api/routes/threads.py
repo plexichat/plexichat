@@ -115,7 +115,7 @@ def _map_thread_exception(e: Exception) -> Optional[HTTPException]:
             status_code=404,
             detail={"error": {"code": 404, "message": "Thread not found"}},
         )
-    if name in ("ThreadAccessDeniedError",):
+    if name in ("ThreadAccessDeniedError", "PermissionDeniedError"):
         return HTTPException(
             status_code=403,
             detail={"error": {"code": 403, "message": str(e) or "Access denied"}},
@@ -125,10 +125,20 @@ def _map_thread_exception(e: Exception) -> Optional[HTTPException]:
             status_code=400,
             detail={"error": {"code": 400, "message": str(e) or "Invalid thread name"}},
         )
-    if name in ("ThreadArchivedError", "ThreadLockedError"):
+    if name in (
+        "ThreadArchivedError",
+        "ThreadLockedError",
+        "ThreadError",
+        "ThreadMemberExistsError",
+    ):
         return HTTPException(
             status_code=409,
             detail={"error": {"code": 409, "message": str(e)}},
+        )
+    if name in ("ThreadMemberNotFoundError",):
+        return HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": str(e) or "Member not found"}},
         )
     if name in ("ChannelNotFoundError",):
         return HTTPException(
@@ -139,6 +149,11 @@ def _map_thread_exception(e: Exception) -> Optional[HTTPException]:
         return HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Message not found"}},
+        )
+    if name == "RateLimitError":
+        return HTTPException(
+            status_code=429,
+            detail={"error": {"code": 429, "message": str(e)}},
         )
     return None
 

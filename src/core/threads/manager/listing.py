@@ -71,14 +71,13 @@ class ThreadListingMixin(ThreadProtocol):
         if private_thread_ids:
             if not all(isinstance(tid, int) for tid in private_thread_ids):
                 raise ValueError("All thread IDs must be integers")
-            member_thread_ids = set()
-            for thread_id in private_thread_ids:
-                row = self._db.fetch_one(
-                    "SELECT thread_id FROM thread_members WHERE user_id = ? AND thread_id = ?",
-                    (user_id, thread_id),
-                )
-                if row:
-                    member_thread_ids.add(row["thread_id"])
+            placeholders = ",".join("?" * len(private_thread_ids))
+            rows = self._db.fetch_all(
+                f"""SELECT thread_id FROM thread_members
+                    WHERE user_id = ? AND thread_id IN ({placeholders})""",
+                (user_id, *private_thread_ids),
+            )
+            member_thread_ids = {r["thread_id"] for r in rows}
 
         has_server_view = True
         public_exists = any(t.thread_type != ThreadType.PRIVATE for t in active_threads)
@@ -117,14 +116,14 @@ class ThreadListingMixin(ThreadProtocol):
             rows = self._db.fetch_all(
                 """SELECT * FROM thread_threads 
                    WHERE channel_id = ? AND state = ? AND deleted = 0 AND archived_at < ?
-                   ORDER BY archived_at DESC LIMIT ?""",
+                   ORDER BY archived_at DESC, id DESC LIMIT ?""",
                 (channel_id, ThreadState.ARCHIVED.value, before_timestamp, limit),
             )
         else:
             rows = self._db.fetch_all(
                 """SELECT * FROM thread_threads 
                    WHERE channel_id = ? AND state = ? AND deleted = 0
-                   ORDER BY archived_at DESC LIMIT ?""",
+                   ORDER BY archived_at DESC, id DESC LIMIT ?""",
                 (channel_id, ThreadState.ARCHIVED.value, limit),
             )
 
@@ -141,14 +140,13 @@ class ThreadListingMixin(ThreadProtocol):
         if private_thread_ids:
             if not all(isinstance(tid, int) for tid in private_thread_ids):
                 raise ValueError("All thread IDs must be integers")
-            member_thread_ids = set()
-            for thread_id in private_thread_ids:
-                row = self._db.fetch_one(
-                    "SELECT thread_id FROM thread_members WHERE user_id = ? AND thread_id = ?",
-                    (user_id, thread_id),
-                )
-                if row:
-                    member_thread_ids.add(row["thread_id"])
+            placeholders = ",".join("?" * len(private_thread_ids))
+            rows = self._db.fetch_all(
+                f"""SELECT thread_id FROM thread_members
+                    WHERE user_id = ? AND thread_id IN ({placeholders})""",
+                (user_id, *private_thread_ids),
+            )
+            member_thread_ids = {r["thread_id"] for r in rows}
 
         has_server_view = True
         public_exists = any(

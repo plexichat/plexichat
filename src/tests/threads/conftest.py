@@ -8,6 +8,42 @@ import pytest
 import uuid
 
 
+def _wired_thread_manager(modules):
+    """Build a ThreadManager fully wired to auth/messaging/servers.
+
+    The threads tests exercise real permission checks and message
+    delivery, so the manager returned by ``server_with_channel`` /
+    ``server_with_moderator`` must be wired (unlike the bare
+    ``thread_manager`` fixture used by low-level unit tests).
+    """
+    from src.core.threads.manager import ThreadManager
+
+    return ThreadManager(
+        modules.threads._db,
+        auth_module=modules.auth,
+        messaging_module=modules.messaging,
+        servers_module=modules.servers,
+    )
+
+
+_MEMBER_PERMS = {
+    "channels.view": True,
+    "messages.send": True,
+    "messages.read_history": True,
+    "threads.create_public": True,
+}
+
+_MODERATOR_PERMS = {
+    "channels.view": True,
+    "messages.send": True,
+    "messages.read_history": True,
+    "messages.bypass_slowmode": True,
+    "threads.create_public": True,
+    "threads.create_private": True,
+    "threads.manage": True,
+}
+
+
 @pytest.fixture
 def db_and_modules(modules):
     """Legacy fixture for backward compatibility."""
@@ -82,9 +118,7 @@ def server_with_channel(modules):
         owner.id,
         server.id,
         "Member",
-        permissions={
-            "threads.create_public": True,
-        },
+        permissions=dict(_MEMBER_PERMS),
     )
     modules.servers.assign_role(owner.id, server.id, member1.id, member_role.id)
     modules.servers.assign_role(owner.id, server.id, member2.id, member_role.id)
@@ -93,7 +127,15 @@ def server_with_channel(modules):
         owner.id, server.id, "general", channel_type=modules.servers.ChannelType.TEXT
     )
 
-    return owner, member1, member2, server, channel, modules.servers, modules.threads
+    return (
+        owner,
+        member1,
+        member2,
+        server,
+        channel,
+        modules.servers,
+        _wired_thread_manager(modules),
+    )
 
 
 @pytest.fixture
@@ -127,11 +169,7 @@ def server_with_moderator(modules):
         owner.id,
         server.id,
         "Moderator",
-        permissions={
-            "threads.manage": True,
-            "threads.create_public": True,
-            "threads.create_private": True,
-        },
+        permissions=dict(_MODERATOR_PERMS),
     )
     modules.servers.assign_role(owner.id, server.id, moderator.id, mod_role.id)
 
@@ -141,7 +179,11 @@ def server_with_moderator(modules):
         server.id,
         "Member",
         permissions={
+            "channels.view": True,
+            "messages.send": True,
+            "messages.read_history": True,
             "threads.create_public": True,
+            "threads.create_private": True,
         },
     )
     modules.servers.assign_role(owner.id, server.id, member.id, member_role.id)
@@ -153,4 +195,12 @@ def server_with_moderator(modules):
         channel_type=modules.servers.ChannelType.TEXT,
     )
 
-    return owner, moderator, member, server, channel, modules.servers, modules.threads
+    return (
+        owner,
+        moderator,
+        member,
+        server,
+        channel,
+        modules.servers,
+        _wired_thread_manager(modules),
+    )

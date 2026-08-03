@@ -74,6 +74,11 @@ class ThreadMembershipMixin(ThreadProtocol):
         if not self._is_member(user_id, thread_id):
             raise ThreadMemberNotFoundError("Not a member of this thread")
 
+        if user_id == thread.owner_id:
+            raise PermissionDeniedError(
+                "Thread owner cannot leave their own thread", "threads.manage"
+            )
+
         self._db.execute(
             "DELETE FROM thread_members WHERE thread_id = ? AND user_id = ?",
             (thread_id, user_id),
@@ -127,12 +132,12 @@ class ThreadMembershipMixin(ThreadProtocol):
         if not self._is_member(member_user_id, thread_id):
             raise ThreadMemberNotFoundError("User is not a member")
 
+        if member_user_id == thread.owner_id:
+            raise PermissionDeniedError("Cannot remove thread owner", "threads.manage")
+
         if user_id != member_user_id:
             if not self.can_manage_thread(user_id, thread_id):
                 raise PermissionDeniedError("Cannot remove members", "threads.manage")
-
-        if member_user_id == thread.owner_id and user_id != thread.owner_id:
-            raise PermissionDeniedError("Cannot remove thread owner", "threads.manage")
 
         self._db.execute(
             "DELETE FROM thread_members WHERE thread_id = ? AND user_id = ?",

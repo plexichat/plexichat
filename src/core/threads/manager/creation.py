@@ -56,10 +56,12 @@ class ThreadCreationMixin(ThreadProtocol):
         thread_id = self._generate_id()
 
         name_encrypted = None
+        stored_name = name
         if self._encrypt_thread_names:
             from src.utils.encryption import encrypt_data
 
             name_encrypted = encrypt_data(name)
+            stored_name = "[encrypted]"
 
         conversation_id = None
         if self._messaging:
@@ -81,7 +83,7 @@ class ThreadCreationMixin(ThreadProtocol):
                 channel_id,
                 server_id,
                 user_id,
-                name,
+                stored_name,
                 name_encrypted,
                 thread_type.value,
                 ThreadState.ACTIVE.value,
@@ -173,10 +175,12 @@ class ThreadCreationMixin(ThreadProtocol):
         thread_id = self._generate_id()
 
         name_encrypted = None
+        stored_name = name
         if self._encrypt_thread_names:
             from src.utils.encryption import encrypt_data
 
             name_encrypted = encrypt_data(name)
+            stored_name = "[encrypted]"
 
         conversation_id = None
         if self._messaging:
@@ -199,7 +203,7 @@ class ThreadCreationMixin(ThreadProtocol):
                 channel_id,
                 server_id,
                 user_id,
-                name,
+                stored_name,
                 name_encrypted,
                 thread_type.value,
                 ThreadState.ACTIVE.value,

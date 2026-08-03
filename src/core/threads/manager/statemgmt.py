@@ -47,8 +47,7 @@ class ThreadStateMixin(ThreadProtocol):
             raise ThreadNotFoundError(f"Thread {thread_id} not found")
 
         if not self.can_manage_thread(user_id, thread_id):
-            if not self._is_member(user_id, thread_id):
-                raise PermissionDeniedError("Cannot unarchive thread", "threads.manage")
+            raise PermissionDeniedError("Cannot unarchive thread", "threads.manage")
 
         if thread.state != ThreadState.ARCHIVED:
             return thread
@@ -116,18 +115,18 @@ class ThreadStateMixin(ThreadProtocol):
 
         if name is not None:
             name = self._validate_thread_name(name)
-            name_encrypted = None
-            if name and self._encrypt_thread_names:
+            if self._encrypt_thread_names:
                 from src.utils.encryption import encrypt_data
 
-                name_encrypted = encrypt_data(name)
-
-            updates.append("name = ?")
-            params.append(name)
-
-            if name_encrypted:
+                updates.append("name = ?")
+                params.append("[encrypted]")
                 updates.append("name_encrypted = ?")
-                params.append(name_encrypted)
+                params.append(encrypt_data(name))
+            else:
+                updates.append("name = ?")
+                params.append(name)
+                updates.append("name_encrypted = ?")
+                params.append(None)
 
         if auto_archive_duration is not None:
             updates.append("auto_archive_duration = ?")
@@ -135,25 +134,10 @@ class ThreadStateMixin(ThreadProtocol):
 
         if updates:
             params.append(thread_id)
-            allowed_columns = {"name", "auto_archive_duration"}
-            for update in updates:
-                col_name = update.split(" = ")[0]
-                if col_name not in allowed_columns:
-                    raise ValueError(f"Invalid column name: {col_name}")
-
-            for update in updates:
-                if "name = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE thread_threads SET name = ? WHERE id = ?",
-                        (params[idx], thread_id),
-                    )
-                elif "auto_archive_duration = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE thread_threads SET auto_archive_duration = ? WHERE id = ?",
-                        (params[idx], thread_id),
-                    )
+            self._db.execute(
+                f"UPDATE thread_threads SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
 
         logger.debug(f"Thread {thread_id} updated by user {user_id}")
 
