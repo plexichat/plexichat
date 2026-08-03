@@ -400,11 +400,13 @@ def messaging_manager(db):
 
 
 @pytest.fixture
-def server_manager(db):
+def server_manager(db, auth_manager, messaging_manager):
     """ServerManager fixture."""
     from src.core.servers.manager import ServerManager
 
-    manager = ServerManager(db)
+    manager = ServerManager(
+        db, auth_module=auth_manager, messaging_module=messaging_manager
+    )
     # Disable encryption for tests to avoid keyring issues
     manager._encrypt_descriptions = False
     return manager
@@ -430,11 +432,11 @@ def presence_manager(db, rel_manager):
 
 
 @pytest.fixture
-def reaction_manager(db):
+def reaction_manager(db, rel_manager):
     """ReactionManager fixture."""
     from src.core.reactions.manager import ReactionManager
 
-    return ReactionManager(db)
+    return ReactionManager(db, relationships_module=rel_manager)
 
 
 @pytest.fixture
@@ -859,7 +861,7 @@ def server_with_voice(server_manager, voice_manager, three_users):
     server_manager.add_member(server.id, member2.id)
 
     voice_channel = server_manager.create_channel(
-        owner.id, server.id, "voice", channel_type=server_manager.ChannelType.VOICE
+        owner.id, server.id, "voice-chat", channel_type=server_manager.ChannelType.VOICE
     )
     stage_channel = server_manager.create_channel(
         owner.id, server.id, "stage", channel_type=server_manager.ChannelType.STAGE
@@ -885,12 +887,21 @@ def server_with_moderator(server_manager, voice_manager, three_users):
     server_manager.add_member(server.id, moderator.id)
     server_manager.add_member(server.id, member.id)
 
-    # Give moderator role
-    mod_role = server_manager.create_role(owner.id, server.id, "Moderator")
-    server_manager.add_role_to_user(owner.id, server.id, moderator.id, mod_role.id)
+    # Give moderator role with standard voice moderation permissions
+    mod_role = server_manager.create_role(
+        owner.id,
+        server.id,
+        "Moderator",
+        permissions={
+            "voice.mute_members": True,
+            "voice.deafen_members": True,
+            "voice.move_members": True,
+        },
+    )
+    server_manager.assign_role(owner.id, server.id, moderator.id, mod_role.id)
 
     voice_channel = server_manager.create_channel(
-        owner.id, server.id, "voice", channel_type=server_manager.ChannelType.VOICE
+        owner.id, server.id, "voice-chat", channel_type=server_manager.ChannelType.VOICE
     )
     stage_channel = server_manager.create_channel(
         owner.id, server.id, "stage", channel_type=server_manager.ChannelType.STAGE

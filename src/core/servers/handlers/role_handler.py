@@ -677,6 +677,7 @@ class RoleHandler:
 
         self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+        invalidate_pattern("has_perm:*")
         invalidate_pattern(f"member_data:*{member_user_id}*")
 
         self.manager._log_audit(
@@ -728,6 +729,7 @@ class RoleHandler:
 
         self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+        invalidate_pattern("has_perm:*")
         invalidate_pattern(f"member_data:*{member_user_id}*")
 
         self.manager._log_audit(
@@ -739,3 +741,79 @@ class RoleHandler:
             {"role_id": role_id},
         )
         return True
+
+    def assign_roles_from_whitelist(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        role_ids: List[SnowflakeID],
+        allowed_role_ids: List[SnowflakeID],
+    ) -> List[SnowflakeID]:
+        """Self-service role assignment for onboarding steps.
+
+        Assigns the given roles to ``user_id``, but only those present in
+        ``allowed_role_ids`` - the admin-defined whitelist captured in the
+        onboarding step's options. Refuses the default role and any role that
+        grants the ``administrator`` permission to prevent privilege
+        escalation through self-service flows.
+
+        Returns the list of role IDs actually assigned.
+        """
+        member = self.manager.get_member(server_id, user_id)
+        if not member:
+            raise MemberNotFoundError("Member not found")
+
+        allowed = set(allowed_role_ids or [])
+        now = self.manager._get_timestamp()
+        assigned: List[SnowflakeID] = []
+
+        for role_id in role_ids:
+            if role_id not in allowed:
+                continue
+            row = self.db.fetch_one(
+                "SELECT * FROM srv_roles WHERE id = ? AND deleted = 0",
+                (role_id,),
+            )
+            if not row or row["server_id"] != server_id:
+                continue
+            if row["is_default"]:
+                continue
+
+            permissions = row["permissions"]
+            if isinstance(permissions, str):
+                permissions = json.loads(permissions) if permissions else {}
+            if permissions.get("administrator"):
+                continue
+
+            existing = self.db.fetch_one(
+                "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
+                (member.id, role_id),
+            )
+            if existing:
+                assigned.append(role_id)
+                continue
+
+            self.db.execute(
+                """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (self.manager._generate_id(), member.id, role_id, now, user_id),
+            )
+            self.manager._log_audit(
+                server_id,
+                user_id,
+                AuditLogAction.MEMBER_ROLE_ADD,
+                "member",
+                user_id,
+                {"role_id": role_id},
+            )
+            assigned.append(role_id)
+
+        if assigned:
+            from src.core.database import invalidate_pattern
+
+            self.manager._cache_invalidate(self.manager._permission_cache_prefix)
+            invalidate_pattern(f"perms:{user_id}:{server_id}:*")
+            invalidate_pattern("has_perm:*")
+            invalidate_pattern(f"member_data:*{user_id}*")
+
+        return assigned

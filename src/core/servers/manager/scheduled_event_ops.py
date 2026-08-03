@@ -491,10 +491,10 @@ class ScheduledEventManager:
         duration = (event.end_time - event.start_time) if event.end_time else 3600000
 
         for i, dt in enumerate(rule):
-            if i >= count:
-                break
             if i == 0:
                 continue
+            if len(instances) >= count:
+                break
 
             start_ms = int(dt.timestamp() * 1000)
             end_ms = start_ms + duration

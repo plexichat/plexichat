@@ -366,9 +366,13 @@ class TemplateManager:
 
     def delete_template(self, user_id: int, code: str) -> bool:
         """Delete a template."""
-        template = self.get_template(code, user_id)
-        if not template:
+        row = self._db.fetch_one(
+            "SELECT * FROM srv_templates WHERE code = ?",
+            (code,),
+        )
+        if not row:
             raise TemplateNotFoundError("Template not found")
+        template = self._row_to_template(row)
 
         if template.creator_id != user_id:
             raise PermissionDeniedError(
@@ -400,9 +404,13 @@ class TemplateManager:
         is_public: Optional[bool] = None,
     ) -> ServerTemplate:
         """Update template metadata."""
-        template = self.get_template(code, user_id)
-        if not template:
+        row = self._db.fetch_one(
+            "SELECT * FROM srv_templates WHERE code = ?",
+            (code,),
+        )
+        if not row:
             raise TemplateNotFoundError("Template not found")
+        template = self._row_to_template(row)
 
         if template.creator_id != user_id:
             raise PermissionDeniedError(
@@ -436,9 +444,11 @@ class TemplateManager:
             allowed_columns = {
                 "name",
                 "description",
+                "is_public",
                 "server_id",
                 "category_id",
                 "enabled",
+                "updated_at",
             }
             # Validate all column names in updates
             for update in updates:

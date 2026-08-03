@@ -15,22 +15,44 @@ from ..models import (
     Ban,
     ChannelType,
     AuditLogAction,
+    OnboardingStepType,
+    ScheduledEventType,
+    ScheduledEventStatus,
+    RSVPStatus,
 )
 from ..exceptions import (
     ServerAccessDeniedError,
+    ServerNotFoundError,
     PermissionDeniedError,
+    ChannelNotFoundError,
+    ChannelAccessDeniedError,
+    ChannelTypeError,
+    CategoryNotFoundError,
     InvalidChannelNameError,
     OwnerCannotLeaveError,
     MemberExistsError,
+    MemberNotFoundError,
     InviteNotFoundError,
+    InviteExpiredError,
     InviteMaxUsesError,
     UserBannedError,
     BanNotFoundError,
     BanExistsError,
     RoleHierarchyError,
+    RoleNotFoundError,
+    RoleAccessDeniedError,
     DefaultRoleError,
     InvalidRoleNameError,
     CannotModifyOwnerError,
+    ScheduledEventNotFoundError,
+    ScheduledEventError,
+    InvalidEventTimeError,
+    TemplateNotFoundError,
+    TemplateError,
+    InvalidTemplateCodeError,
+    WelcomeScreenNotFoundError,
+    OnboardingStepNotFoundError,
+    OnboardingError,
 )
 from .converters import (
     _row_to_channel,
@@ -44,6 +66,11 @@ from .member_ops import MemberOpsMixin
 from .permission_ops import PermissionOpsMixin
 from .invite_ops import InviteOpsMixin
 
+from ..onboarding_mixin import OnboardingMixin
+from ..event_mixin import EventMixin
+from ..template_mixin import TemplateMixin
+from ..welcome_mixin import WelcomeMixin
+
 
 class ServerManager(
     ServerOpsMixin,
@@ -53,37 +80,80 @@ class ServerManager(
     MemberOpsMixin,
     PermissionOpsMixin,
     InviteOpsMixin,
+    OnboardingMixin,
+    EventMixin,
+    TemplateMixin,
+    WelcomeMixin,
     BaseManager,
 ):
     """Core server manager handling all operations."""
 
     ChannelType = ChannelType
     AuditLogAction = AuditLogAction
+    OnboardingStepType = OnboardingStepType
+    ScheduledEventType = ScheduledEventType
+    ScheduledEventStatus = ScheduledEventStatus
+    RSVPStatus = RSVPStatus
 
     ServerAccessDeniedError = ServerAccessDeniedError
+    ServerNotFoundError = ServerNotFoundError
     PermissionDeniedError = PermissionDeniedError
+    ChannelNotFoundError = ChannelNotFoundError
+    ChannelAccessDeniedError = ChannelAccessDeniedError
+    ChannelTypeError = ChannelTypeError
+    CategoryNotFoundError = CategoryNotFoundError
     InvalidChannelNameError = InvalidChannelNameError
     OwnerCannotLeaveError = OwnerCannotLeaveError
     CannotModifyOwnerError = CannotModifyOwnerError
     MemberExistsError = MemberExistsError
+    MemberNotFoundError = MemberNotFoundError
     InviteNotFoundError = InviteNotFoundError
+    InviteExpiredError = InviteExpiredError
     InviteMaxUsesError = InviteMaxUsesError
     UserBannedError = UserBannedError
     BanNotFoundError = BanNotFoundError
     BanExistsError = BanExistsError
     RoleHierarchyError = RoleHierarchyError
+    RoleNotFoundError = RoleNotFoundError
+    RoleAccessDeniedError = RoleAccessDeniedError
     DefaultRoleError = DefaultRoleError
     InvalidRoleNameError = InvalidRoleNameError
+    ScheduledEventNotFoundError = ScheduledEventNotFoundError
+    ScheduledEventError = ScheduledEventError
+    InvalidEventTimeError = InvalidEventTimeError
+    TemplateNotFoundError = TemplateNotFoundError
+    TemplateError = TemplateError
+    InvalidTemplateCodeError = InvalidTemplateCodeError
+    WelcomeScreenNotFoundError = WelcomeScreenNotFoundError
+    OnboardingStepNotFoundError = OnboardingStepNotFoundError
+    OnboardingError = OnboardingError
 
     def _get_manager(self):
         """Compatibility helper for older tests and call sites."""
         return self
 
-    def __init__(self, db, auth_module=None, messaging_module=None):
+    def __init__(
+        self,
+        db,
+        auth_module=None,
+        messaging_module=None,
+        notifications_module=None,
+        events_module=None,
+    ):
         """Initialize the server manager."""
         super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._config = self._load_config()
+
+        from .onboarding_ops import OnboardingManager
+        from .scheduled_event_ops import ScheduledEventManager
+        from .template_ops import TemplateManager
+
+        self._onboarding_manager = OnboardingManager(db, self)
+        self._event_manager = ScheduledEventManager(
+            db, self, notifications_module, events_module
+        )
+        self._template_manager = TemplateManager(db, self)
         self._encrypt_descriptions = config.get(
             "encryption.encrypt_descriptions", False
         )
@@ -203,12 +273,15 @@ class ServerManager(
 
         if cached_row is None:
             row = self._db.fetch_one(
-                "SELECT * FROM srv_channels WHERE id = ?", (channel_id,)
+                "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
+                (channel_id,),
             )
             if row is None:
                 return None
             self._cache_set(self._channel_cache_prefix, cache_key, dict(row))
             cached_row = dict(row)
+        if cached_row.get("deleted"):
+            return None
         server_id = cached_row["server_id"]
 
         if not self._is_member(server_id, user_id):

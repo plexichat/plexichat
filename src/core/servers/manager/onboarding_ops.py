@@ -339,6 +339,7 @@ class OnboardingManager:
                 "required",
                 "options",
                 "position",
+                "updated_at",
             }
             # Validate all column names in updates
             for update in updates:
@@ -452,13 +453,15 @@ class OnboardingManager:
 
         if step.step_type == OnboardingStepType.SELECT_ROLES and response:
             selected_roles = response.get("selected_roles", [])
-            for role_id in selected_roles:
-                try:
-                    self._server_manager.assign_role(
-                        user_id, server_id, user_id, role_id
-                    )
-                except Exception:
-                    pass
+            allowed_roles = (step.options or {}).get("role_ids", [])
+            # Self-service assignment restricted to the admin-defined role
+            # whitelist captured in the step's options. This intentionally
+            # does not require "members.manage_roles" - the step creator's
+            # whitelist is the authorization - but refuses administrator
+            # roles to prevent privilege escalation.
+            self._server_manager.role_handler.assign_roles_from_whitelist(
+                user_id, server_id, selected_roles, allowed_roles
+            )
 
         completed_steps = progress.completed_steps + [step_id]
         now = self._get_timestamp()
