@@ -5,6 +5,7 @@ This is the default indexer that works out of the box with no external dependenc
 """
 
 import json
+import re
 from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
@@ -43,8 +44,19 @@ class SQLiteFTS5Indexer(BaseIndexer):
             return False
 
         try:
+            # Drop existing tables to ensure schema updates are applied
+            for table in [
+                "search_messages_fts",
+                "search_users_fts",
+                "search_servers_fts",
+            ]:
+                try:
+                    self._db.execute(f"DROP TABLE IF EXISTS {table}")
+                except Exception:
+                    pass
+
             self._db.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS search_messages_fts USING fts5(
+                CREATE VIRTUAL TABLE search_messages_fts USING fts5(
                     message_id UNINDEXED,
                     content,
                     author_id UNINDEXED,
@@ -58,12 +70,13 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     has_links UNINDEXED,
                     mentions UNINDEXED,
                     is_pinned UNINDEXED,
+                    attachment_types UNINDEXED,
                     tokenize='porter unicode61'
                 )
             """)
 
             self._db.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS search_users_fts USING fts5(
+                CREATE VIRTUAL TABLE search_users_fts USING fts5(
                     user_id UNINDEXED,
                     username,
                     display_name,
@@ -73,7 +86,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
             """)
 
             self._db.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS search_servers_fts USING fts5(
+                CREATE VIRTUAL TABLE search_servers_fts USING fts5(
                     server_id UNINDEXED,
                     name,
                     description,
@@ -114,16 +127,16 @@ class SQLiteFTS5Indexer(BaseIndexer):
             mentions_json = json.dumps(message.mentions) if message.mentions else "[]"
 
             self._db.execute(
-                """INSERT INTO search_messages_fts 
+                """INSERT INTO search_messages_fts
                    (message_id, content, author_id, author_username, conversation_id,
                     server_id, channel_id, created_at, has_attachments, has_embeds,
-                    has_links, mentions, is_pinned)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    has_links, mentions, is_pinned, attachment_types)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(message.message_id),
                     message.content or "",
                     str(message.author_id),
-                    "",
+                    message.author_username or "",
                     str(message.conversation_id),
                     str(message.server_id) if message.server_id else "",
                     str(message.channel_id) if message.channel_id else "",
@@ -133,6 +146,9 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     "1" if message.has_links else "0",
                     mentions_json,
                     "1" if message.is_pinned else "0",
+                    " ".join(message.attachment_types)
+                    if message.attachment_types
+                    else "",
                 ),
             )
 
@@ -192,9 +208,10 @@ class SQLiteFTS5Indexer(BaseIndexer):
             fts_query = self._build_fts_query(query)
 
             sql = """
-                SELECT message_id, content, author_id, conversation_id,
-                       server_id, channel_id, created_at, has_attachments,
-                       is_pinned, rank
+                SELECT message_id, content, author_id, author_username,
+                       conversation_id, server_id, channel_id, created_at,
+                       has_attachments, has_embeds, has_links, is_pinned,
+                       attachment_types, rank
                 FROM search_messages_fts
                 WHERE search_messages_fts MATCH ?
             """
@@ -232,6 +249,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     message_id=int(row["message_id"]),
                     content=row["content"] or "",
                     author_id=int(row["author_id"]) if row["author_id"] else 0,
+                    author_username=row["author_username"] or "",
                     conversation_id=int(row["conversation_id"])
                     if row["conversation_id"]
                     else 0,
@@ -239,6 +257,9 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     channel_id=int(row["channel_id"]) if row["channel_id"] else None,
                     created_at=int(row["created_at"]) if row["created_at"] else 0,
                     has_attachments=row["has_attachments"] == "1",
+                    has_embeds=row["has_embeds"] == "1",
+                    has_links=row["has_links"] == "1",
+                    attachment_types=list((row["attachment_types"] or "").split()),
                     is_pinned=row["is_pinned"] == "1",
                     score=abs(float(row["rank"])) if row["rank"] else 0.0,
                 )
@@ -474,17 +495,32 @@ class SQLiteFTS5Indexer(BaseIndexer):
         """Build FTS5 query from user query."""
         query = query.strip()
 
-        special_chars = ['"', "'", "(", ")", "*", ":", "-", "+", "^", "~"]
+        special_chars = ["(", ")", "*", ":", "-", "+", "^", "~"]
         clean_query = query
         for char in special_chars:
             clean_query = clean_query.replace(char, " ")
 
-        terms = [t.strip() for t in clean_query.split() if t.strip()]
+        phrases = []
+        for match in re.finditer(r'"([^"]+)"', clean_query):
+            phrases.append(match.group(1))
 
-        if not terms:
+        remaining = re.sub(r'"[^"]*"', "", clean_query)
+        terms = [t.strip() for t in remaining.split() if t.strip()]
+
+        all_tokens = []
+        for phrase in phrases:
+            safe_phrase = phrase.replace('"', "")
+            if safe_phrase:
+                all_tokens.append(f'"{safe_phrase}"')
+        for term in terms:
+            safe_term = term.replace('"', "")
+            if safe_term:
+                all_tokens.append(f'"{safe_term}"*')
+
+        if not all_tokens:
             return '""'
 
-        if len(terms) == 1:
-            return f'"{terms[0]}"*'
+        if len(all_tokens) == 1:
+            return all_tokens[0]
 
-        return " OR ".join(f'"{term}"*' for term in terms)
+        return " OR ".join(all_tokens)

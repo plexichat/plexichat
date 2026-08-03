@@ -25,6 +25,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_messages_fts USING fts5(
     has_links UNINDEXED,
     mentions UNINDEXED,
     is_pinned UNINDEXED,
+    attachment_types UNINDEXED,
     tokenize='porter unicode61'
 );
 
@@ -173,8 +174,17 @@ DEFAULT_CATEGORIES = [
 
 def create_tables(db):
     """Create all search tables including FTS5 virtual tables."""
-    statements = split_sql_statements(SCHEMA)
     db_type = getattr(db, "type", "sqlite")
+
+    # Drop FTS5 virtual tables first to ensure schema updates are applied
+    if db_type == "sqlite":
+        for table in ["search_messages_fts", "search_users_fts", "search_servers_fts"]:
+            try:
+                db.execute(f"DROP TABLE IF EXISTS {table}")
+            except Exception:
+                pass
+
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

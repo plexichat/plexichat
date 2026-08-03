@@ -37,3 +37,52 @@ class TestSearchSuggestions:
     def test_get_search_suggestions(self, seeded):
         suggestions = seeded.get_search_suggestions(user_id=1, partial_query="sea")
         assert isinstance(suggestions, list)
+
+
+class TestFriendLookupAgainstRelFriends:
+    """Regression: friend lookups must not reference a non-existent `status`
+    column on `rel_friends` (that column lives on `rel_friend_requests`).
+
+    Previously `_get_user_friend_ids` / `_get_user_friends_map` filtered with
+    `AND status = 'accepted'`, which raised `OperationalError: no such column:
+    status` on every call. The exception was swallowed, so friend-based
+    enrichment silently never ran.
+    """
+
+    @pytest.fixture
+    def seeded_friends(self, search_manager):
+        uid1 = 900000000000000001
+        uid2 = 900000000000000002
+        uid3 = 900000000000000003
+        now = search_manager._get_timestamp()
+
+        search_manager._db.execute(
+            "INSERT INTO rel_friends (id, user_id, friend_id, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (900000000000000011, uid1, uid2, now),
+        )
+        search_manager._db.execute(
+            "INSERT INTO rel_friends (id, user_id, friend_id, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (900000000000000012, uid2, uid1, now),
+        )
+        search_manager._db.execute(
+            "INSERT INTO rel_friends (id, user_id, friend_id, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (900000000000000013, uid1, uid3, now),
+        )
+        return uid1, uid2, uid3
+
+    def test_get_user_friend_ids_no_status_column(self, search_manager, seeded_friends):
+        uid1, uid2, uid3 = seeded_friends
+        assert search_manager._get_user_friend_ids(uid1) == {uid2, uid3}
+        assert search_manager._get_user_friend_ids(uid2) == {uid1}
+
+    def test_get_user_friends_map_no_status_column(
+        self, search_manager, seeded_friends
+    ):
+        uid1, uid2, uid3 = seeded_friends
+        mapping = search_manager._get_user_friends_map([uid1, uid2, uid3])
+        assert mapping[uid1] == {uid2, uid3}
+        assert mapping[uid2] == {uid1}
+        assert mapping[uid3] == set()

@@ -49,7 +49,8 @@ class PostgresIndexer(BaseIndexer):
                     has_embeds BOOLEAN,
                     has_links BOOLEAN,
                     mentions TEXT,
-                    is_pinned BOOLEAN
+                    is_pinned BOOLEAN,
+                    attachment_types TEXT
                 )
             """)
 
@@ -171,6 +172,9 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
 
             mentions_json = json.dumps(message.mentions) if message.mentions else "[]"
+            attachment_types_str = (
+                " ".join(message.attachment_types) if message.attachment_types else ""
+            )
 
             self._db.upsert(
                 "search_messages",
@@ -188,12 +192,13 @@ class PostgresIndexer(BaseIndexer):
                     "has_links",
                     "mentions",
                     "is_pinned",
+                    "attachment_types",
                 ],
                 (
                     message.message_id,
                     message.content or "",
                     message.author_id,
-                    "",
+                    message.author_username or "",
                     message.conversation_id,
                     message.server_id,
                     message.channel_id,
@@ -203,6 +208,7 @@ class PostgresIndexer(BaseIndexer):
                     message.has_links,
                     mentions_json,
                     message.is_pinned,
+                    attachment_types_str,
                 ),
                 ["message_id"],
             )
@@ -236,6 +242,15 @@ class PostgresIndexer(BaseIndexer):
         except Exception:
             return False
 
+    def _check_websearch_support(self) -> bool:
+        try:
+            self._db.fetch_one(
+                "SELECT 1 WHERE websearch_to_tsquery('english', 'test') IS NOT NULL"
+            )
+            return True
+        except Exception:
+            return False
+
     def search_messages(
         self,
         query: str,
@@ -251,15 +266,30 @@ class PostgresIndexer(BaseIndexer):
             if not query or not query.strip():
                 return []
 
-            # Use Postgres full-text search with ranking
-            sql = """
-                SELECT message_id, content, author_id, conversation_id, server_id, channel_id, 
-                       created_at, has_attachments, is_pinned,
-                       ts_rank_cd(search_vector, query) as rank
-                FROM search_messages, websearch_to_tsquery('english', ?) query
-                WHERE (search_vector @@ query OR content ILIKE ?)
-            """
-            params: List[Any] = [query, f"%{query}%"]
+            use_websearch = self._check_websearch_support()
+
+            if use_websearch:
+                sql = """
+                    SELECT message_id, content, author_id, author_username,
+                           conversation_id, server_id, channel_id,
+                           created_at, has_attachments, has_embeds, has_links,
+                           is_pinned, attachment_types,
+                           ts_rank_cd(search_vector, query) as rank
+                    FROM search_messages, websearch_to_tsquery('english', ?) query
+                    WHERE (search_vector @@ query OR content ILIKE ?)
+                """
+                params: List[Any] = [query, f"%{query}%"]
+            else:
+                sql = """
+                    SELECT message_id, content, author_id, author_username,
+                           conversation_id, server_id, channel_id,
+                           created_at, has_attachments, has_embeds, has_links,
+                           is_pinned, attachment_types,
+                           ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
+                    FROM search_messages
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR content ILIKE ?)
+                """
+                params = [query, query, f"%{query}%"]
 
             if conversation_ids:
                 sql += f" AND conversation_id IN ({','.join(['?'] * len(conversation_ids))})"
@@ -277,25 +307,28 @@ class PostgresIndexer(BaseIndexer):
                 sql += f" AND author_id IN ({','.join(['?'] * len(author_ids))})"
                 params.extend(author_ids)
 
-            # Avoid OFFSET scans on large datasets; fetch a bounded window and slice in memory.
-            fetch_count = max(0, int(limit)) + max(0, int(offset))
-            sql += " ORDER BY rank DESC, created_at DESC LIMIT ?"
-            params.append(fetch_count)
+            sql += " ORDER BY rank DESC, created_at DESC LIMIT ? OFFSET ?"
+            params.append(max(1, int(limit)))
+            params.append(max(0, int(offset)))
 
             rows = self._db.fetch_all(sql, tuple(params))
             results = []
-            for row in rows[offset : offset + limit]:
+            for row in rows:
                 results.append(
                     MessageSearchResult(
                         id=row["message_id"],
                         message_id=row["message_id"],
                         content=row["content"],
                         author_id=row["author_id"],
+                        author_username=row["author_username"] or "",
                         conversation_id=row["conversation_id"],
                         server_id=row["server_id"],
                         channel_id=row["channel_id"],
                         created_at=row["created_at"],
                         has_attachments=bool(row["has_attachments"]),
+                        has_embeds=bool(row["has_embeds"]),
+                        has_links=bool(row["has_links"]),
+                        attachment_types=list((row["attachment_types"] or "").split()),
                         is_pinned=bool(row["is_pinned"]),
                         score=row["rank"],
                     )
@@ -309,6 +342,8 @@ class PostgresIndexer(BaseIndexer):
         raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
         return base64.urlsafe_b64encode(raw).decode("ascii")
 
+    _EPSILON = 1e-6
+
     def _decode_cursor(self, cursor: Optional[str]) -> Optional[dict]:
         if not cursor:
             return None
@@ -318,6 +353,9 @@ class PostgresIndexer(BaseIndexer):
             return val if isinstance(val, dict) else None
         except Exception:
             return None
+
+    def _cursor_float_eq(self, a: float, b: float) -> bool:
+        return abs(a - b) < self._EPSILON
 
     def search_messages_page(
         self,
@@ -361,8 +399,10 @@ class PostgresIndexer(BaseIndexer):
                 sql += """
                     AND (
                         ts_rank_cd(search_vector, query) < ?
-                        OR (ts_rank_cd(search_vector, query) = ? AND created_at < ?)
-                        OR (ts_rank_cd(search_vector, query) = ? AND created_at = ? AND message_id < ?)
+                        OR (abs(ts_rank_cd(search_vector, query) - ?) < 0.0001
+                            AND created_at < ?)
+                        OR (abs(ts_rank_cd(search_vector, query) - ?) < 0.0001
+                            AND created_at = ? AND message_id < ?)
                     )
                 """
                 params.extend(
@@ -439,17 +479,44 @@ class PostgresIndexer(BaseIndexer):
     def search_users(self, query: str, limit=25, offset=0):
         try:
             self._ensure_initialized()
-            fetch_count = max(0, int(limit)) + max(0, int(offset))
-            sql = """
-                SELECT user_id, username, display_name, is_bot,
-                       ts_rank_cd(search_vector, query) as rank
-                FROM search_users, websearch_to_tsquery('english', ?) query
-                WHERE (search_vector @@ query OR username ILIKE ? OR display_name ILIKE ?)
-                ORDER BY rank DESC LIMIT ?
-            """
-            rows = self._db.fetch_all(
-                sql, (query, f"%{query}%", f"%{query}%", fetch_count)
-            )
+            if not query or not query.strip():
+                return []
+
+            use_websearch = self._check_websearch_support()
+
+            if use_websearch:
+                sql = """
+                    SELECT user_id, username, display_name, is_bot,
+                           ts_rank_cd(search_vector, query) as rank
+                    FROM search_users, websearch_to_tsquery('english', ?) query
+                    WHERE (search_vector @@ query OR username ILIKE ? OR display_name ILIKE ?)
+                    ORDER BY rank DESC LIMIT ? OFFSET ?
+                """
+                params = [
+                    query,
+                    f"%{query}%",
+                    f"%{query}%",
+                    max(1, int(limit)),
+                    max(0, int(offset)),
+                ]
+            else:
+                sql = """
+                    SELECT user_id, username, display_name, is_bot,
+                           ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
+                    FROM search_users
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR username ILIKE ? OR display_name ILIKE ?)
+                    ORDER BY rank DESC LIMIT ? OFFSET ?
+                """
+                params = [
+                    query,
+                    query,
+                    f"%{query}%",
+                    f"%{query}%",
+                    max(1, int(limit)),
+                    max(0, int(offset)),
+                ]
+
+            rows = self._db.fetch_all(sql, tuple(params))
             return [
                 UserSearchResult(
                     id=r["user_id"],
@@ -459,7 +526,7 @@ class PostgresIndexer(BaseIndexer):
                     is_bot=bool(r["is_bot"]),
                     score=r["rank"],
                 )
-                for r in rows[offset : offset + limit]
+                for r in rows
             ]
         except Exception:
             return []
@@ -474,19 +541,33 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             if not query or not query.strip():
                 return [], None
-            sql = """
-                SELECT user_id, username, display_name, is_bot,
-                       ts_rank_cd(search_vector, query) as rank
-                FROM search_users, websearch_to_tsquery('english', ?) query
-                WHERE (search_vector @@ query OR username ILIKE ? OR display_name ILIKE ?)
-            """
-            params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+
+            use_websearch = self._check_websearch_support()
+
+            if use_websearch:
+                sql = """
+                    SELECT user_id, username, display_name, is_bot,
+                           ts_rank_cd(search_vector, query) as rank
+                    FROM search_users, websearch_to_tsquery('english', ?) query
+                    WHERE (search_vector @@ query OR username ILIKE ? OR display_name ILIKE ?)
+                """
+                params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+            else:
+                sql = """
+                    SELECT user_id, username, display_name, is_bot,
+                           ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
+                    FROM search_users
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR username ILIKE ? OR display_name ILIKE ?)
+                """
+                params = [query, query, f"%{query}%", f"%{query}%"]
+
             decoded = self._decode_cursor(cursor)
             if decoded and decoded.get("kind") == "usr":
                 sql += """
                     AND (
                         ts_rank_cd(search_vector, query) < ?
-                        OR (ts_rank_cd(search_vector, query) = ? AND user_id < ?)
+                        OR (abs(ts_rank_cd(search_vector, query) - ?) < 0.0001
+                            AND user_id < ?)
                     )
                 """
                 params.extend(
@@ -496,6 +577,7 @@ class PostgresIndexer(BaseIndexer):
                         int(decoded.get("id", 0)),
                     ]
                 )
+
             sql += " ORDER BY rank DESC, user_id DESC LIMIT ?"
             params.append(max(1, int(limit)))
             rows = self._db.fetch_all(sql, tuple(params))
@@ -565,21 +647,38 @@ class PostgresIndexer(BaseIndexer):
     ):
         try:
             self._ensure_initialized()
-            sql = """
-                SELECT server_id, name, description, category, tags, member_count,
-                       ts_rank_cd(search_vector, query) as rank
-                FROM search_servers, websearch_to_tsquery('english', ?) query
-                WHERE (search_vector @@ query OR name ILIKE ? OR description ILIKE ?)
-            """
-            params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+            if not query or not query.strip():
+                return []
+
+            use_websearch = self._check_websearch_support()
+
+            if use_websearch:
+                sql = """
+                    SELECT server_id, name, description, category, tags, member_count,
+                           ts_rank_cd(search_vector, query) as rank
+                    FROM search_servers, websearch_to_tsquery('english', ?) query
+                    WHERE (search_vector @@ query OR name ILIKE ? OR description ILIKE ?)
+                """
+                params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+            else:
+                sql = """
+                    SELECT server_id, name, description, category, tags, member_count,
+                           ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
+                    FROM search_servers
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR name ILIKE ? OR description ILIKE ?)
+                """
+                params = [query, query, f"%{query}%", f"%{query}%"]
+
             if public_only:
                 sql += " AND is_public = TRUE"
             if category:
                 sql += " AND category = ?"
                 params.append(category)
-            fetch_count = max(0, int(limit)) + max(0, int(offset))
-            sql += " ORDER BY rank DESC LIMIT ?"
-            params.append(fetch_count)
+
+            sql += " ORDER BY rank DESC LIMIT ? OFFSET ?"
+            params.append(max(1, int(limit)))
+            params.append(max(0, int(offset)))
+
             rows = self._db.fetch_all(sql, tuple(params))
             return [
                 ServerSearchResult(
@@ -592,7 +691,7 @@ class PostgresIndexer(BaseIndexer):
                     member_count=r["member_count"],
                     score=r["rank"],
                 )
-                for r in rows[offset : offset + limit]
+                for r in rows
             ]
         except Exception:
             return []
@@ -609,24 +708,39 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             if not query or not query.strip():
                 return [], None
-            sql = """
-                SELECT server_id, name, description, category, tags, member_count,
-                       ts_rank_cd(search_vector, query) as rank
-                FROM search_servers, websearch_to_tsquery('english', ?) query
-                WHERE (search_vector @@ query OR name ILIKE ? OR description ILIKE ?)
-            """
-            params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+
+            use_websearch = self._check_websearch_support()
+
+            if use_websearch:
+                sql = """
+                    SELECT server_id, name, description, category, tags, member_count,
+                           ts_rank_cd(search_vector, query) as rank
+                    FROM search_servers, websearch_to_tsquery('english', ?) query
+                    WHERE (search_vector @@ query OR name ILIKE ? OR description ILIKE ?)
+                """
+                params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+            else:
+                sql = """
+                    SELECT server_id, name, description, category, tags, member_count,
+                           ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
+                    FROM search_servers
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR name ILIKE ? OR description ILIKE ?)
+                """
+                params = [query, query, f"%{query}%", f"%{query}%"]
+
             if public_only:
                 sql += " AND is_public = TRUE"
             if category:
                 sql += " AND category = ?"
                 params.append(category)
+
             decoded = self._decode_cursor(cursor)
             if decoded and decoded.get("kind") == "srv":
                 sql += """
                     AND (
                         ts_rank_cd(search_vector, query) < ?
-                        OR (ts_rank_cd(search_vector, query) = ? AND server_id < ?)
+                        OR (abs(ts_rank_cd(search_vector, query) - ?) < 0.0001
+                            AND server_id < ?)
                     )
                 """
                 params.extend(
@@ -636,6 +750,7 @@ class PostgresIndexer(BaseIndexer):
                         int(decoded.get("id", 0)),
                     ]
                 )
+
             sql += " ORDER BY rank DESC, server_id DESC LIMIT ?"
             params.append(max(1, int(limit)))
             rows = self._db.fetch_all(sql, tuple(params))

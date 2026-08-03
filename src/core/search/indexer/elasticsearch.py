@@ -115,10 +115,13 @@ class ElasticsearchIndexer(BaseIndexer):
         path: str,
         body: Optional[Dict] = None,
     ) -> Dict[str, Any]:
-        """Make HTTP request to Elasticsearch."""  # nosec B310
+        """Make HTTP request to Elasticsearch."""
         if self._http_client is None:
             try:
                 url = self._validate_http_url(f"{self._hosts[0]}{path}")
+                from src.utils.security import URLValidator
+
+                URLValidator().validate_url_for_request(url)
                 data = json.dumps(body).encode() if body else None
                 headers = {"Content-Type": "application/json"}
 
@@ -233,7 +236,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 "message_id": str(message.message_id),
                 "content": message.content or "",
                 "author_id": str(message.author_id),
-                "author_username": "",
+                "author_username": message.author_username or "",
                 "conversation_id": str(message.conversation_id),
                 "server_id": str(message.server_id) if message.server_id else None,
                 "channel_id": str(message.channel_id) if message.channel_id else None,
@@ -245,6 +248,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 if message.mentions
                 else [],
                 "is_pinned": message.is_pinned,
+                "attachment_types": message.attachment_types or [],
             }
 
             self._request(
@@ -282,6 +286,7 @@ class ElasticsearchIndexer(BaseIndexer):
                             "message_id": str(message.message_id),
                             "content": message.content or "",
                             "author_id": str(message.author_id),
+                            "author_username": message.author_username or "",
                             "conversation_id": str(message.conversation_id),
                             "server_id": str(message.server_id)
                             if message.server_id
@@ -297,6 +302,7 @@ class ElasticsearchIndexer(BaseIndexer):
                             if message.mentions
                             else [],
                             "is_pinned": message.is_pinned,
+                            "attachment_types": message.attachment_types or [],
                         }
                     )
                 )
@@ -366,14 +372,38 @@ class ElasticsearchIndexer(BaseIndexer):
 
             if conversation_ids:
                 must.append(
-                    {"terms": {"conversation_id": [str(c) for c in conversation_ids]}}
+                    {
+                        "terms": {
+                            "conversation_id": [
+                                str(c) for c in conversation_ids if c is not None
+                            ]
+                        }
+                    }
                 )
             if server_ids:
-                must.append({"terms": {"server_id": [str(s) for s in server_ids]}})
+                must.append(
+                    {
+                        "terms": {
+                            "server_id": [str(s) for s in server_ids if s is not None]
+                        }
+                    }
+                )
             if channel_ids:
-                must.append({"terms": {"channel_id": [str(c) for c in channel_ids]}})
+                must.append(
+                    {
+                        "terms": {
+                            "channel_id": [str(c) for c in channel_ids if c is not None]
+                        }
+                    }
+                )
             if author_ids:
-                must.append({"terms": {"author_id": [str(a) for a in author_ids]}})
+                must.append(
+                    {
+                        "terms": {
+                            "author_id": [str(a) for a in author_ids if a is not None]
+                        }
+                    }
+                )
 
             search_body = {
                 "query": {"bool": {"must": must}},
@@ -395,6 +425,7 @@ class ElasticsearchIndexer(BaseIndexer):
                         message_id=int(source.get("message_id", 0)),
                         content=source.get("content", ""),
                         author_id=int(source.get("author_id", 0)),
+                        author_username=source.get("author_username", ""),
                         conversation_id=int(source.get("conversation_id", 0)),
                         server_id=int(source["server_id"])
                         if source.get("server_id")
@@ -404,6 +435,9 @@ class ElasticsearchIndexer(BaseIndexer):
                         else None,
                         created_at=source.get("created_at", 0),
                         has_attachments=source.get("has_attachments", False),
+                        has_embeds=source.get("has_embeds", False),
+                        has_links=source.get("has_links", False),
+                        attachment_types=source.get("attachment_types", []),
                         is_pinned=source.get("is_pinned", False),
                         score=hit.get("_score", 0.0),
                     )

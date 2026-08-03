@@ -19,7 +19,7 @@ class FilterProcessor:
         self._servers = servers_module
 
         # Cache size limit from config
-        max_cache = config.get("redis.cache_max_items", 1000)
+        max_cache = config.get("search.cache_max_items", 1000)
 
         self._user_cache = CappedDict(max_size=max_cache)
         self._channel_cache = CappedDict(max_size=max_cache)
@@ -141,7 +141,7 @@ class FilterProcessor:
             return lambda r: "audio" in (r.attachment_types or [])
 
         if value_lower == "embed":
-            return lambda r: False  # Would need embed field in result
+            return lambda r: r.has_embeds
 
         return lambda r: r.has_attachments
 

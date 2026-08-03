@@ -77,10 +77,12 @@ class AccessControlMixin(SearchManagerBase):
         if server_id:
             try:
                 rows = self._db.fetch_all(
-                    "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND conversation_id IS NOT NULL",
+                    "SELECT id, conversation_id FROM srv_channels WHERE server_id = ? AND conversation_id IS NOT NULL",
                     (server_id,),
                 )
-                conversations.extend(row["conversation_id"] for row in rows)
+                for row in rows:
+                    if self._can_access_channel(user_id, row["id"]):
+                        conversations.append(row["conversation_id"])
             except Exception:
                 pass
         else:
@@ -139,13 +141,12 @@ class AccessControlMixin(SearchManagerBase):
         else:
             missing = uniq
         if missing:
-            member_rows = []
-            for uid in missing:
-                rows = self._db.fetch_all(
-                    "SELECT user_id, server_id FROM srv_members WHERE user_id = ?",
-                    (uid,),
-                )
-                member_rows.extend(rows)
+            member_rows = self._db.fetch_all(
+                "SELECT user_id, server_id FROM srv_members WHERE user_id IN ({})".format(
+                    ",".join(["?"] * len(missing))
+                ),
+                tuple(missing),
+            )
             for row in member_rows:
                 uid = int(row["user_id"])
                 sid = int(row["server_id"])
@@ -155,4 +156,48 @@ class AccessControlMixin(SearchManagerBase):
         if valkey_available():
             for uid in missing:
                 cache_set(f"user:servers:{uid}", list(result.get(uid, set())), ttl=300)
+        return result
+
+    def _get_user_friend_ids(self, user_id: int) -> set:
+        try:
+            rows = self._db.fetch_all(
+                "SELECT friend_id FROM rel_friends WHERE user_id = ?",
+                (user_id,),
+            )
+            return {row["friend_id"] for row in rows}
+        except Exception:
+            return set()
+
+    def _get_user_friends_map(self, user_ids: List[int]) -> Dict[int, set]:
+        from src.core.database import cache_get, cache_set, valkey_available
+
+        uniq = sorted({int(uid) for uid in user_ids if uid})
+        result: Dict[int, set] = {}
+        missing: List[int] = []
+        if valkey_available():
+            for uid in uniq:
+                cached = cache_get(f"user:friends:{uid}")
+                if isinstance(cached, list):
+                    result[uid] = {int(x) for x in cached}
+                else:
+                    missing.append(uid)
+        else:
+            missing = uniq
+        if missing:
+            friend_rows = []
+            for uid in missing:
+                rows = self._db.fetch_all(
+                    "SELECT user_id, friend_id FROM rel_friends WHERE user_id = ?",
+                    (uid,),
+                )
+                friend_rows.extend(rows)
+            for row in friend_rows:
+                uid = int(row["user_id"])
+                fid = int(row["friend_id"])
+                if uid not in result:
+                    result[uid] = set()
+                result[uid].add(fid)
+        if valkey_available():
+            for uid in missing:
+                cache_set(f"user:friends:{uid}", list(result.get(uid, set())), ttl=300)
         return result

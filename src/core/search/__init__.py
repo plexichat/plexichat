@@ -43,6 +43,12 @@ from .exceptions import (
     DiscoveryError,
     ServerNotListedError,
     VerificationError,
+    BumpCooldownError,
+    CooldownError,
+    CategoryNotFoundError,
+    MinimumMembersError,
+    NotListedError,
+    AlreadyListedError,
 )
 
 __all__ = [
@@ -70,6 +76,12 @@ __all__ = [
     "DiscoveryError",
     "ServerNotListedError",
     "VerificationError",
+    "BumpCooldownError",
+    "CooldownError",
+    "CategoryNotFoundError",
+    "MinimumMembersError",
+    "NotListedError",
+    "AlreadyListedError",
     # Setup
     "setup",
     # Message search

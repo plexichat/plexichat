@@ -51,11 +51,16 @@ class EnrichmentMixin(SearchManagerBase):
         user_id: int,
     ) -> List[UserSearchResult]:
         current_user_servers = self._get_user_server_ids(user_id)
+        current_user_friends = self._get_user_friend_ids(user_id)
         target_ids = [r.user_id for r in results]
         targets_map = self._get_user_servers_map(target_ids)
+        friends_map = self._get_user_friends_map(target_ids)
         for r in results:
             r.mutual_servers = len(
                 current_user_servers & targets_map.get(r.user_id, set())
+            )
+            r.mutual_friends = len(
+                current_user_friends & friends_map.get(r.user_id, set())
             )
         return results
 

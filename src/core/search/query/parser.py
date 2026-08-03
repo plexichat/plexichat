@@ -37,10 +37,6 @@ HAS_VALUES = {"link", "image", "file", "embed", "video", "audio", "attachment"}
 DATE_FORMATS = [
     "%Y-%m-%d",
     "%Y/%m/%d",
-    "%d-%m-%Y",
-    "%d/%m/%Y",
-    "%m-%d-%Y",
-    "%m/%d/%Y",
 ]
 
 RELATIVE_DATE_PATTERN = re.compile(r"^(\d+)(d|w|m|y)$", re.IGNORECASE)

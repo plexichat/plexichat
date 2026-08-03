@@ -94,6 +94,8 @@ class MessageSearchResult(SearchResult):
     channel_name: Optional[str] = None
     created_at: int = 0
     has_attachments: bool = False
+    has_embeds: bool = False
+    has_links: bool = False
     attachment_types: List[str] = field(default_factory=list)
     reactions: List[str] = field(default_factory=list)
     is_pinned: bool = False
@@ -206,6 +208,7 @@ class IndexedMessage:
     content: str
     author_id: SnowflakeID
     conversation_id: SnowflakeID
+    author_username: str = ""
     server_id: Optional[SnowflakeID] = None
     channel_id: Optional[SnowflakeID] = None
     created_at: int = 0

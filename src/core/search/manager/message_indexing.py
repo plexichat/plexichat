@@ -22,11 +22,13 @@ class MessageIndexingMixin(SearchManagerBase):
             message_id=message_id,
             content=content,
             author_id=metadata.get("author_id", 0),
+            author_username=metadata.get("author_username", ""),
             conversation_id=metadata.get("conversation_id", 0),
             server_id=metadata.get("server_id"),
             channel_id=metadata.get("channel_id"),
             created_at=metadata.get("created_at", self._get_timestamp()),
             has_attachments=metadata.get("has_attachments", False),
+            attachment_types=metadata.get("attachment_types", []),
             has_embeds=metadata.get("has_embeds", False),
             has_links="http://" in content or "https://" in content,
             mentions=metadata.get("mentions", []),
@@ -105,9 +107,13 @@ class MessageIndexingMixin(SearchManagerBase):
                 content=plaintext,
                 metadata={
                     "author_id": msg["author_id"],
+                    "author_username": msg.get("author_username", ""),
                     "conversation_id": msg["conversation_id"],
                     "created_at": msg["created_at"],
                     "source_updated_at": msg.get("updated_at", 0) or 0,
+                    "has_attachments": msg.get("has_attachments", False),
+                    "attachment_types": msg.get("attachment_types", []),
+                    "has_embeds": msg.get("has_embeds", False),
                 },
             )
             indexed += 1
@@ -124,56 +130,10 @@ class MessageIndexingMixin(SearchManagerBase):
 
         return indexed
 
-    def reindex_conversation(self, conversation_id: int, force: bool = False) -> int:
-        if not self._messaging:
-            return 0
-
-        if force:
-            messages = self._db.fetch_all(
-                """SELECT id, content, content_encrypted, author_id,
-                          conversation_id, created_at, updated_at
-                   FROM msg_messages
-                   WHERE conversation_id = ? AND deleted = 0""",
-                (conversation_id,),
-            )
-        else:
-            messages = self._db.fetch_all(
-                """SELECT m.id, m.content, m.content_encrypted, m.author_id,
-                          m.conversation_id, m.created_at, m.updated_at
-                   FROM msg_messages m
-                   LEFT JOIN search_message_index i ON m.id = i.message_id
-                   WHERE m.conversation_id = ? AND m.deleted = 0
-                     AND (i.message_id IS NULL
-                          OR m.updated_at > COALESCE(i.source_updated_at, 0))""",
-                (conversation_id,),
-            )
-
-        indexed = 0
-        for msg in messages:
-            plaintext = self._decrypt_message_content(
-                msg["content"], msg.get("content_encrypted"), msg["id"]
-            )
-            self.index_message(
-                message_id=msg["id"],
-                content=plaintext,
-                metadata={
-                    "author_id": msg["author_id"],
-                    "conversation_id": conversation_id,
-                    "created_at": msg["created_at"],
-                    "source_updated_at": msg.get("updated_at", 0) or 0,
-                },
-            )
-            indexed += 1
-
-        return indexed
-
     def _decrypt_message_content(
         self, content: Optional[str], content_encrypted: Optional[str], message_id: int
     ) -> str:
-        if not content:
-            return ""
-
-        if is_message_encrypted(content):
+        if content and is_message_encrypted(content):
             try:
                 return decrypt_message(content, message_id)
             except Exception as e:
@@ -182,7 +142,7 @@ class MessageIndexingMixin(SearchManagerBase):
                 )
                 return ""
 
-        if content == "[encrypted]" and content_encrypted:
+        if (not content or content == "[encrypted]") and content_encrypted:
             try:
                 return decrypt_data(content_encrypted)
             except Exception as e:
@@ -191,4 +151,4 @@ class MessageIndexingMixin(SearchManagerBase):
                 )
                 return ""
 
-        return content
+        return content or ""

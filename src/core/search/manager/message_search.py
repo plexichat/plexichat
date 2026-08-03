@@ -117,7 +117,7 @@ class MessageSearchMixin(SearchManagerBase):
             server_ids=[server_id] if server_id else None,
             channel_ids=[channel_id] if channel_id else None,
             author_ids=[author_id] if author_id is not None else None,
-            limit=limit,
+            limit=limit * 2,
             cursor=cursor,
         )
 
@@ -143,18 +143,26 @@ class MessageSearchMixin(SearchManagerBase):
             results, parsed, self._get_timestamp()
         )
 
-        return MessageSearchResultPage(results=results, next_cursor=next_cursor)
+        return MessageSearchResultPage(results=results[:limit], next_cursor=next_cursor)
 
     def search_server_messages(
         self,
         user_id: int,
         server_id: int,
         query: str,
+        channel_id: Optional[int] = None,
         limit: int = 25,
         offset: int = 0,
     ) -> List[MessageSearchResult]:
         if not self._can_access_server(user_id, server_id):
             return []
+        if channel_id is not None and not self._can_access_channel(user_id, channel_id):
+            return []
         return self.search_messages(
-            user_id, query, server_id=server_id, limit=limit, offset=offset
+            user_id,
+            query,
+            server_id=server_id,
+            channel_id=channel_id,
+            limit=limit,
+            offset=offset,
         )

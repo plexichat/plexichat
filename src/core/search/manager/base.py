@@ -165,6 +165,10 @@ class SearchManagerBase(BaseManager):
 
     def _get_user_servers_map(self, user_ids: List[int]) -> Dict[int, set]: ...
 
+    def _get_user_friend_ids(self, user_id: int) -> set: ...
+
+    def _get_user_friends_map(self, user_ids: List[int]) -> Dict[int, set]: ...
+
     def _enrich_message_results(
         self,
         results: List[MessageSearchResult],
@@ -191,3 +195,7 @@ class SearchManagerBase(BaseManager):
         name_col: str,
         ttl: int = 300,
     ) -> Dict[int, str]: ...
+
+    def reindex_conversation(
+        self, conversation_id: int, force: bool = False
+    ) -> int: ...

@@ -1,3 +1,4 @@
+import threading
 import time
 
 
@@ -7,26 +8,29 @@ from ..exceptions import SearchRateLimitError
 
 
 class RateLimitMixin(SearchManagerBase):
+    _rate_limit_lock = threading.Lock()
+
     def _check_rate_limit(self, user_id: int) -> None:
         rate_limit = self._config.get("rate_limit_per_minute")
         if not rate_limit:
             return
 
         if not valkey_available():
-            now = time.time() * 1000
-            window_start = self._search_rate_window_started_ms.get(user_id)
-            if window_start is None or now - window_start >= 60_000:
-                self._search_rate_window_started_ms[user_id] = now
-                self._search_rate_count[user_id] = 0
+            with self._rate_limit_lock:
+                now = time.time() * 1000
+                window_start = self._search_rate_window_started_ms.get(user_id)
+                if window_start is None or now - window_start >= 60_000:
+                    self._search_rate_window_started_ms[user_id] = now
+                    self._search_rate_count[user_id] = 0
 
-            self._search_rate_count[user_id] = (
-                self._search_rate_count.get(user_id, 0) + 1
-            )
-
-            if self._search_rate_count[user_id] > int(rate_limit):
-                raise SearchRateLimitError(
-                    "Search rate limit exceeded", retry_after_seconds=60
+                self._search_rate_count[user_id] = (
+                    self._search_rate_count.get(user_id, 0) + 1
                 )
+
+                if self._search_rate_count[user_id] > int(rate_limit):
+                    raise SearchRateLimitError(
+                        "Search rate limit exceeded", retry_after_seconds=60
+                    )
             return
 
         window_start_key = f"search:rate_limit:{user_id}:window_start"
@@ -39,8 +43,8 @@ class RateLimitMixin(SearchManagerBase):
             cache_set(window_start_key, now, ttl=60)
             cache_set(count_key, 1, ttl=60)
         else:
-            current_count = int(cache_get(count_key) or 0)
-            new_count = current_count + 1
+            new_count = cache_get(count_key) or 0
+            new_count = int(new_count) + 1
             cache_set(count_key, new_count, ttl=60)
 
             if new_count > int(rate_limit):

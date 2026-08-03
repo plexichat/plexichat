@@ -121,6 +121,9 @@ class MeilisearchIndexer(BaseIndexer):
         # nosec B310
         try:
             url = self._validate_http_url(f"{self._host}{path}")
+            from src.utils.security import URLValidator
+
+            URLValidator().validate_url_for_request(url)
             data = json.dumps(body).encode() if body else None
             headers = {"Content-Type": "application/json"}
 
@@ -226,7 +229,7 @@ class MeilisearchIndexer(BaseIndexer):
                 "message_id": str(message.message_id),
                 "content": message.content or "",
                 "author_id": str(message.author_id),
-                "author_username": "",
+                "author_username": message.author_username or "",
                 "conversation_id": str(message.conversation_id),
                 "server_id": str(message.server_id) if message.server_id else None,
                 "channel_id": str(message.channel_id) if message.channel_id else None,
@@ -238,6 +241,7 @@ class MeilisearchIndexer(BaseIndexer):
                 if message.mentions
                 else [],
                 "is_pinned": message.is_pinned,
+                "attachment_types": message.attachment_types or [],
             }
 
             self._request("POST", f"/indexes/{self._message_index}/documents", [doc])
@@ -262,6 +266,7 @@ class MeilisearchIndexer(BaseIndexer):
                         "message_id": str(message.message_id),
                         "content": message.content or "",
                         "author_id": str(message.author_id),
+                        "author_username": message.author_username or "",
                         "conversation_id": str(message.conversation_id),
                         "server_id": str(message.server_id)
                         if message.server_id
@@ -277,6 +282,7 @@ class MeilisearchIndexer(BaseIndexer):
                         if message.mentions
                         else [],
                         "is_pinned": message.is_pinned,
+                        "attachment_types": message.attachment_types or [],
                     }
                 )
 
@@ -363,6 +369,7 @@ class MeilisearchIndexer(BaseIndexer):
                         message_id=int(hit.get("message_id", 0)),
                         content=hit.get("content", ""),
                         author_id=int(hit.get("author_id", 0)),
+                        author_username=hit.get("author_username", ""),
                         conversation_id=int(hit.get("conversation_id", 0)),
                         server_id=int(hit["server_id"])
                         if hit.get("server_id")
@@ -372,8 +379,11 @@ class MeilisearchIndexer(BaseIndexer):
                         else None,
                         created_at=hit.get("created_at", 0),
                         has_attachments=hit.get("has_attachments", False),
+                        has_embeds=hit.get("has_embeds", False),
+                        has_links=hit.get("has_links", False),
+                        attachment_types=hit.get("attachment_types", []),
                         is_pinned=hit.get("is_pinned", False),
-                        score=1.0,
+                        score=hit.get("_score", 1.0),
                     )
                 )
 
