@@ -13,10 +13,9 @@ Usage:
     result = media.upload_file(user_id=1, file_data=data, filename="image.jpg")
 """
 
-from typing import Optional, Dict, Any, BinaryIO, Tuple, TYPE_CHECKING
+from typing import Optional, Dict, Any, BinaryIO, Tuple
 
-if TYPE_CHECKING:
-    from .manager import MediaManager
+from .manager import MediaManager
 
 from .models import (
     MediaFile,
@@ -137,6 +136,11 @@ __all__ = [
     "complete_upload_session",
     "complete_upload_session_stream",
     "cancel_upload_session",
+    # Server-authored blobs (Suite workbook files, etc.)
+    "store_blob",
+    "retrieve_blob",
+    "delete_blob",
+    "get_blob_size",
 ]
 
 _manager = None
@@ -161,7 +165,6 @@ def setup(db: Any, messaging_module: Optional[Any] = None) -> None:
         _chunked_manager, \
         _setup_complete
 
-    from .manager import MediaManager
     from .deduplication import DeduplicationManager
     from .compression import CompressionManager
     from .chunked import ChunkedUploadManager
@@ -178,6 +181,38 @@ def _get_manager() -> MediaManager:
     if not _setup_complete or _manager is None:
         raise RuntimeError("Media module not initialized. Call media.setup(db) first.")
     return _manager
+
+
+# === Server-authored blob storage ===
+
+
+def store_blob(
+    data: bytes,
+    key: str,
+    content_type: str = "application/octet-stream",
+) -> str:
+    """Store raw server-authored bytes through the active storage adapter.
+
+    Returns an opaque storage path. Used by Suite domains (PlexiSum
+    ``.plexisum`` workbook files) to persist independent database files through
+    the same S3/local adapter as media, without the media upload pipeline.
+    """
+    return _get_manager().store_blob(data, key, content_type)
+
+
+def retrieve_blob(path: str) -> bytes:
+    """Retrieve raw bytes previously stored with store_blob()."""
+    return _get_manager().retrieve_blob(path)
+
+
+def delete_blob(path: str) -> bool:
+    """Delete a stored blob path."""
+    return _get_manager().delete_blob(path)
+
+
+def get_blob_size(path: str) -> int:
+    """Return a stored blob's size in bytes."""
+    return _get_manager().get_blob_size(path)
 
 
 # === File Operations ===

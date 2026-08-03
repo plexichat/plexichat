@@ -82,6 +82,7 @@ class SelfTestContext:
         self.test_stash_item_id: Optional[str] = None
         self.test_sum_workbook_id: Optional[str] = None
         self.test_sum_sheet_id: Optional[str] = None
+        self.test_sum_operation_id: Optional[str] = None
 
         self.results: List[Dict[str, Any]] = []
         self.start_time = 0.0

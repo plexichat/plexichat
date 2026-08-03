@@ -51,6 +51,7 @@ class CleanupService:
                 "poll_polls",
                 "poll_options",
                 "poll_votes",
+                "poll_voters",
                 "thread_threads",
                 "sticker_stickers",
                 "sticker_packs",
@@ -121,17 +122,19 @@ class CleanupService:
         # parents so this remains safe when foreign keys are enabled, while
         # tolerating installations created before the suite tables existed.
         for statement, params in (
-            ("DELETE FROM sum_operations WHERE actor_id = ?", (uid,)),
             (
-                "DELETE FROM sum_operations WHERE workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                "DELETE FROM sum_range_permissions WHERE workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
                 (uid,),
             ),
             (
-                "DELETE FROM sum_cells WHERE workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                "DELETE FROM sum_grants WHERE workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
                 (uid,),
             ),
             (
-                "DELETE FROM sum_sheets WHERE workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                "DELETE FROM sum_snapshots WHERE workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
                 (uid,),
             ),
             ("DELETE FROM sum_workbooks WHERE owner_id = ?", (uid,)),

@@ -29,6 +29,7 @@ from ._config import (  # noqa: F401  (re-exported for convenience)
 )
 from ._validation import _ValidationMixin
 from ._storage_setup import _StorageSetupMixin
+from ._blobs import _BlobMixin
 from ._rate_limit import _RateLimitMixin
 from ._upload import _UploadMixin
 from ._thumbnails import _ThumbnailsMixin
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 class MediaManager(
     _ValidationMixin,
     _StorageSetupMixin,
+    _BlobMixin,
     _RateLimitMixin,
     _UploadMixin,
     _ThumbnailsMixin,

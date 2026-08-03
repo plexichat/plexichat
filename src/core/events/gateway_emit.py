@@ -236,6 +236,32 @@ def emit_thread_delete(
 
 
 # --------------------------------------------------------------------------
+# PlexiSum workbooks (realtime collaboration)
+# --------------------------------------------------------------------------
+def emit_workbook_update(
+    workbook_id: int,
+    revision: int,
+    actor_id: int,
+    data: Dict[str, Any],
+    user_ids: Optional[List[int]] = None,
+    exclude_user_ids: Optional[List[int]] = None,
+) -> None:
+    """Notify everyone with workbook access that a mutation landed.
+
+    The actor is typically excluded (they applied the change locally); every
+    other viewer refreshes their viewport when the event arrives. ``data``
+    carries the workbook id, new revision, actor id, and any extras (e.g.
+    mention targets for comments).
+    """
+    _emit(
+        EventType.WORKBOOK_UPDATE,
+        data,
+        user_ids=user_ids,
+        exclude_user_ids=exclude_user_ids,
+    )
+
+
+# --------------------------------------------------------------------------
 # Security / account alerts (bridges the audit log to live clients)
 # --------------------------------------------------------------------------
 def emit_security_alert(

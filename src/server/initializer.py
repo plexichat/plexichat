@@ -189,6 +189,23 @@ def initialize_modules(
         for t in threads_list:
             t.join()
 
+    # PlexiSum workbook files are independent SQLite databases (``.plexisum``)
+    # stored through the main file-storage adapter. Wire the blob boundary now
+    # that media is available so workbook reads/writes never touch the main
+    # database. The API bootstrap already wired a fallback store for isolated
+    # fixtures; production startup re-points to the real adapter here.
+    try:
+        from src.core.suite import sum as sum_domain
+
+        sum_domain.setup(
+            db,
+            servers_module=servers,
+            media=media,
+        )
+        logger.info("PlexiSum workbook blob store wired to media adapter")
+    except Exception as exc:
+        logger.warning("PlexiSum blob store setup failed: %s", exc)
+
     email_config = config.get("email", {})
     email_sender = None
     smtp_password = os.getenv("PLEXICHAT_SMTP_PASSWORD")

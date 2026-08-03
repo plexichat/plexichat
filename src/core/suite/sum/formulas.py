@@ -1,0 +1,690 @@
+"""Bounded formula evaluator for PlexiSum.
+
+Formulas are stored as raw text (after the ``=``) in ``sum_cells.formula``
+and evaluated on read against a resolver supplied by the caller. The engine
+supports arithmetic, comparisons, string concatenation, cell references,
+ranges, cross-sheet references, and a compact set of common functions.
+
+Every evaluation is bounded: a maximum dependency count, a maximum call
+depth, and cycle detection guarantee a single malicious or accidental formula
+cannot stall a viewport read. Errors propagate as ``#...`` strings.
+
+The engine is deliberately dependency-free and deterministic so it can be
+unit-tested in isolation and reused by viewport reads, CSV export, and sort.
+"""
+
+import math
+import re
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+# Sentinel error codes returned (not raised) to callers as strings.
+DIV_ZERO = "#DIV/0!"
+VALUE_ERROR = "#VALUE!"
+REF_ERROR = "#REF!"
+NAME_ERROR = "#NAME?"
+NUM_ERROR = "#NUM!"
+CYCLE_ERROR = "#CYCLE!"
+N_A_ERROR = "#N/A"
+ERROR_CODES = (
+    DIV_ZERO,
+    VALUE_ERROR,
+    REF_ERROR,
+    NAME_ERROR,
+    NUM_ERROR,
+    CYCLE_ERROR,
+    N_A_ERROR,
+)
+
+MAX_DEPENDENCIES = 200_000
+MAX_CALL_DEPTH = 100
+
+# A resolver returns the raw cell as a dict with at least
+# ``value_type`` and ``value`` (and optionally ``formula``), or ``None``.
+CellResolver = Callable[[Optional[str], int, int], Optional[Dict[str, Any]]]
+
+
+def is_error(value: Any) -> bool:
+    return isinstance(value, str) and value in ERROR_CODES
+
+
+# ── tokenizer ────────────────────────────────────────────────────────────────
+
+_TOKEN_RE = re.compile(
+    r"""
+    (?P<ws>\s+)
+  | (?P<num>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)
+  | (?P<str>"(?:[^"]|"")*")
+  |    (?P<ref>(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?\d+(?::(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?\d+)?)
+  | (?P<op><=|>=|<>|=|<|>|\+|-|\*|/|\^|&|%)
+  | (?P<lparen>\()
+  | (?P<rparen>\))
+  | (?P<comma>,)
+  | (?P<id>[A-Za-z_][A-Za-z0-9_]*)
+    """,
+    re.VERBOSE,
+)
+
+
+class _Token:
+    __slots__ = ("kind", "value")
+
+    def __init__(self, kind: str, value: Any) -> None:
+        self.kind = kind
+        self.value = value
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return f"Token({self.kind}, {self.value!r})"
+
+
+def _tokenize(text: str) -> List[_Token]:
+    tokens: List[_Token] = []
+    pos = 0
+    while pos < len(text):
+        match = _TOKEN_RE.match(text, pos)
+        if match is None:
+            raise ValueError(f"Unexpected character at position {pos}")
+        pos = match.end()
+        kind = match.lastgroup  # type: ignore[attr-defined]
+        if kind == "ws":
+            continue
+        raw = match.group()
+        if kind == "num":
+            tokens.append(_Token("num", float(raw)))
+        elif kind == "str":
+            tokens.append(_Token("str", raw[1:-1].replace('""', '"')))
+        elif kind == "ref":
+            tokens.append(_Token("ref", raw))
+        elif kind == "id":
+            upper = raw.upper()
+            if upper == "TRUE":
+                tokens.append(_Token("bool", True))
+            elif upper == "FALSE":
+                tokens.append(_Token("bool", False))
+            else:
+                tokens.append(_Token("id", upper))
+        elif kind == "lparen":
+            tokens.append(_Token("lparen", "("))
+        elif kind == "rparen":
+            tokens.append(_Token("rparen", ")"))
+        elif kind == "comma":
+            tokens.append(_Token("comma", ","))
+        else:
+            tokens.append(_Token("op", raw))
+    tokens.append(_Token("eof", None))
+    return tokens
+
+
+# ── cell reference parsing ───────────────────────────────────────────────────
+
+_CELL_RE = re.compile(
+    r"^(?:(?:'([^']*)'|([A-Za-z_][A-Za-z0-9_]*))!)?\$?([A-Za-z]+)\$?(\d+)$"
+)
+
+
+def parse_cell_ref(text: str) -> Tuple[Optional[str], int, int]:
+    """Parse ``Sheet2!A1`` or ``'Sheet 1'!A1`` -> (sheet_name, row, col).
+
+    Absolute ``$`` markers are ignored, and single-quoted sheet names (the
+    Excel convention for names containing spaces or punctuation, e.g. the
+    default ``Sheet 1``) are accepted.
+    """
+    match = _CELL_RE.match(text)
+    if not match:
+        raise ValueError(f"Invalid cell reference {text!r}")
+    quoted, unquoted, letters, row_text = match.groups()
+    sheet = quoted if quoted is not None else unquoted
+    column = 0
+    for char in letters.upper():
+        column = column * 26 + (ord(char) - 64)
+    return sheet, int(row_text) - 1, column - 1
+
+
+# ── parser ───────────────────────────────────────────────────────────────────
+
+
+class _Parser:
+    def __init__(self, tokens: List[_Token]) -> None:
+        self._tokens = tokens
+        self._index = 0
+
+    def _peek(self) -> _Token:
+        return self._tokens[self._index]
+
+    def _advance(self) -> _Token:
+        token = self._tokens[self._index]
+        if token.kind != "eof":
+            self._index += 1
+        return token
+
+    def _expect_op(self, op: str) -> None:
+        # Matching by value (not kind) so ``(`` works both as a grouping
+        # parenthesis and as a function-call delimiter.
+        token = self._peek()
+        if token.value != op:
+            raise ValueError(f"Expected {op!r}")
+
+    def parse(self) -> Any:
+        node = self._expr()
+        if self._peek().kind != "eof":
+            raise ValueError("Unexpected trailing input")
+        return node
+
+    def _expr(self) -> Any:
+        # comparison / equality (lowest precedence)
+        node = self._additive()
+        while self._peek().kind == "op" and self._peek().value in (
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "=",
+            "<>",
+        ):
+            op = self._advance().value
+            right = self._additive()
+            node = ("cmp", op, node, right)
+        return node
+
+    def _additive(self) -> Any:
+        node = self._multiplicative()
+        while self._peek().kind == "op" and self._peek().value in ("+", "-", "&"):
+            op = self._advance().value
+            right = self._multiplicative()
+            node = (op, node, right)
+        return node
+
+    def _multiplicative(self) -> Any:
+        node = self._power()
+        while self._peek().kind == "op" and self._peek().value in ("*", "/"):
+            op = self._advance().value
+            right = self._power()
+            node = (op, node, right)
+        return node
+
+    def _power(self) -> Any:
+        node = self._unary()
+        if self._peek().kind == "op" and self._peek().value == "^":
+            self._advance()
+            right = self._power()
+            node = ("^", node, right)
+        return node
+
+    def _unary(self) -> Any:
+        token = self._peek()
+        if token.kind == "op" and token.value in ("+", "-"):
+            self._advance()
+            operand = self._unary()
+            return ("neg", operand) if token.value == "-" else operand
+        node = self._postfix()
+        if self._peek().kind == "op" and self._peek().value == "%":
+            self._advance()
+            return ("%", node)
+        return node
+
+    def _postfix(self) -> Any:
+        token = self._peek()
+        if token.kind == "num":
+            self._advance()
+            return ("num", token.value)
+        if token.kind == "str":
+            self._advance()
+            return ("str", token.value)
+        if token.kind == "bool":
+            self._advance()
+            return ("bool", token.value)
+        if token.kind == "ref":
+            self._advance()
+            return ("ref", token.value)
+        if token.kind == "id":
+            self._advance()
+            self._expect_op("(")
+            self._advance()
+            args: List[Any] = []
+            if self._peek().kind != "rparen":
+                while True:
+                    args.append(self._expr())
+                    if self._peek().kind == "comma":
+                        self._advance()
+                        continue
+                    break
+            self._expect_op(")")
+            self._advance()
+            return ("call", token.value, args)
+        if token.kind == "lparen":
+            self._advance()
+            node = self._expr()
+            self._expect_op(")")
+            self._advance()
+            return node
+        raise ValueError(f"Unexpected token {token!r}")
+
+
+def parse_formula(text: str) -> Any:
+    return _Parser(_tokenize(text)).parse()
+
+
+# ── evaluation ───────────────────────────────────────────────────────────────
+
+
+def _to_number(value: Any) -> float:
+    if value is None:
+        # Blank cells coerce to zero in arithmetic (Excel behavior); only
+        # text that cannot be parsed stays a #VALUE! error.
+        return 0.0
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            raise ValueError(VALUE_ERROR)
+    raise ValueError(VALUE_ERROR)
+
+
+def _to_text(value: Any) -> str:
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _numeric(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+class FormulaEvaluator:
+    """Evaluate parsed formula ASTs against a resolver with hard bounds."""
+
+    def __init__(
+        self, resolver: CellResolver, dependencies: int = MAX_DEPENDENCIES
+    ) -> None:
+        self._resolver = resolver
+        self._dependencies = dependencies
+        self._used = 0
+        # Cache key includes the formula text: the same coordinates may be
+        # evaluated with a different formula when the evaluator is reused
+        # (e.g. ``compute_value`` evaluates arbitrary cells, and a cell's
+        # formula may change between reads). Keying on the formula keeps the
+        # memoization sound in every reuse scenario.
+        self._computed: Dict[Tuple[Optional[str], int, int, str], Any] = {}
+
+    def evaluate_cell(
+        self,
+        sheet: Optional[str],
+        row: int,
+        column: int,
+        formula: str,
+        seen: Optional[set] = None,
+        depth: int = 0,
+    ) -> Any:
+        key = (sheet, row, column, formula)
+        if depth == 0:
+            # Root evaluation starts a fresh dependency budget. Without this
+            # the counter would be cumulative across every formula cell in a
+            # viewport, so a dense sheet of many multi-reference formulas
+            # could spuriously exceed the bound and return #NUM!.
+            self._used = 0
+        if depth > MAX_CALL_DEPTH:
+            return CYCLE_ERROR
+        if seen is None:
+            seen = set()
+        if key in seen:
+            return CYCLE_ERROR
+        if key in self._computed:
+            return self._computed[key]
+        self._used += 1
+        if self._used > self._dependencies:
+            raise ValueError(NUM_ERROR)
+        seen.add(key)
+        try:
+            node = parse_formula(formula)
+            value = self._eval(node, sheet, seen, depth)
+            self._computed[key] = value
+            return value
+        except ValueError as exc:
+            message = str(exc)
+            return message if message in ERROR_CODES else VALUE_ERROR
+        finally:
+            seen.discard(key)
+
+    def _resolve(
+        self, sheet: Optional[str], row: int, column: int, seen: set, depth: int
+    ) -> Any:
+        cell = self._resolver(sheet, row, column)
+        if cell is None:
+            return None
+        self._used += 1
+        if self._used > self._dependencies:
+            raise ValueError(NUM_ERROR)
+        formula = cell.get("formula")
+        if formula:
+            return self.evaluate_cell(sheet, row, column, formula, seen, depth + 1)
+        return cell.get("value")
+
+    def _range_values(
+        self,
+        sheet: Optional[str],
+        row1: int,
+        col1: int,
+        row2: int,
+        col2: int,
+        seen: set,
+        depth: int,
+    ) -> List[Any]:
+        values: List[Any] = []
+        r_start, r_end = sorted((row1, row2))
+        c_start, c_end = sorted((col1, col2))
+        for r in range(r_start, r_end + 1):
+            for c in range(c_start, c_end + 1):
+                self._used += 1
+                if self._used > self._dependencies:
+                    raise ValueError(NUM_ERROR)
+                values.append(self._resolve(sheet, r, c, seen, depth + 1))
+        return values
+
+    def _eval(self, node: Any, sheet: Optional[str], seen: set, depth: int) -> Any:
+        kind = node[0]
+        if kind == "num":
+            return node[1]
+        if kind == "str":
+            return node[1]
+        if kind == "bool":
+            return node[1]
+        if kind == "ref":
+            ref = node[1]
+            r_sheet, row, column = parse_cell_ref(ref)
+            target_sheet = r_sheet or sheet
+            return self._resolve(target_sheet, row, column, seen, depth)
+        if kind == "neg":
+            value = self._eval(node[1], sheet, seen, depth)
+            if is_error(value):
+                return value
+            return -_to_number(value)
+        if kind == "%":
+            value = self._eval(node[1], sheet, seen, depth)
+            if is_error(value):
+                return value
+            return _to_number(value) / 100.0
+        if kind == "cmp":
+            # Comparison nodes are ("cmp", op, left, right).
+            op = node[1]
+            left = self._eval(node[2], sheet, seen, depth)
+            right = self._eval(node[3], sheet, seen, depth)
+            return self._apply(op, left, right)
+        if kind in ("+", "-", "*", "/", "^", "&"):
+            op = kind
+            left = self._eval(node[1], sheet, seen, depth)
+            right = self._eval(node[2], sheet, seen, depth)
+            return self._apply(op, left, right)
+        if kind == "call":
+            name = node[1]
+            args = node[2]
+            return self._call(name, args, sheet, seen, depth)
+        raise ValueError(VALUE_ERROR)
+
+    def _apply(self, op: str, left: Any, right: Any) -> Any:
+        if is_error(left):
+            return left
+        if is_error(right):
+            return right
+        if op == "&":
+            return _to_text(left) + _to_text(right)
+        if op in ("=", "<>", "<", ">", "<=", ">="):
+            if op in ("=", "<>"):
+                if isinstance(left, str) or isinstance(right, str):
+                    comparison = _to_text(left) == _to_text(right)
+                else:
+                    comparison = left == right
+                return comparison if op == "=" else not comparison
+            try:
+                ln = _to_number(left)
+                rn = _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+            if op == "<":
+                return ln < rn
+            if op == ">":
+                return ln > rn
+            if op == "<=":
+                return ln <= rn
+            return ln >= rn
+        if op == "+":
+            if isinstance(left, str) or isinstance(right, str):
+                return VALUE_ERROR
+            try:
+                return _to_number(left) + _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+        if op == "-":
+            try:
+                return _to_number(left) - _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+        if op == "*":
+            try:
+                return _to_number(left) * _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+        if op == "/":
+            try:
+                rn = _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+            if rn == 0:
+                return DIV_ZERO
+            return _to_number(left) / rn
+        if op == "^":
+            try:
+                return math.pow(_to_number(left), _to_number(right))
+            except (ValueError, OverflowError):
+                return NUM_ERROR
+        return VALUE_ERROR
+
+    def _call(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        # Evaluate the arguments lazily where the function is short-circuiting.
+        if name == "IF":
+            if len(args) != 3:
+                return VALUE_ERROR
+            condition = self._truthy(self._eval(args[0], sheet, seen, depth))
+            if (
+                is_error(condition)
+                and isinstance(condition, str)
+                and condition in ERROR_CODES
+            ):
+                return condition
+            branch = args[1] if condition else args[2]
+            return self._eval(branch, sheet, seen, depth)
+        if name in ("AND", "OR"):
+            if not args:
+                return VALUE_ERROR
+            results = [
+                self._truthy(self._eval(arg, sheet, seen, depth)) for arg in args
+            ]
+            if any(is_error(r) for r in results):
+                return VALUE_ERROR
+            return all(results) if name == "AND" else any(results)
+        if name == "NOT":
+            if len(args) != 1:
+                return VALUE_ERROR
+            return not self._truthy(self._eval(args[0], sheet, seen, depth))
+
+        values: List[Any] = []
+        for arg in args:
+            values.extend(self._expand_arg(arg, sheet, seen, depth))
+        if name in ("SUM", "AVERAGE", "COUNT", "COUNTA", "MIN", "MAX", "PRODUCT"):
+            return self._aggregate(name, values)
+        if name in (
+            "ABS",
+            "SQRT",
+            "INT",
+            "LEN",
+            "UPPER",
+            "LOWER",
+            "TRIM",
+            "ISBLANK",
+            "ISNUMBER",
+            "ISTEXT",
+        ):
+            return self._single(name, values)
+        if name in (
+            "ROUND",
+            "ROUNDUP",
+            "ROUNDDOWN",
+            "MOD",
+            "POWER",
+            "LEFT",
+            "RIGHT",
+            "MID",
+        ):
+            return self._double(name, values)
+        if name in ("CONCAT", "CONCATENATE"):
+            return "".join(_to_text(value) for value in values)
+        return NAME_ERROR
+
+    def _expand_arg(
+        self, node: Any, sheet: Optional[str], seen: set, depth: int
+    ) -> List[Any]:
+        kind = node[0]
+        if kind == "ref":
+            text = node[1]
+            if ":" in text:
+                first, second = text.split(":", 1)
+                s1, r1, c1 = parse_cell_ref(first)
+                s2, r2, c2 = parse_cell_ref(second)
+                return self._range_values(s1 or sheet, r1, c1, r2, c2, seen, depth)
+            return [self._eval(node, sheet, seen, depth)]
+        value = self._eval(node, sheet, seen, depth)
+        return [value]
+
+    def _truthy(self, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if _numeric(value):
+            return value != 0
+        if isinstance(value, str) and value not in ERROR_CODES:
+            return True
+        return bool(value)
+
+    def _aggregate(self, name: str, values: List[Any]) -> Any:
+        if name == "COUNTA":
+            return sum(1 for value in values if value is not None and value != "")
+        if name == "COUNT":
+            return sum(1 for value in values if _numeric(value))
+        numbers = [value for value in values if _numeric(value)]
+        if name == "SUM":
+            return float(sum(numbers))
+        if name == "PRODUCT":
+            product = 1.0
+            for value in numbers:
+                product *= value
+            return product
+        if not numbers:
+            if name == "MIN" or name == "MAX":
+                return 0
+            return DIV_ZERO if name == "AVERAGE" else 0
+        if name == "AVERAGE":
+            return float(sum(numbers)) / len(numbers)
+        if name == "MIN":
+            return min(numbers)
+        if name == "MAX":
+            return max(numbers)
+        return VALUE_ERROR
+
+    def _single(self, name: str, values: List[Any]) -> Any:
+        if not values:
+            return VALUE_ERROR
+        value = values[0]
+        if is_error(value):
+            return value
+        if name == "ABS":
+            return abs(_to_number(value))
+        if name == "SQRT":
+            number = _to_number(value)
+            if number < 0:
+                return NUM_ERROR
+            return math.sqrt(number)
+        if name == "INT":
+            return float(math.floor(_to_number(value)))
+        if name == "LEN":
+            return float(len(_to_text(value)))
+        if name == "UPPER":
+            return _to_text(value).upper()
+        if name == "LOWER":
+            return _to_text(value).lower()
+        if name == "TRIM":
+            return _to_text(value).strip()
+        if name == "ISBLANK":
+            return value is None or value == ""
+        if name == "ISNUMBER":
+            return _numeric(value)
+        if name == "ISTEXT":
+            return isinstance(value, str) and value not in ERROR_CODES
+        return VALUE_ERROR
+
+    def _double(self, name: str, values: List[Any]) -> Any:
+        if len(values) < 2:
+            return VALUE_ERROR
+        a, b = values[0], values[1]
+        if is_error(a):
+            return a
+        if name == "MOD":
+            try:
+                divisor = _to_number(b)
+            except ValueError as exc:
+                return str(exc)
+            if divisor == 0:
+                return DIV_ZERO
+            return math.fmod(_to_number(a), divisor)
+        if name == "POWER":
+            try:
+                return math.pow(_to_number(a), _to_number(b))
+            except (ValueError, OverflowError):
+                return NUM_ERROR
+        if name in ("ROUND", "ROUNDUP", "ROUNDDOWN"):
+            digits = int(_to_number(b))
+            factor = 10**digits
+            number = _to_number(a)
+            if name == "ROUND":
+                return round(number * factor) / factor
+            if name == "ROUNDUP":
+                return math.ceil(number * factor - 1e-12) / factor
+            return math.floor(number * factor + 1e-12) / factor
+        if name == "LEFT":
+            return _to_text(a)[: max(0, int(_to_number(b)))]
+        if name == "RIGHT":
+            count = max(0, int(_to_number(b)))
+            text = _to_text(a)
+            return text[-count:] if count else ""
+        if name == "MID":
+            if len(values) < 3:
+                return VALUE_ERROR
+            start = int(_to_number(b)) - 1
+            length = max(0, int(_to_number(values[2])))
+            text = _to_text(a)
+            return text[start : start + length]
+        return VALUE_ERROR
+
+
+def compute_value(
+    value_type: str,
+    value: Any,
+    formula: Optional[str],
+    resolver: CellResolver,
+    sheet: Optional[str] = None,
+) -> Any:
+    """Top-level entry: return the display/computed value for a cell.
+
+    ``sheet`` defaults to ``None`` (single-sheet context); callers that
+    resolve against a real workbook should pass the sheet id so cross-sheet
+    and same-sheet references hit the right rows.
+    """
+    if value_type == "formula" and formula:
+        return FormulaEvaluator(resolver).evaluate_cell(sheet, -1, -1, formula)
+    return value

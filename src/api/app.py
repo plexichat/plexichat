@@ -188,6 +188,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     # Added BEFORE CORS so CORS remains outermost and 413 responses get CORS headers
     max_body_size = config.max_request_body_size
 
+    # PlexiSum workbook uploads carry base64-encoded .plexisum files inside
+    # JSON bodies; a 50MB workbook needs ~67MB of base64, far above the
+    # generic cap, so the Sum routes get their own larger limit.
+    sum_upload_prefix = f"{config.api_prefix}/suite/sum/"
+    sum_upload_max_bytes = max(max_body_size, 96 * 1024 * 1024)
+
     class MaxBodySizeMiddleware(BaseHTTPMiddleware):
         """Reject requests whose body exceeds the configured maximum.
 
@@ -215,8 +221,13 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         """
 
         async def dispatch(self, request: Request, call_next):
+            effective_cap = (
+                sum_upload_max_bytes
+                if request.url.path.startswith(sum_upload_prefix)
+                else max_body_size
+            )
             content_length = request.headers.get("content-length")
-            if content_length and int(content_length) > max_body_size:
+            if content_length and int(content_length) > effective_cap:
                 return Response(
                     content='{"error":{"code":413,"message":"Request body too large"}}',
                     status_code=413,
@@ -242,8 +253,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 msg = await original_receive()
                 if msg.get("type") == "http.request":
                     chunk_len = len(msg.get("body", b"") or b"")
-                    if bytes_seen["n"] + chunk_len > max_body_size:
-                        raise _BodyTooLarge(max_body_size)
+                    if bytes_seen["n"] + chunk_len > effective_cap:
+                        raise _BodyTooLarge(effective_cap)
                     bytes_seen["n"] += chunk_len
                 return msg
 

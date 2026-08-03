@@ -169,7 +169,11 @@ def setup(
         stash_domain.create_tables(db)
         sum_domain.create_tables(db)
         stash_domain.setup(db, servers_module=servers_module)
-        sum_domain.setup(db, servers_module=servers_module)
+        sum_domain.setup(
+            db,
+            servers_module=servers_module,
+            media=get_media(),
+        )
     except Exception:
         # Full production startup already creates these schemas before API
         # setup. Preserve the existing API fixture behavior when a lightweight

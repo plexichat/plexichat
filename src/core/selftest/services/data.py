@@ -552,7 +552,11 @@ class DataGenerator:
                         self.ctx.test_message_id or self.generate_snowflake()
                     )
 
-            if "polls/" in path and "/vote" in path and method == "POST":
+            # Both POST /vote (vote) and PUT /{id}/vote (change-vote) accept
+            # the same PollVoteRequest. The generic loop exercises both
+            # methods, so real option ids must be used for each — a random
+            # snowflake always 400s as an invalid option.
+            if "polls/" in path and "/vote" in path and method in ("POST", "PUT"):
                 if self.ctx.test_poll_option_ids:
                     body["option_ids"] = [
                         int(oid) for oid in self.ctx.test_poll_option_ids

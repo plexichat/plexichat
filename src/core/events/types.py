@@ -77,6 +77,9 @@ class EventType(Enum):
     ARTIFACT_DELETE = "ARTIFACT_DELETE"
     ARTIFACT_OP = "ARTIFACT_OP"
 
+    # PlexiSum workbook mutations (cells, structure, comments, formats...).
+    WORKBOOK_UPDATE = "WORKBOOK_UPDATE"
+
 
 class GatewayIntent(IntFlag):
     """Gateway intents for filtering events."""

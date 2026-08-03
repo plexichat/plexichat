@@ -78,6 +78,8 @@ imagehash==4.3.2
 # Document Generation
 fpdf2==2.8.7
 odfpy==1.4.1
+# Spreadsheet import/export for PlexiSum XLSX bridge
+openpyxl==3.1.5
 
 # Safe Regex (ReDoS protection)
 # google-re2 pinned to date-stamped calver release for strict PEP 440 compliance

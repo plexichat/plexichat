@@ -358,6 +358,141 @@ class SuiteMixin(EndpointTesterBase):
             "?row_start=0&row_end=5&column_start=0&column_end=5"
         )
         self._request_suite("GET", viewport_path, "sum_read_viewport")
+
+        # Production data layer: replay, snapshots, sheet management, CSV,
+        # sharing grants, and range permissions.
+        self._request_suite(
+            "GET",
+            f"{workbook_path}/{workbook_id}/operations?after_revision=0&limit=100",
+            "sum_replay_operations",
+        )
+        snapshot_response = self._request_suite(
+            "POST",
+            f"{workbook_path}/{workbook_id}/snapshots",
+            "sum_create_snapshot",
+            json={},
+        )
+        snapshot_id = None
+        if snapshot_response is not None and 200 <= snapshot_response.status_code < 300:
+            snapshot_id = self._json_body(snapshot_response).get("id")
+        self._request_suite(
+            "GET",
+            f"{workbook_path}/{workbook_id}/snapshots?limit=10",
+            "sum_list_snapshots",
+        )
+        if snapshot_id:
+            self._request_suite(
+                "POST",
+                f"{workbook_path}/{workbook_id}/snapshots/{snapshot_id}/restore",
+                "sum_restore_snapshot",
+            )
+        sheet_response = self._request_suite(
+            "POST",
+            f"{workbook_path}/{workbook_id}/sheets",
+            "sum_create_sheet",
+            json={"name": "Data sheet"},
+        )
+        second_sheet_id = None
+        if sheet_response is not None and 200 <= sheet_response.status_code < 300:
+            second_sheet_id = self._json_body(sheet_response).get("id")
+        if second_sheet_id:
+            self._request_suite(
+                "PATCH",
+                f"{workbook_path}/{workbook_id}/sheets/{second_sheet_id}/rename",
+                "sum_rename_sheet",
+                json={"name": "Renamed sheet"},
+            )
+        csv_response = self._request_suite(
+            "GET",
+            f"{workbook_path}/{workbook_id}/sheets/{sheet_id}/csv",
+            "sum_export_csv",
+        )
+        if csv_response is not None and 200 <= csv_response.status_code < 300:
+            workbook = self._json_body(csv_response)
+            current = workbook.get("content", "")
+            if current:
+                # Re-import the exported CSV as a fresh revision to exercise
+                # the bounded import path end to end.
+                imported = self._request_suite(
+                    "POST",
+                    f"{workbook_path}/{workbook_id}/sheets/{sheet_id}/csv",
+                    "sum_import_csv",
+                    json={"content": current, "base_revision": 0},
+                )
+                if imported is not None and 200 <= imported.status_code < 300:
+                    self.ctx.test_sum_operation_id = self._json_body(imported).get(
+                        "operation_id"
+                    )
+        file_response = self._request_suite(
+            "GET",
+            f"{workbook_path}/{workbook_id}/file",
+            "sum_download_file",
+        )
+        if file_response is not None and 200 <= file_response.status_code < 300:
+            file_body = self._json_body(file_response)
+            file_content = file_body.get("content")
+            if file_content and file_content != "":
+                import base64
+
+                try:
+                    decoded = base64.b64decode(file_content, validate=False)
+                    self._request_suite(
+                        "POST",
+                        f"{workbook_path}/{workbook_id}/file",
+                        "sum_upload_file",
+                        json={
+                            "content": base64.b64encode(decoded).decode(),
+                            "base_revision": None,
+                        },
+                    )
+                except Exception:
+                    logger.warning("sum file round-trip skipped: base64 decode failed")
+        self._request_suite(
+            "GET",
+            f"{workbook_path}/{workbook_id}/grants",
+            "sum_list_grants",
+        )
+        grant_response = self._request_suite(
+            "POST",
+            f"{workbook_path}/{workbook_id}/grants",
+            "sum_grant_workbook",
+            json={"subject_id": 2, "permissions": ["view"], "expires_at": None},
+        )
+        grant_id = None
+        if grant_response is not None and 200 <= grant_response.status_code < 300:
+            grant_id = self._json_body(grant_response).get("id")
+        if grant_id:
+            self._request_suite(
+                "DELETE",
+                f"/api/v1/suite/sum/grants/{grant_id}",
+                "sum_revoke_grant",
+            )
+        self._request_suite(
+            "GET",
+            f"{workbook_path}/{workbook_id}/sheets/{sheet_id}/range-permissions",
+            "sum_list_range_permissions",
+        )
+        range_response = self._request_suite(
+            "POST",
+            f"{workbook_path}/{workbook_id}/sheets/{sheet_id}/range-permissions",
+            "sum_set_range_permission",
+            json={
+                "row_start": 0,
+                "row_end": 5,
+                "column_start": 0,
+                "column_end": 5,
+                "permission": "read_only",
+            },
+        )
+        range_id = None
+        if range_response is not None and 200 <= range_response.status_code < 300:
+            range_id = self._json_body(range_response).get("id")
+        if range_id:
+            self._request_suite(
+                "DELETE",
+                f"{workbook_path}/{workbook_id}/range-permissions/{range_id}",
+                "sum_remove_range_permission",
+            )
         self._request_suite(
             "DELETE",
             f"{workbook_path}/{workbook_id}",
@@ -379,6 +514,26 @@ class SuiteMixin(EndpointTesterBase):
             ("POST", f"{workbook_path}/restore", "sum_probe_restore_workbook"),
             ("GET", f"{workbook_path}/sheets/0/viewport", "sum_probe_viewport"),
             ("POST", f"{workbook_path}/sheets/0/operations", "sum_probe_operation"),
+            ("GET", f"{workbook_path}/operations", "sum_probe_replay"),
+            ("POST", f"{workbook_path}/snapshots", "sum_probe_snapshot"),
+            ("POST", f"{workbook_path}/sheets", "sum_probe_create_sheet"),
+            ("PATCH", f"{workbook_path}/sheets/0/rename", "sum_probe_rename_sheet"),
+            ("GET", f"{workbook_path}/sheets/0/csv", "sum_probe_export_csv"),
+            ("POST", f"{workbook_path}/sheets/0/csv", "sum_probe_import_csv"),
+            ("GET", f"{workbook_path}/file", "sum_probe_download_file"),
+            ("POST", f"{workbook_path}/file", "sum_probe_upload_file"),
+            ("GET", f"{workbook_path}/grants", "sum_probe_list_grants"),
+            ("POST", f"{workbook_path}/grants", "sum_probe_grant"),
+            (
+                "GET",
+                f"{workbook_path}/sheets/0/range-permissions",
+                "sum_probe_list_ranges",
+            ),
+            (
+                "POST",
+                f"{workbook_path}/sheets/0/range-permissions",
+                "sum_probe_set_range",
+            ),
         )
         for method, path, label in probes:
             body = None
@@ -390,5 +545,25 @@ class SuiteMixin(EndpointTesterBase):
                     "cells": [
                         {"row": 0, "column": 0, "value_type": "text", "value": "probe"}
                     ],
+                }
+            elif label == "sum_probe_snapshot":
+                body = {}
+            elif label == "sum_probe_create_sheet":
+                body = {"name": "capability-probe"}
+            elif label == "sum_probe_rename_sheet":
+                body = {"name": "capability-probe"}
+            elif label == "sum_probe_import_csv":
+                body = {"content": "a,b\n1,2\n", "base_revision": 0}
+            elif label == "sum_probe_upload_file":
+                body = {"content": "bm90LWEtcGxleGlzdW0tZmlsZQ=="}
+            elif label == "sum_probe_grant":
+                body = {"subject_id": 0, "permissions": ["view"]}
+            elif label == "sum_probe_set_range":
+                body = {
+                    "row_start": 0,
+                    "row_end": 1,
+                    "column_start": 0,
+                    "column_end": 1,
+                    "permission": "read_only",
                 }
             self._request_suite(method, path, label, json=body)
