@@ -183,9 +183,22 @@ async def admin_set_server_retention(
         )
 
     try:
+        try:
+            server_id = int(body.server_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid server_id"}},
+            )
         manager = _get_manager()
-        manager.set_server_retention_days(int(body.server_id), body.retention_days)
-        effective = manager.get_server_retention_days(int(body.server_id))
+        try:
+            manager.set_server_retention_days(server_id, body.retention_days)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": str(exc)}},
+            ) from exc
+        effective = manager.get_server_retention_days(server_id)
         return ServerRetentionResponse(
             server_id=body.server_id, retention_days=effective, success=True
         )

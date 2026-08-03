@@ -285,6 +285,8 @@ class RecordingManager:
                     call_id,
                     exc,
                 )
+                for fp in filepaths:
+                    self._cleanup_file(fp)
         else:
             logger.info(f"recording: call {call_id} has no recorded files")
 
@@ -388,6 +390,7 @@ class RecordingManager:
                     )
         except Exception as exc:
             logger.warning(f"recording: media upload failed for call {call_id}: {exc}")
+            self._cleanup_file(filepath)
             return
 
         self._update_artifact_payload(
@@ -539,23 +542,23 @@ class RecordingManager:
         and logging context only.
         """
         try:
-            from .repository import get_voice_call
+            from .repository import (
+                get_channel_voice_user_ids,
+                get_voice_call_uncached,
+            )
 
-            call = get_voice_call(self._db, call_id)
+            call = get_voice_call_uncached(self._db, call_id)
             if call is None:
+                return False
+            if call.channel_id is None:
+                # Fail closed: without a channel we cannot resolve the live
+                # roster, so consent cannot be verified.
                 return False
             raw_consented = getattr(call, "consented_participants", []) or []
             if not isinstance(raw_consented, (list, tuple, set)):
                 return False
             consented = {int(value) for value in raw_consented}
-            current_ids = {
-                int(row["user_id"])
-                for row in self._db.fetch_all(
-                    "SELECT user_id FROM voice_states WHERE channel_id = ?",
-                    (call.channel_id,),
-                )
-                or []
-            }
+            current_ids = set(get_channel_voice_user_ids(self._db, call.channel_id))
             # An unavailable/empty live roster must fail closed. Recording a
             # call based only on the initiator ID would bypass participant
             # consent during a membership lookup failure.

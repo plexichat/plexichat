@@ -1,9 +1,5 @@
 """Regression coverage for artifact authorization and lifecycle boundaries."""
 
-from unittest.mock import Mock
-
-import pytest
-
 from src.api.websocket.artifacts import ArtifactSubscriptionRegistry
 from src.core.artifacts.capabilities import (
     artifact_type_capability,

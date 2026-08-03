@@ -18,9 +18,6 @@ import utils.logger as logger
 # Sentinel author id used when anonymizing content in place of the deleted user.
 ANONYMIZED_AUTHOR_ID = 0
 
-# JSON key under which the flattened transcript text is surfaced in exports.
-_TRANSCRIPT_TEXT_KEY = "transcript_text"
-
 
 def _parse_json(text: Any) -> Any:
     if text is None or text == "":
@@ -33,19 +30,36 @@ def _parse_json(text: Any) -> Any:
         return None
 
 
+_SCRUB_TEXT_KEYS = {
+    "text",
+    "content",
+    "document",
+    "content_html",
+    "source",
+    "board",
+    "speaker",
+}
+
+
+def _scrub_node(node: Any) -> Any:
+    """Recursively strip text-bearing keys and per-segment speaker labels."""
+    if isinstance(node, dict):
+        return {
+            key: _scrub_node(value)
+            for key, value in node.items()
+            if key not in _SCRUB_TEXT_KEYS
+        }
+    if isinstance(node, list):
+        return [_scrub_node(value) for value in node]
+    return node
+
+
 def _scrub_transcript_text(payload: Any) -> Optional[str]:
     """Return a scrubbed transcript payload string with PII text removed."""
     data = _parse_json(payload)
     if not isinstance(data, dict):
         return None
-    data.pop("text", None)
-    segments = data.get("segments")
-    if isinstance(segments, list):
-        for seg in segments:
-            if isinstance(seg, dict):
-                seg.pop("text", None)
-                seg.pop("speaker", None)
-    return json.dumps(data, ensure_ascii=False)
+    return json.dumps(_scrub_node(data), ensure_ascii=False)
 
 
 def anonymize_user_artifacts(
@@ -62,8 +76,8 @@ def anonymize_user_artifacts(
 
     * ``anonymize_content=True`` — keeps the rows but removes the user's
       identifiable link: ``author_id`` is set to a sentinel anonymized id,
-      inline transcript text is stripped from the ``payload`` and the export
-      ``transcript_text`` field, and the user is removed from any
+      inline transcript/document text is stripped from the ``payload``,
+      and the user is removed from any
       ``consented_participants`` lists on voice calls they only consented to
       (calls they initiated are anonymized rather than deleted).
     * ``anonymize_content=False`` — deletes artifacts authored by the user and
@@ -114,7 +128,12 @@ def anonymize_user_artifacts(
                 )
         if anonymize:
             new_payload: Optional[str] = None
-            if row.get("artifact_type") in ("transcript", "plexiscribe", "plexiscript"):
+            if row.get("artifact_type") in (
+                "transcript",
+                "plexiscribe",
+                "plexiscript",
+                "whiteboard",
+            ):
                 new_payload = _scrub_transcript_text(row.get("payload"))
             try:
                 if new_payload is not None:
@@ -148,12 +167,17 @@ def anonymize_user_artifacts(
             """
             SELECT id, artifact_id, initiator_id, consented_participants
             FROM voice_calls
-            WHERE initiator_id = ?
-               OR (consented_participants IS NOT NULL
-                   AND EXISTS (SELECT 1 FROM json_each(consented_participants) WHERE value = ?))
+            WHERE initiator_id = ? OR consented_participants IS NOT NULL
             """,
-            (user_id, user_id),
+            (user_id,),
         )
+        if voice_calls:
+            voice_calls = [
+                row
+                for row in voice_calls
+                if int(row.get("initiator_id") or 0) == user_id
+                or user_id in (_parse_json(row.get("consented_participants")) or [])
+            ]
     except Exception as e:
         logger.error(
             f"Failed to load voice calls for anonymization of user {user_id}: {e}"

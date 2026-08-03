@@ -126,10 +126,45 @@ def _resolve_azure_recording_ref(
         return None
 
 
+def _resolve_local_recording_path(
+    ref: str, call_id: Optional[SnowflakeID] = None
+) -> Optional[str]:
+    """Accept a local recording path only when it lives inside the configured
+    recording root and (when the call is known) matches that call's files.
+
+    Artifact payloads are user-editable, so a ``recording_ref`` must never be
+    treated as an arbitrary server-side path: that would let an artifact author
+    read any file the process can access (e.g. via the OpenAI upload or local
+    Whisper).
+    """
+    try:
+        import utils.config as cfg
+        from src.core.voice.signaling.sfu.paths import ensure_within_recording_dir
+
+        artifacts_cfg = cfg.get("artifacts", {}) or {}
+        root = (
+            (artifacts_cfg.get("voice", {}) or {})
+            .get("recording", {})
+            .get("output_dir")
+        )
+        if not root:
+            return None
+        safe_path = ensure_within_recording_dir(
+            ref, os.path.realpath(os.path.expanduser(str(root)))
+        )
+    except Exception:
+        return None
+    if call_id is not None:
+        if not safe_path.name.startswith(f"call_{int(call_id)}."):
+            return None
+    return str(safe_path)
+
+
 def _resolve_recording_ref(
     call_payload: Dict[str, Any],
     db: Any,
     provider_name: str,
+    call_id: Optional[SnowflakeID] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """Resolve a recording reference into the form a provider can consume.
 
@@ -149,7 +184,7 @@ def _resolve_recording_ref(
     if provider_name == "azure":
         return _resolve_azure_recording_ref(call_payload), None
     if os.path.isfile(ref):
-        return ref, None
+        return _resolve_local_recording_path(ref, call_id), None
 
     file_id = call_payload.get("recording_file_id")
     if not file_id:
@@ -360,6 +395,7 @@ async def transcribe_call(
             call_payload,
             db,
             str(transcription_cfg.get("provider", "local_whisper")),
+            call_id=call_id,
         )
         if recording_ref is None:
             logger.warning(f"transcription: call {call_id} has no recording_ref; skip.")

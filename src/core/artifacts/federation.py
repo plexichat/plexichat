@@ -11,7 +11,10 @@ We deliberately do NOT build a full cross-instance realtime transport here: the
 external transport layer lives outside this repo. Instead this bridge provides
 the integration HOOKS:
 
-- it resolves which federation connections belong to an artifact's server,
+- it resolves the active federation connections for this instance (the
+  ``plexijoin_connections`` table is instance-scoped with no per-server column,
+  so an artifact's ops/events are forwarded to every active federation link
+  regardless of its local server),
 - it exposes pluggable forwarders ``forward_artifact_op`` and
   ``forward_artifact_event`` that call into an injectable transport callback,
   and
@@ -142,14 +145,13 @@ class FederationArtifactBridge:
         return int(server_id) if server_id is not None else None
 
     def _resolve_connection_ids(self, server_id: Optional[int]) -> List[int]:
-        """Return the active federation connection ids for a server.
+        """Return the active federation connection ids for this instance.
 
-        Federation links are keyed by the remote instance id, which in this
-        deployment is the remote server's id. We match on the
-        ``remote_instance_id`` column of ``plexijoin_connections`` and only
-        consider links in the ``active`` state.
+        ``plexijoin_connections`` is instance-scoped (there is no per-server
+        column), so an artifact's ops/events are forwarded to every active
+        federation link regardless of its local server.
         """
-        if self._plexijoin is None or server_id is None:
+        if self._plexijoin is None:
             return []
         try:
             result = self._plexijoin.list_connections(status="active")
@@ -164,14 +166,11 @@ class FederationArtifactBridge:
             return []
         matched: List[int] = []
         for conn in connections:
-            remote_instance_id = conn.get("remote_instance_id")
-            if remote_instance_id is None:
+            conn_id = conn.get("id")
+            if conn_id is None:
                 continue
             try:
-                if int(remote_instance_id) == int(server_id):
-                    conn_id = conn.get("id")
-                    if conn_id is not None:
-                        matched.append(int(conn_id))
+                matched.append(int(conn_id))
             except (TypeError, ValueError):
                 continue
         return matched
@@ -213,6 +212,12 @@ class FederationArtifactBridge:
         local permission.
         """
         server_id = self._resolve_server_id(artifact_id)
+        if server_id is None:
+            # Artifact does not exist locally (or is not server-scoped), so
+            # there is nothing valid to forward for it. Forwarding an op for
+            # a nonexistent artifact to every active link would only push
+            # garbage to remote instances.
+            return 0
         connection_ids = self._resolve_connection_ids(server_id)
         if not connection_ids:
             return 0

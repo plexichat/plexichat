@@ -82,6 +82,37 @@ def _is_conversation_member(
         return False
 
 
+def _conversation_server_id(conversation_id: Optional[int]) -> Optional[int]:
+    """Return the server_id a conversation is bound to, or ``None``."""
+    if conversation_id is None:
+        return None
+    db = api.get_db()
+    if db is None:
+        return None
+    try:
+        row = db.fetch_one(
+            "SELECT metadata FROM msg_conversations WHERE id = ? AND deleted = 0",
+            (conversation_id,),
+        )
+    except Exception:
+        return None
+    if not row or not row.get("metadata"):
+        return None
+    try:
+        parsed = json.loads(row["metadata"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    raw = parsed.get("server_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _authorize_scope(
     user_id: int,
     conversation_id: Optional[int],
@@ -104,11 +135,24 @@ def _authorize_scope(
         return
     messaging_mod = api.get_messaging()
     if _is_conversation_member(messaging_mod, conversation_id, user_id):
-        return
-    if server_id is None and conversation_id is None:
-        # Personal / notes-style scope: only the author may act.
-        if author_id is not None and int(author_id) == int(user_id):
+        # Membership alone must not grant access to an unrelated server scope:
+        # the conversation must actually be bound to the requested server (or
+        # the request is unscoped).
+        conv_server = _conversation_server_id(conversation_id)
+        if server_id is None or conv_server is None or conv_server == int(server_id):
             return
+    # Author-only access applies to the personal scope only (no server and no
+    # conversation). A server- or conversation-scoped artifact is authorized
+    # by permission/membership above, never by authorship alone: otherwise any
+    # caller creating an artifact could pass ``author_id`` equal to their own
+    # id and bypass every scope check.
+    if (
+        author_id is not None
+        and int(author_id) == int(user_id)
+        and server_id is None
+        and conversation_id is None
+    ):
+        return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail={"error": {"code": 403, "message": "Not authorized"}},
@@ -318,6 +362,18 @@ def _emit_artifact_message(
         conversation_id = artifact.conversation_id
 
         content = f"{ARTIFACT_ICON} {artifact.title}"
+
+        messaging_mod = api.get_messaging()
+        if messaging_mod is not None and conversation_id is not None:
+            try:
+                messaging_mod.send_message(
+                    user_id=int(artifact.author_id),
+                    conversation_id=int(conversation_id),
+                    content=content,
+                )
+            except Exception as e:  # best-effort: never break the artifact write
+                logger.debug(f"Failed to persist artifact message: {e}")
+
         event = events.create_message_create(
             message_id=int(artifact.id),
             channel_id=int(channel_id) if channel_id else 0,
@@ -660,7 +716,18 @@ async def _convert_upload_impl(
         # The artifact must remain attached to the source message's
         # conversation and its server/channel scope. Accepting arbitrary target
         # IDs lets a caller move an attachment across conversations.
-        source_conv_id = int(msg_data["conversation_id"])
+        source_conv_id = msg_data.get("conversation_id")
+        if source_conv_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Source message has no conversation",
+                    }
+                },
+            )
+        source_conv_id = int(source_conv_id)
         if conversation_id is not None and conversation_id != source_conv_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1109,18 +1176,13 @@ async def update_artifact(
 
         _require_artifact_capability(artifact.artifact_type)
 
-        # Author/owner can always edit their own artifact; otherwise require
-        # the server permission.
-        if (
-            artifact.author_id != current_user.user_id
-            and not _require_server_permission(
-                current_user.user_id, artifact.server_id, "artifact.edit"
-            )
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": 403, "message": "Not authorized"}},
-            )
+        _authorize_scope(
+            current_user.user_id,
+            artifact.conversation_id,
+            artifact.server_id,
+            "artifact.edit",
+            author_id=artifact.author_id,
+        )
 
         update_fields: Dict[str, Any] = {}
         if body.title is not None:
@@ -1139,6 +1201,25 @@ async def update_artifact(
             update_fields["payload"] = _deep_merge_payload(
                 existing_payload, body.payload
             )
+        if "payload" in update_fields:
+            try:
+                merged_size = len(
+                    json.dumps(update_fields["payload"], ensure_ascii=False).encode(
+                        "utf-8"
+                    )
+                )
+            except (TypeError, ValueError):
+                merged_size = -1
+            if merged_size > 1024 * 1024:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "payload exceeds maximum size of 1 MB",
+                        }
+                    },
+                )
         if body.recorded is not None:
             update_fields["recorded"] = body.recorded
         if body.has_transcript is not None:
@@ -1199,16 +1280,13 @@ async def delete_artifact(
                 detail={"error": {"code": 404, "message": "Artifact not found"}},
             )
 
-        if (
-            artifact.author_id != current_user.user_id
-            and not _require_server_permission(
-                current_user.user_id, artifact.server_id, "artifact.delete"
-            )
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": 403, "message": "Not authorized"}},
-            )
+        _authorize_scope(
+            current_user.user_id,
+            artifact.conversation_id,
+            artifact.server_id,
+            "artifact.delete",
+            author_id=artifact.author_id,
+        )
 
         if not manager.delete(aid):
             raise HTTPException(

@@ -419,11 +419,13 @@ def list_artifact_ops(
     ``ARTIFACT_SYNC`` wire format for late-joiner replay).
     """
     try:
+        safe_limit = max(1, min(int(limit), 2000))
+        safe_after = max(0, int(after_seq))
         rows = db.fetch_all(
             "SELECT seq, op_type, actor_id, data, created_at "
             "FROM artifact_ops WHERE artifact_id = ? AND seq > ? "
             "ORDER BY seq ASC LIMIT ?",
-            (artifact_id, int(after_seq), int(limit)),
+            (artifact_id, safe_after, safe_limit),
         )
     except Exception as e:  # pragma: no cover - defensive
         logger.warning(f"Failed to list artifact ops for {artifact_id}: {e}")
@@ -713,3 +715,50 @@ def set_feature_settings_bulk(
             db.rollback()
         raise
     return get_feature_settings(db, server_id, feature)
+
+
+def get_voice_call_uncached(db, call_id: SnowflakeID) -> Optional[VoiceCall]:
+    """Fetch a voice call bypassing the query cache (fresh consent state)."""
+    try:
+        cursor = db.execute("SELECT * FROM voice_calls WHERE id = ?", (call_id,))
+        row = cursor.fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    try:
+        return row_to_voice_call(dict(row))
+    except Exception:
+        return None
+
+
+def get_channel_voice_user_ids(db, channel_id: SnowflakeID) -> List[int]:
+    """Return live ``voice_states`` member ids for a channel, bypassing cache.
+
+    Returns an empty list on any failure so callers fail closed.
+    """
+    try:
+        cursor = db.execute(
+            "SELECT user_id FROM voice_states WHERE channel_id = ?",
+            (channel_id,),
+        )
+        rows = cursor.fetchall() or []
+    except Exception:
+        return []
+    user_ids: List[int] = []
+    for row in rows:
+        value = None
+        try:
+            value = row["user_id"]
+        except (KeyError, TypeError, IndexError):
+            try:
+                value = row[0]
+            except (TypeError, IndexError):
+                value = None
+        if value is None:
+            continue
+        try:
+            user_ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return user_ids

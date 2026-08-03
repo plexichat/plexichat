@@ -27,6 +27,8 @@ from .capabilities import CapabilityState, get_capability
 from .repository import (
     create_voice_call,
     get_voice_call,
+    get_voice_call_uncached,
+    get_channel_voice_user_ids,
     get_active_voice_call_by_channel,
     update_voice_call,
 )
@@ -214,16 +216,22 @@ class VoiceCallManager(BaseManager):
 
         if self._artifact_manager is not None and updated.artifact_id is not None:
             try:
+                existing = self._artifact_manager.get(updated.artifact_id)
+                completion_payload = {
+                    "voice_call_id": updated.id,
+                    "channel_id": updated.channel_id,
+                    "participant_count": participant_count,
+                    "duration_seconds": duration,
+                }
+                if existing is not None and isinstance(existing.payload, dict):
+                    merged_payload = {**existing.payload, **completion_payload}
+                else:
+                    merged_payload = completion_payload
                 self._artifact_manager.update(
                     updated.artifact_id,
                     status=ArtifactStatus.COMPLETED,
                     updated_at=ended_at,
-                    payload={
-                        "voice_call_id": updated.id,
-                        "channel_id": updated.channel_id,
-                        "participant_count": participant_count,
-                        "duration_seconds": duration,
-                    },
+                    payload=merged_payload,
                 )
             except Exception as exc:
                 logger.warning(
@@ -271,11 +279,7 @@ class VoiceCallManager(BaseManager):
         retained for call analytics and must not be used as a consent roster.
         """
         try:
-            rows = self._db.fetch_all(
-                "SELECT user_id FROM voice_states WHERE channel_id = ?",
-                (channel_id,),
-            )
-            return {int(row["user_id"]) for row in rows or []}
+            return set(get_channel_voice_user_ids(self._db, channel_id))
         except Exception as exc:
             logger.warning(
                 "voice_call participant lookup failed for channel %s: %s",
@@ -291,7 +295,7 @@ class VoiceCallManager(BaseManager):
         checked against the live ``voice_states`` membership instead, so a
         departed participant no longer blocks a later recording segment.
         """
-        call = get_voice_call(self._db, call_id)
+        call = get_voice_call_uncached(self._db, call_id)
         if call is None:
             raise ValueError(f"Voice call {call_id} not found")
         normalized_user_id = int(user_id)
@@ -347,7 +351,7 @@ class VoiceCallManager(BaseManager):
 
     def add_consent(self, call_id: SnowflakeID, user_id: SnowflakeID) -> VoiceCall:
         """Append consent and start a pending recording once all consent."""
-        call = get_voice_call(self._db, call_id)
+        call = get_voice_call_uncached(self._db, call_id)
         if call is None:
             raise ValueError(f"Voice call {call_id} not found")
 

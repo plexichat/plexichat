@@ -2,11 +2,14 @@
 Artifact schemas - Pydantic models for the Artifacts REST API.
 """
 
+import json
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from src.api.schemas.common import SnowflakeID
 from src.core.artifacts.models import ArtifactType, ArtifactStatus
+
+_MAX_ARTIFACT_PAYLOAD_BYTES = 1024 * 1024
 
 
 class ArtifactResponse(BaseModel):
@@ -41,7 +44,22 @@ class ArtifactResponse(BaseModel):
     updated_at: int = Field(..., description="Last-update timestamp (ms)")
 
 
-class ArtifactCreateRequest(BaseModel):
+class _PayloadSizeMixin:
+    @field_validator("payload")
+    @classmethod
+    def _validate_payload_size(cls, value):
+        if value is None:
+            return value
+        try:
+            size = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("payload must be JSON-serializable") from exc
+        if size > _MAX_ARTIFACT_PAYLOAD_BYTES:
+            raise ValueError("payload exceeds maximum size of 1 MB")
+        return value
+
+
+class ArtifactCreateRequest(_PayloadSizeMixin, BaseModel):
     """Request body for creating an artifact."""
 
     conversation_id: Optional[SnowflakeID] = Field(
@@ -55,7 +73,7 @@ class ArtifactCreateRequest(BaseModel):
     )
     artifact_type: ArtifactType = Field(..., description="Artifact type")
     title: str = Field(..., description="Display title", min_length=1, max_length=500)
-    summary: Optional[str] = Field(None, description="Short summary")
+    summary: Optional[str] = Field(None, description="Short summary", max_length=2000)
     payload: Optional[Dict[str, Any]] = Field(None, description="Type-specific payload")
     status: Optional[ArtifactStatus] = Field(
         None, description="Lifecycle status (default: completed)"
@@ -70,13 +88,13 @@ class ArtifactCreateRequest(BaseModel):
     )
 
 
-class ArtifactUpdateRequest(BaseModel):
+class ArtifactUpdateRequest(_PayloadSizeMixin, BaseModel):
     """Request body for updating an artifact."""
 
     title: Optional[str] = Field(
         None, description="Display title", min_length=1, max_length=500
     )
-    summary: Optional[str] = Field(None, description="Short summary")
+    summary: Optional[str] = Field(None, description="Short summary", max_length=2000)
     status: Optional[ArtifactStatus] = Field(None, description="Lifecycle status")
     payload: Optional[Dict[str, Any]] = Field(None, description="Type-specific payload")
     recorded: Optional[bool] = Field(

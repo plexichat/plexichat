@@ -52,30 +52,21 @@ def purge_expired(db: Any, config: Optional[Dict[str, Any]] = None) -> int:
             (now,),
         )
         removed = 0
+        from src.core.artifacts.manager import ArtifactManager
+
+        manager = ArtifactManager(db, _get_artifacts_config(config))
         for row in rows:
-            if _delete_artifact_cascade(db, row["id"]):
-                removed += 1
+            try:
+                if manager.delete(int(row["id"]), purge_media=True):
+                    removed += 1
+            except Exception as exc:
+                logger.warning(f"Failed to purge artifact {row['id']}: {exc}")
         if removed:
             logger.info(f"Purged {removed} expired artifact(s)")
         return removed
     except Exception as e:  # pragma: no cover - defensive
         logger.error(f"Failed to purge expired artifacts: {e}", exc_info=True)
         return 0
-
-
-def _delete_artifact_cascade(db: Any, artifact_id: int) -> bool:
-    """Remove an artifact and its cascade-linked rows (ops, voice_calls).
-
-    Reuses the repository's cascade delete so retention, the REST delete, and
-    the admin force-delete all follow the same cleanup semantics.
-    """
-    try:
-        from .repository import delete_artifact_cascade
-
-        return delete_artifact_cascade(db, artifact_id)
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning(f"Failed to cascade-delete artifact {artifact_id}: {e}")
-        return False
 
 
 def _now_ms() -> int:
