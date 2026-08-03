@@ -13,7 +13,7 @@ class TestUnreadCounts:
         """Test getting unread count when there are no unread notifications."""
         unread = notification_manager.get_unread_count(test_user.id)
         assert unread is not None
-        assert isinstance(unread.total_unread, int)
+        assert isinstance(unread.unread_count, int)
         assert isinstance(unread.mention_count, int)
 
     def test_get_unread_counts_dict(self, notification_manager, test_user):
@@ -38,7 +38,6 @@ class TestUnreadCounts:
         uc = UnreadCount(user_id=1, conversation_id=2)
         assert uc.unread_count == 0
         assert uc.mention_count == 0
-        assert uc.total_unread == 0
 
     def test_unread_count_with_server_filter(self, notification_manager, test_user):
         """Test getting unread count filtered by server."""

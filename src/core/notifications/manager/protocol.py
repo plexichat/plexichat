@@ -89,6 +89,11 @@ class NotificationProtocol:
         )
 
     def _decrement_mention_count(
-        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID, amount: int = 1
     ) -> None:
-        super()._decrement_mention_count(user_id, conversation_id)  # type: ignore[misc]
+        super()._decrement_mention_count(user_id, conversation_id, amount)  # type: ignore[misc]
+
+    def _decrement_unread_count(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID, amount: int = 1
+    ) -> None:
+        super()._decrement_unread_count(user_id, conversation_id, amount)  # type: ignore[misc]

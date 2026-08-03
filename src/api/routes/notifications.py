@@ -14,6 +14,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.notifications import NotificationsResponse, NotificationInfo
 from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.core.notifications.exceptions import NotificationNotFoundError
 
 router = APIRouter(tags=["Notifications"])
 
@@ -35,7 +36,7 @@ def _notif_to_response(notif) -> NotificationInfo:
 
     # Construct link
     link = None
-    if notif.server_id:
+    if notif.server_id and notif.channel_id:
         link = f"/channels/{notif.server_id}/{notif.channel_id}/{notif.message_id}"
     elif notif.conversation_id:
         link = f"/channels/@me/{notif.conversation_id}/{notif.message_id}"
@@ -114,7 +115,7 @@ async def mark_all_read(
         raise HTTPException(status_code=500, detail="Notification module not available")
 
     try:
-        notif_mod.mark_all_read(current_user.user_id)
+        await run_in_threadpool(notif_mod.mark_all_read, current_user.user_id)
         return SuccessResponse(success=True, message=None)
     except Exception as e:
         logger.error(f"Failed to mark all notifications read: {e}")
@@ -143,8 +144,8 @@ async def mark_read(
 
         notif_mod.mark_notification_read(current_user.user_id, nid)
         return SuccessResponse(success=True, message=None)
+    except NotificationNotFoundError:
+        raise HTTPException(status_code=404, detail="Notification not found")
     except Exception as e:
-        if "not found" in str(e).lower():
-            raise HTTPException(status_code=404, detail="Notification not found")
         logger.error(f"Failed to mark notification {notification_id} read: {e}")
         raise HTTPException(status_code=500, detail=str(e))

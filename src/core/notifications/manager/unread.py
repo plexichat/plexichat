@@ -48,12 +48,21 @@ class UnreadMixin(NotificationProtocol):
             )
 
     def _decrement_mention_count(
-        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID, amount: int = 1
     ):
         self._db.execute(
-            """UPDATE notif_unread SET mention_count = MAX(0, mention_count - 1)
+            """UPDATE notif_unread SET mention_count = MAX(0, mention_count - ?)
                WHERE user_id = ? AND conversation_id = ?""",
-            (user_id, conversation_id),
+            (amount, user_id, conversation_id),
+        )
+
+    def _decrement_unread_count(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID, amount: int = 1
+    ):
+        self._db.execute(
+            """UPDATE notif_unread SET unread_count = MAX(0, unread_count - ?)
+               WHERE user_id = ? AND conversation_id = ?""",
+            (amount, user_id, conversation_id),
         )
 
     def get_unread_count(
@@ -75,7 +84,7 @@ class UnreadMixin(NotificationProtocol):
         return UnreadCount(
             user_id=user_id,
             conversation_id=0,
-            total_unread=row["total"] if row else 0,
+            unread_count=row["total"] if row else 0,
             mention_count=row["mentions"] if row else 0,
             server_id=server_id,
         )
@@ -93,7 +102,7 @@ class UnreadMixin(NotificationProtocol):
             counts[conv_id] = UnreadCount(
                 user_id=user_id,
                 conversation_id=conv_id,
-                total_unread=row["unread_count"],
+                unread_count=row["unread_count"],
                 mention_count=row["mention_count"],
                 server_id=row["server_id"],
                 channel_id=row["channel_id"],

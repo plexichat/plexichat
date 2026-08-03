@@ -1,4 +1,3 @@
-import asyncio
 from typing import Dict, Any
 
 import utils.logger as logger
@@ -19,17 +18,12 @@ class EventMixin(NotificationProtocol):
 
             if ws_is_setup():
                 dispatcher = get_dispatcher()
-
-                async def dispatch():
-                    try:
-                        event = Event(
-                            event_type=event_type,
-                            data=data,
-                        )
-                        await dispatcher.dispatch_event(event, [user_id])
-                    except Exception as e:
-                        logger.debug(f"Failed to dispatch {event_type.name}: {e}")
-
-                asyncio.create_task(dispatch())
+                event = Event(
+                    event_type=event_type,
+                    data=data,
+                )
+                dispatcher.on_event(event, [user_id])
         except Exception as e:
-            logger.debug(f"Error preparing dispatch: {e}")
+            logger.warning(
+                f"Failed to dispatch notification event {event_type} for user {user_id}: {e}"
+            )

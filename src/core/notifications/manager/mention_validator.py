@@ -83,25 +83,32 @@ class MentionValidationMixin(NotificationProtocol):
                 # opt in (rare; e.g. a stripped test environment) do
                 # so via config.
                 if not self._servers:
-                    allow_missing = False
-                    try:
-                        cfg = _mention_config.get("notifications", {}) or {}
-                        allow_missing = bool(
-                            cfg.get(
-                                "allow_everyone_when_servers_missing",
-                                False,
-                            )
-                        )
-                    except Exception:
+                    # If we have a server_id, the message is in a server context
+                    # but the servers module isn't loaded. Check config for fallback.
+                    if server_id:
                         allow_missing = False
-                    if not allow_missing:
+                        try:
+                            cfg = _mention_config.get("notifications", {}) or {}
+                            allow_missing = bool(
+                                cfg.get(
+                                    "allow_everyone_when_servers_missing",
+                                    False,
+                                )
+                            )
+                        except Exception:
+                            allow_missing = False
+                        if not allow_missing:
+                            m.valid = False
+                            m.error = (
+                                "Servers module not loaded and "
+                                "notifications.allow_everyone_when_servers_missing=false; "
+                                "@everyone/@here denied"
+                            )
+                    else:
+                        # No server_id means DM context - @everyone/@here not allowed in DMs
                         m.valid = False
-                        m.error = (
-                            "Servers module not loaded and "
-                            "notifications.allow_everyone_when_servers_missing=false; "
-                            "@everyone/@here denied"
-                        )
-                elif server_id and channel_id is not None:
+                        m.error = "Cannot use @everyone/@here in DMs"
+                elif server_id and channel_id:
                     if not has_mention_everyone_permission(
                         self._servers, user_id, server_id, channel_id
                     ):

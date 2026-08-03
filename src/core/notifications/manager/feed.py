@@ -55,7 +55,16 @@ class FeedMixin(NotificationProtocol):
         max_items = self._config.get("max_feed_items", 100)
         limit = min(limit, max_items)
 
-        query = "SELECT * FROM notif_notifications WHERE user_id = ?"
+        # Single query with window functions to get total and unread counts
+        query = """
+            SELECT 
+                id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id, 
+                mention_type, content_preview, content_preview_encrypted, read, created_at,
+                COUNT(*) OVER() as total_count,
+                SUM(CASE WHEN read = 0 THEN 1 ELSE 0 END) OVER() as unread_count
+            FROM notif_notifications 
+            WHERE user_id = ?
+        """
         params = [user_id]
 
         if before_id:
@@ -73,17 +82,8 @@ class FeedMixin(NotificationProtocol):
 
         notifications = [row_to_notification(row) for row in rows]
 
-        total_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM notif_notifications WHERE user_id = ?",
-            (user_id,),
-        )
-        total_count = total_row["count"] if total_row else 0
-
-        unread_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM notif_notifications WHERE user_id = ? AND read = 0",
-            (user_id,),
-        )
-        unread_count = unread_row["count"] if unread_row else 0
+        total_count = rows[0]["total_count"] if rows else 0
+        unread_count = rows[0]["unread_count"] if rows else 0
 
         return NotificationFeed(
             notifications=notifications,
@@ -106,6 +106,7 @@ class FeedMixin(NotificationProtocol):
         )
 
         self._decrement_mention_count(user_id, notif.conversation_id)
+        self._decrement_unread_count(user_id, notif.conversation_id)
 
         self._dispatch_notification_event(
             user_id,
@@ -128,7 +129,8 @@ class FeedMixin(NotificationProtocol):
         )
 
         self._db.execute(
-            "UPDATE notif_unread SET mention_count = 0 WHERE user_id = ?", (user_id,)
+            "UPDATE notif_unread SET mention_count = 0, unread_count = 0 WHERE user_id = ?",
+            (user_id,),
         )
 
         self._dispatch_notification_event(
@@ -144,14 +146,28 @@ class FeedMixin(NotificationProtocol):
         )
         count = count_row["count"] if count_row else 0
 
+        # Capture per-conversation counts before marking as read
+        conv_rows = self._db.fetch_all(
+            """SELECT conversation_id, COUNT(*) as total
+               FROM notif_notifications WHERE user_id = ? AND channel_id = ? AND read = 0
+               GROUP BY conversation_id""",
+            (user_id, channel_id),
+        )
+
         self._db.execute(
             "UPDATE notif_notifications SET read = 1 WHERE user_id = ? AND channel_id = ? AND read = 0",
             (user_id, channel_id),
         )
 
-        self._db.execute(
-            "UPDATE notif_unread SET mention_count = 0 WHERE user_id = ? AND channel_id = ?",
-            (user_id, channel_id),
+        # Update unread counts by finding conversation_ids for this channel
+        for row in conv_rows:
+            self._decrement_mention_count(user_id, row["conversation_id"], row["total"])
+            self._decrement_unread_count(user_id, row["conversation_id"], row["total"])
+
+        self._dispatch_notification_event(
+            user_id,
+            EventType.NOTIFICATION_UPDATE,
+            {"channel_id": str(channel_id), "all_read": True},
         )
 
         return count
@@ -163,14 +179,61 @@ class FeedMixin(NotificationProtocol):
         )
         count = count_row["count"] if count_row else 0
 
+        # Capture per-conversation counts before marking as read
+        conv_rows = self._db.fetch_all(
+            """SELECT conversation_id, COUNT(*) as total
+               FROM notif_notifications WHERE user_id = ? AND server_id = ? AND read = 0
+               GROUP BY conversation_id""",
+            (user_id, server_id),
+        )
+
         self._db.execute(
             "UPDATE notif_notifications SET read = 1 WHERE user_id = ? AND server_id = ? AND read = 0",
             (user_id, server_id),
         )
 
+        # Update unread counts by finding conversation_ids for this server
+        for row in conv_rows:
+            self._decrement_mention_count(user_id, row["conversation_id"], row["total"])
+            self._decrement_unread_count(user_id, row["conversation_id"], row["total"])
+
+        self._dispatch_notification_event(
+            user_id,
+            EventType.NOTIFICATION_UPDATE,
+            {"server_id": str(server_id), "all_read": True},
+        )
+
+        return count
+
+    def mark_thread_read(self, user_id: SnowflakeID, thread_id: SnowflakeID) -> int:
+        count_row = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM notif_notifications WHERE user_id = ? AND thread_id = ? AND read = 0",
+            (user_id, thread_id),
+        )
+        count = count_row["count"] if count_row else 0
+
+        # Capture per-conversation counts before marking as read
+        conv_rows = self._db.fetch_all(
+            """SELECT conversation_id, COUNT(*) as total
+               FROM notif_notifications WHERE user_id = ? AND thread_id = ? AND read = 0
+               GROUP BY conversation_id""",
+            (user_id, thread_id),
+        )
+
         self._db.execute(
-            "UPDATE notif_unread SET mention_count = 0 WHERE user_id = ? AND server_id = ?",
-            (user_id, server_id),
+            "UPDATE notif_notifications SET read = 1 WHERE user_id = ? AND thread_id = ? AND read = 0",
+            (user_id, thread_id),
+        )
+
+        # Update unread counts
+        for row in conv_rows:
+            self._decrement_mention_count(user_id, row["conversation_id"], row["total"])
+            self._decrement_unread_count(user_id, row["conversation_id"], row["total"])
+
+        self._dispatch_notification_event(
+            user_id,
+            EventType.NOTIFICATION_UPDATE,
+            {"thread_id": str(thread_id), "all_read": True},
         )
 
         return count
@@ -186,9 +249,16 @@ class FeedMixin(NotificationProtocol):
 
         if not notif.read:
             self._decrement_mention_count(user_id, notif.conversation_id)
+            self._decrement_unread_count(user_id, notif.conversation_id)
 
         self._db.execute(
             "DELETE FROM notif_notifications WHERE id = ?", (notification_id,)
+        )
+
+        self._dispatch_notification_event(
+            user_id,
+            EventType.NOTIFICATION_DELETE,
+            {"id": str(notification_id)},
         )
 
         return True

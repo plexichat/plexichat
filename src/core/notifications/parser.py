@@ -19,7 +19,7 @@ USER_MENTION_PATTERN = re.compile(r"<@(\d+)>")
 ROLE_MENTION_PATTERN = re.compile(r"<@&(\d+)>")
 CHANNEL_MENTION_PATTERN = re.compile(r"<#(\d+)>")
 EVERYONE_PATTERN = re.compile(r"@everyone\b")
-HERE_PATTERN = re.compile(r"@here\b")
+HERE_PATTERN = re.compile(r"(?<!\w)@here\b")
 
 
 def parse_mentions(content: str) -> List[Mention]:

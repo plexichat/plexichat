@@ -112,7 +112,7 @@ def get_blocked_user_ids(relationships, db, user_id: int) -> set:
 
 
 def truncate_content(content: str, config: Dict[str, Any]) -> str:
-    max_len = config.get("content_preview_length", 100)
+    max_len = max(3, config.get("content_preview_length", 100))
     if len(content) <= max_len:
         return content
     return content[: max_len - 3] + "..."
@@ -168,8 +168,8 @@ def has_mention_everyone_permission(
 
 def get_online_members(presence, db, server_id: SnowflakeID) -> List[SnowflakeID]:
     if not presence:
-        return get_server_members(db, server_id)
+        return []
     try:
         return presence.get_online_server_members(0, server_id)
     except Exception:
-        return get_server_members(db, server_id)
+        return []
