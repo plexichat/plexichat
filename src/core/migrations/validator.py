@@ -253,7 +253,7 @@ _DANGEROUS_SQL_PATTERNS: Iterable[tuple[re.Pattern[str], str]] = (
     (re.compile(r"\bDROP\s+DATABASE\b", re.IGNORECASE), "DROP DATABASE"),
     (re.compile(r"\bDROP\s+SCHEMA\b", re.IGNORECASE), "DROP SCHEMA"),
     (
-        re.compile(r"\bTRUNCATE\s+migrations_history\b", re.IGNORECASE),
+        re.compile(r"\bTRUNCATE\s+(?:TABLE\s+)?migrations_history\b", re.IGNORECASE),
         "TRUNCATE migrations_history",
     ),
 )

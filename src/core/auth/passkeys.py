@@ -98,6 +98,7 @@ try:
         verify_authentication_response,
         verify_registration_response,
     )
+    from webauthn.helpers import options_to_json  # type: ignore
     from webauthn.helpers.structs import (  # type: ignore
         AttestationConveyancePreference,
         AuthenticatorSelectionCriteria,
@@ -117,6 +118,7 @@ except ImportError:
     generate_registration_options: Any = None  # type: ignore
     verify_authentication_response: Any = None  # type: ignore
     verify_registration_response: Any = None  # type: ignore
+    options_to_json: Any = None  # type: ignore
     AttestationConveyancePreference: Any = None  # type: ignore
     AuthenticatorSelectionCriteria: Any = None  # type: ignore
     PublicKeyCredentialDescriptor: Any = None  # type: ignore
@@ -354,7 +356,7 @@ class PasskeyManager:
             attestation=AttestationConveyancePreference.DIRECT,
         )
 
-        options_dict = json.loads(options.json())
+        options_dict = json.loads(options_to_json(options=options))
 
         return RegistrationOptions(
             challenge_id=challenge_id,
@@ -541,7 +543,7 @@ class PasskeyManager:
             user_verification=UserVerificationRequirement.PREFERRED,
         )
 
-        options_dict = json.loads(options.json())
+        options_dict = json.loads(options_to_json(options=options))
 
         return AuthenticationOptions(
             challenge_id=challenge_id,

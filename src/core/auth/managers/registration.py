@@ -98,7 +98,7 @@ class RegistrationMixin(AuthManagerProtocol):
             raise WeakPasswordError(f"Weak: {pwd_val.issues}", pwd_val.issues)
 
         if self._db.fetch_one(
-            "SELECT id FROM auth_users WHERE username = ?", (username,)
+            "SELECT id FROM auth_users WHERE LOWER(username) = LOWER(?)", (username,)
         ):
             raise UserExistsError("Registration failed", "username")
 

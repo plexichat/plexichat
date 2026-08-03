@@ -215,14 +215,30 @@ class AccountReaper:
         Suite tables are optional on older databases, so each statement is
         isolated. Child rows are removed before their parents for PostgreSQL
         installations with foreign keys enabled.
+
+        PlexiSum workbook *content* lives in the blob store (``.plexisum``
+        files) rather than the main database, so the Sum manager erases the
+        files and its own metadata via ``purge_user_data`` when the module is
+        initialized; the row-level deletes here are the schema-tolerant
+        fallback for the remaining Suite tables.
         """
+        # Remove .plexisum files and Sum metadata through the manager so
+        # workbook blobs do not leak on the storage adapter. This must run
+        # before the row-level deletes below, which otherwise empty
+        # sum_workbooks first and leave the files orphaned.
+        try:
+            from src.core.suite import sum as sum_domain
+
+            sum_domain.purge_user_data(user_id)
+        except Exception as exc:
+            logger.debug("Reaper: PlexiSum blob purge skipped: %s", exc)
+
         statements = (
             ("DELETE FROM suite_audit_log WHERE actor_id = ?", (user_id,)),
             (
                 "DELETE FROM suite_audit_log WHERE resource_id IN "
-                "(SELECT id FROM stash_items WHERE owner_id = ?) OR resource_id IN "
-                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
-                (user_id, user_id),
+                "(SELECT id FROM stash_items WHERE owner_id = ?)",
+                (user_id,),
             ),
             ("DELETE FROM stash_download_tickets WHERE subject_id = ?", (user_id,)),
             (
@@ -235,21 +251,6 @@ class AccountReaper:
                 "DELETE FROM stash_versions WHERE created_by = ? OR item_id IN "
                 "(SELECT id FROM stash_items WHERE owner_id = ?)",
                 (user_id, user_id),
-            ),
-            (
-                "DELETE FROM sum_operations WHERE actor_id = ? OR workbook_id IN "
-                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
-                (user_id, user_id),
-            ),
-            (
-                "DELETE FROM sum_cells WHERE workbook_id IN "
-                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
-                (user_id,),
-            ),
-            (
-                "DELETE FROM sum_sheets WHERE workbook_id IN "
-                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
-                (user_id,),
             ),
             ("DELETE FROM sum_workbooks WHERE owner_id = ?", (user_id,)),
             ("DELETE FROM stash_items WHERE owner_id = ?", (user_id,)),

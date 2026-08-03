@@ -21,6 +21,9 @@ class AuthManagerProtocol:
     blacklist: Any = None
     deletion_log: Any = None
     passkeys: Any = None
+    # Precomputed dummy Argon2id hash (set by AuthManager.__init__) used to
+    # equalize response timing on the user-not-found path.
+    _dummy_password_hash: str = ""
 
     def _get_timestamp(self) -> int: ...
     def _generate_id(self) -> int: ...

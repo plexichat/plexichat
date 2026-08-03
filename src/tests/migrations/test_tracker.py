@@ -56,7 +56,7 @@ class TestTracker:
     def test_get_migration_status_not_found(self, migration_manager):
         """Test getting status for non-existent migration returns None."""
         migration_manager.tracker.ensure_table_exists()
-        result = migration_manager.tracker.get_migration_status("000")
+        result = migration_manager.tracker.get_migration_status("999999")
         assert result is None
 
     def test_get_all_migration_records(self, migration_manager):

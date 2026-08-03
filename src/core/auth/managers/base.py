@@ -107,6 +107,11 @@ class AuthManager(
             argon2_parallelism=encryption_cfg.get("parallelism", 2),
         )
         self._config = config.get("authentication", {})
+        # Precomputed dummy Argon2id hash used to equalize response timing on the
+        # user-not-found path, preventing account-enumeration timing side channels.
+        self._dummy_password_hash = self.crypto.hash_password(
+            "plexichat-timing-equalizer-dummy-false-password-9f2c7e"
+        )
         logger.info("Initializing authentication module")
         self.blacklist = BlacklistManager(db)
         self.deletion_log = DeletionLog()

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Request, HTTPException, Depends
 
 import src.api as api
@@ -89,7 +89,7 @@ router = APIRouter()
 )
 @(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def passkey_register_options(
-    body: PasskeyRegisterOptionsRequest,
+    body: Optional[PasskeyRegisterOptionsRequest] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> PasskeyRegisterOptionsResponse:
     auth = api.get_auth()
@@ -102,7 +102,7 @@ async def passkey_register_options(
     try:
         options = auth.generate_passkey_registration_options(
             user_id=current_user.user_id,
-            device_name=body.device_name,
+            device_name=body.device_name if body else None,
         )
 
         if not options:

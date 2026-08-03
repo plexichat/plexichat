@@ -29,6 +29,10 @@ class PasswordMixin(AuthManagerProtocol):
             "UPDATE auth_users SET password_hash = ? WHERE id = ?",
             (self.crypto.hash_password(new), user_id),
         )
+        self._db.execute(
+            "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
+        )
+        invalidate_pattern("token_verify:*")
         self._log_audit(AuditEventType.PASSWORD_CHANGE, user_id, True)
         try:
             from src.core.events.gateway_emit import emit_security_alert
@@ -47,6 +51,8 @@ class PasswordMixin(AuthManagerProtocol):
         if not self.email_sender:
             return False
         if not user:
+            # Equalize timing with the found-user path to prevent account enumeration.
+            self.crypto.verify_password("x", self._dummy_password_hash)
             return True
         tid = self._generate_id()
         token, token_hash = create_email_token(tid)
@@ -90,6 +96,11 @@ class PasswordMixin(AuthManagerProtocol):
         self._db.execute(
             "UPDATE auth_email_tokens SET used = 1 WHERE id = ?", (rec["id"],)
         )
+        # Revoke all existing sessions so a compromised/reset credential cannot persist.
+        self._db.execute(
+            "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (rec["user_id"],)
+        )
+        invalidate_pattern("token_verify:*")
         invalidate_pattern(f"user_data:{rec['user_id']}*")
         invalidate_pattern(f"user_api:{rec['user_id']}*")
         return True

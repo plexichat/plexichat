@@ -98,6 +98,9 @@ class SessionMixin(AuthManagerProtocol):
             (username, email_index),
         )
         if not row:
+            # Equalize timing with the found-user path so responses are identical
+            # regardless of whether the account exists (prevents enumeration).
+            self.crypto.verify_password(password, self._dummy_password_hash)
             self._log_audit(AuditEventType.LOGIN_FAILED, None, False, ip_address)
             raise InvalidCredentialsError("Invalid credentials")
 

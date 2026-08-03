@@ -93,6 +93,10 @@ class TwoFactorMixin(AuthManagerProtocol):
         if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
 
+        max_attempts = int(self._config.get("totp", {}).get("max_attempts", 3))
+        if row.get("attempts", 0) >= max_attempts:
+            raise TwoFactorInvalidError("Too many attempts")
+
         user_row = self._db.fetch_one(
             "SELECT * FROM auth_users WHERE id = ?", (row["user_id"],)
         )
@@ -115,6 +119,10 @@ class TwoFactorMixin(AuthManagerProtocol):
             )
             valid, index = totp_module.verify_backup_code(code, backup_hashes)
             if not valid:
+                self._db.execute(
+                    "UPDATE auth_2fa_challenges SET attempts = attempts + 1 WHERE id = ?",
+                    (row["id"],),
+                )
                 raise TwoFactorInvalidError("Invalid code")
             backup_hashes.pop(index)
             self._db.execute(
@@ -123,7 +131,8 @@ class TwoFactorMixin(AuthManagerProtocol):
             )
 
         self._db.execute(
-            "UPDATE auth_2fa_challenges SET used = 1 WHERE id = ?", (row["id"],)
+            "UPDATE auth_2fa_challenges SET used = 1, attempts = 0 WHERE id = ?",
+            (row["id"],),
         )
 
         ip_address = None

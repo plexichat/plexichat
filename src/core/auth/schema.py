@@ -335,6 +335,10 @@ CREATE INDEX IF NOT EXISTS idx_auth_known_ips_ip_index ON auth_known_ips(ip_inde
 -- Index for auth_deletion_records
 CREATE INDEX IF NOT EXISTS idx_auth_deletion_records_user ON auth_deletion_records(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_deletion_records_hash ON auth_deletion_records(identifier_hash);
+
+-- Case-insensitive username uniqueness (prevents lookalike impersonation)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_users_username_lower
+    ON auth_users(LOWER(username));
 """
 
 
