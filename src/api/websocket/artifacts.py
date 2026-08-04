@@ -149,16 +149,13 @@ async def relay_artifact_op(
     # Subscriptions are only a routing hint. Revalidate the artifact and the
     # recipient's current capability/scope before every relay so access changes
     # take effect without waiting for a reconnect.
-    try:
-        import src.api as api
-        from src.core.artifacts.repository import get_artifact
-        from src.core.artifacts.capabilities import capability_allows_artifact
+    import src.api as api
+    from src.core.artifacts.repository import get_artifact
+    from src.core.artifacts.capabilities import capability_allows_artifact
 
-        db = api.get_db()
-        artifact = get_artifact(db, artifact_id) if db is not None else None
-        if artifact is None or not capability_allows_artifact(artifact.artifact_type):
-            return 0
-    except Exception:
+    db = api.get_db()
+    artifact = get_artifact(db, artifact_id) if db is not None else None
+    if artifact is None or not capability_allows_artifact(artifact.artifact_type):
         return 0
 
     subscribers = registry.get_subscribers(artifact_id)

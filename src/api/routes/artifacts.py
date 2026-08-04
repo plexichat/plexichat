@@ -89,13 +89,10 @@ def _conversation_server_id(conversation_id: Optional[int]) -> Optional[int]:
     db = api.get_db()
     if db is None:
         return None
-    try:
-        row = db.fetch_one(
-            "SELECT metadata FROM msg_conversations WHERE id = ? AND deleted = 0",
-            (conversation_id,),
-        )
-    except Exception:
-        return None
+    row = db.fetch_one(
+        "SELECT metadata FROM msg_conversations WHERE id = ? AND deleted = 0",
+        (conversation_id,),
+    )
     if not row or not row.get("metadata"):
         return None
     try:

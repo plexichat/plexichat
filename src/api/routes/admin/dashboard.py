@@ -196,14 +196,11 @@ async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
 
             # Resolve admin username for the audit trail.
             username = None
-            try:
-                row = db.fetch_one(
-                    "SELECT username FROM admin_users WHERE id = ?", (admin_id,)
-                )
-                if row:
-                    username = row.get("username") if isinstance(row, dict) else row[0]
-            except Exception:
-                pass
+            row = db.fetch_one(
+                "SELECT username FROM admin_users WHERE id = ?", (admin_id,)
+            )
+            if row:
+                username = row.get("username") if isinstance(row, dict) else row[0]
 
             changes = {
                 k: {"old": old_tuning.get(k), "new": result.get(k)} for k in updates
