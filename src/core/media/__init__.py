@@ -172,11 +172,30 @@ def setup(db: Any, messaging_module: Optional[Any] = None) -> None:
     from .deduplication import DeduplicationManager
     from .compression import CompressionManager
     from .chunked import ChunkedUploadManager
+    from .schema import create_tables
 
+    # Keep media-owned compatibility objects available on existing databases;
+    # migration 000 remains the authoritative fresh-install orchestrator.
+    create_tables(db)
     _manager = MediaManager(db, messaging_module)
     _dedup_manager = DeduplicationManager(db)
     _compression_manager = CompressionManager()
     _chunked_manager = ChunkedUploadManager(db)
+
+    # The normal initializer installs guards after every reference-owning
+    # domain schema is ready. Direct media setup can run earlier, so it leaves
+    # guard installation to that finalization step when dependencies are absent.
+    from .schema import create_reference_guards
+
+    required_tables = (
+        "msg_attachments",
+        "stash_items",
+        "stash_versions",
+        "auth_users",
+        "srv_servers",
+    )
+    if all(db.table_exists(table) for table in required_tables):
+        create_reference_guards(db)
     _setup_complete = True
 
 

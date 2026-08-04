@@ -139,6 +139,31 @@ class _FilesMixin:
         )
         if icon_count and int(icon_count["count"]) > 0:
             return False
+        stash_item_count = self._db.fetch_one(
+            "SELECT COUNT(*) AS count FROM stash_items "
+            "WHERE deleted = 0 AND media_object_id IN (?, ?)",
+            (file_token, file.filename),
+        )
+        if stash_item_count and int(stash_item_count["count"]) > 0:
+            return False
+        stash_version_count = self._db.fetch_one(
+            "SELECT COUNT(*) AS count FROM stash_versions v "
+            "JOIN stash_items i ON i.id = v.item_id "
+            "WHERE i.deleted = 0 AND v.media_object_id IN (?, ?)",
+            (file_token, file.filename),
+        )
+        if stash_version_count and int(stash_version_count["count"]) > 0:
+            return False
+        artifact_count = self._db.fetch_one(
+            "SELECT COUNT(*) AS count FROM artifacts "
+            "WHERE COALESCE(payload, '') LIKE ? OR COALESCE(payload, '') LIKE ?",
+            (
+                f"%" + '"recording_file_id":' + file_token + "%",
+                f"%" + '"recording_file_ids"' + "%" + file_token + "%",
+            ),
+        )
+        if artifact_count and int(artifact_count["count"]) > 0:
+            return False
         dedup_count = (
             self._db.fetch_one(
                 "SELECT reference_count FROM media_file_hashes WHERE hash_value = ?",
@@ -187,19 +212,18 @@ class _FilesMixin:
         # transaction.  The check above is only a cheap preflight; this second
         # check is authoritative and prevents a concurrent attachment from
         # being created between the check and delete.
-        transaction_started = False
-        original_data: Optional[bytes] = None
         storage = self._get_storage_by_backend(file.storage_backend.value)
+        deletion_timestamp = self._get_timestamp()
+
+        # Phase one durably publishes the tombstone before touching object
+        # storage. If the worker dies after this commit, every guarded writer
+        # continues to reject the reference and a later cleanup can retry the
+        # storage removal safely.
         try:
             begin()
-            transaction_started = True
-            # Touch the row while the transaction is open.  SQLite obtains its
-            # writer lock here; PostgreSQL takes a row lock, preventing another
-            # transaction from changing the media record while references are
-            # checked and metadata is removed.
             lock_cursor = self._db.execute(
                 "UPDATE media_files SET deleted = 1, deleted_at = ? WHERE id = ?",
-                (self._get_timestamp(), int(file_id)),
+                (deletion_timestamp, int(file_id)),
                 auto_commit=False,
             )
             try:
@@ -211,45 +235,62 @@ class _FilesMixin:
                 "INSERT INTO media_file_deletion_locks "
                 "(media_file_id, requested_by, requested_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(media_file_id) DO NOTHING",
-                (int(file_id), int(user_id), self._get_timestamp()),
+                (int(file_id), int(user_id), deletion_timestamp),
                 auto_commit=False,
             )
-            try:
-                if int(getattr(lock_cursor, "rowcount", 0)) != 1:
-                    raise MediaError("Media object is already being deleted")
-            finally:
-                lock_cursor.close()
+            lock_cursor.close()
+            tombstone_cursor = self._db.execute(
+                "INSERT INTO media_file_deletion_tombstones "
+                "(media_file_id, filename, requested_by, requested_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(media_file_id) DO NOTHING",
+                (int(file_id), file.filename, int(user_id), deletion_timestamp),
+                auto_commit=False,
+            )
+            tombstone_cursor.close()
             if not self.can_delete_file_permanently(file_id):
                 raise MediaError("Media object is still referenced")
-            try:
-                original_data = storage.retrieve(file.storage_path)
-            except Exception as exc:
-                raise MediaError("Underlying media object could not be read") from exc
+            commit()
+        except MediaError:
+            rollback()
+            raise
+        except Exception as exc:
+            rollback()
+            raise MediaError("Could not publish media deletion tombstone") from exc
+
+        try:
             if not storage.delete(file.storage_path):
                 raise MediaError("Underlying media object could not be deleted")
-            if file.checksum and self._dedup_manager is not None:
-                self._dedup_manager.decrement_reference(file.checksum)
-            # The media DELETE trigger requires the tombstone to remain until
-            # the row is removed; ON DELETE CASCADE clears the lock atomically.
-            self._db.execute("DELETE FROM media_files WHERE id = ?", (int(file_id),))
-            commit()
         except Exception as exc:
-            if transaction_started:
-                rollback()
-            if original_data is not None:
-                try:
-                    storage.store(original_data, file.storage_path, file.content_type)
-                except Exception as restore_exc:
-                    logger.critical(
-                        "Media deletion rollback could not restore file %s: %s",
-                        file_id,
-                        restore_exc,
-                    )
+            # Leave the durable tombstone and soft-deleted metadata in place;
+            # cleanup can retry without exposing a newly-created reference.
             if isinstance(exc, MediaError):
                 raise
+            raise MediaError("Underlying media object could not be deleted") from exc
+
+        try:
+            begin()
+            if file.checksum and self._dedup_manager is not None:
+                self._dedup_manager.decrement_reference(file.checksum)
+            self._db.execute(
+                "DELETE FROM media_files WHERE id = ?",
+                (int(file_id),),
+                auto_commit=False,
+            )
+            self._db.execute(
+                "DELETE FROM media_file_deletion_locks WHERE media_file_id = ?",
+                (int(file_id),),
+                auto_commit=False,
+            )
+            commit()
+        except Exception as exc:
+            rollback()
+            # The object is already gone, so retain the tombstone and leave
+            # metadata for an idempotent repair job rather than resurrecting a
+            # reference to missing storage.
             raise MediaError(
-                "Media metadata deletion failed; storage was restored"
+                "Media metadata deletion failed after storage removal"
             ) from exc
+
         logger.info("Permanently deleted media file %s", file_id)
         return True
 
