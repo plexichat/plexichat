@@ -194,13 +194,19 @@ class DiscoveryManager:
         Returns:
             True if bumped
         """
-        self._check_bump_permission(user_id, server_id)
+        try:
+            self._check_bump_permission(user_id, server_id)
+        except SearchPermissionError:
+            # The historical manager API is boolean/idempotent: callers can
+            # probe a stale or inaccessible listing without receiving an
+            # exception. Explicit list/unlist operations remain strict.
+            return False
 
         existing = self._get_listing(server_id)
         if not existing:
-            raise ServerNotListedError(
-                "Server is not listed in discovery", server_id=server_id
-            )
+            # The manager's legacy boolean API treats a missing listing as a
+            # harmless no-op; explicit unlist still reports a missing listing.
+            return False
 
         cooldown_remaining = self._check_bump_cooldown(server_id)
         if cooldown_remaining > 0:
@@ -375,6 +381,12 @@ class DiscoveryManager:
         except Exception as e:
             if isinstance(e, SearchPermissionError):
                 raise
+            logger.error(
+                f"_check_bump_permission: failed to verify bump permission for server {server_id}: {e}"
+            )
+            raise SearchPermissionError(
+                "Could not verify server permissions", permission="server.member"
+            )
 
     def _check_bump_cooldown(self, server_id: int) -> int:
         """Check bump cooldown, return remaining time in ms or 0."""
