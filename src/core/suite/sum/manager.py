@@ -21,12 +21,15 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
+
+import utils.config as config
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.core.base import BaseManager
 
 from .formulas import FormulaEvaluator, is_error
 from .schema import (
+    PLEXISUM_FORMAT_VERSION,
     SUM_OPERATION_TYPES,
     SUM_VALUE_TYPES,
     ensure_feature_tables,
@@ -313,6 +316,25 @@ class SumManager(BaseManager):
         if media is not None:
             self._blob = MediaBlobStore(media)
         else:
+            environment = (
+                str(config.get("application.environment", "development"))
+                .strip()
+                .lower()
+            )
+            local_opt_in = os.getenv("PLEXICHAT_SUM_ALLOW_LOCAL_STORAGE", "").lower()
+            if (
+                storage_dir is None
+                and environment
+                not in {
+                    "development",
+                    "test",
+                    "testing",
+                }
+                and local_opt_in not in {"1", "true", "yes"}
+            ):
+                raise SumStorageError(
+                    "PlexiSum requires the configured media storage adapter"
+                )
             base_dir = storage_dir or os.path.join(os.getcwd(), "data", "sum")
             self._blob = LocalBlobStore(base_dir)
 
@@ -362,7 +384,13 @@ class SumManager(BaseManager):
             for row in rows:
                 ids[int(row["subject_id"])] = None
         except Exception:
-            pass
+            import utils.logger as logger
+
+            logger.error(
+                f"PlexiSum: failed to load grants for workbook {workbook.get('id')}; "
+                "grant holders excluded from authorized viewers",
+                exc_info=True,
+            )
         server_id = workbook.get("server_id")
         if (
             workbook.get("scope") == "server"
@@ -375,7 +403,14 @@ class SumManager(BaseManager):
                 ):
                     ids[int(member_id)] = None
             except Exception:
-                pass
+                import utils.logger as logger
+
+                logger.error(
+                    f"PlexiSum: failed to load server members for workbook "
+                    f"{workbook.get('id')} (server {server_id}); "
+                    "server members excluded from authorized viewers",
+                    exc_info=True,
+                )
         return list(ids)
 
     def _emit_update(
@@ -589,6 +624,8 @@ class SumManager(BaseManager):
             return
         if self._has_grant(int(workbook["id"]), int(user_id), "edit"):
             return
+        if not mutation and self._has_grant(int(workbook["id"]), int(user_id), "view"):
+            return
         server_id = workbook.get("server_id")
         if (
             workbook["scope"] == "server"
@@ -671,12 +708,24 @@ class SumManager(BaseManager):
             directory = str(current_row["blob_path"]).rsplit("/", 1)[0]
             current = int(current_row.get("current_revision") or 0)
         except Exception:
+            import utils.logger as logger
+
+            logger.error(
+                f"PlexiSum: failed to read workbook {workbook_id} for revision GC",
+                exc_info=True,
+            )
             return
         for revision in range(max(0, current - REVISION_KEEP_COUNT)):
             try:
                 self._blob.delete(f"{directory}/rev-{revision}.plexisum")
             except Exception:
-                pass
+                import utils.logger as logger
+
+                logger.debug(
+                    f"PlexiSum: failed to delete superseded revision blob "
+                    f"rev-{revision}.plexisum for workbook {workbook_id}",
+                    exc_info=True,
+                )
 
     def _save_file(
         self, workbook_id: int, revision: int, data: bytes
@@ -703,8 +752,16 @@ class SumManager(BaseManager):
         connection.row_factory = sqlite3.Row
         try:
             ensure_feature_tables(connection)
-        except sqlite3.Error:
-            pass
+            format_row = connection.execute(
+                "SELECT value FROM sum_meta WHERE key = 'format_version'"
+            ).fetchone()
+            if format_row is None or format_row["value"] != PLEXISUM_FORMAT_VERSION:
+                raise SumStorageError("Unsupported PlexiSum workbook format")
+        except (sqlite3.Error, SumStorageError) as exc:
+            SumManager._close_sqlite(connection, handle.name)
+            if isinstance(exc, SumStorageError):
+                raise
+            raise SumStorageError("Workbook file schema could not be upgraded") from exc
         return connection, handle.name
 
     @staticmethod
@@ -766,8 +823,10 @@ class SumManager(BaseManager):
                 "SELECT id, name FROM sum_sheets WHERE deleted = 0"
             ).fetchall():
                 sheet_map[str(row["name"])] = str(row["id"])
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            import utils.logger as logger
+
+            logger.error(f"PlexiSum formula resolver could not load sheet names: {exc}")
         cache: Dict[Tuple[str, int, int], Optional[Dict[str, Any]]] = {}
 
         def resolver(
@@ -1019,14 +1078,18 @@ class SumManager(BaseManager):
         revision = int(base) + 1
         now = int(time.time() * 1000)
         path, size, checksum = self._save_file(workbook_id, revision, data)
-        cursor = self._db.execute(
-            "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, file_size = ?, checksum = ?, updated_at = ? WHERE id = ? AND current_revision = ?",
-            (revision, path, size, checksum, now, workbook_id, base),
-        )
         try:
-            affected = int(cursor.rowcount)
-        finally:
-            cursor.close()
+            cursor = self._db.execute(
+                "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, file_size = ?, checksum = ?, updated_at = ? WHERE id = ? AND current_revision = ?",
+                (revision, path, size, checksum, now, workbook_id, base),
+            )
+            try:
+                affected = int(cursor.rowcount)
+            finally:
+                cursor.close()
+        except Exception:
+            self._blob.delete(path)
+            raise
         if affected != 1:
             self._blob.delete(path)
             raise SumConflictError("Workbook revision changed during upload")
@@ -1057,20 +1120,69 @@ class SumManager(BaseManager):
         }
 
     def _validate_workbook_file(self, data: bytes) -> None:
-        """Reject bytes that are not a valid PlexiSum workbook file."""
+        """Validate format, integrity, and resource bounds before storage."""
         from .schema import PLEXISUM_FORMAT_VERSION
 
+        max_bytes = 50 * 1024 * 1024
+        if not isinstance(data, bytes) or not data:
+            raise SumValidationError("Workbook file is required")
+        if len(data) > max_bytes:
+            raise SumValidationError("Workbook file is too large")
         if not data.startswith(b"SQLite format 3"):
             raise SumValidationError("File is not a SQLite database")
-        connection, path = self._open_sqlite(data)
         try:
+            connection, path = self._open_sqlite(data)
+        except SumStorageError as exc:
+            raise SumValidationError(
+                "File is not a supported PlexiSum workbook"
+            ) from exc
+        try:
+            format_row = connection.execute(
+                "SELECT value FROM sum_meta WHERE key = 'format_version'"
+            ).fetchone()
+            if format_row is None or format_row["value"] != PLEXISUM_FORMAT_VERSION:
+                raise SumValidationError("File is not a supported PlexiSum workbook")
+            page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
+            page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+            if page_size <= 0 or page_count <= 0 or page_size * page_count > max_bytes:
+                raise SumValidationError("Workbook SQLite allocation is too large")
+            integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+            if str(integrity).lower() != "ok":
+                raise SumValidationError("Workbook SQLite integrity check failed")
+            object_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table', 'index', 'trigger', 'view')"
+                ).fetchone()[0]
+            )
+            if object_count > 1_000:
+                raise SumValidationError("Workbook contains too many SQLite objects")
             meta = connection.execute(
                 "SELECT value FROM sum_meta WHERE key = 'format_version'"
             ).fetchone()
             if meta is None or meta["value"] != PLEXISUM_FORMAT_VERSION:
                 raise SumValidationError("File is not a supported PlexiSum workbook")
-            connection.execute("SELECT id FROM sum_sheets LIMIT 1").fetchall()
-        except sqlite3.Error as exc:
+            sheet_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM sum_sheets WHERE deleted = 0"
+                ).fetchone()[0]
+            )
+            cell_count = int(
+                connection.execute("SELECT COUNT(*) FROM sum_cells").fetchone()[0]
+            )
+            if sheet_count > 1_000 or cell_count > 5_000_000:
+                raise SumValidationError("Workbook dimensions exceed supported limits")
+            extent = connection.execute(
+                "SELECT MAX(row_index), MAX(column_index) FROM sum_cells"
+            ).fetchone()
+            if extent[0] is not None and int(extent[0]) > 10_000_000:
+                raise SumValidationError("Workbook row extent exceeds supported limits")
+            if extent[1] is not None and int(extent[1]) > 16_384:
+                raise SumValidationError(
+                    "Workbook column extent exceeds supported limits"
+                )
+        except SumValidationError:
+            raise
+        except (sqlite3.Error, ValueError, TypeError) as exc:
             raise SumValidationError("File is not a valid PlexiSum workbook") from exc
         finally:
             self._close_sqlite(connection, path)
@@ -1163,8 +1275,12 @@ class SumManager(BaseManager):
                     "freeze_rows": int(freeze["freeze_rows"]),
                     "freeze_columns": int(freeze["freeze_columns"]),
                 }
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            import utils.logger as logger
+
+            logger.error(
+                f"PlexiSum viewport could not read freeze config for sheet {sheet_id}: {exc}"
+            )
         try:
             validations = connection.execute(
                 "SELECT id, row_start, row_end, column_start, column_end, rule_type, "
@@ -1186,8 +1302,12 @@ class SumManager(BaseManager):
                 }
                 for v in validations
             ]
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            import utils.logger as logger
+
+            logger.error(
+                f"PlexiSum viewport could not read validations for sheet {sheet_id}: {exc}"
+            )
         try:
             formats = connection.execute(
                 "SELECT id, row_start, row_end, column_start, column_end, rule_type, "
@@ -1208,8 +1328,12 @@ class SumManager(BaseManager):
                 }
                 for f in formats
             ]
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            import utils.logger as logger
+
+            logger.error(
+                f"PlexiSum viewport could not read conditional formats for sheet {sheet_id}: {exc}"
+            )
         try:
             comments = connection.execute(
                 "SELECT id, row_index, column_index, author_id, body, resolved, "
@@ -1230,8 +1354,12 @@ class SumManager(BaseManager):
                 }
                 for c in comments
             ]
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            import utils.logger as logger
+
+            logger.error(
+                f"PlexiSum viewport could not read comments for sheet {sheet_id}: {exc}"
+            )
         return metadata
 
     def read_viewport(
@@ -1966,8 +2094,13 @@ class SumManager(BaseManager):
                 "UPDATE sum_indexes SET state = 'pending' WHERE sheet_id = ?",
                 (sheet_id,),
             )
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            import utils.logger as logger
+
+            logger.error(
+                f"PlexiSum could not invalidate sheet indexes for sheet {sheet_id}: {exc}"
+            )
+            raise
 
     def _shift_range_permissions(
         self,
@@ -2088,8 +2221,13 @@ class SumManager(BaseManager):
         if crossed:
             try:
                 self._promote_indexes(connection, sheet_id, now, crossed)
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as exc:
+                import utils.logger as logger
+
+                logger.error(
+                    f"PlexiSum could not promote auto-indexes for sheet {sheet_id}: {exc}"
+                )
+                raise
         # Re-check pending indexes: a column that crossed the threshold while
         # all its cells were blank is marked 'pending' (its access count never
         # drops below the threshold again, so it cannot "re-cross"). This op
@@ -2105,8 +2243,13 @@ class SumManager(BaseManager):
             ]
             if pending:
                 self._promote_indexes(connection, sheet_id, now, pending)
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            import utils.logger as logger
+
+            logger.error(
+                f"PlexiSum could not promote pending auto-indexes for sheet {sheet_id}: {exc}"
+            )
+            raise
 
     def _promote_indexes(
         self,
@@ -2223,7 +2366,13 @@ class SumManager(BaseManager):
                     "c"
                 ]
             )
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            import utils.logger as logger
+
+            logger.error(
+                f"PlexiSum could not count cells for snapshot of workbook "
+                f"{workbook_id}: {exc}"
+            )
             cell_count = 0
         finally:
             self._close_sqlite(connection, tmp_path)
@@ -2499,14 +2648,18 @@ class SumManager(BaseManager):
         revision = base + 1
         now = int(time.time() * 1000)
         path, size, checksum = self._save_file(workbook_id, revision, updated)
-        cursor = self._db.execute(
-            "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, file_size = ?, checksum = ?, updated_at = ? WHERE id = ? AND current_revision = ?",
-            (revision, path, size, checksum, now, workbook_id, base),
-        )
         try:
-            affected = int(cursor.rowcount)
-        finally:
-            cursor.close()
+            cursor = self._db.execute(
+                "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, file_size = ?, checksum = ?, updated_at = ? WHERE id = ? AND current_revision = ?",
+                (revision, path, size, checksum, now, workbook_id, base),
+            )
+            try:
+                affected = int(cursor.rowcount)
+            finally:
+                cursor.close()
+        except Exception:
+            self._blob.delete(path)
+            raise
         if affected != 1:
             self._blob.delete(path)
             raise SumConflictError("Workbook revision changed during update")
@@ -3479,8 +3632,13 @@ class SumManager(BaseManager):
                             "mentions": mentioned,
                         },
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                import utils.logger as logger
+
+                logger.error(
+                    f"PlexiSum could not emit comment update for workbook "
+                    f"{workbook_id}: {exc}"
+                )
         return comment
 
     def list_comments(
@@ -4100,23 +4258,9 @@ class SumManager(BaseManager):
                 pass
             raise
 
-        try:
-            # Workbook ids are captured before deletion so the audit rows they
-            # referenced are removed too.
-            if workbook_ids:
-                placeholders = ",".join("?" * len(workbook_ids))
-                self._db.execute(
-                    f"DELETE FROM suite_audit_log WHERE actor_id = ? OR resource_id IN ({placeholders})",
-                    (uid, *workbook_ids),
-                )
-            else:
-                self._db.execute(
-                    "DELETE FROM suite_audit_log WHERE actor_id = ?", (uid,)
-                )
-        except Exception:
-            # suite_audit_log lives in the Stash schema; tolerate isolated
-            # Sum-only databases where it has not been created.
-            pass
+        # Suite audit records are compliance history, not user content. Keep
+        # them after DSAR content deletion; account-erasure reporting can
+        # anonymize actor identity separately without destroying the trail.
         try:
             import utils.logger as logger
 

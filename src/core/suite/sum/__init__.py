@@ -30,9 +30,9 @@ def setup(
 ) -> SumManager:
     """Initialize and retain the process-local Sum manager.
 
-    ``media`` is the media module exposing the storage-adapter blob helpers;
-    when unavailable (isolated tests, embedded callers) a local directory blob
-    store under ``storage_dir`` (default ``<cwd>/data/sum``) is used instead.
+    ``media`` is the media module exposing the storage-adapter blob helpers.
+    In development/test mode an explicit ``storage_dir`` may be supplied for
+    isolated tests; production requires the configured media adapter.
     """
     global _manager
     _manager = SumManager(
@@ -67,6 +67,7 @@ __all__ = [
     "SumPermissionError",
     "SumStorageError",
     "SumValidationError",
+    "purge_user_data",
     "create_tables",
     "setup",
     "get_manager",

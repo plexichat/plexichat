@@ -11,6 +11,7 @@ remain stable. Cells are typed and sparse. Managed indexes are created from
 measured workloads (``sum_statistics`` drives ``sum_indexes``).
 """
 
+import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -30,6 +31,7 @@ SUM_OPERATION_TYPES = (
 
 # The workbook file format marker. Bump when the on-disk file schema changes.
 PLEXISUM_FORMAT_VERSION = "1"
+SUPPORTED_PLEXISUM_FORMAT_VERSIONS = frozenset({PLEXISUM_FORMAT_VERSION})
 
 # ── Main-database metadata (never the workbook data) ─────────────────────────
 
@@ -95,6 +97,108 @@ CREATE TABLE IF NOT EXISTS sum_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_sum_snapshots_workbook ON sum_snapshots(workbook_id, created_at DESC);
 """
+
+# Required columns are a compact compatibility contract for existing files.
+# ``CREATE TABLE IF NOT EXISTS`` can add missing tables but cannot repair a
+# table whose columns were changed by an incompatible external editor. Such a
+# file is rejected rather than being opened with silently incorrect semantics.
+WORKBOOK_SCHEMA_REQUIREMENTS = {
+    "sum_meta": {"key", "value"},
+    "sum_sheets": {"id", "name", "position", "deleted", "created_at", "updated_at"},
+    "sum_columns": {
+        "id",
+        "sheet_id",
+        "stable_key",
+        "display_name",
+        "data_type",
+        "position",
+    },
+    "sum_rows": {"id", "sheet_id", "stable_key", "position", "created_at"},
+    "sum_cells": {
+        "sheet_id",
+        "row_index",
+        "column_index",
+        "value_type",
+        "value_json",
+        "formula",
+        "style_json",
+        "revision",
+        "updated_at",
+    },
+    "sum_operations": {
+        "operation_id",
+        "actor_id",
+        "base_revision",
+        "result_revision",
+        "operation_type",
+        "payload_json",
+        "created_at",
+    },
+    "sum_snapshots": {
+        "snapshot_id",
+        "revision",
+        "snapshot_json",
+        "checksum",
+        "created_at",
+    },
+    "sum_statistics": {
+        "sheet_id",
+        "column_key",
+        "filter_count",
+        "sort_count",
+        "access_count",
+        "updated_at",
+    },
+    "sum_indexes": {
+        "id",
+        "sheet_id",
+        "column_key",
+        "index_type",
+        "state",
+        "statistics_json",
+        "created_at",
+    },
+    "sum_index_entries": {"index_id", "value_json", "row_index"},
+    "sum_validations": {
+        "id",
+        "sheet_id",
+        "row_start",
+        "row_end",
+        "column_start",
+        "column_end",
+        "rule_type",
+        "criteria_json",
+        "allow_blank",
+        "message",
+        "created_by",
+        "created_at",
+    },
+    "sum_conditional_formats": {
+        "id",
+        "sheet_id",
+        "row_start",
+        "row_end",
+        "column_start",
+        "column_end",
+        "rule_type",
+        "criteria_json",
+        "style_json",
+        "created_by",
+        "created_at",
+    },
+    "sum_comments": {
+        "id",
+        "sheet_id",
+        "row_index",
+        "column_index",
+        "author_id",
+        "body",
+        "resolved",
+        "created_at",
+        "updated_at",
+    },
+    "sum_freeze": {"sheet_id", "freeze_rows", "freeze_columns"},
+}
 
 
 def create_tables(db) -> None:
@@ -279,70 +383,51 @@ CREATE TABLE IF NOT EXISTS sum_freeze (
 );
 """
 
-# Feature tables added after the initial file format shipped. ``ensure_feature_tables``
-# runs on every file open so older ``.plexisum`` files gain the new tables
-# in place without a format-version bump (the additions are strictly
-# additive and independent of cell data).
-FEATURE_TABLES_SQL = """
-CREATE TABLE IF NOT EXISTS sum_validations (
-    id TEXT PRIMARY KEY,
-    sheet_id TEXT NOT NULL,
-    row_start INTEGER NOT NULL,
-    row_end INTEGER NOT NULL,
-    column_start INTEGER NOT NULL,
-    column_end INTEGER NOT NULL,
-    rule_type TEXT NOT NULL,
-    criteria_json TEXT NOT NULL,
-    allow_blank INTEGER NOT NULL DEFAULT 1,
-    message TEXT,
-    created_by INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_file_validations_sheet ON sum_validations(sheet_id);
 
-CREATE TABLE IF NOT EXISTS sum_conditional_formats (
-    id TEXT PRIMARY KEY,
-    sheet_id TEXT NOT NULL,
-    row_start INTEGER NOT NULL,
-    row_end INTEGER NOT NULL,
-    column_start INTEGER NOT NULL,
-    column_end INTEGER NOT NULL,
-    rule_type TEXT NOT NULL,
-    criteria_json TEXT NOT NULL,
-    style_json TEXT NOT NULL,
-    created_by INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_file_cformats_sheet ON sum_conditional_formats(sheet_id);
+def upgrade_workbook_schema(connection, format_version: str) -> None:
+    """Apply the supported format-1 additive schema contract.
 
-CREATE TABLE IF NOT EXISTS sum_comments (
-    id TEXT PRIMARY KEY,
-    sheet_id TEXT NOT NULL,
-    row_index INTEGER NOT NULL,
-    column_index INTEGER NOT NULL,
-    author_id INTEGER NOT NULL,
-    body TEXT NOT NULL,
-    resolved INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_file_comments_cell ON sum_comments(sheet_id, row_index, column_index);
-
-CREATE TABLE IF NOT EXISTS sum_freeze (
-    sheet_id TEXT PRIMARY KEY,
-    freeze_rows INTEGER NOT NULL DEFAULT 0,
-    freeze_columns INTEGER NOT NULL DEFAULT 0
-);
-"""
+    Version 1 is not a general migration engine: it can create missing tables
+    and indexes idempotently, but it does not rewrite incompatible existing
+    tables or infer altered columns. A future on-disk format must add an
+    explicit version branch here before it is marked supported; unknown or
+    missing versions fail closed and are never rewritten.
+    """
+    if str(format_version) != "1":
+        raise sqlite3.DatabaseError(
+            f"Unsupported PlexiSum format version: {format_version}"
+        )
+    connection.executescript(WORKBOOK_FILE_SCHEMA)
 
 
 def ensure_feature_tables(connection) -> None:
-    """Idempotently backfill feature tables into an opened workbook file.
+    """Validate and apply additive setup for a supported ``.plexisum`` file.
 
-    Safe to run on every open; ``CREATE TABLE IF NOT EXISTS`` makes it a no-op
-    for files that already carry the tables.
+    This is deliberately fail-closed for missing/unknown markers and
+    incompatible columns. It is format validation plus idempotent table/index
+    creation, not a promise to migrate arbitrary legacy SQLite files.
     """
-    connection.executescript(FEATURE_TABLES_SQL)
+    format_row = connection.execute(
+        "SELECT value FROM sum_meta WHERE key = 'format_version'"
+    ).fetchone()
+    if format_row is None:
+        raise sqlite3.DatabaseError("Missing PlexiSum format version")
+    format_version = str(format_row[1])
+    if format_version not in SUPPORTED_PLEXISUM_FORMAT_VERSIONS:
+        raise sqlite3.DatabaseError(
+            f"Unsupported PlexiSum format version: {format_version}"
+        )
+    upgrade_workbook_schema(connection, format_version)
+    for table_name, required_columns in WORKBOOK_SCHEMA_REQUIREMENTS.items():
+        columns = {
+            row[1]
+            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if not required_columns.issubset(columns):
+            missing = sorted(required_columns - columns)
+            raise sqlite3.DatabaseError(
+                f"Unsupported PlexiSum schema for {table_name}; missing columns: {missing}"
+            )
 
 
 def create_workbook_file(path: str, workbook_id: Any = None) -> None:
@@ -350,7 +435,9 @@ def create_workbook_file(path: str, workbook_id: Any = None) -> None:
 
     The file is an independent SQLite database with the stable physical tables
     and the dynamic logical schema hooks described above. It is stored through
-    the main file-storage adapter; it is never a main-database table.
+    the main file-storage adapter; it is never a main-database table. Existing
+    files are accepted only when their format marker and required columns match
+    the supported contract.
     """
     import sqlite3
 
