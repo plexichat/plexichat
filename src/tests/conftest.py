@@ -440,11 +440,19 @@ def reaction_manager(db, rel_manager):
 
 
 @pytest.fixture
-def webhook_manager(db):
-    """WebhookManager fixture."""
+def webhook_manager(db, server_manager, auth_manager, messaging_manager):
+    """WebhookManager fixture with real permission and message dependencies."""
     from src.core.webhooks.manager import WebhookManager
 
-    return WebhookManager(db)
+    return WebhookManager(
+        db,
+        auth_module=auth_manager,
+        # Keep this fixture's raw-channel tests focused on webhook behavior;
+        # those tests intentionally do not create a messaging conversation.
+        # Production setup wires the real messaging module in api/bootstrap.
+        messaging_module=None,
+        servers_module=server_manager,
+    )
 
 
 @pytest.fixture
@@ -1305,6 +1313,7 @@ class ModuleRegistry:
 
     def __init__(
         self,
+        db,
         auth_manager,
         messaging_manager,
         server_manager,
@@ -1323,6 +1332,7 @@ class ModuleRegistry:
         reports,
         feedback,
     ):
+        self._db = db
         self.auth = auth_manager
         self.messaging = messaging_manager
         self.servers = server_manager
@@ -1344,6 +1354,7 @@ class ModuleRegistry:
 
 @pytest.fixture
 def modules(
+    db,
     auth_manager,
     messaging_manager,
     server_manager,
@@ -1369,6 +1380,7 @@ def modules(
     Example: modules.auth, modules.messaging, etc.
     """
     return ModuleRegistry(
+        db=db,
         auth_manager=auth_manager,
         messaging_manager=messaging_manager,
         server_manager=server_manager,
