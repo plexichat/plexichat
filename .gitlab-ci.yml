@@ -5,9 +5,141 @@ stages:
   - lint
   - security
   - test
+  - timestamp
   - docker
   - request-merge
   - test-and-release
+
+# =========================================================
+# OPEN TIMESTAMP STAGE
+# =========================================================
+
+ots:timestamp_commit:
+  extends: .python_base
+  stage: timestamp
+  script:
+    - pip install opentimestamps
+    - |
+      python3 << 'PYEOF'
+      import hashlib, os, sys
+      from opentimestamps.core.timestamp import Timestamp, DetachedTimestampFile
+      from opentimestamps.core.op import OpSHA256
+      from opentimestamps.core.serialize import StreamSerializationContext
+      from opentimestamps.calendar import RemoteCalendar
+
+      commit_sha = os.environ["CI_COMMIT_SHA"]
+      project = os.environ["CI_PROJECT_PATH"].replace("/", "_")
+      sha256 = hashlib.sha256(commit_sha.encode()).digest()
+
+      stamp = Timestamp(sha256)
+      dtf = DetachedTimestampFile(OpSHA256(), stamp)
+
+      calendars = [
+          "https://ots.btc.catallaxy.com",
+          "https://a.calendar.opentimestamps.org",
+          "https://b.calendar.opentimestamps.org",
+      ]
+      for cal_url in calendars:
+          try:
+              cal = RemoteCalendar(cal_url)
+              cal_stamp = cal.submit(sha256, timeout=30)
+              dtf.timestamp.merge(cal_stamp)
+              print(f"Submitted to {cal_url}")
+              break
+          except Exception as e:
+              print(f"Calendar {cal_url} failed: {e}", file=sys.stderr)
+              continue
+
+      out_dir = "ots-proofs"
+      os.makedirs(out_dir, exist_ok=True)
+      out_path = os.path.join(out_dir, f"{project}_{commit_sha[:12]}.ots")
+      with open(out_path, "wb") as f:
+          ctx = StreamSerializationContext(f)
+          dtf.serialize(ctx)
+      print(f"Proof saved: {out_path} ({os.path.getsize(out_path)} bytes)")
+      PYEOF
+  artifacts:
+    paths:
+      - ots-proofs/
+    expire_in: never
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+  allow_failure: true
+  resource_group: plexichat-ci
+
+ots:push_proofs:
+  stage: test-and-release
+  extends: .python_base
+  needs:
+    - ots:timestamp_commit
+  script:
+    - pip install opentimestamps
+    - |
+      python3 << 'PYEOF'
+      import hashlib, os, sys, subprocess
+      from opentimestamps.core.timestamp import Timestamp, DetachedTimestampFile
+      from opentimestamps.core.op import OpSHA256
+      from opentimestamps.core.serialize import StreamSerializationContext
+      from opentimestamps.calendar import RemoteCalendar
+
+      commit_sha = os.environ["CI_COMMIT_SHA"]
+      project = os.environ["CI_PROJECT_PATH"].replace("/", "_")
+      sha256 = hashlib.sha256(commit_sha.encode()).digest()
+
+      stamp = Timestamp(sha256)
+      dtf = DetachedTimestampFile(OpSHA256(), stamp)
+
+      calendars = [
+          "https://ots.btc.catallaxy.com",
+          "https://a.calendar.opentimestamps.org",
+          "https://b.calendar.opentimestamps.org",
+      ]
+      for cal_url in calendars:
+          try:
+              cal = RemoteCalendar(cal_url)
+              cal_stamp = cal.submit(sha256, timeout=30)
+              dtf.timestamp.merge(cal_stamp)
+              print(f"Submitted to {cal_url}")
+              break
+          except Exception as e:
+              print(f"Calendar {cal_url} failed: {e}", file=sys.stderr)
+              continue
+
+      out_dir = "ots-proofs"
+      os.makedirs(out_dir, exist_ok=True)
+      out_path = os.path.join(out_dir, f"{project}_{commit_sha[:12]}.ots")
+      with open(out_path, "wb") as f:
+          ctx = StreamSerializationContext(f)
+          dtf.serialize(ctx)
+      print(f"Proof saved: {out_path}")
+      PYEOF
+    - git config user.email "ci@plexichat.com"
+    - git config user.name "Plexichat CI"
+    - git fetch origin ots-proofs || true
+    - |
+      if git rev-parse --verify origin/ots-proofs >/dev/null 2>&1; then
+        git checkout -B ots-proofs origin/ots-proofs
+      else
+        git checkout --orphan ots-proofs
+        git rm -rf . 2>/dev/null || true
+        rm -rf .git/ots-proofs 2>/dev/null || true
+      fi
+    - mkdir -p ots-proofs
+    - cp ots-proofs/*.ots ots-proofs/ 2>/dev/null || true
+    - git add ots-proofs/
+    - |
+      if git diff --cached --quiet; then
+        echo "No new proofs to commit"
+      else
+        git commit -m "OTS proof: $CI_COMMIT_SHA"
+        git push origin ots-proofs
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+  allow_failure: true
+  resource_group: plexichat-ci
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -196,14 +328,14 @@ docker:build_and_push:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
     - echo "Building backend docker image for tag $CI_COMMIT_TAG"
-    - docker build -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest .
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
-    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG
-    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest
+    - docker build -t $CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG -t $CI_REGISTRY/$CI_PROJECT_PATH/backend:latest .
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker push $CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG
+    - docker push $CI_REGISTRY/$CI_PROJECT_PATH/backend:latest
     # Push to Docker Hub
     - echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USER" --password-stdin
-    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:$CI_COMMIT_TAG
-    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:latest
+    - docker tag $CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:$CI_COMMIT_TAG
+    - docker tag $CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:latest
     - docker push plexichat/plexichat:$CI_COMMIT_TAG
     - docker push plexichat/plexichat:latest
   resource_group: plexichat-ci
@@ -211,10 +343,10 @@ docker:build_and_push:
 container_scanning:
   stage: docker
   variables:
-    CS_IMAGE: "$CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG"
+    CS_IMAGE: "$CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG"
     CS_REGISTRY_USER: "$CI_REGISTRY_USER"
     CS_REGISTRY_PASSWORD: "$CI_REGISTRY_PASSWORD"
-    CS_REGISTRY_INSECURE: "true"
+    CS_REGISTRY_INSECURE: "${CI_REGISTRY_INSECURE:-false}"
   needs:
     - docker:build_and_push
   rules:
@@ -236,13 +368,13 @@ docker:backup:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
     - echo "Building backup docker image for tag $CI_COMMIT_TAG"
-    - docker build -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:latest docker/backup/
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
-    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG
-    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:latest
+    - docker build -t $CI_REGISTRY/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG -t $CI_REGISTRY/$CI_PROJECT_PATH/backup:latest docker/backup/
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker push $CI_REGISTRY/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG
+    - docker push $CI_REGISTRY/$CI_PROJECT_PATH/backup:latest
     - echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USER" --password-stdin
-    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG plexichat/plexichat-backup:$CI_COMMIT_TAG
-    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG plexichat/plexichat-backup:latest
+    - docker tag $CI_REGISTRY/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG plexichat/plexichat-backup:$CI_COMMIT_TAG
+    - docker tag $CI_REGISTRY/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG plexichat/plexichat-backup:latest
     - docker push plexichat/plexichat-backup:$CI_COMMIT_TAG
     - docker push plexichat/plexichat-backup:latest
   resource_group: plexichat-ci
@@ -260,10 +392,10 @@ docker:cleanup_old_images:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
     - echo "Cleaning up old Docker images based on retention policy"
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
     - |
       # Get all tags for backend image
-      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY:80/$CI_PROJECT_PATH/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V || true)
+      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY/$CI_PROJECT_PATH/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V || true)
       
       # Separate by version type
       ALPHA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-alpha' || echo "")
@@ -275,7 +407,7 @@ docker:cleanup_old_images:
         ALPHA_TO_DELETE=$(echo "$ALPHA_TAGS" | head -n -5)
         for tag in $ALPHA_TO_DELETE; do
           echo "Deleting old alpha build: $tag"
-          docker rmi $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$tag || true
+          docker rmi $CI_REGISTRY/$CI_PROJECT_PATH/backend:$tag || true
         done
       fi
       
@@ -284,7 +416,7 @@ docker:cleanup_old_images:
         BETA_TO_DELETE=$(echo "$BETA_TAGS" | head -n -10)
         for tag in $BETA_TO_DELETE; do
           echo "Deleting old beta build: $tag"
-          docker rmi $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$tag || true
+          docker rmi $CI_REGISTRY/$CI_PROJECT_PATH/backend:$tag || true
         done
       fi
       
@@ -300,7 +432,7 @@ create_merge_request:
     - apk add --no-cache curl jq
   script:
     - |
-      API="$(echo "${CI_API_V4_URL}" | sed 's|https://|http://|')/projects/${CI_PROJECT_ID}"
+      API="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}"
       AUTH="PRIVATE-TOKEN: ${PLEXICHAT_MR_PAT}"
       
       echo "Creating merge request from dev to master..."
