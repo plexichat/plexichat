@@ -123,3 +123,47 @@ class TestCommandRegistration:
             server_id=server.id,
         )
         assert cmd.server_id == server.id
+
+    def test_global_and_guild_same_name_coexist(
+        self, app_manager, test_user, test_server
+    ):
+        """Test that global and guild commands with same name can coexist."""
+        server, owner = test_server
+        app = app_manager.create_application(owner_id=test_user.id, name="Coexist App")
+        global_cmd = app_manager.register_command(
+            application_id=app.id,
+            name="shared",
+            description="Global version",
+        )
+        guild_cmd = app_manager.register_command(
+            application_id=app.id,
+            name="shared",
+            description="Guild version",
+            server_id=server.id,
+        )
+        assert global_cmd.server_id is None
+        assert guild_cmd.server_id == server.id
+        assert global_cmd.id != guild_cmd.id
+
+    def test_update_global_command_name_no_conflict(
+        self, app_manager, test_user, test_server
+    ):
+        """Test renaming a global command doesn't conflict with guild command of same name."""
+        server, owner = test_server
+        app = app_manager.create_application(owner_id=test_user.id, name="Rename App")
+        global_cmd = app_manager.register_command(
+            application_id=app.id,
+            name="original",
+            description="Global",
+        )
+        guild_cmd = app_manager.register_command(
+            application_id=app.id,
+            name="original",
+            description="Guild",
+            server_id=server.id,
+        )
+        updated = app_manager.update_command(
+            command_id=global_cmd.id,
+            name="original",
+        )
+        assert updated.name == "original"

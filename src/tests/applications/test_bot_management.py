@@ -3,7 +3,11 @@
 import pytest
 from unittest.mock import patch
 
-from src.core.applications.exceptions import BotRequestError, PermissionDeniedError
+from src.core.applications.exceptions import (
+    BotRequestError,
+    BotRequestExistsError,
+    PermissionDeniedError,
+)
 
 
 @pytest.fixture
@@ -85,3 +89,77 @@ class TestBotManagement:
                 reviewer_id=other.id,
                 approve=True,
             )
+
+    def test_review_bot_request_rejects_already_reviewed(
+        self, app_manager_with_servers, server_manager, bot_test_users
+    ):
+        owner, other = bot_test_users
+        server = server_manager.create_server(owner.id, "Bot Server")
+        app_manager_with_servers.create_application(owner.id, "Bot App")
+        request = app_manager_with_servers.request_bot(
+            server.id,
+            app_manager_with_servers.get_application(
+                app_manager_with_servers._db.fetch_one(
+                    "SELECT id FROM app_applications WHERE owner_id = ?",
+                    (owner.id,),
+                )["id"]
+            ).id,
+            owner.id,
+        )
+
+        app_manager_with_servers.review_bot_request(
+            server_id=server.id,
+            request_id=request.id,
+            reviewer_id=owner.id,
+            approve=True,
+        )
+
+        with pytest.raises(BotRequestError, match="already approved"):
+            app_manager_with_servers.review_bot_request(
+                server_id=server.id,
+                request_id=request.id,
+                reviewer_id=owner.id,
+                approve=True,
+            )
+
+    def test_last_used_at_populated_on_verify(self, app_manager, test_user):
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="LastUsed App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        from src.core.applications.oauth.flows import OAuth2Flow
+        from src.core.applications.oauth.tokens import generate_client_secret
+
+        flow = OAuth2Flow(
+            app_manager._db,
+            {
+                "code_expiry_seconds": 600,
+                "token_expiry_seconds": 604800,
+                "refresh_enabled": True,
+            },
+        )
+        code = flow.create_authorization_code(
+            application_id=app.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
+        client_secret, secret_hash = generate_client_secret()
+        app_manager._db.execute(
+            "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
+            (secret_hash, app.id),
+        )
+        token = flow.exchange_code(
+            app.id, client_secret, code.code, "https://example.com/callback"
+        )
+
+        flow.verify_access_token(token.access_token)
+
+        row = app_manager._db.fetch_one(
+            "SELECT last_used_at FROM app_oauth_tokens WHERE id = ?",
+            (token.id,),
+        )
+        assert row is not None
+        assert row["last_used_at"] is not None
+        assert row["last_used_at"] > 0

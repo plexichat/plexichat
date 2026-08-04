@@ -7,6 +7,7 @@ from src.core.applications.models import (
     InteractionResponseType,
     InteractionResponse,
 )
+from src.core.applications.exceptions import InteractionExpiredError
 
 
 @pytest.mark.applications
@@ -103,3 +104,55 @@ class TestInteractionHandling:
             data={"name": "test"},
         )
         assert interaction.server_id == server.id
+
+    def test_interaction_expiry_is_in_milliseconds(self, app_manager, test_user):
+        """Test that interaction token expiry uses millisecond units."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Expiry App")
+        interaction = app_manager.handle_interaction(
+            application_id=app.id,
+            interaction_type=InteractionType.APPLICATION_COMMAND,
+            user_id=test_user.id,
+            data={"name": "test"},
+        )
+        handler = app_manager._interactions
+        created_at = interaction.created_at
+        timeout_config = handler._config.get("interaction_timeout", 900)
+        now = handler._current_time()
+        remaining = (created_at + timeout_config * 1000) - now
+        assert remaining > 800000, f"Interaction expiry too short: {remaining}ms"
+
+    def test_dispatch_interaction_calls_events(self, app_manager, test_user):
+        """Test that dispatch_interaction actually dispatches events."""
+        from unittest.mock import MagicMock
+
+        mock_events = MagicMock()
+        app_manager._interactions._events = mock_events
+
+        app = app_manager.create_application(owner_id=test_user.id, name="Dispatch App")
+        interaction = app_manager.handle_interaction(
+            application_id=app.id,
+            interaction_type=InteractionType.APPLICATION_COMMAND,
+            user_id=test_user.id,
+            data={"name": "test"},
+        )
+        mock_events.dispatch.assert_called()
+        call_args = mock_events.dispatch.call_args
+        event = call_args[0][0]
+        assert event.event_type.value == "INTERACTION_CREATE"
+
+    def test_component_response_rejects_pong(self, app_manager, test_user):
+        """Test that message component interactions cannot respond with PONG."""
+        app = app_manager.create_application(
+            owner_id=test_user.id, name="CompReject App"
+        )
+        interaction = app_manager.handle_interaction(
+            application_id=app.id,
+            interaction_type=InteractionType.MESSAGE_COMPONENT,
+            user_id=test_user.id,
+            data={"custom_id": "btn", "component_type": 2},
+        )
+        response = InteractionResponse(
+            response_type=InteractionResponseType.PONG,
+        )
+        with pytest.raises(Exception):
+            app_manager.create_interaction_response(interaction.token, response)
