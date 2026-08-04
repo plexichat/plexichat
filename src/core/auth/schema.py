@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS auth_users (
     failed_login_attempts INTEGER DEFAULT 0,
     last_login_at INTEGER,
     totp_enabled INTEGER DEFAULT 0,
+    -- Passkey state (canonical initial schema)
+    passkey_enabled INTEGER DEFAULT 0,
+    webauthn_user_handle TEXT,
     totp_secret_encrypted TEXT,
     backup_codes_hash TEXT,
     avatar_url TEXT,
@@ -160,6 +163,8 @@ CREATE TABLE IF NOT EXISTS auth_2fa_challenges (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     used INTEGER DEFAULT 0,
+    -- Number of failed verification attempts for this challenge
+    attempts INTEGER DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 

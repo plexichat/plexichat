@@ -157,31 +157,12 @@ def setup(
     _events = events_module
     _telemetry = telemetry_module
     # Applications is set up separately via applications.setup() in main.py,
-    # and get_applications() has a fallback import so no explicit assignment needed here.
-    # Suite metadata is initialized here as well as during the full server
-    # initializer so normal startup, self-test fixtures, and embedded API tests
-    # share the same manager lifecycle. The DDL is idempotent and stays in the
-    # reviewed domain schema modules rather than being scattered through routes.
-    try:
-        from src.core.suite import stash as stash_domain
-        from src.core.suite import sum as sum_domain
-
-        stash_domain.create_tables(db)
-        sum_domain.create_tables(db)
-        stash_domain.setup(db, servers_module=servers_module)
-        sum_domain.setup(
-            db,
-            servers_module=servers_module,
-            media=get_media(),
-        )
-    except Exception:
-        # Full production startup already creates these schemas before API
-        # setup. Preserve the existing API fixture behavior when a lightweight
-        # test database intentionally omits Suite tables; routes fail closed
-        # instead of silently fabricating data. Failure is still surfaced via
-        # logging rather than swallowed silently.
-        logger.warning("Suite metadata setup skipped", exc_info=True)
-
+    # and get_applications() has a fallback import so no explicit assignment
+    # is needed here. Suite schema creation and manager wiring belong to the
+    # server initializer: migration 000 is the authoritative production DDL
+    # path, and the initializer wires the media adapter after media.setup().
+    # API setup must not create schema or silently replace a production
+    # storage dependency with a fixture fallback.
     _setup_complete = True
 
 

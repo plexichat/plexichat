@@ -59,16 +59,6 @@ def initialize_modules(
     try:
         migration_result = run_migrations(db)
 
-        # Ensure admin tables (including system_alerts) are created
-        # regardless of migration state — CREATE TABLE IF NOT EXISTS
-        # makes this safe to call on every startup.
-        try:
-            from src.core.admin.schema import create_admin_tables
-
-            create_admin_tables(db)
-        except Exception:
-            pass
-
         if migration_result["success"]:
             logger.info(
                 f"Migrations applied successfully: "
@@ -102,19 +92,6 @@ def initialize_modules(
         raise
 
     db.connect()
-
-    # PlexiSuite domain schemas are startup-owned and idempotent. Stash keeps
-    # metadata here while file bytes remain in the existing media subsystem.
-    try:
-        from src.core.suite.stash import create_tables as create_stash_tables
-        from src.core.suite.sum.schema import create_tables as create_sum_tables
-
-        create_stash_tables(db)
-        create_sum_tables(db)
-        logger.info("PlexiStash and PlexiSum metadata tables initialized")
-    except Exception as exc:
-        logger.error(f"Failed to initialize PlexiSuite domain tables: {exc}")
-        raise
 
     valkey_config = config.get("valkey") or {}
     if valkey_config.get("enabled", False):
@@ -192,19 +169,17 @@ def initialize_modules(
     # PlexiSum workbook files are independent SQLite databases (``.plexisum``)
     # stored through the main file-storage adapter. Wire the blob boundary now
     # that media is available so workbook reads/writes never touch the main
-    # database. The API bootstrap already wired a fallback store for isolated
-    # fixtures; production startup re-points to the real adapter here.
-    try:
-        from src.core.suite import sum as sum_domain
+    # database. Schema creation already happened through migration 000.
+    from src.core.suite import stash as stash_domain
+    from src.core.suite import sum as sum_domain
 
-        sum_domain.setup(
-            db,
-            servers_module=servers,
-            media=media,
-        )
-        logger.info("PlexiSum workbook blob store wired to media adapter")
-    except Exception as exc:
-        logger.warning("PlexiSum blob store setup failed: %s", exc)
+    stash_domain.setup(db, servers_module=servers, media=media)
+    sum_domain.setup(
+        db,
+        servers_module=servers,
+        media=media,
+    )
+    logger.info("PlexiStash and PlexiSum storage wired to media adapter")
 
     email_config = config.get("email", {})
     email_sender = None
