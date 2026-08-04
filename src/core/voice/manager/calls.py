@@ -34,15 +34,12 @@ class CallLifecycleMixin(VoiceProtocol):
         Voice channels are not always tied to a conversation; when one cannot be
         resolved we return ``None`` and the call is recorded without one.
         """
-        try:
-            row = self._db.fetch_one(
-                "SELECT conversation_id FROM srv_channels WHERE id = ?",
-                (channel_id,),
-            )
-            if row and row.get("conversation_id"):
-                return row["conversation_id"]
-        except Exception:
-            return None
+        row = self._db.fetch_one(
+            "SELECT conversation_id FROM srv_channels WHERE id = ?",
+            (channel_id,),
+        )
+        if row and row.get("conversation_id"):
+            return row["conversation_id"]
         return None
 
     def _on_member_joined(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:

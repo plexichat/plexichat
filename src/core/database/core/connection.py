@@ -227,7 +227,9 @@ class DatabaseConnectionMixin:
                 try:
                     conn.execute("PRAGMA optimize;")
                 except Exception:
-                    pass
+                    logger.debug(
+                        f"PRAGMA optimize failed on connection {conn_id}", exc_info=True
+                    )
 
             force_close = False
             metadata = self.monitor.get_connection_metadata(conn_id)

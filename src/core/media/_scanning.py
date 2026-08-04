@@ -77,8 +77,10 @@ class _ScanningMixin:
                     "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
                     (ScanStatus.ERROR.value, str(e), file_id),
                 )
-            except Exception:
-                pass
+            except Exception as mark_err:
+                logger.error(
+                    f"Failed to persist scan ERROR status for file {file_id}: {mark_err}"
+                )
 
     def _handle_infected_file(
         self,

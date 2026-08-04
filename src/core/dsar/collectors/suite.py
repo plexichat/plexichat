@@ -74,5 +74,10 @@ class SuiteCollector(BaseCollector):
         """Return rows, treating pre-Suite installations as empty."""
         try:
             return [dict(row) for row in self._db.fetch_all(query, params)]
-        except Exception:
+        except Exception as exc:
+            import utils.logger as logger
+
+            logger.error(
+                f"Suite DSAR collector query failed ({query!r}, {params!r}): {exc}"
+            )
             return []

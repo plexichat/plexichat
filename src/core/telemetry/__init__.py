@@ -329,7 +329,7 @@ def get_endpoint_stats(
     except Exception:
         # The aggregate row above is still useful when the raw
         # pull fails (driver-specific quoting, permission errors etc).
-        pass
+        logger.warning("telemetry: raw request metrics pull failed", exc_info=True)
 
     if cap_hit:
         logger.warning(

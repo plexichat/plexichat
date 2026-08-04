@@ -186,53 +186,38 @@ class EventRouter:
         """Get all member user IDs for a server."""
         if not self._servers:
             return []
-        try:
-            # ServerManager has get_member_user_ids
-            members = self._servers.get_member_user_ids(server_id)
-            return members if members else []
-        except Exception:
-            return []
+        # ServerManager has get_member_user_ids
+        members = self._servers.get_member_user_ids(server_id)
+        return members if members else []
 
     def _get_dm_participant_ids(self, channel_id: int) -> List[int]:
         """Get participant user IDs for a DM/group conversation."""
         if not self._messaging:
             return []
-        try:
-            participants = self._messaging.get_participant_ids(channel_id)
-            return participants if participants else []
-        except Exception:
-            return []
+        participants = self._messaging.get_participant_ids(channel_id)
+        return participants if participants else []
 
     def _get_presence_recipients(self, user_id: int) -> List[int]:
         """Get users who should receive presence updates for a user."""
         recipients: Set[int] = set()
 
         if self._relationships:
-            try:
-                friend_ids = self._relationships.get_friend_ids(user_id)
-                if friend_ids:
-                    recipients.update(friend_ids)
-            except Exception:
-                pass
+            friend_ids = self._relationships.get_friend_ids(user_id)
+            if friend_ids:
+                recipients.update(friend_ids)
 
         if self._servers:
-            try:
-                server_ids = self._servers.get_user_server_ids(user_id)
-                for sid in server_ids or []:
-                    member_ids = self._get_server_member_ids(sid)
-                    recipients.update(member_ids)
-            except Exception:
-                pass
+            server_ids = self._servers.get_user_server_ids(user_id)
+            for sid in server_ids or []:
+                member_ids = self._get_server_member_ids(sid)
+                recipients.update(member_ids)
 
         recipients.discard(user_id)
 
         # Filter out blocked users
         if self._relationships and recipients:
-            try:
-                blocked_ids = self._relationships.get_all_blocked_ids(user_id)
-                for bid in blocked_ids:
-                    recipients.discard(bid)
-            except Exception:
-                pass
+            blocked_ids = self._relationships.get_all_blocked_ids(user_id)
+            for bid in blocked_ids:
+                recipients.discard(bid)
 
         return list(recipients)

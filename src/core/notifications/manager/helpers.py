@@ -169,7 +169,4 @@ def has_mention_everyone_permission(
 def get_online_members(presence, db, server_id: SnowflakeID) -> List[SnowflakeID]:
     if not presence:
         return []
-    try:
-        return presence.get_online_server_members(0, server_id)
-    except Exception:
-        return []
+    return presence.get_online_server_members(0, server_id)

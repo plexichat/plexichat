@@ -131,8 +131,11 @@ class SoundboardManager(BaseManager):
             )
             if row and row.get("last_play_at") is not None:
                 candidates.append(int(row["last_play_at"]))
-        except Exception:
-            pass  # DB unreachable — fall back to local cache only
+        except Exception as e:
+            logger.error(
+                f"Failed to check cooldown for user {user_id} sound {sound_id}: {e}"
+            )
+            return cooldown_seconds
 
         if not candidates:
             return None
@@ -147,8 +150,7 @@ class SoundboardManager(BaseManager):
 
         Writes both the authoritative DB row and the in-process cache
         so back-to-back plays within a single connection don't hit
-        the DB.  Falls back to ``DELETE`` + ``INSERT`` on drivers
-        without ``ON CONFLICT``.
+        the DB.
         """
         now = self._get_timestamp()
         self._client_local_cooldowns[(user_id, sound_id)] = now
@@ -163,21 +165,11 @@ class SoundboardManager(BaseManager):
                 "  server_id    = excluded.server_id",
                 (user_id, sound_id, server_id, now),
             )
-            return
-        except Exception:
-            pass
-
-        # Fallback for older backends (SQLite pre-3.24, etc.).
-        self._db.execute(
-            "DELETE FROM soundboard_user_cooldowns WHERE user_id = ? AND sound_id = ?",
-            (user_id, sound_id),
-        )
-        self._db.execute(
-            "INSERT INTO soundboard_user_cooldowns "
-            "(user_id, sound_id, server_id, last_play_at) "
-            "VALUES (?, ?, ?, ?)",
-            (user_id, sound_id, server_id, now),
-        )
+        except Exception as e:
+            logger.error(
+                f"Failed to persist cooldown for user {user_id} sound {sound_id}: {e}"
+            )
+            raise
 
     def upload_sound(
         self,
@@ -708,18 +700,15 @@ class SoundboardManager(BaseManager):
             )
         except (TypeError, ValueError):  # noqa: BLE001
             cooldown_grace_active = False
-        try:
-            cs_row = self._db.fetch_one(
-                "SELECT cooldown_seconds FROM soundboard_sounds WHERE id = ?",
-                (sound_id,),
-            )
-            if cs_row is not None and cs_row.get("cooldown_seconds") is not None:
-                raw = int(cs_row["cooldown_seconds"])
-                if raw != 0 or not cooldown_grace_active:
-                    per_sound_cooldown = raw
-                # else: grace window active + stored 0 → treat as NULL.
-        except Exception:
-            per_sound_cooldown = None
+        cs_row = self._db.fetch_one(
+            "SELECT cooldown_seconds FROM soundboard_sounds WHERE id = ?",
+            (sound_id,),
+        )
+        if cs_row is not None and cs_row.get("cooldown_seconds") is not None:
+            raw = int(cs_row["cooldown_seconds"])
+            if raw != 0 or not cooldown_grace_active:
+                per_sound_cooldown = raw
+            # else: grace window active + stored 0 → treat as NULL.
 
         # Honour "global_cooldown_seconds" by sharing the key with any
         # sound — the test suite checks that playing a *different* sound
