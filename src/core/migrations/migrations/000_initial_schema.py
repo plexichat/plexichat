@@ -3,6 +3,10 @@ Initial schema migration.
 
 Creates all core tables using module schema definitions.
 This is the foundational migration that sets up the entire database schema.
+
+All schema changes currently belong in the module schema definitions imported
+below. Keep this initial migration authoritative for new installations; the
+001 migration is reserved for migration-system self-tests.
 """
 
 import logging
@@ -26,7 +30,10 @@ from src.core.voice.schema import create_tables as create_voice_tables  # noqa: 
 from src.core.applications.schema import create_tables as create_applications_tables  # noqa: E402
 from src.core.stickers.schema import create_tables as create_stickers_tables  # noqa: E402
 from src.core.soundboard.schema import create_tables as create_soundboard_tables  # noqa: E402
-from src.core.media.schema import create_tables as create_media_tables  # noqa: E402
+from src.core.media.schema import (  # noqa: E402
+    create_reference_guards as create_media_reference_guards,
+    create_tables as create_media_tables,
+)
 from src.core.media.deduplication import create_tables as create_media_dedup_tables  # noqa: E402
 from src.core.media.chunked import create_tables as create_media_chunked_tables  # noqa: E402
 from src.core.reports.schema import create_tables as create_reports_tables  # noqa: E402
@@ -40,6 +47,8 @@ from src.core.dsar.schema import create_tables as create_dsar_tables  # noqa: E4
 from src.core.artifacts.schema import create_tables as create_artifacts_tables  # noqa: E402
 from src.core.admin.schema import create_admin_tables  # noqa: E402
 from src.core.dmspam.schema import create_dmspam_tables  # noqa: E402
+from src.core.suite.stash.schema import create_tables as create_stash_tables  # noqa: E402
+from src.core.suite.sum.schema import create_tables as create_sum_tables  # noqa: E402
 from src.core.chat_tracking.schema import create_chat_tracking_tables  # noqa: E402
 
 
@@ -85,6 +94,15 @@ def up(db):
         ("admin", create_admin_tables),
         ("dmspam", create_dmspam_tables),
         ("chat_tracking", create_chat_tracking_tables),
+        # Suite schema ownership stays in the domain modules. Migration 000
+        # only orchestrates their idempotent creators; workbook cells remain
+        # exclusively inside independent .plexisum SQLite files.
+        ("suite_stash", create_stash_tables),
+        ("suite_sum_metadata", create_sum_tables),
+        # Reference guards must be installed after every dependent domain
+        # table exists. The guard definitions remain owned by media/schema.py;
+        # migration 000 only orchestrates their creation.
+        ("media_reference_guards", create_media_reference_guards),
     ]
 
     for name, creator in schema_creators:

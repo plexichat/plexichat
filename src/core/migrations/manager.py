@@ -19,6 +19,11 @@ from .progress import ProgressBar
 
 logger = logging.getLogger(__name__)
 
+# These versions were consolidated into migration 000. Their history records
+# remain valid evidence of an older installation and must not make integrity
+# checks fail merely because the retired source files are intentionally gone.
+RETIRED_MIGRATIONS = {"002", "003", "004"}
+
 
 class Migration:
     """Represents a single migration with metadata."""
@@ -433,7 +438,12 @@ class MigrationManager:
         self.tracker.ensure_table_exists()
 
         records = self.tracker.get_all_migration_records()
-        results = {"valid": True, "checked": 0, "mismatches": []}
+        results = {
+            "valid": True,
+            "checked": 0,
+            "mismatches": [],
+            "retired": [],
+        }
 
         try:
             migration_files = validator.get_migration_files(str(self.migrations_dir))
@@ -452,6 +462,12 @@ class MigrationManager:
             results["checked"] += 1
 
             if version not in migration_dict:
+                if version in RETIRED_MIGRATIONS:
+                    # 002-004 were folded into the authoritative initial
+                    # schema. Preserve their historical records without
+                    # requiring deleted migration source files.
+                    results["retired"].append(version)
+                    continue
                 results["valid"] = False
                 results["mismatches"].append(
                     {"version": version, "error": "Migration file not found"}
