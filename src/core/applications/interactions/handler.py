@@ -197,7 +197,7 @@ class InteractionHandler:
             raise InteractionNotFoundError("Invalid interaction token")
 
         expiry = self._config.get("interaction_timeout", INTERACTION_TOKEN_EXPIRY)
-        if self._current_time() > interaction.created_at + expiry:
+        if self._current_time() > interaction.created_at + expiry * 1000:
             raise InteractionExpiredError("Interaction token has expired")
 
         return interaction
@@ -329,6 +329,9 @@ class InteractionHandler:
         if not self._events:
             return
 
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+
         event_data = {
             "id": str(interaction.id),
             "application_id": str(interaction.application_id),
@@ -358,6 +361,27 @@ class InteractionHandler:
             event_data["guild_locale"] = interaction.server_locale
 
         logger.debug(f"Dispatching INTERACTION_CREATE for {interaction.id}")
+
+        bot_id = None
+        row = self._db.fetch_one(
+            "SELECT bot_id FROM app_applications WHERE id = ?",
+            (interaction.application_id,),
+        )
+        if row and row["bot_id"]:
+            bot_id = row["bot_id"]
+
+        event = Event(
+            event_type=EventType.INTERACTION_CREATE,
+            data=event_data,
+            server_id=interaction.server_id,
+            channel_id=interaction.channel_id,
+            user_id=interaction.user_id,
+        )
+
+        if bot_id:
+            self._events.dispatch(event, user_ids=[bot_id])
+        else:
+            self._events.dispatch(event)
 
     def _validate_response(
         self,
@@ -390,6 +414,16 @@ class InteractionHandler:
         elif interaction.interaction_type == InteractionType.MODAL_SUBMIT:
             if response.response_type == InteractionResponseType.MODAL:
                 issues.append("Cannot respond to modal submit with another modal")
+
+        elif interaction.interaction_type == InteractionType.MESSAGE_COMPONENT:
+            if response.response_type in (
+                InteractionResponseType.PONG,
+                InteractionResponseType.MODAL,
+                InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
+            ):
+                issues.append(
+                    f"Cannot respond to message component with {response.response_type.name}"
+                )
 
         if response.components:
             if response.response_type == InteractionResponseType.MODAL:

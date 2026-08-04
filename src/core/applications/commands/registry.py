@@ -112,11 +112,18 @@ class CommandRegistry:
                 current,
             )
 
-        existing = self._db.fetch_one(
-            """SELECT id FROM app_commands
-               WHERE application_id = ? AND name = ? AND server_id IS ?""",
-            (application_id, name.lower(), server_id),
-        )
+        if server_id is not None:
+            existing = self._db.fetch_one(
+                """SELECT id FROM app_commands
+                   WHERE application_id = ? AND name = ? AND server_id = ?""",
+                (application_id, name.lower(), server_id),
+            )
+        else:
+            existing = self._db.fetch_one(
+                """SELECT id FROM app_commands
+                   WHERE application_id = ? AND name = ? AND server_id IS NULL""",
+                (application_id, name.lower()),
+            )
         if existing:
             raise CommandValidationError(
                 "Command with this name already exists", ["Duplicate command name"]
@@ -281,11 +288,23 @@ class CommandRegistry:
                 raise CommandValidationError("Command validation failed", issues)
 
         if name is not None and name.lower() != command.name:
-            existing = self._db.fetch_one(
-                """SELECT id FROM app_commands
-                   WHERE application_id = ? AND name = ? AND server_id IS ? AND id != ?""",
-                (command.application_id, name.lower(), command.server_id, command_id),
-            )
+            if command.server_id is not None:
+                existing = self._db.fetch_one(
+                    """SELECT id FROM app_commands
+                       WHERE application_id = ? AND name = ? AND server_id = ? AND id != ?""",
+                    (
+                        command.application_id,
+                        name.lower(),
+                        command.server_id,
+                        command_id,
+                    ),
+                )
+            else:
+                existing = self._db.fetch_one(
+                    """SELECT id FROM app_commands
+                       WHERE application_id = ? AND name = ? AND server_id IS NULL AND id != ?""",
+                    (command.application_id, name.lower(), command_id),
+                )
             if existing:
                 raise CommandValidationError(
                     "Command with this name already exists", ["Duplicate command name"]
