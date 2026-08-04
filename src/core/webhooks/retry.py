@@ -260,17 +260,25 @@ class WebhookRetryQueue:
         return [dict(row) for row in rows]
 
     def retry_dead_letter(self, retry_id: int) -> bool:
-        """Manually retry a dead letter entry."""
+        """Manually retry a dead-letter entry.
+
+        Return ``True`` only when an eligible dead-letter row was changed;
+        callers must not report success for an unknown or already-retried id.
+        """
         now = self._get_timestamp()
-        self._db.execute(
+        result = self._db.execute(
             """UPDATE webhook_retry_queue
                SET status = 'retrying', attempt_count = 0,
                    next_attempt_at = ?, updated_at = ?
                WHERE id = ? AND status = 'dead_letter'""",
             (now, now, retry_id),
         )
-        logger.info(f"Manually retried dead letter entry {retry_id}")
-        return True
+        changed = int(getattr(result, "rowcount", 0) or 0)
+        if changed == 1:
+            logger.info(f"Manually retried dead letter entry {retry_id}")
+            return True
+        logger.debug("Dead letter entry %s was not eligible for retry", retry_id)
+        return False
 
     def cleanup_expired(self) -> int:
         """

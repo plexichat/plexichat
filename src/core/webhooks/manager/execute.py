@@ -10,9 +10,11 @@ from src.core.base import SnowflakeID
 from src.core.webhooks.models import WebhookMessage
 from src.core.webhooks.exceptions import (
     EmbedLimitError,
+    ContentTooLongError,
     InvalidContentError,
+    InvalidWebhookContentError,
     InvalidWebhookTokenError,
-    WebhookNotFoundError,
+    RateLimitError,
 )
 
 from .base import WebhookManagerTrait
@@ -31,7 +33,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         avatar_url: Optional[str] = None,
         embeds: Optional[List[Dict[str, Any]]] = None,
         thread_id: Optional[SnowflakeID] = None,
-        wait: bool = False,
+        wait: bool = True,
     ) -> Optional[WebhookMessage]:
         """Execute a webhook to send a message."""
         full_token = token
@@ -47,20 +49,32 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         )
 
         if not row:
-            raise WebhookNotFoundError("Webhook not found")
+            # Do not disclose whether a webhook id exists to an unauthenticated
+            # caller presenting a token. Treat both cases identically.
+            raise InvalidWebhookTokenError("Invalid webhook token")
 
         if not self._verify_token(parsed["secret"], row["token_hash"]):
             raise InvalidWebhookTokenError("Invalid webhook token")
 
         if not content and not embeds:
-            raise InvalidContentError(
+            raise InvalidWebhookContentError(
                 "Message must have content or embeds", ["empty_message"]
             )
+
+        rate_limit = self._config.get("rate_limit_per_minute")
+        if rate_limit:
+            from src.core.database.cache import check_rate_limit
+
+            allowed, _remaining = check_rate_limit(
+                f"webhook:{webhook_id}:execute", int(rate_limit), 60
+            )
+            if not allowed:
+                raise RateLimitError("Webhook execution rate limit exceeded")
 
         if content:
             max_length = self._config.get("max_message_length", 2000)
             if len(content) > max_length:
-                raise InvalidContentError(
+                raise ContentTooLongError(
                     f"Content exceeds maximum length of {max_length}",
                     ["content_too_long"],
                 )
@@ -199,7 +213,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         avatar_url: Optional[str] = None,
         embeds: Optional[List[Dict[str, Any]]] = None,
         thread_id: Optional[SnowflakeID] = None,
-        wait: bool = False,
+        wait: bool = True,
     ) -> Optional[WebhookMessage]:
         """Execute a webhook using its URL."""
         match = re.match(r"^/?webhooks/(\d+)/([A-Za-z0-9_-]+)$", webhook_url)
