@@ -7,16 +7,25 @@ from .manager import (
     StashNotFoundError,
     StashPermissionError,
     StashValidationError,
+    StashStorageError,
 )
 from .schema import create_tables
 
 _manager: Optional[StashManager] = None
 
 
-def setup(db: Any, servers_module: Optional[Any] = None) -> StashManager:
+def setup(
+    db: Any,
+    servers_module: Optional[Any] = None,
+    media: Optional[Any] = None,
+) -> StashManager:
     """Initialize Stash metadata tables and return the shared manager."""
     global _manager
-    _manager = StashManager(db, servers_module=servers_module)
+    _manager = StashManager(
+        db,
+        servers_module=servers_module,
+        media=media,
+    )
     return _manager
 
 
@@ -32,6 +41,7 @@ __all__ = [
     "StashNotFoundError",
     "StashPermissionError",
     "StashValidationError",
+    "StashStorageError",
     "create_tables",
     "setup",
     "get_manager",

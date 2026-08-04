@@ -27,12 +27,76 @@ class StashValidationError(ValueError):
     """Raised for malformed Stash metadata."""
 
 
+class StashStorageError(RuntimeError):
+    """Raised when a referenced media object cannot be resolved."""
+
+
 class StashManager(BaseManager):
     """Persistence and authorization boundary for PlexiStash metadata."""
 
-    def __init__(self, db: Any, servers_module: Optional[Any] = None) -> None:
+    def __init__(
+        self,
+        db: Any,
+        servers_module: Optional[Any] = None,
+        media: Optional[Any] = None,
+    ) -> None:
         super().__init__(db)
         self._servers = servers_module
+        self._media = media
+
+    def _resolve_media_object(
+        self, media_object_id: Optional[str], owner_id: int
+    ) -> Optional[Any]:
+        """Resolve an active media object and verify it is safe to reference.
+
+        Stash stores only opaque references, but accepting arbitrary strings
+        would create dangling records and could later turn into an IDOR. The
+        media boundary is authoritative for existence, deleted state, and
+        access. Numeric IDs and generated filenames are both supported for
+        compatibility with existing media records.
+        """
+        if media_object_id is None:
+            return None
+        value = str(media_object_id).strip()
+        if (
+            not value
+            or len(value) > 512
+            or any(char in value for char in ("\x00", "\r", "\n"))
+        ):
+            raise StashValidationError("media_object_id is invalid")
+        if self._media is None:
+            raise StashStorageError("Media storage is unavailable")
+        media_file = None
+        if value.isdigit():
+            media_file = self._media.get_file(int(value))
+        if media_file is None:
+            media_file = self._media.get_file_by_filename(value)
+        if media_file is None or bool(getattr(media_file, "deleted", False)):
+            raise StashValidationError(
+                "media_object_id does not identify an active file"
+            )
+        if value.isdigit():
+            media_query = "SELECT deleted FROM media_files WHERE id = ?"
+            if getattr(self._db, "type", "sqlite") == "postgres":
+                media_query += " FOR UPDATE"
+            media_row = self._db.fetch_one(media_query, (int(value),))
+            if not media_row or bool(media_row.get("deleted", 0)):
+                raise StashStorageError("Media object is unavailable")
+            locked = self._db.fetch_one(
+                "SELECT 1 FROM media_file_deletion_locks WHERE media_file_id = ?",
+                (int(value),),
+            )
+            if locked:
+                raise StashStorageError("Media object is being permanently deleted")
+        uploader_id = int(getattr(media_file, "uploaded_by", 0))
+        if uploader_id != int(owner_id):
+            try:
+                allowed = bool(self._media.check_file_access(value, int(owner_id)))
+            except Exception:
+                allowed = False
+            if not allowed:
+                raise StashPermissionError("You cannot reference this media object")
+        return media_file
 
     def _audit(
         self,
@@ -280,6 +344,7 @@ class StashManager(BaseManager):
         ):
             raise StashPermissionError("You are not a member of this server")
         self._validate_collection(user_id, collection_id, scope, server_id)
+        self._resolve_media_object(media_object_id, user_id)
         now = int(time.time() * 1000)
         item_id = self._generate_id()
         clean_tags = sorted(
@@ -425,7 +490,9 @@ class StashManager(BaseManager):
             )
             updates["collection_id"] = collection_id
         if "media_object_id" in fields:
-            updates["media_object_id"] = fields["media_object_id"]
+            media_object_id = fields["media_object_id"]
+            self._resolve_media_object(media_object_id, int(row["owner_id"]))
+            updates["media_object_id"] = media_object_id
         if "metadata" in fields:
             updates["metadata_json"] = self._json(fields["metadata"], {})
         if "tags" in fields:
@@ -518,6 +585,8 @@ class StashManager(BaseManager):
         if not row:
             raise StashNotFoundError("Stash item not found")
         self._authorize(row, user_id, "manage_versions", mutation=True)
+        media_object_id = fields.get("media_object_id")
+        self._resolve_media_object(media_object_id, int(row["owner_id"]))
         version_id = self._generate_id()
         now = int(time.time() * 1000)
         self._db.execute(
@@ -526,7 +595,7 @@ class StashManager(BaseManager):
                 version_id,
                 item_id,
                 user_id,
-                fields.get("media_object_id"),
+                media_object_id,
                 fields.get("content_type"),
                 fields.get("size_bytes"),
                 fields.get("checksum"),
@@ -535,7 +604,7 @@ class StashManager(BaseManager):
         )
         self._db.execute(
             "UPDATE stash_items SET current_version_id = ?, media_object_id = COALESCE(?, media_object_id), updated_at = ? WHERE id = ?",
-            (version_id, fields.get("media_object_id"), now, item_id),
+            (version_id, media_object_id, now, item_id),
         )
         self._audit("edit", "version", version_id, user_id, {"item_id": int(item_id)})
         return self.get_version(user_id, item_id, version_id)
@@ -830,9 +899,12 @@ class StashManager(BaseManager):
     def purge_deleted_items(self, retention_days: int = 30) -> int:
         """Hard-delete stash items soft-deleted longer than ``retention_days`` ago.
 
-        Child rows (versions, grants, tickets, audit) are removed first for
-        databases with foreign keys enabled. Items within the retention window
-        remain restorable by their owner or server manager.
+        Child rows (versions, grants, tickets) are removed first for
+        databases with foreign keys enabled. Referenced media is permanently
+        deleted only when it is still owned by the item owner and no other
+        active Stash item references it. Compliance audit rows are retained.
+        Items within the retention window remain restorable by their owner or
+        server manager.
         """
         try:
             retention_days = max(1, int(retention_days))
@@ -846,12 +918,104 @@ class StashManager(BaseManager):
                 (cutoff,),
             )
         ]
+        purged_count = 0
         for item_id in ids:
+            item = self._db.fetch_one(
+                "SELECT owner_id, media_object_id FROM stash_items WHERE id = ?",
+                (item_id,),
+            )
+            if item:
+                media_refs = {
+                    str(item["media_object_id"])
+                    for row in [item]
+                    if row.get("media_object_id")
+                }
+                version_rows = self._db.fetch_all(
+                    "SELECT media_object_id FROM stash_versions WHERE item_id = ?",
+                    (item_id,),
+                )
+                media_refs.update(
+                    str(row["media_object_id"])
+                    for row in version_rows
+                    if row.get("media_object_id")
+                )
+                cleanup_failed = bool(media_refs) and self._media is None
+                for media_object_id in media_refs:
+                    if self._media is None:
+                        break
+                    refs = self._db.fetch_one(
+                        "SELECT COUNT(*) AS count FROM stash_items "
+                        "WHERE deleted = 0 AND media_object_id = ? AND id <> ?",
+                        (media_object_id, item_id),
+                    )
+                    version_refs = self._db.fetch_one(
+                        "SELECT COUNT(*) AS count FROM stash_versions v "
+                        "JOIN stash_items i ON i.id = v.item_id "
+                        "WHERE i.deleted = 0 AND v.media_object_id = ? AND v.item_id <> ?",
+                        (media_object_id, item_id),
+                    )
+                    if (refs and int(refs["count"]) > 0) or (
+                        version_refs and int(version_refs["count"]) > 0
+                    ):
+                        continue
+                    try:
+                        media_file: Optional[Any] = None
+                        # Normal resolution intentionally hides soft-deleted
+                        # media. Retention cleanup uses the media boundary's
+                        # internal purge lookup so a previously soft-deleted
+                        # file does not remain orphaned forever.
+                        if str(media_object_id).isdigit():
+                            purge_lookup = getattr(
+                                self._media, "get_file_for_permanent_delete", None
+                            )
+                            if callable(purge_lookup):
+                                media_file = purge_lookup(int(media_object_id))
+                        if media_file is None:
+                            purge_lookup_by_name = getattr(
+                                self._media,
+                                "get_file_by_filename_for_permanent_delete",
+                                None,
+                            )
+                            if callable(purge_lookup_by_name):
+                                media_file = purge_lookup_by_name(str(media_object_id))
+                        if media_file is None:
+                            media_file = self._resolve_media_object(
+                                media_object_id, int(item["owner_id"])
+                            )
+                        if media_file is None:
+                            raise StashStorageError(
+                                "Referenced media object could not be resolved for purge"
+                            )
+                        if media_file is not None:
+                            can_delete = getattr(
+                                self._media, "can_delete_file_permanently", None
+                            )
+                            if not callable(can_delete) or not can_delete(
+                                int(media_file.id)
+                            ):
+                                raise StashStorageError(
+                                    "Media object is still referenced outside PlexiStash"
+                                )
+                            self._media.delete_file_permanently(
+                                int(item["owner_id"]), int(media_file.id)
+                            )
+                    except Exception as exc:
+                        import utils.logger as logger
+
+                        logger.warning(
+                            "Stash media cleanup deferred for item %s: %s",
+                            item_id,
+                            exc,
+                        )
+                        cleanup_failed = True
+                if cleanup_failed:
+                    # Keep metadata for a later retention pass; deleting it
+                    # now would make an undeletable object untraceable.
+                    continue
             for query in (
                 "DELETE FROM stash_download_tickets WHERE item_id = ?",
                 "DELETE FROM stash_grants WHERE item_id = ?",
                 "DELETE FROM stash_versions WHERE item_id = ?",
-                "DELETE FROM suite_audit_log WHERE resource_type = 'item' AND resource_id = ?",
             ):
                 try:
                     self._db.execute(query, (item_id,))
@@ -859,8 +1023,11 @@ class StashManager(BaseManager):
                     import utils.logger as logger
 
                     logger.debug("Stash purge child cleanup skipped: %s", exc)
+            # Deliberately retain suite_audit_log for compliance and forensic
+            # history; content retention must not erase the security trail.
             self._db.execute("DELETE FROM stash_items WHERE id = ?", (item_id,))
-        return len(ids)
+            purged_count += 1
+        return purged_count
 
     def create_collection(
         self, user_id: int, name: str, server_id: Optional[int] = None
