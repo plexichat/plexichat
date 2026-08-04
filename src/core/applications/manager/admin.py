@@ -27,11 +27,8 @@ class AdminMixin(ApplicationManagerProtocol):
         return int(row["count"]) if row else 0
 
     def _maybe_count_rows(self, query: str, params: tuple = ()) -> int:
-        try:
-            row = self._db.fetch_one(query, params)
-            return int(row["count"]) if row else 0
-        except Exception:
-            return 0
+        row = self._db.fetch_one(query, params)
+        return int(row["count"]) if row else 0
 
     def _count_rows_any(
         self, tables: List[str], where: str = "", params: tuple = ()
@@ -53,7 +50,7 @@ class AdminMixin(ApplicationManagerProtocol):
         )
 
     def get_admin_bot_stats(self) -> Dict[str, int]:
-        week_ago = self._get_timestamp() - 604800
+        week_ago = self._get_timestamp() - 7 * 24 * 60 * 60 * 1000
         return {
             "total_applications": self._count_rows("app_applications"),
             "total_bots": self._count_rows("app_applications", "bot_id IS NOT NULL"),

@@ -203,6 +203,21 @@ class BotManagementMixin(ApplicationManagerProtocol):
         if already_approved:
             raise BotAlreadyApprovedError("Bot is already approved on this server")
 
+        import utils.config as cfg
+
+        bot_config = cfg.get("bots", {})
+        max_pending = bot_config.get("max_requests_pending_per_user", 5)
+        pending_count = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM app_bot_requests WHERE requester_id = ? AND status = 'pending'",
+            (requester_id,),
+        )
+        current_pending = pending_count["count"] if pending_count else 0
+        if current_pending >= max_pending:
+            raise BotRequestError(
+                f"Maximum of {max_pending} pending bot requests per user",
+                requester_id,
+            )
+
         request_id = self._generate_id()
         now = self._get_timestamp()
 
@@ -248,6 +263,9 @@ class BotManagementMixin(ApplicationManagerProtocol):
 
         if row["server_id"] != server_id:
             raise BotRequestError("Bot request not found", request_id)
+
+        if row["status"] != "pending":
+            raise BotRequestError(f"Request already {row['status']}", request_id)
 
         self._require_server_manage_permission(reviewer_id, row["server_id"])
 
@@ -430,6 +448,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
     ) -> List[UserAuthorizedApplication]:
         rows = self._db.fetch_all(
             """SELECT t.id, t.application_id, t.scopes, t.created_at, t.expires_at,
+                      t.last_used_at,
                       a.name as app_name, a.icon_url as app_icon
                FROM app_oauth_tokens t
                JOIN app_applications a ON t.application_id = a.id
@@ -446,7 +465,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
                 application_icon=row["app_icon"],
                 scopes=json.loads(row["scopes"]) if row["scopes"] else [],
                 authorized_at=row["created_at"],
-                last_used_at=row["expires_at"],
+                last_used_at=row["last_used_at"],
             )
             for row in rows
         ]

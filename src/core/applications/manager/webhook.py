@@ -1,5 +1,6 @@
 import hmac
 import hashlib
+import time
 
 from ..exceptions import WebhookSignatureError
 
@@ -14,6 +15,14 @@ class WebhookMixin(ApplicationManagerProtocol):
         signature: str,
         timestamp: str,
     ) -> bool:
+        max_skew = self._config.get("webhook_signature_max_skew_seconds", 300)
+        try:
+            ts = int(timestamp)
+        except (ValueError, TypeError):
+            raise WebhookSignatureError("Invalid webhook timestamp")
+        if abs(int(time.time()) - ts) > max_skew:
+            raise WebhookSignatureError("Timestamp outside allowed window")
+
         secret = self._config.get("webhook_signature_secret", "")
         message = timestamp.encode() + body
 

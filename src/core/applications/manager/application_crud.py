@@ -347,7 +347,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             "access_token": token.access_token,
             "refresh_token": token.refresh_token,
             "token_type": "Bearer",
-            "expires_in": token.expires_at - self._get_timestamp(),
+            "expires_in": (token.expires_at - self._get_timestamp()) // 1000,
             "scope": " ".join(token.scopes),
         }
 
@@ -363,7 +363,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             "access_token": token.access_token,
             "refresh_token": token.refresh_token,
             "token_type": "Bearer",
-            "expires_in": token.expires_at - self._get_timestamp(),
+            "expires_in": (token.expires_at - self._get_timestamp()) // 1000,
             "scope": " ".join(token.scopes),
         }
 

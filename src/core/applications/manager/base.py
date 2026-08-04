@@ -82,6 +82,7 @@ class ApplicationManager(
                 "burst_limit": 10,
             },
             "webhook_signature_secret": "plexichat-webhook-secret",  # pragma: allowlist secret
+            "webhook_signature_max_skew_seconds": 300,
         }
 
         app_config = config.get("applications", {})

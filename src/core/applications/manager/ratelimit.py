@@ -9,21 +9,31 @@ class RatelimitMixin(ApplicationManagerProtocol):
         now = self._get_timestamp()
         limits = self._config.get("rate_limits", {})
         requests_per_minute = limits.get("requests_per_minute", 50)
+        burst_limit = limits.get("burst_limit", 10)
 
         if application_id not in self._rate_limits:
-            self._rate_limits[application_id] = {"count": 0, "reset_at": now + 60000}
+            self._rate_limits[application_id] = {
+                "tokens": float(burst_limit),
+                "last_refill": now,
+                "max_tokens": float(burst_limit),
+                "refill_rate": requests_per_minute / 60.0,
+            }
 
-        rate_info = self._rate_limits[application_id]
+        bucket = self._rate_limits[application_id]
 
-        if now >= rate_info["reset_at"]:
-            rate_info["count"] = 0
-            rate_info["reset_at"] = now + 60000
+        elapsed_ms = now - bucket["last_refill"]
+        elapsed_sec = elapsed_ms / 1000.0
+        bucket["tokens"] = min(
+            bucket["max_tokens"],
+            bucket["tokens"] + elapsed_sec * bucket["refill_rate"],
+        )
+        bucket["last_refill"] = now
 
-        if rate_info["count"] >= requests_per_minute:
-            retry_after = (rate_info["reset_at"] - now) // 1000
+        if bucket["tokens"] < 1:
+            retry_after = max(1, int((1 - bucket["tokens"]) / bucket["refill_rate"]))
             raise RateLimitError(
                 f"Rate limit exceeded for application {application_id}", retry_after
             )
 
-        rate_info["count"] += 1
+        bucket["tokens"] -= 1
         return True
