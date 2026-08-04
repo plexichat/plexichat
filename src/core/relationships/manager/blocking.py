@@ -80,10 +80,14 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
         """Unblock a user."""
         if not self._is_blocked(blocker_id, blocked_id):
             raise NotBlockedError("User is not blocked")
-        self._db.execute(
-            "DELETE FROM rel_blocked WHERE blocker_id = ? AND blocked_id = ?",
-            (blocker_id, blocked_id),
-        )
+
+        def delete_block() -> None:
+            self._db.execute(
+                "DELETE FROM rel_blocked WHERE blocker_id = ? AND blocked_id = ?",
+                (blocker_id, blocked_id),
+            )
+
+        self._run_in_transaction(delete_block)
         invalidate_blocked_ids = getattr(self.get_blocked_user_ids, "invalidate", None)
         if callable(invalidate_blocked_ids):
             invalidate_blocked_ids(self, blocker_id)

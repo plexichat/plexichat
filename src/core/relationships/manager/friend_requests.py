@@ -74,7 +74,25 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             )
             return request_id
 
-        request_id = self._run_in_transaction(create_request)
+        try:
+            request_id = self._run_in_transaction(create_request)
+        except Exception as e:
+            error_str = str(e).lower()
+            if (
+                "unique" in error_str
+                or "constraint" in error_str
+                or "duplicate" in error_str
+            ):
+                logger.debug(
+                    f"UNIQUE constraint violation during friend request from {sender_id} to {recipient_id}, "
+                    f"checking for reverse request (race condition)"
+                )
+                reverse = self._get_pending_request(recipient_id, sender_id)
+                if reverse:
+                    return self.accept_friend_request(sender_id, reverse["id"])
+                raise FriendRequestExistsError("Friend request already exists")
+            raise
+
         self._invalidate_all_relationships_cache(sender_id, recipient_id)
 
         logger.debug(
