@@ -2,9 +2,13 @@
 
 ## Current branch posture
 
-The expansion branch contains contracts and product documentation only. It does
-not register a router, add database migrations, alter startup, or replace the
-existing artifact editor flows.
+The Suite routes and metadata schemas are now registered during normal startup.
+Migration `000` orchestrates the Stash and Sum domain schema creators; the
+schema definitions remain in their domain modules. PlexiSum cell data is never
+stored in the main database: each workbook is an independent `.plexisum`
+SQLite file stored through the configured media adapter. Migration `001` remains
+the migration-system self-test; retired `002`/`003`/`004` history is tolerated
+without restoring those files.
 
 ## Phase 1: client shell
 
@@ -31,7 +35,9 @@ existing artifact editor flows.
 2. Finalize logical item, collection, version, grant, and audit contracts.
 3. Add backend request/response schemas.
 4. Add authorization tests before routes.
-5. Add migrations with rollback only after schema review.
+5. Keep metadata schema definitions in the domain schema modules and have
+   migration `000` call their idempotent creators; add a separate migration only
+   after a reviewed schema transition is required.
 6. Add secure download tickets and preview isolation.
 7. Add client home/workspace and chat save/share actions.
 8. Add DSAR, retention, and audit coverage.
@@ -65,7 +71,10 @@ existing artifact editor flows.
 - Existing editor globals remain valid during migration.
 - New app IDs are allow-listed; no dynamic module import from user input.
 - No client route is an authorization boundary.
-- No data migration happens merely to create the scaffold.
+- Production PlexiSum startup fails closed if the media adapter is unavailable;
+  local blob storage is only for explicit development/test use.
+- Retention cleanup removes content and storage blobs only after safe reference
+  checks and retains Suite audit records for compliance.
 
 ## Definition of done for an app feeling standalone
 
