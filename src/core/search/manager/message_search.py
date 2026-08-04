@@ -111,39 +111,62 @@ class MessageSearchMixin(SearchManagerBase):
 
         search_text = parsed.search_text if parsed.search_terms else query
 
-        results, next_cursor = self._indexer.search_messages_page(
-            query=search_text,
-            conversation_ids=accessible_conversations,
-            server_ids=[server_id] if server_id else None,
-            channel_ids=[channel_id] if channel_id else None,
-            author_ids=[author_id] if author_id is not None else None,
-            limit=limit * 2,
-            cursor=cursor,
+        # Fetch one backend page at a time.  Post-index filters (mentions,
+        # attachments, and query filters) can remove rows; advancing the
+        # backend cursor only by ``limit * 2`` would either skip matches or
+        # return a cursor that points past unseen results.
+        collected = []
+        page_cursor = cursor
+        next_cursor = None
+        while len(collected) < limit:
+            page_results, page_next_cursor = self._indexer.search_messages_page(
+                query=search_text,
+                conversation_ids=accessible_conversations,
+                server_ids=[server_id] if server_id else None,
+                channel_ids=[channel_id] if channel_id else None,
+                author_ids=[author_id] if author_id is not None else None,
+                # Advance by one backend result at a time.  Returning a cursor
+                # for a larger backend page would skip filtered rows that were
+                # not included in this response.
+                limit=1,
+                cursor=page_cursor,
+            )
+            if not page_results:
+                next_cursor = None
+                break
+
+            filtered = page_results
+            if after_timestamp is not None:
+                filtered = [
+                    r
+                    for r in filtered
+                    if r.created_at and r.created_at > after_timestamp
+                ]
+            if has_attachments is not None:
+                filtered = [r for r in filtered if r.has_attachments == has_attachments]
+            if mentions_user is not None:
+                filtered = [
+                    r
+                    for r in filtered
+                    if f"<@{mentions_user}>" in (r.content or "")
+                    or f"<@!{mentions_user}>" in (r.content or "")
+                ]
+
+            filtered = self._filter_processor.apply_filters(filtered, parsed, user_id)
+            filtered = self._enrich_message_results(filtered, user_id)
+            filtered = self._ranking_engine.rank_message_results(
+                filtered, parsed, self._get_timestamp()
+            )
+            collected.extend(filtered)
+
+            next_cursor = page_next_cursor
+            if not page_next_cursor or page_next_cursor == page_cursor:
+                break
+            page_cursor = page_next_cursor
+
+        return MessageSearchResultPage(
+            results=collected[:limit], next_cursor=next_cursor
         )
-
-        if after_timestamp is not None:
-            results = [
-                r for r in results if r.created_at and r.created_at > after_timestamp
-            ]
-
-        if has_attachments is not None:
-            results = [r for r in results if r.has_attachments == has_attachments]
-
-        if mentions_user is not None:
-            results = [
-                r
-                for r in results
-                if f"<@{mentions_user}>" in (r.content or "")
-                or f"<@!{mentions_user}>" in (r.content or "")
-            ]
-
-        results = self._filter_processor.apply_filters(results, parsed, user_id)
-        results = self._enrich_message_results(results, user_id)
-        results = self._ranking_engine.rank_message_results(
-            results, parsed, self._get_timestamp()
-        )
-
-        return MessageSearchResultPage(results=results[:limit], next_cursor=next_cursor)
 
     def search_server_messages(
         self,
