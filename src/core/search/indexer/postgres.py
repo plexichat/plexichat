@@ -239,7 +239,10 @@ class PostgresIndexer(BaseIndexer):
                 "DELETE FROM search_messages WHERE message_id = ?", (message_id,)
             )
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(
+                f"Failed to remove message {message_id} from Postgres index: {e}"
+            )
             return False
 
     def _check_websearch_support(self) -> bool:
@@ -465,7 +468,8 @@ class PostgresIndexer(BaseIndexer):
                 ["user_id"],
             )
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to index user {user.user_id} in Postgres: {e}")
             return False
 
     def remove_user(self, user_id: int) -> bool:
@@ -473,7 +477,8 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             self._db.execute("DELETE FROM search_users WHERE user_id = ?", (user_id,))
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to remove user {user_id} from Postgres index: {e}")
             return False
 
     def search_users(self, query: str, limit=25, offset=0):
@@ -528,7 +533,8 @@ class PostgresIndexer(BaseIndexer):
                 )
                 for r in rows
             ]
-        except Exception:
+        except Exception as e:
+            logger.error(f"Postgres user search failed: {e}")
             return []
 
     def search_users_page(
@@ -629,7 +635,8 @@ class PostgresIndexer(BaseIndexer):
                 ["server_id"],
             )
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to index server {server.server_id} in Postgres: {e}")
             return False
 
     def remove_server(self, server_id: int) -> bool:
@@ -639,7 +646,10 @@ class PostgresIndexer(BaseIndexer):
                 "DELETE FROM search_servers WHERE server_id = ?", (server_id,)
             )
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(
+                f"Failed to remove server {server_id} from Postgres index: {e}"
+            )
             return False
 
     def search_servers(
@@ -693,7 +703,8 @@ class PostgresIndexer(BaseIndexer):
                 )
                 for r in rows
             ]
-        except Exception:
+        except Exception as e:
+            logger.error(f"Postgres server search failed: {e}")
             return []
 
     def search_servers_page(

@@ -415,7 +415,8 @@ class MeilisearchIndexer(BaseIndexer):
         try:
             self._request("DELETE", f"/indexes/{self._user_index}/documents/{user_id}")
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to remove user {user_id} from Meilisearch: {e}")
             return False
 
     def search_users(
@@ -478,7 +479,8 @@ class MeilisearchIndexer(BaseIndexer):
                 "DELETE", f"/indexes/{self._server_index}/documents/{server_id}"
             )
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to remove server {server_id} from Meilisearch: {e}")
             return False
 
     def search_servers(

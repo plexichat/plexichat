@@ -44,19 +44,11 @@ class SQLiteFTS5Indexer(BaseIndexer):
             return False
 
         try:
-            # Drop existing tables to ensure schema updates are applied
-            for table in [
-                "search_messages_fts",
-                "search_users_fts",
-                "search_servers_fts",
-            ]:
-                try:
-                    self._db.execute(f"DROP TABLE IF EXISTS {table}")
-                except Exception:
-                    pass
-
+            # Initialization must be idempotent and must not destroy indexed
+            # data when a manager is recreated during startup or a worker
+            # reload. Schema changes belong in migrations, not in initialize().
             self._db.execute("""
-                CREATE VIRTUAL TABLE search_messages_fts USING fts5(
+                CREATE VIRTUAL TABLE IF NOT EXISTS search_messages_fts USING fts5(
                     message_id UNINDEXED,
                     content,
                     author_id UNINDEXED,
@@ -76,7 +68,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
             """)
 
             self._db.execute("""
-                CREATE VIRTUAL TABLE search_users_fts USING fts5(
+                CREATE VIRTUAL TABLE IF NOT EXISTS search_users_fts USING fts5(
                     user_id UNINDEXED,
                     username,
                     display_name,
@@ -86,7 +78,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
             """)
 
             self._db.execute("""
-                CREATE VIRTUAL TABLE search_servers_fts USING fts5(
+                CREATE VIRTUAL TABLE IF NOT EXISTS search_servers_fts USING fts5(
                     server_id UNINDEXED,
                     name,
                     description,

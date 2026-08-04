@@ -471,7 +471,8 @@ class ElasticsearchIndexer(BaseIndexer):
         try:
             self._request("DELETE", f"/{self._user_index}/_doc/{user_id}")
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to remove user {user_id} from Elasticsearch: {e}")
             return False
 
     def search_users(
@@ -540,7 +541,8 @@ class ElasticsearchIndexer(BaseIndexer):
         try:
             self._request("DELETE", f"/{self._server_index}/_doc/{server_id}")
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to remove server {server_id} from Elasticsearch: {e}")
             return False
 
     def search_servers(
