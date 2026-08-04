@@ -32,6 +32,9 @@ from .exceptions import (
     ChannelNotFoundError,
     PermissionDeniedError,
     InvalidContentError,
+    InvalidWebhookContentError,
+    ContentTooLongError,
+    RateLimitError,
     EmbedLimitError,
 )
 
@@ -52,6 +55,9 @@ __all__ = [
     "ChannelNotFoundError",
     "PermissionDeniedError",
     "InvalidContentError",
+    "InvalidWebhookContentError",
+    "ContentTooLongError",
+    "RateLimitError",
     "EmbedLimitError",
     # Setup
     "setup",
@@ -173,7 +179,7 @@ def execute_webhook(
     avatar_url: Optional[str] = None,
     embeds: Optional[List[Dict[str, Any]]] = None,
     thread_id: Optional[int] = None,
-    wait: bool = False,
+    wait: bool = True,
 ) -> Optional[WebhookMessage]:
     """Execute a webhook to send a message."""
     return _get_manager().execute_webhook(
@@ -188,7 +194,7 @@ def execute_webhook_by_url(
     avatar_url: Optional[str] = None,
     embeds: Optional[List[Dict[str, Any]]] = None,
     thread_id: Optional[int] = None,
-    wait: bool = False,
+    wait: bool = True,
 ) -> Optional[WebhookMessage]:
     """Execute a webhook using its URL."""
     return _get_manager().execute_webhook_by_url(
