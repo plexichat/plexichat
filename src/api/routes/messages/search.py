@@ -52,41 +52,35 @@ async def search_messages(
         # Resolve channel_id to conversation_id for server channels
         conv_id = cid
         if servers_mod:
-            try:
-                channel = servers_mod.get_channel(cid, current_user.user_id)
-                if (
-                    channel
-                    and hasattr(channel, "conversation_id")
-                    and channel.conversation_id
-                ):
-                    conv_id = channel.conversation_id
-            except Exception:
-                pass
+            channel = servers_mod.get_channel(cid, current_user.user_id)
+            if (
+                channel
+                and hasattr(channel, "conversation_id")
+                and channel.conversation_id
+            ):
+                conv_id = channel.conversation_id
 
         messages = []
 
         # Use messaging module's search (handles encryption via blind index)
         if messaging:
-            try:
 
-                def _search_messages_sync():
-                    import src.api as api_module
+            def _search_messages_sync():
+                import src.api as api_module
 
-                    db = api_module.get_db()
-                    try:
-                        return messaging.search_messages(
-                            user_id=current_user.user_id,
-                            conversation_id=conv_id,
-                            query=content,
-                            limit=limit,
-                        )
-                    finally:
-                        if db:
-                            db.close()
+                db = api_module.get_db()
+                try:
+                    return messaging.search_messages(
+                        user_id=current_user.user_id,
+                        conversation_id=conv_id,
+                        query=content,
+                        limit=limit,
+                    )
+                finally:
+                    if db:
+                        db.close()
 
-                messages = await run_in_threadpool(_search_messages_sync)
-            except Exception as e:
-                logger.debug(f"Messaging search failed: {e}")
+            messages = await run_in_threadpool(_search_messages_sync)
 
         # Bulk fetch all author info
         author_ids = list(set(m.author_id for m in messages))

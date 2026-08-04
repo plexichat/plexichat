@@ -416,6 +416,20 @@ def get_messages(
     )
 
 
+def search_messages(
+    user_id: int,
+    conversation_id: int,
+    query: str,
+    limit: int = 50,
+    before_id: Optional[int] = None,
+    after_id: Optional[int] = None,
+) -> List[Message]:
+    """Search messages in a conversation for the channel search route."""
+    return _get_manager().search_messages(
+        user_id, conversation_id, query, limit, before_id, after_id
+    )
+
+
 def pin_message(user_id: int, message_id: int) -> bool:
     """Pin a message in its conversation."""
     return _get_manager().pin_message(user_id, message_id)
@@ -689,6 +703,7 @@ __all__ = [
     "delete_message",
     "get_message",
     "get_messages",
+    "search_messages",
     "pin_message",
     "unpin_message",
     "get_pinned_messages",
