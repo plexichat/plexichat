@@ -28,6 +28,7 @@ class AttachmentRepository(BaseRepository[Attachment]):
         auto_commit: bool = True,
     ) -> None:
         """Create a new attachment."""
+        self._reject_locked_media_reference(metadata, checksum, filename, url)
         self._execute(
             """INSERT INTO msg_attachments 
                (id, message_id, filename, content_type, size, url, url_encrypted, created_at, metadata, checksum)
@@ -55,7 +56,13 @@ class AttachmentRepository(BaseRepository[Attachment]):
         """Create multiple attachments in batch."""
         if not attachments:
             return
-
+        for attachment in attachments:
+            self._reject_locked_media_reference(
+                attachment.get("metadata"),
+                attachment.get("checksum"),
+                attachment.get("filename"),
+                attachment.get("url"),
+            )
         # Only start transaction if not already in one
         in_trans = getattr(self._db, "in_transaction", False)
         if not in_trans:
@@ -87,6 +94,59 @@ class AttachmentRepository(BaseRepository[Attachment]):
             if not in_trans:
                 self.rollback()
             raise
+
+    def _reject_locked_media_reference(
+        self,
+        metadata: Optional[Dict[str, Any]],
+        checksum: Optional[str],
+        filename: Optional[str] = None,
+        url: Optional[str] = None,
+    ) -> None:
+        """Reject attachment creation while a referenced media file is purging."""
+        candidates = []
+        if isinstance(metadata, dict):
+            for key in ("media_file_id", "file_id"):
+                value = metadata.get(key)
+                if value is not None and str(value).isdigit():
+                    candidates.append(int(value))
+        if not candidates and checksum:
+            row = self._db.fetch_one(
+                "SELECT id FROM media_files WHERE checksum = ? AND deleted = 0",
+                (checksum,),
+            )
+            if row:
+                candidates.append(int(row["id"]))
+        if not candidates and filename:
+            rows = self._db.fetch_all(
+                "SELECT id FROM media_files WHERE filename = ? AND deleted = 0",
+                (str(filename),),
+            )
+            candidates.extend(int(row["id"]) for row in rows)
+        if not candidates and url:
+            rows = self._db.fetch_all(
+                "SELECT id, filename FROM media_files WHERE deleted = 0 "
+                "AND (? LIKE '%' || filename)",
+                (str(url),),
+            )
+            candidates.extend(int(row["id"]) for row in rows)
+        for file_id in candidates:
+            # Reference writers participate in the same row-lock protocol as
+            # permanent deletion. PostgreSQL blocks here until the deleter
+            # commits/rolls back; SQLite's writer lock provides the equivalent
+            # serialization. The lock-table check then handles the committed
+            # tombstone for both drivers.
+            media_query = "SELECT deleted FROM media_files WHERE id = ?"
+            if getattr(self._db, "type", "sqlite") == "postgres":
+                media_query += " FOR UPDATE"
+            media_row = self._db.fetch_one(media_query, (file_id,))
+            if not media_row or bool(media_row.get("deleted", 0)):
+                raise ValueError("Media object is unavailable")
+            locked = self._db.fetch_one(
+                "SELECT 1 FROM media_file_deletion_locks WHERE media_file_id = ?",
+                (file_id,),
+            )
+            if locked:
+                raise ValueError("Media object is being permanently deleted")
 
     def get_by_id(self, att_id: SnowflakeID) -> Optional[Dict[str, Any]]:
         """Get attachment by ID."""
