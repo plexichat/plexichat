@@ -8,6 +8,8 @@ from typing import Optional
 
 from typing import Any
 
+
+import utils.logger as logger
 from .helpers import _hash_admin_token
 
 
@@ -56,8 +58,11 @@ class SessionMixin:
                         "UPDATE admin_sessions SET token = ? WHERE id = ?",
                         (token_hash, session_id),
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.error(
+                        f"Failed to upgrade legacy admin session token for "
+                        f"session {session_id}: {exc}"
+                    )
                 return admin_id
             return None
 
