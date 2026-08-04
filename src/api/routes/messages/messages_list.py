@@ -353,83 +353,74 @@ async def get_pinned_messages(
         messages = []
 
         if servers_mod:
-            try:
 
-                def _get_channel_sync():
-                    import src.api as api_module
+            def _get_channel_sync():
+                import src.api as api_module
 
-                    db = api_module.get_db()
-                    try:
-                        return servers_mod.get_channel(cid, current_user.user_id)
-                    finally:
-                        if db:
-                            db.close()
+                db = api_module.get_db()
+                try:
+                    return servers_mod.get_channel(cid, current_user.user_id)
+                finally:
+                    if db:
+                        db.close()
 
-                channel = await run_in_threadpool(_get_channel_sync)
-                conversation_id = (
-                    getattr(channel, "conversation_id", None) if channel else None
-                )
-                if conversation_id and messaging:
-
-                    def _get_pins_sync():
-                        import src.api as api_module
-
-                        db = api_module.get_db()
-                        try:
-                            return messaging.get_pinned_messages(
-                                current_user.user_id, conversation_id
-                            )
-                        finally:
-                            if db:
-                                db.close()
-
-                    messages = await run_in_threadpool(_get_pins_sync) or []
-            except Exception:
-                pass
-
-        if not messages and messaging:
-            try:
+            channel = await run_in_threadpool(_get_channel_sync)
+            conversation_id = (
+                getattr(channel, "conversation_id", None) if channel else None
+            )
+            if conversation_id and messaging:
 
                 def _get_pins_sync():
                     import src.api as api_module
 
                     db = api_module.get_db()
                     try:
-                        return messaging.get_pinned_messages(current_user.user_id, cid)
+                        return messaging.get_pinned_messages(
+                            current_user.user_id, conversation_id
+                        )
                     finally:
                         if db:
                             db.close()
 
                 messages = await run_in_threadpool(_get_pins_sync) or []
-            except Exception:
-                pass
+
+        if not messages and messaging:
+
+            def _get_pins_sync():
+                import src.api as api_module
+
+                db = api_module.get_db()
+                try:
+                    return messaging.get_pinned_messages(current_user.user_id, cid)
+                finally:
+                    if db:
+                        db.close()
+
+            messages = await run_in_threadpool(_get_pins_sync) or []
 
         author_cache = {}
         author_ids = {m.author_id for m in messages}
         if auth and author_ids:
-            try:
 
-                def _get_users_bulk_sync():
-                    import src.api as api_module
+            def _get_users_bulk_sync():
+                import src.api as api_module
 
-                    db = api_module.get_db()
-                    try:
-                        return auth.get_user_profiles_bulk(list(author_ids))
-                    finally:
-                        if db:
-                            db.close()
+                db = api_module.get_db()
+                try:
+                    return auth.get_user_profiles_bulk(list(author_ids))
+                finally:
+                    if db:
+                        db.close()
 
-                users = await run_in_threadpool(_get_users_bulk_sync)
-                author_cache = {
-                    int(uid): {
-                        "username": u.get("username"),
-                        "avatar_url": u.get("avatar_url"),
-                        "badges": u.get("badges", []),
-                    }
-                    for uid, u in users.items()
+            users = await run_in_threadpool(_get_users_bulk_sync)
+            author_cache = {
+                int(uid): {
+                    "username": u.get("username"),
+                    "avatar_url": u.get("avatar_url"),
+                    "badges": u.get("badges", []),
                 }
-            except Exception:
-                author_cache = {}
+                for uid, u in users.items()
+            }
         result = []
         for m in messages:
             author_id = m.author_id
