@@ -2,6 +2,7 @@ import secrets
 import ipaddress
 from typing import Optional, List, Dict, Any, Tuple
 
+import utils.logger as logger
 from src.core.database import cached, invalidate_pattern
 
 from ..models import AccessToken, AuditEventType
@@ -523,8 +524,11 @@ class ApiTokenMixin(AuthManagerProtocol):
             api_cfg = get_api_config()
             if not api_cfg.access_token_required:
                 return False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(
+                f"is_api_access_token_required: failed to read access token config: {e}"
+            )
+            return True
         try:
             now = self._get_timestamp()
             row = self._db.fetch_one(
@@ -534,8 +538,11 @@ class ApiTokenMixin(AuthManagerProtocol):
                 (now,),
             )
             return bool(row)
-        except Exception:
-            return False
+        except Exception as e:
+            logger.error(
+                f"is_api_access_token_required: failed to query access tokens: {e}"
+            )
+            return True
 
     def _normalize_access_token_scope_mode(self, scope_mode: str) -> str:
         normalized = (scope_mode or "none").strip().lower()

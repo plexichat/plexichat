@@ -324,14 +324,11 @@ def _fetch_next_seq(db, artifact_id: SnowflakeID) -> int:
     Uses ``db.execute`` directly (not ``fetch_one``) so the result is never
     served from the query cache: a just-inserted op must be visible.
     """
-    try:
-        row = db.execute(
-            "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq "
-            "FROM artifact_ops WHERE artifact_id = ?",
-            (artifact_id,),
-        ).fetchone()
-    except Exception:
-        return 1
+    row = db.execute(
+        "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq "
+        "FROM artifact_ops WHERE artifact_id = ?",
+        (artifact_id,),
+    ).fetchone()
     if not row:
         return 1
     try:
@@ -418,18 +415,14 @@ def list_artifact_ops(
     the original op payload under ``op`` (the same shape used on the
     ``ARTIFACT_SYNC`` wire format for late-joiner replay).
     """
-    try:
-        safe_limit = max(1, min(int(limit), 2000))
-        safe_after = max(0, int(after_seq))
-        rows = db.fetch_all(
-            "SELECT seq, op_type, actor_id, data, created_at "
-            "FROM artifact_ops WHERE artifact_id = ? AND seq > ? "
-            "ORDER BY seq ASC LIMIT ?",
-            (artifact_id, safe_after, safe_limit),
-        )
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning(f"Failed to list artifact ops for {artifact_id}: {e}")
-        return []
+    safe_limit = max(1, min(int(limit), 2000))
+    safe_after = max(0, int(after_seq))
+    rows = db.fetch_all(
+        "SELECT seq, op_type, actor_id, data, created_at "
+        "FROM artifact_ops WHERE artifact_id = ? AND seq > ? "
+        "ORDER BY seq ASC LIMIT ?",
+        (artifact_id, safe_after, safe_limit),
+    )
     ops: List[Dict[str, Any]] = []
     for row in rows:
         try:
@@ -552,26 +545,23 @@ def get_server_retention_days(db, server_id: SnowflakeID) -> Optional[int]:
     """Return the per-server retention override (days) or ``None``.
 
     Reads from the ``server_artifact_settings`` table created by migration 048.
-    Returns ``None`` when no override exists or on any error (the caller then
-    falls back to the global default).
+    Returns ``None`` when no override exists (the caller then falls back to the
+    global default).
     """
-    try:
-        row = db.fetch_one(
-            "SELECT retention_days FROM server_artifact_settings WHERE server_id = ?",
-            (server_id,),
-        )
-        if not row:
-            return None
-        raw = row.get("retention_days")
-        if raw is None:
-            return None
-        try:
-            days = int(raw)
-        except (TypeError, ValueError):
-            return None
-        return days if days > 0 else None
-    except Exception:
+    row = db.fetch_one(
+        "SELECT retention_days FROM server_artifact_settings WHERE server_id = ?",
+        (server_id,),
+    )
+    if not row:
         return None
+    raw = row.get("retention_days")
+    if raw is None:
+        return None
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return days if days > 0 else None
 
 
 def set_server_retention_days(
@@ -646,17 +636,12 @@ def update_voice_call(db, call_id: SnowflakeID, **fields: Any) -> Optional[Voice
 
 def get_feature_settings(db, server_id: SnowflakeID, feature: str) -> Dict[str, str]:
     """Return all setting key-value pairs for a feature on a server."""
-    try:
-        rows = db.fetch_all(
-            "SELECT setting_key, setting_value FROM server_artifact_feature_settings "
-            "WHERE server_id = ? AND feature = ?",
-            (server_id, feature),
-        )
-        return (
-            {row["setting_key"]: row["setting_value"] for row in rows} if rows else {}
-        )
-    except Exception:
-        return {}
+    rows = db.fetch_all(
+        "SELECT setting_key, setting_value FROM server_artifact_feature_settings "
+        "WHERE server_id = ? AND feature = ?",
+        (server_id, feature),
+    )
+    return {row["setting_key"]: row["setting_value"] for row in rows} if rows else {}
 
 
 def set_feature_setting(
@@ -719,11 +704,8 @@ def set_feature_settings_bulk(
 
 def get_voice_call_uncached(db, call_id: SnowflakeID) -> Optional[VoiceCall]:
     """Fetch a voice call bypassing the query cache (fresh consent state)."""
-    try:
-        cursor = db.execute("SELECT * FROM voice_calls WHERE id = ?", (call_id,))
-        row = cursor.fetchone()
-    except Exception:
-        return None
+    cursor = db.execute("SELECT * FROM voice_calls WHERE id = ?", (call_id,))
+    row = cursor.fetchone()
     if not row:
         return None
     try:
@@ -733,18 +715,12 @@ def get_voice_call_uncached(db, call_id: SnowflakeID) -> Optional[VoiceCall]:
 
 
 def get_channel_voice_user_ids(db, channel_id: SnowflakeID) -> List[int]:
-    """Return live ``voice_states`` member ids for a channel, bypassing cache.
-
-    Returns an empty list on any failure so callers fail closed.
-    """
-    try:
-        cursor = db.execute(
-            "SELECT user_id FROM voice_states WHERE channel_id = ?",
-            (channel_id,),
-        )
-        rows = cursor.fetchall() or []
-    except Exception:
-        return []
+    """Return live ``voice_states`` member ids for a channel, bypassing cache."""
+    cursor = db.execute(
+        "SELECT user_id FROM voice_states WHERE channel_id = ?",
+        (channel_id,),
+    )
+    rows = cursor.fetchall() or []
     user_ids: List[int] = []
     for row in rows:
         value = None

@@ -82,8 +82,11 @@ class IpBlacklistMixin(AuthManagerProtocol):
                 return False
 
             return True
-        except Exception:
-            return False
+        except Exception as e:
+            logger.error(
+                f"is_ip_blocked: failed to check IP blacklist for {ip_address}: {e}"
+            )
+            return True
 
     def get_blocked_ips(self) -> List[Dict[str, Any]]:
         rows = self._db.fetch_all(
