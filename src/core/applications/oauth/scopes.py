@@ -59,9 +59,6 @@ def validate_scopes(scopes: List[str]) -> Tuple[bool, List[str]]:
     if invalid:
         issues.append(f"Invalid scopes: {', '.join(sorted(invalid))}")
 
-    if "bot" in scopes and len(scopes) == 1:
-        pass
-
     return len(issues) == 0, issues
 
 

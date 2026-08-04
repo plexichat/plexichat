@@ -155,7 +155,7 @@ class OAuth2Flow:
         """
         code_id = generate_snowflake_id()
         now = self._current_time()
-        expires_at = now + self._config.get("code_expiry_seconds", 600)
+        expires_at = now + int(self._config.get("code_expiry_seconds", 600)) * 1000
 
         full_code, code_hash = generate_authorization_code(code_id)
 
@@ -254,9 +254,15 @@ class OAuth2Flow:
         if code_record["redirect_uri"] != redirect_uri:
             raise InvalidGrantError("Redirect URI mismatch")
 
-        self._db.execute(
-            "UPDATE app_oauth_codes SET used = 1 WHERE id = ?", (parsed["id"],)
+        cursor = self._db.execute(
+            "UPDATE app_oauth_codes SET used = 1 WHERE id = ? AND used = 0",
+            (parsed["id"],),
         )
+        try:
+            if cursor.rowcount == 0:
+                raise InvalidGrantError("Authorization code already used")
+        except AttributeError:
+            pass
 
         scopes = json.loads(code_record["scopes"])
         token = self._create_token(
@@ -386,6 +392,17 @@ class OAuth2Flow:
         if not verify_token_hash(parsed["secret"], token_record["access_token_hash"]):
             raise InvalidGrantError("Invalid access token")
 
+        try:
+            self._db.execute(
+                "UPDATE app_oauth_tokens SET last_used_at = ? WHERE id = ?",
+                (self._current_time(), token_record["id"]),
+            )
+        except Exception as exc:
+            logger.error(
+                f"Failed to update last_used_at for OAuth token "
+                f"{token_record['id']}: {exc}"
+            )
+
         return {
             "token_id": token_record["id"],
             "application_id": token_record["application_id"],
@@ -448,7 +465,7 @@ class OAuth2Flow:
         """Create a new OAuth2 token pair."""
         token_id = generate_snowflake_id()
         now = self._current_time()
-        expires_at = now + self._config.get("token_expiry_seconds", 604800)
+        expires_at = now + int(self._config.get("token_expiry_seconds", 604800)) * 1000
 
         access_token, access_hash = generate_access_token(token_id)
 
