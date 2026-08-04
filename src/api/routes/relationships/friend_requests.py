@@ -160,9 +160,16 @@ class FriendRequestMixin:
             except Exception as e:
                 logger.debug(f"Failed to invalidate relationship cache in create: {e}")
 
+            req_status = getattr(request, "status", None)
+            if req_status is not None and hasattr(req_status, "value"):
+                req_status = req_status.value
+            response_status = (
+                "friend" if req_status == "accepted" else "pending_outgoing"
+            )
+
             return RelationshipResponse(
                 user_id=SnowflakeID(target_id),
-                status="pending_outgoing",
+                status=response_status,
                 created_at=getattr(request, "created_at", None),
             )
         except HTTPException:
@@ -219,19 +226,14 @@ class FriendRequestMixin:
                 )
                 request_id = None
 
-                try:
-                    provided_id = int(user_id)
-                except (ValueError, TypeError):
-                    provided_id = 0
-
                 for r in pending:
-                    if r.id == provided_id or r.sender_id == provided_id:
+                    if r.sender_id == sender_id:
                         request_id = r.id
                         break
 
                 if not request_id:
                     logger.warning(
-                        f"Friend request from/with ID {user_id} not found for user {current_user.user_id}. Pending IDs: {[r.id for r in pending]}, Senders: {[r.sender_id for r in pending]}"
+                        f"Friend request from user {sender_id} not found for user {current_user.user_id}. Pending senders: {[r.sender_id for r in pending]}"
                     )
                     raise HTTPException(
                         status_code=404,

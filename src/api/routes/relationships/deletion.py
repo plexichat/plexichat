@@ -55,13 +55,6 @@ class DeletionMixin:
 
             try:
                 rel = relationships.get_relationship(current_user.user_id, target_id)
-                if not rel:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={
-                            "error": {"code": 404, "message": "Relationship not found"}
-                        },
-                    )
 
                 status = getattr(rel, "status", None)
                 if status is None and isinstance(rel, dict):
@@ -72,6 +65,14 @@ class DeletionMixin:
                 status_str = str(status).lower() if status is not None else ""
                 if "." in status_str:
                     status_str = status_str.split(".")[-1]
+
+                if status_str == "none":
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": {"code": 404, "message": "Relationship not found"}
+                        },
+                    )
 
                 if status_str in ("friend", "friends"):
                     relationships.remove_friend(current_user.user_id, target_id)
@@ -102,34 +103,10 @@ class DeletionMixin:
                         },
                     )
                 elif status_str == "pending_incoming":
-                    pending = relationships.get_pending_requests_incoming(
-                        current_user.user_id
+                    row = relationships._get_pending_request(
+                        target_id, current_user.user_id
                     )
-                    found = False
-                    for r in pending:
-                        if getattr(r, "sender_id", 0) == target_id:
-                            relationships.decline_friend_request(
-                                current_user.user_id, r.id
-                            )
-                            await self._dispatch_relationship_event(
-                                "remove",
-                                current_user.user_id,
-                                target_id,
-                                {
-                                    "user_id": str(target_id),
-                                },
-                            )
-                            await self._dispatch_relationship_event(
-                                "remove",
-                                target_id,
-                                current_user.user_id,
-                                {
-                                    "user_id": str(current_user.user_id),
-                                },
-                            )
-                            found = True
-                            break
-                    if not found:
+                    if not row:
                         raise HTTPException(
                             status_code=404,
                             detail={
@@ -139,35 +116,29 @@ class DeletionMixin:
                                 }
                             },
                         )
+                    req_id = row["id"]
+                    relationships.decline_friend_request(current_user.user_id, req_id)
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        current_user.user_id,
+                        target_id,
+                        {
+                            "user_id": str(target_id),
+                        },
+                    )
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        target_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                        },
+                    )
                 elif status_str == "pending_outgoing":
-                    pending = relationships.get_pending_requests_outgoing(
-                        current_user.user_id
+                    row = relationships._get_pending_request(
+                        current_user.user_id, target_id
                     )
-                    found = False
-                    for r in pending:
-                        if getattr(r, "recipient_id", 0) == target_id:
-                            relationships.cancel_friend_request(
-                                current_user.user_id, r.id
-                            )
-                            await self._dispatch_relationship_event(
-                                "remove",
-                                current_user.user_id,
-                                target_id,
-                                {
-                                    "user_id": str(target_id),
-                                },
-                            )
-                            await self._dispatch_relationship_event(
-                                "remove",
-                                target_id,
-                                current_user.user_id,
-                                {
-                                    "user_id": str(current_user.user_id),
-                                },
-                            )
-                            found = True
-                            break
-                    if not found:
+                    if not row:
                         raise HTTPException(
                             status_code=404,
                             detail={
@@ -177,6 +148,24 @@ class DeletionMixin:
                                 }
                             },
                         )
+                    req_id = row["id"]
+                    relationships.cancel_friend_request(current_user.user_id, req_id)
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        current_user.user_id,
+                        target_id,
+                        {
+                            "user_id": str(target_id),
+                        },
+                    )
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        target_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                        },
+                    )
                 else:
                     try:
                         friends = relationships.get_friends(current_user.user_id)
