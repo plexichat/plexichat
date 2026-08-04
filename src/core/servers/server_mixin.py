@@ -22,9 +22,12 @@ class ServerMixin:
         name: str,
         description: Optional[str] = None,
         icon_url: Optional[str] = None,
+        is_public: Optional[bool] = None,
     ) -> Server:
         """Create a new server."""
-        return self._manager.create_server(owner_id, name, description, icon_url)
+        return self._manager.create_server(
+            owner_id, name, description, icon_url, is_public
+        )
 
     def get_server(
         self, server_id: SnowflakeID, user_id: SnowflakeID

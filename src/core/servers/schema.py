@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS srv_servers (
     owner_id INTEGER NOT NULL,
     description_encrypted TEXT,
     icon_url TEXT,
+    is_public INTEGER NOT NULL DEFAULT 0,
     default_role_id INTEGER,
     default_channel_id INTEGER,
     system_channel_id INTEGER,

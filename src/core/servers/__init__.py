@@ -361,9 +361,12 @@ def create_server(
     name: str,
     description: Optional[str] = None,
     icon_url: Optional[str] = None,
+    is_public: Optional[bool] = None,
 ) -> Server:
     """Create a new server."""
-    return _get_manager().create_server(owner_id, name, description, icon_url)
+    return _get_manager().create_server(
+        owner_id, name, description, icon_url, is_public
+    )
 
 
 def get_server(server_id: int, user_id: int) -> Optional[Server]:

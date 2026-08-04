@@ -32,6 +32,7 @@ class ServerOpsMixin(ServerProtocol):
         name: str,
         description: Optional[str] = None,
         icon_url: Optional[str] = None,
+        is_public: Optional[bool] = None,
     ) -> Server:
         """Create a new server."""
         if not name or not name.strip():
@@ -64,14 +65,16 @@ class ServerOpsMixin(ServerProtocol):
 
         self._db.execute(
             """INSERT INTO srv_servers
-               (id, name, owner_id, description_encrypted, icon_url, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (id, name, owner_id, description_encrypted, icon_url, is_public,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 server_id,
                 name,
                 owner_id,
                 description_encrypted,
                 icon_url,
+                1 if is_public else 0,
                 now,
                 now,
             ),
