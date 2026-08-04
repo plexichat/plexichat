@@ -229,9 +229,18 @@ class AccountReaper:
         try:
             from src.core.suite import sum as sum_domain
 
-            sum_domain.purge_user_data(user_id)
+            # A configured Sum manager must be able to erase its external
+            # workbook blobs before metadata is removed. Do not continue with
+            # row deletion after a real storage failure, or the blob paths are
+            # lost and the user's .plexisum files become orphaned.
+            if sum_domain.get_manager() is not None:
+                sum_domain.purge_user_data(user_id)
+        except RuntimeError:
+            # PlexiSum is optional and not initialized in legacy deployments.
+            logger.debug("Reaper: PlexiSum is not initialized; skipping purge")
         except Exception as exc:
-            logger.debug("Reaper: PlexiSum blob purge skipped: %s", exc)
+            logger.error("Reaper: PlexiSum blob purge failed: %s", exc)
+            raise
 
         statements = (
             ("DELETE FROM suite_audit_log WHERE actor_id = ?", (user_id,)),
@@ -365,23 +374,19 @@ class AccountReaper:
                 "DELETE FROM message_reports WHERE reporter_id = ? OR reported_user_id = ?",
                 (user_id, user_id),
             )
-            try:
-                if self._db.column_exists("admin_audit_log", "target_user_id"):
-                    self._db.execute(
-                        "DELETE FROM admin_audit_log WHERE admin_id = ? OR target_user_id = ?",
-                        (user_id, user_id),
-                    )
-                else:
-                    self._db.execute(
-                        "DELETE FROM admin_audit_log WHERE admin_id = ?",
-                        (user_id,),
-                    )
-            except Exception:
-                pass
+            if self._db.column_exists("admin_audit_log", "target_user_id"):
+                self._db.execute(
+                    "DELETE FROM admin_audit_log WHERE admin_id = ? OR target_user_id = ?",
+                    (user_id, user_id),
+                )
+            else:
+                self._db.execute(
+                    "DELETE FROM admin_audit_log WHERE admin_id = ?",
+                    (user_id,),
+                )
             self._db.execute(
                 "DELETE FROM media_hash_reports WHERE reporter_id = ?", (user_id,)
             )
-            self._purge_suite_data(user_id)
             self._db.execute("DELETE FROM auth_users WHERE id = ?", (user_id,))
             self._db.execute(
                 "DELETE FROM auth_deletion_records WHERE user_id = ?", (user_id,)

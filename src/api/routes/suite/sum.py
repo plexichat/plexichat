@@ -481,24 +481,25 @@ async def upload_file(
 
         raw = body.content
         if raw.startswith("data:"):
-            # Accept data URLs so the client can send the file directly.
+            # Accept only a base64 data URL. Do not silently discard invalid
+            # characters: permissive decoding can turn malformed input into a
+            # different valid SQLite file.
             comma = raw.find(",")
-            if comma == -1:
+            if comma == -1 or ";base64" not in raw[:comma].lower():
                 raise HTTPException(status_code=400, detail="Invalid file payload")
             encoded = raw[comma + 1 :]
-            try:
-                raw = base64_module.b64decode(encoded, validate=False)
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=400, detail="Invalid base64 payload"
-                ) from exc
         else:
-            try:
-                raw = base64_module.b64decode(raw, validate=False)
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=400, detail="Invalid base64 payload"
-                ) from exc
+            encoded = raw
+        if len(encoded) > 70_000_000:
+            raise HTTPException(status_code=413, detail="Workbook file is too large")
+        try:
+            raw = base64_module.b64decode(encoded, validate=True)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail="Invalid base64 payload"
+            ) from exc
+        if len(raw) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Workbook file is too large")
         result = _manager().upload_file(
             current_user.user_id,
             int(workbook_id),
