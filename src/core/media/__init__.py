@@ -105,6 +105,10 @@ __all__ = [
     "get_file_data",
     "get_file_stream",
     "delete_file",
+    "delete_file_permanently",
+    "can_delete_file_permanently",
+    "get_file_for_permanent_delete",
+    "get_file_by_filename_for_permanent_delete",
     "check_file_access",
     # URL signing
     "sign_url",
@@ -348,6 +352,28 @@ def delete_file(user_id: int, file_id: int) -> bool:
         True if deleted
     """
     return _get_manager().delete_file(user_id, file_id)
+
+
+def delete_file_permanently(user_id: int, file_id: int) -> bool:
+    """Permanently delete an owned file and its underlying storage object."""
+    return _get_manager().delete_file_permanently(user_id, file_id)
+
+
+def can_delete_file_permanently(file_id: int) -> bool:
+    """Check whether a file has no known cross-domain references."""
+    return _get_manager().can_delete_file_permanently(file_id)
+
+
+def get_file_for_permanent_delete(file_id: int) -> Optional[MediaFile]:
+    """Load an active or soft-deleted file for internal retention cleanup."""
+    return _get_manager()._get_file_for_permanent_delete(file_id)
+
+
+def get_file_by_filename_for_permanent_delete(
+    filename: str,
+) -> Optional[MediaFile]:
+    """Load an active or soft-deleted file by opaque filename."""
+    return _get_manager().get_file_by_filename_for_permanent_delete(filename)
 
 
 def check_file_access(filename: str, user_id: int) -> bool:
