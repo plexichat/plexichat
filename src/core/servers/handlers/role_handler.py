@@ -543,12 +543,53 @@ class RoleHandler:
         role_rows = self.manager._get_member_role_rows(server_id, user_id)
         base_perms = calculate_base_permissions(role_rows, is_owner)
 
+        # The server owner is an administrator even if a legacy or partially
+        # restored database is missing the owner's membership row. Keep the
+        # base permissions in that case, but do not return early: timeout
+        # restrictions below must still be evaluated.
         result = base_perms
         if channel_id:
             member = self.manager.get_member(server_id, user_id)
             if not member:
-                return {}
+                if not is_owner:
+                    return {}
+                member = None
+            if member is None:
+                role_ids = []
+                role_overrides = []
+                member_override = None
+            else:
+                role_ids = [r["id"] for r in role_rows]
+                role_overrides = []
+                if role_ids:
+                    if not all(isinstance(rid, int) for rid in role_ids):
+                        raise ValueError("All role IDs must be integers")
+                    override_rows = []
+                    for role_id in role_ids:
+                        row = self.db.fetch_one(
+                            "SELECT * FROM srv_channel_overrides WHERE channel_id = ? AND target_type = 'role' AND target_id = ?",
+                            (channel_id, role_id),
+                        )
+                        if row:
+                            override_rows.append(row)
+                    role_overrides = [dict(row) for row in override_rows]
 
+                member_override_row = self.db.fetch_one(
+                    """SELECT * FROM srv_channel_overrides
+                       WHERE channel_id = ? AND target_type = 'member' AND target_id = ?""",
+                    (channel_id, user_id),
+                )
+                member_override = (
+                    dict(member_override_row) if member_override_row else None
+                )
+
+                result = apply_channel_overrides(
+                    base_perms, role_overrides, member_override
+                )
+
+        # 4. Check for timeout
+        member = self.manager.get_member(server_id, user_id)
+        if member and member.timeout_until:
             role_ids = [r["id"] for r in role_rows]
             role_overrides = []
             if role_ids:
