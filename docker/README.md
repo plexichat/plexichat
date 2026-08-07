@@ -3,7 +3,7 @@
 This compose file lives in the `plexichat` repo and orchestrates:
 - backend (FastAPI server)
 - db (PostgreSQL)
-- redis (Valkey)
+- valkey (Redis-compatible cache/session store)
 - rustfs (S3-compatible object storage + bucket init)
 - client (Nginx serving Vite-built static assets)
 - cert-init (self-signed TLS certificate generation)
@@ -39,7 +39,7 @@ If you have the repository cloned locally, you can start the stack directly:
 # using the deploy script, or create them manually.
 
 # Start the stack
-VERSION=a.1.0-84 docker compose up -d
+BACKEND_VERSION=a.1.0-131 CLIENT_VERSION=a.1.0-117 docker compose up -d
 ```
 
 ## Verify

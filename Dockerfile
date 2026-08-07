@@ -25,6 +25,6 @@ EXPOSE 8000
 EXPOSE 30000-30100/udp
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -sf http://localhost:8000/ready
+    CMD curl -sf http://localhost:8000/api/v1/ready
 
 CMD ["python", "main.py"]

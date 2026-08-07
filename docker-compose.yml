@@ -180,7 +180,7 @@ services:
     expose:
       - "8000"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/ready"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/ready"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -208,7 +208,7 @@ services:
 
   client:
     restart: unless-stopped
-    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat-client}/nginx:${CLIENT_VERSION:-latest}
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat-client}/nginx:${CLIENT_VERSION:-latest}
     env_file:
       - .env
     depends_on:
@@ -224,7 +224,7 @@ services:
       - "443:443"
 
   backup:
-    image: registry.plexichat.com/plexichat/plexichat/backup:${BACKEND_VERSION:-latest}
+    image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backup:${BACKEND_VERSION:-latest}
     env_file:
       - .env
     environment:
@@ -251,6 +251,46 @@ services:
       - rustfs_data:/rustfs-data:ro
       - backup_repo:/repo
     restart: unless-stopped
+
+  # Local AI moderation (Shieldstral) - OPTIONAL.
+  #
+  # Profile-gated: only started when deploy passes --profile ai. The
+  # Shieldstral-1.0-3B safety classifier (Apache-2.0) is served locally via
+  # llama.cpp's OpenAI-compatible API, so no message content ever leaves the
+  # host. The deploy script downloads the model + vision projector into
+  # ./models/shieldstral, wires automod.ai.shieldstral into the backend
+  # config, and enables the "ai" profile.
+  #
+  # GPU acceleration: deploy detects nvidia-container-toolkit and writes a
+  # docker-compose.gpu.yml override that swaps LLAMA_IMAGE to the CUDA build
+  # and adds the GPU device reservation (see deploy.sh / deploy.ps1).
+  shieldstral:
+    profiles: ["ai"]
+    restart: unless-stopped
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
+    environment:
+      LLAMA_ARG_MODEL: /models/shieldstral/${SHIELDSTRAL_MODEL:-Shieldstral-1.0-3B-Q4_K_M.gguf}
+      LLAMA_ARG_MMPROJ: /models/shieldstral/${SHIELDSTRAL_MMPROJ:-mmproj-Shieldstral-1.0-3b-BF16.gguf}
+      LLAMA_ARG_CTX_SIZE: ${SHIELDSTRAL_CONTEXT:-4096}
+      LLAMA_ARG_HOST: 0.0.0.0
+      LLAMA_ARG_PORT: "8080"
+      # Image default is 99 (-1 = keep all on CPU); deploy sets this to 99
+      # on GPU hosts via the docker-compose.gpu.yml override.
+      LLAMA_ARG_N_GPU_LAYERS: ${SHIELDSTRAL_GPU_LAYERS:-0}
+    volumes:
+      - ./models/shieldstral:/models/shieldstral:ro
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${SHIELDSTRAL_MEM_LIMIT:-6G}
 
 volumes:
   postgres_data:
