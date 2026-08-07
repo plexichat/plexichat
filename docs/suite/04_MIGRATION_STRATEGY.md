@@ -1,6 +1,6 @@
 # PlexiSuite migration and implementation strategy
 
-## Current branch posture
+## Current posture
 
 The Suite routes and metadata schemas are now registered during normal startup.
 Migration `000` orchestrates the Stash and Sum domain schema creators; the
@@ -9,6 +9,12 @@ stored in the main database: each workbook is an independent `.plexisum`
 SQLite file stored through the configured media adapter. Migration `001` remains
 the migration-system self-test; retired `002`/`003`/`004` history is tolerated
 without restoring those files.
+
+Phases 3 and 5 below are implemented (Stash backend + client workspace app;
+Sum data layer + bounded-viewport grid). Phase 6 (realtime) is implemented on
+the gateway (opcodes 64-67). The remaining work is the Sum renderer upgrade:
+the spike decision to adopt a Univer-based renderer behind the existing
+op/revision contract is planned but not shipped.
 
 ## Phase 1: client shell
 
@@ -62,6 +68,21 @@ without restoring those files.
 6. Add permissions at workbook/sheet/range boundaries.
 7. Add CSV import/export and later XLSX.
 8. Add comments, mentions, notifications, and audit.
+
+## Phase 6: Sum realtime (implemented)
+
+1. Add gateway opcodes 64-67 (`SUM_SUBSCRIBE` / `SUM_UNSUBSCRIBE` / `SUM_OP` /
+   `SUM_SYNC`), events, and intents.
+2. Add the Sum subscription registry and relay with per-relay authorization
+   revalidation (capability + `SumManager._authorize`).
+3. Add subscribe/op/sync handlers with bounded payloads, `operation_id`
+   idempotency, and `SumConflictError` recovery via `SUM_SYNC` to the sender.
+4. Wire connection teardown cleanup in the gateway.
+5. Add the client `SumRealtime` hub (`suite/shared/sum-realtime.js`) consumed
+   by the current grid and any future renderer.
+
+Realtime is a delta channel only; REST replay remains the durable source of
+truth. See [07_SUM_REALTIME.md](07_SUM_REALTIME.md).
 
 ## Compatibility rules
 

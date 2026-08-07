@@ -50,12 +50,14 @@ Viewport requests and operation payloads must be bounded. Operations must be
 idempotent, revisioned, actor-attributed, and permission-checked. Compressed
 range operations are required for large paste actions.
 
-## Future WebSocket boundary
+## WebSocket realtime boundary
 
-A Sum realtime namespace may be added after the REST/repository contract is
-stable. It must share the same operation envelope, sequencing, authorization,
-rate limits, and cross-worker delivery guarantees as the existing artifact
-fabric. Realtime delivery is not durable persistence.
+PlexiSum realtime is implemented on the gateway (opcodes 64-67,
+`SUM_SUBSCRIBE` / `SUM_UNSUBSCRIBE` / `SUM_OP` / `SUM_SYNC`). It shares the same
+operation envelope, sequencing, authorization, rate limits, and cross-worker
+delivery guarantees as the existing artifact fabric. Realtime delivery is not
+durable persistence — the REST `/operations` replay path remains the
+authoritative source after reconnects. See [07_SUM_REALTIME.md](07_SUM_REALTIME.md).
 
 ## Required gates before registration
 

@@ -32,7 +32,23 @@ onboarding, and deep links. It does not need a separate deployment or backend.
 - [PlexiSum data model and performance](03_SUM_DATA_MODEL.md)
 - [Migration and implementation strategy](04_MIGRATION_STRATEGY.md)
 - [API contract plan](05_API_CONTRACTS.md)
+- [PlexiSum real-time fabric](07_SUM_REALTIME.md)
 
-The implementation branch should add behavior incrementally. This scaffold
-contains contracts and decisions only; it does not create migrations or alter
-startup behavior.
+## Implementation status
+
+PlexiSuite is no longer a contract-only scaffold. The Stash and Sum domains are
+fully registered during normal startup: migration `000` orchestrates the domain
+schema creators, the domain `setup()` hooks mount their routers, capability
+checks (`plexisum`, `plexistash`) gate both surfaces, and PlexiSum cell data
+lives in `.plexisum` SQLite workbook files stored through the configured media
+adapter (never in the main database).
+
+- **PlexiStash** — metadata/ACL backend (items, collections, versions, grants,
+  download tickets) plus a client workspace app mounted inside the suite
+  launcher.
+- **PlexiSum** — full server data layer (19 tables, ~40 REST endpoints,
+  bounded formula engine) with a bounded-viewport grid client, now including a
+  real-time gateway fabric (opcodes 64-67) for collaborative editing.
+- **Remaining work** — the PlexiSum renderer is a hand-rolled grid; the spike
+  decision to replace it with a Univer-based renderer (behind the same
+  op/revision contract) is a future fork, not yet shipped.
