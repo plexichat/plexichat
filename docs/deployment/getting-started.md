@@ -21,7 +21,7 @@ This guide covers installing, configuring, and running Plexichat in production. 
 ### Minimum
 
 - CPU: 2 cores
-- RAM: 2GB
+- RAM: 4GB
 - Disk: 10GB SSD
 - OS: Linux (Ubuntu 20.04+, Debian 11+, CentOS Stream 9+)
 - Python: **3.11 or later** (the server uses 3.11+ language features; 3.10 will not work)
@@ -55,10 +55,10 @@ sudo apt install -y python3.11 python3.11-pip python3.11-venv git build-essentia
 # Install PostgreSQL (if using PostgreSQL)
 sudo apt install -y postgresql postgresql-contrib
 
-# Install Redis (if using Redis)
-sudo apt install -y redis-server
-sudo systemctl enable redis-server
-sudo systemctl start redis-server
+# Install Valkey (if using Valkey)
+sudo apt install -y valkey-server
+sudo systemctl enable valkey-server
+sudo systemctl start valkey-server
 ```
 
 ### Step 2: Clone the Repository
@@ -105,7 +105,7 @@ database:
     password: "${POSTGRES_PASSWORD}"
     sslmode: "require"
 
-redis:
+valkey:
   enabled: true
   password: "${VALKEY_PASSWORD}"
 
@@ -142,8 +142,8 @@ export PLEXICHAT_SYSTEM_KEY="your_encryption_key"
 # Database
 export POSTGRES_PASSWORD="your_secure_password"
 
-# Redis
-export VALKEY_PASSWORD="your_redis_password"
+# Valkey
+export VALKEY_PASSWORD="your_valkey_password"
 
 # S3 (if using external media storage)
 export S3_BUCKET="your-bucket-name"
@@ -180,7 +180,7 @@ docker run -d \
   -p 8000:8000 \
   -e PLEXICHAT_SYSTEM_KEY="your_encryption_key" \
   -e POSTGRES_PASSWORD="your_db_password" \
-  -e VALKEY_PASSWORD="your_redis_password" \
+  -e VALKEY_PASSWORD="your_valkey_password" \
   -v $(pwd)/config:/app/config \
   -v plexichat_data:/data \
   plexichat:latest
@@ -224,12 +224,12 @@ services:
     networks:
       - plexichat_network
 
-  redis:
-    image: redis:7-alpine
+  valkey:
+    image: valkey/valkey:9.1.1-alpine
     container_name: plexichat_valkey
-    command: redis-server --requirepass ${VALKEY_PASSWORD}
+    command: redis-server --appendonly yes --requirepass ${VALKEY_PASSWORD}
     volumes:
-      - redis_data:/data
+      - valkey_data:/data
     restart: unless-stopped
     networks:
       - plexichat_network
@@ -252,7 +252,7 @@ services:
 volumes:
   plexichat_data:
   postgres_data:
-  redis_data:
+  valkey_data:
 
 networks:
   plexichat_network:
@@ -570,7 +570,7 @@ Verify reverse proxy WebSocket configuration (Upgrade headers), increase proxy t
 - [Default Configuration Reference](../default-config.md) -- every key with defaults
 - [Authentication Configuration](configuration/config-authentication.md) -- password, 2FA, sessions, deletion
 - [Database Configuration](configuration/config-database.md) -- PostgreSQL/SQLite setup
-- [Redis Configuration](configuration/config-valkey.md) -- caching and sessions
+- [Valkey Configuration](configuration/config-valkey.md) -- caching and sessions
 - [Media Configuration](configuration/config-media.md) -- storage and processing
 - [Voice Configuration](configuration/config-voice.md) -- voice/video setup
 - [Security Best Practices](../security.md) -- production security

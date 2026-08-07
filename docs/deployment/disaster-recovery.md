@@ -339,9 +339,9 @@ database:
   port: 5432
 ```
 
-### Redis Failover
+### Valkey Failover
 
-**Redis Sentinel:**
+**Redis Sentinel (compatible with Valkey):**
 
 **Setup Sentinel:**
 ```bash
@@ -570,7 +570,7 @@ curl https://api.plexichat.com/health
 {
   "status": "healthy",
   "database": "connected",
-  "redis": "connected",
+  "valkey": "connected",
   "version": "a.1.0-51"
 }
 ```
@@ -580,7 +580,7 @@ curl https://api.plexichat.com/health
 **Key Metrics:**
 - API response time
 - Database connection pool
-- Redis connection pool
+- Valkey connection pool
 - WebSocket connections
 - Error rates
 - Disk usage
@@ -592,7 +592,7 @@ curl https://api.plexichat.com/health
 - API response time > 1s
 - Error rate > 5%
 - Database connection failures
-- Redis connection failures
+- Valkey connection failures
 - Disk usage > 80%
 - Memory usage > 90%
 

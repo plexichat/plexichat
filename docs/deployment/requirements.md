@@ -10,10 +10,26 @@ This document outlines the system requirements for running Plexichat in differen
 - macOS: 10.15+ (for development/testing only)
 
 ### Hardware
-- **RAM**: Minimum 2GB, Recommended 4GB+
+- **RAM**: Minimum 5GB, Recommended 8GB — the full Docker Compose stack (server, PostgreSQL, Valkey, RustFS, Nginx, and the antivirus/media-scanning service) typically uses ~5GB at idle
 - **CPU**: Minimum 2 cores, Recommended 4+ cores
 - **Storage**: Minimum 10GB SSD, Recommended 50GB+ SSD
 - **Network**: 1Gbps+ recommended
+
+### Local AI Moderation
+Plexichat's AI moderation and assistant features run **entirely on your own
+hardware** - content never leaves your server. Each AI feature adds a fixed
+amount of RAM on top of the base requirements above:
+
+| Feature | Extra RAM (min / recommended) | Total (min / recommended) |
+|---------|-------------------------------|---------------------------|
+| Base stack (no AI) | - | 5GB / 8GB |
+| + Shieldstral local AI moderation | +3GB / +3GB | 8GB / 11GB |
+| + Gemma assistant (E2B or E4B) | +3GB / +5GB | 8GB / 13GB |
+
+These are per-instance numbers and include the loaded model weights plus the
+inference runtime. The deploy script enables Shieldstral with
+`--ai-automod` (or the interactive prompt) and auto-detects a CUDA GPU to
+offload inference, which reduces CPU/RAM pressure on capable hosts.
 
 ### Software Dependencies
 - **Python**: **3.11+** (both server and client; 3.10 will not work due to 3.11+ language features in the server codebase)
