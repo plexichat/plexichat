@@ -14,7 +14,8 @@ EXTERNAL
 |  (Reverse Proxy)  |
 +-------------------+
   |
-  | Internal Network (plexichat-frontend)
+  |
+  | Default Bridge Network (plexichat_default)
   |
   v
 +-------------------+
@@ -22,8 +23,6 @@ EXTERNAL
 |   (REST + WS)     |    |
 +-------------------+    |
   |                      |
-  | Internal Network (plexichat-backend)
-  |
   +------> +-----------+ <-- PostgreSQL Database
   |        | Database  |
   |        | Connection|
@@ -31,7 +30,7 @@ EXTERNAL
   +------> +-----------+
            |
            +------> +--------+
-                    | Redis  |
+                    | Valkey |
                     | Cache  |
                     +--------+
                     |
@@ -58,22 +57,22 @@ EXTERNAL
 
 **Connections:**
 - Backend (pooled: 5-20 development, 20-100 production)
-- Network: `plexichat-backend`
+- Network: default bridge network (single network in `docker-compose.yml`)
 
 **Health Check:**
 - `pg_isready` command
 - Interval: 10 seconds
 - Timeout: 5 seconds
 
-### 2. Redis (Cache)
+### 2. Valkey (Cache / Session Store)
 
 **Purpose:** High-speed caching and session storage
 
 **Services:**
-- In-memory key-value store
+- In-memory key-value store (Redis-protocol compatible)
 - Session cache (WebSocket connections)
 - Rate limiting counters
-- Pub/Sub for real-time events
+- Pub/Sub for real-time events (including cross-worker dispatch)
 
 **Data:**
 - Sessions, presence status, pending events
@@ -82,7 +81,7 @@ EXTERNAL
 
 **Connections:**
 - Backend (pooled: 50)
-- Network: `plexichat-backend`
+- Network: default bridge network (single network in `docker-compose.yml`)
 
 **Health Check:**
 - `redis-cli ping` command
@@ -185,9 +184,10 @@ EXTERNAL
 - Data: `plexichat_home`, `postgres_data`, `valkey_data`, `rustfs_data`, `certs`, `backup_repo`
 
 **Health Check:**
-- `curl http://localhost:8000/health`
-- Interval: 10 seconds
-- Start period: 30 seconds
+- `curl http://localhost:8000/api/v1/ready` (liveness probe)
+- `curl http://localhost:8000/health` (deep health: DB, events, cross-worker listener)
+- Interval: 15 seconds
+- Start period: 10 seconds
 
 **Ports:**
 - API: 8000/TCP
@@ -234,7 +234,7 @@ EXTERNAL
 - Optional secondary/off-site repository replication
 
 **Data:**
-- Restic repository: `backup-repo` volume (persistent)
+- Restic repository: `backup_repo` volume (persistent)
 
 **Dependencies:**
 - Depends on: Database (healthy)
@@ -257,41 +257,23 @@ docker exec backup /scripts/backup.sh restore <snap>  # restore files
 
 ## Networks
 
-### plexichat-backend (Internal)
+`docker-compose.yml` defines a single default bridge network
+(`plexichat_default`). All services reach each other by service name over
+this network:
 
-**Services:**
-- Database
-- Redis
-- RustFS
-- Backend
-- Backup
-- RustFS-Init
-- Cert-Init
+- Backend reaches DB as `db:5432`
+- Backend reaches Valkey as `valkey:6379`
+- Backend reaches RustFS as `rustfs:9000`
+- Client (Nginx) reaches Backend as `backend:8000`
 
-**Purpose:** Isolated internal network for data tier
+Only the `client` service publishes host ports (80, 443). The `backend`
+publishes 8000/TCP and 30000-30100/UDP for single-instance dev/prod but
+those must be removed when scaling to multiple replicas (see
+`docker-compose.yml` header comments). The `rustfs` service publishes
+9000/9001 for the S3 API and web console.
 
-**Communication:**
-- All services on this network reach each other by hostname
-- Example: Backend reaches DB as `http://db:5432`
-- External access: None (no published ports except backend:8000)
-
-**Security:** Services can't be reached from outside
-
-### plexichat-frontend (External)
-
-**Services:**
-- Backend
-- Client
-
-**Purpose:** Frontend communication network
-
-**Communication:**
-- Client reaches Backend as `http://backend:8000`
-- External users reach Client on port 80/443
-
-**Security:**
-- HTTP/HTTPS exposed to internet (ports 80, 443)
-- Backend API on 8000 (internal only)
+External internet can only reach the published ports; Database, Valkey,
+RustFS, ClamAV, and Backup are reachable only inside the Docker network.
 
 ## Volumes
 
@@ -304,8 +286,6 @@ docker exec backup /scripts/backup.sh restore <snap>  # restore files
 | `certs` | Nginx | TLS certificates | Yes |
 | `backup_repo` | Backup | restic repository | Yes |
 | `clamav_db` | ClamAV | Signature database | Yes |
-| `client-runtime` | Deploy Script | Client JS config | Yes |
-| `backup-repo` | Backup | Restic repository | Yes |
 
 **Data Loss Risk:**
 - `docker compose down -v` deletes ALL volumes including the restic repository
@@ -354,9 +334,9 @@ Nginx (passes through)
   v
 Backend (WebSocket Handler)
   |
-  | Store in Redis
+  | Store in Valkey
   v
-Redis (Session state)
+Valkey (Session state)
   |
   | Broadcast event
   v
@@ -402,9 +382,9 @@ Backend (message handler)
   | 1. Validate
   | 2. Encrypt (AES-GCM)
   | 3. Store in Database
-  | 4. Publish to Redis (pub/sub)
+  | 4. Publish to Valkey (pub/sub)
   v
-Redis Subscription
+Valkey Subscription
   |
   | Broadcast to connected users
   v
@@ -416,7 +396,7 @@ User C (receives via WebSocket)
 
 1. Deploy script generates `.env`, `docker-config.yaml`, and `client-config.js`
 2. Docker Compose parses configuration
-3. Database, Redis, RustFS services start in parallel
+3. Database, Valkey, RustFS services start in parallel
 4. RustFS-Init waits for RustFS health, creates bucket, exits
 5. Cert-Init generates TLS certs, exits
 6. Backend waits for all dependencies to be healthy, then starts
@@ -431,7 +411,7 @@ User C (receives via WebSocket)
 
 - Backend: 500MB-2GB (depends on users)
 - Database: 200MB-1GB
-- Redis: 100MB-500MB
+- Valkey: 100MB-500MB
 - Client: 20MB
 - RustFS: 100MB
 
@@ -452,15 +432,15 @@ User C (receives via WebSocket)
 
 ### Network Isolation
 
-- External internet can only reach ports 80, 443
-- Database, Redis, RustFS are on internal network only
+- External internet can only reach the published ports (80, 443, plus 8000 and 9000/9001 when exposed)
+- Database, Valkey, RustFS, ClamAV, and Backup are on the internal Docker network only
 - Services communicate by hostname (DNS resolution in docker network)
 
 ### Authentication
 
 - Frontend -> Backend: JWT token in header/cookie
 - Backend -> Database: Username/password (hardcoded in config)
-- Backend -> Redis: Password (in config)
+- Backend -> Valkey: Password (via `VALKEY_PASSWORD`, in config)
 - Backend -> RustFS: Access key/secret (in config)
 
 ### Encryption

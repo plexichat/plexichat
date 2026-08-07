@@ -8,7 +8,7 @@ Before deploying, ensure:
 
 - [ ] All encryption keys are strong and unique (use [Environment Generator](/docs/api/deployment/env-generator))
 - [ ] Database password is secure and different from defaults
-- [ ] Redis password is set and secure
+- [ ] Valkey password is set and secure
 - [ ] TLS certificates are generated or obtained
 - [ ] Firewall rules are configured
 - [ ] Backups are tested and working
@@ -67,15 +67,15 @@ cp /etc/letsencrypt/live/yourdomain.com/privkey.pem /etc/nginx/certs/
 
 ### 3. Network Isolation
 
-Services communicate only within their networks:
+Services communicate over a single internal Docker network:
 
-- **plexichat-backend** (internal) - Database, Redis, RustFS, Backend
-- **plexichat-frontend** (external) - Client, Backend
+- **plexichat_default** - Database, Valkey, RustFS, ClamAV, Backend, Client, Backup
 
 External traffic only reaches:
 - HTTP port 80 (redirects to HTTPS)
 - HTTPS port 443 (frontend)
 - Backend API on 8000 (if exposed, restrict with firewall)
+- RustFS console on 9001 (if exposed, restrict with firewall)
 
 Firewall rules example (Linux iptables):
 ```bash
@@ -237,7 +237,7 @@ Resource requirements:
 
 For larger scale, migrate to Kubernetes:
 1. Separate database to managed service (AWS RDS, DigitalOcean Postgres)
-2. Separate Redis to managed service (AWS ElastiCache)
+2. Separate Valkey to a managed Redis/Valkey service (AWS ElastiCache, Google Memorystore)
 3. Deploy backend replicas across nodes
 4. Use ingress controller for TLS/routing
 5. Configure persistent volumes for media

@@ -47,7 +47,7 @@ docker compose up
 
 **Message:**
 ```
-Error response from daemon: volume "plexichat_db-data" not found
+Error response from daemon: volume "plexichat_postgres_data" not found
 ```
 
 **Cause:** Volumes were deleted or corrupted
@@ -56,9 +56,9 @@ Error response from daemon: volume "plexichat_db-data" not found
 
 Create volumes:
 ```bash
-docker volume create plexichat_db-data
-docker volume create plexichat_redis-data
-docker volume create plexichat_rustfs-data
+docker volume create plexichat_postgres_data
+docker volume create plexichat_valkey_data
+docker volume create plexichat_rustfs_data
 ```
 
 Or remove and recreate:
@@ -146,7 +146,7 @@ docker compose restart valkey
 
 Check password:
 ```bash
-grep VALKEY_PASSWORD .env.generated
+grep VALKEY_PASSWORD .env
 ```
 
 Ensure it matches in docker-compose.yml
@@ -190,7 +190,7 @@ FATAL: could not create shared memory segment: No space left on device
 
 Check disk space:
 ```bash
-docker volume inspect plexichat_db-data | grep Mountpoint
+docker volume inspect plexichat_postgres_data | grep Mountpoint
 # Then: df -h <mountpoint>
 ```
 
@@ -278,7 +278,7 @@ docker compose exec backend env | grep DB_POOL
 
 Increase max connections:
 ```bash
-# Edit .env or .env.generated
+# Edit .env
 DB_POOL_MAX_CONNECTIONS=100
 
 # Restart
@@ -508,7 +508,7 @@ ERROR: configuration error: invalid DB_POOL_MAX_CONNECTIONS value
 
 Check .env file:
 ```bash
-cat .env.generated | grep DB_POOL
+cat .env | grep DB_POOL
 ```
 
 Should be integers:
@@ -543,7 +543,7 @@ Verify services are on same network:
 docker compose config | grep -A 20 "networks:"
 ```
 
-Services should be on `plexichat-backend` or `plexichat-frontend`
+Services should be on the shared `plexichat_default` network
 
 ## Recovery Procedures
 

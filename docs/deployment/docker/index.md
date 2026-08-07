@@ -21,7 +21,7 @@ Plexichat is a multi-container application stack:
 - **Database** (PostgreSQL) - User data, messages, servers
  - **Cache** (Valkey) - Sessions, rate limiting, WebSocket state
 - **Storage** (RustFS) - Media files (avatars, attachments)
-- **Frontend** (Nginx + Vue) - Web client, reverse proxy, TLS termination
+- **Frontend** (Nginx + Vite) - Web client, reverse proxy, TLS termination
 
 All services run in isolated containers with automatic health monitoring and dependency management.
 
@@ -121,13 +121,13 @@ docker compose down -v
 
 1. Generate secure `.env` using the [Environment Generator](/docs/api/deployment/env-generator)
 2. Save as `.env` in your Plexichat directory
-3. Run: `VERSION=latest docker compose up -d`
+3. Run: `BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d`
 4. Wait for all services to report `healthy`
 5. Access frontend at http://localhost
 
 For versioned deployment:
 ```bash
-VERSION=a.1.0-131 docker compose up -d
+BACKEND_VERSION=a.1.0-131 CLIENT_VERSION=a.1.0-117 docker compose up -d
 ```
 
 See [Quick Start](quick-start.md) for detailed steps.
@@ -144,7 +144,7 @@ See [Quick Start](quick-start.md) for detailed steps.
 - **Development**: Uses placeholder passwords (changeme) - NOT FOR PRODUCTION
 - **Production**: Use strong secrets in `.env` file, never commit sensitive data
 - **TLS**: Self-signed certificates generated automatically for HTTPS
-- **Network Isolation**: Services communicate only within their network (backend-internal, frontend-internal)
+- **Network Isolation**: All services share a single internal Docker network; only the client's 80/443 (and optional backend 8000 + RustFS 9000/9001) are published
 
 See [Production Setup](production-setup.md#security) for hardening guidelines.
 
@@ -152,24 +152,24 @@ See [Production Setup](production-setup.md#security) for hardening guidelines.
 
 All data is stored in named Docker volumes:
 
-- `db-data` - PostgreSQL database
-- `valkey-data` - Valkey cache
-- `rustfs-data` - Media files
-- `backend-data` - Application state
-- `backend-logs` - Log files
-- `backend-media` - Uploaded files
-- `backend-temp` - Temporary files
+- `postgres_data` - PostgreSQL database
+- `valkey_data` - Valkey cache
+- `rustfs_data` - Media files (RustFS)
+- `plexichat_home` - Application state (config, keyrings, media)
+- `certs` - TLS certificates
+- `backup_repo` - restic backup repository
+- `clamav_db` - ClamAV signature database
 
 Volumes survive container restarts but are deleted with `docker compose down -v`.
 
 ## Networking
 
-Docker Compose creates two networks:
-
-- **plexichat-backend** - Database, Valkey, RustFS, Backend (internal)
-- **plexichat-frontend** - Backend, Client (external HTTP/HTTPS)
-
-Services on the same network can communicate by service name (e.g., `backend` can reach `db` as `http://db:5432`).
+`docker-compose.yml` creates a single default bridge network. All services
+communicate by service name over that network (e.g., `backend` reaches `db`
+as `http://db:5432`, and the `client` nginx reaches the API as
+`http://backend:8000`). Only the `client` service publishes host ports
+(80, 443) by default; `backend` (8000, 30000-30100/UDP) and `rustfs`
+(9000, 9001) also publish host ports in single-instance setups.
 
 ## Next Steps
 

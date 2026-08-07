@@ -1,6 +1,6 @@
 # Connection Pooling
 
-Understanding and tuning database and Redis connection pools for Plexichat.
+Understanding and tuning database and Valkey connection pools for Plexichat.
 
 ## What is Connection Pooling?
 
@@ -135,7 +135,7 @@ Restart backend: docker compose restart backend
 Monitor: docker stats backend
 ```
 
-## Redis Connection Pool
+## Valkey Connection Pool
 
 ### Default Settings
 
@@ -154,32 +154,32 @@ max_connections: 100-200
 Set in `.env`:
 
 ```bash
-REDIS_CONNECTION_POOL=50
+VALKEY_CONNECTION_POOL=50
 ```
 
 Or in environment:
 ```bash
-export REDIS_CONNECTION_POOL=100
+export VALKEY_CONNECTION_POOL=100
 docker compose up
 ```
 
 ### Tuning Guidelines
 
-Redis connections are typically lighter weight than database connections.
+Valkey connections are typically lighter weight than database connections.
 
 - Low traffic: 10-20
 - Medium traffic: 50 (default)
 - High traffic: 100-200
 
-**Monitor Redis:**
+**Monitor Valkey:**
 ```bash
-docker compose exec redis redis-cli INFO stats | grep connected_clients
+docker compose exec valkey redis-cli INFO stats | grep connected_clients
 ```
 
 **If hitting max:**
 ```
-[ERROR] Redis pool exhausted: Cannot allocate connection
-Increase REDIS_CONNECTION_POOL in .env
+[ERROR] Valkey pool exhausted: Cannot allocate connection
+Increase VALKEY_CONNECTION_POOL in .env
 docker compose restart backend
 ```
 
@@ -285,8 +285,8 @@ watch -n 5 'echo "=== DB Pool ==="; \
   echo "=== Active Connections ==="; \
   docker compose exec db psql -U plexichat -d plexichat -c \
     "SELECT count(*) FROM pg_stat_activity WHERE datname='"'"'plexichat'"'"';"; \
-  echo "=== Redis Connections ==="; \
-  docker compose exec redis redis-cli INFO stats | grep connected_clients'
+  echo "=== Valkey Connections ==="; \
+  docker compose exec valkey redis-cli INFO stats | grep connected_clients'
 ```
 
 Save as `monitor-pool.sh` and run:

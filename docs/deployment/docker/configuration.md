@@ -45,7 +45,7 @@ POSTGRES_PASSWORD=your-secure-password
 DB_POOL_MIN_CONNECTIONS=5
 DB_POOL_MAX_CONNECTIONS=20
 
-# Redis
+# Valkey
 VALKEY_PASSWORD=your-valkey-password
 
 # RustFS
@@ -109,7 +109,7 @@ docker compose up
 
 See [Connection Pooling](connection-pooling.md) for tuning guidance.
 
-### Redis Configuration
+### Valkey Configuration
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -190,7 +190,7 @@ MONITORING_METRICS_ENABLED=true
 ```
 
 ### Test Profile (`--profile test`)
-Uses SQLite instead of PostgreSQL, no Redis, minimal logging.
+Uses SQLite instead of PostgreSQL, no Valkey, minimal logging.
 
 ## Configuration Precedence Example
 

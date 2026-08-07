@@ -277,9 +277,9 @@ DEL key_name            # Delete key
 
 Open browser: http://localhost:9001
 
-Login with credentials from `.env.generated`:
+Login with credentials from `.env`:
 ```bash
-grep S3_ .env.generated
+grep S3_ .env
 ```
 
 ### PostgreSQL CLI

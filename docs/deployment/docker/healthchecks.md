@@ -39,38 +39,51 @@ Colors:
 
 ### Backend API Healthcheck
 
-**Endpoint:** `GET /health`
+The compose stack and image probe the liveness endpoint:
+`GET /api/v1/ready`. It returns 200 as soon as the HTTP server is bound —
+no database, Valkey, or filesystem checks, so it is a pure liveness
+signal. A deeper `GET /health` (root or `/api/v1/health`) additionally
+reports EventManager saturation metrics and cross-worker listener status.
 
-**Test Command:**
+**Test Command (liveness, used by Docker):**
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/api/v1/ready
 ```
 
 **Expected Response (200 OK):**
 ```json
+{"status": "ready"}
+```
+
+**Deep Health Check:**
+```bash
+curl http://localhost:8000/health
+```
+
+**Expected Response (200 OK, excerpt):**
+```json
 {
   "status": "healthy",
   "version": "a.1.0-131",
-  "timestamp": "2024-01-15T10:30:45Z",
-  "database": "connected",
-  "valkey": "connected",
-  "storage": "connected"
+  "events_metrics": {},
+  "is_queue_recreate_pending": false,
+  "cross_worker_listener": {}
 }
 ```
 
-**Healthcheck Settings:**
+**Healthcheck Settings (compose):**
 ```
-Interval: 10 seconds
+Interval: 15 seconds
 Timeout: 5 seconds
 Retries: 3
-Start period: 30 seconds
+Start period: 10 seconds
 ```
 
-Meaning: After 30 seconds, if 3 consecutive checks fail over 30 seconds (3 x 10s), service marks as unhealthy.
+Meaning: After 10 seconds, if 3 consecutive checks fail (3 x 15s), service marks as unhealthy.
 
 **Manual Test:**
 ```bash
-docker compose exec backend curl -v http://localhost:8000/health
+docker compose exec backend curl -v http://localhost:8000/api/v1/ready
 ```
 
 ### PostgreSQL Healthcheck

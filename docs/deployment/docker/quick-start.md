@@ -25,12 +25,12 @@ Save it as `.env` in your Plexichat directory.
 ## Step 2: Start Services
 
 ```bash
-VERSION=latest docker compose up -d
+BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d
 ```
 
 For a specific version:
 ```bash
-VERSION=a.1.0-131 docker compose up -d
+BACKEND_VERSION=a.1.0-131 CLIENT_VERSION=a.1.0-117 docker compose up -d
 ```
 
 This command:
@@ -183,7 +183,7 @@ docker compose up
 
 Default dev setup uses:
 - Database: PostgreSQL (auto-initialized)
-- Cache: Redis
+- Cache: Valkey
 - Storage: RustFS (local)
 - API Port: 8000
 - Frontend Port: 80/443
