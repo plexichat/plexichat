@@ -288,6 +288,65 @@ def _apply_env_overrides() -> None:
 
     config.set("media", media_config)
 
+    valkey_config = config.get("valkey") or config.get("redis") or {}
+
+    valkey_changed = False
+
+    valkey_enabled = os.getenv("VALKEY_ENABLED")
+    if valkey_enabled is not None:
+        # Booleans can't ride the ${VAR:-default} interpolation (it yields a
+        # string, and "false" would be truthy), so the flag is the one value
+        # applied here, mirroring MONITORING_ENABLED / SCANNER_ENABLED.
+        valkey_config["enabled"] = valkey_enabled.lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        valkey_changed = True
+
+    # Port/db/max_connections are declared as ints in the defaults (matching
+    # what config files and the valkey client expect), so they can't ride
+    # ${VAR:-default} interpolation either. Apply env overrides with the same
+    # int coercion used for SCANNER_PORT / postgres ports above.
+    valkey_port = os.getenv("VALKEY_PORT")
+    if valkey_port:
+        try:
+            port_val = int(valkey_port)
+            if port_val < 1 or port_val > 65535:
+                raise ValueError(f"Port must be between 1 and 65535, got {port_val}")
+            valkey_config["port"] = port_val
+            valkey_changed = True
+        except ValueError as e:
+            logger.warning(
+                f"Invalid VALKEY_PORT value: {valkey_port}, using default: {e}"
+            )
+
+    valkey_db = os.getenv("VALKEY_DB")
+    if valkey_db:
+        try:
+            valkey_config["db"] = int(valkey_db)
+            valkey_changed = True
+        except ValueError as e:
+            logger.warning(f"Invalid VALKEY_DB value: {valkey_db}, using default: {e}")
+
+    valkey_max_connections = os.getenv("VALKEY_CONNECTION_POOL")
+    if valkey_max_connections:
+        try:
+            valkey_config.setdefault("connection_pool", {})["max_connections"] = int(
+                valkey_max_connections
+            )
+            valkey_changed = True
+        except ValueError as e:
+            logger.warning(
+                f"Invalid VALKEY_CONNECTION_POOL value: {valkey_max_connections}, using default: {e}"
+            )
+
+    # Only persist when an override was actually applied: the write is
+    # atomic and thread-safe now, but an unconditional rewrite of the
+    # home config on every boot is wasteful and churns the file.
+    if valkey_changed:
+        config.set("valkey", valkey_config)
+
 
 def setup_config(
     project_root: str, default_config: dict, config_path_arg: Optional[str] = None

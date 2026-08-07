@@ -181,6 +181,35 @@ def initialize_modules(
     )
     logger.info("PlexiStash and PlexiSum storage wired to media adapter")
 
+    # Stash background cleanup job: purge soft-deleted items past their
+    # retention window and expire one-time download tickets. Runs only when
+    # the plexistash capability is available and an interval is configured.
+    try:
+        from src.core.artifacts.capabilities import (
+            CapabilityState,
+            get_capability,
+        )
+
+        if get_capability("plexistash").state == CapabilityState.AVAILABLE:
+            from src.core.suite.stash.cleanup import StashCleanupJob
+
+            stash_cfg = config.get("artifacts", {}).get("plexistash", {}) or {}
+            try:
+                cleanup_interval = int(
+                    stash_cfg.get("cleanup_interval_minutes", 60) or 0
+                )
+            except (TypeError, ValueError):
+                cleanup_interval = 60
+            if cleanup_interval > 0:
+                stash_cleanup = StashCleanupJob(db, config.get("artifacts", {}))
+                stash_cleanup.start()
+                modules_store["stash_cleanup"] = stash_cleanup
+                logger.info("Stash cleanup job started")
+            else:
+                logger.info("Stash cleanup disabled (cleanup_interval_minutes <= 0)")
+    except Exception as e:
+        logger.warning(f"Failed to start Stash cleanup job: {e}")
+
     email_config = config.get("email", {})
     email_sender = None
     smtp_password = os.getenv("PLEXICHAT_SMTP_PASSWORD")
