@@ -52,13 +52,13 @@ database:
 valkey:
   enabled: false
   host: ${VALKEY_HOST:-localhost}
-  port: 6379
+  port: ${VALKEY_PORT:-6379}
   password: ${VALKEY_PASSWORD:-}
-  db: 0
+  db: ${VALKEY_DB:-0}
   ssl: false
   key_prefix: 'plexichat:'
   connection_pool:
-    max_connections: 50
+    max_connections: ${VALKEY_CONNECTION_POOL:-50}
     timeout: 5
   ttl:
     session: 1800
@@ -623,7 +623,7 @@ soundboard:
   default_cooldown_seconds: 3.0
   max_cooldown_seconds: 30.0
 webhooks:
-  max_webhooks_per_channel: 100
+  max_webhooks_per_channel: 10
   max_webhooks_per_server: 50
   max_message_length: 2000
   max_embeds_per_message: 10
@@ -637,6 +637,14 @@ automod:
       max_percentage: 70.0
       min_length: 10
       ignore_commands: true
+  ai:
+    shieldstral:
+      endpoint_url: ""
+      api_key: ""
+      model: shieldstral
+      threshold: 0.5
+      policy_query: "Evaluate the following content for harmful, toxic, hateful, sexually explicit, or unsafe material. Answer with a single word only: 'yes' if it is harmful, 'no' if it is not."
+      timeout_seconds: 60
 applications:
   max_applications_per_user: 25
   max_commands_per_app: 100

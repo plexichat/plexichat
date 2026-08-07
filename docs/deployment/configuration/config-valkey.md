@@ -1,22 +1,22 @@
-# Redis Configuration
+# Valkey Configuration
 
 This guide covers Redis configuration for deploying Plexichat in production. Redis provides caching, session storage, and pub/sub messaging capabilities that significantly improve performance and enable horizontal scaling.
 
 ## Configuration Location
 
-All Redis settings are nested under the `redis` key in your configuration file:
+All Valkey settings are nested under the `valkey` key in your configuration file (`redis` is accepted as a legacy alias for backward compatibility):
 
 ```yaml
-redis:
-  # All Redis settings go here
+valkey:
+  # All Valkey settings go here
 ```
 
-## When to Use Redis
+## When to Use Valkey
 
 ### Configuration
 
 ```yaml
-redis:
+valkey:
   enabled: false
 ```
 
@@ -63,7 +63,7 @@ Enable/disable Redis and basic connection settings.
 ### Configuration
 
 ```yaml
-redis:
+valkey:
   enabled: false
   host: "localhost"
   port: 6379
@@ -115,7 +115,7 @@ Secure connection settings for Redis.
 ### Configuration
 
 ```yaml
-redis:
+valkey:
   ssl: false
   ssl_cert_reqs: "required"
   ssl_ca_certs: ""
@@ -169,7 +169,7 @@ Redis connection pool settings.
 ### Configuration
 
 ```yaml
-redis:
+valkey:
   connection_pool:
     max_connections: 50
     timeout: 5
@@ -223,7 +223,7 @@ Prefix all Redis keys to avoid collisions with other applications.
 ### Configuration
 
 ```yaml
-redis:
+valkey:
   key_prefix: "plexichat:"
 ```
 
@@ -262,7 +262,7 @@ Configure automatic expiration of cached data.
 ### Configuration
 
 ```yaml
-redis:
+valkey:
   ttl:
     session: 1800
     presence: 300
@@ -315,7 +315,7 @@ Configure maximum cache size to prevent memory exhaustion.
 ### Configuration
 
 ```yaml
-redis:
+valkey:
   cache_max_items: 1000
 ```
 
