@@ -282,7 +282,7 @@ If using a self-signed certificate:
    psql -h localhost -U plexichat -d plexichat
    ```
 
-### Redis Connection Failures
+### Valkey Connection Failures
 
 **Symptoms:**
 - Slow performance
@@ -290,13 +290,13 @@ If using a self-signed certificate:
 - Caching not working
 
 **Troubleshooting:**
-1. Check Redis is running:
+1. Check Valkey is running:
    ```bash
    redis-cli ping
    ```
-2. Verify Redis connection in config
-3. Check Redis logs
-4. Test Redis connectivity from server
+2. Verify Valkey connection in config
+3. Check Valkey logs
+4. Test Valkey connectivity from server
 
 ### Rate Limiting
 

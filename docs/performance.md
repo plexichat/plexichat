@@ -163,7 +163,7 @@ valkey:
 - Session persistence needed: Yes
 - Rate limit accuracy needed: Yes
 
-Without Redis, session and rate-limit state is stored in-process memory. This works for single-worker deployments but is lost on restart and cannot be shared across workers.
+Without Valkey, session and rate-limit state is stored in-process memory. This works for single-worker deployments but is lost on restart and cannot be shared across workers.
 
 See [Valkey Configuration](deployment/configuration/config-valkey.md) for detailed setup guidance.
 
@@ -278,7 +278,7 @@ server:
 - Scale: 500-2,000 users | Workers: 2-4 | Valkey: Required | Notes: Multiple workers must share state
 - Scale: 2,000+ users | Workers: 4+ | Valkey: Required | Notes: Add workers for CPU-bound workloads
 
-**Important**: Multiple workers require Redis for shared session state, rate limit counters, and presence tracking. Without Redis, each worker maintains independent state, leading to inconsistent behavior.
+**Important**: Multiple workers require Valkey for shared session state, rate limit counters, and presence tracking. Without Valkey, each worker maintains independent state, leading to inconsistent behavior.
 
 ---
 
@@ -351,7 +351,7 @@ database:
     min_connections: 5
     max_connections: 25
 
-redis:
+valkey:
   enabled: true
   connection_pool:
     max_connections: 50
