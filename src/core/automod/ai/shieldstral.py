@@ -52,6 +52,19 @@ class ShieldstralAdapter(BaseAIAdapter):
         self._yes_token = (config.get("yes_token", "yes") or "yes").lower()
         self._no_token = (config.get("no_token", "no") or "no").lower()
 
+    @staticmethod
+    def _normalize_token(token: Any) -> str:
+        """Lowercase a token and strip sentence-piece/byte space markers.
+
+        llama.cpp tokens may render as ``" yes"``, ``"\\u0120yes"`` (GPT-2
+        space), or ``"\\u2581yes"`` (SentencePiece space); normalizing those
+        away keeps the yes/no match robust across tokenizers.
+        """
+        text = str(token)
+        for marker in ("\u0120", "\u2581", "_"):
+            text = text.replace(marker, " ")
+        return text.strip().lower()
+
     def check_content(
         self, content: str, context: Optional[Dict[str, Any]] = None
     ) -> AICheckResult:
@@ -112,6 +125,10 @@ class ShieldstralAdapter(BaseAIAdapter):
             raise AIBackendError(
                 f"Shieldstral API connection error: {e.reason}", backend="shieldstral"
             )
+        except TimeoutError as e:
+            raise AIBackendTimeoutError(
+                "Shieldstral API request timed out", backend="shieldstral"
+            ) from e
         except json.JSONDecodeError as e:
             logger.error(f"Shieldstral API response parse error: {e}")
             raise AIBackendError(
@@ -163,7 +180,7 @@ class ShieldstralAdapter(BaseAIAdapter):
                 continue
             if token is None or lp is None:
                 continue
-            token_lower = str(token).strip().lower()
+            token_lower = self._normalize_token(token)
             if token_lower.startswith(self._yes_token):
                 yes_lp = max(yes_lp, float(lp))
             elif token_lower.startswith(self._no_token):
@@ -181,7 +198,7 @@ class ShieldstralAdapter(BaseAIAdapter):
 
     def _score_from_text(self, answer: str) -> float:
         """Fall back to the raw ``yes``/``no`` answer when no log-probs."""
-        normalized = (answer or "").strip().lower()
+        normalized = self._normalize_token(answer)
         if normalized.startswith(self._yes_token):
             return 1.0
         if normalized.startswith(self._no_token):

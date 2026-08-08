@@ -10,7 +10,11 @@ from unittest.mock import patch, MagicMock
 
 from src.core.automod.ai.shieldstral import ShieldstralAdapter
 from src.core.automod.models import AIBackendType
-from src.core.automod.exceptions import AIBackendUnavailableError
+from src.core.automod.exceptions import (
+    AIBackendError,
+    AIBackendTimeoutError,
+    AIBackendUnavailableError,
+)
 
 
 def _mock_response(payload: dict):
@@ -168,3 +172,117 @@ class TestShieldstralAdapter:
     def test_get_categories(self):
         adapter = ShieldstralAdapter({"endpoint_url": "http://shieldstral:8080"})
         assert adapter.get_categories()["safety"]
+
+    @patch("src.core.automod.ai.shieldstral.urlopen")
+    def test_token_markers_normalized(self, mock_urlopen):
+        """GPT-2/SentencePiece space markers ('Ġ', '▁') must not break matching."""
+        payload = _logprobs_payload(-0.1, -2.5, answer="yes")
+        payload["choices"][0]["logprobs"]["content"][0]["top_logprobs"] = [
+            {"id": 0, "token": "\u0120yes", "bytes": None, "logprob": -0.1},
+            {"id": 1, "token": "\u2581no", "bytes": None, "logprob": -2.5},
+        ]
+        mock_urlopen.return_value = _mock_response(payload)
+
+        adapter = ShieldstralAdapter({"endpoint_url": "http://shieldstral:8080"})
+        result = adapter.check_content("bad content")
+
+        assert result.flagged
+        assert result.scores["safety"] > 0.8
+
+    @patch("src.core.automod.ai.shieldstral.urlopen")
+    def test_text_fallback_with_marker(self, mock_urlopen):
+        """Text fallback should also normalize marker-prefixed answers."""
+        payload = {
+            "model": "shieldstral",
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": "\u0120yes"}}
+            ],
+        }
+        mock_urlopen.return_value = _mock_response(payload)
+
+        adapter = ShieldstralAdapter({"endpoint_url": "http://shieldstral:8080"})
+        result = adapter.check_content("x")
+
+        assert result.flagged
+        assert result.scores["safety"] == 1.0
+
+    @patch("src.core.automod.ai.shieldstral.urlopen")
+    def test_only_yes_token_scores_max(self, mock_urlopen):
+        """Only a 'yes' token present -> certainty it is unsafe."""
+        payload = _logprobs_payload(-0.1, -2.5)
+        payload["choices"][0]["logprobs"]["content"][0]["top_logprobs"] = [
+            {"id": 0, "token": "yes", "bytes": None, "logprob": -0.1}
+        ]
+        mock_urlopen.return_value = _mock_response(payload)
+
+        adapter = ShieldstralAdapter({"endpoint_url": "http://shieldstral:8080"})
+        result = adapter.check_content("x")
+
+        assert result.flagged
+        assert result.scores["safety"] == 1.0
+
+    @patch("src.core.automod.ai.shieldstral.urlopen")
+    def test_only_no_token_scores_zero(self, mock_urlopen):
+        """Only a 'no' token present -> certainty it is safe."""
+        payload = _logprobs_payload(-0.1, -2.5)
+        payload["choices"][0]["logprobs"]["content"][0]["top_logprobs"] = [
+            {"id": 0, "token": "no", "bytes": None, "logprob": -0.1}
+        ]
+        mock_urlopen.return_value = _mock_response(payload)
+
+        adapter = ShieldstralAdapter({"endpoint_url": "http://shieldstral:8080"})
+        result = adapter.check_content("x")
+
+        assert not result.flagged
+        assert result.scores["safety"] == 0.0
+
+    @patch("src.core.automod.ai.shieldstral.urlopen")
+    def test_missing_content_falls_back_safe(self, mock_urlopen):
+        """Missing log-probs and empty content degrades to safe."""
+        mock_urlopen.return_value = _mock_response(
+            {"model": "shieldstral", "choices": []}
+        )
+        adapter = ShieldstralAdapter({"endpoint_url": "http://shieldstral:8080"})
+        result = adapter.check_content("x")
+
+        assert not result.flagged
+        assert result.scores["safety"] == 0.0
+
+    @patch("src.core.automod.ai.shieldstral.urlopen")
+    def test_http_error_raises_backend_error(self, mock_urlopen):
+        from urllib.error import HTTPError
+
+        mock_urlopen.side_effect = HTTPError(
+            "http://shieldstral:8080", 503, "Unavailable", None, None
+        )
+        adapter = ShieldstralAdapter({"endpoint_url": "http://shieldstral:8080"})
+
+        with pytest.raises(AIBackendError):
+            adapter.check_content("x")
+
+    @patch("src.core.automod.ai.shieldstral.urlopen")
+    def test_read_timeout_raises_timeout_error(self, mock_urlopen):
+        from urllib.error import URLError
+
+        mock_urlopen.side_effect = URLError("timed out")
+        adapter = ShieldstralAdapter({"endpoint_url": "http://shieldstral:8080"})
+
+        with pytest.raises(AIBackendTimeoutError):
+            adapter.check_content("x")
+
+    @patch("src.core.automod.ai.shieldstral.urlopen")
+    def test_connection_error_raises_backend_error(self, mock_urlopen):
+        from urllib.error import URLError
+
+        mock_urlopen.side_effect = URLError("Connection refused")
+        adapter = ShieldstralAdapter({"endpoint_url": "http://shieldstral:8080"})
+
+        with pytest.raises(AIBackendError):
+            adapter.check_content("x")
+
+    @patch("src.core.automod.ai.shieldstral.urlopen")
+    def test_invalid_endpoint_url_raises(self, mock_urlopen):
+        adapter = ShieldstralAdapter({"endpoint_url": "not-a-url"})
+
+        with pytest.raises(AIBackendError):
+            adapter.check_content("x")
