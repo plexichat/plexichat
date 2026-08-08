@@ -2,6 +2,8 @@
 Presence routes - User status and presence endpoints.
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
@@ -27,13 +29,40 @@ def _presence_to_response(pres, user_id: int) -> PresenceResponse:
         custom_text = getattr(custom, "text", None)
         custom_emoji = getattr(custom, "emoji", None)
 
+    # CORRECTNESS FIX: a never-online user has last_seen == 0 in the DB.
+    # Exposing 0 leaks the fact that the user exists but has never been seen;
+    # report None instead so offline users are indistinguishable.
+    last_seen = getattr(pres, "last_seen", None)
+    if not last_seen:
+        last_seen = None
+
     return PresenceResponse(
         user_id=SnowflakeID(user_id),
         status=status or "offline",
         custom_status=custom_text,
         custom_emoji=custom_emoji,
-        last_seen=getattr(pres, "last_seen", None),
+        last_seen=last_seen,
     )
+
+
+def _build_presence_event_data(
+    user_id: int,
+    status: str,
+    custom_status: Optional[str],
+    custom_emoji: Optional[str],
+) -> dict:
+    """Build the PRESENCE_UPDATE event payload, scrubbing invisible state.
+
+    An invisible user must always appear offline with no custom status to
+    everyone else, exactly like ``get_visible_presence`` renders them.
+    """
+    is_invisible = status == "invisible"
+    return {
+        "user_id": str(user_id),
+        "status": "offline" if is_invisible else status,
+        "custom_status": None if is_invisible else custom_status,
+        "custom_emoji": None if is_invisible else custom_emoji,
+    }
 
 
 async def _dispatch_presence_event(
@@ -56,7 +85,7 @@ async def _dispatch_presence_event(
         logger.debug(f"Failed to dispatch presence event for user {user_id}: {e}")
 
 
-@cached(ttl=15, prefix="presence_targets")
+@cached(ttl=5, prefix="presence_targets")
 def _get_presence_targets(user_id: int) -> list:
     """
     Identify all users who should receive presence notifications for a given user.
@@ -108,6 +137,20 @@ def _get_presence_targets(user_id: int) -> list:
                                     continue
         except Exception as e:
             logger.debug(f"Error fetching shared members: {e}")
+
+    # CORRECTNESS FIX: presence updates must not reach users who block (or are
+    # blocked by) the target — blocked users should always observe the target
+    # as offline, so they must never receive real presence events either.
+    if relationships:
+        try:
+            blocked_ids = relationships.get_all_blocked_ids(user_id)
+            for bid in blocked_ids:
+                try:
+                    target_user_ids.discard(int(bid))
+                except (ValueError, TypeError):
+                    continue
+        except Exception as e:
+            logger.debug(f"Error filtering blocked users from presence targets: {e}")
 
     # Remove self just in case
     target_user_ids.discard(user_id)
@@ -169,15 +212,14 @@ async def update_presence(
                     status_enum = UserStatus(body.status)
                     presence.set_status(current_user.user_id, status_enum)
 
-                    if body.custom_status is not None or body.custom_emoji is not None:
-                        if body.custom_status or body.custom_emoji:
-                            presence.set_custom_status(
-                                user_id=current_user.user_id,
-                                text=body.custom_status,
-                                emoji=body.custom_emoji,
-                            )
-                        else:
-                            presence.clear_custom_status(current_user.user_id)
+                    if body.custom_status or body.custom_emoji:
+                        presence.set_custom_status(
+                            user_id=current_user.user_id,
+                            text=(body.custom_status or ""),
+                            emoji=body.custom_emoji,
+                        )
+                    else:
+                        presence.clear_custom_status(current_user.user_id)
 
                     return presence.get_presence(current_user.user_id)
                 finally:
@@ -190,22 +232,22 @@ async def update_presence(
             # Get all users who should receive this presence update (uses cached function)
             target_user_ids = _get_presence_targets(current_user.user_id)
 
-            # For invisible status, show as offline to others
-            visible_status = body.status if body.status != "invisible" else "offline"
+            # CORRECTNESS FIX: never leak custom status for an invisible user.
+            # The event data must be scrubbed the same way the REST response
+            # and ``get_visible_presence`` are.
+            presence_data = _build_presence_event_data(
+                current_user.user_id,
+                body.status,
+                body.custom_status,
+                body.custom_emoji,
+            )
 
             if target_user_ids:
                 import asyncio
 
                 asyncio.create_task(
                     _dispatch_presence_event(
-                        current_user.user_id,
-                        {
-                            "user_id": str(current_user.user_id),
-                            "status": visible_status,
-                            "custom_status": body.custom_status,
-                            "custom_emoji": body.custom_emoji,
-                        },
-                        target_user_ids,
+                        current_user.user_id, presence_data, target_user_ids
                     )
                 )
 
