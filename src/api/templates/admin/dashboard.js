@@ -1436,7 +1436,7 @@ async function loadAutomodConfig() {
     try {
         const cfg = await api('/api/v1/admin/automod/config');
         document.getElementById('automod-enabled').checked = cfg.enabled !== false;
-        const o = cfg.ai?.openai||{}, p = cfg.ai?.perspective||{}, c = cfg.ai?.custom||{};
+        const o = cfg.ai?.openai||{}, p = cfg.ai?.perspective||{}, c = cfg.ai?.custom||{}, s = cfg.ai?.shieldstral||{};
         document.getElementById('automod-openai-key').value = o.api_key||'';
         document.getElementById('automod-openai-model').value = o.model||'';
         document.getElementById('automod-openai-url').value = o.api_url||'';
@@ -1444,6 +1444,9 @@ async function loadAutomodConfig() {
         document.getElementById('automod-perspective-key').value = p.api_key||'';
         document.getElementById('automod-perspective-threshold').value = p.threshold??'';
         document.getElementById('automod-perspective-attributes').value = (p.attributes||[]).join(', ');
+        document.getElementById('automod-shieldstral-endpoint').value = s.endpoint_url||'';
+        document.getElementById('automod-shieldstral-threshold').value = s.threshold??'';
+        document.getElementById('automod-shieldstral-policy').value = s.policy_query||'';
         document.getElementById('automod-custom-endpoint').value = c.endpoint_url||'';
         document.getElementById('automod-custom-key').value = c.api_key||'';
         document.getElementById('automod-custom-auth-header').value = c.auth_header||'';
@@ -1468,6 +1471,11 @@ async function saveAutomodConfig() {
                 api_key: document.getElementById('automod-perspective-key').value || null,
                 threshold: parseFloat(document.getElementById('automod-perspective-threshold').value) || null,
                 attributes: document.getElementById('automod-perspective-attributes').value.split(',').map(s=>s.trim()).filter(Boolean)
+            },
+            shieldstral: {
+                endpoint_url: document.getElementById('automod-shieldstral-endpoint').value || null,
+                threshold: parseFloat(document.getElementById('automod-shieldstral-threshold').value) || null,
+                policy_query: document.getElementById('automod-shieldstral-policy').value || null
             },
             custom: {
                 endpoint_url: document.getElementById('automod-custom-endpoint').value || null,
