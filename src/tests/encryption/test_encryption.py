@@ -45,8 +45,14 @@ from src.core.auth.tokens import (  # noqa: E402
 
 @pytest.fixture(scope="module")
 def setup_encryption():
-    """Setup encryption module for tests."""
-    setup(worker_id=1, datacenter_id=1)
+    """Setup encryption module for tests (low-cost Argon2 for speed)."""
+    setup(
+        worker_id=1,
+        datacenter_id=1,
+        argon2_time_cost=1,
+        argon2_memory_cost=8,
+        argon2_parallelism=1,
+    )
     yield
 
 
@@ -132,65 +138,66 @@ class TestPasswordHashing:
 
 
 class TestPasswordHashingTimingAttacks:
-    """Test password hashing timing attack resistance."""
+    """Password verification must perform the full Argon2 hash for both
+    correct and incorrect passwords (no early exit), and the final
+    comparison must be constant-time.
 
-    def test_verify_timing_consistency_correct_password(self, setup_encryption):
-        """Test that correct password verification has consistent timing."""
-        password = "correct_password_123"
-        hash_str = hash_password(password)
+    These properties are asserted structurally -- by counting hasher
+    invocations and their arguments -- rather than by measuring wall-clock
+    time.  Microsecond-scale timing assertions are dominated by scheduler
+    noise under parallel test load and produced non-reproducible failures;
+    the structural check below is deterministic and directly proves the
+    security property (both outcomes do the same expensive work).
+    """
 
-        timings = []
-        for _ in range(10):
-            start = time.perf_counter()
-            verify_password(password, hash_str)
-            end = time.perf_counter()
-            timings.append(end - start)
+    @staticmethod
+    def _patch_hasher():
+        from unittest.mock import patch
 
-        avg = sum(timings) / len(timings)
-        for t in timings:
-            assert abs(t - avg) < avg * 0.8
+        from argon2 import PasswordHasher
+        from src.utils.encryption import _get_manager
 
-    def test_verify_timing_consistency_incorrect_password(self, setup_encryption):
-        """Test that incorrect password verification has consistent timing."""
+        hasher = _get_manager().password_hasher
+        # PasswordHasher uses __slots__, so instance-level patching cannot be
+        # undone; patch at the class level and rebind the concrete instance
+        # through the ORIGINAL unbound function (a lambda calling
+        # ``hasher.verify`` would re-enter the patched attribute).
+        original_verify = PasswordHasher.verify
+        return patch.object(
+            PasswordHasher,
+            "verify",
+            wraps=lambda *args, **kwargs: original_verify(hasher, *args, **kwargs),
+        )
+
+    def test_both_outcomes_perform_full_hash(self, setup_encryption):
+        """Correct and incorrect passwords both invoke the full Argon2 verify."""
         password = "correct_password_123"
         wrong_password = "wrong_password_123"
         hash_str = hash_password(password)
 
-        timings = []
-        for _ in range(10):
-            start = time.perf_counter()
-            verify_password(wrong_password, hash_str)
-            end = time.perf_counter()
-            timings.append(end - start)
+        with self._patch_hasher() as verify:
+            assert verify_password(password, hash_str) is True
+            assert verify_password(wrong_password, hash_str) is False
 
-        avg = sum(timings) / len(timings)
-        for t in timings:
-            assert abs(t - avg) < avg * 1.0
+        # Exactly one full hash computation per verification: the wrong
+        # password must not short-circuit before the hasher is invoked.
+        assert verify.call_count == 2
 
-    def test_verify_timing_correct_vs_incorrect(self, setup_encryption):
-        """Test that correct and incorrect passwords take similar time."""
-        password = "test_password_timing"
-        wrong_password = "wrong_password_timing"
+    def test_hasher_called_with_same_arguments_for_both_outcomes(
+        self, setup_encryption
+    ):
+        """The wrong-password path runs the identical hasher call as the
+        correct path -- no pre-comparison of the raw password string."""
+        password = "correct_password_123"
+        wrong_password = "wrong_password_123"
         hash_str = hash_password(password)
 
-        correct_timings = []
-        incorrect_timings = []
-
-        for _ in range(5):
-            start = time.perf_counter()
+        with self._patch_hasher() as verify:
             verify_password(password, hash_str)
-            end = time.perf_counter()
-            correct_timings.append(end - start)
-
-            start = time.perf_counter()
             verify_password(wrong_password, hash_str)
-            end = time.perf_counter()
-            incorrect_timings.append(end - start)
 
-        avg_correct = sum(correct_timings) / len(correct_timings)
-        avg_incorrect = sum(incorrect_timings) / len(incorrect_timings)
-
-        assert abs(avg_correct - avg_incorrect) < max(avg_correct, avg_incorrect) * 0.3
+        calls = [call.args for call in verify.call_args_list]
+        assert calls == [(hash_str, password), (hash_str, wrong_password)]
 
 
 class TestDataEncryption:
@@ -687,12 +694,12 @@ class TestMessageEncryption:
         env_key = base64.b64encode(b"a" * 32).decode("utf-8")
         monkeypatch.setenv(env_name, env_key)
 
-        keyring = Keyring(temp_keyring_path, env_var=env_name)
+        keyring = Keyring(temp_keyring_path, kek_env_var=env_name)
         encryptor = MessageEncryptor(keyring=keyring)
 
         encryptor.encrypt_message("hello")
 
-        reloaded = MessageEncryptor(Keyring(temp_keyring_path, env_var=env_name))
+        reloaded = MessageEncryptor(Keyring(temp_keyring_path, kek_env_var=env_name))
         assert reloaded.is_key_auto_generated() is False
 
     def test_legacy_env_backed_keyring_is_not_flagged_auto_generated(
@@ -703,7 +710,7 @@ class TestMessageEncryption:
         env_key = base64.b64encode(b"b" * 32).decode("utf-8")
         monkeypatch.setenv(env_name, env_key)
 
-        keyring = Keyring(temp_keyring_path, env_var=env_name)
+        keyring = Keyring(temp_keyring_path, kek_env_var=env_name)
         MessageEncryptor(keyring=keyring).encrypt_message("hello")
 
         encrypted_data = json.loads(temp_keyring_path.read_text())
@@ -726,7 +733,7 @@ class TestMessageEncryption:
             )
         )
 
-        reloaded = MessageEncryptor(Keyring(temp_keyring_path, env_var=env_name))
+        reloaded = MessageEncryptor(Keyring(temp_keyring_path, kek_env_var=env_name))
         assert reloaded.is_key_auto_generated() is False
 
     def test_generated_message_key_is_flagged_auto_generated(self, temp_keyring_path):
@@ -945,29 +952,32 @@ class TestSecureTokenGeneration:
         assert parsed is None
 
     def test_token_verification_timing_attack_resistance(self):
-        """Test that token verification is timing-attack resistant."""
+        """Token verification must route through the constant-time comparator.
+
+        Wall-clock timing of microsecond-scale SHA-256 comparisons is dominated
+        by scheduler noise (flaky under parallel load), so the constant-time
+        guarantee is asserted structurally: every verification must call the
+        module's constant-time comparison helper.
+        """
+        from unittest.mock import patch
+        from src.core.auth.tokens import _constant_time_compare
+
         secret = generate_token_secret()
         correct_hash = hash_token(secret)
         wrong_secret = generate_token_secret()
 
-        correct_timings = []
-        wrong_timings = []
+        with patch(
+            "src.core.auth.tokens._constant_time_compare",
+            wraps=_constant_time_compare,
+        ) as cmp:
+            assert verify_token_hash(secret, correct_hash) is True
+            assert verify_token_hash(wrong_secret, correct_hash) is False
+        assert cmp.call_count == 2
 
-        for _ in range(100):
-            start = time.perf_counter()
-            verify_token_hash(secret, correct_hash)
-            end = time.perf_counter()
-            correct_timings.append(end - start)
-
-            start = time.perf_counter()
-            verify_token_hash(wrong_secret, correct_hash)
-            end = time.perf_counter()
-            wrong_timings.append(end - start)
-
-        avg_correct = sum(correct_timings) / len(correct_timings)
-        avg_wrong = sum(wrong_timings) / len(wrong_timings)
-
-        assert abs(avg_correct - avg_wrong) < max(avg_correct, avg_wrong) * 0.5
+        # The comparator itself must be correct on both outcomes.
+        assert _constant_time_compare("abcd", "abcd") is True
+        assert _constant_time_compare("abcd", "abce") is False
+        assert _constant_time_compare("abcd", "abc") is False
 
 
 class TestEncryptionManager:
@@ -981,7 +991,7 @@ class TestEncryptionManager:
     def test_manager_custom_argon2_params(self):
         """Test EncryptionManager with custom Argon2 parameters."""
         manager = EncryptionManager(
-            argon2_time_cost=3, argon2_memory_cost=131072, argon2_parallelism=4
+            argon2_time_cost=2, argon2_memory_cost=1024, argon2_parallelism=2
         )
         password = "test_password"
         hash_str = manager.hash_password(password)

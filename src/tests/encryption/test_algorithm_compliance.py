@@ -29,8 +29,14 @@ from src.utils.encryption.core import EncryptionManager  # noqa: E402
 
 @pytest.fixture(scope="module")
 def setup_encryption():
-    """Setup encryption module for tests."""
-    setup(worker_id=1, datacenter_id=1)
+    """Setup encryption module for tests (low-cost Argon2 for speed)."""
+    setup(
+        worker_id=1,
+        datacenter_id=1,
+        argon2_time_cost=1,
+        argon2_memory_cost=8,
+        argon2_parallelism=1,
+    )
     yield
 
 
@@ -398,34 +404,34 @@ class TestSecurityBestPractices:
         assert plaintext.lower() not in encrypted.lower()
 
     def test_timing_safe_comparison(self):
-        """Test that verification uses constant-time comparison."""
+        """Test that verification uses a constant-time comparison.
+
+        Asserted structurally (every verification must call the module's
+        constant-time comparator) rather than by wall-clock timing: timing
+        microsecond-scale SHA-256 comparisons is dominated by scheduler noise
+        and is inherently flaky under parallel load.
+        """
+        from unittest.mock import patch
         from src.core.auth.tokens import (
             verify_token_hash,
             hash_token,
             generate_token_secret,
+            _constant_time_compare,
         )
 
         secret = generate_token_secret()
         correct_hash = hash_token(secret)
         wrong_secret = generate_token_secret()
 
-        import time
+        with patch(
+            "src.core.auth.tokens._constant_time_compare",
+            wraps=_constant_time_compare,
+        ) as cmp:
+            assert verify_token_hash(secret, correct_hash) is True
+            assert verify_token_hash(wrong_secret, correct_hash) is False
+        assert cmp.call_count == 2
 
-        correct_times = []
-        wrong_times = []
-
-        for _ in range(50):
-            start = time.perf_counter()
-            verify_token_hash(secret, correct_hash)
-            correct_times.append(time.perf_counter() - start)
-
-            start = time.perf_counter()
-            verify_token_hash(wrong_secret, correct_hash)
-            wrong_times.append(time.perf_counter() - start)
-
-        avg_correct = sum(correct_times) / len(correct_times)
-        avg_wrong = sum(wrong_times) / len(wrong_times)
-
-        # Relaxed threshold for timing-safe comparison test
-        # This test is flaky due to system timing variations
-        assert abs(avg_correct - avg_wrong) < max(avg_correct, avg_wrong) * 0.7
+        # Comparator correctness on both outcomes and on length mismatch.
+        assert _constant_time_compare("abcd", "abcd") is True
+        assert _constant_time_compare("abcd", "abce") is False
+        assert _constant_time_compare("abcd", "abc") is False
