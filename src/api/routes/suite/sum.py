@@ -90,7 +90,10 @@ def _manager() -> SumManager:
         db = api.get_db()
         if db is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
-        return SumManager(
+        # Keep the fixture/embedded fallback on the same compatibility path as
+        # normal startup; constructing SumManager directly is not enough for
+        # already-applied databases missing additive metadata tables/columns.
+        return sum_domain.setup(
             db,
             servers_module=api.get_servers(),
             media=api.get_media(),
