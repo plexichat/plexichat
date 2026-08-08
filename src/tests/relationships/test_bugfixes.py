@@ -166,50 +166,59 @@ class TestBug4AcceptRouteSenderMatching:
 class TestBug5SuggestedFriendsExcludePending:
     """Bug 5: Suggested friends should exclude users with pending requests."""
 
-    def test_suggested_friends_excludes_outgoing_pending(self, rel_manager):
+    def test_suggested_friends_excludes_outgoing_pending(
+        self, rel_manager, three_users
+    ):
         """Users with outgoing pending requests should not be suggested."""
+        user1, user2, user3 = three_users
         # Create a chain: user1 -> user2 -> user3
-        req1 = rel_manager.send_friend_request(1, 2)
-        rel_manager.accept_friend_request(2, req1.id)
+        req1 = rel_manager.send_friend_request(user1.id, user2.id)
+        rel_manager.accept_friend_request(user2.id, req1.id)
 
-        req2 = rel_manager.send_friend_request(2, 3)
-        rel_manager.accept_friend_request(3, req2.id)
+        req2 = rel_manager.send_friend_request(user2.id, user3.id)
+        rel_manager.accept_friend_request(user3.id, req2.id)
 
         # user1 sends request to user3 (pending)
-        rel_manager.send_friend_request(1, 3)
+        rel_manager.send_friend_request(user1.id, user3.id)
 
         # user3 should not be suggested to user1 since there's a pending request
-        suggestions = rel_manager.get_suggested_friends(1)
-        assert 3 not in suggestions
+        suggestions = rel_manager.get_suggested_friends(user1.id)
+        assert user3.id not in suggestions
 
-    def test_suggested_friends_excludes_incoming_pending(self, rel_manager):
+    def test_suggested_friends_excludes_incoming_pending(
+        self, rel_manager, three_users
+    ):
         """Users with incoming pending requests should not be suggested."""
+        user1, user2, user3 = three_users
         # Create a chain: user1 -> user2 -> user3
-        req1 = rel_manager.send_friend_request(1, 2)
-        rel_manager.accept_friend_request(2, req1.id)
+        req1 = rel_manager.send_friend_request(user1.id, user2.id)
+        rel_manager.accept_friend_request(user2.id, req1.id)
 
-        req2 = rel_manager.send_friend_request(2, 3)
-        rel_manager.accept_friend_request(3, req2.id)
+        req2 = rel_manager.send_friend_request(user2.id, user3.id)
+        rel_manager.accept_friend_request(user3.id, req2.id)
 
         # user3 sends request to user1 (pending)
-        rel_manager.send_friend_request(3, 1)
+        rel_manager.send_friend_request(user3.id, user1.id)
 
         # user3 should not be suggested to user1 since there's a pending request
-        suggestions = rel_manager.get_suggested_friends(1)
-        assert 3 not in suggestions
+        suggestions = rel_manager.get_suggested_friends(user1.id)
+        assert user3.id not in suggestions
 
-    def test_suggested_friends_includes_users_without_pending(self, rel_manager):
+    def test_suggested_friends_includes_users_without_pending(
+        self, rel_manager, three_users
+    ):
         """Users without pending requests should still be suggested."""
+        user1, user2, user3 = three_users
         # Create a chain: user1 -> user2 -> user3
-        req1 = rel_manager.send_friend_request(1, 2)
-        rel_manager.accept_friend_request(2, req1.id)
+        req1 = rel_manager.send_friend_request(user1.id, user2.id)
+        rel_manager.accept_friend_request(user2.id, req1.id)
 
-        req2 = rel_manager.send_friend_request(2, 3)
-        rel_manager.accept_friend_request(3, req2.id)
+        req2 = rel_manager.send_friend_request(user2.id, user3.id)
+        rel_manager.accept_friend_request(user3.id, req2.id)
 
         # No pending request between user1 and user3
-        suggestions = rel_manager.get_suggested_friends(1)
-        assert 3 in suggestions
+        suggestions = rel_manager.get_suggested_friends(user1.id)
+        assert user3.id in suggestions
 
 
 class TestBug6UnblockTransaction:

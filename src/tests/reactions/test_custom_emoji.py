@@ -144,8 +144,15 @@ class TestCreateCustomEmoji:
             users_with_server
         )
 
-        # Skip permission test for now - permission system needs review
-        pytest.skip("Permission system not fully implemented")
+        from src.core.reactions import PermissionDeniedError
+
+        # Wire the real server manager so the permission gate is active.
+        reaction_manager._servers = server_manager
+
+        with pytest.raises(PermissionDeniedError):
+            reaction_manager.create_custom_emoji(
+                member.id, server.id, "noperm_emoji", sample_image, "image/png"
+            )
 
 
 class TestDeleteCustomEmoji:
@@ -201,8 +208,20 @@ class TestDeleteCustomEmoji:
 
     def test_delete_emoji_no_permission_fails(self, users_with_server, sample_image):
         """Test member cannot delete emoji."""
-        # Skip permission test for now - permission system needs review
-        pytest.skip("Permission system not fully implemented")
+        owner, member, server, group, msg, server_manager, reaction_manager = (
+            users_with_server
+        )
+
+        from src.core.reactions import PermissionDeniedError
+
+        emoji = reaction_manager.create_custom_emoji(
+            owner.id, server.id, "owner_emoji", sample_image, "image/png"
+        )
+
+        reaction_manager._servers = server_manager
+
+        with pytest.raises(PermissionDeniedError):
+            reaction_manager.delete_custom_emoji(member.id, emoji.id)
 
 
 class TestGetCustomEmoji:
@@ -257,13 +276,25 @@ class TestCustomEmojiValidation:
     """Tests for custom emoji validation in reactions."""
 
     def test_custom_emoji_not_in_server_fails(
-        self,
-        auth_manager,
-        server_manager,
-        messaging_manager,
-        reaction_manager,
-        sample_image,
+        self, users_with_server, sample_image, messaging_manager
     ):
         """Test using custom emoji from different server fails."""
-        # Skip complex cross-server validation test for now
-        pytest.skip("Cross-server emoji validation needs fixture redesign")
+        owner, member, server, group, msg, server_manager, reaction_manager = (
+            users_with_server
+        )
+
+        channel = server_manager.create_channel(
+            owner.id, server.id, "text-room", "text"
+        )
+        srv_msg = messaging_manager.send_message(
+            owner.id, channel.conversation_id, "in channel"
+        )
+
+        server2 = server_manager.create_server(owner.id, "Second Server")
+        emoji = reaction_manager.create_custom_emoji(
+            owner.id, server2.id, "other_server_emoji", sample_image, "image/png"
+        )
+
+        custom_str = f"<:other_server_emoji:{emoji.id}>"
+        with pytest.raises(CustomEmojiNotFoundError):
+            reaction_manager.add_reaction(owner.id, srv_msg.id, custom_str)

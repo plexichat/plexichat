@@ -78,8 +78,9 @@ class TestEmojiLimits:
         """Test under limit passes."""
         mock_db.fetch_one.return_value = {"count": 25}
 
-        # Should not raise
-        reactions_manager._check_emoji_limits(server_id=1, animated=False)
+        assert (
+            reactions_manager._check_emoji_limits(server_id=1, animated=False) is None
+        )
 
 
 class TestCreateEmoji:
