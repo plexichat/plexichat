@@ -34,13 +34,13 @@ class EmbedURLPreviewMixin(EmbedManagerProtocol):
     _db: Any
     _validate_embed_data: Any
 
-    def _scrape_url_metadata(self, url: str) -> Dict[str, Any]:
+    def _scrape_url_metadata(self, user_id: SnowflakeID, url: str) -> Dict[str, Any]:
         """Scrape URL metadata for previews.
 
         This method exists primarily as an override point for unit tests.
         In production it delegates to the hardened LinkPreviewService.
         """
-        preview = self._link_preview_service.generate_preview(0, url)
+        preview = self._link_preview_service.generate_preview(user_id, url)
         parsed = urlparse(url)
         host = parsed.hostname or parsed.netloc
         site_url = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else None
@@ -87,7 +87,7 @@ class EmbedURLPreviewMixin(EmbedManagerProtocol):
         validated_url = validate_url(url, "url")
 
         try:
-            scraped = self._scrape_url_metadata(validated_url)
+            scraped = self._scrape_url_metadata(user_id, validated_url)
         except RuntimeError as e:
             if "rate limit" in str(e).lower():
                 raise PreviewRateLimitError(str(e))
@@ -189,7 +189,9 @@ class EmbedURLPreviewMixin(EmbedManagerProtocol):
 
         return embed
 
-    def parse_url_metadata(self, url: str) -> Dict[str, Any]:
+    def parse_url_metadata(
+        self, url: str, user_id: Optional[SnowflakeID] = None
+    ) -> Dict[str, Any]:
         """
         Parse URL metadata (OpenGraph/Twitter Card) without creating embed.
 
@@ -197,22 +199,36 @@ class EmbedURLPreviewMixin(EmbedManagerProtocol):
 
         Args:
             url: URL to parse
+            user_id: ID of user requesting the parse (used for rate
+                limiting). Defaults to ``0`` for callers that have no
+                authenticated user context.
 
         Returns:
             Dict with metadata (title, description, image, etc.)
         """
         from src.core.embeds.validator import validate_url
-
-        validated_url = validate_url(url, "url")
+        from src.core.embeds.exceptions import InvalidUrlError
 
         try:
-            metadata = self._scrape_url_metadata(validated_url)
+            validated_url = validate_url(url, "url")
+        except InvalidUrlError as e:
+            logger.warning(f"URL rejected during metadata parse: {e}")
+            return {
+                "valid": False,
+                "url": url,
+                "error": str(e),
+            }
+
+        try:
+            metadata = self._scrape_url_metadata(user_id or 0, validated_url)
             metadata["url"] = validated_url
+            metadata["valid"] = True
             return metadata
         except Exception as e:
             parsed = urlparse(validated_url)
             logger.warning(f"Failed to parse URL metadata for {validated_url}: {e}")
             return {
+                "valid": True,
                 "url": validated_url,
                 "site_name": parsed.netloc,
                 "site_url": f"{parsed.scheme}://{parsed.netloc}",

@@ -16,6 +16,12 @@ from typing import Tuple, Optional, Set
 from urllib.parse import urlparse, urlunparse
 
 
+# RFC 6598 shared address space (CGNAT, 100.64.0.0/10): not flagged by
+# ipaddress.is_private on some Python releases, but it is a non-global
+# carrier-grade NAT range that must never be reachable via SSRF.
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+
+
 def generate_csp_nonce() -> str:
     """
     Generate a cryptographically secure nonce for CSP.
@@ -159,14 +165,23 @@ class URLValidator:
         """Check if an IP address is private or reserved."""
         try:
             addr = ipaddress.ip_address(ip)
-            return (
-                addr.is_private
-                or addr.is_loopback
-                or addr.is_link_local
-                or addr.is_reserved
-                or addr.is_multicast
-                or addr.is_unspecified
-            )
         except ValueError:
             # If not a valid IP, it might be a hostname that escaped previous checks
             return True
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+            or addr.is_unspecified
+        ):
+            return True
+        # Explicit CGNAT check — covers plain IPv4 and IPv4-mapped IPv6
+        # (``::ffff:100.64.0.1`` has ``version == 6`` and ``is_private`` is
+        # False for the embedded address on some Python releases).
+        if addr.version == 4:
+            return addr in _CGNAT_NETWORK
+        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+            return addr.ipv4_mapped in _CGNAT_NETWORK
+        return False

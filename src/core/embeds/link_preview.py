@@ -38,7 +38,8 @@ BLOCKED_IMAGE_TYPES = {"image/svg+xml"}  # SVG can contain scripts
 DEFAULT_CONFIG = {
     "enabled": True,
     "timeout_seconds": 8,
-    "max_html_bytes": 512 * 1024,  # 512KB
+    "max_html_bytes": 512 * 1024,  # 512KB (kept for back-compat)
+    "max_body_size": 512 * 1024,  # 512KB (streamed read cap)
     "max_redirects": 5,
     "max_image_size": 5 * 1024 * 1024,  # 5MB
     "cache_ttl_seconds": 3600,  # 1 hour
@@ -262,6 +263,8 @@ class LinkPreviewService:
         proxied_image_id: Optional[int] = None,
     ) -> None:
         """Cache preview metadata."""
+        from src.utils.encryption import generate_snowflake_id
+
         url_hash = self._hash_url(url)
         now = int(time.time() * 1000)
         ttl_ms = self._config["cache_ttl_seconds"] * 1000
@@ -282,7 +285,7 @@ class LinkPreviewService:
                expires_at = excluded.expires_at,
                fetch_count = fetch_count + 1""",
             (
-                int(time.time() * 1000000),  # Simple ID
+                generate_snowflake_id(),  # Uniqueness is guaranteed by the generator
                 url_hash,
                 url,
                 metadata.title,
@@ -336,18 +339,57 @@ class LinkPreviewService:
         # Validate the redirect destination
         return self._url_validator.validate_url_for_request(redirect_url)
 
+    @staticmethod
+    def _read_limited(response: Any, max_size: int) -> bytes:
+        """
+        Read a streaming response body up to ``max_size`` bytes.
+
+        Stops reading as soon as the cap is exceeded so a malicious
+        remote server cannot force us to buffer an unbounded body in
+        memory (the previous implementation materialised the whole body
+        with ``response.content`` before slicing it).
+
+        Raises:
+            ValueError: If the body exceeds ``max_size`` bytes.
+        """
+        chunks = []
+        total = 0
+        for chunk in response.iter_bytes():
+            total += len(chunk)
+            if total > max_size:
+                raise ValueError(f"Response exceeds maximum size of {max_size} bytes")
+            chunks.append(chunk)
+        return b"".join(chunks)
+
     def _fetch_with_redirects(
-        self, url: str, hostname: str, resolved_ip: str
+        self,
+        url: str,
+        hostname: Optional[str] = None,
+        resolved_ip: Optional[str] = None,
     ) -> Tuple[bytes, str, str]:
         """
         Fetch URL with secure redirect handling.
 
+        Args:
+            url: URL to fetch
+            hostname: Real hostname (used for the ``Host`` header and TLS
+                SNI). Defaults to the URL's hostname when omitted.
+            resolved_ip: IP resolved by the SSRF validator. Defaults to the
+                hostname when omitted (production always passes the
+                validator-resolved IP from ``generate_preview``).
+
         Returns:
             Tuple of (content, final_url, content_type)
         """
+        parsed = urlparse(url)
+        if hostname is None:
+            hostname = parsed.hostname or parsed.netloc
+        if resolved_ip is None:
+            resolved_ip = hostname
+
         client = self._get_http_client()
         max_redirects = self._config["max_redirects"]
-        max_size = self._config["max_html_bytes"]
+        max_size = self._config["max_body_size"]
 
         current_url = url
         current_hostname = hostname
@@ -367,55 +409,68 @@ class LinkPreviewService:
                 "Host": current_hostname,
             }
 
+            # SECURITY: we connect to the resolved IP (DNS-rebinding
+            # protection) but the TLS SNI / certificate hostname must
+            # still be the real hostname or HTTPS certificate
+            # verification fails for every normal site.
+            extensions = {}
+            if parsed.scheme == "https":
+                extensions["sni_hostname"] = current_hostname
+
             try:
-                response = client.get(
+                with client.stream(
+                    "GET",
                     request_url,
                     headers=headers,
                     follow_redirects=False,
-                )
+                    extensions=extensions,
+                ) as response:
+                    # Handle redirects
+                    if response.status_code in (301, 302, 303, 307, 308):
+                        if redirect_count >= max_redirects:
+                            raise ValueError(
+                                f"Too many redirects (max {max_redirects})"
+                            )
+
+                        location = response.headers.get("location")
+                        if not location:
+                            raise ValueError("Redirect without Location header")
+
+                        # Resolve relative redirects
+                        redirect_url = urljoin(current_url, location)
+
+                        # Validate redirect destination (SSRF protection)
+                        try:
+                            current_hostname, current_ip = self._validate_redirect(
+                                redirect_url, current_hostname
+                            )
+                        except ValueError as e:
+                            raise ValueError(f"Blocked redirect: {e}")
+
+                        current_url = redirect_url
+                        logger.debug(f"Following redirect to: {redirect_url}")
+                        continue
+
+                    # Check response status
+                    if response.status_code != 200:
+                        raise ValueError(f"HTTP {response.status_code}")
+
+                    # Check content type
+                    content_type = response.headers.get("content-type", "").lower()
+                    if (
+                        "text/html" not in content_type
+                        and "application/xhtml+xml" not in content_type
+                    ):
+                        raise ValueError(f"Unsupported content type: {content_type}")
+
+                    # Read content with size limit (streamed)
+                    content = self._read_limited(response, max_size)
+
+                    return content, current_url, content_type
+            except ValueError:
+                raise
             except Exception as e:
                 raise ValueError(f"Failed to fetch URL: {e}")
-
-            # Handle redirects
-            if response.status_code in (301, 302, 303, 307, 308):
-                if redirect_count >= max_redirects:
-                    raise ValueError(f"Too many redirects (max {max_redirects})")
-
-                location = response.headers.get("location")
-                if not location:
-                    raise ValueError("Redirect without Location header")
-
-                # Resolve relative redirects
-                redirect_url = urljoin(current_url, location)
-
-                # Validate redirect destination (SSRF protection)
-                try:
-                    current_hostname, current_ip = self._validate_redirect(
-                        redirect_url, current_hostname
-                    )
-                except ValueError as e:
-                    raise ValueError(f"Blocked redirect: {e}")
-
-                current_url = redirect_url
-                logger.debug(f"Following redirect to: {redirect_url}")
-                continue
-
-            # Check response status
-            if response.status_code != 200:
-                raise ValueError(f"HTTP {response.status_code}")
-
-            # Check content type
-            content_type = response.headers.get("content-type", "").lower()
-            if (
-                "text/html" not in content_type
-                and "application/xhtml+xml" not in content_type
-            ):
-                raise ValueError(f"Unsupported content type: {content_type}")
-
-            # Read content with size limit
-            content = response.content[:max_size]
-
-            return content, current_url, content_type
 
         raise ValueError("Redirect loop detected")
 
@@ -509,6 +564,15 @@ class LinkPreviewService:
         """
         Proxy and cache image through our server.
 
+        Delegates the fetch entirely to the configured media proxy, which
+        performs its own SSRF validation (connection to the resolved IP
+        plus ``Host`` header), streaming size limits, and caching. This
+        replaces the previous implementation that first fetched the
+        image itself and then re-fetched the raw URL through
+        ``_media_proxy.fetch`` — a double fetch that also handed the
+        un-validated original URL to the proxy (a DNS-rebinding / SSRF
+        hand-off).
+
         Returns:
             Proxied content ID or None if failed
         """
@@ -516,53 +580,19 @@ class LinkPreviewService:
             return None
 
         try:
-            # Validate image URL
-            hostname, resolved_ip = self._validate_image_url(image_url)
-
-            # Fetch image
-            client = self._get_http_client()
-            parsed = urlparse(image_url)
-            port = parsed.port or (80 if parsed.scheme == "http" else 443)
-            request_url = f"{parsed.scheme}://{resolved_ip}:{port}{parsed.path or '/'}"
-            if parsed.query:
-                request_url += f"?{parsed.query}"
-
-            response = client.get(
-                request_url,
-                headers={
-                    "User-Agent": self._config["user_agent"],
-                    "Host": hostname,
-                },
-                follow_redirects=False,
-            )
-
-            if response.status_code != 200:
-                return None
-
-            content_type = response.headers.get("content-type", "")
-            content_type_lower = content_type.lower()
-            if not content_type_lower.startswith("image/"):
-                return None
-            if (
-                content_type_lower.startswith("image/svg")
-                or "svg+xml" in content_type_lower
-            ):
-                return None
-            data = response.content
-
-            # Check size
-            if len(data) > self._config["max_image_size"]:
-                logger.warning(f"Image too large: {len(data)} bytes")
-                return None
-
-            # Validate content
-            if not self._validate_image_content(data, content_type):
-                return None
-
-            # Store via media proxy
             proxied = self._media_proxy.fetch(image_url, force_refresh=False)
-            return proxied.id if proxied else None
+            if not proxied or not getattr(proxied, "id", None):
+                return None
 
+            # Block SVG content (can contain scripts)
+            content_type = (getattr(proxied, "content_type", "") or "").lower()
+            if content_type.startswith("image/svg") or "svg+xml" in content_type:
+                logger.warning(f"Blocked image type: {content_type}")
+                raise ValueError("SVG image content is blocked (can contain scripts)")
+
+            return proxied.id
+        except ValueError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to proxy image {image_url}: {e}")
             return None
@@ -592,15 +622,17 @@ class LinkPreviewService:
         if not self._check_rate_limit(user_id):
             raise RuntimeError("Rate limit exceeded for link previews")
 
+        # Consume the budget for every preview request — cache hits
+        # included — so the limit cannot be bypassed by hammering a
+        # cached URL.
+        self._update_rate_limit(user_id)
+
         # Check cache first
         if not skip_cache:
             cached = self._get_cached_preview(url)
             if cached:
                 logger.debug(f"Cache hit for URL preview: {url}")
                 return cached.metadata
-
-        # Update rate limit
-        self._update_rate_limit(user_id)
 
         # Validate URL
         hostname, resolved_ip, validated_url = self._validate_url(url)

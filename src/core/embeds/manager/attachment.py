@@ -83,42 +83,80 @@ class EmbedAttachmentMixin(EmbedManagerProtocol):
             raise EmbedNotFoundError("Embed not found")
 
         max_embeds = self._config.get("max_embeds_per_message", MAX_EMBEDS_PER_MESSAGE)
-        current_count = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM embed_message_embeds WHERE message_id = ?",
-            (message_id,),
-        )
-        count = current_count["count"] if current_count else 0
 
-        if count >= max_embeds:
-            raise EmbedLimitError(
-                f"Message has reached maximum of {max_embeds} embeds", max_embeds, count
+        # The count check, position shift and insert are performed inside a
+        # transaction so concurrent attaches cannot exceed max_embeds.
+        try:
+            self._db.begin_transaction()
+
+            current_count = self._db.fetch_one(
+                "SELECT COUNT(*) as count FROM embed_message_embeds WHERE message_id = ?",
+                (message_id,),
             )
+            count = int(current_count["count"]) if current_count else 0
 
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM embed_message_embeds WHERE message_id = ? AND embed_id = ?",
-            (message_id, embed_id),
-        )
-        if existing:
-            return True
+            if count >= max_embeds:
+                self._db.rollback()
+                raise EmbedLimitError(
+                    f"Message has reached maximum of {max_embeds} embeds",
+                    max_embeds,
+                    count,
+                )
 
-        if position is None:
-            position = count
-        else:
+            existing = self._db.fetch_one(
+                "SELECT 1 FROM embed_message_embeds WHERE message_id = ? AND embed_id = ?",
+                (message_id, embed_id),
+            )
+            if existing:
+                self._db.commit()
+                return True
+
+            if position is None:
+                position = count
+            else:
+                try:
+                    position = int(position)
+                except (TypeError, ValueError):
+                    position = count
+
+            assert isinstance(position, int)
+
+            # Clamp to a sane range (0 .. count) so negative or
+            # oversized positions cannot create gaps or malformed rows.
+            if position < 0:
+                position = 0
+            elif position > count:
+                position = count
+
+            # Inserting at the front or middle (position < count)
+            # must shift existing embeds at/after the insertion point
+            # up by one so the new embed occupies the requested slot.
+            if position < count:
+                self._db.execute(
+                    """UPDATE embed_message_embeds
+                       SET position = position + 1
+                       WHERE message_id = ? AND position >= ?""",
+                    (message_id, position),
+                )
+
+            now = self._get_timestamp()
+            assoc_id = self._generate_id()
+
             self._db.execute(
-                """UPDATE embed_message_embeds
-                   SET position = position + 1
-                   WHERE message_id = ? AND position >= ?""",
-                (message_id, position),
+                """INSERT INTO embed_message_embeds (id, message_id, embed_id, position, suppressed, created_at)
+                   VALUES (?, ?, ?, ?, 0, ?)""",
+                (assoc_id, message_id, embed_id, position, now),
             )
 
-        now = self._get_timestamp()
-        assoc_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO embed_message_embeds (id, message_id, embed_id, position, suppressed, created_at)
-               VALUES (?, ?, ?, ?, 0, ?)""",
-            (assoc_id, message_id, embed_id, position, now),
-        )
+            self._db.commit()
+        except EmbedLimitError:
+            raise
+        except Exception:
+            try:
+                self._db.rollback()
+            except Exception:
+                pass
+            raise
 
         logger.debug(f"Embed {embed_id} attached to message {message_id}")
 

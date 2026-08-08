@@ -106,7 +106,7 @@ class EmbedManagerBase(BaseManager):
         ]
 
         footer = None
-        if row["footer_text"]:
+        if row["footer_text"] or row["footer_icon_url"]:
             footer = EmbedFooter(
                 text=row["footer_text"], icon_url=row["footer_icon_url"]
             )
@@ -139,9 +139,18 @@ class EmbedManagerBase(BaseManager):
         if row["provider_name"] or row["provider_url"]:
             provider = EmbedProvider(name=row["provider_name"], url=row["provider_url"])
 
+        try:
+            embed_type = EmbedType(row["embed_type"])
+        except (ValueError, KeyError):
+            logger.warning(
+                f"Unknown embed_type {row['embed_type']!r} on embed {row['id']}; "
+                "falling back to RICH"
+            )
+            embed_type = EmbedType.RICH
+
         return Embed(
             id=row["id"],
-            embed_type=EmbedType(row["embed_type"]),
+            embed_type=embed_type,
             title=row["title"],
             description=row["description"],
             url=row["url"],

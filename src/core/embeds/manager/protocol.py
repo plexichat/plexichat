@@ -5,7 +5,7 @@ Used by embed mixins to declare which methods they expect from sibling
 mixins when combined via multiple inheritance.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from src.core.base import SnowflakeID
 
@@ -15,31 +15,22 @@ class EmbedManagerProtocol:
     _config: Dict[str, Any]
     _validate_embed_data: Any
 
-    def get_embed(self, embed_id: SnowflakeID) -> Optional[Any]: ...
+    _get_timestamp: Callable[[], int]
+    _generate_id: Callable[[], SnowflakeID]
 
-    def _get_message(self, message_id: SnowflakeID) -> Optional[Dict[str, Any]]: ...
-
-    def _is_participant(
-        self, conversation_id: SnowflakeID, user_id: SnowflakeID
-    ) -> bool: ...
-
-    def _get_channel_for_conversation(
-        self, conversation_id: SnowflakeID
-    ) -> Optional[Dict[str, Any]]: ...
-
-    def _check_embed_links_permission(
-        self,
-        user_id: SnowflakeID,
-        server_id: SnowflakeID,
-        channel_id: Optional[SnowflakeID] = None,
-    ) -> bool: ...
-
-    def _get_timestamp(self) -> int: ...
-
-    def _generate_id(self) -> SnowflakeID: ...
-
-    def _row_to_embed(self, row: Dict[str, Any]) -> Any: ...
+    get_embed: Callable[[SnowflakeID], Optional[Any]]
+    _get_message: Callable[[SnowflakeID], Optional[Dict[str, Any]]]
+    _is_participant: Callable[[SnowflakeID, SnowflakeID], bool]
+    _get_channel_for_conversation: Callable[[SnowflakeID], Optional[Dict[str, Any]]]
+    _check_embed_links_permission: Callable[
+        [SnowflakeID, SnowflakeID, Optional[SnowflakeID]], bool
+    ]
+    _row_to_embed: Callable[[Dict[str, Any]], Any]
 
     def attach_embed_to_message(
-        self, user_id: SnowflakeID, message_id: SnowflakeID, embed_id: SnowflakeID
+        self,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
+        embed_id: SnowflakeID,
+        position: Optional[int] = None,
     ) -> bool: ...

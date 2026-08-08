@@ -82,7 +82,9 @@ __all__ = [
     "parse_url_metadata",
     # Validation
     "validate_embed",
+    "validate_embed_data",
     "sanitize_embed_content",
+    "sanitize_content",
 ]
 
 _manager = None
@@ -127,6 +129,7 @@ def _get_manager():
 def create_embed(
     user_id: int,
     title: Optional[str] = None,
+    message_id: Optional[int] = None,
     description: Optional[str] = None,
     url: Optional[str] = None,
     timestamp: Optional[str] = None,
@@ -143,6 +146,7 @@ def create_embed(
     return _get_manager().create_embed(
         user_id=user_id,
         title=title,
+        message_id=message_id,
         description=description,
         url=url,
         timestamp=timestamp,
@@ -175,6 +179,8 @@ def update_embed(
     thumbnail: Optional[Dict[str, Any]] = None,
     author: Optional[Dict[str, Any]] = None,
     fields: Optional[List[Dict[str, Any]]] = None,
+    provider: Optional[Dict[str, Any]] = None,
+    embed_type: Optional[EmbedType] = None,
 ) -> Embed:
     """Update an existing embed."""
     return _get_manager().update_embed(
@@ -190,6 +196,8 @@ def update_embed(
         thumbnail=thumbnail,
         author=author,
         fields=fields,
+        provider=provider,
+        embed_type=embed_type,
     )
 
 
@@ -237,9 +245,9 @@ def create_url_preview(
     return _get_manager().create_url_preview(user_id, url, message_id)
 
 
-def parse_url_metadata(url: str) -> Dict[str, Any]:
+def parse_url_metadata(url: str, user_id: Optional[int] = None) -> Dict[str, Any]:
     """Parse URL metadata (OpenGraph/Twitter Card) without creating embed."""
-    return _get_manager().parse_url_metadata(url)
+    return _get_manager().parse_url_metadata(url, user_id=user_id)
 
 
 # === Validation ===
@@ -250,6 +258,16 @@ def validate_embed(embed_data: Dict[str, Any]) -> Dict[str, Any]:
     return _get_manager().validate_embed_data(embed_data)
 
 
+def validate_embed_data(embed_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate embed data and return validation result dict."""
+    return _get_manager().validate_embed_data(embed_data)
+
+
 def sanitize_embed_content(content: str) -> str:
+    """Sanitize embed content (remove scripts, validate URLs)."""
+    return _get_manager().sanitize_content(content)
+
+
+def sanitize_content(content: str) -> str:
     """Sanitize embed content (remove scripts, validate URLs)."""
     return _get_manager().sanitize_content(content)

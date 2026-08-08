@@ -18,8 +18,11 @@ class EmbedValidationMixin:
     This mixin provides method wrappers that return dicts for test compatibility.
     """
 
-    _validate_embed_data: Any
     _sanitize_content: Any
+
+    def _validate_embed_data(self, embed_data: Dict[str, Any]) -> Any:
+        """Raw validation used by CRUD/URL-preview mixins (returns ValidationResult)."""
+        return _validate_embed_data(embed_data)
 
     def validate_embed(self, embed_data: Dict[str, Any]) -> Dict[str, Any]:
         """Re-exposed validation for tests."""
