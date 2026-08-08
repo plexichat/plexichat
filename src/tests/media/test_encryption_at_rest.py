@@ -9,10 +9,20 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def media_setup(db):
-    from src.core.media import setup
+    from src.core import media
 
-    setup(db)
-    return db
+    media.setup(db)
+    yield db
+    # Wait for fire-and-forget background tasks before the db fixture
+    # removes the temp SQLite file (see MediaManager.close docstring:
+    # a thread touching a deleted mmap'd DB file crashes with SIGBUS).
+    if media._manager is not None:
+        try:
+            media._manager.close()
+        except Exception:
+            pass
+        media._manager = None
+        media._setup_complete = False
 
 
 class TestEncryptionWrap:
@@ -33,9 +43,9 @@ class TestEncryptionWrap:
         assert reason is None
 
     def test_report_hash_idempotent(self, media_setup, test_user):
-        from src.core.media import setup
+        from src.core.media import report_hash
 
-        report_id = setup.report_hash(
+        report_id = report_hash(
             hash_value="a" * 64,
             reporter_id=test_user.id,
             reason="unit-test",

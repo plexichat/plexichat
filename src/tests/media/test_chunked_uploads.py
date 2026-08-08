@@ -88,14 +88,12 @@ class TestChunkedSessions:
             user_id=test_user.id,
             filename="bad.bin",
             content_type="application/octet-stream",
-            total_size=len(chunk) * 2,
+            total_size=len(chunk),
         )
-        chunked.upload_chunk(session.id, test_user.id, 0, chunk)
-        # Now try uploading a second chunk with a wrong checksum
         result = chunked.upload_chunk(
             session.id,
             test_user.id,
-            1,
+            0,
             b"Z" * len(chunk),
             chunk_checksum=hashlib.sha256(chunk).hexdigest(),
         )

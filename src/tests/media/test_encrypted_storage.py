@@ -35,13 +35,9 @@ class TestEncryptedStorage:
         file = media_manager.get_file(result.file_id)
         assert file is not None
         # File should be retrievable regardless of encryption status
-        try:
-            data, content_type = media_manager.get_file_data(result.file_id)
-            assert data is not None
-            assert content_type == "image/png"
-        except Exception:
-            # Encryption key may not be configured in test env
-            pass
+        data, content_type = media_manager.get_file_data(result.file_id)
+        assert data == MINI_PNG
+        assert content_type == "image/png"
 
     def test_encrypted_flag_in_storage(self, media_manager, test_user):
         """Test that is_encrypted returns a boolean."""
