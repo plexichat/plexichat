@@ -309,26 +309,37 @@ class TestDenialOfService:
 
         messages = []
         for i in range(20):
-            try:
-                msg = messaging_manager.send_message(
-                    user_id=user1.id, conversation_id=dm.id, content=f"Message {i}"
-                )
-                messages.append(msg)
-            except Exception:
-                break
+            msg = messaging_manager.send_message(
+                user_id=user1.id, conversation_id=dm.id, content=f"Message {i}"
+            )
+            messages.append(msg)
+
+        assert len(messages) == 20
 
     def test_login_attempt_rate_limiting(self, auth_manager):
-        """Test that login attempts are rate limited."""
-        for i in range(20):
-            try:
-                auth_manager.login("nonexistent", "password")
-            except Exception:
-                pass
+        """Test that repeated failed logins eventually lock the account."""
+        import uuid
+        from unittest.mock import patch
+
+        from src.core.auth.exceptions import AccountLockedError, InvalidCredentialsError
+        from src.utils import encryption
+
+        username = f"lockout_{uuid.uuid4().hex[:8]}"
+        auth_manager.register(username, f"{username}@example.com", "TestPass123!")
+
+        locked = False
+        with patch.object(encryption, "verify_password", return_value=False):
+            for _ in range(10):
+                try:
+                    auth_manager.login(username, "WrongPassword!")
+                except AccountLockedError:
+                    locked = True
+                    break
+                except InvalidCredentialsError:
+                    continue
+        assert locked is True
 
     def test_resource_exhaustion_prevention(self, auth_manager, test_user):
-        """Test prevention of resource exhaustion."""
-        for i in range(15):
-            try:
-                auth_manager.get_user(test_user.id)
-            except Exception:
-                break
+        """Test prevention of resource exhaustion: repeated lookups must not fail."""
+        for _ in range(15):
+            assert auth_manager.get_user(test_user.id) is not None

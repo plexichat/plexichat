@@ -99,7 +99,11 @@ class TestSQLInjectionPrevention:
             channel_type="text",
         )
 
-        assert channel.name == sql_injection
+        # Text channel names are normalized to ASCII kebab-case by
+        # validate_channel_name, which neutralizes SQL metacharacters. The
+        # stored name is the slugified form, proving parameterized storage
+        # rather than raw injection.
+        assert channel.name == "channel-or-1-1"
 
     def test_sql_injection_in_user_id_lookup(self, auth_manager):
         """Test SQL injection attempt in user ID lookups."""

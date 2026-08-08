@@ -8,6 +8,8 @@ cryptographic integrity, expiration, and proper token lifecycle.
 import pytest
 import time
 
+from src.core.auth.exceptions import TokenExpiredError, TokenInvalidError
+
 
 class TestTokenValidation:
     """Test token validation mechanisms."""
@@ -75,9 +77,16 @@ class TestTokenValidation:
 
     def test_expired_token_rejected(self, auth_manager, db, test_user):
         """Test that expired tokens are rejected."""
-        # Skip - internal token parsing structure has changed
-        # Token expiration is handled by the auth manager internally
-        pass
+        result = auth_manager.login(test_user.username, "TestPass123!")
+
+        current_time = int(time.time() * 1000)
+        db.execute(
+            "UPDATE auth_sessions SET expires_at = ? WHERE id = ?",
+            (current_time - 100000, result.session.id),
+        )
+
+        with pytest.raises(TokenExpiredError):
+            auth_manager.verify_token(result.token)
 
     def test_revoked_token_rejected(self, auth_manager, test_user):
         """Test that revoked tokens are rejected."""
@@ -142,21 +151,20 @@ class TestTokenValidation:
                 assert char.isalnum() or char in ["-", "_"]
 
     def test_token_rate_limiting(self, auth_manager):
-        """Test rate limiting on token verification."""
+        """Test that invalid tokens are consistently rejected."""
         invalid_token = "123456.invalidsecret"
 
-        for i in range(10):
-            try:
+        for _ in range(10):
+            with pytest.raises(TokenInvalidError):
                 auth_manager.verify_token(invalid_token, ip_address="192.168.1.1")
-            except Exception:
-                pass
 
     def test_token_reuse_detection(self, auth_manager, test_user):
-        """Test detection of suspicious token reuse."""
+        """Test that a valid token keeps verifying across repeated use."""
         result = auth_manager.login(test_user.username, "TestPass123!")
 
         for _ in range(5):
-            auth_manager.verify_token(result.token)
+            token_info = auth_manager.verify_token(result.token)
+            assert token_info.valid
 
     def test_token_permissions_validation(self, auth_manager, test_user):
         """Test that token permissions are properly validated."""
@@ -180,12 +188,8 @@ class TestTokenValidation:
 
         auth_manager.disable_bot(test_user.id, bot.id)
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(TokenInvalidError):
             auth_manager.verify_token(bot.token)
-
-        # Error message may not contain "disabled" specifically
-        # The important thing is the token is rejected
-        assert exc_info.value is not None
 
     def test_token_regeneration_invalidates_old(self, auth_manager, test_user):
         """Test that token regeneration invalidates old tokens."""
@@ -269,22 +273,28 @@ class TestTokenValidation:
             with pytest.raises(Exception):
                 auth_manager.verify_token(token)
 
-    def test_token_timing_attack_resistance(self, auth_manager):
-        """Test resistance to timing attacks on token validation."""
-        valid_token_prefix = "123456789."
+    def test_token_timing_attack_resistance(self, auth_manager, test_user):
+        """Token secrets must be compared via the constant-time comparator.
 
-        times = []
-        for i in range(10):
-            start = time.time()
-            try:
-                auth_manager.verify_token(f"{valid_token_prefix}secret{i}")
-            except Exception:
-                pass
-            elapsed = time.time() - start
-            times.append(elapsed)
+        Structural test (wall-clock timing is inherently flaky under CI
+        load): the comparator is exercised directly for matching and
+        mismatching secrets, and the hot verify path is shown to consult
+        the token-hash verifier rather than fast-path around it.
+        """
+        from unittest.mock import patch
 
-        avg_time = sum(times) / len(times)
-        for t in times:
-            # More lenient timing check - timing tests are flaky in CI
-            variation = abs(t - avg_time) / avg_time if avg_time > 0 else 0
-            assert variation < 2.0
+        from src.core.auth.tokens import _constant_time_compare
+
+        assert _constant_time_compare("secret123", "secret123") is True
+        assert _constant_time_compare("secret123", "secret124") is False
+        assert _constant_time_compare("secret123", "secret125") is False
+        assert _constant_time_compare("secret123", "secret") is False  # length mismatch
+
+        result = auth_manager.login(test_user.username, "TestPass123!")
+
+        with patch(
+            "src.core.auth.managers.session.verify_token_hash", return_value=True
+        ) as mock_verify:
+            token_info = auth_manager.verify_token(result.token)
+            assert token_info.valid
+            assert mock_verify.call_count >= 1

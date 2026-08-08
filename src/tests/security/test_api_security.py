@@ -111,12 +111,27 @@ class TestAPIRouteSecurity:
                 )
 
     def test_api_rate_limiting_enforced(self, auth_manager):
-        """Test that API rate limiting is enforced."""
-        for i in range(20):
-            try:
-                auth_manager.login("nonexistent", "password")
-            except Exception:
-                pass
+        """Test that repeated failed logins eventually lock the account."""
+        import uuid
+        from unittest.mock import patch
+
+        from src.core.auth.exceptions import AccountLockedError, InvalidCredentialsError
+        from src.utils import encryption
+
+        username = f"ratelimit_{uuid.uuid4().hex[:8]}"
+        auth_manager.register(username, f"{username}@example.com", "TestPass123!")
+
+        locked = False
+        with patch.object(encryption, "verify_password", return_value=False):
+            for _ in range(10):
+                try:
+                    auth_manager.login(username, "WrongPassword!")
+                except AccountLockedError:
+                    locked = True
+                    break
+                except InvalidCredentialsError:
+                    continue
+        assert locked is True
 
     def test_api_error_messages_dont_leak_info(self, auth_manager):
         """Test that error messages don't leak sensitive information."""
