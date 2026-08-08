@@ -140,6 +140,11 @@ class AccessControlMixin(SearchManagerBase):
         if valkey_available():
             for uid in missing:
                 cache_set(f"user:servers:{uid}", list(result.get(uid, set())), ttl=300)
+        # Every requested user must be present in the map, even with no
+        # memberships, so callers can index directly without .get()
+        # fallbacks.
+        for uid in uniq:
+            result.setdefault(uid, set())
         return result
 
     def _get_user_friend_ids(self, user_id: int) -> set:
@@ -181,4 +186,9 @@ class AccessControlMixin(SearchManagerBase):
         if valkey_available():
             for uid in missing:
                 cache_set(f"user:friends:{uid}", list(result.get(uid, set())), ttl=300)
+        # Every requested user must be present in the map, even with no
+        # friends, so callers can index directly without .get()
+        # fallbacks.
+        for uid in uniq:
+            result.setdefault(uid, set())
         return result

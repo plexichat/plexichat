@@ -16,8 +16,9 @@ class CategoryManager:
     def __init__(self, db):
         self._db = db
 
-        # Cache size limit from config
-        max_cache = config.get("redis.cache_max_items", 1000)
+        # Cache size limit from config (under the "valkey" or legacy "redis" block).
+        valkey_cfg = config.get("valkey") or config.get("redis") or {}
+        max_cache = valkey_cfg.get("cache_max_items", 1000)
 
         self._cache = CappedDict(max_size=max_cache)
         self._cache_loaded = False

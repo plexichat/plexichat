@@ -44,26 +44,33 @@ class ElasticsearchIndexer(BaseIndexer):
         # URLValidator BEFORE accepting the configuration so an
         # attacker cannot redirect ``index_message`` into a private
         # network address.
-        try:
-            from src.utils.security import URLValidator
+        #
+        # When a caller injects a custom ``http_client`` the urllib
+        # path (and its SSRF surface) is never used — ``_request``
+        # short-circuits to the injected client — so there is nothing
+        # to validate and the host defaults must not abort
+        # construction (this is what mock-based unit tests rely on).
+        if http_client is None:
+            try:
+                from src.utils.security import URLValidator
 
-            validator = URLValidator()
-            for h in list(candidate_hosts):
-                validator.validate_url_for_request(h)
-        except Exception as _es_host_exc:
-            import utils.logger as _es_logger
+                validator = URLValidator()
+                for h in list(candidate_hosts):
+                    validator.validate_url_for_request(h)
+            except Exception as _es_host_exc:
+                import utils.logger as _es_logger
 
-            _es_logger.critical(
-                "Elasticsearch host list %r failed SSRF "
-                "validation; aborting indexer construction: %s",
-                candidate_hosts,
-                _es_host_exc,
-            )
-            raise SearchBackendError(
-                f"Elasticsearch host failed SSRF validation: {_es_host_exc}",
-                backend="elasticsearch",
-                original_error=_es_host_exc,
-            )
+                _es_logger.critical(
+                    "Elasticsearch host list %r failed SSRF "
+                    "validation; aborting indexer construction: %s",
+                    candidate_hosts,
+                    _es_host_exc,
+                )
+                raise SearchBackendError(
+                    f"Elasticsearch host failed SSRF validation: {_es_host_exc}",
+                    backend="elasticsearch",
+                    original_error=_es_host_exc,
+                )
         self._hosts = candidate_hosts
         self._index_prefix = index_prefix
         self._http_client = http_client

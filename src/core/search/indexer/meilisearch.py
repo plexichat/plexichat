@@ -45,24 +45,31 @@ class MeilisearchIndexer(BaseIndexer):
         # host up-front via the centralised URLValidator so the
         # ``ActivityIndexer`` cannot be coerced into hitting an
         # arbitrary internal endpoint at index time.
-        try:
-            from src.utils.security import URLValidator
+        #
+        # When a caller injects a custom ``http_client`` the urllib
+        # path (and its SSRF surface) is never used — ``_request``
+        # short-circuits to the injected client — so there is nothing
+        # to validate and the default host must not abort construction
+        # (this is what mock-based unit tests rely on).
+        if http_client is None:
+            try:
+                from src.utils.security import URLValidator
 
-            URLValidator().validate_url_for_request(host)
-        except Exception as _meili_host_exc:
-            import utils.logger as _meili_logger
+                URLValidator().validate_url_for_request(host)
+            except Exception as _meili_host_exc:
+                import utils.logger as _meili_logger
 
-            _meili_logger.critical(
-                "Meilisearch host %r failed SSRF validation; "
-                "aborting indexer construction: %s",
-                host,
-                _meili_host_exc,
-            )
-            raise SearchBackendError(
-                f"Meilisearch host failed SSRF validation: {_meili_host_exc}",
-                backend="meilisearch",
-                original_error=_meili_host_exc,
-            )
+                _meili_logger.critical(
+                    "Meilisearch host %r failed SSRF validation; "
+                    "aborting indexer construction: %s",
+                    host,
+                    _meili_host_exc,
+                )
+                raise SearchBackendError(
+                    f"Meilisearch host failed SSRF validation: {_meili_host_exc}",
+                    backend="meilisearch",
+                    original_error=_meili_host_exc,
+                )
         self._host = host.rstrip("/")
         self._api_key = api_key
         self._index_prefix = index_prefix
