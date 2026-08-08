@@ -114,8 +114,18 @@ _setup_called = False
 _free_tier_mode = False
 _public_key_configured = False
 
-# Default license file location
+# Default license file location. Computed at import time for backward
+# compatibility, but lookups always resolve ``Path.home()`` dynamically so
+# changes to the home directory (and test monkeypatching of ``Path.home``)
+# are honored.
 DEFAULT_LICENSE_PATH = Path.home() / ".plexichat" / "config" / "license"
+
+
+def _default_license_candidates():
+    """Resolve the default on-disk license candidates against the current home dir."""
+    base = Path.home() / ".plexichat" / "config" / "license"
+    return (base, base.with_suffix(".json"))
+
 
 # Environment variable name
 LICENSE_ENV_VAR = "PLEXICHAT_LICENSE"
@@ -314,7 +324,7 @@ def _load_license_from_env_base64(lm: "LicenseManager", env_value: str) -> bool:
 
 def _load_license_from_default_location(lm: "LicenseManager") -> bool:
     """Attempt to load a license from the default on-disk locations."""
-    for _candidate in (DEFAULT_LICENSE_PATH, DEFAULT_LICENSE_PATH.with_suffix(".json")):
+    for _candidate in _default_license_candidates():
         try:
             if not _candidate.exists():
                 continue
@@ -348,8 +358,12 @@ def is_valid() -> bool:
 
     Returns:
         True if license is valid and not expired, False otherwise
+
+    Raises:
+        RuntimeError: If setup() has not been called yet.
     """
-    if not _setup_called or _free_tier_mode:
+    _ensure_setup()
+    if _free_tier_mode:
         return False
     return _get_manager().is_valid()
 
@@ -387,7 +401,8 @@ def has_feature(feature_name: str, default: bool = False) -> bool:
         if license.has_feature("messaging", default=True):
             handle_message()
     """
-    if not _setup_called or _free_tier_mode:
+    _ensure_setup()
+    if _free_tier_mode:
         return default
     return _get_manager().has_feature(feature_name, default)
 
@@ -415,7 +430,8 @@ def get_feature_config(feature_name: str, default: Any = None) -> Any:
         # Boolean feature
         is_enabled = license.get_feature_config("bond", default=False)
     """
-    if not _setup_called or _free_tier_mode:
+    _ensure_setup()
+    if _free_tier_mode:
         return default
     return _get_manager().get_feature_config(feature_name, default)
 
@@ -435,7 +451,8 @@ def get_feature_limit(limit_name: str, default: Any = None) -> Any:
         max_users = license.get_feature_limit("max_users", default=100)
         max_servers = license.get_feature_limit("max_servers", default=10)
     """
-    if not _setup_called or _free_tier_mode:
+    _ensure_setup()
+    if _free_tier_mode:
         return default
     return _get_manager().get_feature_limit(limit_name, default)
 
@@ -452,7 +469,8 @@ def get_instance_id() -> Optional[str]:
         if instance_id:
             logger.info(f"Running as instance: {instance_id}")
     """
-    if not _setup_called or _free_tier_mode:
+    _ensure_setup()
+    if _free_tier_mode:
         return None
     return _get_manager().get_instance_id()
 
@@ -473,7 +491,8 @@ def get_license_source() -> Optional[str]:
         if source and source.startswith("file:"):
             print(f"License from: {source[5:]}")
     """
-    if not _setup_called or _free_tier_mode:
+    _ensure_setup()
+    if _free_tier_mode:
         return None
     return _get_manager().get_license_source()
 
@@ -495,7 +514,8 @@ def get_validation_result() -> Optional[LicenseValidationResult]:
             print(f"Expired: {result.is_expired}")
             print(f"Error: {result.error_message}")
     """
-    if not _setup_called or _free_tier_mode or _license_manager is None:
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
         return None
     return _license_manager._validation_result
 
@@ -513,7 +533,8 @@ def get_expiry_timestamp() -> Optional[int]:
             days_left = (expiry - time.time()) / 86400
             print(f"License expires in {days_left:.0f} days")
     """
-    if not _setup_called or _free_tier_mode:
+    _ensure_setup()
+    if _free_tier_mode:
         return None
     return _get_manager().get_expiry_timestamp()
 
@@ -529,7 +550,8 @@ def to_dict() -> Dict[str, Any]:
         license_data = license.to_dict()
         print(json.dumps(license_data, indent=2))
     """
-    if not _setup_called or _free_tier_mode:
+    _ensure_setup()
+    if _free_tier_mode:
         return {}
     return _get_manager().to_dict()
 

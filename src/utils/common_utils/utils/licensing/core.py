@@ -343,6 +343,16 @@ class LicenseManager:
         except Exception as e:
             raise SignatureVerificationError(f"Signature verification error: {e}")
 
+    def _ensure_validated(self) -> None:
+        """Run validation lazily if it has not been run yet.
+
+        Feature/limit getters must not hand out license data from a license
+        that has never been validated (e.g. expired or with a bad signature),
+        so the first access triggers a full validation.
+        """
+        if self._validation_result is None:
+            self.validate()
+
     def has_feature(self, feature_name: str, default: bool = False) -> bool:
         """
         Check if the license includes a specific feature.
@@ -360,6 +370,7 @@ class LicenseManager:
         if self._license is None:
             return default
 
+        self._ensure_validated()
         if self._validation_result and not self._validation_result.is_valid:
             return default
 
@@ -396,6 +407,7 @@ class LicenseManager:
         if self._license is None:
             return default
 
+        self._ensure_validated()
         if self._validation_result and not self._validation_result.is_valid:
             return default
 
@@ -415,6 +427,7 @@ class LicenseManager:
         if self._license is None:
             return default
 
+        self._ensure_validated()
         if self._validation_result and not self._validation_result.is_valid:
             return default
 
@@ -427,6 +440,8 @@ class LicenseManager:
         Returns:
             Instance ID if license is valid, None otherwise
         """
+        if self._validation_result is None:
+            self.validate()
         if self._validation_result and self._validation_result.is_valid:
             return self._license.instance_id if self._license else None
         return None

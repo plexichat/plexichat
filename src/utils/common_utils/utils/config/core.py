@@ -1,5 +1,6 @@
 import os
 import json
+import tempfile
 import yaml
 import logging
 import re
@@ -141,9 +142,12 @@ class ConfigLoader:
         """
         Recursively resolve environment variable interpolation in a config tree.
 
-        Type coercion is ONLY applied to values that underwent interpolation
-        (contained ${...} patterns) AND have a typed default value to infer from.
-        Non-interpolated string values are always preserved as-is.
+        Type coercion is applied to string values that have a typed default to
+        infer from, whether the value was interpolated (contained ${...}
+        patterns) or read plain from a config file. Coercing plain values keeps
+        config files that quote numbers (e.g. ``port: "6379"``) from tripping
+        strict type validation while leaving bare strings (hosts, passwords,
+        API keys) untouched when the default is also a string.
 
         Args:
             node: Config node (dict, list, or primitive value)
@@ -151,7 +155,7 @@ class ConfigLoader:
 
         Returns:
             Resolved config node with all interpolations resolved and types coerced
-            only where the default config provides a type hint.
+            where the default config provides a type hint.
         """
         if isinstance(node, dict):
             default_dict = default_node if isinstance(default_node, dict) else {}
@@ -168,9 +172,16 @@ class ConfigLoader:
             ]
         else:
             # Fast path: plain string with no interpolation tokens — no
-            # regex, no coercion, no recursion. _resolve_value would also
-            # short-circuit, but we save the call entirely.
+            # regex, no recursion. _resolve_value would also short-circuit,
+            # but we save the call entirely. Coerce plain file strings to the
+            # default's type when a typed default exists (e.g. a quoted
+            # ``port: "6379"`` in a config file becomes int 6379), so config
+            # files that quote numbers don't trip strict type validation.
+            # Bare strings without a typed default stay strings (hosts,
+            # passwords, API keys, ...).
             if isinstance(node, str) and "$" not in node:
+                if default_node is not None and not isinstance(default_node, str):
+                    return self._coerce_value(node, default_node)
                 return node
             resolved_value = self._resolve_value(node)
             # Only apply type coercion to values that were actually interpolated
@@ -330,15 +341,38 @@ class ConfigLoader:
     def _save_config(self) -> None:
         """Saves the current config to the file atomically (write-then-rename).
 
-        Writes the new contents to ``<config_path>.tmp`` and only then
-        renames over the real path. A crash mid-write therefore leaves the
-        previous config intact instead of producing a half-written file.
+        Writes the new contents to a unique temp file in the same directory
+        and only then renames over the real path. A crash mid-write therefore
+        leaves the previous config intact instead of producing a half-written
+        file, and concurrent ``set()`` calls from different threads can no
+        longer collide on a shared ``.tmp`` name (one thread renaming the
+        other's temp file away mid-write).
+
+        ``mkstemp`` creates its file mode 0600, so the mode of an existing
+        config file is preserved (or a standard umask-derived mode is used
+        for new files) to keep this write path consistent with
+        ``_create_default_config`` and to avoid silently locking other
+        users/processes out of the config.
         """
         parent = os.path.dirname(self.config_path) or "."
         os.makedirs(parent, exist_ok=True)
-        temp_path = self.config_path + ".tmp"
+        # Preserve the existing file's mode (mkstemp always creates 0600);
+        # for a brand-new file fall back to the umask-derived mode that a
+        # plain open(path, "w") would have produced.
         try:
-            with open(temp_path, "w", encoding="utf-8") as f:
+            file_mode = os.stat(self.config_path).st_mode & 0o7777
+        except OSError:
+            umask = os.umask(0)
+            os.umask(umask)
+            file_mode = 0o666 & ~umask
+        temp_path: Optional[str] = None
+        try:
+            fd, temp_path = tempfile.mkstemp(
+                dir=parent,
+                prefix=os.path.basename(self.config_path) + ".",
+                suffix=".tmp",
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 if self.config_path.endswith(".yaml") or self.config_path.endswith(
                     ".yml"
                 ):
@@ -349,10 +383,12 @@ class ConfigLoader:
                     raise ValueError(
                         "Unsupported config format. Use .yaml, .yml, or .json"
                     )
+            os.chmod(temp_path, file_mode)
             os.replace(temp_path, self.config_path)
         except Exception:
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
+            if temp_path is not None:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
             raise

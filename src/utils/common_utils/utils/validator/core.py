@@ -42,7 +42,7 @@ class Validator:
         self,
         blocklist_patterns: Optional[List[str]] = None,
         escape_char: str = '"',
-        allow_escaped: bool = False,
+        allow_escaped: bool = True,
         auto_sanitize_html: bool = True,
     ):
         """
@@ -65,6 +65,31 @@ class Validator:
         self.allow_escaped = allow_escaped
         self.auto_sanitize_html = auto_sanitize_html
 
+    def _is_escaped_match(self, text: str, match) -> bool:
+        """
+        Check whether a blocked-pattern match is enclosed by the escape char.
+
+        A match counts as escaped when ``allow_escaped`` is enabled, an
+        ``escape_char`` is configured, and:
+
+        1. the whole text is enclosed by the escape char (leading AND
+           trailing), and
+        2. the match occurs inside a quoted segment (an odd number of
+           escape chars precede the match start).
+
+        This satisfies the documented ``"DROP TABLE users"`` behaviour while
+        still blocking ``"safe" DROP TABLE "more"`` where the blocked
+        pattern sits outside the quoted segments.
+        """
+        if not self.allow_escaped or not self.escape_char:
+            return False
+        if len(text) < 2:
+            return False
+        if not (text.startswith(self.escape_char) and text.endswith(self.escape_char)):
+            return False
+        prefix = text[: match.start()]
+        return prefix.count(self.escape_char) % 2 == 1
+
     def validate(self, text: Optional[str]) -> ValidationResult:
         """
         Validates the input text.
@@ -79,9 +104,14 @@ class Validator:
             return ValidationResult(True, text)
 
         # 1. Blocklist Pattern Matching
+        saw_escaped_pattern = False
         for pattern in self.compiled_patterns:
             match = pattern.search(text)
             if match:
+                if self._is_escaped_match(text, match):
+                    # Enclosed in the escape char — treated as inert content.
+                    saw_escaped_pattern = True
+                    continue
                 # Found a blocked pattern
                 return ValidationResult(
                     False, None, f"Detected blocked pattern: {pattern.pattern}"
@@ -91,7 +121,11 @@ class Validator:
 
         # 2. HTML Sanitization
         if self.auto_sanitize_html:
-            sanitized = html.escape(sanitized)
+            # When an escaped blocked pattern was found, quote=False keeps the
+            # escape char ('"' by default) intact so the escaped content
+            # round-trips unchanged. Without any escaped pattern, quotes are
+            # escaped normally (e.g. Say "Hello" -> Say &quot;Hello&quot;).
+            sanitized = html.escape(sanitized, quote=not saw_escaped_pattern)
 
         return ValidationResult(True, sanitized)
 

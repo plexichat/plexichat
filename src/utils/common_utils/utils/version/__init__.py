@@ -27,6 +27,7 @@ from .core import (
     VersionStage,
     parse_version,
     compare_versions,
+    compare_version_objects,
     is_compatible,
     format_version,
     InvalidVersionError,
@@ -34,6 +35,7 @@ from .core import (
     increment_minor,
     increment_major,
     change_stage,
+    is_same_release_line,
 )
 
 _current_version: Optional[Version] = None
@@ -184,10 +186,12 @@ __all__ = [
     "to_dict",
     "parse_version",
     "compare_versions",
+    "compare_version_objects",
     "is_compatible",
     "format_version",
     "increment_build",
     "increment_minor",
     "increment_major",
     "change_stage",
+    "is_same_release_line",
 ]
