@@ -274,8 +274,8 @@ services:
       LLAMA_ARG_CTX_SIZE: ${SHIELDSTRAL_CONTEXT:-4096}
       LLAMA_ARG_HOST: 0.0.0.0
       LLAMA_ARG_PORT: "8080"
-      # Image default is 99 (-1 = keep all on CPU); deploy sets this to 99
-      # on GPU hosts via the docker-compose.gpu.yml override.
+      # Layers offloaded to the GPU. 0 = CPU only; -1/99 = all layers on the
+      # GPU. deploy sets 99 on GPU hosts via the docker-compose.gpu.yml override.
       LLAMA_ARG_N_GPU_LAYERS: ${SHIELDSTRAL_GPU_LAYERS:-0}
     volumes:
       - ./models/shieldstral:/models/shieldstral:ro
