@@ -186,6 +186,7 @@ class ArtifactManager(BaseManager):
         payload: Optional[Dict[str, Any]] = None,
         retention_policy: Any = None,
         license_feature: Optional[str] = None,
+        emit_event: bool = True,
     ) -> Artifact:
         """Create and persist a new artifact with a fresh Snowflake id."""
         created_at = self._get_timestamp()
@@ -212,7 +213,8 @@ class ArtifactManager(BaseManager):
             license_feature=license_feature,
         )
         created = create_artifact(self._db, artifact)
-        self._emit_lifecycle_event("create", created)
+        if emit_event:
+            self._emit_lifecycle_event("create", created)
         return created
 
     def get(self, artifact_id: SnowflakeID) -> Optional[Artifact]:
@@ -222,6 +224,7 @@ class ArtifactManager(BaseManager):
     def update(
         self,
         artifact_id: SnowflakeID,
+        emit_event: bool = True,
         **fields: Any,
     ) -> Optional[Artifact]:
         """Update an artifact's mutable fields and retention deadline."""
@@ -243,11 +246,16 @@ class ArtifactManager(BaseManager):
 
         fields.setdefault("updated_at", self._get_timestamp())
         updated = update_artifact(self._db, artifact_id, **fields)
-        if updated is not None:
+        if updated is not None and emit_event:
             self._emit_lifecycle_event("update", updated)
         return updated
 
-    def delete(self, artifact_id: SnowflakeID, purge_media: bool = True) -> bool:
+    def delete(
+        self,
+        artifact_id: SnowflakeID,
+        purge_media: bool = True,
+        emit_event: bool = True,
+    ) -> bool:
         """Delete an artifact row plus its cascade-linked rows.
 
         Removes the metadata row, the ordered operations log (``artifact_ops``),
@@ -265,8 +273,14 @@ class ArtifactManager(BaseManager):
             artifact = None
         if artifact is not None and purge_media:
             self._purge_artifact_media(artifact)
-        deleted = delete_artifact(self._db, artifact_id)
-        if deleted and artifact is not None:
+        sum_purged = False
+        if artifact is not None and artifact.artifact_type == ArtifactType.SUM:
+            sum_purged = self._purge_sum_workbook(artifact)
+        # A valid linked SUM purge deletes the workbook and artifact in Sum's
+        # single metadata transaction. Otherwise the repository owns the
+        # standalone artifact-row deletion.
+        deleted = True if sum_purged else delete_artifact(self._db, artifact_id)
+        if deleted and artifact is not None and emit_event:
             self._emit_lifecycle_event("delete", artifact)
         return deleted
 
@@ -350,6 +364,64 @@ class ArtifactManager(BaseManager):
         return list_artifact_ops(self._db, artifact_id, after_seq, limit)
 
     # === Media cleanup ===
+
+    def _purge_sum_workbook(self, artifact: Artifact) -> bool:
+        """Erase the linked Sum workbook through its owning domain manager."""
+        payload = artifact.payload or {}
+        if not isinstance(payload, dict) or not payload.get("workbook_id"):
+            # A SUM artifact without a valid link cannot be safely deleted:
+            # the workbook metadata/blob may still exist but is no longer
+            # discoverable for cleanup.
+            raise ValueError("SUM artifact is missing its linked workbook_id")
+        try:
+            workbook_id = int(payload["workbook_id"])
+            if workbook_id <= 0:
+                raise ValueError("SUM artifact has an invalid workbook_id")
+            from src.core.suite import sum as sum_domain
+
+            manager = sum_domain.get_manager()
+            linked = manager._db.fetch_one(
+                "SELECT artifact_id FROM sum_workbooks WHERE id = ?",
+                (workbook_id,),
+            )
+            if not linked:
+                # The workbook was already purged; the artifact row can still
+                # be removed by this manager without attempting storage work.
+                return False
+            linked_artifact_id = linked.get("artifact_id")
+            if linked_artifact_id is not None and int(linked_artifact_id) != int(
+                artifact.id
+            ):
+                raise RuntimeError("SUM artifact/workbook link mismatch")
+            if linked_artifact_id is None:
+                # Do not delete an artifact while leaving an unowned workbook
+                # behind. The link must be repaired before destructive cleanup.
+                raise RuntimeError("SUM workbook has no owning artifact link")
+            return bool(manager.purge_workbook_by_id(workbook_id, purge_artifact=True))
+        except RuntimeError:
+            # Sum is optional on legacy installations. If Sum metadata exists,
+            # fail closed rather than deleting the artifact identity while
+            # leaving its external workbook blob behind. If table capability
+            # cannot be checked, fail closed as well.
+            try:
+                has_sum_tables = self._db.table_exists("sum_workbooks")
+            except AttributeError as exc:
+                raise RuntimeError(
+                    "Cannot verify Sum metadata tables for artifact cleanup"
+                ) from exc
+            if has_sum_tables:
+                raise RuntimeError(
+                    "Sum manager unavailable for linked workbook cleanup"
+                )
+            logger.debug("Sum manager unavailable during artifact cleanup")
+            return False
+        except Exception as exc:
+            logger.error(
+                "Failed to purge Sum workbook linked to artifact %s: %s",
+                artifact.id,
+                exc,
+            )
+            raise
 
     def _purge_artifact_media(self, artifact: Artifact) -> None:
         """Best-effort soft-delete of media files referenced by the payload."""

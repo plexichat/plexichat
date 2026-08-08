@@ -55,6 +55,21 @@ CREATE TABLE IF NOT EXISTS sum_workbooks (
 );
 CREATE INDEX IF NOT EXISTS idx_sum_workbooks_owner ON sum_workbooks(owner_id, deleted, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sum_workbooks_server ON sum_workbooks(server_id, deleted, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sum_workbooks_artifact ON sum_workbooks(artifact_id);
+
+-- Immutable workbook revision blobs are storage metadata only. Cell data stays
+-- exclusively in the independent SQLite file referenced by blob_path.
+CREATE TABLE IF NOT EXISTS sum_revision_blobs (
+    id BIGINT PRIMARY KEY,
+    workbook_id BIGINT NOT NULL,
+    revision BIGINT NOT NULL,
+    blob_path TEXT NOT NULL UNIQUE,
+    checksum TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    FOREIGN KEY (workbook_id) REFERENCES sum_workbooks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sum_revision_blobs_workbook
+    ON sum_revision_blobs(workbook_id, revision DESC, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS sum_grants (
     id BIGINT PRIMARY KEY,
@@ -201,16 +216,66 @@ WORKBOOK_SCHEMA_REQUIREMENTS = {
 }
 
 
+def _main_table_columns(db, table_name: str) -> set[str]:
+    """Return columns for a known Sum metadata table across DB backends."""
+    if getattr(db, "type", "sqlite") == "sqlite":
+        rows = db.fetch_all(f"PRAGMA table_info({table_name})")
+        return {str(row.get("name")) for row in rows}
+    rows = db.fetch_all(
+        "SELECT column_name AS name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table_name,),
+    )
+    return {str(row.get("name")) for row in rows}
+
+
+def _ensure_main_columns(db) -> None:
+    """Apply additive metadata changes for databases created by older builds.
+
+    ``CREATE TABLE IF NOT EXISTS`` does not add columns to an existing table.
+    The initial migration remains the canonical fresh-install schema, while
+    this small compatibility step keeps already-initialized databases usable
+    without putting workbook cells in the main database.
+    """
+    columns = _main_table_columns(db, "sum_workbooks")
+    if "artifact_id" in columns:
+        return
+    statement = "ALTER TABLE sum_workbooks ADD COLUMN artifact_id BIGINT"
+    if getattr(db, "type", "sqlite") != "sqlite":
+        statement = (
+            "ALTER TABLE sum_workbooks ADD COLUMN IF NOT EXISTS artifact_id BIGINT"
+        )
+    db.execute(statement)
+
+
 def create_tables(db) -> None:
-    """Create the main-database Sum metadata tables idempotently."""
-    for statement in split_sql_statements(MAIN_SCHEMA):
-        if statement.strip():
-            converted = (
-                db.convert_schema(statement)
-                if hasattr(db, "convert_schema")
-                else statement
-            )
-            db.execute(converted)
+    """Create Sum metadata tables and apply safe additive compatibility fixes."""
+    statements = [s for s in split_sql_statements(MAIN_SCHEMA) if s.strip()]
+    artifact_index = next(
+        (
+            statement
+            for statement in statements
+            if "CREATE INDEX IF NOT EXISTS idx_sum_workbooks_artifact" in statement
+        ),
+        None,
+    )
+    # An old sum_workbooks table may not have artifact_id yet, so defer that
+    # index until the compatibility column has been added below.
+    for statement in statements:
+        if statement == artifact_index:
+            continue
+        converted = (
+            db.convert_schema(statement) if hasattr(db, "convert_schema") else statement
+        )
+        db.execute(converted)
+    _ensure_main_columns(db)
+    if artifact_index is not None:
+        converted = (
+            db.convert_schema(artifact_index)
+            if hasattr(db, "convert_schema")
+            else artifact_index
+        )
+        db.execute(converted)
 
 
 # ── The .plexisum workbook file schema (dynamic, data-carrying) ──────────────
@@ -397,7 +462,27 @@ def upgrade_workbook_schema(connection, format_version: str) -> None:
         raise sqlite3.DatabaseError(
             f"Unsupported PlexiSum format version: {format_version}"
         )
-    connection.executescript(WORKBOOK_FILE_SCHEMA)
+    started_transaction = not connection.in_transaction
+    savepoint_name = "plexisum_schema_upgrade"
+    if started_transaction:
+        connection.execute("BEGIN")
+    else:
+        connection.execute(f"SAVEPOINT {savepoint_name}")
+    try:
+        for statement in split_sql_statements(WORKBOOK_FILE_SCHEMA):
+            if statement.strip():
+                connection.execute(statement)
+        if started_transaction:
+            connection.commit()
+        else:
+            connection.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+    except Exception:
+        if started_transaction:
+            connection.rollback()
+        else:
+            connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+            connection.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+        raise
 
 
 def ensure_feature_tables(connection) -> None:
@@ -407,16 +492,42 @@ def ensure_feature_tables(connection) -> None:
     incompatible columns. It is format validation plus idempotent table/index
     creation, not a promise to migrate arbitrary legacy SQLite files.
     """
+    meta_exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sum_meta'"
+    ).fetchone()
+    if not meta_exists:
+        raise sqlite3.DatabaseError("Missing PlexiSum metadata table")
     format_row = connection.execute(
         "SELECT value FROM sum_meta WHERE key = 'format_version'"
     ).fetchone()
     if format_row is None:
         raise sqlite3.DatabaseError("Missing PlexiSum format version")
-    format_version = str(format_row[1])
+    format_version = str(format_row[0])
     if format_version not in SUPPORTED_PLEXISUM_FORMAT_VERSIONS:
         raise sqlite3.DatabaseError(
             f"Unsupported PlexiSum format version: {format_version}"
         )
+    # Validate all tables that already exist before applying any additive DDL.
+    # Missing feature tables are the supported format-1 upgrade case; an
+    # existing table with incompatible columns is rejected without mutating the
+    # file first.
+    for table_name, required_columns in WORKBOOK_SCHEMA_REQUIREMENTS.items():
+        table_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        if not table_exists:
+            continue
+        columns = {
+            row[1]
+            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if not required_columns.issubset(columns):
+            missing = sorted(required_columns - columns)
+            raise sqlite3.DatabaseError(
+                f"Unsupported PlexiSum schema for {table_name}; missing columns: {missing}"
+            )
+
     upgrade_workbook_schema(connection, format_version)
     for table_name, required_columns in WORKBOOK_SCHEMA_REQUIREMENTS.items():
         columns = {
@@ -443,7 +554,10 @@ def create_workbook_file(path: str, workbook_id: Any = None) -> None:
 
     connection = sqlite3.connect(str(path))
     try:
-        connection.executescript(WORKBOOK_FILE_SCHEMA)
+        connection.execute("BEGIN")
+        for statement in split_sql_statements(WORKBOOK_FILE_SCHEMA):
+            if statement.strip():
+                connection.execute(statement)
         connection.execute(
             "INSERT OR REPLACE INTO sum_meta (key, value) VALUES (?, ?)",
             ("format_version", PLEXISUM_FORMAT_VERSION),
@@ -458,6 +572,9 @@ def create_workbook_file(path: str, workbook_id: Any = None) -> None:
             ("created_at", str(int(__import__("time").time() * 1000))),
         )
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 

@@ -25,6 +25,14 @@ class ArtifactType(Enum):
     FUTURE = "future"
     PLEXISCRIBE = "plexiscribe"
     PLEXISCRIPT = "plexiscript"
+    SUM = "sum"
+
+    @classmethod
+    def _missing_(cls, value):
+        """Keep newer/unknown persisted types renderable as ``future``."""
+        if value is None:
+            return cls.FUTURE
+        return cls.FUTURE
 
 
 class ArtifactStatus(Enum):

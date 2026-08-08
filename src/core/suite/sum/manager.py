@@ -20,6 +20,7 @@ import sqlite3
 import tempfile
 import threading
 import time
+import uuid
 from collections import OrderedDict
 
 import utils.config as config
@@ -54,8 +55,12 @@ MAX_STRUCTURAL_CELLS = 200_000
 # Snapshots beyond this count are garbage-collected (oldest first) when a
 # new snapshot is created.
 MAX_SNAPSHOTS_KEPT = 50
+# Bound compensation memory during account/workbook purge. A purge that would
+# exceed this limit fails before deleting that blob batch, preserving metadata
+# pointers for a later retry instead of risking worker OOM.
+MAX_PURGE_BACKUP_BYTES = 256 * 1024 * 1024
 
-# Keep this many immutable ``rev-N`` blobs per workbook after a successful
+# Keep this many immutable revision blobs per workbook after a successful
 # commit; older revisions are unreachable through any read path (the metadata
 # row only tracks the current blob) and are garbage-collected to stop storage
 # growing by the full file size on every edit.
@@ -226,6 +231,9 @@ class BlobStore:
     def delete(self, path: str) -> bool:
         raise NotImplementedError
 
+    def exists(self, path: str) -> bool:
+        raise NotImplementedError
+
     def size(self, path: str) -> int:
         raise NotImplementedError
 
@@ -247,6 +255,25 @@ class MediaBlobStore(BlobStore):
             return bool(self._media.delete_blob(path))
         except Exception:
             return False
+
+    def exists(self, path: str) -> bool:
+        # Use the media module's public server-blob boundary when available. A
+        # Compatibility facades may predate blob_exists(). Retrieve is still a
+        # reliable existence probe for those adapters and avoids treating every
+        # successful delete as unconfirmed forever.
+        checker = getattr(self._media, "blob_exists", None)
+        if callable(checker):
+            return bool(checker(path))
+        try:
+            self._media.retrieve_blob(path)
+            return True
+        except FileNotFoundError:
+            return False
+        except Exception:
+            # An unavailable/unauthorized backend is not proof of absence.
+            # Report present so _delete_blob_confirmed fails closed and keeps
+            # the metadata pointer for a later retry.
+            return True
 
     def size(self, path: str) -> int:
         try:
@@ -273,10 +300,26 @@ class LocalBlobStore(BlobStore):
 
     def store(self, data: bytes, key: str) -> str:
         target = self._resolve(key)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "wb") as handle:
-            handle.write(data)
-        return key
+        directory = os.path.dirname(target)
+        os.makedirs(directory, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix=".plexisum-", suffix=".tmp", dir=directory, delete=False
+            ) as handle:
+                temporary = handle.name
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+            temporary = None
+            return key
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
 
     def retrieve(self, path: str) -> bytes:
         with open(self._resolve(path), "rb") as handle:
@@ -288,6 +331,12 @@ class LocalBlobStore(BlobStore):
             return True
         except FileNotFoundError:
             return False
+        except OSError:
+            return False
+
+    def exists(self, path: str) -> bool:
+        try:
+            return os.path.isfile(self._resolve(path))
         except OSError:
             return False
 
@@ -660,15 +709,9 @@ class SumManager(BaseManager):
     # ── workbook file lifecycle ──────────────────────────────────────────────
 
     def _file_bytes(self, workbook_id: int) -> bytes:
-        """Retrieve the current workbook file bytes, cached by revision.
-
-        Blobs are immutable and the cache key includes the revision, so a hit
-        can never be stale. This removes the repeated full-file storage
-        downloads that previously happened on every viewport read, replay,
-        export, and write.
-        """
+        """Retrieve and integrity-check the current independent workbook file."""
         row = self._db.fetch_one(
-            "SELECT blob_path, current_revision FROM sum_workbooks "
+            "SELECT blob_path, current_revision, checksum FROM sum_workbooks "
             "WHERE id = ? AND deleted = 0",
             (int(workbook_id),),
         )
@@ -677,11 +720,19 @@ class SumManager(BaseManager):
         revision = int(row.get("current_revision") or 0)
         cached = _WORKBOOK_FILE_CACHE.get((int(workbook_id), revision))
         if cached is not None:
+            if (
+                row.get("checksum")
+                and hashlib.sha256(cached).hexdigest() != row["checksum"]
+            ):
+                _WORKBOOK_FILE_CACHE.drop_workbook(int(workbook_id))
+                raise SumStorageError("Workbook file checksum mismatch")
             return cached
         try:
             data = self._blob.retrieve(str(row["blob_path"]))
         except Exception as exc:
             raise SumStorageError("Workbook file could not be read") from exc
+        if row.get("checksum") and hashlib.sha256(data).hexdigest() != row["checksum"]:
+            raise SumStorageError("Workbook file checksum mismatch")
         _WORKBOOK_FILE_CACHE.put((int(workbook_id), revision), data)
         return data
 
@@ -689,51 +740,145 @@ class SumManager(BaseManager):
         """Publish just-committed file bytes to the read cache."""
         _WORKBOOK_FILE_CACHE.put((int(workbook_id), int(revision)), data)
 
-    def _prune_revision_blobs(self, workbook_id: int) -> None:
-        """Best-effort GC of superseded immutable revision blobs.
+    def _delete_blob_confirmed(self, path: str) -> bool:
+        """Delete a blob and confirm that it is no longer present.
 
-        Every mutation writes a new immutable ``rev-N`` blob while the
-        metadata row only tracks the current one, so older revision blobs are
-        never referenced by any read path and would otherwise grow storage by
-        the full file size on every edit. Keep a small window for crash
-        tolerance and delete the rest.
+        Storage adapters return ``False`` both for an already-missing object
+        and, in the media boundary, for a swallowed provider error. The
+        explicit existence check distinguishes those cases sufficiently for
+        retryable cleanup: an absent object is success, while an object that
+        remains is failure and its metadata pointer must be retained.
         """
+        if not path:
+            return True
         try:
-            current_row = self._db.fetch_one(
-                "SELECT blob_path, current_revision FROM sum_workbooks WHERE id = ?",
+            self._blob.delete(path)
+        except Exception:
+            return False
+        try:
+            # Always verify, even when delete() reported success; some remote
+            # adapters acknowledge a request before the object is gone.
+            return not self._blob.exists(path)
+        except Exception:
+            return False
+
+    def _prune_revision_blobs(self, workbook_id: int) -> None:
+        """Best-effort GC of unreferenced old immutable revision blobs."""
+        try:
+            rows = self._db.fetch_all(
+                "SELECT id, blob_path FROM sum_revision_blobs "
+                "WHERE workbook_id = ? ORDER BY revision DESC, created_at DESC",
                 (int(workbook_id),),
             )
-            if not current_row or not current_row.get("blob_path"):
-                return
-            directory = str(current_row["blob_path"]).rsplit("/", 1)[0]
-            current = int(current_row.get("current_revision") or 0)
         except Exception:
             import utils.logger as logger
 
             logger.error(
-                f"PlexiSum: failed to read workbook {workbook_id} for revision GC",
+                f"PlexiSum: failed to read workbook {workbook_id} revision metadata",
                 exc_info=True,
             )
             return
-        for revision in range(max(0, current - REVISION_KEEP_COUNT)):
+        # Keep the current blob plus REVISION_KEEP_COUNT of history: the
+        # newest row in the table is the live workbook file and must never be
+        # deleted, so the GC window starts after it.
+        for row in rows[REVISION_KEEP_COUNT + 1 :]:
+            path = str(row.get("blob_path") or "")
             try:
-                self._blob.delete(f"{directory}/rev-{revision}.plexisum")
+                if path:
+                    if not self._delete_blob_confirmed(path):
+                        raise SumStorageError(
+                            f"Revision blob could not be deleted: {path}"
+                        )
+                self._db.execute(
+                    "DELETE FROM sum_revision_blobs WHERE id = ?", (row["id"],)
+                )
             except Exception:
                 import utils.logger as logger
 
                 logger.debug(
-                    f"PlexiSum: failed to delete superseded revision blob "
-                    f"rev-{revision}.plexisum for workbook {workbook_id}",
+                    "PlexiSum: failed to delete superseded revision blob %s",
+                    path,
                     exc_info=True,
                 )
 
     def _save_file(
         self, workbook_id: int, revision: int, data: bytes
     ) -> Tuple[str, int, str]:
-        """Store a new immutable versioned blob; return (path, size, checksum)."""
-        key = f"{int(workbook_id)}/rev-{int(revision)}.plexisum"
+        """Store a uniquely named immutable revision blob.
+
+        The random suffix prevents two concurrent writers targeting the same
+        revision from overwriting one another before the metadata CAS decides
+        which revision wins.
+        """
+        key = f"{int(workbook_id)}/rev-{int(revision)}-{uuid.uuid4().hex}.plexisum"
         path = self._blob.store(data, key)
         return path, len(data), hashlib.sha256(data).hexdigest()
+
+    def _publish_revision(
+        self,
+        workbook_id: int,
+        expected_revision: int,
+        revision: int,
+        data: bytes,
+        now: int,
+        conflict_message: str,
+    ) -> Tuple[str, int, str]:
+        """Publish one immutable file and atomically advance main metadata."""
+        # A caller-owned outer transaction could roll back the metadata after
+        # the blob has been stored, leaving an unreachable external object.
+        # Revision publication therefore owns its main-DB transaction and must
+        # not be nested inside another one.
+        if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
+            self._db, "in_transaction", False
+        ):
+            raise SumStorageError(
+                "PlexiSum revision writes require a standalone transaction"
+            )
+        path, size, checksum = self._save_file(workbook_id, revision, data)
+        try:
+            self._db.begin_transaction()
+            cursor = self._db.execute(
+                "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, "
+                "file_size = ?, checksum = ?, updated_at = ? "
+                "WHERE id = ? AND current_revision = ?",
+                (
+                    int(revision),
+                    path,
+                    size,
+                    checksum,
+                    now,
+                    int(workbook_id),
+                    int(expected_revision),
+                ),
+            )
+            try:
+                affected = int(cursor.rowcount)
+            finally:
+                cursor.close()
+            if affected != 1:
+                raise SumConflictError(conflict_message)
+            self._db.execute(
+                "INSERT INTO sum_revision_blobs "
+                "(id, workbook_id, revision, blob_path, checksum, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    self._generate_id(),
+                    int(workbook_id),
+                    int(revision),
+                    path,
+                    checksum,
+                    now,
+                ),
+            )
+            self._db.commit()
+        except Exception:
+            if getattr(self._db, "in_transaction", False):
+                self._db.rollback()
+            self._blob.delete(path)
+            raise
+        self._cache_current_file(workbook_id, revision, data)
+        self._prune_revision_blobs(workbook_id)
+        return path, size, checksum
 
     @staticmethod
     def _open_sqlite(data: bytes) -> Tuple[sqlite3.Connection, str]:
@@ -904,13 +1049,41 @@ class SumManager(BaseManager):
             except OSError:
                 pass
 
+        # As with revision publication, reject a caller-owned outer
+        # transaction before creating an external blob. Otherwise that outer
+        # rollback could discard the metadata while the file remains stored.
+        if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
+            self._db, "in_transaction", False
+        ):
+            raise SumStorageError(
+                "PlexiSum workbook creation requires a standalone transaction"
+            )
         path, size, checksum = self._save_file(workbook_id, 0, data)
-        self._db.begin_transaction()
+        artifact_id = None
+        transaction_started = False
         try:
+            # Keep the artifact identity and workbook metadata in one main-DB
+            # transaction. Workbook cells remain exclusively in the blob.
+            self._db.begin_transaction()
+            transaction_started = True
+            from src.core.artifacts.manager import ArtifactManager
+            from src.core.artifacts.models import ArtifactType
+
+            artifact = ArtifactManager(self._db).create(
+                conversation_id=None,
+                author_id=user_id,
+                artifact_type=ArtifactType.SUM,
+                title=title,
+                server_id=server_id,
+                payload={"workbook_id": str(workbook_id)},
+                emit_event=False,
+            )
+            artifact_id = int(artifact.id)
             self._db.execute(
-                "INSERT INTO sum_workbooks (id, owner_id, title, scope, server_id, current_revision, blob_path, file_size, checksum, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO sum_workbooks (id, artifact_id, owner_id, title, scope, server_id, current_revision, blob_path, file_size, checksum, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     workbook_id,
+                    artifact_id,
                     user_id,
                     title,
                     scope,
@@ -923,20 +1096,55 @@ class SumManager(BaseManager):
                     now,
                 ),
             )
+            self._db.execute(
+                "INSERT INTO sum_revision_blobs "
+                "(id, workbook_id, revision, blob_path, checksum, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (self._generate_id(), workbook_id, 0, path, checksum, now),
+            )
             self._audit(
                 "create",
                 "workbook",
                 workbook_id,
                 user_id,
-                {"title": title, "scope": scope},
+                {"title": title, "scope": scope, "artifact_id": artifact_id},
             )
             self._db.commit()
+            transaction_started = False
         except Exception:
-            if getattr(self._db, "in_transaction", False):
-                self._db.rollback()
+            if transaction_started or getattr(self._db, "in_transaction", False):
+                try:
+                    self._db.rollback()
+                except Exception:
+                    pass
             self._blob.delete(path)
+            # The rollback above normally removes the artifact too. This
+            # compensation handles adapters that commit artifact writes
+            # independently, without masking the original error.
+            if artifact_id is not None:
+                try:
+                    from src.core.artifacts.repository import delete_artifact
+
+                    delete_artifact(self._db, artifact_id)
+                except Exception:
+                    pass
             raise
         self._cache_current_file(workbook_id, 0, data)
+        # The artifact event must follow the commit; otherwise a failed
+        # transaction can announce an identity that was rolled back.
+        try:
+            if artifact_id is not None:
+                from src.core.artifacts.manager import ArtifactManager
+
+                committed_artifact = ArtifactManager(self._db).get(int(artifact_id))
+                if committed_artifact is not None:
+                    ArtifactManager(self._db)._emit_lifecycle_event(
+                        "create", committed_artifact
+                    )
+        except Exception:
+            import utils.logger as logger
+
+            logger.debug("PlexiSum artifact create event failed", exc_info=True)
         return self.get_workbook(user_id, workbook_id)
 
     def get_workbook(self, user_id: int, workbook_id: int) -> Dict[str, Any]:
@@ -1006,13 +1214,51 @@ class SumManager(BaseManager):
         return items, int(count["count"]) if count else 0
 
     def delete_workbook(self, user_id: int, workbook_id: int) -> None:
-        self._workbook(user_id, workbook_id, mutation=True)
+        workbook = self._workbook(user_id, workbook_id, mutation=True)
+        if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
+            self._db, "in_transaction", False
+        ):
+            raise SumStorageError(
+                "PlexiSum lifecycle writes require a standalone transaction"
+            )
         now = int(time.time() * 1000)
-        self._db.execute(
-            "UPDATE sum_workbooks SET deleted = 1, updated_at = ? WHERE id = ?",
-            (now, int(workbook_id)),
-        )
-        self._audit("delete", "workbook", int(workbook_id), user_id)
+        artifact_id = workbook.get("artifact_id")
+        self._db.begin_transaction()
+        try:
+            self._db.execute(
+                "UPDATE sum_workbooks SET deleted = 1, updated_at = ? WHERE id = ?",
+                (now, int(workbook_id)),
+            )
+            # The artifact is the platform-owned lifecycle identity for the
+            # workbook. Archive it with the metadata row so universal-app and
+            # artifact queries do not expose a deleted workbook as live.
+            if artifact_id is not None:
+                from src.core.artifacts.manager import ArtifactManager
+                from src.core.artifacts.models import ArtifactStatus
+
+                ArtifactManager(self._db).update(
+                    int(artifact_id), status=ArtifactStatus.ARCHIVED, emit_event=False
+                )
+            self._audit("delete", "workbook", int(workbook_id), user_id)
+            self._db.commit()
+        except Exception:
+            if getattr(self._db, "in_transaction", False):
+                self._db.rollback()
+            raise
+        # Emit only after both workbook and artifact state are committed.
+        if artifact_id is not None:
+            try:
+                from src.core.artifacts.manager import ArtifactManager
+
+                committed_artifact = ArtifactManager(self._db).get(int(artifact_id))
+                if committed_artifact is not None:
+                    ArtifactManager(self._db)._emit_lifecycle_event(
+                        "update", committed_artifact
+                    )
+            except Exception:
+                import utils.logger as logger
+
+                logger.debug("PlexiSum artifact archive event failed", exc_info=True)
 
     def restore_workbook(self, user_id: int, workbook_id: int) -> Dict[str, Any]:
         row = self._db.fetch_one(
@@ -1022,12 +1268,47 @@ class SumManager(BaseManager):
         if not row:
             raise SumNotFoundError("Deleted workbook not found")
         self._authorize(row, user_id, mutation=True)
+        if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
+            self._db, "in_transaction", False
+        ):
+            raise SumStorageError(
+                "PlexiSum lifecycle writes require a standalone transaction"
+            )
         now = int(time.time() * 1000)
-        self._db.execute(
-            "UPDATE sum_workbooks SET deleted = 0, updated_at = ? WHERE id = ?",
-            (now, int(workbook_id)),
-        )
-        self._audit("restore", "workbook", int(workbook_id), user_id)
+        artifact_id = row.get("artifact_id")
+        self._db.begin_transaction()
+        try:
+            self._db.execute(
+                "UPDATE sum_workbooks SET deleted = 0, updated_at = ? WHERE id = ?",
+                (now, int(workbook_id)),
+            )
+            if artifact_id is not None:
+                from src.core.artifacts.manager import ArtifactManager
+                from src.core.artifacts.models import ArtifactStatus
+
+                ArtifactManager(self._db).update(
+                    int(artifact_id), status=ArtifactStatus.COMPLETED, emit_event=False
+                )
+            self._audit("restore", "workbook", int(workbook_id), user_id)
+            self._db.commit()
+        except Exception:
+            if getattr(self._db, "in_transaction", False):
+                self._db.rollback()
+            raise
+        # Emit only after both workbook and artifact state are committed.
+        if artifact_id is not None:
+            try:
+                from src.core.artifacts.manager import ArtifactManager
+
+                committed_artifact = ArtifactManager(self._db).get(int(artifact_id))
+                if committed_artifact is not None:
+                    ArtifactManager(self._db)._emit_lifecycle_event(
+                        "update", committed_artifact
+                    )
+            except Exception:
+                import utils.logger as logger
+
+                logger.debug("PlexiSum artifact restore event failed", exc_info=True)
         return self.get_workbook(user_id, workbook_id)
 
     # ── file download / upload ───────────────────────────────────────────────
@@ -1077,24 +1358,14 @@ class SumManager(BaseManager):
             raise SumConflictError(f"Workbook revision is {base}")
         revision = int(base) + 1
         now = int(time.time() * 1000)
-        path, size, checksum = self._save_file(workbook_id, revision, data)
-        try:
-            cursor = self._db.execute(
-                "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, file_size = ?, checksum = ?, updated_at = ? WHERE id = ? AND current_revision = ?",
-                (revision, path, size, checksum, now, workbook_id, base),
-            )
-            try:
-                affected = int(cursor.rowcount)
-            finally:
-                cursor.close()
-        except Exception:
-            self._blob.delete(path)
-            raise
-        if affected != 1:
-            self._blob.delete(path)
-            raise SumConflictError("Workbook revision changed during upload")
-        self._cache_current_file(workbook_id, revision, data)
-        self._prune_revision_blobs(workbook_id)
+        path, size, checksum = self._publish_revision(
+            int(workbook_id),
+            int(base),
+            int(revision),
+            data,
+            now,
+            "Workbook revision changed during upload",
+        )
         self._audit(
             "upload",
             "workbook_file",
@@ -1766,20 +2037,14 @@ class SumManager(BaseManager):
         finally:
             self._close_sqlite(connection, path)
 
-        new_path, size, checksum = self._save_file(workbook_id, revision, updated)
-        cursor = self._db.execute(
-            "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, file_size = ?, checksum = ?, updated_at = ? WHERE id = ? AND current_revision = ?",
-            (revision, new_path, size, checksum, now, workbook_id, current_revision),
+        new_path, size, checksum = self._publish_revision(
+            int(workbook_id),
+            int(current_revision),
+            int(revision),
+            updated,
+            now,
+            "Workbook revision changed during operation",
         )
-        try:
-            affected = int(cursor.rowcount)
-        finally:
-            cursor.close()
-        if affected != 1:
-            self._blob.delete(new_path)
-            raise SumConflictError("Workbook revision changed during operation")
-        self._cache_current_file(workbook_id, revision, updated)
-        self._prune_revision_blobs(workbook_id)
         self._audit(
             "edit",
             "operation",
@@ -2353,41 +2618,84 @@ class SumManager(BaseManager):
 
     def create_snapshot(self, user_id: int, workbook_id: int) -> Dict[str, Any]:
         workbook = self._workbook(user_id, workbook_id, mutation=True)
+        if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
+            self._db, "in_transaction", False
+        ):
+            raise SumStorageError(
+                "PlexiSum snapshot writes require a standalone transaction"
+            )
         data = self._file_bytes(workbook_id)
         snapshot_id = self._generate_id()
         key = f"{int(workbook_id)}/snapshot-{snapshot_id}.plexisum"
-        path = self._blob.store(data, key)
         checksum = hashlib.sha256(data).hexdigest()
         now = int(time.time() * 1000)
-        connection, tmp_path = self._open_sqlite(data)
+        connection = None
+        tmp_path = None
         try:
+            connection, tmp_path = self._open_sqlite(data)
             cell_count = int(
                 connection.execute("SELECT COUNT(*) AS c FROM sum_cells").fetchone()[
                     "c"
                 ]
             )
-        except sqlite3.Error as exc:
-            import utils.logger as logger
-
-            logger.error(
-                f"PlexiSum could not count cells for snapshot of workbook "
-                f"{workbook_id}: {exc}"
-            )
-            cell_count = 0
+        except (sqlite3.Error, SumStorageError) as exc:
+            raise SumStorageError("Snapshot source workbook could not be read") from exc
         finally:
-            self._close_sqlite(connection, tmp_path)
-        self._db.execute(
-            "INSERT INTO sum_snapshots (id, workbook_id, created_by, revision, blob_path, checksum, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                snapshot_id,
-                workbook_id,
-                user_id,
-                int(workbook["current_revision"]),
-                path,
-                checksum,
-                now,
-            ),
-        )
+            if connection is not None and tmp_path is not None:
+                self._close_sqlite(connection, tmp_path)
+
+        # Validate the source before creating the external snapshot object. This
+        # keeps schema/format failures from producing an unreachable blob.
+        path = self._blob.store(data, key)
+        try:
+            self._db.begin_transaction()
+            self._db.execute(
+                "INSERT INTO sum_snapshots (id, workbook_id, created_by, revision, blob_path, checksum, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    snapshot_id,
+                    workbook_id,
+                    user_id,
+                    int(workbook["current_revision"]),
+                    path,
+                    checksum,
+                    now,
+                ),
+            )
+            self._db.commit()
+        except Exception:
+            if getattr(self._db, "in_transaction", False):
+                self._db.rollback()
+            if not self._delete_blob_confirmed(path):
+                # Preserve a durable retry pointer when storage refuses the
+                # compensating delete. A later GC/account purge can retry it.
+                try:
+                    self._db.begin_transaction()
+                    self._db.insert_or_ignore(
+                        "sum_snapshots",
+                        [
+                            "id",
+                            "workbook_id",
+                            "created_by",
+                            "revision",
+                            "blob_path",
+                            "checksum",
+                            "created_at",
+                        ],
+                        (
+                            snapshot_id,
+                            workbook_id,
+                            user_id,
+                            int(workbook["current_revision"]),
+                            path,
+                            checksum,
+                            now,
+                        ),
+                    )
+                    self._db.commit()
+                except Exception:
+                    if getattr(self._db, "in_transaction", False):
+                        self._db.rollback()
+            raise
         self._gc_snapshots(int(workbook_id))
         self._audit(
             "snapshot",
@@ -2428,11 +2736,11 @@ class SumManager(BaseManager):
                 (int(workbook_id), count - MAX_SNAPSHOTS_KEPT),
             )
             for snap in stale:
-                if snap.get("blob_path"):
-                    try:
-                        self._blob.delete(str(snap["blob_path"]))
-                    except Exception:
-                        pass
+                snap_path = str(snap.get("blob_path") or "")
+                if snap_path and not self._delete_blob_confirmed(snap_path):
+                    # Keep the row as a retry pointer. Removing it here would
+                    # orphan a snapshot blob after a transient storage failure.
+                    continue
                 self._db.execute(
                     "DELETE FROM sum_snapshots WHERE id = ?", (int(snap["id"]),)
                 )
@@ -2487,20 +2795,14 @@ class SumManager(BaseManager):
         base_revision = int(current["current_revision"]) if current else 0
         revision = base_revision + 1
         now = int(time.time() * 1000)
-        path, size, checksum = self._save_file(workbook_id, revision, data)
-        cursor = self._db.execute(
-            "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, file_size = ?, checksum = ?, updated_at = ? WHERE id = ? AND current_revision = ?",
-            (revision, path, size, checksum, now, workbook_id, base_revision),
+        path, size, checksum = self._publish_revision(
+            int(workbook_id),
+            int(base_revision),
+            int(revision),
+            data,
+            now,
+            "Workbook revision changed during restore",
         )
-        try:
-            affected = int(cursor.rowcount)
-        finally:
-            cursor.close()
-        if affected != 1:
-            self._blob.delete(path)
-            raise SumConflictError("Workbook revision changed during restore")
-        self._cache_current_file(workbook_id, revision, data)
-        self._prune_revision_blobs(workbook_id)
         self._audit(
             "restore_snapshot",
             "workbook",
@@ -2647,24 +2949,14 @@ class SumManager(BaseManager):
         base = int(current["current_revision"]) if current else 0
         revision = base + 1
         now = int(time.time() * 1000)
-        path, size, checksum = self._save_file(workbook_id, revision, updated)
-        try:
-            cursor = self._db.execute(
-                "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, file_size = ?, checksum = ?, updated_at = ? WHERE id = ? AND current_revision = ?",
-                (revision, path, size, checksum, now, workbook_id, base),
-            )
-            try:
-                affected = int(cursor.rowcount)
-            finally:
-                cursor.close()
-        except Exception:
-            self._blob.delete(path)
-            raise
-        if affected != 1:
-            self._blob.delete(path)
-            raise SumConflictError("Workbook revision changed during update")
-        self._cache_current_file(workbook_id, revision, updated)
-        self._prune_revision_blobs(workbook_id)
+        path, size, checksum = self._publish_revision(
+            int(workbook_id),
+            int(base),
+            int(revision),
+            updated,
+            now,
+            "Workbook revision changed during update",
+        )
         self._audit(
             action,
             "workbook",
@@ -3075,20 +3367,14 @@ class SumManager(BaseManager):
         finally:
             self._close_sqlite(connection, path)
 
-        new_path, size, checksum = self._save_file(workbook_id, revision, updated)
-        cursor = self._db.execute(
-            "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, file_size = ?, checksum = ?, updated_at = ? WHERE id = ? AND current_revision = ?",
-            (revision, new_path, size, checksum, now, workbook_id, current_revision),
+        new_path, size, checksum = self._publish_revision(
+            int(workbook_id),
+            int(current_revision),
+            int(revision),
+            updated,
+            now,
+            "Workbook revision changed during import",
         )
-        try:
-            affected = int(cursor.rowcount)
-        finally:
-            cursor.close()
-        if affected != 1:
-            self._blob.delete(new_path)
-            raise SumConflictError("Workbook revision changed during import")
-        self._cache_current_file(workbook_id, revision, updated)
-        self._prune_revision_blobs(workbook_id)
         self._audit(
             "import_csv",
             "sheet",
@@ -4177,6 +4463,167 @@ class SumManager(BaseManager):
 
     # ── account erasure ──────────────────────────────────────────────────────
 
+    def purge_workbook_by_id(
+        self, workbook_id: int, purge_artifact: bool = True
+    ) -> bool:
+        """Permanently erase one workbook and all owned storage references.
+
+        ``purge_artifact`` is disabled when the caller is already deleting the
+        linked Artifact row; keeping that distinction prevents recursive
+        cleanup while making this direct lifecycle entry point complete.
+        """
+        row = self._db.fetch_one(
+            "SELECT id, owner_id, blob_path, current_revision, artifact_id "
+            "FROM sum_workbooks WHERE id = ?",
+            (int(workbook_id),),
+        )
+        if not row:
+            return False
+        self._purge_workbook_rows([row], purge_artifacts=purge_artifact)
+        _WORKBOOK_FILE_CACHE.drop_workbook(int(workbook_id))
+        return True
+
+    def _purge_workbook_rows(
+        self, workbooks: List[Dict[str, Any]], purge_artifacts: bool = False
+    ) -> None:
+        """Delete workbook blobs, linked metadata, and optionally artifacts."""
+        if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
+            self._db, "in_transaction", False
+        ):
+            raise SumStorageError("PlexiSum purge requires a standalone transaction")
+        workbook_ids = [int(row["id"]) for row in workbooks]
+        # Keep a bounded-in-scope backup of existing blobs until the metadata
+        # transaction commits. If a database/artifact delete fails after the
+        # external delete, restore the exact immutable objects before re-raising.
+        # This prevents rows that survived rollback from pointing at missing
+        # workbook files.
+        backups: Dict[str, bytes] = {}
+        backup_bytes = 0
+        try:
+            for wb in workbooks:
+                wb_id = int(wb["id"])
+                revision_rows = self._db.fetch_all(
+                    "SELECT blob_path FROM sum_revision_blobs WHERE workbook_id = ?",
+                    (wb_id,),
+                )
+                paths = [
+                    str(item["blob_path"])
+                    for item in revision_rows
+                    if item.get("blob_path")
+                ]
+                current_path = wb.get("blob_path")
+                if current_path:
+                    paths.append(str(current_path))
+                snapshots = self._db.fetch_all(
+                    "SELECT blob_path FROM sum_snapshots WHERE workbook_id = ?",
+                    (wb_id,),
+                )
+                paths.extend(
+                    str(item["blob_path"])
+                    for item in snapshots
+                    if item.get("blob_path")
+                )
+                if not revision_rows and current_path:
+                    try:
+                        current = int(wb.get("current_revision") or 0)
+                    except (TypeError, ValueError):
+                        current = 0
+                    directory = str(current_path).rsplit("/", 1)[0]
+                    paths.extend(
+                        f"{directory}/rev-{revision}.plexisum"
+                        for revision in range(current + 1)
+                    )
+                for path in dict.fromkeys(paths):
+                    try:
+                        if self._blob.exists(path):
+                            data = self._blob.retrieve(path)
+                            if backup_bytes + len(data) > MAX_PURGE_BACKUP_BYTES:
+                                raise SumStorageError(
+                                    "PlexiSum purge backup exceeds the safety limit"
+                                )
+                            backups[path] = data
+                            backup_bytes += len(data)
+                    except Exception as exc:
+                        raise SumStorageError(
+                            f"Could not read PlexiSum blob before purge: {path}"
+                        ) from exc
+                failed = [
+                    path
+                    for path in dict.fromkeys(paths)
+                    if not self._delete_blob_confirmed(path)
+                ]
+                if failed:
+                    raise SumStorageError(
+                        "Could not confirm deletion of PlexiSum blobs: "
+                        + ", ".join(failed[:10])
+                    )
+        except Exception:
+            restore_failures = []
+            for path, data in backups.items():
+                try:
+                    if not self._blob.exists(path):
+                        self._blob.store(data, path)
+                except Exception:
+                    restore_failures.append(path)
+            if restore_failures:
+                import utils.logger as logger
+
+                logger.error(
+                    "PlexiSum purge could not restore blobs after storage cleanup failure: %s",
+                    ", ".join(restore_failures[:10]),
+                )
+            raise
+        try:
+            self._db.begin_transaction()
+            for wb_id in workbook_ids:
+                # Remove the linked artifact inside the same transaction before
+                # workbook metadata. If a later SQL step fails, rollback keeps
+                # both metadata and artifact rows retryable; external blobs were
+                # already confirmed absent above.
+                artifact_row = self._db.fetch_one(
+                    "SELECT artifact_id FROM sum_workbooks WHERE id = ?", (wb_id,)
+                )
+                if (
+                    purge_artifacts
+                    and artifact_row
+                    and artifact_row.get("artifact_id") is not None
+                ):
+                    from src.core.artifacts.repository import delete_artifact
+
+                    delete_artifact(self._db, int(artifact_row["artifact_id"]))
+                self._db.execute(
+                    "DELETE FROM sum_range_permissions WHERE workbook_id = ?", (wb_id,)
+                )
+                self._db.execute(
+                    "DELETE FROM sum_grants WHERE workbook_id = ?", (wb_id,)
+                )
+                self._db.execute(
+                    "DELETE FROM sum_snapshots WHERE workbook_id = ?", (wb_id,)
+                )
+                self._db.execute(
+                    "DELETE FROM sum_revision_blobs WHERE workbook_id = ?", (wb_id,)
+                )
+                self._db.execute("DELETE FROM sum_workbooks WHERE id = ?", (wb_id,))
+            self._db.commit()
+        except Exception:
+            if getattr(self._db, "in_transaction", False):
+                self._db.rollback()
+            restore_failures = []
+            for path, data in backups.items():
+                try:
+                    if not self._blob.exists(path):
+                        self._blob.store(data, path)
+                except Exception:
+                    restore_failures.append(path)
+            if restore_failures:
+                import utils.logger as logger
+
+                logger.error(
+                    "PlexiSum purge could not restore blobs after DB rollback: %s",
+                    ", ".join(restore_failures[:10]),
+                )
+            raise
+
     def purge_user_data(self, user_id: int) -> None:
         """Permanently erase a user's workbook files and metadata.
 
@@ -4190,80 +4637,27 @@ class SumManager(BaseManager):
         the user as a subject on other people's workbooks, and it is
         idempotent and tolerant of a user who never created workbooks.
         """
+        # Blob deletion is irreversible from the database's point of view.
+        # Reject an outer transaction before touching storage, otherwise a
+        # later caller rollback could leave metadata pointing at deleted files.
+        if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
+            self._db, "in_transaction", False
+        ):
+            raise SumStorageError("PlexiSum purge requires a standalone transaction")
         uid = int(user_id)
         workbooks = self._db.fetch_all(
-            "SELECT id, blob_path, current_revision FROM sum_workbooks WHERE owner_id = ?",
+            "SELECT id, artifact_id, blob_path, current_revision "
+            "FROM sum_workbooks WHERE owner_id = ?",
             (uid,),
         )
-        workbook_ids = [int(wb["id"]) for wb in workbooks]
-
-        # Blob erasure is best-effort; the storage adapter may not expose a
-        # listing API, so revision blobs are removed by their deterministic
-        # ``rev-N`` key names up to the current revision. The directory is
-        # derived from the stored current blob path so the same code works
-        # for the media adapter (``plexisum/``-namespaced) and the local
-        # filesystem fallback alike.
-        for wb in workbooks:
-            wb_id = int(wb["id"])
-            _WORKBOOK_FILE_CACHE.drop_workbook(wb_id)
-            try:
-                current = int(wb.get("current_revision") or 0)
-            except (TypeError, ValueError):
-                current = 0
-            current_path = wb.get("blob_path")
-            directory = (
-                str(current_path).rsplit("/", 1)[0] if current_path else f"{wb_id}"
-            )
-            for revision in range(current + 1):
-                try:
-                    self._blob.delete(f"{directory}/rev-{revision}.plexisum")
-                except Exception:
-                    pass
-            # Snapshot file blobs (path is stored verbatim in the row).
-            snapshots = self._db.fetch_all(
-                "SELECT blob_path FROM sum_snapshots WHERE workbook_id = ?",
-                (wb_id,),
-            )
-            for snap in snapshots:
-                snap_path = snap.get("blob_path")
-                if snap_path:
-                    try:
-                        self._blob.delete(str(snap_path))
-                    except Exception:
-                        pass
-
-        # Metadata (children before parents for FK-enabled PostgreSQL).
+        self._purge_workbook_rows(workbooks, purge_artifacts=True)
         try:
             self._db.begin_transaction()
-            for wb_id in workbook_ids:
-                self._db.execute(
-                    "DELETE FROM sum_range_permissions WHERE workbook_id = ?",
-                    (wb_id,),
-                )
-                self._db.execute(
-                    "DELETE FROM sum_grants WHERE workbook_id = ?", (wb_id,)
-                )
-                self._db.execute(
-                    "DELETE FROM sum_snapshots WHERE workbook_id = ?", (wb_id,)
-                )
-                self._db.execute("DELETE FROM sum_workbooks WHERE id = ?", (wb_id,))
-            # Grants granted *to* the user on other people's workbooks must
-            # also be revoked for full erasure.
             self._db.execute("DELETE FROM sum_grants WHERE subject_id = ?", (uid,))
             self._db.commit()
         except Exception:
-            try:
+            if getattr(self._db, "in_transaction", False):
                 self._db.rollback()
-            except Exception:
-                pass
             raise
-
-        # Suite audit records are compliance history, not user content. Keep
-        # them after DSAR content deletion; account-erasure reporting can
-        # anonymize actor identity separately without destroying the trail.
-        try:
-            import utils.logger as logger
-
-            logger.debug("Purged PlexiSum data for user %s", uid)
-        except Exception:
-            pass
+        _WORKBOOK_FILE_CACHE.clear()
+        return

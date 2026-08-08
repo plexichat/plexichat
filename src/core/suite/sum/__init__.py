@@ -35,6 +35,12 @@ def setup(
     isolated tests; production requires the configured media adapter.
     """
     global _manager
+    # Migration 000 is intentionally authoritative for fresh installations,
+    # but applied migrations are not rerun on every boot. Re-apply this
+    # idempotent metadata schema step so existing databases receive additive
+    # Sum tables and the artifact_id compatibility column before any manager
+    # query uses them. Workbook cells remain exclusively in .plexisum files.
+    create_tables(db)
     _manager = SumManager(
         db,
         servers_module=servers_module,
