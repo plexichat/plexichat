@@ -69,4 +69,4 @@ class TestQueryParser:
         # Whatever the implementation, ParsedQuery must expose
         # filters and raw text fields.
         assert hasattr(parsed, "filters")
-        assert hasattr(parsed, "raw")
+        assert hasattr(parsed, "raw_query")

@@ -45,7 +45,7 @@ class TestMessageSearchPermissions:
 
         results = search.search_messages(user1.id, unique_id)
 
-        assert len(results) >= 0
+        assert any(r.id == msg.id for r in results)
 
     def test_user_cannot_search_others_dms(
         self, auth_manager, messaging_manager, search_manager

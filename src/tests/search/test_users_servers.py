@@ -50,10 +50,31 @@ class TestFriendLookupAgainstRelFriends:
     """
 
     @pytest.fixture
-    def seeded_friends(self, search_manager):
-        uid1 = 900000000000000001
-        uid2 = 900000000000000002
-        uid3 = 900000000000000003
+    def seeded_friends(self, search_manager, auth_manager, pii_gen):
+        # rel_friends has FK constraints to auth_users, so the friend
+        # rows must reference real registered users.
+        from unittest.mock import patch
+
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            u1 = auth_manager.register(
+                username="friendseed1",
+                email=pii_gen.email(),
+                password="TestPass123!",
+            )
+            u2 = auth_manager.register(
+                username="friendseed2",
+                email=pii_gen.email(),
+                password="TestPass123!",
+            )
+            u3 = auth_manager.register(
+                username="friendseed3",
+                email=pii_gen.email(),
+                password="TestPass123!",
+            )
+
+        uid1, uid2, uid3 = u1.id, u2.id, u3.id
         now = search_manager._get_timestamp()
 
         search_manager._db.execute(
