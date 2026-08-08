@@ -1,17 +1,24 @@
 """
-API endpoint performance and load tests.
+API critical-path functional tests.
 
-Tests API critical paths:
-- Endpoint response times
-- Concurrent request handling
-- Throughput under load
-- Rate limiting performance
-- Request parsing overhead
-- Memory leaks in request handling
+Exercises the core server flows (health contract, registration/login,
+messaging, presence, server membership) under repeated and concurrent
+load. Timing is not asserted directly: these verify correctness so a
+regression surfaces as a deterministic failure instead of a wall-clock
+flake.
+
+Run with: pytest -m performance
 """
+
+import threading
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+
+from src.core.presence.models import UserStatus
+
+pytestmark = pytest.mark.performance
 
 
 @pytest.fixture
@@ -38,79 +45,110 @@ def api_client(test_app):
     return TestClient(test_app)
 
 
-class TestAPIEndpointPerformance:
-    """Test API endpoint performance."""
+class TestAPICriticalPaths:
+    """Functional coverage of the API critical paths."""
 
-    def test_health_endpoint_performance(self, benchmark, api_client):
-        """Benchmark health check endpoint."""
-        pytest.skip("Requires pytest-benchmark plugin")
+    def test_health_endpoint_contract(self, api_client):
+        response = api_client.get("/api/v1/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert isinstance(data.get("version"), str)
 
-    def test_register_endpoint_performance(self, benchmark, api_client):
-        """Benchmark registration endpoint."""
-        pytest.skip("Requires pytest-benchmark plugin")
+    def test_register_login_message_round_trip(self, auth_manager, messaging_manager):
+        username = f"api_{uuid.uuid4().hex[:8]}"
+        user = auth_manager.register(
+            username=username,
+            email=f"{username}@example.com",
+            password="PerfTest123!",
+        )
+        partner = auth_manager.register(
+            username=f"api2_{uuid.uuid4().hex[:8]}",
+            email=f"api2_{uuid.uuid4().hex[:8]}@example.com",
+            password="PerfTest123!",
+        )
+        result = auth_manager.login(username, "PerfTest123!")
+        token_info = auth_manager.verify_token(result.token)
+        assert token_info.valid
+        assert token_info.user_id == user.id
 
-    def test_login_endpoint_performance(self, benchmark, api_client, auth_manager):
-        """Benchmark login endpoint."""
-        pytest.skip("Requires pytest-benchmark plugin")
+        dm = messaging_manager.create_dm(user.id, partner.id)
+        msg = messaging_manager.send_message(
+            user_id=user.id, conversation_id=dm.id, content="hello api"
+        )
+        assert msg is not None
 
-    def test_get_messages_endpoint_performance(
-        self, benchmark, api_client, messaging_manager, auth_manager, test_dm
+    def test_sustained_message_round_trips(self, messaging_manager, test_dm):
+        dm, user1, user2 = test_dm
+
+        for i in range(50):
+            msg = messaging_manager.send_message(
+                user_id=user1.id, conversation_id=dm.id, content=f"sustained {i}"
+            )
+            assert msg is not None
+
+        messages = messaging_manager.get_messages(
+            user_id=user1.id, conversation_id=dm.id, limit=50
+        )
+        assert len(messages) == 50
+
+    def test_read_heavy_workload(self, messaging_manager, test_dm):
+        dm, user1, user2 = test_dm
+
+        for i in range(20):
+            messaging_manager.send_message(
+                user_id=user1.id, conversation_id=dm.id, content=f"read {i}"
+            )
+
+        for _ in range(50):
+            messages = messaging_manager.get_messages(
+                user_id=user1.id, conversation_id=dm.id, limit=10
+            )
+            assert 0 < len(messages) <= 10
+
+    def test_mixed_workload(
+        self, auth_manager, messaging_manager, server_manager, presence_manager
     ):
-        """Benchmark get messages endpoint."""
-        pytest.skip("Requires pytest-benchmark plugin")
+        username = f"api_{uuid.uuid4().hex[:8]}"
+        owner = auth_manager.register(
+            username=username,
+            email=f"{username}@example.com",
+            password="PerfTest123!",
+        )
+        server = server_manager.create_server(owner.id, "API Mixed Server")
+        assert server is not None
 
-    def test_send_message_endpoint_performance(
-        self, benchmark, api_client, auth_manager, test_dm
-    ):
-        """Benchmark send message endpoint."""
-        pytest.skip("Requires pytest-benchmark plugin")
+        channel = server_manager.get_channels(owner.id, server.id)[0]
+        for i in range(20):
+            msg = messaging_manager.send_message(
+                owner.id, channel.conversation_id, f"mixed {i}"
+            )
+            assert msg is not None
+            presence_manager.set_status(owner.id, UserStatus.ONLINE)
 
-    def test_concurrent_api_requests(
-        self, benchmark, api_client, auth_manager, test_dm
-    ):
-        """Test concurrent API request handling."""
-        pytest.skip("Requires pytest-benchmark plugin")
+    def test_concurrent_mixed_operations(self, messaging_manager, test_dm):
+        dm, user1, user2 = test_dm
+        errors = []
 
+        def worker(op_id):
+            try:
+                if op_id % 2 == 0:
+                    messaging_manager.send_message(
+                        user_id=user1.id,
+                        conversation_id=dm.id,
+                        content=f"conc {op_id}",
+                    )
+                else:
+                    messaging_manager.get_messages(user1.id, dm.id, limit=20)
+            except Exception as exc:  # pragma: no cover - failure path
+                errors.append(exc)
 
-class TestAPIThroughput:
-    """Test API throughput and sustained load."""
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
-    def test_sustained_request_throughput(self, api_client, auth_manager, test_dm):
-        """Test sustained request throughput."""
-        pytest.skip("Performance test requires timing infrastructure")
-
-    def test_read_heavy_throughput(
-        self, api_client, messaging_manager, auth_manager, test_dm
-    ):
-        """Test throughput for read-heavy operations."""
-        pytest.skip("Performance test requires timing infrastructure")
-
-    def test_mixed_workload_throughput(self, api_client, auth_manager, test_dm):
-        """Test throughput with mixed read/write operations."""
-        pytest.skip("Performance test requires timing infrastructure")
-
-
-class TestAPIMemory:
-    """Test API memory usage and leaks."""
-
-    def test_request_handling_memory_leak(
-        self, api_client, auth_manager, test_dm, memory_tracker
-    ):
-        """Check for memory leaks in request handling."""
-        pytest.skip("Requires memory tracking fixtures")
-
-    def test_authentication_memory_leak(self, api_client, auth_manager, memory_tracker):
-        """Check for memory leaks in authentication."""
-        pytest.skip("Requires memory tracking fixtures")
-
-
-class TestAPIDegradation:
-    """Test API performance degradation under load."""
-
-    def test_response_time_stability(self, api_client, auth_manager, test_dm):
-        """Ensure response times remain stable over time."""
-        pytest.skip("Performance test requires timing infrastructure")
-
-    def test_concurrent_load_scaling(self, api_client, auth_manager, test_dm):
-        """Test performance scaling under concurrent load."""
-        pytest.skip("Performance test requires timing infrastructure")
+        assert errors == []
+        messages = messaging_manager.get_messages(user1.id, dm.id, limit=50)
+        assert len(messages) >= 10

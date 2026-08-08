@@ -330,15 +330,14 @@ class TestEdgeCases:
 
     def test_empty_message_handling(self, messaging_manager, test_dm):
         """Test handling of edge case message content."""
+        from src.core.messaging.exceptions import InvalidContentError
+
         dm, user1, user2 = test_dm
 
-        try:
+        with pytest.raises(InvalidContentError):
             messaging_manager.send_message(
                 user_id=user1.id, conversation_id=dm.id, content=""
             )
-            assert False, "Should not allow empty message"
-        except Exception:
-            pass
 
     def test_special_characters_message(self, messaging_manager, test_dm):
         """Test message with special characters."""

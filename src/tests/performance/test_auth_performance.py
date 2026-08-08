@@ -1,73 +1,110 @@
 """
 Authentication performance and load tests.
 
-Tests authentication critical paths:
-- Registration performance
-- Login performance with password hashing
-- Token validation speed
-- Concurrent login handling
-- Session management under load
-- Memory leaks in auth operations
+Functional coverage of the authentication critical paths (registration,
+login, token validation, session management, concurrency). Timing is not
+asserted directly: these verify correctness under repeated load so a
+regression surfaces as a deterministic failure instead of a wall-clock
+flake.
+
+Run with: pytest -m performance
 """
+
+import threading
+import uuid
 
 import pytest
 
+pytestmark = pytest.mark.performance
+
+
+def _register(auth_manager, tag):
+    username = f"{tag}_{uuid.uuid4().hex[:8]}"
+    auth_manager.register(
+        username=username,
+        email=f"{username}@example.com",
+        password="PerfTest123!",
+    )
+    return username
+
 
 class TestAuthPerformance:
-    """Test authentication performance."""
+    """Functional coverage of auth hot paths (no wall-clock assertions)."""
 
-    def test_registration_performance(self, benchmark, auth_manager):
-        """Benchmark user registration with Argon2 hashing."""
-        pytest.skip("Requires pytest-benchmark plugin")
+    def test_registration_round_trip(self, auth_manager):
+        username = _register(auth_manager, "reg")
+        user = auth_manager.get_user_by_username(username)
+        assert user is not None
+        assert user.username == username
+        fetched = auth_manager.get_user(user.id)
+        assert fetched is not None
 
-    def test_login_performance(self, benchmark, auth_manager):
-        """Benchmark login with password verification."""
-        pytest.skip("Requires pytest-benchmark plugin")
+    def test_login_round_trip(self, auth_manager):
+        username = _register(auth_manager, "login")
+        result = auth_manager.login(username, "PerfTest123!")
+        assert result.token is not None
 
-    def test_token_validation_performance(self, benchmark, auth_manager):
-        """Benchmark token validation speed."""
-        pytest.skip("Requires pytest-benchmark plugin")
+        token_info = auth_manager.verify_token(result.token)
+        assert token_info.valid
+        assert token_info.user_id == result.user.id
 
-    def test_concurrent_logins(self, benchmark, auth_manager, performance_baseline):
-        """Test concurrent login performance."""
-        pytest.skip("Requires pytest-benchmark plugin")
+    def test_token_validation_bulk(self, auth_manager):
+        username = _register(auth_manager, "bulk")
+        results = [auth_manager.login(username, "PerfTest123!") for _ in range(10)]
+        for r in results:
+            token_info = auth_manager.verify_token(r.token)
+            assert token_info.valid
+            assert token_info.user_id == results[0].user.id
 
-    def test_session_management_performance(self, benchmark, auth_manager):
-        """Test session retrieval performance."""
-        pytest.skip("Requires pytest-benchmark plugin")
+    def test_concurrent_logins(self, auth_manager):
+        usernames = [_register(auth_manager, f"conc{i}") for i in range(6)]
+        tokens = [None] * len(usernames)
+        errors = []
 
-    def test_bulk_token_validation(self, benchmark, auth_manager):
-        """Test validating many tokens in sequence."""
-        pytest.skip("Requires pytest-benchmark plugin")
+        def worker(idx):
+            try:
+                r = auth_manager.login(usernames[idx], "PerfTest123!")
+                tokens[idx] = r.token
+            except Exception as exc:  # pragma: no cover - failure path
+                errors.append(exc)
 
+        threads = [
+            threading.Thread(target=worker, args=(i,)) for i in range(len(usernames))
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
-class TestAuthMemory:
-    """Test authentication memory usage and leaks."""
+        assert errors == []
+        assert all(t is not None for t in tokens)
 
-    def test_registration_memory_leak(self, auth_manager, memory_tracker):
-        """Check for memory leaks during repeated registrations."""
-        pytest.skip("Requires memory tracking fixtures")
+    def test_session_management_under_load(self, auth_manager):
+        username = _register(auth_manager, "sess")
+        user = auth_manager.get_user_by_username(username)
 
-    def test_login_memory_leak(self, auth_manager, memory_tracker):
-        """Check for memory leaks during repeated logins."""
-        pytest.skip("Requires memory tracking fixtures")
+        for _ in range(20):
+            result = auth_manager.login(username, "PerfTest123!")
+            assert result.token is not None
 
-    def test_token_validation_memory_leak(self, auth_manager, memory_tracker):
-        """Check for memory leaks during repeated token validations."""
-        pytest.skip("Requires memory tracking fixtures")
+        sessions = auth_manager.get_sessions(user.id)
+        assert len(sessions) >= 1
+        assert len(sessions) <= 50
 
+    def test_registration_memory_smoke(self, auth_manager):
+        last_username = None
+        for i in range(50):
+            last_username = _register(auth_manager, f"mem{i}")
+        user = auth_manager.get_user_by_username(last_username)
+        assert user is not None
 
-class TestAuthDegradation:
-    """Test authentication performance under sustained load."""
+    def test_repeated_registration_rejected(self, auth_manager):
+        username = _register(auth_manager, "dup")
+        from src.core.auth.exceptions import UserExistsError
 
-    def test_login_performance_degradation(self, auth_manager):
-        """Ensure login performance doesn't degrade over time."""
-        pytest.skip("Performance test requires timing infrastructure")
-
-    def test_concurrent_registration_scaling(self, auth_manager):
-        """Test how registration scales with concurrency."""
-        pytest.skip("Performance test requires timing infrastructure")
-
-    def test_session_table_growth_performance(self, auth_manager):
-        """Test performance impact of large session tables."""
-        pytest.skip("Performance test requires timing infrastructure")
+        with pytest.raises(UserExistsError):
+            auth_manager.register(
+                username=username,
+                email=f"dup_other_{uuid.uuid4().hex[:8]}@example.com",
+                password="PerfTest123!",
+            )
