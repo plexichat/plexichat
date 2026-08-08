@@ -28,17 +28,14 @@ class TestPlexiJoinInbound:
         assert "total" in env
 
     def test_approve_request_missing_raises(self, plexijoin):
-        try:
+        """Approving a nonexistent request raises ValueError."""
+        with pytest.raises(ValueError):
             plexijoin.approve_request(999999, admin_id=1)
-        except ValueError:
-            # ValueError is the canonical "request not found" path.
-            pass
 
     def test_deny_request_missing_raises(self, plexijoin):
-        try:
+        """Denying a nonexistent request raises ValueError."""
+        with pytest.raises(ValueError):
             plexijoin.deny_request(999999, admin_id=1)
-        except ValueError:
-            pass
 
     def test_status_summary_construction(self, plexijoin):
         s = plexijoin.get_status_summary()
