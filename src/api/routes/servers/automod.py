@@ -272,3 +272,58 @@ async def get_server_automod_violations(
     except Exception as e:
         logger.error(f"Failed to get automod violations for server {server_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/{server_id}/automod/violations/{violation_id}",
+    response_model=AutomodViolationResponse,
+    summary="Get a single server automod violation",
+)
+async def get_server_automod_violation(
+    server_id: str,
+    violation_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> AutomodViolationResponse:
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+    from src.core import automod
+
+    try:
+        sid = int(server_id)
+        vid = int(violation_id)
+        servers_mod.require_permission(current_user.user_id, sid, "server.automod")
+
+        violation = automod.get_violation(vid, server_id=sid)
+        if violation is None:
+            raise HTTPException(status_code=404, detail="Violation not found")
+
+        return AutomodViolationResponse(
+            id=SnowflakeID(violation.id),
+            user_id=SnowflakeID(violation.user_id),
+            channel_id=SnowflakeID(violation.channel_id),
+            rule_id=SnowflakeID(violation.rule_id),
+            rule_type=violation.rule_type.value
+            if hasattr(violation.rule_type, "value")
+            else str(violation.rule_type),
+            matched_content=violation.matched_content,
+            severity=violation.severity.value
+            if hasattr(violation.severity, "value")
+            else str(violation.severity),
+            actions_taken=[
+                a.value if hasattr(a, "value") else str(a)
+                for a in violation.actions_taken
+            ],
+            created_at=violation.created_at,
+            metadata=violation.metadata or {},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to get automod violation {violation_id} for server {server_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail=str(e))
