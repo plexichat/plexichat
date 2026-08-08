@@ -33,12 +33,12 @@ class TestIntegration:
         result = automod_manager.check_message(
             server_id=server.id,
             channel_id=channel_id,
-            user_id=owner.id,
+            user_id=99999,
             content="This contains badword in it",
         )
         assert result is not None
-        assert len(result) >= 1
-        assert result[0].rule_id == rule.id
+        assert len(result.violations) >= 1
+        assert result.violations[0].rule_id == rule.id
 
     def test_check_message_no_match(self, automod_manager, test_server):
         """Test that check_message returns empty when no rules match."""
@@ -64,11 +64,11 @@ class TestIntegration:
         result = automod_manager.check_message(
             server_id=server.id,
             channel_id=channel_id,
-            user_id=owner.id,
+            user_id=99999,
             content="This is a perfectly fine message",
         )
         assert result is not None
-        assert len(result) == 0
+        assert len(result.violations) == 0
 
     def test_process_violation_records_in_audit_log(self, automod_manager, test_server):
         """Test that processing a violation creates an audit log entry."""
@@ -136,10 +136,10 @@ class TestIntegration:
         result = automod_manager.check_message(
             server_id=server.id,
             channel_id=channel_id,
-            user_id=owner.id,
+            user_id=99999,
             content="This contains shouldnotmatch word",
         )
-        assert len(result) == 0
+        assert len(result.violations) == 0
 
     def test_exempt_channel_skips_rule(self, automod_manager, test_server):
         """Test that a channel exemption prevents rule enforcement."""
@@ -173,10 +173,10 @@ class TestIntegration:
         result = automod_manager.check_message(
             server_id=server.id,
             channel_id=channel_id,
-            user_id=owner.id,
+            user_id=99999,
             content="This contains exemptword",
         )
-        assert len(result) == 0
+        assert len(result.violations) == 0
 
     def test_reputation_decreases_with_violations(self, automod_manager, test_server):
         """Test that reputation score decreases when violations are processed."""
