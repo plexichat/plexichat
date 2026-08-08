@@ -625,7 +625,10 @@ class TestSessionHijacking:
     ):
         """Test resume fails with expired session."""
         session = session_manager.create_session(connection, user_id=12345, intents=513)
-        session.last_activity = time.monotonic() - 70
+        # Expiry is checked against the wall-clock ``last_activity_epoch``
+        # (persisted for cross-worker resume), not the monotonic
+        # ``last_activity`` local-only field.
+        session.last_activity_epoch = time.time() - 70
 
         resume_payload = {
             "token": "test_token",

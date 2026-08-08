@@ -35,13 +35,10 @@ class TestOpcodes:
         assert GatewayOpcode.HELLO == 10
         assert GatewayOpcode.HEARTBEAT_ACK == 11
 
-    def test_unknown_opcode_handling(self, opcode_handler, connection):
+    @pytest.mark.asyncio
+    async def test_unknown_opcode_handling(self, opcode_handler, connection):
         """Test unknown opcode returns error."""
-        import asyncio
-
-        result = asyncio.get_event_loop().run_until_complete(
-            opcode_handler.handle(connection, 99, None)
-        )
+        result = await opcode_handler.handle(connection, 99, None)
         assert result[2] == GatewayCloseCode.UNKNOWN_OPCODE
 
 
@@ -151,8 +148,19 @@ class TestZlibDecompressor:
 
     def test_decompressor_reset(self):
         """Test decompressor reset method."""
+        compressor = ZlibCompressor()
         decompressor = ZlibDecompressor()
+
+        data = {"op": 0, "d": {"content": "test"}}
+        compressed = compressor.compress(data)
+        assert decompressor.decompress(compressed) == data
+
+        compressor.reset()
         decompressor.reset()
+
+        data2 = {"op": 0, "d": {"content": "test2"}}
+        compressed2 = compressor.compress(data2)
+        assert decompressor.decompress(compressed2) == data2
 
 
 class TestConnectionEdgeCases:
