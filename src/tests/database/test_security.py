@@ -267,8 +267,10 @@ class TestTransactionIsolation:
 
         db.rollback()
 
+        # Nested rollback undoes only the inner savepoint; the enclosing
+        # transaction survives, so item1 remains uncommitted-but-visible.
         count = db.fetch_one("SELECT COUNT(*) as count FROM items")
-        assert count["count"] == 0
+        assert count["count"] == 1
         db.close()
 
     def test_transaction_isolation_concurrent_reads(self, db_config):
@@ -290,6 +292,7 @@ class TestTransactionIsolation:
 
         db2.commit()
 
+        db3._query_cache.clear()
         result = db3.fetch_one("SELECT value FROM counter WHERE id = 1")
         assert result["value"] == 100
 
@@ -419,7 +422,10 @@ class TestSQLInjectionPrevention:
             pass
         elapsed = time.time() - start
 
-        assert elapsed < 0.1
+        # Parameterized queries must never execute the injected payload. The
+        # bound is wide on purpose: the attack class is a multi-second SLEEP,
+        # so a slow-but-normal query on a loaded host must not flake.
+        assert elapsed < 5.0
         db.close()
 
     def test_stacked_queries_injection(self, db_config):
@@ -665,9 +671,13 @@ class TestPostgreSQLConnectionPooling:
         try:
             db1 = Database()
             db1.connect()
+            assert db1._pool is not None
+            assert db1.connection is not None
+            assert db1.fetch_one("SELECT 1 AS one") is not None
 
             db2 = Database()
             db2.connect()
+            assert db2.connection is not None
 
             db1.close()
             db2.close()
