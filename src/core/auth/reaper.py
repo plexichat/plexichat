@@ -233,11 +233,37 @@ class AccountReaper:
             # workbook blobs before metadata is removed. Do not continue with
             # row deletion after a real storage failure, or the blob paths are
             # lost and the user's .plexisum files become orphaned.
-            if sum_domain.get_manager() is not None:
-                sum_domain.purge_user_data(user_id)
+            try:
+                sum_domain.get_manager()
+            except RuntimeError:
+                # Initialize through the same compatibility path as normal boot
+                # before erasing any Sum rows. If the configured media adapter
+                # is unavailable, setup fails closed and no raw row delete below
+                # may discard the blob pointers.
+                import src.api as api
+
+                db = api.get_db()
+                if db is None:
+                    raise RuntimeError("PlexiSum database unavailable")
+                sum_domain.setup(
+                    db,
+                    servers_module=api.get_servers(),
+                    media=api.get_media(),
+                )
+            sum_domain.purge_user_data(user_id)
         except RuntimeError:
-            # PlexiSum is optional and not initialized in legacy deployments.
-            logger.debug("Reaper: PlexiSum is not initialized; skipping purge")
+            # PlexiSum is optional only when its metadata tables are absent.
+            # If the database cannot answer that question, fail closed instead
+            # of deleting the user's row-level metadata and orphaning blobs.
+            try:
+                has_sum_tables = self._db.table_exists("sum_workbooks")
+            except AttributeError as exc:
+                raise RuntimeError(
+                    "Cannot verify Sum metadata tables during account purge"
+                ) from exc
+            if has_sum_tables:
+                raise RuntimeError("PlexiSum manager unavailable during account purge")
+            logger.debug("Reaper: PlexiSum is not installed; skipping purge")
         except Exception as exc:
             logger.error("Reaper: PlexiSum blob purge failed: %s", exc)
             raise
@@ -261,7 +287,6 @@ class AccountReaper:
                 "(SELECT id FROM stash_items WHERE owner_id = ?)",
                 (user_id, user_id),
             ),
-            ("DELETE FROM sum_workbooks WHERE owner_id = ?", (user_id,)),
             ("DELETE FROM stash_items WHERE owner_id = ?", (user_id,)),
             ("DELETE FROM stash_collections WHERE owner_id = ?", (user_id,)),
         )

@@ -49,8 +49,11 @@ class BotManagementMixin(ApplicationManagerProtocol):
         permissions: str = "{}",
         bot_name: Optional[str] = None,
     ) -> ApprovedBot:
-        self._check_bot_license()
+        # SECURITY: authorize before licensing so a user without
+        # ``server.manage`` gets PermissionDeniedError rather than a
+        # license error (which would leak feature availability).
         self._require_server_manage_permission(approved_by, server_id)
+        self._check_bot_license()
 
         existing = self._db.fetch_one(
             "SELECT id FROM app_approved_bots WHERE server_id = ? AND application_id = ? AND status = 'approved'",

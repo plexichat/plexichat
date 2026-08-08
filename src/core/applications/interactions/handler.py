@@ -507,13 +507,17 @@ class InteractionHandler:
         if raw_data:
             decoded: Any = None
             try:
-                decoded = decrypt_data(raw_data, context=f"interaction:{row['id']}")
+                # decrypt_data returns the decrypted plaintext (a JSON
+                # string), so parse it into a dict before passing it to
+                # _parse_interaction_data which expects a mapping.
+                plaintext = decrypt_data(raw_data, context=f"interaction:{row['id']}")
+                decoded = json.loads(plaintext)
             except Exception:
                 try:
                     decoded = json.loads(raw_data)
                 except (json.JSONDecodeError, TypeError):
                     decoded = None
-            if decoded is not None:
+            if decoded is not None and isinstance(decoded, dict):
                 data = self._parse_interaction_data(decoded)
 
         return Interaction(
