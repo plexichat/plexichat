@@ -1,6 +1,5 @@
 """Unit tests for admin self-service security helpers."""
 
-import sys
 from unittest.mock import MagicMock
 
 
@@ -29,7 +28,7 @@ class TestAdminAuthSecurity:
         assert status.otp_enabled is True
         assert status.backup_codes_remaining == 3
 
-    def test_begin_otp_setup_resets_existing_otp_state(self, mocker, monkeypatch):
+    def test_begin_otp_setup_resets_existing_otp_state(self, mocker):
         from src.core.admin import auth as admin_auth
 
         mock_db = MagicMock()
@@ -56,7 +55,7 @@ class TestAdminAuthSecurity:
         fake_pyotp.TOTP.side_effect = lambda secret: _FakeTOTP(secret)
 
         mocker.patch("src.utils.encryption.verify_password", return_value=True)
-        monkeypatch.setitem(sys.modules, "pyotp", fake_pyotp)
+        mocker.patch("src.core.admin.auth.otp_setup_mixin.pyotp", fake_pyotp)
 
         result = admin_auth.begin_otp_setup(mock_db, 1, "CurrentPass123!")
 

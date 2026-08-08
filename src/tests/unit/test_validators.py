@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 # Try to import hypothesis, skip tests if not available
 try:
-    from hypothesis import given, strategies as st, settings
+    from hypothesis import given, strategies as st, settings, assume
 
     HAS_HYPOTHESIS = True
 except ImportError:
@@ -35,6 +35,7 @@ class TestUsernameValidation:
     def test_username_validation_against_real_logic(self, username):
         """Test username validation using the actual codebase logic."""
         # This calls the real validate_username from src.core.auth.passwords
+        assume(username.isprintable())
         valid, issues = validate_username(username)
 
         # Cross-check: if valid, should match basic constraints

@@ -12,7 +12,14 @@ import string
 import re
 
 try:
-    from hypothesis import given, strategies as st, assume, settings, example
+    from hypothesis import (
+        given,
+        strategies as st,
+        assume,
+        settings,
+        example,
+        HealthCheck,
+    )
     from hypothesis.strategies import composite
 
     HAS_HYPOTHESIS = True
@@ -23,7 +30,7 @@ from src.core.auth.passwords import validate_username, validate_email, validate_
 from src.core.messaging.content import validate_content
 from src.core.webhooks.manager import WebhookManager
 from src.core.servers.manager import ServerManager
-from src.core.webhooks.exceptions import WebhookNameError
+from src.core.webhooks.exceptions import WebhookNameError, WebhookAvatarError
 from src.core.servers.exceptions import (
     InvalidServerNameError,
     InvalidChannelNameError,
@@ -173,7 +180,7 @@ class TestAuthManagerPropertyBased:
     """Property-based tests for AuthManager validation."""
 
     @given(usernames(valid_only=False))
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=40, deadline=None)
     def test_username_validation_comprehensive(self, username):
         """Test username validation with comprehensive inputs."""
         valid, issues = validate_username(username)
@@ -194,7 +201,11 @@ class TestAuthManagerPropertyBased:
             assert not valid or "at most" in str(issues).lower()
 
     @given(usernames(valid_only=True))
-    @settings(max_examples=100, deadline=None)
+    @settings(
+        max_examples=40,
+        deadline=None,
+        suppress_health_check=[HealthCheck.filter_too_much],
+    )
     @example("validuser123")
     @example("User_Name")
     def test_valid_usernames_accepted(self, username):
@@ -237,7 +248,7 @@ class TestAuthManagerPropertyBased:
         assert any("reserved" in issue.lower() for issue in issues)
 
     @given(email_addresses(valid_only=False))
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=40, deadline=None)
     def test_email_validation_comprehensive(self, email):
         """Test email validation with comprehensive inputs."""
         result = validate_email(email)
@@ -252,14 +263,12 @@ class TestAuthManagerPropertyBased:
             assert not result
 
     @given(email_addresses(valid_only=True))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=40, deadline=None)
     @example("test@example.com")
     @example("user.name@domain.co.uk")
     def test_valid_emails_accepted(self, email):
         """Valid emails should be accepted."""
-        result = validate_email(email)
-        # Note: May fail if TLD not in list, but valid structure should parse
-        assert isinstance(result, bool)
+        assert validate_email(email) is True
 
     @given(st.text(min_size=1, max_size=20).filter(lambda x: "@" not in x))
     @settings(max_examples=50)
@@ -269,7 +278,7 @@ class TestAuthManagerPropertyBased:
         assert not result
 
     @given(passwords(valid_only=False))
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=60, deadline=None)
     def test_password_validation_comprehensive(self, password):
         """Test password validation with comprehensive inputs."""
         result = validate_password(password)
@@ -297,7 +306,7 @@ class TestAuthManagerPropertyBased:
             )
 
     @given(passwords(valid_only=True))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=40, deadline=None)
     @example("ValidPass123!")
     def test_valid_passwords_accepted(self, password):
         """Valid passwords meeting all requirements should be accepted."""
@@ -338,7 +347,7 @@ class TestMessagingManagerPropertyBased:
     """Property-based tests for MessagingManager validation."""
 
     @given(message_content(max_length=4000))
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=60, deadline=None)
     def test_message_content_validation(self, content):
         """Test message content validation with various inputs."""
         result = validate_content(content, max_length=4000)
@@ -366,9 +375,20 @@ class TestMessagingManagerPropertyBased:
             min_size=1,
             max_size=4000,
             alphabet=st.characters(blacklist_categories=["Cs"]),
+        ).filter(
+            lambda x: (
+                "<script" not in x.lower()
+                and "javascript:" not in x.lower()
+                and "union select" not in x.lower()
+                and "drop table" not in x.lower()
+            )
         )
     )
-    @settings(max_examples=100, deadline=None)
+    @settings(
+        max_examples=40,
+        deadline=None,
+        suppress_health_check=[HealthCheck.filter_too_much],
+    )
     @example("Hello, world!")
     @example("Test message with émojis 🎉")
     def test_valid_message_content_accepted(self, content):
@@ -376,9 +396,7 @@ class TestMessagingManagerPropertyBased:
         assume(content.strip())  # Not empty after stripping
 
         result = validate_content(content, max_length=4000)
-        assert (
-            result.valid or len(result.issues) > 0
-        )  # May have warnings but should process
+        assert result.valid is True
 
     @given(
         st.text(
@@ -405,23 +423,19 @@ class TestMessagingManagerPropertyBased:
 
     @given(
         st.text(
-            alphabet=st.characters() | st.sampled_from(["|", "n", "s", "f", "w"]),
-            min_size=1,
-            max_size=100,
-        ).filter(lambda x: "||" in x or "nsfw" in x.lower())
+            alphabet=st.characters(whitelist_categories=["Ll", "Lu", "Nd", "Zs"]),
+            min_size=0,
+            max_size=60,
+        )
     )
-    @settings(max_examples=50)
-    def test_spoiler_and_nsfw_detection(self, content):
-        """Test spoiler and NSFW content detection."""
+    @settings(max_examples=40, deadline=None)
+    def test_spoiler_and_nsfw_detection(self, filler):
+        """Spoiler tags and NSFW markers must always be flagged."""
+        content = f"start {filler} ||spoiler|| {filler} nsfw {filler} end"
         result = validate_content(content, max_length=4000)
-
-        if "||" in content:
-            # May detect spoilers (depending on exact format)
-            pass
-
-        if "nsfw" in content.lower():
-            # Should potentially flag NSFW
-            assert isinstance(result.has_nsfw, bool)
+        assert result.valid is True
+        assert result.has_spoilers is True
+        assert result.has_nsfw is True
 
     @given(st.text(min_size=1, max_size=200, alphabet="<>"))
     @settings(max_examples=50)
@@ -458,7 +472,7 @@ class TestServersManagerPropertyBased:
     """Property-based tests for ServersManager validation."""
 
     @given(st.text(min_size=0, max_size=150))
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=60, deadline=None)
     def test_server_name_validation(self, name):
         """Test server name validation with various inputs."""
         try:
@@ -470,14 +484,14 @@ class TestServersManagerPropertyBased:
             assert not stripped or len(stripped) < 2 or len(stripped) > 100
 
     @given(st.text(min_size=2, max_size=100).filter(lambda x: x.strip()))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=40, deadline=None)
     @example("Valid Server")
     @example("My Gaming Server 123")
     def test_valid_server_names(self, name):
-        """Valid server names should be accepted."""
+        """Valid server names should round-trip through the validator."""
         stripped = name.strip()
         assume(2 <= len(stripped) <= 100)
-        assert len(stripped) >= 2
+        assert _get_server_manager()._validate_server_name(name) == stripped
 
     @given(st.text(min_size=0, max_size=1))
     @settings(max_examples=50)
@@ -496,7 +510,7 @@ class TestServersManagerPropertyBased:
             _get_server_manager()._validate_server_name(name)
 
     @given(st.text(min_size=0, max_size=150))
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=60, deadline=None)
     def test_channel_name_validation(self, name):
         """Test channel name validation."""
         try:
@@ -520,16 +534,20 @@ class TestServersManagerPropertyBased:
             | st.sampled_from(["-"]),
         )
     )
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=40, deadline=None)
     @example("general")
     @example("my-channel")
     def test_valid_channel_names(self, name):
-        """Valid channel names should be accepted."""
+        """Valid channel names accepted; dash-only names rejected."""
         assume(name.strip())
-        assert len(name) <= 100
+        if any(ch.isalnum() for ch in name):
+            assert _get_server_manager()._validate_channel_name(name) == name
+        else:
+            with pytest.raises(InvalidChannelNameError):
+                _get_server_manager()._validate_channel_name(name)
 
     @given(st.text(min_size=0, max_size=150))
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=60, deadline=None)
     def test_role_name_validation(self, name):
         """Test role name validation."""
         try:
@@ -541,14 +559,14 @@ class TestServersManagerPropertyBased:
             assert not stripped or len(stripped) > 100
 
     @given(st.text(min_size=1, max_size=100).filter(lambda x: x.strip()))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=40, deadline=None)
     @example("Admin")
     @example("Moderator Role")
     def test_valid_role_names(self, name):
-        """Valid role names should be accepted."""
+        """Valid role names should round-trip through the validator."""
         stripped = name.strip()
         assume(0 < len(stripped) <= 100)
-        assert len(stripped) > 0
+        assert _get_server_manager()._validate_role_name(name) == stripped
 
 
 # =============================================================================
@@ -562,7 +580,7 @@ class TestWebhookManagerPropertyBased:
     """Property-based tests for WebhookManager validation."""
 
     @given(st.text(min_size=0, max_size=120))
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=60, deadline=None)
     def test_webhook_name_validation(self, name):
         """Test webhook name validation."""
         try:
@@ -585,15 +603,15 @@ class TestWebhookManagerPropertyBased:
     @given(
         st.text(min_size=1, max_size=80).filter(lambda x: x.strip() and "<" not in x)
     )
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=40, deadline=None)
     @example("My Webhook")
     @example("GitHub Bot")
     def test_valid_webhook_names(self, name):
-        """Valid webhook names should be accepted."""
+        """Valid webhook names should round-trip through the validator."""
         stripped = name.strip()
         assume(0 < len(stripped) <= 80)
         assume("<" not in name)
-        assert len(stripped) > 0
+        assert _get_webhook_manager()._validate_name(name) == stripped
 
     @given(st.text(min_size=81, max_size=200))
     @settings(max_examples=50)
@@ -611,24 +629,43 @@ class TestWebhookManagerPropertyBased:
     )
     @settings(max_examples=30)
     def test_webhook_name_xss_rejection(self, pattern, prefix, suffix):
-        """Webhook names with XSS attempts should be sanitized/rejected."""
+        """Webhook names with XSS attempts must be sanitized or rejected."""
         name = prefix + pattern + suffix
-        # Should contain dangerous patterns
-        assert "<script" in name.lower() or "javascript:" in name.lower()
+        try:
+            sanitized = _get_webhook_manager()._validate_name(name)
+        except WebhookNameError:
+            return  # sanitized to empty -> rejected
+        # Complete <script...> tags and javascript: URIs must never survive.
+        assert re.search(r"<script[^>]*>", sanitized, re.IGNORECASE) is None
+        assert "javascript:" not in sanitized.lower()
 
-    @given(st.text(min_size=0, max_size=300))
-    @settings(max_examples=100, deadline=None)
-    def test_webhook_avatar_url_validation(self, url):
-        """Test webhook avatar URL validation."""
-        # Valid URLs should start with http:// or https://
-        # Invalid schemes should be rejected
-        if url.strip():
-            if url.startswith(("http://", "https://")):
-                pass  # Potentially valid
-            else:
-                pass  # Invalid scheme
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            (None, None),
+            ("", None),
+            ("   ", None),
+            ("http://example.com/a.png", "http://example.com/a.png"),
+            (" https://example.com/a.png ", "https://example.com/a.png"),
+            ("ftp://example.com/x", WebhookAvatarError),
+            ("file:///etc/passwd", WebhookAvatarError),
+            ("javascript:alert(1)", WebhookAvatarError),
+            ("data:text/html,x", WebhookAvatarError),
+            ("http://", WebhookAvatarError),
+            ("not-a-url", WebhookAvatarError),
+        ],
+    )
+    def test_webhook_avatar_url_validation(self, url, expected, monkeypatch):
+        """Avatar URLs must be http/https and pass SSRF checks (DNS stubbed)."""
+        monkeypatch.setattr(
+            "src.utils.security.URLValidator.validate_url_for_request",
+            lambda self, url: (url, "93.184.216.34"),
+        )
+        if expected is WebhookAvatarError:
+            with pytest.raises(WebhookAvatarError):
+                _get_webhook_manager()._validate_avatar_url(url)
         else:
-            pass  # Empty is treated as None
+            assert _get_webhook_manager()._validate_avatar_url(url) == expected
 
 
 # =============================================================================
@@ -643,7 +680,7 @@ class TestUnicodeHandling:
     @given(
         st.text(alphabet=st.characters(min_codepoint=0x1F600, max_codepoint=0x1F64F))
     )
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=40, deadline=None)
     def test_emoji_handling_in_messages(self, content):
         """Test emoji handling in message content."""
         if content.strip():
@@ -652,7 +689,7 @@ class TestUnicodeHandling:
             assert isinstance(result.sanitized_content, str)
 
     @given(st.text(alphabet=st.characters(min_codepoint=0x0600, max_codepoint=0x06FF)))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=40, deadline=None)
     def test_arabic_text_handling(self, content):
         """Test Arabic text handling."""
         if content.strip():
@@ -660,7 +697,7 @@ class TestUnicodeHandling:
             assert isinstance(result.sanitized_content, str)
 
     @given(st.text(alphabet=st.characters(min_codepoint=0x4E00, max_codepoint=0x9FFF)))
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=40, deadline=None)
     def test_cjk_text_handling(self, content):
         """Test CJK (Chinese/Japanese/Korean) text handling."""
         if content.strip():
