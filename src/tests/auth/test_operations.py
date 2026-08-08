@@ -411,8 +411,30 @@ class TestAuthManagerTwoFactor:
             auth_manager.disable_2fa(user.id, "WrongPassword", "123456")
 
     def test_2fa_challenge_expired(self, db, auth_manager):
-        """Test completing expired 2FA challenge."""
-        pass
+        """Test completing an expired 2FA challenge."""
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register("testuser", "test@example.com", "Password123!")
+
+        from src.core.auth.tokens import create_2fa_challenge_token
+        from src.utils.encryption import generate_snowflake_id
+
+        challenge_id = generate_snowflake_id()
+        now = int(time.time() * 1000)
+        # The token and its hash come from a single generation call so the
+        # secret matches the stored hash (reaching the expiry check).
+        full_token, token_hash = create_2fa_challenge_token(challenge_id)
+
+        db.execute(
+            """INSERT INTO auth_2fa_challenges 
+               (id, user_id, token_hash, created_at, expires_at, used)
+               VALUES (?, ?, ?, ?, ?, 0)""",
+            (challenge_id, user.id, token_hash, now, now - 100000),
+        )
+
+        with pytest.raises(TokenExpiredError):
+            auth_manager.complete_2fa(full_token, "123456")
 
     def test_2fa_challenge_used(self, db, auth_manager):
         """Test reusing 2FA challenge."""

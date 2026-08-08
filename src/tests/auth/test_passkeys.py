@@ -30,11 +30,44 @@ class TestPasskeyManager:
         assert passkey_manager is not None
         assert passkey_manager._db is not None
 
-    def test_challenge_cleanup(self, passkey_manager):
-        """Test cleanup of expired challenges."""
-        # Test that cleanup method exists and can be called
-        passkey_manager.cleanup_expired_challenges()
-        # Should not raise an error
+    def test_challenge_cleanup(self, passkey_manager, db):
+        """Test cleanup of expired challenges removes only expired rows."""
+        import time
+
+        now = int(time.time() * 1000)
+        db.execute(
+            """INSERT INTO auth_passkey_challenges
+               (id, challenge_id, user_id, challenge_type, challenge, expires_at, used, created_at)
+               VALUES (?, ?, NULL, 'registration', ?, ?, 0, ?)""",
+            (
+                900001,
+                "expired_probe_challenge",
+                b"\x00\x01",
+                now - 100000,
+                now - 200000,
+            ),
+        )
+        db.execute(
+            """INSERT INTO auth_passkey_challenges
+               (id, challenge_id, user_id, challenge_type, challenge, expires_at, used, created_at)
+               VALUES (?, ?, NULL, 'registration', ?, ?, 0, ?)""",
+            (900002, "fresh_probe_challenge", b"\x00\x02", now + 3600000, now),
+        )
+
+        deleted = passkey_manager.cleanup_expired_challenges()
+
+        assert deleted == 1
+        assert (
+            db.fetch_one(
+                "SELECT challenge_id FROM auth_passkey_challenges WHERE id = 900001"
+            )
+            is None
+        )
+        fresh = db.fetch_one(
+            "SELECT challenge_id FROM auth_passkey_challenges WHERE id = 900002"
+        )
+        assert fresh is not None
+        assert fresh["challenge_id"] == "fresh_probe_challenge"
 
 
 class TestPasskeyAPI:

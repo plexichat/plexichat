@@ -105,11 +105,11 @@ class TestLogin:
         assert len(user_sessions) <= 10
 
     def test_login_with_ip_tracking(self, db, auth_manager):
-        """Test that login correctly tracks multiple IP addresses."""
+        """Test that login records distinct IP addresses per session."""
         from src.utils import encryption
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            auth_manager.register(
+            user = auth_manager.register(
                 username="ip_test",
                 email="ip_test@example.com",
                 password="TestPass123!",
@@ -117,9 +117,9 @@ class TestLogin:
 
         # Login from different IPs
         with patch.object(encryption, "verify_password", return_value=True):
-            auth_manager.login("ip_test", "TestPass123!")
-            auth_manager.login("ip_test", "TestPass123!")
+            auth_manager.login("ip_test", "TestPass123!", ip_address="203.0.113.1")
+            auth_manager.login("ip_test", "TestPass123!", ip_address="198.51.100.7")
 
-        # Verify IP tracking is working (implementation-specific)
-        # This is a placeholder for IP tracking verification
-        assert True
+        sessions = auth_manager.get_sessions(user.id)
+        assert len(sessions) == 2
+        assert {s.ip_address for s in sessions} == {"203.0.113.1", "198.51.100.7"}
