@@ -108,6 +108,28 @@ class ReportGenerator:
             logger.info(
                 f"  {dur:>8.1f}ms | {success:<4} | {r['method']:<6} {label[:45]:<45} ({status}){expected}"
             )
+
+        ram = self.ctx.ram_monitor
+        if ram is not None:
+            ram.stop()
+            summary = ram.summary()
+            logger.info("-" * 60)
+            logger.info("RAM USAGE SUMMARY:")
+            if summary:
+                logger.info(
+                    f"  Process RSS:  start {summary['start_rss_mb']:>8.1f} MB | "
+                    f"end {summary['end_rss_mb']:>8.1f} MB | "
+                    f"peak {summary['peak_rss_mb']:>8.1f} MB | "
+                    f"delta {summary['delta_rss_mb']:+.1f} MB"
+                )
+                logger.info(
+                    f"  System Memory: used {summary['system_used_mb']:>9.1f} MB / "
+                    f"{summary['system_total_mb']:>9.1f} MB "
+                    f"({summary['system_percent']:.1f}%)"
+                )
+            else:
+                logger.info("  (no RAM samples collected)")
+
         logger.info("=" * 60)
 
         if failed > 0:

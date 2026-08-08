@@ -210,6 +210,46 @@ class FeatureSetupMixin(SetupServiceBase):
         except Exception as e:
             logger.warning(f"Failed to create test automod rule: {e}")
 
+    def create_test_automod_violation(self) -> None:
+        if not self.ctx.test_automod_rule_id or not self.ctx.test_server_id:
+            return
+        try:
+            from src.core import automod
+            from src.core.automod.models import (
+                RuleMatch,
+                RuleType,
+                ViolationSeverity,
+                RuleAction,
+                ActionType,
+            )
+
+            match = RuleMatch(
+                rule_id=self.ctx.test_automod_rule_id,
+                rule_type=RuleType.KEYWORD,
+                matched=True,
+                matched_content="test-bad-word",
+                severity=ViolationSeverity.MEDIUM,
+            )
+            user_id = self.ctx.test_other_user_id or self.ctx.test_user_id
+            assert user_id is not None, (
+                "No test user id available for automod violation"
+            )
+            violation = automod.process_violation(
+                server_id=self.ctx.test_server_id,
+                channel_id=self.ctx.test_channel_id or 0,
+                user_id=user_id,
+                message_id=None,
+                match=match,
+                actions=[RuleAction(action_type=ActionType.LOG_ONLY)],
+                context={"source": "selftest"},
+            )
+            self.ctx.test_automod_violation_id = violation.id
+            logger.debug(
+                f"Created test automod violation ID: {self.ctx.test_automod_violation_id}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create test automod violation: {e}")
+
     def create_test_access_token(self) -> None:
         try:
             from src.core import auth as auth_module

@@ -399,7 +399,8 @@ class CoreMixin(EndpointTesterBase):
             f"({len(created_ids)} messages deleted); verifying removal..."
         )
 
-        # Confirm the messages are actually gone.
+        # Confirm the messages render as deleted tombstones (deleted flag
+        # set, content blank) rather than disappearing entirely.
         all_gone = True
         for mid in created_ids:
             try:
@@ -407,21 +408,29 @@ class CoreMixin(EndpointTesterBase):
                     f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages/{mid}",
                     timeout=5,
                 )
-                if check.status_code == 200:
+                if check.status_code != 200:
                     all_gone = False
                     logger.error(
-                        f"FAILED: test_bulk_delete_messages -> message {mid} still present"
+                        f"FAILED: test_bulk_delete_messages -> message {mid} missing (expected tombstone)"
                     )
-                    self.ctx.results.append(
-                        {
-                            "method": "GET",
-                            "path": f"/api/v1/channels/{channel_id}/messages/{mid}",
-                            "status_code": check.status_code,
-                            "duration_ms": 0,
-                            "success": False,
-                            "error": "message not deleted",
-                        }
-                    )
+                else:
+                    data = check.json()
+                    if not data.get("deleted") or data.get("content") not in (None, ""):
+                        all_gone = False
+                        logger.error(
+                            f"FAILED: test_bulk_delete_messages -> message {mid} not marked deleted"
+                        )
+                    if not all_gone:
+                        self.ctx.results.append(
+                            {
+                                "method": "GET",
+                                "path": f"/api/v1/channels/{channel_id}/messages/{mid}",
+                                "status_code": check.status_code,
+                                "duration_ms": 0,
+                                "success": False,
+                                "error": "message not deleted",
+                            }
+                        )
             except Exception as exc:
                 logger.debug(f"bulk-delete verification for {mid} errored: {exc}")
 

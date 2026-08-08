@@ -112,6 +112,8 @@ class DataGenerator:
             val = str(self.ctx.test_server_id)
         elif "channel" in name_low:
             val = str(self.ctx.test_channel_id)
+        elif "violation" in name_low:
+            val = str(self.ctx.test_automod_violation_id or _gen_snowflake())
         elif "rule" in name_low or "automod" in name_low:
             val = str(self.ctx.test_automod_rule_id or _gen_snowflake())
         elif "ticket" in name_low:

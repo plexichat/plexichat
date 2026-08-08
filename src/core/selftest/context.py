@@ -56,6 +56,7 @@ class SelfTestContext:
         self.test_bot_request_id: Optional[int] = None
         self.test_passkey_challenge_id: Optional[str] = None
         self.test_automod_rule_id: Optional[int] = None
+        self.test_automod_violation_id: Optional[int] = None
         self.test_ticket_id: Optional[int] = None
         self.test_access_token_id: Optional[int] = None
         self.test_emoji_id: Optional[int] = None
@@ -86,6 +87,7 @@ class SelfTestContext:
 
         self.results: List[Dict[str, Any]] = []
         self.start_time = 0.0
+        self.ram_monitor: Any = None
         self.session = requests_module.Session()
         self.other_session = requests_module.Session()
         self.openapi_spec: Dict[str, Any] = {}
@@ -102,6 +104,7 @@ class SelfTestContext:
         self.endpoints: Any = None
         self.ws: Any = None
         self.artifacts: Any = None
+        self.sum: Any = None
         self.ratelimit: Any = None
         self.static_client: Any = None
         self.docs: Any = None

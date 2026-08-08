@@ -29,6 +29,20 @@ class CleanupService:
             if db.type == "sqlite":
                 db.execute("PRAGMA foreign_keys=OFF")
 
+            # Sum workbooks own external .plexisum blobs, so their purge must
+            # happen before this SQL transaction starts. The domain manager
+            # deliberately rejects nested lifecycle transactions to prevent
+            # deleting blobs and then rolling back their metadata.
+            rows = db.fetch_all(
+                "SELECT id, username FROM auth_users WHERE username LIKE 'selftest_%'"
+            )
+            for row in rows:
+                uid = row["id"] if isinstance(row, dict) else row[0]
+                try:
+                    self._purge_sum_for_user(db, uid)
+                except Exception:
+                    raise
+
             db.begin_transaction()
 
             for tbl in ["media_upload_sessions", "plexijoin_traffic_log"]:
@@ -97,7 +111,7 @@ class CleanupService:
                     )
                 except Exception:
                     pass
-                self.delete_all_for_user(db, uid)
+                self.delete_all_for_user(db, uid, purge_sum=False)
                 logger.debug(f"Pre-test cleanup: Deleted user {uname}")
 
             try:
@@ -117,10 +131,31 @@ class CleanupService:
             if db.type == "sqlite":
                 db.execute("PRAGMA foreign_keys=ON")
 
-    def delete_all_for_user(self, db: Any, uid: int) -> None:
-        # PlexiSuite resources are user-owned metadata. Delete children before
-        # parents so this remains safe when foreign keys are enabled, while
-        # tolerating installations created before the suite tables existed.
+    def _purge_sum_for_user(self, db: Any, uid: int) -> None:
+        """Purge Sum blobs before entering a caller-owned SQL transaction."""
+        try:
+            from src.core.suite import sum as sum_domain
+
+            sum_domain.get_manager().purge_user_data(uid)
+        except RuntimeError:
+            try:
+                has_sum_tables = db.table_exists("sum_workbooks")
+            except AttributeError as exc:
+                raise RuntimeError(
+                    "Cannot verify Sum metadata tables during self-test cleanup"
+                ) from exc
+            if has_sum_tables:
+                logger.warning("Sum cleanup skipped: manager unavailable")
+                raise
+
+    def delete_all_for_user(self, db: Any, uid: int, purge_sum: bool = True) -> None:
+        # PlexiSuite resources are user-owned metadata. Sum workbooks must be
+        # purged through the domain manager first so external .plexisum blobs
+        # and linked artifacts are not orphaned. The remaining SQL is only a
+        # schema-tolerant fallback for installations without an initialized Sum
+        # domain.
+        if purge_sum:
+            self._purge_sum_for_user(db, uid)
         for statement, params in (
             (
                 "DELETE FROM sum_range_permissions WHERE workbook_id IN "
@@ -132,12 +167,6 @@ class CleanupService:
                 "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
                 (uid,),
             ),
-            (
-                "DELETE FROM sum_snapshots WHERE workbook_id IN "
-                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
-                (uid,),
-            ),
-            ("DELETE FROM sum_workbooks WHERE owner_id = ?", (uid,)),
             ("DELETE FROM suite_audit_log WHERE actor_id = ?", (uid,)),
             ("DELETE FROM stash_download_tickets WHERE subject_id = ?", (uid,)),
             (
@@ -156,6 +185,21 @@ class CleanupService:
             except Exception as exc:
                 logger.debug("Optional PlexiSuite cleanup skipped: %s", exc)
 
+        db.execute(
+            "DELETE FROM automod_violations WHERE user_id = ? "
+            "OR server_id IN (SELECT id FROM srv_servers WHERE owner_id = ?)",
+            (uid, uid),
+        )
+        db.execute(
+            "DELETE FROM automod_audit WHERE target_user_id = ? "
+            "OR server_id IN (SELECT id FROM srv_servers WHERE owner_id = ?)",
+            (uid, uid),
+        )
+        db.execute(
+            "DELETE FROM automod_reputation WHERE user_id = ? "
+            "OR server_id IN (SELECT id FROM srv_servers WHERE owner_id = ?)",
+            (uid, uid),
+        )
         db.execute(
             "DELETE FROM message_reports WHERE reporter_id = ? OR reported_user_id = ?",
             (uid, uid),
@@ -313,6 +357,13 @@ class CleanupService:
         )
         db.execute("DELETE FROM webhook_webhooks WHERE server_id = ?", (sid,))
 
+        db.execute("DELETE FROM automod_rules WHERE server_id = ?", (sid,))
+        db.execute("DELETE FROM automod_violations WHERE server_id = ?", (sid,))
+        db.execute("DELETE FROM automod_audit WHERE server_id = ?", (sid,))
+        db.execute("DELETE FROM automod_reputation WHERE server_id = ?", (sid,))
+        db.execute("DELETE FROM automod_exemptions WHERE server_id = ?", (sid,))
+        db.execute("DELETE FROM automod_rate_tracking WHERE server_id = ?", (sid,))
+
         db.execute("DELETE FROM srv_servers WHERE id = ?", (sid,))
 
     def cleanup_test_data(self) -> None:
@@ -329,14 +380,27 @@ class CleanupService:
                 if db.type == "sqlite":
                     db.execute("PRAGMA foreign_keys=OFF")
 
-                db.begin_transaction()
+                # Sum owns external blobs and rejects nested lifecycle
+                # transactions. Purge those files before opening the SQL
+                # transaction used for the remaining user cleanup.
                 if self.ctx.test_user_id:
-                    self.delete_all_for_user(db, self.ctx.test_user_id)
+                    self._purge_sum_for_user(db, self.ctx.test_user_id)
                 if (
                     self.ctx.test_other_user_id
                     and self.ctx.test_other_user_id != self.ctx.test_user_id
                 ):
-                    self.delete_all_for_user(db, self.ctx.test_other_user_id)
+                    self._purge_sum_for_user(db, self.ctx.test_other_user_id)
+
+                db.begin_transaction()
+                if self.ctx.test_user_id:
+                    self.delete_all_for_user(db, self.ctx.test_user_id, purge_sum=False)
+                if (
+                    self.ctx.test_other_user_id
+                    and self.ctx.test_other_user_id != self.ctx.test_user_id
+                ):
+                    self.delete_all_for_user(
+                        db, self.ctx.test_other_user_id, purge_sum=False
+                    )
 
                 if db.in_transaction:
                     try:

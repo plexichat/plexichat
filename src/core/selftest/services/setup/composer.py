@@ -78,6 +78,7 @@ class SetupService(
             self.create_test_notification()
             self.create_test_reports()
             self.create_test_automod_rule()
+            self.create_test_automod_violation()
             self.create_test_access_token()
             self.create_test_ticket()
             self.create_test_poll()
@@ -90,7 +91,7 @@ class SetupService(
 
             logger.info(
                 f"Resources created: Server={self.ctx.test_server_id}, Channel={self.ctx.test_channel_id}, Role={self.ctx.test_role_id}, "
-                f"AutoMod={self.ctx.test_automod_rule_id}, Token={self.ctx.test_access_token_id}, Ticket={self.ctx.test_ticket_id}, "
+                f"AutoMod={self.ctx.test_automod_rule_id}, AutoModV={self.ctx.test_automod_violation_id}, Token={self.ctx.test_access_token_id}, Ticket={self.ctx.test_ticket_id}, "
                 f"Poll={self.ctx.test_poll_id}, Thread={self.ctx.test_thread_id}"
             )
             return True

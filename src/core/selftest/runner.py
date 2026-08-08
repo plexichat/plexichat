@@ -24,10 +24,12 @@ from .services.discovery import RouteDiscovery
 from .services.endpoints import EndpointTester
 from .services.websocket import WebSocketTester
 from .services.artifacts import ArtifactsTester
+from .services.sum import SumTester
 from .services.ratelimit import RateLimitTester
 from .services.static_client import StaticClientTester
 from .services.docs import DocsTester
 from .services.report import ReportGenerator
+from .services.memory import RamMonitor
 
 
 class SelfTestRunner:
@@ -53,10 +55,12 @@ class SelfTestRunner:
         self.endpoints = EndpointTester(self.ctx)
         self.ws = WebSocketTester(self.ctx)
         self.artifacts = ArtifactsTester(self.ctx)
+        self.sum = SumTester(self.ctx)
         self.ratelimit = RateLimitTester(self.ctx)
         self.static_client = StaticClientTester(self.ctx)
         self.docs = DocsTester(self.ctx)
         self.report = ReportGenerator(self.ctx)
+        self.ram_monitor = RamMonitor()
 
         # Expose services on context so they can call each other
         self.ctx.data = self.data
@@ -66,14 +70,17 @@ class SelfTestRunner:
         self.ctx.endpoints = self.endpoints
         self.ctx.ws = self.ws
         self.ctx.artifacts = self.artifacts
+        self.ctx.sum = self.sum
         self.ctx.ratelimit = self.ratelimit
         self.ctx.static_client = self.static_client
         self.ctx.docs = self.docs
         self.ctx.report = self.report
+        self.ctx.ram_monitor = self.ram_monitor
 
     def run_all(self) -> bool:
         """Run all discovered API tests."""
         self.ctx.start_time = time.time()
+        self.ram_monitor.start()
         logger.info("=" * 60)
         logger.info("STARTING API SELF-TEST SUITE")
         logger.info(f"Target: {self.ctx.base_url}")
@@ -83,6 +90,7 @@ class SelfTestRunner:
         routes = self.discovery.discover_routes()
         if not routes:
             logger.error("No routes discovered. Aborting tests.")
+            self.ram_monitor.stop()
             return False
         logger.info(f"Discovered {len(routes)} endpoints")
 
@@ -90,6 +98,7 @@ class SelfTestRunner:
         self.cleanup.pre_test_cleanup()
         if not self.setup.run_setup():
             logger.error("Setup failed. Aborting tests.")
+            self.ram_monitor.stop()
             return False
 
         # 3. WebSocket Test
@@ -98,6 +107,9 @@ class SelfTestRunner:
         # 3b. Artifacts feature self-test suites (lifecycle, capabilities,
         #     retention + privacy, and the WSS artifact-op round-trip harness).
         self.artifacts.test_artifacts()
+
+        # 3c. PlexiSum realtime fabric (capability-gated WSS SUM_OP round trip).
+        self.sum.test_sum()
 
         # 4. Static client smoke tests (no-op when feature is disabled)
         self.static_client.test_static_client()
@@ -415,5 +427,7 @@ class SelfTestRunner:
 
         # 11. Summary
         success = self.report.report_summary()
+
+        self.ram_monitor.stop()
 
         return success
