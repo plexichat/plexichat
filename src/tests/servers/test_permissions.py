@@ -94,8 +94,7 @@ class TestRequirePermission:
         """Test require_permission when user has permission."""
         server, owner, _, _, _, _, servers = server_with_members
 
-        # Should not raise
-        servers.require_permission(owner.id, server.id, "server.manage")
+        assert servers.require_permission(owner.id, server.id, "server.manage") is None
 
     def test_require_permission_failure(self, server_with_members):
         """Test require_permission when user lacks permission."""

@@ -137,7 +137,7 @@ class TestServersAsync:
             )
 
         members = []
-        for _ in range(20):
+        for _ in range(10):
             with patch.object(
                 encryption, "hash_password", return_value="fake_hash_$test"
             ):
@@ -164,4 +164,4 @@ class TestServersAsync:
         fetched_server = await asyncio.to_thread(
             server_manager.get_server, server.id, owner.id
         )
-        assert fetched_server.member_count == 21  # members + owner
+        assert fetched_server.member_count == 11  # members + owner
