@@ -218,6 +218,7 @@ class TestWebhookErrors:
             webhook.token,
             content="test",
             username="Custom Name",
+            wait=True,
         )
         assert result is not None
 
@@ -237,6 +238,7 @@ class TestWebhookErrors:
             webhook.token,
             content="test",
             avatar_url="https://example.com/avatar.png",
+            wait=True,
         )
         assert result is not None
 
@@ -256,6 +258,7 @@ class TestWebhookErrors:
             webhook.token,
             content="test",
             embeds=[{"title": "Test Embed", "description": "Test"}],
+            wait=True,
         )
         assert result is not None
 

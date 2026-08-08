@@ -641,10 +641,21 @@ class TestJanusSFUSecurity:
                 ]
             )
 
-            try:
-                await adapter.create_room(malicious_room_id)
-            except (SFUConnectionError, ValueError):
-                pass
+            from src.core.voice.signaling.sfu import janus as janus_mod
+
+            # The malicious id is never interpolated into commands: it is only
+            # used as an opaque key and fed to the sanitizing helpers. Prove
+            # the id round-trips and is routed through stable_numeric_id.
+            room_info = None
+            with patch(
+                "src.core.voice.signaling.sfu.janus.stable_numeric_id",
+                side_effect=janus_mod.stable_numeric_id,
+            ) as mock_id:
+                room_info = await adapter.create_room(malicious_room_id)
+
+            assert room_info is not None
+            assert room_info.id == malicious_room_id
+            mock_id.assert_called_once_with(malicious_room_id, "room")
 
     @pytest.mark.asyncio
     async def test_janus_rate_limiting(self, mock_janus_session):
@@ -662,11 +673,9 @@ class TestJanusSFUSecurity:
                 }
             )
 
-            for _ in range(100):
-                try:
-                    await adapter.health_check()
-                except SFUConnectionError:
-                    break
+            # Every 429 response must be surfaced as an unhealthy check.
+            for _ in range(3):
+                assert await adapter.health_check() is False
 
     @pytest.mark.asyncio
     async def test_janus_publisher_spoofing(self, mock_janus_session):
@@ -863,11 +872,10 @@ class TestMediasoupSFUSecurity:
             mock_response.status = 404
             mock_response.text = AsyncMock(return_value="Room not found")
 
-            for room_id in range(1000):
-                try:
-                    await adapter.get_room_info(f"room_{room_id}")
-                except SFUConnectionError:
-                    pass
+            # A nonexistent room must not leak info: the adapter returns None
+            # instead of raising or echoing room details.
+            result = await adapter.get_room_info("room_1")
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_mediasoup_dtls_parameter_validation(self, mock_mediasoup_session):
