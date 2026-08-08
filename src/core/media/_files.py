@@ -9,6 +9,7 @@ from typing import Optional, Dict, List, Tuple, BinaryIO
 
 from .models import MediaFile
 from .exceptions import MediaError, PermissionDeniedError
+from src.utils.encryption import decrypt_data
 
 logger = logging.getLogger(__name__)
 
@@ -103,12 +104,27 @@ class _FilesMixin:
         file = self._get_file_for_permanent_delete(file_id)
         if not file:
             return True
+        # A missing reference-owner table means the schema is older or
+        # incomplete. Refuse permanent deletion rather than treating unknown
+        # references as absent.
+        required_tables = (
+            "msg_attachments",
+            "stash_items",
+            "stash_versions",
+            "auth_users",
+            "srv_servers",
+            "artifacts",
+            "media_file_deletion_tombstones",
+        )
+        if not all(self._db.table_exists(table) for table in required_tables):
+            return False
         checksum = file.checksum
         file_token = str(file.id)
         attachment_count = self._db.fetch_one(
             "SELECT COUNT(*) AS count FROM msg_attachments WHERE deleted = 0 "
             "AND ((checksum IS NOT NULL AND checksum = ?) OR "
-            "filename = ? OR url LIKE ? OR metadata LIKE ? OR metadata LIKE ? OR "
+            "filename = ? OR url LIKE ? OR "
+            "metadata LIKE ? OR metadata LIKE ? OR metadata LIKE ? OR "
             "metadata LIKE ? OR metadata LIKE ? OR metadata LIKE ? OR "
             "metadata LIKE ? OR metadata LIKE ? OR metadata LIKE ?)",
             (
@@ -127,6 +143,21 @@ class _FilesMixin:
         )
         if attachment_count and int(attachment_count["count"]) > 0:
             return False
+        # Legacy encrypted attachment rows may predate canonical file_id
+        # metadata. Resolve them at the application boundary so deletion is
+        # target-specific rather than treating every encrypted row as a match.
+        encrypted_attachments = self._db.fetch_all(
+            "SELECT url_encrypted FROM msg_attachments "
+            "WHERE deleted = 0 AND url_encrypted IS NOT NULL"
+        )
+        for attachment in encrypted_attachments:
+            try:
+                encrypted_url = decrypt_data(attachment["url_encrypted"])
+            except Exception:
+                # An undecodable encrypted reference cannot be proven unrelated.
+                return False
+            if file.filename in str(encrypted_url):
+                return False
         avatar_count = self._db.fetch_one(
             "SELECT COUNT(*) AS count FROM auth_users WHERE avatar_url LIKE ?",
             (f"%{file.filename}",),
@@ -157,21 +188,16 @@ class _FilesMixin:
         artifact_count = self._db.fetch_one(
             "SELECT COUNT(*) AS count FROM artifacts "
             "WHERE COALESCE(payload, '') LIKE ? OR COALESCE(payload, '') LIKE ?",
-            (
-                f"%" + '"recording_file_id":' + file_token + "%",
-                f"%" + '"recording_file_ids"' + "%" + file_token + "%",
-            ),
+            (f"%{file_token}%", f"%{file.filename}%"),
         )
         if artifact_count and int(artifact_count["count"]) > 0:
             return False
-        dedup_count = (
-            self._db.fetch_one(
+        dedup_count = None
+        if checksum and self._db.table_exists("media_file_hashes"):
+            dedup_count = self._db.fetch_one(
                 "SELECT reference_count FROM media_file_hashes WHERE hash_value = ?",
                 (checksum,),
             )
-            if checksum
-            else None
-        )
         if dedup_count and int(dedup_count["reference_count"]) > 1:
             return False
         return True

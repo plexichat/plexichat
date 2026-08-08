@@ -8,7 +8,7 @@ import logging
 from typing import Optional, Tuple
 
 from .models import StorageBackend, SignedUrl
-from .exceptions import MediaError
+from .exceptions import MediaError, SignatureInvalidError, SignatureExpiredError
 from .security import UrlSigner
 
 logger = logging.getLogger(__name__)
@@ -63,4 +63,7 @@ class _SigningMixin:
     def verify_signed_url(
         self, url: str, current_user_id: Optional[int] = None
     ) -> Tuple[bool, int]:
-        return self._url_signer.verify_url(url, current_user_id=current_user_id)
+        try:
+            return self._url_signer.verify_url(url, current_user_id=current_user_id)
+        except (SignatureInvalidError, SignatureExpiredError):
+            return False, 0

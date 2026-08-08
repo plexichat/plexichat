@@ -118,3 +118,23 @@ class MediaManager(
             self._compression_manager = None
 
         logger.info("Media module initialized")
+
+    def close(self) -> None:
+        """Shut down background workers and release resources.
+
+        Waits for in-flight executor tasks (malware scan, pHash dedup,
+        thumbnails, rate-limit update) to complete so no background
+        thread keeps touching the database after the manager is torn
+        down. Without this, a fire-and-forget task can outlive its
+        request/test and access a deleted SQLite file through its
+        mmap'd connection, crashing the whole process with SIGBUS.
+
+        Idempotent: safe to call multiple times or when already closed.
+        """
+        executor = self._executor
+        self._executor = None
+        if executor is not None:
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except Exception as e:
+                logger.warning(f"Media background executor shutdown failed: {e}")

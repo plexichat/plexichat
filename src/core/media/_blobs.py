@@ -54,6 +54,12 @@ class _BlobMixin:
             logger.warning("Blob delete failed for %s", path, exc_info=True)
             return False
 
+    def blob_exists(self, path: str) -> bool:
+        """Return whether a server-authored blob exists in configured storage."""
+        if not isinstance(path, str) or not path.startswith(f"{BLOB_NAMESPACE}/"):
+            raise ValueError("Invalid blob path")
+        return bool(self._storage.exists(path))
+
     def get_blob_size(self, path: str) -> int:
         """Return the stored blob size in bytes (0 when unknown)."""
         try:

@@ -78,6 +78,22 @@ CREATE TABLE IF NOT EXISTS media_proxy_cache (
     access_count INTEGER NOT NULL DEFAULT 0
 );
 
+-- Perceptual hash index for deduplication
+CREATE TABLE IF NOT EXISTS media_file_hashes (
+    id INTEGER PRIMARY KEY,
+    hash_value TEXT NOT NULL UNIQUE,
+    phash_value TEXT,
+    algorithm TEXT NOT NULL DEFAULT 'sha512',
+    file_size INTEGER NOT NULL DEFAULT 0,
+    content_type TEXT NOT NULL DEFAULT '',
+    reference_count INTEGER NOT NULL DEFAULT 1,
+    first_seen INTEGER NOT NULL DEFAULT 0,
+    storage_path TEXT NOT NULL DEFAULT '',
+    storage_backend TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_media_file_hashes_phash
+    ON media_file_hashes(phash_value);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_media_files_uploaded_by ON media_files(uploaded_by);
 CREATE INDEX IF NOT EXISTS idx_media_files_content_type ON media_files(content_type);
@@ -105,6 +121,7 @@ def create_reference_guards(db) -> None:
     required_tables = (
         "media_files",
         "media_file_deletion_locks",
+        "media_file_deletion_tombstones",
         "msg_attachments",
         "stash_items",
         "stash_versions",

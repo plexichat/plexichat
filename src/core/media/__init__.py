@@ -144,6 +144,7 @@ __all__ = [
     "store_blob",
     "retrieve_blob",
     "delete_blob",
+    "blob_exists",
     "get_blob_size",
 ]
 
@@ -174,6 +175,17 @@ def setup(db: Any, messaging_module: Optional[Any] = None) -> None:
     from .chunked import ChunkedUploadManager
     from .schema import create_tables
 
+    # Shut down any previous manager's background workers before
+    # replacing it, so fire-and-forget scan/phash/thumbnail threads
+    # never outlive their database file (they hold mmap'd SQLite
+    # connections; a deleted DB file crashes the process with SIGBUS).
+    if _manager is not None:
+        try:
+            _manager.close()
+        except Exception:
+            pass
+        _manager = None
+
     # Keep media-owned compatibility objects available on existing databases;
     # migration 000 remains the authoritative fresh-install orchestrator.
     create_tables(db)
@@ -182,20 +194,13 @@ def setup(db: Any, messaging_module: Optional[Any] = None) -> None:
     _compression_manager = CompressionManager()
     _chunked_manager = ChunkedUploadManager(db)
 
-    # The normal initializer installs guards after every reference-owning
-    # domain schema is ready. Direct media setup can run earlier, so it leaves
-    # guard installation to that finalization step when dependencies are absent.
+    # Never expose a media manager without the database-level reference guards.
+    # Migration 000 creates every dependency before normal startup reaches this
+    # point; direct callers receive a fail-closed error on an incomplete or
+    # legacy schema instead of silently permitting unsafe deletion.
     from .schema import create_reference_guards
 
-    required_tables = (
-        "msg_attachments",
-        "stash_items",
-        "stash_versions",
-        "auth_users",
-        "srv_servers",
-    )
-    if all(db.table_exists(table) for table in required_tables):
-        create_reference_guards(db)
+    create_reference_guards(db)
     _setup_complete = True
 
 
@@ -231,6 +236,11 @@ def retrieve_blob(path: str) -> bytes:
 def delete_blob(path: str) -> bool:
     """Delete a stored blob path."""
     return _get_manager().delete_blob(path)
+
+
+def blob_exists(path: str) -> bool:
+    """Return whether a server-authored blob exists in active storage."""
+    return _get_manager().blob_exists(path)
 
 
 def get_blob_size(path: str) -> int:
