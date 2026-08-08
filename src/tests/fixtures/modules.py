@@ -32,6 +32,16 @@ class ModuleRegistry:
 
     def _reset_module(self, module):
         """Reset a module's internal state for fresh initialization."""
+        # Shut down any existing manager's background workers before
+        # dropping it, so fire-and-forget threads never outlive their
+        # database file (mmap'd-connection SIGBUS — see MediaManager.close).
+        if getattr(module, "_manager", None) is not None:
+            try:
+                close = getattr(module._manager, "close", None)
+                if callable(close):
+                    close()
+            except Exception:
+                pass
         module._manager = None
         module._setup_complete = False
 

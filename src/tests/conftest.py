@@ -112,6 +112,10 @@ DEFAULT_TEST_CONFIG = {
     },
     "version": {"current": "r.1.0-1", "min_client": "a.1.0-1"},
     "servers": {"templates": {"max_templates_per_user": 1000}},
+    # Discovery tests build small servers (owner + 1-2 members) and
+    # bump immediately after listing; keep the directory thresholds
+    # test-friendly (production defaults: 10 members / 4h cooldown).
+    "search": {"discovery": {"min_members_for_listing": 3, "bump_cooldown_hours": 0}},
 }
 
 # =============================================================================
@@ -164,8 +168,10 @@ if not hasattr(Database, "fetch_last_insert_id"):
 #   1. The real validator runs first (so genuine bug-detection still
 #      kicks in for real-world addresses like ``bad@x.x``).
 #   2. A blanket whitelist catches every RFC 6761 reserved TLD
-#      (``.test``/``.local``/``.example``/``.invalid``) plus the bare
-#      ``test`` host emitted by ``pii_gen.email()``.
+#      (``.test``/``.local``/``.example``/``.invalid``). The bare ``@test``
+#      host is deliberately NOT whitelisted: ``user@test`` has no TLD and
+#      must be rejected by the strict validator (the security suite asserts
+#      this). Fixture emails use ``@test.local``, which ``.local`` covers.
 from src.core.auth import passwords as _auth_passwords  # noqa: E402
 from src.core.auth.managers import registration as _reg_module  # noqa: E402
 
@@ -174,7 +180,6 @@ _TEST_TLD_WHITELIST = (
     ".local",
     ".example",
     ".invalid",
-    "@test",  # bare "test" hostname (RFC 6761 reserved)
 )
 _original_validate_email = _auth_passwords.validate_email
 
@@ -217,34 +222,70 @@ def setup_config(tmpdir_factory):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_global_config():
+    """Restore the shared config after every test.
+
+    Several test fixtures call ``config.setup()`` with partial configs
+    (e.g. only a ``database`` section), which replaces the ENTIRE global
+    config and leaks to later tests/files — silently breaking suites that
+    depend on other sections (auth lockout thresholds, search discovery
+    limits, media compression defaults, ...). Snapshotting here keeps every
+    test's config changes fully contained.
+
+    The restore swaps the loader's config dict directly instead of doing a
+    YAML round-trip through ``config.setup()`` — the full-file dump/reload
+    was the dominant per-test fixture cost (thousands of tests) and the
+    snapshot dict is private to this fixture, so no other code can observe
+    the swap. The loader is re-fetched in teardown because a test may have
+    called ``config.setup()`` and replaced the module-level instance.
+    """
+    import copy
+    from utils.config import _config_instance as _config_loader
+
+    snapshot = copy.deepcopy(_config_loader.config)
+    snapshot_path = getattr(_config_loader, "config_path", None)
+    try:
+        yield
+    finally:
+        from utils.config import _config_instance as _config_loader_current
+
+        if _config_loader_current is not None:
+            _config_loader_current.config = snapshot
+            # Parity with the old config.setup() restore: keep the loader
+            # pointed at the pre-test path so stray config.set() writes don't
+            # land in a test's temp file.
+            if snapshot_path is not None and hasattr(
+                _config_loader_current, "config_path"
+            ):
+                _config_loader_current.config_path = snapshot_path
+            _config_loader_current._invalidate_cache()
+
+
 # =============================================================================
 # Database Fixture (Function-Scoped for Isolation)
 # =============================================================================
 
 
-@pytest.fixture
-def db(setup_config):
-    """
-    Create a clean database for each test.
+@pytest.fixture(scope="session")
+def migrated_db_template():
+    """Fully-migrated empty test database, built once per worker process.
 
-    Uses a fresh database file for each test for complete isolation.
+    The function-scoped ``db`` fixture copies this template file instead of
+    re-running the full migration chain for every test (measured ~560 ms/test
+    — the suite's dominant fixture cost). Isolation is preserved because
+    each test connects to its own fresh copy of the template.
+
+    Test-friendly crypto/encryption state is also initialised here, once per
+    worker, rather than per test (~175 ms/test) — no test mutates the
+    encryption module singletons, so the state is identical either way.
     """
+    import shutil
     from src.core.database import Database
     from src.core.migrations import run_migrations
     from src.utils import encryption
 
-    # Create a temporary database file for this test
-    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
-    temp_db.close()
-
-    # Save current config to restore later
-    old_db_conf = config.get("database", None)
-    config.set("database", {"type": "sqlite", "path": temp_db.name})
-
-    db = Database()
-    db.connect()
-
-    # Use fake hashing for fast tests
+    # Test-friendly crypto + keyring state, once per worker.
     encryption.setup(
         worker_id=1,
         argon2_time_cost=1,
@@ -252,14 +293,22 @@ def db(setup_config):
         argon2_parallelism=1,
     )
 
-    # Mock the hashing to be instant
+    temp_dir = tempfile.mkdtemp(prefix="plexichat_template_")
+    template_path = os.path.join(temp_dir, "template.db")
+
+    old_db_conf = config.get("database", None)
+    config.set("database", {"type": "sqlite", "path": template_path})
+
+    template_db = Database()
+    template_db.connect()
+
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
         with patch.object(encryption, "verify_password", return_value=True):
             # Apply all migrations (including irreversible ones) for tests
-            run_migrations(db)
+            run_migrations(template_db)
 
             # Insert system user (ID 0) for system messages
-            db.execute(
+            template_db.execute(
                 "INSERT INTO auth_users (id, account_type, username, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (0, "system", "system", "!", "{}", 0, 0),
             )
@@ -268,14 +317,14 @@ def db(setup_config):
             try:
                 from src.core import reports, feedback
 
-                reports.setup(db)
-                feedback.setup(db)
+                reports.setup(template_db)
+                feedback.setup(template_db)
             except Exception:
                 # If reports/feedback setup fails, create minimal tables manually
                 pass  # Tables will be created by migrations or not needed
 
             # Ensure required tables exist (workarounds for migration issues)
-            db.execute("""
+            template_db.execute("""
                 CREATE TABLE IF NOT EXISTS auth_sessions (
                     id INTEGER PRIMARY KEY,
                     user_id INTEGER NOT NULL,
@@ -293,7 +342,7 @@ def db(setup_config):
                 )
             """)
 
-            db.execute("""
+            template_db.execute("""
                 CREATE TABLE IF NOT EXISTS auth_api_access_tokens (
                     id INTEGER PRIMARY KEY,
                     name TEXT,
@@ -318,7 +367,7 @@ def db(setup_config):
                 )
             """)
 
-            db.execute("""
+            template_db.execute("""
                 CREATE TABLE IF NOT EXISTS auth_ip_blacklist (
                     ip_index TEXT PRIMARY KEY,
                     ip_encrypted TEXT,
@@ -328,7 +377,7 @@ def db(setup_config):
                 )
             """)
 
-            db.execute("""
+            template_db.execute("""
                 CREATE TABLE IF NOT EXISTS srv_servers (
                     id INTEGER PRIMARY KEY,
                     owner_id INTEGER NOT NULL,
@@ -350,6 +399,49 @@ def db(setup_config):
                 )
             """)
 
+    template_db.close()
+
+    if old_db_conf:
+        config.set("database", old_db_conf)
+
+    yield template_path
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def db(setup_config, migrated_db_template):
+    """
+    Create a clean database for each test.
+
+    Uses a fresh copy of the migrated template file for each test for
+    complete isolation without re-running the migration chain.
+    """
+    import shutil
+    from src.core.database import Database
+    from src.utils import encryption
+
+    # Create a temporary database file for this test from the template
+    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    temp_db.close()
+    shutil.copy2(migrated_db_template, temp_db.name)
+
+    # Point the live config at this test's database without a YAML write.
+    # ``config.set()`` would dump the whole file per test; swapping the
+    # loader's dict directly is equivalent (cache is invalidated) and cheap.
+    import copy
+    from utils.config import _config_instance as _config_loader
+
+    old_db_conf = copy.deepcopy(_config_loader.config.get("database"))
+    _config_loader.config["database"] = {"type": "sqlite", "path": temp_db.name}
+    _config_loader._invalidate_cache()
+
+    db = Database()
+    db.connect()
+
+    # Mock the hashing to be instant (active for the whole test, matching
+    # the historical fixture behaviour that tests rely on for register()).
+    with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+        with patch.object(encryption, "verify_password", return_value=True):
             yield db
 
     # Cleanup
@@ -363,9 +455,10 @@ def db(setup_config):
     except Exception:
         pass
 
-    # Restore config
-    if old_db_conf:
-        config.set("database", old_db_conf)
+    # Restore the database config
+    if old_db_conf is not None:
+        _config_loader.config["database"] = old_db_conf
+        _config_loader._invalidate_cache()
 
 
 @pytest.fixture
@@ -480,11 +573,16 @@ def automod_manager(db, server_manager, messaging_manager, notification_manager)
 
 
 @pytest.fixture
-def media_manager(db):
+def media_manager(db, messaging_manager):
     """MediaManager fixture."""
     from src.core.media.manager import MediaManager
 
-    return MediaManager(db)
+    manager = MediaManager(db, messaging_manager)
+    yield manager
+    # Wait for fire-and-forget background tasks before the db fixture
+    # removes the temp SQLite file (see MediaManager.close docstring:
+    # a thread touching a deleted mmap'd DB file crashes with SIGBUS).
+    manager.close()
 
 
 @pytest.fixture
@@ -689,13 +787,23 @@ def logged_in_user(auth_manager, pii_gen):
 @pytest.fixture
 def test_user_with_token(auth_manager, test_user):
     """Create a test user and return them with their auth token (dict format for compatibility)."""
+    # The api conftest overrides test_user as a credentials dict; the root
+    # conftest returns a User object. Normalize to a dict either way.
+    if isinstance(test_user, dict):
+        user = test_user["user"]
+        username = test_user["username"]
+        password = test_user["password"]
+    else:
+        user = test_user
+        username = test_user.username
+        password = "TestPass123!"
     with patch.object(encryption, "verify_password", return_value=True):
-        result = auth_manager.login(test_user.username, "TestPass123!")
+        result = auth_manager.login(username, password)
     return {
-        "user": test_user,
+        "user": user,
         "token": result.token,
-        "username": test_user.username,
-        "password": "TestPass123!",
+        "username": username,
+        "password": password,
     }
 
 
@@ -1193,7 +1301,16 @@ def test_client(
     )
 
     app = create_app(enable_rate_limiting=False)
-    return TestClient(app)
+    yield TestClient(app)
+    # Tear down media background workers before the db fixture removes
+    # the temp SQLite file (mmap'd-connection SIGBUS — see close()).
+    if media._manager is not None:
+        try:
+            media._manager.close()
+        except Exception:
+            pass
+        media._manager = None
+        media._setup_complete = False
 
 
 @pytest.fixture
@@ -1280,7 +1397,16 @@ def rate_limit_client(
     )
 
     app = create_app(enable_rate_limiting=True)
-    return TestClient(app)
+    yield TestClient(app)
+    # Tear down media background workers before the db fixture removes
+    # the temp SQLite file (mmap'd-connection SIGBUS — see close()).
+    if media._manager is not None:
+        try:
+            media._manager.close()
+        except Exception:
+            pass
+        media._manager = None
+        media._setup_complete = False
 
 
 @pytest.fixture
@@ -1329,6 +1455,7 @@ class ModuleRegistry:
         sticker_manager,
         poll_manager,
         soundboard_manager,
+        embeds_manager,
         reports,
         feedback,
     ):
@@ -1348,6 +1475,7 @@ class ModuleRegistry:
         self.stickers = sticker_manager
         self.polls = poll_manager
         self.soundboard = soundboard_manager
+        self.embeds = embeds_manager
         self.reports = reports
         self.feedback = feedback
 
@@ -1370,6 +1498,7 @@ def modules(
     sticker_manager,
     poll_manager,
     soundboard_manager,
+    embeds_manager,
     reports,
     feedback,
 ):
@@ -1396,6 +1525,7 @@ def modules(
         sticker_manager=sticker_manager,
         poll_manager=poll_manager,
         soundboard_manager=soundboard_manager,
+        embeds_manager=embeds_manager,
         reports=reports,
         feedback=feedback,
     )
@@ -1593,6 +1723,18 @@ def test_webhook_id():
 
 def pytest_configure(config):
     """Register custom markers."""
+    # Under pytest-xdist every worker shares the single on-disk Hypothesis
+    # database; concurrent writes from parallel workers can raise database-
+    # lock errors that surface as random, non-reproducible failures on
+    # arbitrary tests. Give each worker an in-memory database instead.
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        try:
+            from hypothesis import settings
+
+            settings.register_profile("xdist", settings(database=None))
+            settings.load_profile("xdist")
+        except Exception:
+            pass
     config.addinivalue_line("markers", "unit: Fast unit tests, no database required")
     config.addinivalue_line("markers", "integration: Tests requiring full module setup")
     config.addinivalue_line(
