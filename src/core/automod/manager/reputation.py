@@ -9,6 +9,35 @@ from .protocol import AutoModProtocol
 
 
 class ReputationMixin(AutoModProtocol):
+    def get_violation(
+        self, violation_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
+    ) -> Optional[Violation]:
+        """Get a single violation by ID (optionally scoped to a server)."""
+        query = "SELECT * FROM automod_violations WHERE id = ?"
+        params = [violation_id]
+        if server_id is not None:
+            query += " AND server_id = ?"
+            params.append(server_id)
+        row = self._db.fetch_one(query, tuple(params))
+        if not row:
+            return None
+        return row_to_violation(row)
+
+    def get_violation_by_message(
+        self, message_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
+    ) -> Optional[Violation]:
+        """Get the violation linked to a message (used for the admin audit link)."""
+        query = "SELECT * FROM automod_violations WHERE message_id = ?"
+        params = [message_id]
+        if server_id is not None:
+            query += " AND server_id = ?"
+            params.append(server_id)
+        query += " ORDER BY created_at DESC LIMIT 1"
+        row = self._db.fetch_one(query, tuple(params))
+        if not row:
+            return None
+        return row_to_violation(row)
+
     def get_violations(
         self,
         server_id: SnowflakeID,

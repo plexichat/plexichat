@@ -152,6 +152,9 @@ class MessageSpamRule(BaseRule):
         """Validate spam rule configuration."""
         issues = []
 
+        if "max_messages" not in config:
+            issues.append("max_messages is required")
+
         max_messages = config.get("max_messages", 5)
         if not isinstance(max_messages, int) or max_messages < 1:
             issues.append("max_messages must be a positive integer")

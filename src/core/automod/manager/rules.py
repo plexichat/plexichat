@@ -25,6 +25,12 @@ class RuleOpsMixin(AutoModProtocol):
         check_all: bool = False,
         _silent: bool = False,
     ) -> Rule:
+        if not name or not name.strip():
+            raise RuleValidationError("Rule name is required")
+
+        if not actions:
+            raise RuleValidationError("At least one action is required")
+
         rule_class = self.RULE_CLASSES.get(rule_type)
         if rule_class:
             valid, issues = rule_class.validate_config(rule_config)

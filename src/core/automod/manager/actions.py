@@ -114,6 +114,34 @@ class ActionMixin(AutoModProtocol):
 
         self._update_reputation(user_id, server_id, match.severity)
 
+        # Record an audit log entry for the violation so moderators can
+        # review enforcement history (matches the trigger_action contract).
+        audit_id = self._generate_id()
+        audit_action = actions_taken[0] if actions_taken else ActionType.LOG_ONLY
+        self._db.execute(
+            """INSERT INTO automod_audit 
+               (id, server_id, action_type, target_user_id, moderator_id, rule_id, reason, metadata, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                audit_id,
+                server_id,
+                audit_action.value,
+                user_id,
+                None,
+                match.rule_id,
+                match.matched_content or "AutoMod violation",
+                json.dumps(
+                    {
+                        "violation_id": violation_id,
+                        "channel_id": channel_id,
+                        "message_id": message_id,
+                        "actions_taken": [a.value for a in actions_taken],
+                    }
+                ),
+                now,
+            ),
+        )
+
         return Violation(
             id=violation_id,
             server_id=server_id,

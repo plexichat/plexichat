@@ -95,7 +95,14 @@ class MentionSpamRule(BaseRule):
         """Validate mention spam rule configuration."""
         issues = []
 
-        for field in ["max_user_mentions", "max_role_mentions", "max_total_mentions"]:
+        limit_fields = ["max_user_mentions", "max_role_mentions", "max_total_mentions"]
+        if not any(field in config for field in limit_fields):
+            issues.append(
+                "at least one of max_user_mentions, max_role_mentions, "
+                "max_total_mentions is required"
+            )
+
+        for field in limit_fields:
             value = config.get(field)
             if value is not None:
                 if not isinstance(value, int) or value < 0:
