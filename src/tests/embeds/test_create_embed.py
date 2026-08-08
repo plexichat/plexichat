@@ -232,14 +232,14 @@ class TestCreateEmbedWithSections:
             title="Full Author Embed",
             author={
                 "name": "Jane Doe",
-                "url": "https://jane.example.com",
-                "icon_url": "https://jane.example.com/avatar.png",
+                "url": "https://example.com/jane",
+                "icon_url": "https://example.com/jane/avatar.png",
             },
         )
 
         assert embed.author.name == "Jane Doe"
-        assert embed.author.url == "https://jane.example.com"
-        assert embed.author.icon_url == "https://jane.example.com/avatar.png"
+        assert embed.author.url == "https://example.com/jane"
+        assert embed.author.icon_url == "https://example.com/jane/avatar.png"
 
     def test_create_embed_with_image(self, db, auth_manager):
         """Test creating embed with image."""
@@ -341,8 +341,8 @@ class TestCreateFullEmbed:
             },
             author={
                 "name": "Author",
-                "url": "https://author.com",
-                "icon_url": "https://author.com/icon.png",
+                "url": "https://example.com/author",
+                "icon_url": "https://example.com/author/icon.png",
             },
             fields=[
                 {"name": "Field 1", "value": "Value 1", "inline": True},

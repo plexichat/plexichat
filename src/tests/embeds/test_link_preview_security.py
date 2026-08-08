@@ -126,39 +126,32 @@ class TestLinkPreviewService:
         assert result is False
 
     def test_proxy_image_disallows_redirects(self, preview_service):
-        """Test proxied images are fetched without following redirects."""
+        """Test proxied images are delegated to the media proxy (no local fetch)."""
+        proxied = Mock()
+        proxied.id = "proxied_1"
+        proxied.content_type = "image/jpeg"
         preview_service._media_proxy = Mock()
-        preview_service._validate_image_url = Mock(
-            return_value=("cdn.example.com", "93.184.216.34")
+        preview_service._media_proxy.fetch = Mock(return_value=proxied)
+
+        proxied_id = preview_service._proxy_image("https://example.com/image.jpg")
+
+        # The LinkPreviewService must not fetch the image itself — the media
+        # proxy owns redirect/SSRF handling. Delegate exactly once.
+        preview_service._media_proxy.fetch.assert_called_once_with(
+            "https://example.com/image.jpg", force_refresh=False
         )
-        client = Mock()
-        client.get.return_value = Mock(status_code=302, headers={}, content=b"")
-        preview_service._get_http_client = Mock(return_value=client)
-
-        proxied_id = preview_service._proxy_image("https://cdn.example.com/image.jpg")
-
-        assert proxied_id is None
-        assert client.get.call_args.kwargs["follow_redirects"] is False
-        preview_service._media_proxy.fetch.assert_not_called()
+        assert proxied_id == "proxied_1"
 
     def test_proxy_image_rejects_svg_content_types(self, preview_service):
         """Test proxied images reject SVG responses before caching them."""
+        proxied = Mock()
+        proxied.id = "proxied_svg"
+        proxied.content_type = "image/svg+xml"
         preview_service._media_proxy = Mock()
-        preview_service._validate_image_url = Mock(
-            return_value=("cdn.example.com", "93.184.216.34")
-        )
-        client = Mock()
-        client.get.return_value = Mock(
-            status_code=200,
-            headers={"content-type": "image/svg+xml"},
-            content=b"<svg></svg>",
-        )
-        preview_service._get_http_client = Mock(return_value=client)
+        preview_service._media_proxy.fetch = Mock(return_value=proxied)
 
-        proxied_id = preview_service._proxy_image("https://cdn.example.com/image.svg")
-
-        assert proxied_id is None
-        preview_service._media_proxy.fetch.assert_not_called()
+        with pytest.raises(ValueError, match="SVG"):
+            preview_service._proxy_image("https://example.com/image.svg")
 
 
 class TestMetaTagParser:

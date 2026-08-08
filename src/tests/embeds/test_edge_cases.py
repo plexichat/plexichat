@@ -208,11 +208,15 @@ class TestUpdateEmbed:
 class TestModuleNotInitialized:
     """Tests for module not initialized error."""
 
-    def test_module_not_initialized(self):
-        """Test error when module not initialized."""
-        # This test would require resetting the module state
-        # which is complex in the current test setup
-        pass
+    def test_module_not_initialized(self, monkeypatch):
+        """Module functions raise RuntimeError before embeds.setup()."""
+        import src.core.embeds as embeds_mod
+
+        monkeypatch.setattr(embeds_mod, "_setup_complete", False)
+        monkeypatch.setattr(embeds_mod, "_manager", None)
+
+        with pytest.raises(RuntimeError, match="not initialized"):
+            embeds_mod.create_embed(user_id=1)
 
 
 class TestSpecialCharacters:
