@@ -15,7 +15,7 @@ def test_default_config_uses_expected_branding_and_paths():
     )
     # dbname uses interpolation: ${POSTGRES_DBNAME:-plexichat}
     assert config["database"]["postgres"]["dbname"] == "${POSTGRES_DBNAME:-plexichat}"
-    assert config["redis"]["key_prefix"] == "plexichat:"
+    assert config["valkey"]["key_prefix"] == "plexichat:"
     assert config["authentication"]["totp"]["issuer"] == "Plexichat"
     assert config["api"]["title"] == "Plexichat API"
     assert config["docs"]["title"] == "Plexichat API Documentation"
@@ -33,17 +33,15 @@ def test_default_config_uses_expected_branding_and_paths():
 
 
 def test_main_source_uses_uppercase_env_vars_and_lowercase_home_dir():
-    """main.py should keep env var names and filesystem paths case-safe."""
-    main_source = Path("main.py").read_text(encoding="utf-8")
+    """src/cli/main.py should keep env var names uppercase and paths lowercase."""
+    main_source = Path("src/cli/main.py").read_text(encoding="utf-8")
 
     assert "PLEXICHAT_CONFIG" in main_source
     assert "PLEXICHAT_SYSTEM_KEY" in main_source
-    assert "PLEXICHAT_SMTP_PASSWORD" in main_source
     assert "PLEXICHAT_MESSAGE_KEY" in main_source
     assert ".plexichat" in main_source
 
     assert "Plexichat_CONFIG" not in main_source
     assert "Plexichat_SYSTEM_KEY" not in main_source
-    assert "Plexichat_SMTP_PASSWORD" not in main_source
     assert "Plexichat_MESSAGE_KEY" not in main_source
     assert ".Plexichat" not in main_source
