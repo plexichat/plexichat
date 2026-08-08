@@ -40,11 +40,30 @@ async def _cleanup_voice_connection(user_id: int) -> None:
 
 
 async def _dispatch_offline_presence(
-    user_id: int, presence_module: Optional[Any], dispatcher: "GatewayDispatcher"
+    user_id: int,
+    presence_module: Optional[Any],
+    dispatcher: "GatewayDispatcher",
+    session_manager: Optional[Any] = None,
 ) -> None:
     """Dispatch offline presence to friends and server members when user disconnects."""
     try:
         import src.api as api
+
+        # CORRECTNESS FIX: a user with several tabs/connections must only go
+        # offline once their LAST connection drops. This connection is still
+        # registered with the session manager at this point, so a count > 1
+        # means at least one other active connection remains.
+        if session_manager is not None:
+            try:
+                if session_manager.get_user_connection_count(user_id) > 1:
+                    logger.debug(
+                        f"User {user_id} still has active connections; staying online"
+                    )
+                    return
+            except Exception as e:
+                logger.debug(
+                    f"Failed to check remaining connections for user {user_id}: {e}"
+                )
 
         # Collect all user IDs who should receive this presence update
         target_user_ids = set()
@@ -71,30 +90,55 @@ async def _dispatch_offline_presence(
                     f"Failed to get shared server members for offline presence: {e}"
                 )
 
-        # Clear typing indicators and dispatch TYPING_STOP events
+        # Remove self for safety
+        target_user_ids.discard(user_id)
+
+        # Filter out blocked users
+        if relationships:
+            try:
+                blocked_ids = relationships.get_all_blocked_ids(user_id)
+                for bid in blocked_ids:
+                    try:
+                        target_user_ids.discard(int(bid))
+                    except (ValueError, TypeError):
+                        continue
+            except Exception:
+                pass
+
+        # Clear typing indicators and dispatch TYPING_STOP events to the
+        # channel members who were actually able to see the typing
+        # (CORRECTNESS FIX: previously the stop went to every friend and
+        # shared-server member, leaking presence outside the channel).
         if presence_module:
             try:
                 typing_channels = presence_module.clear_all_typing(user_id)
                 if typing_channels:
                     from src.core.events.models import Event
                     from src.core.events.types import EventType
+                    from src.api.websocket.handlers.presence import (
+                        _get_channel_recipients,
+                    )
 
                     # Dispatch TYPING_STOP for each channel in parallel
                     tasks = []
                     for channel_id in typing_channels:
+                        from starlette.concurrency import run_in_threadpool
+
+                        recipients, server_id = await run_in_threadpool(
+                            _get_channel_recipients, user_id, channel_id
+                        )
+                        if not recipients:
+                            continue
                         event = Event(
                             event_type=EventType.TYPING_STOP,
                             data={
                                 "channel_id": str(channel_id),
                                 "user_id": str(user_id),
                             },
+                            server_id=server_id,
                             channel_id=channel_id,
                         )
-                        # Dispatch to all potential viewers
-                        if target_user_ids:
-                            tasks.append(
-                                dispatcher.dispatch_event(event, list(target_user_ids))
-                            )
+                        tasks.append(dispatcher.dispatch_event(event, list(recipients)))
 
                     if tasks:
                         await asyncio.gather(*tasks, return_exceptions=True)
@@ -224,7 +268,10 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
         if connection.is_authenticated and connection.user_id:
             await _cleanup_voice_connection(connection.user_id)
             await _dispatch_offline_presence(
-                connection.user_id, presence_module, dispatcher
+                connection.user_id,
+                presence_module,
+                dispatcher,
+                session_manager=session_manager,
             )
 
         # Remove only this connection's artifact subscriptions. A user may
@@ -237,6 +284,16 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
             )
         except Exception as exc:
             logger.debug("Artifact subscription cleanup failed: %s", exc)
+
+        # Remove only this connection's PlexiSum workbook subscriptions.
+        try:
+            from .sum import get_sum_subscription_registry
+
+            get_sum_subscription_registry().unsubscribe_connection(
+                connection_id, connection.user_id
+            )
+        except Exception as exc:
+            logger.debug("Sum subscription cleanup failed: %s", exc)
 
         connection.set_disconnected()
         session_manager.remove_connection(connection_id)

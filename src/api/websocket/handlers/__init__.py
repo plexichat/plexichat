@@ -6,9 +6,11 @@ This module aggregates opcode handlers from sub-modules:
 - presence.py: Presence-related handlers (presence_update, typing)
 - voice.py: Voice-related handlers (voice state, WebRTC signaling)
 - guild.py: Guild-related handlers (request guild members)
+- artifacts.py: Artifact real-time fabric handlers (subscribe, op, sync)
+- sum.py: PlexiSum real-time fabric handlers (workbook subscribe, op, sync)
 """
 
-from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
 
 from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
 from src.api.websocket.connection import Connection
@@ -54,6 +56,7 @@ class OpcodeHandler:
         from .voice import VoiceHandler
         from .guild import GuildHandler
         from .artifacts import ArtifactHandler
+        from .sum import SumHandler
 
         self._connection_handler = ConnectionHandler(
             session_manager, auth_module, presence_module
@@ -62,6 +65,37 @@ class OpcodeHandler:
         self._voice_handler = VoiceHandler(servers_module)
         self._guild_handler = GuildHandler(servers_module)
         self._artifact_handler = ArtifactHandler()
+        self._sum_handler = SumHandler()
+
+    def _get_typing_recipient_ids(
+        self,
+        user_id: int,
+        channel_id: int,
+        server_id: int,
+        include_self: bool = False,
+    ) -> List[int]:
+        """Return only members who can still view a channel.
+
+        Typing indicators (and other presence-style events) must never leak
+        to users who lost access to the channel; recipients are resolved
+        through the servers boundary and filtered by channel visibility.
+        """
+        if not self._servers:
+            return []
+
+        member_user_ids = self._servers.get_member_user_ids(
+            server_id, exclude_user_id=None if include_self else user_id
+        )
+
+        visible_user_ids: List[int] = []
+        for member_user_id in member_user_ids:
+            try:
+                if self._servers.get_channel(channel_id, member_user_id):
+                    visible_user_ids.append(member_user_id)
+            except Exception:
+                continue
+
+        return visible_user_ids
 
     async def handle(
         self,
@@ -132,6 +166,20 @@ class OpcodeHandler:
             if self._dispatcher is None:
                 return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
             return await self._artifact_handler.handle_artifact_op(
+                connection, data, self._dispatcher
+            )
+        elif op == GatewayOpcode.SUM_SUBSCRIBE:
+            if self._dispatcher is None:
+                return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
+            return await self._sum_handler.handle_sum_subscribe(
+                connection, data, self._dispatcher
+            )
+        elif op == GatewayOpcode.SUM_UNSUBSCRIBE:
+            return await self._sum_handler.handle_sum_unsubscribe(connection, data)
+        elif op == GatewayOpcode.SUM_OP:
+            if self._dispatcher is None:
+                return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
+            return await self._sum_handler.handle_sum_op(
                 connection, data, self._dispatcher
             )
         else:

@@ -169,11 +169,21 @@ class VoiceHandler:
             from src.core.voice import signaling
 
             offer = data.get("sdp")
-            channel_id = data.get("channel_id")
+            raw_channel_id = data.get("channel_id")
             if not offer:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
-            if not channel_id:
+            if raw_channel_id is None or raw_channel_id == "":
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
+            # The channel id must be a positive integer; a malformed value
+            # must be rejected here rather than surfacing as an opaque
+            # signaling failure.
+            try:
+                channel_id = int(raw_channel_id)
+            except (TypeError, ValueError):
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+            if channel_id <= 0:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
             if not connection.user_id:

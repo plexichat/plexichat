@@ -47,6 +47,19 @@ class ConnectionHandler:
         """Handle heartbeat opcode."""
         connection.record_heartbeat()
         connection.record_heartbeat_ack()
+
+        # CORRECTNESS FIX: keep last_seen fresh while the user is connected.
+        # Without this, last_seen stays frozen at the moment they connected
+        # (or went offline), so "last seen" reported stale data for active
+        # users.
+        if self._presence and connection.is_authenticated and connection.user_id:
+            try:
+                await run_in_threadpool(
+                    self._presence.update_last_seen, connection.user_id
+                )
+            except Exception as e:
+                logger.debug(f"Heartbeat last_seen update failed: {e}")
+
         return int(GatewayOpcode.HEARTBEAT_ACK), None, None
 
     async def handle_identify(
@@ -86,6 +99,15 @@ class ConnectionHandler:
         )
         if user_id is None:
             return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
+
+        # Enforce the per-user connection cap before creating a session. A
+        # user flooding new IDENTIFY frames from additional tabs must be
+        # rejected with RATE_LIMITED instead of silently exceeding the limit.
+        if not self._session_manager.can_user_connect(user_id):
+            logger.warning(
+                f"User {user_id} exceeded max connections; identify rejected"
+            )
+            return None, None, int(GatewayCloseCode.RATE_LIMITED)
 
         compress = data.get("compress", False)
         if compress:
@@ -127,7 +149,7 @@ class ConnectionHandler:
         data: Optional[Dict[str, Any]],
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle resume opcode."""
-        if not data:
+        if data is None:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         token = data.get("token")
@@ -248,9 +270,21 @@ class ConnectionHandler:
         """Dispatch online presence to friends when user connects."""
         # Set presence to online FIRST before dispatching
         if self._presence:
-            try:
-                from src.core.presence.models import UserStatus
+            from src.core.presence.models import UserStatus
 
+            try:
+                current_status = await run_in_threadpool(
+                    self._presence.get_status, user_id
+                )
+            except Exception:
+                current_status = UserStatus.ONLINE
+
+            if current_status == UserStatus.INVISIBLE:
+                # An invisible user must stay invisible; dispatch as offline
+                await self._dispatch_presence_to_friends(user_id, "offline", None, None)
+                return
+
+            try:
                 await run_in_threadpool(
                     self._presence.set_status, user_id, UserStatus.ONLINE
                 )

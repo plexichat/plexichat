@@ -109,7 +109,7 @@ def cross_worker_listener_status() -> dict:
     """
     import utils.config as _cfg
 
-    valkey_cfg = _cfg.get("redis") or {}
+    valkey_cfg = _cfg.get("valkey") or _cfg.get("redis") or {}
     if not valkey_cfg.get("enabled", False):
         return {"enabled": False}
 
@@ -327,7 +327,7 @@ async def _cross_worker_poll_loop() -> None:
     """
     import utils.config as config
 
-    valkey_cfg = config.get("redis") or {}
+    valkey_cfg = config.get("valkey") or config.get("redis") or {}
     if not valkey_cfg.get("enabled", False):
         logger.info("Cross-worker listener: Valkey disabled — skipping")
         return
@@ -472,10 +472,16 @@ def _create_pubsub_client(valkey_cfg: dict) -> Any | None:
         return None
 
     host = valkey_cfg.get("host", "localhost")
-    port = valkey_cfg.get("port", 6379)
+    try:
+        port = int(valkey_cfg.get("port", 6379))
+    except (TypeError, ValueError):
+        port = 6379
     password = valkey_cfg.get("password", "") or None
     use_tls = valkey_cfg.get("ssl", False)
-    db = valkey_cfg.get("db", 0)
+    try:
+        db = int(valkey_cfg.get("db", 0))
+    except (TypeError, ValueError):
+        db = 0
 
     try:
         kwargs: dict = {
