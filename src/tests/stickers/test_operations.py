@@ -333,12 +333,12 @@ class TestStickerSearch:
         )
 
         results = sticker_manager.search_stickers("emoji")
-        assert len(results) >= 0
+        assert len(results) >= 1
 
     def test_search_stickers_empty_query(self, sticker_manager):
         """Search with empty query."""
         results = sticker_manager.search_stickers("")
-        assert len(results) >= 0
+        assert len(results) == 0
 
 
 class TestStickerSuggestions:
@@ -346,7 +346,8 @@ class TestStickerSuggestions:
 
     def test_get_suggestions_for_text(self, sticker_manager):
         """Get sticker suggestions for text."""
-        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
+        # Suggestions only surface DEFAULT/SERVER packs, so use a default pack.
+        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.DEFAULT)
         sticker_manager.add_sticker(
             1,
             pack.id,
@@ -357,13 +358,15 @@ class TestStickerSuggestions:
             tags=["approve", "yes"],
         )
 
-        suggestions = sticker_manager.get_suggestions("yes")
-        assert len(suggestions) >= 0
+        suggestions = sticker_manager.get_suggestions("yes", user_id=1)
+        assert len(suggestions) >= 1
+        assert any("yes" in s.matched_keywords for s in suggestions)
 
     def test_get_trending_stickers(self, sticker_manager):
         """Get trending stickers."""
         trending = sticker_manager.get_trending_stickers(limit=10)
-        assert len(trending) >= 0
+        assert isinstance(trending, list)
+        assert len(trending) <= 10
 
 
 class TestStickerPermissions:

@@ -569,7 +569,7 @@ class TestSoundSearch:
         )
 
         results = soundboard_manager.search_sounds(1, 1, "")
-        assert len(results) >= 0
+        assert len(results) == 0
 
 
 class TestSoundPermissions:

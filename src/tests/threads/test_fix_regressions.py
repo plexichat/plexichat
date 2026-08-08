@@ -353,7 +353,7 @@ class TestMessageRetrievalAndCount:
 
 
 class TestArchivedPagination:
-    def test_archived_pagination_stable_ordering(self, server_with_channel):
+    def test_archived_pagination_stable_ordering(self, server_with_channel, test_db):
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         archived_ids = []
@@ -364,6 +364,17 @@ class TestArchivedPagination:
             threads.archive_thread(owner.id, thread.id)
             archived_ids.append(thread.id)
 
+        # Force distinct archived_at values. The six archive() calls can all
+        # complete within the same millisecond (particularly with the fast
+        # test crypto), and timestamp-cursor pagination is ambiguous when
+        # every row shares one timestamp: the second page's
+        # ``before_timestamp`` cursor then excludes every row.
+        for i, thread_id in enumerate(archived_ids):
+            test_db.execute(
+                "UPDATE thread_threads SET archived_at = ? WHERE id = ?",
+                (1000 * (i + 1), thread_id),
+            )
+
         first_page = threads.get_archived_threads(owner.id, channel.id, limit=3)
         assert len(first_page) == 3
 
@@ -373,7 +384,7 @@ class TestArchivedPagination:
         )
 
         seen = {t.id for t in first_page} | {t.id for t in second_page}
-        assert len(seen) >= 6
+        assert len(seen) == 6
 
     def test_archived_ordering_has_tiebreak(self, server_with_channel, test_db):
         owner, member1, member2, server, channel, servers, threads = server_with_channel

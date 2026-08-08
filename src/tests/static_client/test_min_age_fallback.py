@@ -4,12 +4,9 @@ Tests for the static client min_age fallback logic.
 
 from __future__ import annotations
 
-import os
 import tempfile
 from unittest.mock import patch
 
-
-os.environ.setdefault("PLEXICHAT_SYSTEM_KEY", "a" * 64)
 
 from src.static_client.config import (  # noqa: E402
     CacheControlConfig,
