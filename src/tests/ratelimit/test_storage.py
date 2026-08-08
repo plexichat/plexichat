@@ -186,7 +186,7 @@ class TestLocking:
     def test_acquire_and_release_lock(self, memory_storage):
         """Test acquiring and releasing a lock."""
         acquired = memory_storage.acquire_lock("test:lock")
-        assert acquired is True
+        assert acquired is not None  # Lock token ("locked") when acquired
         memory_storage.release_lock("test:lock")
 
     def test_lock_blocks_concurrent_access(self, memory_storage):
@@ -209,7 +209,7 @@ class TestLocking:
 
     def test_release_unacquired_lock(self, memory_storage):
         """Test releasing an unacquired lock doesn't raise."""
-        memory_storage.release_lock("nonexistent:lock")
+        assert memory_storage.release_lock("nonexistent:lock") is None
 
 
 class TestThreadSafety:

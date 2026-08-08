@@ -576,7 +576,7 @@ class TestHeaderSpoofing:
         # 2. Spoofed header request - Should FAIL (429)
         resp2 = client.get("/api/v1/test", headers={"X-Internal-Request": "true"})
         assert resp2.status_code == 429
-        assert "Rate limit exceeded" in resp2.text
+        assert "You are being rate limited." in resp2.text
 
         ratelimit._manager = None
         ratelimit._setup_complete = False
