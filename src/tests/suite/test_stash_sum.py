@@ -11,9 +11,12 @@ from src.core.suite.stash.manager import StashNotFoundError, StashPermissionErro
 from src.core.suite.sum.manager import (
     SumConflictError,
     SumManager,
+    SumStorageError,
     SumValidationError,
 )
 from src.core.artifacts.capabilities import CapabilityInfo, CapabilityState
+from src.core.artifacts.manager import ArtifactManager
+from src.core.artifacts.models import ArtifactType
 
 
 def test_stash_personal_items_are_owner_scoped(db, two_users, server_manager):
@@ -34,12 +37,30 @@ def test_stash_personal_items_are_owner_scoped(db, two_users, server_manager):
         manager.get_item(other.id, item["id"])
 
 
-def test_stash_server_membership_pin_and_version(db, two_users, server_manager):
+def test_stash_server_membership_pin_and_version(
+    db, two_users, server_manager, media_manager
+):
     owner, member = two_users
     server = server_manager.create_server(owner.id, "Suite server")
     server_manager.add_member(server.id, member.id)
     create_stash_tables(db)
-    manager = StashManager(db, servers_module=server_manager)
+    manager = StashManager(db, servers_module=server_manager, media=media_manager)
+
+    # Stash references must point at real, active media objects; the manager
+    # revalidates existence and ownership through the media boundary, so the
+    # fixture uploads actual files rather than passing opaque strings.
+    file_one = media_manager.upload_file(
+        user_id=owner.id,
+        file_data=b"suite-file-one",
+        filename="suite-file-1.txt",
+        content_type="text/plain",
+    )
+    file_two = media_manager.upload_file(
+        user_id=owner.id,
+        file_data=b"suite-file-two",
+        filename="suite-file-2.txt",
+        content_type="text/plain",
+    )
 
     item = manager.create_item(
         owner.id,
@@ -47,7 +68,7 @@ def test_stash_server_membership_pin_and_version(db, two_users, server_manager):
         title="Shared file",
         scope="server",
         server_id=server.id,
-        media_object_id="media-1",
+        media_object_id=str(file_one.file_id),
     )
     assert manager.list_items(member.id, server_id=server.id)[1] == 1
 
@@ -56,33 +77,39 @@ def test_stash_server_membership_pin_and_version(db, two_users, server_manager):
     version = manager.create_version(
         owner.id,
         item["id"],
-        media_object_id="media-2",
+        media_object_id=str(file_two.file_id),
         content_type="text/plain",
         size_bytes=12,
         checksum="abc",
     )
-    assert version["media_object_id"] == "media-2"
+    assert version["media_object_id"] == str(file_two.file_id)
     assert manager.get_item(owner.id, item["id"])["current_version_id"] == version["id"]
     assert manager.list_versions(member.id, item["id"])[0]["media_object_id"] is None
     assert manager.list_versions(member.id, item["id"])[0]["content_type"] is None
 
 
 def test_stash_download_ticket_is_single_use_and_cleanup_is_safe(
-    db, two_users, server_manager
+    db, two_users, server_manager, media_manager
 ):
     owner, _ = two_users
     create_stash_tables(db)
-    manager = StashManager(db, servers_module=server_manager)
+    manager = StashManager(db, servers_module=server_manager, media=media_manager)
+    uploaded = media_manager.upload_file(
+        user_id=owner.id,
+        file_data=b"suite-ticket-file",
+        filename="suite-ticket.txt",
+        content_type="text/plain",
+    )
     item = manager.create_item(
         owner.id,
         item_type="file",
         title="Opaque media reference",
-        media_object_id="media-file-name-or-key",
+        media_object_id=str(uploaded.file_id),
     )
 
     ticket = manager.create_download_ticket(owner.id, int(item["id"]), ttl_seconds=1)
     redeemed = manager.redeem_download_ticket(owner.id, ticket["ticket"])
-    assert redeemed["media_object_id"] == "media-file-name-or-key"
+    assert redeemed["media_object_id"] == str(uploaded.file_id)
     with pytest.raises(StashPermissionError):
         manager.redeem_download_ticket(owner.id, ticket["ticket"])
 
@@ -729,6 +756,126 @@ def test_sum_snapshot_retention_gc(db, two_users, server_manager):
     assert count == 50
 
 
+def test_sum_snapshot_gc_keeps_metadata_when_blob_delete_is_unconfirmed(
+    db, two_users, server_manager
+):
+    """GC retains a retry pointer when storage cannot confirm deletion."""
+    owner, _ = two_users
+    create_sum_tables(db)
+    manager = SumManager(db, servers_module=server_manager)
+    workbook = manager.create_workbook(owner.id, "Snapshot cleanup")
+    for _ in range(50):
+        manager.create_snapshot(owner.id, int(workbook["id"]))
+
+    manager._delete_blob_confirmed = lambda _path: False
+    manager.create_snapshot(owner.id, int(workbook["id"]))
+    count = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM sum_snapshots WHERE workbook_id = ?",
+        (int(workbook["id"]),),
+    )["c"]
+    assert count == 51
+
+
+def test_sum_purge_retains_metadata_when_blob_delete_fails(
+    db, two_users, server_manager, tmp_path
+):
+    """Account erasure fails closed instead of losing retryable blob paths."""
+    owner, _ = two_users
+    create_sum_tables(db)
+    manager = SumManager(db, servers_module=server_manager, storage_dir=str(tmp_path))
+    workbook = manager.create_workbook(owner.id, "Purge safety")
+    workbook_id = int(workbook["id"])
+
+    original_confirm = manager._delete_blob_confirmed
+    manager._delete_blob_confirmed = lambda _path: False
+    with pytest.raises(SumStorageError):
+        manager.purge_workbook_by_id(workbook_id)
+    assert (
+        db.fetch_one("SELECT id FROM sum_workbooks WHERE id = ?", (workbook_id,))
+        is not None
+    )
+
+    manager._delete_blob_confirmed = original_confirm
+    manager.purge_workbook_by_id(workbook_id)
+    assert (
+        db.fetch_one("SELECT id FROM sum_workbooks WHERE id = ?", (workbook_id,))
+        is None
+    )
+    assert (
+        db.fetch_one(
+            "SELECT id FROM artifacts WHERE id = ?", (int(workbook["artifact_id"]),)
+        )
+        is None
+    )
+
+
+def test_sum_artifact_delete_removes_linked_workbook_and_artifact(
+    db, two_users, server_manager, tmp_path
+):
+    """Deleting a SUM artifact removes its workbook and artifact identity."""
+    from src.core.suite import sum as sum_domain
+
+    owner, _ = two_users
+    manager = sum_domain.setup(
+        db, servers_module=server_manager, storage_dir=str(tmp_path)
+    )
+    workbook = manager.create_workbook(owner.id, "Artifact lifecycle")
+    workbook_id = int(workbook["id"])
+    artifact_id = int(workbook["artifact_id"])
+    assert ArtifactManager(db).delete(artifact_id, purge_media=False) is True
+    assert (
+        db.fetch_one("SELECT id FROM sum_workbooks WHERE id = ?", (workbook_id,))
+        is None
+    )
+    assert db.fetch_one("SELECT id FROM artifacts WHERE id = ?", (artifact_id,)) is None
+    assert not list((tmp_path / str(workbook_id)).rglob("*.plexisum"))
+
+
+def test_sum_artifact_delete_rejects_missing_workbook_link(db, two_users):
+    """Malformed SUM artifacts fail closed instead of deleting metadata."""
+    owner, _ = two_users
+    artifact = ArtifactManager(db).create(
+        conversation_id=None,
+        author_id=owner.id,
+        artifact_type=ArtifactType.SUM,
+        title="Malformed Sum",
+        payload={},
+        emit_event=False,
+    )
+    with pytest.raises(ValueError, match="workbook_id"):
+        ArtifactManager(db).delete(artifact.id, purge_media=False)
+    assert db.fetch_one("SELECT id FROM artifacts WHERE id = ?", (artifact.id,))
+
+
+def test_sum_snapshot_insert_failure_cleans_blob(
+    db, two_users, server_manager, monkeypatch, tmp_path
+):
+    """A failed snapshot metadata insert removes its external file."""
+    owner, _ = two_users
+    create_sum_tables(db)
+    manager = SumManager(db, servers_module=server_manager, storage_dir=str(tmp_path))
+    workbook = manager.create_workbook(owner.id, "Snapshot failure")
+    original_execute = db.execute
+
+    def fail_snapshot_insert(query, params=None, *args, **kwargs):
+        if "INSERT INTO sum_snapshots" in query:
+            raise RuntimeError("forced snapshot insert failure")
+        return original_execute(query, params, *args, **kwargs)
+
+    monkeypatch.setattr(db, "execute", fail_snapshot_insert)
+    with pytest.raises(RuntimeError, match="forced snapshot insert failure"):
+        manager.create_snapshot(owner.id, int(workbook["id"]))
+    assert (
+        db.fetch_one(
+            "SELECT COUNT(*) AS c FROM sum_snapshots WHERE workbook_id = ?",
+            (int(workbook["id"]),),
+        )["c"]
+        == 0
+    )
+    snapshot_files = list((tmp_path / str(workbook["id"])).glob("snapshot-*.plexisum"))
+    assert snapshot_files == []
+
+
 def test_sum_axis_metadata_tracks_written_cells(db, two_users, server_manager):
     """Writing a cell records its row and column in the axis metadata tables."""
     owner, _ = two_users
@@ -1038,7 +1185,7 @@ def test_sum_viewport_filter_hides_rows(db, two_users, server_manager):
 
 
 def test_sum_xlsx_export_and_import(db, two_users, server_manager):
-    openpyxl = pytest.importorskip("openpyxl")
+    pytest.importorskip("openpyxl")
     owner, _ = two_users
     manager = _sum_manager(db, server_manager)
     workbook = manager.create_workbook(owner.id, "XLSX bridge")
