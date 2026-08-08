@@ -31,7 +31,7 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
                     return msg
 
         msg_row = self._repo.get_by_id(message_id)
-        if not msg_row or msg_row["deleted"]:
+        if not msg_row:
             return None
 
         if not self._participant_svc.is_participant(

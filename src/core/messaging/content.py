@@ -119,15 +119,19 @@ class ContentProcessor:
         sanitized = validation_result.sanitized_value or ""
 
         if not validation_result.is_valid:
-            # Content contains potentially dangerous patterns or sanitization failed
-            # If not already sanitized by the validator (e.g. auto_sanitize_html=False),
-            # we must escape it manually here to prevent stored XSS.
+            # Content contains potentially dangerous patterns. The validator (or
+            # the manual escaping below) neutralizes them, so the sanitized
+            # result is SAFE to store and display. We therefore record the flag
+            # as a non-blocking warning: ``valid`` stays True for content that
+            # was successfully sanitized. Enforcement for outgoing messages is
+            # handled by the messaging service, whose own validator rejects
+            # blocked patterns outright.
             import html
 
             if not validation_result.sanitized_value:
                 sanitized = html.escape(content)
 
-            issues.append(
+            warnings.append(
                 validation_result.error_message
                 or "Content contained potentially unsafe patterns and was sanitized"
             )

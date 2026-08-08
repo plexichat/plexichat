@@ -498,6 +498,18 @@ class MessagingManager(BaseManager):
             user_id, message_id, metadata, merge
         )
 
+    def automod_remove_message(
+        self,
+        message_id: SnowflakeID,
+        violation_id: Optional[SnowflakeID] = None,
+        rule_name: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Optional[Message]:
+        """Replace a message with an AutoMod removal placeholder (system op)."""
+        return self._message_svc.automod_remove_message(
+            message_id, violation_id, rule_name, reason
+        )
+
     def delete_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
     ) -> bool:

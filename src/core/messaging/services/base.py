@@ -30,7 +30,9 @@ class BaseService:
         self._db = db
         self._config = config.get(config_section, {})
 
-        max_cache = cache_max_size or config.get("redis.cache_max_items", 1000)
+        # cache_max_items lives under the "valkey" (or legacy "redis") block.
+        valkey_cfg = config.get("valkey") or config.get("redis") or {}
+        max_cache = cache_max_size or valkey_cfg.get("cache_max_items", 1000)
         self._cache: CappedDict = CappedDict(max_size=max_cache)
         self._cache_ttl = 60.0  # 60 second cache TTL
 

@@ -157,6 +157,81 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         cache_set(f"msg:obj:{message_id}", msg, ttl=3600)
         return msg
 
+    def automod_remove_message(
+        self,
+        message_id: SnowflakeID,
+        violation_id: Optional[SnowflakeID] = None,
+        rule_name: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Optional[Message]:
+        """Replace a message with an AutoMod removal placeholder.
+
+        Called by the AutoMod engine (async AI moderation) to 'delete' a
+        message by replacing its content. Rendering is driven by the
+        ``automod_removed`` metadata flag, never by content text, so users
+        typing the placeholder phrase are unaffected. The stored violation id
+        lets admins deep-link to the matching audit-log entry.
+
+        This is a system-level operation: it intentionally bypasses the
+        per-user edit/delete permission checks. The AutoMod boundary enforces
+        ``__system_context__`` before invoking it.
+        """
+        msg_row = self._repo.get_by_id(message_id)
+        if not msg_row:
+            return None
+
+        now = self._get_timestamp()
+        existing_metadata = (
+            self._repo._json_loads(msg_row.get("metadata"))
+            if msg_row.get("metadata")
+            else {}
+        )
+        existing_metadata.update(
+            {
+                "automod_removed": True,
+                "automod_violation_id": violation_id,
+                "automod_rule": rule_name,
+                "automod_reason": reason,
+                "automod_removed_at": now,
+            }
+        )
+
+        self._repo.update_content(
+            message_id,
+            "",
+            now,
+            content_index="",
+        )
+        self._repo.update_metadata(message_id, existing_metadata, now)
+
+        # Blank the search tokens so the removed content stops matching.
+        try:
+            self._repo.set_content_tokens(message_id, [])
+        except Exception as exc:
+            logger.debug(f"Failed to clear search tokens for {message_id}: {exc}")
+        try:
+            search_remove_from_index(message_id)
+        except Exception as e:
+            logger.debug(f"Failed to update search index for {message_id}: {e}")
+
+        cache_delete(f"msg:obj:{message_id}")
+
+        # Build the updated message directly (system call: no participant check).
+        try:
+            updated_row = self._repo.get_by_id(message_id)
+            if not updated_row:
+                return None
+            pin_info = self._pin_repo.get_by_message(message_id)
+            msg = self._repo.row_to_model(updated_row, pin_info)
+            msg.attachments = self._attachment_repo.get_by_message(message_id)
+        except Exception as exc:
+            logger.warning(
+                f"Failed to reload message {message_id} after removal: {exc}"
+            )
+            return None
+        cache_set(f"msg:obj:{message_id}", msg, ttl=3600)
+        return msg
+
     def delete_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
     ) -> bool:

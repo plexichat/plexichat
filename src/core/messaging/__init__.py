@@ -374,6 +374,21 @@ def delete_message(user_id: int, message_id: int, hard_delete: bool = False) -> 
     return _get_manager().delete_message(user_id, message_id, hard_delete)
 
 
+def automod_remove_message(
+    message_id: int,
+    violation_id: Optional[int] = None,
+    rule_name: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Optional[Message]:
+    """Replace a message with an AutoMod removal placeholder (system op).
+
+    Only invoked by the AutoMod engine after the system-context check.
+    """
+    return _get_manager().automod_remove_message(
+        message_id, violation_id, rule_name, reason
+    )
+
+
 def delete_messages_bulk(
     user_id: int, channel_id: int, message_ids: List[int]
 ) -> List[int]:

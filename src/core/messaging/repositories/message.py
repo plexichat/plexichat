@@ -114,8 +114,13 @@ class MessageRepository(BaseRepository[Message]):
         before_id: Optional[SnowflakeID] = None,
         after_id: Optional[SnowflakeID] = None,
     ) -> List[Dict[str, Any]]:
-        """Get messages from a conversation with cursor pagination."""
-        query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0"
+        """Get messages from a conversation with cursor pagination.
+
+        Deleted messages are included so clients can render the
+        'Message deleted by user' tombstone. The ``deleted`` column drives
+        rendering; clients filter/display based on it.
+        """
+        query = "SELECT * FROM msg_messages WHERE conversation_id = ?"
         params: List[Any] = [conversation_id]
 
         if before_id:
@@ -295,13 +300,41 @@ class MessageRepository(BaseRepository[Message]):
             self.invalidate_conversation_cache(cid)
 
     def soft_delete(
-        self, msg_id: SnowflakeID, deleted_at: int, auto_commit: bool = True
+        self,
+        msg_id: SnowflakeID,
+        deleted_at: int,
+        user_id: Optional[SnowflakeID] = None,
+        auto_commit: bool = True,
     ) -> None:
-        """Soft delete a message."""
+        """Soft delete a message (rendered as 'Message deleted by user').
+
+        The content is blanked and a ``deleted_by_user`` marker is stored in
+        metadata. Rendering is driven by the ``deleted`` flag, never by the
+        content text, so a user typing those words is not affected.
+        """
         cid = self._get_conv_id(msg_id)
+        existing_metadata = {}
+        try:
+            row = self._fetch_one(
+                "SELECT metadata FROM msg_messages WHERE id = ?", (msg_id,)
+            )
+            if row and row.get("metadata"):
+                existing_metadata = self._json_loads(row["metadata"]) or {}
+        except Exception:
+            pass
+        existing_metadata.update(
+            {
+                "deleted_by_user": True,
+                "deleted_by": user_id,
+                "deleted_at": deleted_at,
+            }
+        )
         self._execute(
-            "UPDATE msg_messages SET deleted = 1, deleted_at = ?, content = '[deleted]' WHERE id = ?",
-            (deleted_at, msg_id),
+            """UPDATE msg_messages
+               SET deleted = 1, deleted_at = ?, content = '', content_encrypted = NULL,
+                   content_index = NULL, metadata = ?, updated_at = ?
+               WHERE id = ?""",
+            (deleted_at, self._json_dumps(existing_metadata), deleted_at, msg_id),
             auto_commit=auto_commit,
         )
         if cid:
