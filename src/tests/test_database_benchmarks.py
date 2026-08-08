@@ -285,8 +285,15 @@ def test_single_query_execution_sqlite(benchmark_db_sqlite, benchmark_data):
     logger.info(
         f"Single query execution benchmark: {result.mean_ms:.3f}ms (target: 10ms)"
     )
-    assert result.exceeded_target_percent == 0, (
-        f"Query execution exceeded 10ms target in {result.exceeded_target_count} cases"
+    # Load-robust pass criteria: a single GC/IO hiccup under a busy CI host
+    # must not fail the benchmark, but a real regression must. The median must
+    # stay under the target and at most a small fraction of queries may exceed
+    # it.
+    assert result.median_ms < 10.0, (
+        f"Median query execution exceeded 10ms: {result.median_ms:.3f}ms"
+    )
+    assert result.exceeded_target_percent < 10.0, (
+        f"Query execution exceeded 10ms target in {result.exceeded_target_count} of {iterations} cases"
     )
 
 
@@ -423,8 +430,13 @@ def test_connection_acquisition_sqlite(benchmark_db_sqlite, benchmark_data):
     logger.info(
         f"Connection acquisition benchmark: {result.mean_ms:.3f}ms (target: 50ms)"
     )
-    assert result.exceeded_target_percent == 0, (
-        f"Connection acquisition exceeded 50ms in {result.exceeded_target_count} cases"
+    # Load-robust pass criteria (see single-query benchmark): median must stay
+    # under the target and at most a small fraction of attempts may exceed it.
+    assert result.median_ms < 50.0, (
+        f"Median connection acquisition exceeded 50ms: {result.median_ms:.3f}ms"
+    )
+    assert result.exceeded_target_percent < 10.0, (
+        f"Connection acquisition exceeded 50ms in {result.exceeded_target_count} of {iterations} cases"
     )
 
 

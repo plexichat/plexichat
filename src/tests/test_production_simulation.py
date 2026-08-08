@@ -706,14 +706,16 @@ class TestValkeyWithDatabaseQueries:
             start_time = time.time()
             with db.get_session() as session:
                 result = session.execute(text("SELECT 1"))
-                result.fetchone()
+                row = result.fetchone()
+                assert row is not None
             time_with_redis = time.time() - start_time
 
             # Simulate Valkey failure by not using cache
             start_time = time.time()
             with db.get_session() as session:
                 result = session.execute(text("SELECT 1"))
-                result.fetchone()
+                row = result.fetchone()
+                assert row is not None
             time_without_redis = time.time() - start_time
 
             # Both should succeed
@@ -1018,7 +1020,8 @@ class TestGracefulShutdown:
 
         try:
             with db.get_session() as session:
-                session.execute(text("SELECT 1"))
+                result = session.execute(text("SELECT 1"))
+                assert result.fetchone() is not None
             logger.info(f"Query completed within {timeout_seconds}s timeout")
         except Exception as e:
             logger.error(f"Timeout error: {e}")

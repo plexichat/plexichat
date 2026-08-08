@@ -68,33 +68,21 @@ class TestDatabaseIsolation:
     # These tests verify isolation by creating data and checking it doesn't persist
 
     def test_isolation_part1_create_user(self, auth_manager):
-        """Create a user with a specific username."""
+        """Create a user with a known fixed username."""
         from src.utils import encryption
         from unittest.mock import patch
-        import uuid
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user = auth_manager.register(
-                username=f"isolation_test_{uuid.uuid4().hex[:8]}",
-                email=f"isolation_test_{uuid.uuid4().hex[:8]}@example.com",
+                username="isolation_fixed_probe",
+                email="isolation_fixed_probe@example.com",
                 password="TestPass123!",
             )
-        assert user.username is not None
+        assert user.username == "isolation_fixed_probe"
 
     def test_isolation_part2_user_should_not_exist(self, auth_manager):
-        """The user from part1 should not exist due to rollback."""
-        # This test runs after part1, but the user shouldn't exist
-        # because each test runs in a transaction that's rolled back
-        try:
-            # Try to find a user that shouldn't exist
-            user = auth_manager.get_user_by_username("isolation_test_user_xyz")
-            # If we get here, isolation might not be working
-            if user is not None:
-                # Could be a pool user with similar name pattern
-                pass
-        except Exception:
-            # Expected - user doesn't exist
-            pass
+        """The user from part1 must not exist: each test runs on a fresh DB."""
+        assert auth_manager.get_user_by_username("isolation_fixed_probe") is None
 
 
 class TestConfigSharing:

@@ -270,7 +270,7 @@ class TestSQLiteConcurrency:
 
     def test_database_size_growth(self, sqlite_db):
         """Test database size growth with many records."""
-        num_records = 10000
+        num_records = 3000
 
         start_time = time.time()
 

@@ -270,9 +270,8 @@ def test_invalid_db_type(db_config):
     """Test that invalid database type raises error."""
     config_path, temp_dir = db_config
     config.set("database", {"type": "invalid"})
-    db = Database()
     with pytest.raises(ValueError, match="Unsupported database type"):
-        db.connect()
+        Database()
 
 
 def test_invalid_sql_query(db_config):
@@ -286,11 +285,21 @@ def test_invalid_sql_query(db_config):
 
 
 def test_query_on_disconnected_db(db_config):
-    """Test querying without connection raises error."""
+    """Test that a fresh Database lazily connects on first query.
+
+    The current API auto-connects on first use (no explicit connect() call
+    is required), so querying a never-connected Database succeeds and
+    establishes a connection.
+    """
     config_path, temp_dir = db_config
     db = Database()
-    with pytest.raises(ConnectionError):
-        db.execute("SELECT 1")
+    assert db.connection is None
+
+    cursor = db.execute("SELECT 1")
+    cursor.close()
+
+    assert db.connection is not None
+    db.close()
 
 
 def test_table_not_exists_error(db_config):
@@ -750,18 +759,22 @@ def test_row_factory_dict_access(db_config):
 
 
 def test_ensure_connected_error(db_config):
-    """Test that operations fail gracefully when not connected."""
+    """Test that operations auto-connect when no connection is open.
+
+    The API lazily reconnects after close(), so fetch/table helpers work
+    without an explicit connect() call.
+    """
     config_path, temp_dir = db_config
     db = Database()
+    db.connect()
+    db.close()
+    assert db.connection is None
 
-    with pytest.raises(ConnectionError):
-        db.fetch_one("SELECT 1")
-
-    with pytest.raises(ConnectionError):
-        db.fetch_all("SELECT 1")
-
-    with pytest.raises(ConnectionError):
-        db.table_exists("test")
+    # Operations auto-reconnect after close.
+    assert db.fetch_one("SELECT 1") is not None
+    assert db.fetch_all("SELECT 1") != []
+    assert db.table_exists("test") is False
+    db.close()
 
 
 def test_auto_create_directory(db_config):
@@ -1272,7 +1285,7 @@ def test_connection_timeout_config_exists(db_config):
     test_config = {
         "database": {
             "type": "sqlite",
-            "path": db_config.replace("test.db", "timeout_test.db"),
+            "path": str(temp_dir / "timeout_test.db"),
             "connection_pool": {
                 "min_connections": 2,
                 "max_connections": 20,
