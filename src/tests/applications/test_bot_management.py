@@ -17,6 +17,19 @@ def app_manager_with_servers(app_manager, server_manager):
     return app_manager
 
 
+@pytest.fixture(autouse=True)
+def _enable_bots_license():
+    """Enable the bots license feature for the duration of these tests.
+
+    The bot approval flows legitimately gate on ``has_feature("bots")``;
+    the suite runs unlicensed by default, so patch the proxy module the
+    manager imports (``importlib.import_module("utils.licensing")``) the
+    same way the channel-ratchet licensing tests patch it.
+    """
+    with patch("utils.licensing.has_feature", return_value=True):
+        yield
+
+
 @pytest.fixture
 def bot_test_users(auth_manager):
     """Create two explicit users with valid emails for bot management tests."""

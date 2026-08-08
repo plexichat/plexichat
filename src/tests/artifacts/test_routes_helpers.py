@@ -27,12 +27,15 @@ def test_literal_artifact_routes_precede_dynamic_route():
 def test_personal_scope_author_authorized():
     # server_id=None and conversation_id=None => personal scope; the author
     # must be allowed through (this is the bug that was fixed).
-    _authorize_scope(
-        user_id=42,
-        conversation_id=None,
-        server_id=None,
-        permission="artifact.edit",
-        author_id=42,
+    assert (
+        _authorize_scope(
+            user_id=42,
+            conversation_id=None,
+            server_id=None,
+            permission="artifact.edit",
+            author_id=42,
+        )
+        is None
     )
 
 
@@ -58,19 +61,23 @@ def test_personal_scope_missing_author_denied():
 
 
 def test_personal_scope_string_ids_normalized():
-    _authorize_scope(
-        user_id=42,
-        conversation_id=None,
-        server_id=None,
-        permission="artifact.edit",
-        author_id="42",
+    assert (
+        _authorize_scope(
+            user_id=42,
+            conversation_id=None,
+            server_id=None,
+            permission="artifact.edit",
+            author_id="42",
+        )
+        is None
     )
 
 
 def test_server_scope_ignores_author_mismatch_with_permission():
-    # A server-scoped artifact with a valid server permission should not be
-    # gated by author identity; the server check runs first.
-    try:
+    # A server-scoped artifact is gated by server permission, never by author
+    # identity. Without a permission module configured this must 403 rather
+    # than silently pass on authorship.
+    with pytest.raises(HTTPException) as exc:
         _authorize_scope(
             user_id=42,
             conversation_id=None,
@@ -78,8 +85,7 @@ def test_server_scope_ignores_author_mismatch_with_permission():
             permission="artifact.edit",
             author_id=7,
         )
-    except HTTPException:
-        pass  # A 403 here is fine when no permission module is configured.
+    assert exc.value.status_code == 403
 
 
 # === _deep_merge_payload ===

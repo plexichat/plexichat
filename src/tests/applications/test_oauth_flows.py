@@ -158,14 +158,13 @@ class TestOAuthFlows:
             redirect_uri="https://example.com/callback",
             scopes=["identify"],
         )
-        from src.core.applications.oauth.tokens import hash_token_secret
+        from src.core.applications.oauth.tokens import hash_token
 
-        secret = code.code.split("_")[-1] if "_" in code.code else code.code
         client_secret = "test_secret"
 
         app_manager._db.execute(
             "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
-            (client_secret, app.id),
+            (hash_token(client_secret), app.id),
         )
 
         token1 = flow.exchange_code(
@@ -210,8 +209,17 @@ class TestOAuthFlows:
         token = flow.exchange_code(
             app.id, client_secret, code.code, "https://example.com/callback"
         )
+
+        # The flow call above consumes the code, so issue a fresh one for
+        # the manager-level exchange under test.
+        code2 = flow.create_authorization_code(
+            application_id=app.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
         result = app_manager.exchange_code(
-            app.id, client_secret, code.code, "https://example.com/callback"
+            app.id, client_secret, code2.code, "https://example.com/callback"
         )
         expires_in = result["expires_in"]
         assert expires_in > 500, (
