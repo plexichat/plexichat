@@ -1,7 +1,7 @@
 """
 Licence gate for the v3 channel ratchet.
 
-Single source of truth for the question "is the running PlexiChat
+Single source of truth for the question "is the running Plexichat
 instance licensed to use server-managed v3 channel ratchet encryption?".
 
 The function is intentionally a thin wrapper around

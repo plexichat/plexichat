@@ -60,5 +60,12 @@ class MessageEncryptor:
         return content.startswith("ENC:")
 
     def is_key_auto_generated(self) -> bool:
-        """Check if the message encryption key was auto-generated."""
-        return self.keyring.current_key_source == "generated"
+        """Check if the message encryption key was auto-generated.
+
+        ``generated`` is the label written at key-generation time; ``local``
+        is what the truthful KEK-source probe reports for the same situation
+        after a reload (machine-local generated fallback key). Both mean the
+        key material was not operator-provisioned via env/HSM/TPM and should
+        trigger the startup warning.
+        """
+        return self.keyring.current_key_source in ("generated", "local")

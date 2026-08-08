@@ -66,6 +66,12 @@ KEY_BYTES = 32
 
 LEGACY_WIRE_PREFIXES = ("ENC:1:", "ENC:2:")
 
+# Shared snowflake generator used for ratchet interval ids. Kept at
+# module level so the 12-bit sequence counter is monotonic across
+# manager instances (a per-call generator collided within the same
+# wall-clock millisecond).
+_interval_snowflake = None
+
 
 def _legacy_envelope_allowed() -> bool:
     """Return True if legacy ``ENC:1:`` / ``ENC:2:`` envelopes may
@@ -370,10 +376,18 @@ class ChannelRatchetManager:
         return derive_key(interval.start_key, salt=salt, info=info, length=KEY_BYTES)
 
     def _next_interval_id(self, now_ms: int) -> SnowflakeID:
+        # Share one SnowflakeGenerator across calls: a fresh instance
+        # per call resets the sequence counter, so two intervals created
+        # within the same wall-clock millisecond collided with identical
+        # ids. The shared instance increments the 12-bit sequence field
+        # until the next millisecond ticks over.
+        global _interval_snowflake
         try:
-            from ..core.snowflake import SnowflakeGenerator
+            if _interval_snowflake is None:
+                from ..core.snowflake import SnowflakeGenerator
 
-            return int(SnowflakeGenerator().generate())
+                _interval_snowflake = SnowflakeGenerator()
+            return int(_interval_snowflake.generate())
         except Exception:
             return int(now_ms) << 22
 

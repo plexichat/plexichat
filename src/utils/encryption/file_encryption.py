@@ -32,6 +32,11 @@ KEY_SIZE = 32
 # Deprecation warning for legacy format
 _LEGACY_FORMAT_WARNING = "Legacy PXENC format detected. Files will be migrated to PXSTR v2 format on rewrite."
 
+# Module-level singleton so the convenience functions reuse a single
+# FileEncryptor (and its keyring) instead of constructing a fresh one
+# per call. Tests can override this with a temp-keyring instance.
+_file_encryptor: Optional["FileEncryptor"] = None
+
 
 def read_exactly(stream: BinaryIO, n: int) -> bytes:
     """
@@ -473,9 +478,17 @@ class StreamingFileEncryptor:
 
 
 # Convenience
+def _get_file_encryptor() -> "FileEncryptor":
+    """Return the shared module-level FileEncryptor, creating it lazily."""
+    global _file_encryptor
+    if _file_encryptor is None:
+        _file_encryptor = FileEncryptor()
+    return _file_encryptor
+
+
 def encrypt_file(data: bytes, aad: Optional[bytes] = b"") -> bytes:
-    return FileEncryptor().encrypt_to_blob(data, aad)
+    return _get_file_encryptor().encrypt_to_blob(data, aad)
 
 
 def decrypt_file(blob: bytes, aad: Optional[bytes] = b"") -> bytes:
-    return FileEncryptor().decrypt_from_blob(blob, aad)
+    return _get_file_encryptor().decrypt_from_blob(blob, aad)
