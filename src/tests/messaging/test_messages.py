@@ -1,5 +1,9 @@
 """Tests for messaging functionality."""
 
+import pytest
+
+from src.core.messaging.exceptions import ConversationAccessDeniedError
+
 
 def test_send_message(messaging_manager, two_users):
     """Test sending a message between users."""
@@ -15,11 +19,8 @@ def test_send_message(messaging_manager, two_users):
 
 def test_send_message_to_nonexistent_conversation(messaging_manager, test_user):
     """Test that sending to a non-existent conversation fails."""
-    try:
+    with pytest.raises(ConversationAccessDeniedError):
         messaging_manager.send_message(test_user.id, 999999, "Test message")
-        assert False, "Should have raised an error"
-    except Exception:
-        pass  # Expected to fail
 
 
 def test_edit_message(messaging_manager, two_users):

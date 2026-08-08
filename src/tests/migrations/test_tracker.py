@@ -10,7 +10,9 @@ class TestTracker:
     def test_ensure_table_exists(self, migration_manager):
         """Test that ensure_table_exists creates the history table."""
         migration_manager.tracker.ensure_table_exists()
-        # Should not raise
+        # The history table must now be queryable.
+        applied = migration_manager.tracker.get_applied_migrations()
+        assert isinstance(applied, list)
 
     def test_get_applied_migrations(self, migration_manager):
         """Test getting list of applied migrations."""
