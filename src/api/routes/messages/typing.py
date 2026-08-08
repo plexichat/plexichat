@@ -68,9 +68,15 @@ async def trigger_typing(
 
                     server_id = getattr(channel, "server_id", None)
                     if server_id:
-                        # Use optimized function that only fetches user IDs
-                        user_ids = servers_mod.get_member_user_ids(
-                            server_id, exclude_user_id=current_user.user_id
+                        # Use channel-access-filtered recipients to avoid leaking
+                        # typing indicators to users who can't view the channel
+                        from starlette.concurrency import run_in_threadpool
+                        from src.api.websocket.handlers.presence import (
+                            _get_channel_recipients,
+                        )
+
+                        user_ids, _ = await run_in_threadpool(
+                            _get_channel_recipients, current_user.user_id, cid
                         )
             except Exception:
                 channel = None
@@ -88,8 +94,10 @@ async def trigger_typing(
             except Exception:
                 pass
 
-        # Set typing indicator in presence module
-        if presence:
+        # Set typing indicator in presence module — only for a channel the
+        # user can actually access (CORRECTNESS FIX: typing was previously
+        # recorded even for nonexistent / unauthorized channels).
+        if presence and (channel or user_ids):
             try:
                 presence.start_typing(current_user.user_id, cid)
             except Exception:
