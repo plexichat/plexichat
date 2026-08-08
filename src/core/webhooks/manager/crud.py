@@ -45,7 +45,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
         name = self._validate_name(name)
         avatar_url = self._validate_avatar_url(avatar_url)
 
-        max_per_channel = self._config.get("max_webhooks_per_channel", 100)
+        max_per_channel = self._config.get("max_webhooks_per_channel", 10)
         channel_count = self._get_channel_webhook_count(channel_id)
         if channel_count >= max_per_channel:
             raise WebhookLimitError(
@@ -285,47 +285,29 @@ class WebhookCRUDMixin(WebhookManagerTrait):
                 raise ValueError(f"Invalid column name: {col_name}")
 
         now = self._get_timestamp()
+        # Apply updates with exact column matching. A substring check like
+        # ``"url = ?" in update`` falsely matched ``avatar_url = ?`` and
+        # executed ``SET url = ?`` against a table that has no ``url``
+        # column (and silently skipped the ``avatar_url = NULL`` clear
+        # case). Column names are validated against ``allowed_columns``
+        # above, so building the SET clause from them is safe.
         for update in updates:
-            if "name = ?" in update:
-                idx = updates.index(update)
+            if " = " not in update:
+                continue
+            col_name, value_part = update.split(" = ", 1)
+            if col_name == "updated_at":
+                continue
+            idx = updates.index(update)
+            if value_part == "NULL":
                 self._db.execute(
-                    "UPDATE webhook_webhooks SET name = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
+                    f"UPDATE webhook_webhooks SET {col_name} = NULL, updated_at = ? "
+                    f"WHERE id = ?",
+                    (now, webhook_id),
                 )
-            elif "url = ?" in update:
-                idx = updates.index(update)
+            else:
                 self._db.execute(
-                    "UPDATE webhook_webhooks SET url = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "secret = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET secret = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "events = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET events = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "enabled = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET enabled = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "avatar_url = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET avatar_url = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "channel_id = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET channel_id = ?, updated_at = ? WHERE id = ?",
+                    f"UPDATE webhook_webhooks SET {col_name} = ?, updated_at = ? "
+                    f"WHERE id = ?",
                     (params[idx], now, webhook_id),
                 )
 

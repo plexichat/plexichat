@@ -33,9 +33,14 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         avatar_url: Optional[str] = None,
         embeds: Optional[List[Dict[str, Any]]] = None,
         thread_id: Optional[SnowflakeID] = None,
-        wait: bool = True,
+        wait: bool = False,
     ) -> Optional[WebhookMessage]:
-        """Execute a webhook to send a message."""
+        """Execute a webhook to send a message.
+
+        ``wait=False`` (the default, matching the HTTP API) queues the
+        message and returns ``None`` immediately; ``wait=True`` blocks
+        until the message is created and returns it.
+        """
         full_token = token
         if not token.startswith("webhook."):
             full_token = self._format_webhook_token(webhook_id, token)
@@ -213,10 +218,12 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         avatar_url: Optional[str] = None,
         embeds: Optional[List[Dict[str, Any]]] = None,
         thread_id: Optional[SnowflakeID] = None,
-        wait: bool = True,
+        wait: bool = False,
     ) -> Optional[WebhookMessage]:
         """Execute a webhook using its URL."""
-        match = re.match(r"^/?webhooks/(\d+)/([A-Za-z0-9_-]+)$", webhook_url)
+        # The token segment is the full ``webhook.{id}.{secret}`` token
+        # (dots included), so the char class must allow ``.`` as well.
+        match = re.match(r"^/?webhooks/(\d+)/([A-Za-z0-9_.-]+)$", webhook_url)
         if not match:
             raise InvalidWebhookTokenError("Invalid webhook URL format")
 
