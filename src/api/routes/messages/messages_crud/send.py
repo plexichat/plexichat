@@ -105,6 +105,52 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             ):
                 content_value = "\u200b"
 
+            # Phase 1 (synchronous): cheap rules (keyword/regex/spam/etc.) run
+            # BEFORE the message is created or broadcast. A match blocks the
+            # send entirely, so other clients never see the message. AI
+            # moderation is intentionally excluded here and runs async (phase 2).
+            server_id = self._resolve_server_id(cid, current_user.user_id, servers_mod)
+            if server_id:
+                try:
+                    from src.core import automod
+
+                    fast_result = automod.check_message_fast(
+                        server_id=server_id,
+                        channel_id=cid,
+                        user_id=current_user.user_id,
+                        content=content_value,
+                        message_id=None,
+                        context={"source": "message_create"},
+                    )
+                    if not fast_result.passed:
+                        for match in fast_result.violations:
+                            automod.process_violation(
+                                server_id=server_id,
+                                channel_id=cid,
+                                user_id=current_user.user_id,
+                                message_id=None,
+                                match=match,
+                                actions=fast_result.actions_to_take,
+                                context={"source": "message_create"},
+                            )
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": "MESSAGE_BLOCKED",
+                                    "message": "Message blocked by auto-moderation",
+                                    "violations": [
+                                        v.rule_type.value
+                                        for v in fast_result.violations
+                                    ],
+                                }
+                            },
+                        )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.warning(f"Automod fast check failed for message create: {e}")
+
             msg, server_id = await self._send_message_with_fallback(
                 cid,
                 current_user.user_id,
@@ -121,49 +167,6 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Channel not found"}},
                 )
-
-            if server_id:
-                try:
-                    from src.core import automod
-
-                    content = getattr(msg, "content", None) or body.content or ""
-                    result = automod.check_message(
-                        server_id=server_id,
-                        channel_id=cid,
-                        user_id=current_user.user_id,
-                        content=content,
-                        message_id=get_msg_id(msg),
-                        context={"source": "message_create"},
-                    )
-                    if not result.passed:
-                        for match in result.violations:
-                            automod.process_violation(
-                                server_id=server_id,
-                                channel_id=cid,
-                                user_id=current_user.user_id,
-                                message_id=get_msg_id(msg),
-                                match=match,
-                                actions=result.actions_to_take,
-                                context={"source": "message_create"},
-                            )
-
-                        if result.should_delete:
-                            raise HTTPException(
-                                status_code=400,
-                                detail={
-                                    "error": {
-                                        "code": "MESSAGE_BLOCKED",
-                                        "message": "Message blocked by auto-moderation",
-                                        "violations": [
-                                            v.rule_type.value for v in result.violations
-                                        ],
-                                    }
-                                },
-                            )
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    logger.warning(f"Automod check failed for message create: {e}")
 
             if body.poll:
                 polls_module = api.get_polls()
@@ -290,6 +293,31 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             await self._broadcast_message_create(
                 response, server_id, cid, servers_mod, messaging, current_user
             )
+
+            # Phase 2 (asynchronous): AI moderation runs in the background
+            # after the message has been broadcast. A match replaces the
+            # message with an AutoMod tombstone (flag-driven rendering) and
+            # pushes a MESSAGE_UPDATE so clients re-render it.
+            if server_id:
+                try:
+                    from src.core import automod
+
+                    msg_id = get_msg_id(msg)
+                    if msg_id is None:
+                        logger.warning(
+                            f"Automod AI check skipped for message in channel {channel_id}: no id"
+                        )
+                    else:
+                        automod.schedule_ai_check(
+                            server_id=server_id,
+                            channel_id=cid,
+                            user_id=current_user.user_id,
+                            message_id=msg_id,
+                            content=content_value,
+                            context={"source": "message_create"},
+                        )
+                except Exception as e:
+                    logger.warning(f"Automod AI check scheduling failed: {e}")
 
             return response
         except HTTPException:

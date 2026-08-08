@@ -142,6 +142,20 @@ class MessagesCRUDBase:
 
         return msg, server_id
 
+    def _resolve_server_id(
+        self, channel_id: int, user_id: int, servers_mod: Any
+    ) -> Optional[int]:
+        """Return the server id for a channel, or None for DM conversations."""
+        if not servers_mod:
+            return None
+        try:
+            channel = servers_mod.get_channel(channel_id, user_id)
+            if channel:
+                return getattr(channel, "server_id", None)
+        except Exception:
+            return None
+        return None
+
     def _resolve_author_info(self, current_user, auth=None):
         author_username = current_user.username
         author_avatar_url = getattr(current_user, "avatar_url", None)
