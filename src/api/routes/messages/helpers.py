@@ -226,6 +226,7 @@ def _message_to_response(
         author_badges=author_badges or get_attr(msg, "author_badges") or [],
         reactions=reactions_data or [],
         metadata=metadata,
+        deleted=bool(get_attr(msg, "deleted", False)),
         poll=poll_response,
         poll_results=poll_results,
     )
