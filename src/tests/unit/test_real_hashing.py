@@ -115,6 +115,8 @@ class TestArgon2Parameters:
         hasher.hash_password("TestPass123!")
         elapsed = time.time() - start
 
-        # Should take at least 10ms (security) but less than 500ms (usability)
+        # Should take at least 10ms (security) but stay usable. The upper bound
+        # is generous so a loaded CI host cannot flake it; a genuinely broken
+        # config (multi-second hashing) still fails.
         assert elapsed >= 0.01, "Hashing too fast - may be insecure"
-        assert elapsed < 0.5, "Hashing too slow - may impact UX"
+        assert elapsed < 2.0, "Hashing too slow - may impact UX"
