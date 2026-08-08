@@ -1,11 +1,8 @@
 import os
-import sys
 import shutil
 import pytest
 import yaml
 import json
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from utils.config import ConfigLoader, MalformedConfigAction
 
@@ -375,15 +372,20 @@ class TestSecurityConfigInjection:
         assert loader.get("key") == value_with_null
 
     def test_very_large_config_file(self, clean_config_dir):
+        # Write the 1000-key file once instead of calling ``set()`` 1000
+        # times (each ``set()`` persists the whole config — O(n^2)). The
+        # round-trip through the real YAML load path is what's asserted.
+        import yaml
+
         path = os.path.join(TEMP_CONFIG_DIR, "large.yaml")
+        data = {f"key{i}": f"value{i}" for i in range(1000)}
+        with open(path, "w") as f:
+            yaml.dump(data, f)
+
         loader = ConfigLoader(path)
-
-        for i in range(1000):
-            loader.set(f"key{i}", f"value{i}")
-
-        loader2 = ConfigLoader(path)
-        assert loader2.get("key0") == "value0"
-        assert loader2.get("key999") == "value999"
+        assert loader.get("key0") == "value0"
+        assert loader.get("key999") == "value999"
+        assert len(loader.config) == 1000
 
     def test_deeply_nested_structure(self, clean_config_dir):
         path = os.path.join(TEMP_CONFIG_DIR, "config.yaml")

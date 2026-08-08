@@ -1,13 +1,10 @@
 import os
-import sys
 import shutil
 import time
 import logging
 import zipfile
 import pytest
 from datetime import datetime, timedelta
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from utils.logger import Logger
 
