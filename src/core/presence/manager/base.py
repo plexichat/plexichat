@@ -82,6 +82,25 @@ class PresenceManagerBase(BaseManager):
             (user_id, "offline", now, now),
         )
 
+    def _reseed_presence_cache(self, user_id: SnowflakeID) -> Presence:
+        """Fetch fresh presence from the database and refresh the cache.
+
+        Mirrors the write pattern used by ``set_status``/``set_activity`` so
+        mutating operations never hand back a stale cached presence.
+        """
+        from src.core.database import cache_set
+
+        presence = self.get_presence(user_id, use_cache=False)
+        try:
+            cache_set(
+                f"presence:{user_id}",
+                self._presence_to_dict(presence),
+                ttl=self._presence_timeout_ms // 1000,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to cache presence for user {user_id}: {e}")
+        return presence
+
     def _presence_to_dict(self, presence: Presence) -> Dict[str, Any]:
         """Convert Presence model to dict for caching."""
         return {
@@ -91,6 +110,7 @@ class PresenceManagerBase(BaseManager):
                 "text": presence.custom_status.text,
                 "emoji": presence.custom_status.emoji,
                 "expires_at": presence.custom_status.expires_at,
+                "created_at": presence.custom_status.created_at,
             }
             if presence.custom_status
             else None,
@@ -128,6 +148,7 @@ class PresenceManagerBase(BaseManager):
                 text=custom_status["text"],
                 emoji=custom_status["emoji"],
                 expires_at=custom_status["expires_at"],
+                created_at=custom_status.get("created_at", 0),
             )
             if custom_status
             else None,

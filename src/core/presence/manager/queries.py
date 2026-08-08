@@ -74,9 +74,28 @@ class OnlineQueryMixin(PresenceManagerBase):
 
         Returns:
             List of online member user IDs
+
+        NOTE: only members of the server may query its online members.
+        ``user_id == 0`` is the reserved system caller (e.g. @here mention
+        fan-out in the notifications module) and bypasses the membership
+        check; any other non-member gets an empty list instead of leaking
+        the server's online roster.
         """
         if not self._servers:
             return []
+
+        if user_id != 0:
+            is_member = getattr(self._servers, "_is_member", None)
+            if callable(is_member):
+                if not is_member(server_id, user_id):
+                    return []
+            else:
+                try:
+                    members = self._servers.get_members(user_id, server_id)
+                    if not members:
+                        return []
+                except Exception:
+                    return []
 
         if hasattr(self._servers, "get_member_user_ids"):
             member_ids = self._servers.get_member_user_ids(server_id)

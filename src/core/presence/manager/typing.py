@@ -117,16 +117,27 @@ class TypingMixin(PresenceManagerBase):
                 try:
                     user_ids = client.smembers(f"typing:channel:{channel_id}")
                     if user_ids:
-                        now = self._get_timestamp()
-                        return [
-                            TypingIndicator(
-                                user_id=int(uid),
-                                channel_id=channel_id,
-                                started_at=now - 1000,
-                                expires_at=now + 5000,
-                            )
-                            for uid in user_ids
-                        ]
+                        ids = [int(uid) for uid in user_ids]
+                        # CORRECTNESS FIX: the Valkey set only stores member
+                        # ids, not timestamps. Fetch the real started_at /
+                        # expires_at rows from the DB (written by
+                        # ``start_typing``) instead of fabricating values.
+                        placeholders = ",".join("?" * len(ids))
+                        rows = self._db.fetch_all(
+                            f"""SELECT * FROM pres_typing
+                                WHERE channel_id = ? AND user_id IN ({placeholders})""",
+                            (channel_id,) + tuple(ids),
+                        )
+                        if rows:
+                            return [
+                                TypingIndicator(
+                                    user_id=row["user_id"],
+                                    channel_id=row["channel_id"],
+                                    started_at=row["started_at"],
+                                    expires_at=row["expires_at"],
+                                )
+                                for row in rows
+                            ]
                 except Exception as e:
                     logger.debug(f"Valkey get_typing_users failed: {e}")
 

@@ -64,8 +64,7 @@ class CustomStatusMixin(PresenceManagerBase):
 
         logger.debug(f"User {user_id} custom status set")
 
-        result = self.get_presence(user_id)
-        return result
+        return self._reseed_presence_cache(user_id)
 
     def get_custom_status(self, user_id: int) -> Optional[CustomStatus]:
         """Get user's custom status."""
@@ -97,4 +96,4 @@ class CustomStatusMixin(PresenceManagerBase):
 
         logger.debug(f"User {user_id} custom status cleared")
 
-        return self.get_presence(user_id)
+        return self._reseed_presence_cache(user_id)

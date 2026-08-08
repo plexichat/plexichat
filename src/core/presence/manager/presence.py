@@ -25,10 +25,17 @@ class PresenceMixin(PresenceManagerBase):
 
     def get_presence(self, user_id: int, use_cache: bool = True) -> Presence:
         """Get full presence information for a user with optimized database access."""
-        if use_cache and valkey_available():
+        if use_cache:
             cached = get_cached_presence(user_id)
             if cached:
-                return self._dict_to_presence(cached)
+                try:
+                    return self._dict_to_presence(cached)
+                except Exception:
+                    # CORRECTNESS FIX: a cache entry written with an
+                    # incompatible schema (e.g. by ``cache_presence``) must
+                    # not crash presence lookups. Treat it as a miss and
+                    # purge it so the next call rebuilds a valid entry.
+                    cache_delete(f"presence:{user_id}")
 
         query = """
             SELECT
@@ -89,26 +96,9 @@ class PresenceMixin(PresenceManagerBase):
             )
 
         if valkey_available():
-            client = get_valkey_client()
-            if client:
-                try:
-                    focus = client.hgetall(f"presence:focus:{user_id}")
-                    if focus:
-                        focus_data = cast(Dict[Any, Any], focus)
-                        channel_value = focus_data.get("channel_id") or focus_data.get(
-                            b"channel_id"
-                        )
-                        server_value = focus_data.get("server_id") or focus_data.get(
-                            b"server_id"
-                        )
-                        if channel_value is not None:
-                            presence.current_channel_id = int(channel_value) or None
-                        if server_value is not None:
-                            presence.current_server_id = int(server_value) or None
-                except Exception:
-                    pass
+            presence = self._apply_focus(presence, user_id)
 
-        if use_cache and valkey_available() and row:
+        if use_cache:
             try:
                 cache_set(
                     f"presence:{user_id}",
@@ -120,6 +110,34 @@ class PresenceMixin(PresenceManagerBase):
 
         return presence
 
+    def _apply_focus(self, presence: Presence, user_id: int) -> Presence:
+        """Merge transient focused-channel state from Valkey into presence."""
+        if not valkey_available():
+            return presence
+
+        client = get_valkey_client()
+        if not client:
+            return presence
+
+        try:
+            focus = client.hgetall(f"presence:focus:{user_id}")
+            if focus:
+                focus_data = cast(Dict[Any, Any], focus)
+                channel_value = focus_data.get("channel_id") or focus_data.get(
+                    b"channel_id"
+                )
+                server_value = focus_data.get("server_id") or focus_data.get(
+                    b"server_id"
+                )
+                if channel_value is not None:
+                    presence.current_channel_id = int(channel_value) or None
+                if server_value is not None:
+                    presence.current_server_id = int(server_value) or None
+        except Exception:
+            pass
+
+        return presence
+
     def get_presences(self, user_ids: List[int]) -> List[Presence]:
         """Get presence information for multiple users efficiently with batch queries and Valkey caching."""
         if not user_ids:
@@ -128,19 +146,18 @@ class PresenceMixin(PresenceManagerBase):
         results_map: Dict[int, Presence] = {}
         missing_ids = list(user_ids)
 
-        if valkey_available():
-            try:
-                from src.core.database.cache import get_bulk_presence
+        try:
+            from src.core.database.cache import get_bulk_presence
 
-                cached_data = get_bulk_presence(user_ids)
-                for uid, data in cached_data.items():
-                    try:
-                        results_map[uid] = self._dict_to_presence(data)
-                        missing_ids.remove(uid)
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.warning(f"Failed to fetch bulk presence from Valkey: {e}")
+            cached_data = get_bulk_presence(user_ids)
+            for uid, data in cached_data.items():
+                try:
+                    results_map[uid] = self._dict_to_presence(data)
+                    missing_ids.remove(uid)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Failed to fetch bulk presence from cache: {e}")
 
         if not missing_ids:
             return [results_map[uid] for uid in user_ids]
@@ -217,14 +234,22 @@ class PresenceMixin(PresenceManagerBase):
                     updated_at=pres_row["updated_at"],
                 )
 
+            # CORRECTNESS FIX: merge the transient focused-channel state into
+            # each bulk result so the cached dict is schema-identical to the
+            # one written by ``get_presence`` (focused channel/server would
+            # otherwise be silently dropped from the cache).
+            presence = self._apply_focus(presence, uid)
+
             results_map[uid] = presence
 
-            if valkey_available() and pres_row:
+            try:
                 cache_set(
                     f"presence:{uid}",
                     self._presence_to_dict(presence),
                     ttl=self._presence_timeout_ms // 1000,
                 )
+            except Exception:
+                pass
 
         return [results_map[uid] for uid in user_ids]
 
@@ -240,19 +265,35 @@ class PresenceMixin(PresenceManagerBase):
         )
 
     def update_last_seen(self, user_id: int) -> Presence:
-        """Update user's last seen timestamp."""
+        """Update user's last seen timestamp, throttled to once per 30s."""
         self._validate_user(user_id)
-        self._ensure_presence_record(user_id)
-
         now = self._get_timestamp()
 
+        row = self._db.fetch_one(
+            "SELECT last_seen FROM pres_presence WHERE user_id = ?", (user_id,)
+        )
+        if row and (now - row["last_seen"]) < 30000:
+            return self._reseed_presence_cache(user_id)
+
+        # Ensure a presence record exists (e.g. freshly registered users) so
+        # the UPDATE below always touches a row and returns a real timestamp.
+        self._ensure_presence_record(user_id)
         self._db.execute(
             "UPDATE pres_presence SET last_seen = ?, updated_at = ? WHERE user_id = ?",
             (now, now, user_id),
         )
 
-        result = self.get_presence(user_id)
-        return result
+        if valkey_available():
+            try:
+                client = get_valkey_client()
+                if client and client.sismember("presence:online_users", str(user_id)):
+                    client.expire(
+                        "presence:online_users", self._presence_timeout_ms // 1000
+                    )
+            except Exception:
+                pass
+
+        return self._reseed_presence_cache(user_id)
 
     def set_focused_channel(
         self,

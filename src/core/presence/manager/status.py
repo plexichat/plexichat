@@ -34,6 +34,11 @@ class StatusMixin(PresenceManagerBase):
             key = "presence:online_users"
             if status in ("online", "idle", "dnd"):
                 client.sadd(key, str(user_id))
+                # CORRECTNESS FIX: without a TTL the online-users set grows
+                # unbounded and retains stale entries after a server restart
+                # or a dropped connection that never sent OFFLINE. Refresh a
+                # bounded TTL on every add so the index self-heals.
+                client.expire(key, self._presence_timeout_ms // 1000)
             else:
                 client.srem(key, str(user_id))
         except Exception as e:
@@ -75,12 +80,15 @@ class StatusMixin(PresenceManagerBase):
             )
 
         presence = self.get_presence(user_id, use_cache=False)
-        if valkey_available():
+        try:
             cache_set(
                 f"presence:{user_id}",
                 self._presence_to_dict(presence),
                 ttl=self._presence_timeout_ms // 1000,
             )
+        except Exception as e:
+            logger.debug(f"Failed to cache presence for user {user_id}: {e}")
+        if valkey_available():
             self._update_valkey_presence(user_id, status.value)
 
         logger.debug(f"User {user_id} status set to {status.value}")
@@ -95,7 +103,10 @@ class StatusMixin(PresenceManagerBase):
         if not row:
             return UserStatus.OFFLINE
 
-        return UserStatus(row["status"])
+        try:
+            return UserStatus(row["status"])
+        except ValueError:
+            return UserStatus.OFFLINE
 
     def clear_status(self, user_id: int) -> Presence:
         """Clear user's status (set to offline)."""
