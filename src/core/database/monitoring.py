@@ -24,6 +24,7 @@ class DatabaseMonitor:
         # Threading state
         self._periodic_logging_thread = None
         self._stop_logging = False
+        self._stop_event = threading.Event()
 
         # Rate-limited alert state (record only on state transitions).
         self._alert_state: dict[str, bool] = {}  # alert_key → currently_firing
@@ -159,6 +160,7 @@ class DatabaseMonitor:
                 return
 
             self._stop_logging = False
+            self._stop_event.clear()
             self._periodic_logging_thread = threading.Thread(
                 target=self._periodic_logging_loop,
                 args=(get_stats_cb, reap_cb),
@@ -174,6 +176,7 @@ class DatabaseMonitor:
         """Stop the background logging thread."""
         with self._lock:
             self._stop_logging = True
+            self._stop_event.set()
 
     def _format_log_context(self, **kwargs) -> str:
         """Internal helper for structured logging context."""
@@ -182,7 +185,7 @@ class DatabaseMonitor:
 
     def _periodic_logging_loop(self, get_stats_cb, reap_cb=None):
         """Main loop for the periodic logging thread."""
-        while not self._stop_logging:
+        while not self._stop_event.is_set():
             try:
                 # 1. Proactively reap leaked connections if callback provided
                 if reap_cb:
@@ -319,7 +322,7 @@ class DatabaseMonitor:
             except Exception as e:
                 logger.error(f"Error in pool monitoring loop: {e}")
 
-            time.sleep(self._periodic_log_interval)
+            self._stop_event.wait(self._periodic_log_interval)
 
     def _cleanup_metrics(self):
         """Clean up old metrics to prevent memory growth."""

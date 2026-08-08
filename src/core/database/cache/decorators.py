@@ -21,7 +21,7 @@ from ..valkey_client import (
     ValkeyOperationError,
     JsonSerializable,
 )
-from .base import mem_cache_get, mem_cache_set
+from .base import mem_cache_get, mem_cache_set, default_cache_ttl
 from .serialization import generate_cache_key, ensure_serializable, reconstruct_object
 
 _cache_stats: dict = {"hits": 0, "misses": 0, "errors": 0}
@@ -69,6 +69,13 @@ def cached(
                     if cached_value is not None:
                         _cache_stats["hits"] += 1
                         logger.debug(f"CACHE HIT (Valkey): {cache_key}")
+                        # Keep the local L1 warm so lookups still succeed from
+                        # memory if Valkey goes down right after this hit.
+                        mem_cache_set(
+                            cache_key,
+                            cached_value,
+                            ttl if ttl is not None else default_cache_ttl(),
+                        )
                         return reconstruct_object(cached_value)
                 except ValkeyOperationError:
                     _cache_stats["errors"] += 1
@@ -86,9 +93,7 @@ def cached(
             result = await async_func(*args, **kwargs)
             serializable_result = ensure_serializable(result)
 
-            cache_ttl = ttl if ttl is not None else 300
-            if valkey_ready and client is not None:
-                cache_ttl = ttl if ttl is not None else client.ttl_cache
+            cache_ttl = ttl if ttl is not None else default_cache_ttl()
 
             if valkey_ready:
                 assert client is not None
@@ -128,6 +133,13 @@ def cached(
                     if cached_value is not None:
                         _cache_stats["hits"] += 1
                         logger.debug(f"CACHE HIT (Valkey): {cache_key}")
+                        # Keep the local L1 warm so lookups still succeed from
+                        # memory if Valkey goes down right after this hit.
+                        mem_cache_set(
+                            cache_key,
+                            cached_value,
+                            ttl if ttl is not None else default_cache_ttl(),
+                        )
                         return reconstruct_object(cached_value)
                 except ValkeyOperationError:
                     _cache_stats["errors"] += 1
@@ -144,9 +156,7 @@ def cached(
             result = func(*args, **kwargs)
             serializable_result = ensure_serializable(result)
 
-            cache_ttl = ttl if ttl is not None else 300
-            if valkey_ready and client is not None:
-                cache_ttl = ttl if ttl is not None else client.ttl_cache
+            cache_ttl = ttl if ttl is not None else default_cache_ttl()
 
             if valkey_ready:
                 assert client is not None

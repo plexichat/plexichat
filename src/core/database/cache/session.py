@@ -14,17 +14,19 @@ from ..valkey_client import (
     is_available,
     ValkeyOperationError,
 )
-from .operations import cache_get, cache_delete, invalidate_pattern
+from .operations import cache_get, cache_delete, cache_set, invalidate_pattern
+from .base import default_ttl
 
 
 def cache_session(
     session_id: str, user_id: int, data: Dict[str, Any], ttl: Optional[int] = None
 ) -> bool:
-    """Cache a user session."""
-    client = get_client()
-    if not client or not is_available():
-        return False
+    """Cache a user session.
 
+    Works with Valkey when connected (also tracking the user's session set for
+    bulk invalidation); otherwise falls back to the in-memory tier so the
+    session is still served from cache in single-node deployments.
+    """
     session_data: Dict[str, Any] = {
         "user_id": user_id,
         "created_at": time.time(),
@@ -32,15 +34,13 @@ def cache_session(
     }
 
     try:
-        session_ttl = ttl if ttl is not None else client.ttl_session
-        from .operations import cache_set as _cache_set
-
-        _cache_set(f"session:{session_id}", session_data)
-        # Set TTL separately since cache_set uses default TTL
-        client.expire(f"session:{session_id}", session_ttl)
-        client.sadd(f"user_sessions:{user_id}", session_id)
+        session_ttl = ttl if ttl is not None else default_ttl("session")
+        stored = cache_set(f"session:{session_id}", session_data, ttl=session_ttl)
+        client = get_client()
+        if client and is_available():
+            client.sadd(f"user_sessions:{user_id}", session_id)
         logger.debug(f"Session cached: {session_id} for user {user_id}")
-        return True
+        return stored
     except ValkeyOperationError as e:
         logger.warning(f"Failed to cache session {session_id}: {e}")
         return False
@@ -53,13 +53,10 @@ def get_cached_session(session_id: str) -> Optional[Dict[str, Any]]:
 
 def invalidate_session(session_id: str, user_id: Optional[int] = None) -> bool:
     """Invalidate a session."""
-    client = get_client()
-    if not client or not is_available():
-        return False
-
     try:
         cache_delete(f"session:{session_id}")
-        if user_id:
+        client = get_client()
+        if user_id and client and is_available():
             client.srem(f"user_sessions:{user_id}", session_id)
         logger.debug(f"Session invalidated: {session_id}")
         return True
@@ -79,7 +76,8 @@ def invalidate_user_sessions(user_id: int) -> int:
         if session_ids:
             keys_to_delete = [f"session:{sid}" for sid in session_ids]
             keys_to_delete.append(f"user_sessions:{user_id}")
-            client.delete(*keys_to_delete)
+            for key in keys_to_delete:
+                cache_delete(key)
             logger.debug(f"Invalidated {len(session_ids)} sessions for user {user_id}")
             return len(session_ids)
         return 0

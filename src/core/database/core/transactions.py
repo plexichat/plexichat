@@ -102,12 +102,26 @@ class DatabaseTransactionMixin:
         self._invalidate_query_cache()
         conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
         if self.transaction_depth > 0:
-            # If we're inside a nested transaction, our test-suite expects a rollback
-            # to abort the *entire* transaction chain.
+            # Nested rollback: undo only the innermost savepoint so the
+            # enclosing transaction remains intact (standard savepoint
+            # semantics). A full-chain rollback only happens when the
+            # outermost transaction is rolled back.
             if self.transaction_depth > 1:
-                conn.rollback()
-                self.transaction_depth = 0
-                self.in_transaction = False
+                cursor = conn.cursor()
+                try:
+                    cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}")
+                except Exception as e:
+                    if self._is_no_transaction(e):
+                        # Savepoint already gone (e.g. failed transaction) —
+                        # fall back to aborting the whole chain.
+                        conn.rollback()
+                        self.transaction_depth = 0
+                        self.in_transaction = False
+                        return
+                    raise
+                finally:
+                    cursor.close()
+                self.transaction_depth -= 1
                 return
 
             if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]

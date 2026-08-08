@@ -37,24 +37,43 @@ ValkeyValue = Union[str, bytes, int, float]
 
 class ValkeyClientBase:
     def __init__(self):
-        self.config = config.get("redis") or {}
+        # The config block is canonically named "valkey" (see
+        # src/config_defaults.py). "redis" is accepted as a backward-compatible
+        # alias so older deployments and tests that used the old key keep
+        # working.
+        self.config = config.get("valkey") or config.get("redis") or {}
         self.enabled = self.config.get("enabled", False)
         self._client: Any = None
         self._pubsub_handle: Any = None
         self._connected = False
 
         self.host = self.config.get("host", "localhost")
-        self.port = self.config.get("port", 6379)
+        try:
+            self.port = int(self.config.get("port", 6379))
+        except (TypeError, ValueError):
+            self.port = 6379
         self.password = self.config.get("password", "") or None
-        self.db = self.config.get("db", 0)
+        try:
+            self.db = int(self.config.get("db", 0))
+        except (TypeError, ValueError):
+            self.db = 0
         self.ssl = self.config.get("ssl", False)
 
         self.key_prefix = self.config.get("key_prefix", "plexichat:")
 
-        ttl_config = self.config.get("ttl", {})
-        self.ttl_session = ttl_config.get("session", 1800)
-        self.ttl_presence = ttl_config.get("presence", 300)
-        self.ttl_cache = ttl_config.get("cache", 60)
+        ttl_config = self.config.get("ttl", {}) or {}
+        try:
+            self.ttl_session = int(ttl_config.get("session", 1800))
+        except (TypeError, ValueError):
+            self.ttl_session = 1800
+        try:
+            self.ttl_presence = int(ttl_config.get("presence", 300))
+        except (TypeError, ValueError):
+            self.ttl_presence = 300
+        try:
+            self.ttl_cache = int(ttl_config.get("cache", 60))
+        except (TypeError, ValueError):
+            self.ttl_cache = 60
 
         self.worker_id = "unknown"
 
@@ -136,8 +155,11 @@ class ValkeyClientBase:
             if self.password:
                 kwargs["credentials"] = ServerCredentials(self.password)
 
-            pool_config = self.config.get("connection_pool", {})
-            timeout = pool_config.get("timeout", 5)
+            pool_config = self.config.get("connection_pool", {}) or {}
+            try:
+                timeout = int(pool_config.get("timeout", 5))
+            except (TypeError, ValueError):
+                timeout = 5
             kwargs["request_timeout"] = timeout * 1000
 
             kwargs["reconnect_strategy"] = BackoffStrategy(

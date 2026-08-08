@@ -17,6 +17,7 @@ from .base import (
     mem_cache_get,
     mem_cache_set,
     mem_cache_delete,
+    default_cache_ttl,
 )
 from .serialization import ensure_serializable, reconstruct_object
 from .decorators import get_cache_stats
@@ -36,7 +37,9 @@ def cache_get(key: str) -> Optional[Any]:
             else:
                 stats["misses"] += 1
                 logger.debug(f"Cache GET MISS: {key}")
-            return value
+                # Fall through to the memory tier: a ``cache_set`` may have
+                # only reached memory (Valkey write failed or was skipped),
+                # so the L1 copy must still be served.
         except ValkeyOperationError as e:
             stats["errors"] += 1
             logger.warning(f"Cache GET failed for {key}: {e}")
@@ -46,10 +49,10 @@ def cache_get(key: str) -> Optional[Any]:
 def cache_set(key: str, value: Any, ttl: Optional[int] = None) -> bool:
     """Set a value in cache, falling back to in-memory cache."""
     client = get_client()
+    cache_ttl = ttl if ttl is not None else default_cache_ttl()
     stored = False
     if client and is_available():
         try:
-            cache_ttl = ttl if ttl is not None else client.ttl_cache
             serializable_value = ensure_serializable(value)
             client.set_json(key, serializable_value, ttl=cache_ttl)
             logger.debug(f"Cache SET: {key} (ttl={cache_ttl})")
@@ -58,8 +61,11 @@ def cache_set(key: str, value: Any, ttl: Optional[int] = None) -> bool:
             stats = get_cache_stats()
             stats["errors"] += 1
             logger.warning(f"Cache SET failed for {key}: {e}")
-    if not stored and ttl is not None:
-        mem_cache_set(key, value, ttl)
+    if not stored:
+        # Always keep a local copy: this is the offline/fallback tier and the
+        # local L1 behind a healthy Valkey, so a subsequent cache_get serves
+        # from memory even if Valkey goes down right after the write.
+        mem_cache_set(key, value, cache_ttl)
         return True
     return stored
 

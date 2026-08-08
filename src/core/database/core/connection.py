@@ -67,10 +67,51 @@ class DatabaseConnectionMixin:
 
             now = time.time()
             last_valid_check = getattr(self._local, "last_valid_check", 0)
-            if now - last_valid_check < 30.0:
+            fast_path = (now - last_valid_check) < 30.0
+
+            # Cheap health checks run on EVERY access so eviction rules
+            # (closed connections, max idle time, max connection age) are
+            # honored even inside the 30s validation window.
+            if getattr(conn, "closed", 0) != 0:
+                logger.debug(f"Connection {conn_id} is closed, reconnecting")
+                is_valid = False
+            elif not hasattr(conn, "closed"):
+                # Python 3.14+ removed the ``.closed`` attribute from
+                # sqlite3.Connection; probe with a side-effect-free attribute
+                # read that raises ProgrammingError once the connection is
+                # closed (``in_transaction`` is available on sqlite3 and
+                # psycopg2 connections).
+                try:
+                    _ = conn.in_transaction
+                except Exception:
+                    logger.debug(f"Connection {conn_id} is closed, reconnecting")
+                    is_valid = False
+
+            metadata = self.monitor.get_connection_metadata(conn_id)
+            if is_valid and metadata:
+                last_used = metadata.get("last_used", now)
+                if self._max_idle_time > 0 and (now - last_used) > self._max_idle_time:
+                    logger.warning(
+                        f"Connection {conn_id} exceeded max idle time, evicting"
+                    )
+                    is_valid = False
+
+                elif self._max_connection_age_seconds > 0:
+                    created_at = metadata.get("created_at", 0)
+                    if (now - created_at) > self._max_connection_age_seconds:
+                        logger.warning(
+                            f"Connection {conn_id} exceeded max age ({now - created_at:.1f}s), evicting"
+                        )
+                        is_valid = False
+
+            # Fast path: skip the expensive liveness checks (postgres poll,
+            # SELECT 1) for connections touched within the validation window.
+            if is_valid and fast_path:
+                self._local.last_valid_check = now
+                self.monitor.update_connection_last_used(conn_id)
                 return conn
 
-            if self.type == "postgres":
+            if is_valid and self.type == "postgres":
                 if getattr(conn, "closed", 0) != 0:
                     is_valid = False
 
@@ -89,40 +130,17 @@ class DatabaseConnectionMixin:
                         logger.debug(f"Connection {conn_id} failed poll check: {e}")
                         is_valid = False
 
-            if is_valid:
-                metadata = self.monitor.get_connection_metadata(conn_id)
-                if metadata:
-                    last_used = metadata.get("last_used", now)
-                    if (
-                        self._max_idle_time > 0
-                        and (now - last_used) > self._max_idle_time
-                    ):
-                        logger.warning(
-                            f"Connection {conn_id} exceeded max idle time, evicting"
-                        )
+            if is_valid and metadata and self._enable_validation:
+                last_val = metadata.get("last_validation", 0)
+                if (now - last_val) >= self._validation_interval:
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute(self._validation_query)
+                        cursor.close()
+                        metadata["last_validation"] = now
+                    except Exception as e:
+                        logger.warning(f"Connection {conn_id} failed validation: {e}")
                         is_valid = False
-
-                    elif self._max_connection_age_seconds > 0:
-                        created_at = metadata.get("created_at", 0)
-                        if (now - created_at) > self._max_connection_age_seconds:
-                            logger.warning(
-                                f"Connection {conn_id} exceeded max age ({now - created_at:.1f}s), evicting"
-                            )
-                            is_valid = False
-
-                    if is_valid and self._enable_validation:
-                        last_val = metadata.get("last_validation", 0)
-                        if (now - last_val) >= self._validation_interval:
-                            try:
-                                cursor = conn.cursor()
-                                cursor.execute(self._validation_query)
-                                cursor.close()
-                                metadata["last_validation"] = now
-                            except Exception as e:
-                                logger.warning(
-                                    f"Connection {conn_id} failed validation: {e}"
-                                )
-                                is_valid = False
 
             if is_valid:
                 self._local.last_valid_check = now
@@ -157,6 +175,8 @@ class DatabaseConnectionMixin:
                     pass
                 self._local.connection = None
 
+            logger.info("Acquiring new database connection")
+
             start_time = time.time()
             if self.type == "postgres" and isinstance(self.engine, PostgresEngine):
                 if not self._pool:
@@ -165,7 +185,23 @@ class DatabaseConnectionMixin:
                     self._pool = self.engine.create_pool(
                         min_conn, pool_config.get("max_connections", 300)
                     )
-                conn = self.engine.connect(self._pool)
+                pool_config = self.config.get("connection_pool", {})
+                connect_timeout = pool_config.get("connect_timeout", 10)
+                try:
+                    conn = self.engine.connect(self._pool)
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "pool" in err_str and (
+                        "exhaust" in err_str or "no available" in err_str
+                    ):
+                        logger.error(
+                            "Connection pool exhausted: no available connections"
+                        )
+                    elif "timeout" in err_str:
+                        logger.error(f"Connection timeout ({connect_timeout}s): {e}")
+                    else:
+                        logger.error(f"Failed to acquire PostgreSQL connection: {e}")
+                    raise
             else:
                 conn = self.engine.connect()
 
@@ -187,6 +223,11 @@ class DatabaseConnectionMixin:
                     "thread_id": threading.current_thread().ident,
                     "acquired_at": time.time(),
                 },
+            )
+
+            logger.info(
+                "Connected to "
+                + ("PostgreSQL" if self.type == "postgres" else "SQLite")
             )
 
             return conn
@@ -254,6 +295,8 @@ class DatabaseConnectionMixin:
 
         self.transaction_depth = 0
         self.in_transaction = False
+
+        logger.info("cleared thread-local connection state")
 
     def start_pool_monitoring(self: _DatabaseConnectionProtocol):
         self.monitor.start_pool_monitoring(self.get_pool_stats, self.reap_connections)

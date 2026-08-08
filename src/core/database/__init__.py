@@ -11,6 +11,7 @@ from .valkey_client import (
 from .cache import (
     cached,
     cache_get,
+    cache_get_many,
     cache_set,
     cache_delete,
     invalidate_cached,
@@ -52,6 +53,7 @@ __all__ = [
     "valkey_available",
     "cached",
     "cache_get",
+    "cache_get_many",
     "cache_set",
     "cache_delete",
     "invalidate_cached",

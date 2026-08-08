@@ -8,9 +8,33 @@ used as fallback when Valkey is unavailable.
 import time
 from typing import Any, Dict, Optional, Tuple
 
+import utils.config as config
+
 # Cache storage
 _mem_cache: Dict[str, Tuple[float, Any]] = {}
 _MEM_CACHE_MAX_SIZE = 1000
+
+# Default TTLs used by the in-memory fallback tier. Mirror valkey's
+# ``ttl.*`` so both tiers behave identically.
+_DEFAULT_TTLS = {"cache": 60, "presence": 300, "session": 1800}
+_DEFAULT_CACHE_TTL = _DEFAULT_TTLS["cache"]
+
+
+def default_ttl(kind: str = "cache") -> int:
+    """Effective default TTL for ``kind`` (cache/presence/session), honoring
+    the configured ``valkey.ttl.<kind>`` even when Valkey is not connected.
+    Keeps the in-memory fallback and the Valkey tier on the same expiry."""
+    try:
+        valkey_cfg = config.get("valkey") or config.get("redis") or {}
+        ttl = (valkey_cfg.get("ttl", {}) or {}).get(kind, _DEFAULT_TTLS.get(kind, 60))
+        return int(ttl)
+    except (TypeError, ValueError):
+        return _DEFAULT_TTLS.get(kind, 60)
+
+
+def default_cache_ttl() -> int:
+    """Effective default cache TTL (see ``default_ttl``)."""
+    return default_ttl("cache")
 
 
 class CacheError(Exception):

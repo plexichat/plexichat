@@ -78,7 +78,7 @@ class DatabaseMaintenanceMixin:
         query: str,
     ):
         error_type = type(e).__name__
-        logger.error(f"Query failed ({error_type}): {str(e)[:100]}")
+        logger.error(f"Query execution failed ({error_type}): {str(e)[:100]}")
 
         try:
             if self.type == "postgres":  # pyright: ignore[reportAttributeAccessIssue]

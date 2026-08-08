@@ -187,6 +187,8 @@ class DatabaseExecutionMixin:
                 _query_count.set(_query_count.get() + 1)
                 _query_time_ms.set(_query_time_ms.get() + duration_ms)
 
+                logger.debug(f"Executed query ({duration_ms:.2f}ms): {query[:100]}")
+
                 if duration_ms > self._slow_query_threshold_ms:
                     logger.warning(
                         f"Slow query detected ({duration_ms:.2f}ms): {query[:100]}"

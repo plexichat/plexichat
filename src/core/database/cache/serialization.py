@@ -63,9 +63,17 @@ def ensure_serializable(obj: Any) -> Any:
         return obj.value
 
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        data = ensure_serializable(dataclasses.asdict(obj))
-        if isinstance(data, dict):
-            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+        # Recurse field-by-field instead of ``asdict`` so nested dataclass
+        # instances are serialized (and tagged) as objects rather than being
+        # flattened into plain dicts and losing their type on reconstruction.
+        data = {}
+        for field in dataclasses.fields(obj):
+            if isinstance(field.type, dataclasses.InitVar):
+                # InitVar pseudo-fields are not stored as instance
+                # attributes and are not part of the serialized state.
+                continue
+            data[field.name] = ensure_serializable(getattr(obj, field.name))
+        data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
         return data
 
     if isinstance(obj, (list, tuple, set)):
@@ -133,7 +141,10 @@ def reconstruct_object(data: Any) -> Any:
 
             try:
                 if issubclass(cls, Enum):
-                    return cls(reconstructed_params)
+                    # Enums reconstruct from a single value, not kwargs.
+                    if len(reconstructed_params) == 1:
+                        return cls(next(iter(reconstructed_params.values())))
+                    return cls(*reconstructed_params.values())
                 return cls(**reconstructed_params)
             except Exception as e:
                 logger.debug(f"Failed to reconstruct {type_name}: {e}")
