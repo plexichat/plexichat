@@ -45,7 +45,7 @@ def record_system_alert(
                 source,
                 event_type,
                 severity,
-                _json.dumps(details) if details else None,
+                _json.dumps(details) if details is not None else None,
                 target_path,
                 int(time.time()),
             ),
