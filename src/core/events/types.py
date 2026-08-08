@@ -81,6 +81,8 @@ class EventType(Enum):
 
     # PlexiSum workbook mutations (cells, structure, comments, formats...).
     WORKBOOK_UPDATE = "WORKBOOK_UPDATE"
+    SUM_OPERATION = "SUM_OPERATION"
+    SUM_PRESENCE = "SUM_PRESENCE"
 
 
 class GatewayIntent(IntFlag):
@@ -107,31 +109,20 @@ class GatewayIntent(IntFlag):
     AUTOMOD = 1 << 18
     AUDIT_LOG = 1 << 19
     ARTIFACTS = 1 << 20
+    SUMS = 1 << 21
 
     @classmethod
     def all_intents(cls) -> int:
-        """Get all intents combined."""
-        return (
-            cls.GUILDS
-            | cls.GUILD_MEMBERS
-            | cls.GUILD_BANS
-            | cls.GUILD_EMOJIS
-            | cls.GUILD_INTEGRATIONS
-            | cls.GUILD_WEBHOOKS
-            | cls.GUILD_INVITES
-            | cls.GUILD_VOICE_STATES
-            | cls.GUILD_PRESENCES
-            | cls.GUILD_MESSAGES
-            | cls.GUILD_MESSAGE_REACTIONS
-            | cls.GUILD_MESSAGE_TYPING
-            | cls.DIRECT_MESSAGES
-            | cls.DIRECT_MESSAGE_REACTIONS
-            | cls.DIRECT_MESSAGE_TYPING
-            | cls.MESSAGE_CONTENT
-            | cls.AUTOMOD
-            | cls.AUDIT_LOG
-            | cls.ARTIFACTS
-        )
+        """Get all intents combined.
+
+        Derived from the enum itself so the mask can never drift from the
+        declared intent set (a previous hand-written list silently dropped
+        SCHEDULED_EVENTS and THREADS).
+        """
+        value = 0
+        for member in cls:
+            value |= int(member)
+        return value
 
     @classmethod
     def default_intents(cls) -> int:
@@ -151,6 +142,7 @@ class GatewayIntent(IntFlag):
             | cls.DIRECT_MESSAGE_REACTIONS
             | cls.DIRECT_MESSAGE_TYPING
             | cls.ARTIFACTS
+            | cls.SUMS
         )
 
     @classmethod
