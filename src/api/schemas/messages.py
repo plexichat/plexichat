@@ -93,6 +93,10 @@ class MessageResponse(BaseModel):
     content: Optional[str] = Field(None, description="Message content")
     created_at: int = Field(..., description="Creation timestamp")
     edited_at: Optional[int] = Field(None, description="Edit timestamp")
+    deleted: bool = Field(
+        False,
+        description="Whether the message was deleted (renders a 'Message deleted by user' tombstone)",
+    )
     reply_to_id: Optional[SnowflakeID] = Field(
         None, description="Reply target message ID"
     )
