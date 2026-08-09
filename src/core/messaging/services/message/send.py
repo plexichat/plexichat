@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import utils.logger as logger
 from src.core.base import SnowflakeID
 from src.core.database import cache_set
+from src.core.embeds.validator import sanitize_message_embeds
 from src.utils.encryption import (
     encrypt_message,
     blind_index,
@@ -123,7 +124,7 @@ class SendMixin(BaseService, MessageServiceProtocol):
         if content_result.filtered_words:
             metadata["filtered"] = True
         if embeds:
-            metadata["embeds"] = embeds
+            metadata["embeds"] = sanitize_message_embeds(embeds)
 
         try:
             self._repo.begin_transaction()
@@ -265,6 +266,7 @@ class SendMixin(BaseService, MessageServiceProtocol):
             deleted=False,
             pinned=False,
             metadata=metadata if metadata else None,
+            embeds=metadata.get("embeds") or [],
             attachments=attachment_list,
         )
 

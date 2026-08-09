@@ -17,6 +17,7 @@ from src.api.schemas.webhooks import (
     WebhookMessageResponse,
 )
 from src.core.database.cache import invalidate_pattern
+from src.core.embeds.exceptions import EmbedError
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
@@ -624,6 +625,14 @@ async def execute_webhook(
                 username=getattr(message, "username", None),
                 avatar_url=getattr(message, "avatar_url", None),
                 created_at=message.created_at,
+            )
+        except EmbedError as e:
+            logger.warning(
+                f"Embed validation error during execution of webhook {wid}: {e}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": str(e)}},
             )
         except Exception as e:
             exc_name = type(e).__name__

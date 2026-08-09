@@ -16,6 +16,7 @@ from src.api.schemas.messages import (
 from src.core.messaging.exceptions import (
     MessageNotFoundError,
 )
+from src.core.embeds.exceptions import EmbedError
 from src.core.servers.exceptions import (
     ServerNotFoundError,
     ChannelNotFoundError,
@@ -322,6 +323,17 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             return response
         except HTTPException:
             raise
+        except EmbedError as e:
+            issues = getattr(e, "issues", [])
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "; ".join(issues) if issues else str(e),
+                    }
+                },
+            )
         except Exception as e:
             logger.error(
                 f"Failed to send message to channel {channel_id}: {e}",

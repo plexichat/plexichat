@@ -36,6 +36,33 @@ class MessageStatusService(BaseService):
         self._participant_svc = participant_service
         self._user_settings_svc = user_settings_service
 
+    def _get_servers_module(self):
+        """Return the servers module without importing the whole API app.
+
+        Importing ``src.api`` pulls in the full FastAPI application (every
+        router, schema and the gateway) — a ~2.5s import cost on first use
+        per worker. When ``src.api`` has already been imported we return its
+        configured object (exactly what ``api.get_servers()`` returned
+        before); otherwise we fall back to the light ``src.core.servers``
+        import, which is the same fallback ``api.get_servers()`` itself
+        uses. This preserves identical semantics in every context.
+        """
+        import sys
+
+        api_mod = sys.modules.get("src.api")
+        if api_mod is not None:
+            get_servers = getattr(api_mod, "get_servers", None)
+            if get_servers is not None:
+                servers = get_servers()
+                if servers:
+                    return servers
+        try:
+            from src.core import servers
+
+            return servers
+        except ImportError:
+            return None
+
     def mark_delivered(
         self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
     ) -> int:
@@ -110,9 +137,7 @@ class MessageStatusService(BaseService):
         channel_receipts_enabled = True
         try:
             # We need to find if this is a server channel and check its setting
-            import src.api as api
-
-            servers_mod = api.get_servers()
+            servers_mod = self._get_servers_module()
             if servers_mod:
                 # messaging conversation_id might be different from server channel_id
                 # but servers_mod.get_channel usually handles the lookup
@@ -268,9 +293,7 @@ class MessageStatusService(BaseService):
 
         # Cache for channel settings
         channel_settings_cache = {}  # {conv_id: bool}
-        import src.api as api
-
-        servers_mod = api.get_servers()
+        servers_mod = self._get_servers_module()
 
         result: Dict[SnowflakeID, Dict[str, Any]] = {}
         for mid in message_ids:
@@ -385,9 +408,7 @@ class MessageStatusService(BaseService):
 
         Returns the number of channels marked.
         """
-        import src.api as api
-
-        servers_mod = api.get_servers()
+        servers_mod = self._get_servers_module()
         if not servers_mod:
             return 0
 

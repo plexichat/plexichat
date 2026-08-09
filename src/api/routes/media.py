@@ -10,8 +10,10 @@ Provides endpoints for:
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
 from typing import Optional
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import Response
 
 import utils.logger as logger
+import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.media import (
     HashReportRequest,
@@ -26,6 +28,11 @@ from src.api.schemas.media import (
     UploadSessionInfo,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.core.media.exceptions import (
+    MediaError,
+    ProxyError,
+    ProxyFetchError,
+)
 
 router = APIRouter(prefix="/media", tags=["Media"])
 
@@ -445,6 +452,92 @@ async def get_user_upload_sessions(
     except Exception as e:
         logger.error(
             f"Failed to get upload sessions for user {user.user_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+# ==================== External URL Proxy ====================
+
+
+@router.get(
+    "/proxy",
+    summary="Proxy external content",
+    responses={
+        200: {
+            "description": "The proxied content (images only)",
+            "content": {
+                "image/jpeg": {},
+                "image/png": {},
+                "image/gif": {},
+                "image/webp": {},
+            },
+        },
+        400: {"model": ErrorResponse, "description": "Invalid or blocked URL"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Proxy not available"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_proxied_content(
+    url: str,
+    user: TokenInfo = Depends(get_current_user),
+) -> Response:
+    """
+    Fetch and serve external image content through Plexichat.
+
+    The external URL is fetched server-side (with SSRF validation, DNS
+    rebinding protection, content-type allow-listing and SVG/magic-byte
+    rejection) and served to the client so the origin never learns the
+    client's address. Results are cached by the media proxy.
+    """
+    if not url or len(url) > 2048:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid URL"}},
+        )
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {"code": 400, "message": "Only http/https URLs are allowed"}
+            },
+        )
+
+    try:
+        media_mod = api.get_media()
+        if not media_mod:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Proxy not available"}},
+            )
+
+        data, content_type = await run_in_threadpool(media_mod.get_proxied_content, url)
+        return Response(content=data, media_type=content_type)
+    except HTTPException:
+        raise
+    except (ProxyFetchError,) as e:
+        logger.warning(f"Proxy fetch failed for {url}: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+    except (ProxyError, MediaError) as e:
+        logger.warning(f"Proxy error for {url}: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+    except Exception as e:
+        logger.error(
+            f"Unexpected error proxying {url} for user {user.user_id}: {e}",
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500,
