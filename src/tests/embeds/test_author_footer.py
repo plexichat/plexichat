@@ -390,6 +390,7 @@ class TestAuthorFooterCharacterCount:
         )
 
         assert embed is not None
+        assert embed.title == title
 
     def test_footer_text_counts_toward_total(self, db, auth_manager):
         """Test footer text counts toward total character limit."""
@@ -414,6 +415,7 @@ class TestAuthorFooterCharacterCount:
         )
 
         assert embed is not None
+        assert embed.title == title
 
     def test_author_and_footer_exceed_total(self, db, auth_manager):
         """Test author and footer together can exceed total limit."""

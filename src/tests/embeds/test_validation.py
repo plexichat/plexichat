@@ -394,6 +394,7 @@ class TestTotalCharacterLimit:
         )
 
         assert embed is not None
+        assert embed.title == title
 
     def test_total_chars_exceeds_limit(self, db, auth_manager, embeds_manager):
         """Test embed exceeding total character limit fails."""

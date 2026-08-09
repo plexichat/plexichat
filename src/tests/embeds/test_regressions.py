@@ -398,7 +398,7 @@ class TestCreateUrlPreviewUserKeyed:
         )
 
         with patch(
-            "src.core.embeds.link_preview.LinkPreviewService._check_rate_limit",
+            "src.core.embeds.link_preview.LinkPreviewService._consume_rate_limit",
             return_value=True,
         ) as mock_check:
             with patch(
@@ -504,6 +504,6 @@ class TestProxyImageSingleFetch:
         service._media_proxy = Mock()
         service._media_proxy.fetch = Mock(return_value=mock_proxied)
 
-        # SVG is blocked by raising ValueError (the proxy fetch still happens once).
-        with pytest.raises(ValueError, match="SVG"):
-            service._proxy_image("https://example.com/image.svg")
+        # SVG is skipped (returning None) so the preview continues without an
+        # image; the proxy fetch still happens once.
+        assert service._proxy_image("https://example.com/image.svg") is None

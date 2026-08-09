@@ -150,8 +150,9 @@ class TestLinkPreviewService:
         preview_service._media_proxy = Mock()
         preview_service._media_proxy.fetch = Mock(return_value=proxied)
 
-        with pytest.raises(ValueError, match="SVG"):
-            preview_service._proxy_image("https://example.com/image.svg")
+        # An SVG is skipped (preview continues without an image) rather than
+        # failing the whole preview.
+        assert preview_service._proxy_image("https://example.com/image.svg") is None
 
 
 class TestMetaTagParser:

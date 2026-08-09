@@ -69,6 +69,7 @@ class TestEmptyEmbed:
         embed = embeds._manager.create_embed(user_id=user.id, title="   ")
 
         assert embed is not None
+        assert isinstance(embed.title, str)
 
 
 class TestUpdateEmbed:
@@ -399,6 +400,7 @@ class TestBoundaryConditions:
         )
 
         assert embed is not None
+        assert embed.title == title
 
 
 class TestConcurrentOperations:

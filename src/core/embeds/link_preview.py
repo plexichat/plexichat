@@ -221,6 +221,50 @@ class LinkPreviewService:
             "DELETE FROM embed_preview_rate_limits WHERE window_start < ?", (cutoff,)
         )
 
+    def _consume_rate_limit(self, user_id: int) -> bool:
+        """
+        Atomically consume one unit of the per-user rate-limit budget.
+
+        Uses a single conditional upsert so concurrent requests cannot both
+        pass a check-then-act race and together exceed the configured limit.
+
+        Returns:
+            True if the request is allowed, False if rate limited.
+        """
+        now = int(time.time())
+        window_seconds = self._config["rate_limit_window_seconds"]
+        window_start = now - (now % window_seconds)
+        max_requests = self._config["rate_limit_requests"]
+
+        result = self._db.execute(
+            """INSERT INTO embed_preview_rate_limits (user_id, window_start, request_count)
+               VALUES (?, ?, 1)
+               ON CONFLICT(user_id, window_start) DO UPDATE SET
+               request_count = request_count + 1
+               WHERE request_count < ?""",
+            (user_id, window_start, max_requests),
+        )
+
+        rowcount = getattr(result, "rowcount", None)
+        if rowcount is None:
+            # Drivers without a reliable rowcount: re-read the counter.
+            row = self._db.fetch_one(
+                """SELECT request_count FROM embed_preview_rate_limits
+                   WHERE user_id = ? AND window_start = ?""",
+                (user_id, window_start),
+            )
+            allowed = bool(row) and row["request_count"] <= max_requests
+        else:
+            allowed = int(rowcount) > 0
+
+        # Cleanup old entries
+        cutoff = now - (window_seconds * 10)
+        self._db.execute(
+            "DELETE FROM embed_preview_rate_limits WHERE window_start < ?", (cutoff,)
+        )
+
+        return allowed
+
     def _get_cached_preview(self, url: str) -> Optional[CachedPreview]:
         """Get cached preview if valid."""
         url_hash = self._hash_url(url)
@@ -398,15 +442,24 @@ class LinkPreviewService:
         for redirect_count in range(max_redirects + 1):
             # Build request URL using resolved IP
             parsed = urlparse(current_url)
-            port = parsed.port or (80 if parsed.scheme == "http" else 443)
+            try:
+                port = parsed.port or (80 if parsed.scheme == "http" else 443)
+            except ValueError as e:
+                raise ValueError(f"Invalid port in URL: {e}")
             request_url = f"{parsed.scheme}://{current_ip}:{port}{parsed.path or '/'}"
             if parsed.query:
                 request_url += f"?{parsed.query}"
 
+            host_header = current_hostname
+            if (parsed.scheme == "http" and port != 80) or (
+                parsed.scheme == "https" and port != 443
+            ):
+                host_header = f"{current_hostname}:{port}"
+
             headers = {
                 "User-Agent": self._config["user_agent"],
                 "Accept": "text/html,application/xhtml+xml",
-                "Host": current_hostname,
+                "Host": host_header,
             }
 
             # SECURITY: we connect to the resolved IP (DNS-rebinding
@@ -584,15 +637,21 @@ class LinkPreviewService:
             if not proxied or not getattr(proxied, "id", None):
                 return None
 
-            # Block SVG content (can contain scripts)
+            # Block SVG content (can contain scripts). The media proxy also
+            # rejects SVG at fetch time (both by Content-Type and by magic
+            # bytes) so this is defense-in-depth; if an SVG slips through we
+            # skip the image rather than fail the whole preview.
             content_type = (getattr(proxied, "content_type", "") or "").lower()
             if content_type.startswith("image/svg") or "svg+xml" in content_type:
-                logger.warning(f"Blocked image type: {content_type}")
-                raise ValueError("SVG image content is blocked (can contain scripts)")
+                logger.warning(
+                    f"Blocked image type for {image_url}: {content_type}; skipping image"
+                )
+                return None
 
             return proxied.id
-        except ValueError:
-            raise
+        except ValueError as e:
+            logger.warning(f"Blocked image for {image_url}: {e}; skipping image")
+            return None
         except Exception as e:
             logger.warning(f"Failed to proxy image {image_url}: {e}")
             return None
@@ -618,14 +677,16 @@ class LinkPreviewService:
         if not self._config["enabled"]:
             raise RuntimeError("Link previews are disabled")
 
-        # Check rate limit
-        if not self._check_rate_limit(user_id):
+        # Atomically consume the rate-limit budget BEFORE any further work so
+        # concurrent requests cannot race past the limit. This applies to
+        # cache hits as well so the limit cannot be bypassed by hammering a
+        # cached URL.
+        if not self._consume_rate_limit(user_id):
             raise RuntimeError("Rate limit exceeded for link previews")
 
-        # Consume the budget for every preview request — cache hits
-        # included — so the limit cannot be bypassed by hammering a
-        # cached URL.
-        self._update_rate_limit(user_id)
+        # Validate the URL (SSRF + scheme checks) BEFORE consulting the cache
+        # so a cached entry can never be served for an unvalidated/unsafe URL.
+        hostname, resolved_ip, validated_url = self._validate_url(url)
 
         # Check cache first
         if not skip_cache:
@@ -633,9 +694,6 @@ class LinkPreviewService:
             if cached:
                 logger.debug(f"Cache hit for URL preview: {url}")
                 return cached.metadata
-
-        # Validate URL
-        hostname, resolved_ip, validated_url = self._validate_url(url)
 
         # Fetch with secure redirect handling
         html, final_url, content_type = self._fetch_with_redirects(
