@@ -27,8 +27,8 @@ valkey-glide-sync==2.5.0
 
 # Authentication & Security
 argon2-cffi==25.1.0
-# cryptography pinned to 49.0.0+ clears GHSA-537c-gmf6-5ccf (pip-audit)
-cryptography==49.0.0
+# cryptography pinned to 50.0.0+ clears PYSEC-2026-3552 (pip-audit)
+cryptography==50.0.0
 pyotp==2.10.0
 webauthn==3.0.0
 xxhash==3.8.1
@@ -99,11 +99,14 @@ msgpack==1.2.1
 PyJWT==2.13.0
 # httpx[http2] pulls in h2 for the APNs HTTP/2 transport.
 httpx[http2]==0.28.1
-# cryptography pinned to 49.0.0+ clears GHSA-537c-gmf6-5ccf (pip-audit)
+# h2 pinned to 4.4.1+ clears CVE-2026-71554 (pip-audit)
+h2==4.4.1
+# cryptography pinned to 50.0.0+ clears PYSEC-2026-3552 (pip-audit)
 
 # Testing & Development
 pytest==9.1.1
 pytest-asyncio==1.4.0
+pytest-benchmark==5.2.3
 pytest-cov==7.1.0
 pytest-timeout==2.4.0
 pytest-xdist>=3.6
