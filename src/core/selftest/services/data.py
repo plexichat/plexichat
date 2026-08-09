@@ -146,6 +146,13 @@ class DataGenerator:
                 val = str(self.ctx.test_role_id or _gen_snowflake())
         elif "invite" in name_low or "code" in name_low:
             val = self.ctx.test_invite_code or "test_invite"
+        elif name_low == "url" and "/media/proxy" in path:
+            # The media proxy endpoint resolves query param ``url`` to a real
+            # public http(s) URL. ``1`` (the generic default) would be rejected
+            # with 400 by the route's scheme validation. Use an asset served
+            # from a domain we control (plexichat.com / plexichat-landing) so
+            # the proxy actually fetches and returns 200.
+            val = "https://plexichat.com/image.png"
         elif "webhook" in name_low:
             val = (
                 str(self.ctx.test_webhook_id)

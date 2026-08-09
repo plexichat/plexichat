@@ -184,6 +184,22 @@ class ICECandidateValidator:
                 f"Blocked address: {address}", candidate=str(parsed)
             )
 
+        # Reject loopback, multicast, link-local, and unspecified addresses
+        # outright (prevents SSRF-style ICE candidate abuse).
+        try:
+            parsed_addr = ipaddress.ip_address(address)
+        except ValueError:
+            parsed_addr = None
+        if parsed_addr is not None and (
+            parsed_addr.is_loopback
+            or parsed_addr.is_multicast
+            or parsed_addr.is_link_local
+            or parsed_addr.is_unspecified
+        ):
+            raise ICECandidateError(
+                f"Blocked address: {address}", candidate=str(parsed)
+            )
+
         ctype = parsed.get("type", "host")
         if ctype != "relay" and not self._is_valid_ip(address):
             raise ICECandidateError(

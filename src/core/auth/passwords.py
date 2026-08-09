@@ -38,7 +38,11 @@ def validate_username(username: str) -> Tuple[bool, List[str]]:
     if len(username) > max_length:
         issues.append(f"Username must be at most {max_length} characters")
 
-    if not re.match(pattern, username):
+    # fullmatch (not match): ``$`` in the configured pattern matches before a
+    # trailing newline, so ``re.match(r"^[a-zA-Z0-9_]+$", "00\n")`` succeeds
+    # and control characters slipped through the validator. fullmatch requires
+    # the pattern to cover the entire string, rejecting any trailing input.
+    if not re.fullmatch(pattern, username):
         issues.append("Username can only contain letters, numbers, and underscores")
 
     reserved = {
@@ -166,7 +170,9 @@ def validate_email(email: str) -> bool:
         True if email format is valid
     """
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    return bool(re.match(pattern, email))
+    # fullmatch (not match): same trailing-newline ``$`` gotcha as
+    # validate_username — ``"a@b.com\n"`` would otherwise pass validation.
+    return bool(re.fullmatch(pattern, email))
 
 
 __all__ = [
