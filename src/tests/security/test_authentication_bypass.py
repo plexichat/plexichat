@@ -73,10 +73,8 @@ class TestAuthenticationBypass:
     def test_account_lockout_after_failed_attempts(self, auth_manager, test_user):
         """Test that accounts are locked after failed login attempts."""
         for i in range(5):
-            try:
+            with pytest.raises(Exception):
                 auth_manager.login(test_user.username, "wrongpassword")
-            except Exception:
-                pass
 
         with pytest.raises(Exception) as exc_info:
             auth_manager.login(test_user.username, "TestPass123!")
@@ -174,12 +172,8 @@ class TestAuthenticationBypass:
 
     def test_case_sensitivity_in_login(self, auth_manager, test_user):
         """Test case sensitivity in login credentials."""
-        try:
-            result = auth_manager.login(test_user.username.upper(), "TestPass123!")
-            if result:
-                assert result.user.id == test_user.id
-        except Exception:
-            pass
+        with pytest.raises(Exception):
+            auth_manager.login(test_user.username.upper(), "TestPass123!")
 
     def test_empty_credentials_rejected(self, auth_manager):
         """Test that empty credentials are rejected."""

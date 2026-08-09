@@ -91,6 +91,7 @@ class TestSoundCooldowns:
 
         playback = soundboard.play_sound(owner.id, sound2.id, voice_channel.id)
         assert playback is not None
+        assert playback.user_id == owner.id
 
     def test_different_users_no_shared_cooldown(self, db_and_modules):
         """Test different users have independent cooldowns."""
@@ -132,3 +133,4 @@ class TestSoundCooldowns:
 
         playback = soundboard.play_sound(member.id, sound.id, voice_channel.id)
         assert playback is not None
+        assert playback.user_id == member.id

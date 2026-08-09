@@ -285,6 +285,7 @@ class TestAuthManagerTokenHandling:
         for _ in range(10):
             token_info = auth_manager.verify_token(result.token)
             assert token_info is not None
+            assert token_info.expires_at > 0
 
     def test_verify_token_ip_binding(self, db, auth_manager):
         """Test token IP binding enforcement."""
@@ -300,6 +301,7 @@ class TestAuthManagerTokenHandling:
         # Verify token - should work without IP binding
         token_info = auth_manager.verify_token(result.token)
         assert token_info is not None
+        assert token_info.expires_at > 0
 
     def test_verify_token_user_agent_binding(self, db, auth_manager):
         """Test token user-agent binding enforcement."""
@@ -315,6 +317,7 @@ class TestAuthManagerTokenHandling:
         # Verify token - should work without user-agent binding
         token_info = auth_manager.verify_token(result.token)
         assert token_info is not None
+        assert token_info.expires_at > 0
 
     def test_bot_token_verification(self, db, auth_manager):
         """Test bot token verification."""
@@ -775,6 +778,7 @@ class TestAuthManagerCache:
 
         cached2 = auth_manager.get_user(user.id)
         assert cached2 is not None
+        assert cached2.id == user.id
 
     def test_cache_invalidation_on_update(self, db, auth_manager):
         """Test cache is invalidated on user update."""
@@ -790,6 +794,7 @@ class TestAuthManagerCache:
 
         updated = auth_manager.get_user(user.id)
         assert updated is not None
+        assert updated.id == user.id
 
     def test_bulk_user_fetch_caching(self, db, auth_manager):
         """Test get_users_bulk uses cache."""
@@ -1010,11 +1015,9 @@ class TestAuthManagerAudit:
 
         with patch.object(encryption, "verify_password", return_value=True):
             auth_manager.login("testuser", "Password123!")
-        try:
+        with pytest.raises(Exception):
             with patch.object(encryption, "verify_password", return_value=False):
                 auth_manager.login("testuser", "WrongPassword")
-        except Exception:
-            pass
 
         history = auth_manager.get_login_history(user.id)
         assert len(history) > 0
@@ -1070,4 +1073,5 @@ class TestAuthManagerUtilities:
     def test_get_config(self, db, auth_manager):
         """Test config value retrieval."""
         value = config.get("authentication.sessions.max_per_user", 10)
-        assert value is not None
+        assert isinstance(value, int)
+        assert value > 0

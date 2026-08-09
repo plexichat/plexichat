@@ -122,8 +122,10 @@ def test_get_privileged_intents_requested_empty():
 
 def test_default_intents_non_empty_and_valid():
     assert isinstance(DEFAULT_INTENTS, int)
-    assert DEFAULT_INTENTS >= 0
+    # default_intents() ORs several non-zero intent bits together
+    assert DEFAULT_INTENTS > 0
     assert validate_intents(DEFAULT_INTENTS) is True
+    assert has_privileged_intents(DEFAULT_INTENTS) is False
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,11 @@
+import string
+
 import pytest
 from unittest.mock import MagicMock
 
 # Try to import hypothesis, skip tests if not available
 try:
-    from hypothesis import given, strategies as st, settings, assume
+    from hypothesis import given, strategies as st, settings
 
     HAS_HYPOTHESIS = True
 except ImportError:
@@ -30,12 +32,16 @@ def _get_server_manager():
 class TestUsernameValidation:
     """Property-based tests for username validation."""
 
-    @given(st.text(min_size=1, max_size=50))
+    @given(st.text(alphabet=string.printable, min_size=1, max_size=50))
     @settings(max_examples=100)
     def test_username_validation_against_real_logic(self, username):
         """Test username validation using the actual codebase logic."""
-        # This calls the real validate_username from src.core.auth.passwords
-        assume(username.isprintable())
+        # This calls the real validate_username from src.core.auth.passwords.
+        # The alphabet is restricted to printable characters so every example
+        # is a candidate — previously ``assume(username.isprintable())`` over
+        # arbitrary text (which includes control/format characters) filtered
+        # out most examples and intermittently exhausted hypothesis's
+        # rejection budget, flaking the suite.
         valid, issues = validate_username(username)
 
         # Cross-check: if valid, should match basic constraints
@@ -123,19 +129,25 @@ class TestPasswordValidation:
 class TestServerNameValidation:
     """Property-based tests for server name validation using ServerManager."""
 
-    @given(st.text(min_size=0, max_size=150))
+    @given(st.text(alphabet=string.printable, min_size=0, max_size=150))
     @settings(max_examples=100)
     def test_server_name_validation_real_logic(self, name):
         """Test server name validation using the actual manager logic."""
         sm = _get_server_manager()
+        stripped = name.strip()
 
         try:
             validated_name = sm._validate_server_name(name)
-            # If it didn't raise, it's valid
+        except Exception:
+            # The implementation only rejects empty/whitespace-only names or
+            # names outside [min, max] after stripping — verify the rejection
+            # was actually justified instead of swallowing any exception.
+            assert not stripped or not (2 <= len(stripped) <= 100), (
+                f"Validator rejected a valid-length printable name: {name!r}"
+            )
+        else:
             assert 2 <= len(validated_name) <= 100
-        except Exception:  # Specifically InvalidServerNameError, but we want to be broad for the assert
-            # If it raised, we can't easily assert unless we know it should have passed
-            pass
+            assert validated_name == stripped
 
 
 @pytest.mark.unit

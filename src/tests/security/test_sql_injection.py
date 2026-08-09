@@ -58,7 +58,9 @@ class TestSQLInjectionPrevention:
             )
 
         messages = messaging_manager.get_messages(user1.id, dm.id)
-        assert len(messages) >= 1
+        # The injection payload was rejected, leaving only the valid message.
+        assert len(messages) == 1
+        assert messages[0].content == "Valid message"
 
     def test_sql_injection_in_search_query(self, messaging_manager, two_users):
         """Test SQL injection attempt in search functionality."""
@@ -71,11 +73,9 @@ class TestSQLInjectionPrevention:
 
         sql_injection = "test' OR '1'='1"
 
-        try:
-            results = messaging_manager.search_messages(user1.id, sql_injection)
-            assert isinstance(results, list)
-        except Exception:
-            pass
+        results = messaging_manager.search_messages(user1.id, dm.id, sql_injection)
+        assert isinstance(results, list)
+        assert all("OR '1'='1" not in r.content for r in results)
 
     def test_sql_injection_in_server_name(self, server_manager, test_user, db):
         """Test SQL injection attempt in server name."""

@@ -95,8 +95,9 @@ class TestIntegration:
             installer_id=test_user.id,
         )
         installations = app_manager.get_installations(application_id=app.id)
-        assert len(installations) >= 1
-        assert all(i.application_id == app.id for i in installations)
+        assert len(installations) == 1
+        assert installations[0].application_id == app.id
+        assert installations[0].server_id == server.id
 
     def test_get_installations_by_server(self, app_manager, test_user, test_server):
         """Test getting installations filtered by server."""
@@ -110,8 +111,9 @@ class TestIntegration:
             installer_id=test_user.id,
         )
         installations = app_manager.get_installations(server_id=server.id)
-        assert len(installations) >= 1
-        assert all(i.server_id == server.id for i in installations)
+        assert len(installations) == 1
+        assert installations[0].server_id == server.id
+        assert installations[0].application_id == app.id
 
     def test_install_with_scopes(self, app_manager, test_user, test_server):
         """Test installing with specific scopes."""

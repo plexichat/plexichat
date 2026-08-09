@@ -326,6 +326,7 @@ class TestBug8RaceConditionHandling:
                 # Should not raise, should handle race condition
                 result = rel_manager.send_friend_request(user1.id, user2.id)
                 assert result is not None
+                assert result.sender_id == user1.id
 
     def test_send_friend_request_raises_on_non_unique_error(
         self, rel_manager, two_users

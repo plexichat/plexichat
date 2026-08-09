@@ -169,12 +169,11 @@ class TestAuthorizationChecks:
 
         server_manager.add_member(server.id, user2.id)
 
-        try:
+        with pytest.raises(Exception) as exc_info:
             server_manager.update_server(
                 user_id=user2.id, server_id=server.id, name="New Name"
             )
-        except Exception:
-            pass
+        assert "Missing required permission" in str(exc_info.value)
 
     def test_bot_permissions_respected(self, auth_manager, test_user):
         """Test that bot permissions are properly enforced."""
@@ -264,16 +263,10 @@ class TestAuthorizationChecks:
 
         server = server_manager.create_server(owner_id=user1.id, name="Test Server")
 
-        try:
-            role = server_manager.create_role(
-                server_id=server.id,
-                creator_id=user1.id,
-                name="Test Role",
-                permissions={"messages.send": True},
-            )
+        role = server_manager.create_role(
+            user1.id, server.id, "Test Role", permissions={"messages.send": True}
+        )
+        assert role.permissions.get("messages.send") is True
 
-            server_manager.add_member(server.id, user2.id)
-
-            server_manager.assign_role(user1.id, server.id, user2.id, role.id)
-        except Exception:
-            pass
+        server_manager.add_member(server.id, user2.id)
+        server_manager.assign_role(user1.id, server.id, user2.id, role.id)

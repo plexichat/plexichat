@@ -55,6 +55,7 @@ class TestAttachments:
             attachments=attachments,
         )
         assert msg is not None
+        assert msg.content == "Multiple files"
 
     def test_add_attachment_to_message(self, messaging_manager, two_users):
         """Test adding an attachment to an existing message."""

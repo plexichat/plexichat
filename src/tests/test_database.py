@@ -85,6 +85,8 @@ def test_sqlite_connection(db_config):
     db = Database()
     db.connect()
     assert db.connection is not None
+    row = db.fetch_one("SELECT 1 AS one")
+    assert row["one"] == 1
     db.close()
 
 
@@ -359,10 +361,8 @@ def test_logging_errors(db_config):
     log_file = str(temp_dir / "logs" / "latest.log")
     db = Database()
     db.connect()
-    try:
+    with pytest.raises(Exception):
         db.execute("INVALID SQL")
-    except Exception:
-        pass
     db.close()
 
     with open(log_file, "r") as f:

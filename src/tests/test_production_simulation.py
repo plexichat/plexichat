@@ -1018,13 +1018,10 @@ class TestGracefulShutdown:
         """
         timeout_seconds = 5
 
-        try:
-            with db.get_session() as session:
-                result = session.execute(text("SELECT 1"))
-                assert result.fetchone() is not None
-            logger.info(f"Query completed within {timeout_seconds}s timeout")
-        except Exception as e:
-            logger.error(f"Timeout error: {e}")
+        with db.get_session() as session:
+            result = session.execute(text("SELECT 1"))
+            assert result.fetchone() is not None
+        logger.info(f"Query completed within {timeout_seconds}s timeout")
 
     @pytest.mark.production_simulation
     @pytest.mark.requires_postgres

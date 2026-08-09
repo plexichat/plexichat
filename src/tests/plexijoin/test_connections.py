@@ -57,7 +57,10 @@ class TestPlexiJoinConnections:
 
         rows = plexijoin.get_traffic_data(hours=1)
         assert isinstance(rows, list)
-        assert len(rows) >= 1
+        assert len(rows) == 1
+        assert rows[0]["direction"] == "inbound"
+        assert rows[0]["message_count"] == 5
+        assert rows[0]["recorded_at"] > 0
 
     def test_traffic_data_window(self, plexijoin):
         rows = plexijoin.get_traffic_data(hours=1)

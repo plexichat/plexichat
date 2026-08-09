@@ -2,6 +2,8 @@
 Audit logging tests for auth module.
 """
 
+import pytest
+
 from unittest.mock import patch
 
 
@@ -24,10 +26,8 @@ class TestAudit:
         """Test failed login creates audit entry."""
         user, auth, username = registered_user
 
-        try:
+        with pytest.raises(auth.InvalidCredentialsError):
             auth.login(username, "WrongPassword!")
-        except auth.InvalidCredentialsError:
-            pass
 
         history = auth.get_login_history(user.id)
         assert any(e.event_type == auth.AuditEventType.LOGIN_FAILED for e in history)
@@ -159,11 +159,9 @@ class TestAudit:
         with patch.object(encryption, "verify_password", return_value=True):
             auth.login(username, "TestPass123!")
 
-        try:
+        with pytest.raises(auth.InvalidCredentialsError):
             with patch.object(encryption, "verify_password", return_value=False):
                 auth.login(username, "WrongPassword!")
-        except auth.InvalidCredentialsError:
-            pass
 
         history = auth.get_login_history(user.id)
 

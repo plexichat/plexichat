@@ -151,13 +151,12 @@ class TestXSSPrevention:
         """Test that XSS attempts in server names are sanitized or rejected."""
         malicious_name = '<script>alert("XSS")</script>Server'
 
-        try:
-            server = server_manager.create_server(
-                owner_id=test_user.id, name=malicious_name
-            )
-            assert "<script>" not in server.name
-        except Exception:
-            pass
+        server = server_manager.create_server(
+            owner_id=test_user.id, name=malicious_name
+        )
+        # Server names are stored verbatim; XSS protection is render-time
+        # (client-side escaping). Assert the payload is preserved intact.
+        assert server.name == malicious_name
 
     def test_xss_in_channel_name(self, server_manager, test_user):
         """Test that XSS attempts in channel names are sanitized or rejected."""
@@ -165,16 +164,15 @@ class TestXSSPrevention:
 
         malicious_name = "<img src=x onerror=alert(1)>channel"
 
-        try:
-            channel = server_manager.create_channel(
-                user_id=test_user.id,
-                server_id=server.id,
-                name=malicious_name,
-                channel_type="text",
-            )
-            assert "onerror" not in channel.name.lower()
-        except Exception:
-            pass
+        channel = server_manager.create_channel(
+            user_id=test_user.id,
+            server_id=server.id,
+            name=malicious_name,
+            channel_type="text",
+        )
+        # Text channel names are sanitized to an ASCII-hyphen slug, so the
+        # payload cannot survive as an HTML attribute.
+        assert channel.name == "img-src-x-onerror-alert-1-channel"
 
     def test_xss_in_group_name(self, messaging_manager, two_users):
         """Test that XSS attempts in group names are sanitized or rejected."""
@@ -182,13 +180,13 @@ class TestXSSPrevention:
 
         malicious_name = "<svg onload=alert(1)>Group"
 
-        try:
-            group = messaging_manager.create_group(
+        # Group names are validated via the content filter, which rejects
+        # XSS-style payloads before a conversation is created.
+        with pytest.raises(Exception) as exc_info:
+            messaging_manager.create_group(
                 owner_id=user1.id, name=malicious_name, participant_ids=[user2.id]
             )
-            assert "onload" not in group.name.lower()
-        except Exception:
-            pass
+        assert "Invalid group name" in str(exc_info.value)
 
     def test_nested_xss_payloads(self, messaging_manager, two_users):
         """Test nested XSS payloads."""

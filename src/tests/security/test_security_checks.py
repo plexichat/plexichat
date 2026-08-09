@@ -25,6 +25,8 @@ class TestDataProtection:
         result = auth_manager.login(test_user.username, "TestPass123!")
 
         assert result.token is not None
+        assert isinstance(result.token, str)
+        assert len(result.token) > 0
 
     def test_session_tokens_hashed_in_database(self, auth_manager, db, test_user):
         """Test that session tokens are hashed in the database."""
@@ -56,19 +58,23 @@ class TestDataProtection:
             "SELECT totp_secret_encrypted FROM auth_users WHERE id = ?", (test_user.id,)
         )
 
-        if user_record["totp_secret_encrypted"]:
-            assert user_record["totp_secret_encrypted"] != setup.secret
+        # The secret must be persisted (encrypted column populated) and must
+        # never match the plaintext secret returned by setup.
+        assert user_record is not None
+        assert user_record["totp_secret_encrypted"]
+        assert user_record["totp_secret_encrypted"] != setup.secret
 
     def test_backup_codes_hashed(self, auth_manager, db, test_user):
         """Test that backup codes are hashed in the database."""
         setup = auth_manager.setup_2fa(test_user.id)
 
-        # Skip the TOTP code generation - just verify backup codes exist
-        if setup.backup_codes:
-            # Backup codes should be returned by setup
-            assert len(setup.backup_codes) > 0
-            # They should not be plain text in the response (they're one-time use)
-            # The important thing is they're generated and can be used
+        # Backup codes must be generated in the expected quantity and format.
+        from src.core.auth.totp import get_totp_config
+
+        expected_count = get_totp_config().get("backup_code_count", 10)
+        assert len(setup.backup_codes) == expected_count
+        for code in setup.backup_codes:
+            assert "-" in code
 
     def test_email_not_exposed_to_unauthorized_users(self, auth_manager, test_user):
         """Test that email addresses are not exposed to unauthorized users."""
@@ -85,15 +91,16 @@ class TestDataProtection:
         )
 
         sessions = auth_manager.get_sessions(test_user.id)
-        if sessions:
-            assert sessions[0].ip_address == "192.168.1.100"
+        assert len(sessions) == 1
+        assert sessions[0].ip_address == "192.168.1.100"
 
     def test_audit_log_records_security_events(self, auth_manager, test_user):
         """Test that security events are logged in audit log."""
         auth_manager.login(test_user.username, "TestPass123!")
 
         history = auth_manager.get_login_history(test_user.id, limit=10)
-        assert len(history) > 0
+        assert len(history) == 1
+        assert history[0].user_id == test_user.id
 
 
 class TestRaceConditions:
@@ -117,7 +124,9 @@ class TestRaceConditions:
         for t in threads:
             t.join()
 
-        assert len(results) > 0
+        # All five concurrent logins must succeed without errors.
+        assert len(results) == 5
+        assert len(errors) == 0
 
     def test_concurrent_message_sends(self, messaging_manager, two_users):
         """Test concurrent message sends don't cause issues."""
@@ -143,7 +152,9 @@ class TestRaceConditions:
         for t in threads:
             t.join()
 
-        assert len(messages) > 0
+        # All five concurrent sends must succeed without errors.
+        assert len(messages) == 5
+        assert len(errors) == 0
 
     def test_concurrent_session_creation(self, auth_manager, test_user):
         """Test concurrent session creation doesn't exceed limits."""
@@ -176,15 +187,12 @@ class TestInputBoundaries:
         """Test maximum username length validation."""
         max_length_username = "a" * 32
 
-        try:
-            user = auth_manager.register(
-                username=max_length_username,
-                email="maxlen@test.com",
-                password="TestPass123!",
-            )
-            assert user.username == max_length_username
-        except Exception:
-            pass
+        user = auth_manager.register(
+            username=max_length_username,
+            email="maxlen@test.com",
+            password="TestPass123!",
+        )
+        assert user.username == max_length_username
 
     def test_minimum_username_length(self, auth_manager):
         """Test minimum username length validation."""
@@ -201,13 +209,11 @@ class TestInputBoundaries:
 
         max_content = "x" * 4000
 
-        try:
-            msg = messaging_manager.send_message(
-                user_id=user1.id, conversation_id=dm.id, content=max_content
-            )
-            assert len(msg.content) <= 4000
-        except Exception:
-            pass
+        msg = messaging_manager.send_message(
+            user_id=user1.id, conversation_id=dm.id, content=max_content
+        )
+        assert msg is not None
+        assert len(msg.content) <= 4000
 
     def test_zero_length_inputs(self, auth_manager):
         """Test handling of zero-length inputs."""
@@ -238,6 +244,7 @@ class TestSecurityHeaders:
 
         token_info = auth_manager.verify_token(result.token)
         assert token_info.expires_at is not None
+        assert token_info.expires_at > 0
 
     def test_session_security_attributes(self, auth_manager, test_user):
         """Test that sessions have proper security attributes."""
@@ -249,10 +256,10 @@ class TestSecurityHeaders:
         )
 
         sessions = auth_manager.get_sessions(test_user.id)
-        if sessions:
-            session = sessions[0]
-            assert session.ip_address is not None
-            assert session.user_agent is not None
+        assert len(sessions) == 1
+        session = sessions[0]
+        assert session.ip_address is not None
+        assert session.user_agent is not None
 
 
 class TestPrivilegeEscalation:
@@ -268,16 +275,14 @@ class TestPrivilegeEscalation:
 
     def test_bot_cannot_have_admin_permissions(self, auth_manager, test_user):
         """Test that bots cannot be created with admin permissions."""
-        try:
-            bot = auth_manager.create_bot(
+        with pytest.raises(Exception) as exc_info:
+            auth_manager.create_bot(
                 owner_id=test_user.id,
                 username=f"sysbot_{test_user.id}",
                 display_name="Admin Bot",
                 permissions={"admin.*": True},
             )
-            assert not bot.permissions.get("admin.*")
-        except Exception:
-            pass
+        assert "Bots cannot have permission" in str(exc_info.value)
 
     def test_member_cannot_escalate_to_owner(self, server_manager, two_users):
         """Test that members cannot escalate to server owner."""
@@ -287,9 +292,14 @@ class TestPrivilegeEscalation:
 
         server_manager.add_member(server.id, member.id)
 
-        server_obj = server_manager.get_server(owner.id, server.id)
-        if server_obj:
-            assert server_obj.owner_id == owner.id
+        # The owner must remain the owner after a member joins.
+        assert server_manager.server_exists(server.id) is True
+        row = server_manager._db.fetch_one(
+            "SELECT owner_id FROM srv_servers WHERE id = ?", (server.id,)
+        )
+        assert row is not None
+        assert row["owner_id"] == owner.id
+        assert row["owner_id"] != member.id
 
     def test_permission_inheritance_security(self, server_manager, test_user):
         """Test that permission inheritance is secure."""
@@ -342,4 +352,6 @@ class TestDenialOfService:
     def test_resource_exhaustion_prevention(self, auth_manager, test_user):
         """Test prevention of resource exhaustion: repeated lookups must not fail."""
         for _ in range(15):
-            assert auth_manager.get_user(test_user.id) is not None
+            user = auth_manager.get_user(test_user.id)
+            assert user is not None
+            assert user.id == test_user.id

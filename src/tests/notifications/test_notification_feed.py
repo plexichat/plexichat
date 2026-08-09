@@ -43,9 +43,10 @@ class TestGetNotificationFeed:
 
         feed = notification_manager.get_notification_feed(user2.id)
 
-        assert len(feed.notifications) >= 1
-        assert feed.total_count >= 1
-        assert feed.unread_count >= 1
+        # Exactly one mention notification was created
+        assert len(feed.notifications) == 1
+        assert feed.total_count == 1
+        assert feed.unread_count == 1
 
     def test_feed_order(self, auth_manager, messaging_manager, notification_manager):
         """Test feed is ordered by most recent first."""
@@ -78,7 +79,8 @@ class TestGetNotificationFeed:
 
         feed = notification_manager.get_notification_feed(member1.id)
 
-        assert len(feed.notifications) >= 3
+        # Exactly one notification per mention message (3 messages)
+        assert len(feed.notifications) == 3
         for i in range(len(feed.notifications) - 1):
             assert (
                 feed.notifications[i].created_at >= feed.notifications[i + 1].created_at
@@ -191,7 +193,9 @@ class TestGetNotifications:
 
         notifs = notification_manager.get_notifications(user2.id)
 
-        assert len(notifs) >= 1
+        # Exactly one mention notification was created
+        assert len(notifs) == 1
+        assert notifs[0].user_id == user2.id
 
     def test_get_unread_only(
         self, auth_manager, messaging_manager, notification_manager

@@ -205,13 +205,13 @@ class TestSQLiteConcurrency:
         writes_per_writer = 20
         reads_per_reader = 50
 
-        write_lock = threading.Lock()
-        write_complete = threading.Event()
-        writes_done = 0
-
         def write_worker(thread_id: int):
-            """Worker that writes to database."""
-            nonlocal writes_done
+            """Worker that writes to database.
+
+            Individual INSERTs may fail under SQLite single-writer contention;
+            the aggregate success rate is verified below via the final row
+            count, which is the real assertion for this load test.
+            """
             for i in range(writes_per_writer):
                 try:
                     sqlite_db.execute(
@@ -220,10 +220,6 @@ class TestSQLiteConcurrency:
                     )
                 except Exception:
                     pass
-            with write_lock:
-                writes_done += 1
-                if writes_done >= num_writers:
-                    write_complete.set()
 
         def read_worker(thread_id: int):
             """Worker that reads from database."""
@@ -266,6 +262,12 @@ class TestSQLiteConcurrency:
         # Verify reads succeeded (WAL mode should allow concurrent reads)
         assert total_reads >= num_readers * reads_per_reader * 0.9, (
             "Too many read failures"
+        )
+
+        # Verify the majority of writes also succeeded
+        total_rows = sqlite_db.fetch_one("SELECT COUNT(*) as count FROM load_test")
+        assert total_rows["count"] >= num_writers * writes_per_writer * 0.9, (
+            "Too many write failures"
         )
 
     def test_database_size_growth(self, sqlite_db):

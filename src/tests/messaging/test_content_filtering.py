@@ -11,6 +11,7 @@ class TestContentFiltering:
         """Test getting default content filter settings for a user."""
         settings = messaging_manager.get_user_filter_settings(test_user.id)
         assert settings is not None
+        assert settings.profanity_filter is False
 
     def test_update_profanity_filter(self, messaging_manager, test_user):
         """Test enabling/disabling profanity filter."""
@@ -45,6 +46,7 @@ class TestContentFiltering:
         """Test getting user message settings."""
         settings = messaging_manager.get_user_message_settings(test_user.id)
         assert settings is not None
+        assert settings.read_receipts_enabled is True
 
     def test_update_message_settings(self, messaging_manager, test_user):
         """Test updating user message settings."""

@@ -2,9 +2,6 @@
 
 import pytest
 
-from unittest.mock import patch
-from src.utils import encryption
-
 
 @pytest.mark.notifications
 class TestIntegration:
@@ -25,7 +22,8 @@ class TestIntegration:
             content=msg.content,
         )
         notifs = notification_manager.get_notifications(user2.id)
-        assert len(notifs) >= 1
+        assert len(notifs) == 1
+        assert notifs[0].message_id == msg.id
 
     def test_no_notification_for_self_mention(
         self, notification_manager, messaging_manager, two_users

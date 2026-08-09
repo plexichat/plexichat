@@ -187,4 +187,5 @@ class TestRegistration:
             )
 
         assert user is not None
+        assert user.username == "leo"
         # IP tracking is internal, just verify no error

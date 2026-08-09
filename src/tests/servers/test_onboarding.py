@@ -250,6 +250,7 @@ class TestOnboardingStepRetrieval:
         retrieved = servers.get_onboarding_step(step.id, member_user.id)
 
         assert retrieved is not None
+        assert retrieved.id == step.id
 
 
 @pytest.mark.servers

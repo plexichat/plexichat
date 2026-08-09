@@ -54,9 +54,11 @@ class TestPagination:
     def test_get_conversations_pagination(self, messaging_manager, two_users):
         """Test getting conversations with pagination."""
         user1, user2 = two_users
-        messaging_manager.create_dm(user1.id, user2.id)
+        dm = messaging_manager.create_dm(user1.id, user2.id)
         conversations = messaging_manager.get_conversations(user1.id, limit=10)
-        assert len(conversations) >= 1
+        # Exactly one DM was created
+        assert len(conversations) == 1
+        assert int(conversations[0].id) == int(dm.id)
 
     def test_empty_conversation_returns_no_messages(self, messaging_manager, two_users):
         """Test that a new conversation has no messages."""

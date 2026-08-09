@@ -74,8 +74,9 @@ class TestSecuritySpoofing:
             filename="test.exe.png",
             content_type="image/png",
         )
-        # Should be sanitized
+        # Should be sanitized: accepted with a safe image extension
         assert result is not None
+        assert result.filename.endswith(".png")
 
     def test_magic_bytes_validation_for_jpeg(self, media_manager):
         """Test magic byte validation for JPEG."""

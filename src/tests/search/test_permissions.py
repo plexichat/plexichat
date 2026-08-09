@@ -156,7 +156,9 @@ class TestDiscoveryPermissions:
             user_id=owner.id, server_id=server.id, category="gaming"
         )
 
-        assert listing is not None
+        assert listing.server_id == server.id
+        assert listing.name == f"List Perm Server {unique_id}"
+        assert listing.category == "gaming"
 
     def test_member_can_bump_server(self, auth_manager, server_manager, search_manager):
         """Test server member can bump server."""

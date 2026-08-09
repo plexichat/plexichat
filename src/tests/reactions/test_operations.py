@@ -253,7 +253,7 @@ class TestReactionErrors:
         reaction_manager.add_reaction(2, 1, "❤️")
 
         count = reaction_manager.remove_all_reactions(1, 1)
-        assert count >= 2
+        assert count == 2
 
 
 class TestReactionCustomEmoji:
@@ -280,7 +280,8 @@ class TestReactionCustomEmoji:
         reaction_manager.add_reaction(1, 1, "<:custom_emoji:123>")
 
         reactions = reaction_manager.get_reactions(1, 1)
-        assert len(reactions.reactions) >= 1
+        assert len(reactions.reactions) == 1
+        assert reactions.reactions[0].emoji == "<:custom_emoji:123>"
 
     def test_nonexistent_custom_emoji_reaction_fails(self, reaction_manager, test_db):
         """Rejecting a fabricated custom emoji that does not exist."""

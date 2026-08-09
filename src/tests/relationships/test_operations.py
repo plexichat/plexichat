@@ -418,6 +418,7 @@ class TestRelationshipNotifications:
         user1, user2 = two_users
         req = rel_manager.send_friend_request(user1.id, user2.id)
         assert req is not None
+        assert req.sender_id == user1.id
 
     def test_friend_accept_notification(self, rel_manager, two_users):
         """Accepting request triggers notification."""
@@ -425,6 +426,7 @@ class TestRelationshipNotifications:
         req = rel_manager.send_friend_request(user1.id, user2.id)
         accepted = rel_manager.accept_friend_request(user2.id, req.id)
         assert accepted is not None
+        assert accepted.id == req.id
 
     def test_unfriend_notification(self, rel_manager, two_users):
         """Unfriending triggers notification."""
@@ -446,7 +448,9 @@ class TestRelationshipBulkOperations:
         rel_manager.accept_friend_request(user3.id, req2.id)
 
         mutual = rel_manager.get_mutual_friends(user1.id, user2.id)
-        assert len(mutual) >= 1
+        # user3 is the only user friends with both user1 and user2.
+        assert len(mutual) == 1
+        assert mutual[0] == user3.id
 
     def test_get_suggested_friends(self, rel_manager, three_users):
         """Get friend suggestions."""
@@ -458,3 +462,4 @@ class TestRelationshipBulkOperations:
 
         suggestions = rel_manager.get_suggested_friends(user1.id)
         assert suggestions is not None
+        assert isinstance(suggestions, list)

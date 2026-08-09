@@ -83,6 +83,7 @@ class TestEmojiEdgeCases:
         reaction = reaction_manager.add_reaction(user1.id, msg.id, "test123")
 
         assert reaction is not None
+        assert reaction.emoji == "test123"
 
 
 class TestReactionEdgeCases:

@@ -434,7 +434,9 @@ class TestVersionPattern:
     def test_pattern_matches_valid(self):
         valid_versions = ["a.1.0-1", "b.2.3-15", "c.99.99-999", "r.1.0-1"]
         for version in valid_versions:
-            assert VERSION_PATTERN.match(version.lower()) is not None
+            match = VERSION_PATTERN.match(version.lower())
+            assert match is not None
+            assert match.group(0) == version.lower()
 
     def test_pattern_rejects_invalid(self):
         invalid_versions = ["1.0.0", "v1.0.0", "a.1.0", "a-1-0-1", "x.1.0-1"]

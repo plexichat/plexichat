@@ -43,6 +43,8 @@ class TestUnreadCounts:
         """Test getting unread count filtered by server."""
         unread = notification_manager.get_unread_count(test_user.id, server_id=999)
         assert unread is not None
+        assert unread.unread_count == 0
+        assert unread.mention_count == 0
 
     def test_mark_server_read(self, notification_manager, test_user):
         """Test marking all notifications in a server as read."""

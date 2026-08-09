@@ -96,6 +96,7 @@ class TestServerIntegration:
         reaction = reaction_manager.add_reaction(owner.id, msg.id, "group_react")
 
         assert reaction is not None
+        assert reaction.emoji == "group_react"
 
     def test_member_can_react_in_group(self, users_with_server):
         """Test group member can react."""
@@ -106,6 +107,7 @@ class TestServerIntegration:
         reaction = reaction_manager.add_reaction(member.id, msg.id, "member_group")
 
         assert reaction is not None
+        assert reaction.emoji == "member_group"
 
     def test_non_member_cannot_react(
         self, auth_manager, messaging_manager, reaction_manager

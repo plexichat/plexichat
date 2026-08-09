@@ -70,6 +70,7 @@ class TestPreferences:
             test_user.id, server.id
         )
         assert settings is not None
+        assert isinstance(settings.level, NotificationLevel)
 
     def test_update_server_specific_settings(
         self, notification_manager, test_user, test_server

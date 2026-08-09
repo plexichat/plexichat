@@ -4,7 +4,6 @@ Tests for bugs that were fixed in the notifications system.
 
 import pytest
 from src.core.notifications import (
-    NotificationNotFoundError,
     MentionType,
     NotificationLevel,
 )

@@ -64,6 +64,7 @@ class TestMaxReactionsLimit:
 
         reaction = reaction_manager.add_reaction(user2.id, msg.id, "unique_0")
         assert reaction is not None
+        assert reaction.emoji == "unique_0"
 
     def test_adding_existing_emoji_allowed_at_limit(
         self, auth_manager, messaging_manager, reaction_manager
@@ -90,6 +91,7 @@ class TestMaxReactionsLimit:
 
         reaction = reaction_manager.add_reaction(user2.id, msg.id, "existing_5")
         assert reaction is not None
+        assert reaction.emoji == "existing_5"
 
     def test_remove_and_add_new_at_limit(
         self, auth_manager, messaging_manager, reaction_manager
@@ -118,6 +120,7 @@ class TestMaxReactionsLimit:
 
         reaction = reaction_manager.add_reaction(user1.id, msg.id, "new_emoji")
         assert reaction is not None
+        assert reaction.emoji == "new_emoji"
 
 
 class TestPaginationLimits:

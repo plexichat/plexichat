@@ -29,13 +29,13 @@ def test_connection_age_eviction(setup_logging):
     if os.path.exists(db_path):
         os.remove(db_path)
 
-    # Configure with very short max age (1 second)
+    # Configure with very short max age (0.5 seconds)
     db_config = {
         "database": {
             "type": "sqlite",
             "path": db_path,
             "connection_pool": {
-                "max_connection_age_hours": 1 / 3600.0  # 1 second
+                "max_connection_age_hours": 0.5 / 3600.0  # 0.5 seconds
             },
         }
     }
@@ -50,8 +50,8 @@ def test_connection_age_eviction(setup_logging):
     first_id = id(first_conn)
     assert first_conn is not None
 
-    # Wait for connection to exceed max age
-    time.sleep(1.5)
+    # Wait for connection to exceed max age (eviction is lazy on _get_conn)
+    time.sleep(0.8)
 
     # Next call to _get_conn should evict and create new connection
     second_conn = db._get_conn()
@@ -70,13 +70,13 @@ def test_connection_idle_eviction(setup_logging):
     if os.path.exists(db_path):
         os.remove(db_path)
 
-    # Configure with very short max idle time (1 second)
+    # Configure with very short max idle time (0.5 seconds)
     db_config = {
         "database": {
             "type": "sqlite",
             "path": db_path,
             "connection_pool": {
-                "max_idle_time": 1,
+                "max_idle_time": 0.5,
                 "max_connection_age_hours": 1,  # 1 hour
             },
         }
@@ -91,8 +91,8 @@ def test_connection_idle_eviction(setup_logging):
     first_conn = db._local.connection
     first_id = id(first_conn)
 
-    # Wait for connection to exceed max idle time
-    time.sleep(1.5)
+    # Wait for connection to exceed max idle time (eviction is lazy on _get_conn)
+    time.sleep(0.8)
 
     # Next call to _get_conn should evict and create new connection
     second_conn = db._get_conn()
@@ -116,7 +116,7 @@ def test_close_forces_closure_for_old_connections(setup_logging):
             "type": "sqlite",
             "path": db_path,
             "connection_pool": {
-                "max_connection_age_hours": 1 / 3600.0  # 1 second
+                "max_connection_age_hours": 0.5 / 3600.0  # 0.5 seconds
             },
         }
     }
@@ -131,7 +131,7 @@ def test_close_forces_closure_for_old_connections(setup_logging):
     db.engine.close_connection = MagicMock()
 
     # Wait for connection to exceed max age
-    time.sleep(1.5)
+    time.sleep(0.8)
 
     # Call close
     db.close()

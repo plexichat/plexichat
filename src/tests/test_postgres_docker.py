@@ -392,10 +392,8 @@ class TestPostgresDockerErrorHandling:
     def test_connection_after_error_docker(self, postgres_db):
         """Test that connection is still usable after error."""
         # Cause an error
-        try:
+        with pytest.raises(Exception):
             postgres_db.execute("INVALID QUERY")
-        except Exception:
-            pass
 
         # Connection should still work for valid queries
         result = postgres_db.fetch_one("SELECT 1 as test")

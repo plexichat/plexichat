@@ -83,6 +83,7 @@ class TestLockThread:
 
         msg = threads.send_message(owner.id, thread.id, "Owner message")
         assert msg is not None
+        assert msg["content"] == "Owner message"
 
 
 class TestUnlockThread:
@@ -147,6 +148,7 @@ class TestUnlockThread:
 
         msg = threads.send_message(member1.id, thread.id, "Should work")
         assert msg is not None
+        assert msg["content"] == "Should work"
 
 
 class TestLockAndArchive:

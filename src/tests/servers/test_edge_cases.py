@@ -109,6 +109,7 @@ class TestMemberEdgeCases:
         # Banning non-member should work (preemptive ban)
         ban = servers.ban_member(owner.id, server.id, outsider.id)
         assert ban is not None
+        assert ban.user_id == outsider.id
 
     def test_update_nonexistent_member(self, fresh_server_tuple, base_users):
         """Test updating nonexistent member."""

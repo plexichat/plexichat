@@ -66,7 +66,9 @@ class TestTTL:
         state = {"tokens": 10}
         memory_storage.set_bucket("test:key", state)
         time.sleep(0.1)
-        assert memory_storage.get_bucket("test:key") is not None
+        bucket = memory_storage.get_bucket("test:key")
+        assert bucket is not None
+        assert bucket["tokens"] == 10
 
     def test_ttl_can_be_updated(self):
         """Test TTL can be updated."""
@@ -75,7 +77,9 @@ class TestTTL:
         storage.set_bucket("test:key", state, ttl=0.1)
         storage.set_bucket("test:key", state, ttl=1.0)
         time.sleep(0.15)
-        assert storage.get_bucket("test:key") is not None
+        bucket = storage.get_bucket("test:key")
+        assert bucket is not None
+        assert bucket["tokens"] == 10
 
 
 class TestPrefixOperations:
@@ -186,18 +190,28 @@ class TestLocking:
     def test_acquire_and_release_lock(self, memory_storage):
         """Test acquiring and releasing a lock."""
         acquired = memory_storage.acquire_lock("test:lock")
-        assert acquired is not None  # Lock token ("locked") when acquired
+        assert acquired == "locked"
         memory_storage.release_lock("test:lock")
 
     def test_lock_blocks_concurrent_access(self, memory_storage):
         """Test lock blocks concurrent access."""
         results = []
+        max_concurrent = {"value": 0}
+        concurrent_holders = []
+        lock_protect = threading.Lock()
 
         def worker(worker_id):
-            acquired = memory_storage.acquire_lock("test:lock", timeout=0.1)
+            acquired = memory_storage.acquire_lock("test:lock", timeout=0.5)
             if acquired:
-                results.append(worker_id)
+                with lock_protect:
+                    results.append(worker_id)
+                    concurrent_holders.append(worker_id)
+                    max_concurrent["value"] = max(
+                        max_concurrent["value"], len(concurrent_holders)
+                    )
                 time.sleep(0.05)
+                with lock_protect:
+                    concurrent_holders.pop()
                 memory_storage.release_lock("test:lock")
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(3)]
@@ -205,7 +219,11 @@ class TestLocking:
             t.start()
         for t in threads:
             t.join()
-        assert len(results) >= 1
+
+        # All 3 workers contend and (with a generous timeout) all get in.
+        assert len(results) == 3
+        # Mutual exclusion: at no point did more than one thread hold the lock.
+        assert max_concurrent["value"] == 1
 
     def test_release_unacquired_lock(self, memory_storage):
         """Test releasing an unacquired lock doesn't raise."""

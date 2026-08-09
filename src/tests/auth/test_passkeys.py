@@ -25,10 +25,30 @@ class TestPasskeyManager:
         # Result depends on whether webauthn library is installed
         assert isinstance(available, bool)
 
-    def test_manager_initialization(self, passkey_manager):
-        """Test that passkey manager initializes correctly."""
-        assert passkey_manager is not None
-        assert passkey_manager._db is not None
+    def test_manager_initialization(self, passkey_manager, db):
+        """Test that passkey manager initializes with real config-derived state."""
+        # The manager must be wired to the same DB it was constructed with.
+        assert passkey_manager._db is db
+        assert isinstance(passkey_manager._crypto, object)
+
+        # Config-derived defaults must be populated (not placeholder None).
+        assert isinstance(passkey_manager._challenge_ttl, int)
+        assert passkey_manager._challenge_ttl > 0
+        assert isinstance(passkey_manager._rp_name, str) and passkey_manager._rp_name
+        assert isinstance(passkey_manager._rp_id, str) and passkey_manager._rp_id
+
+        # Table bootstrap must be idempotent and create usable tables.
+        from src.core.auth.passkeys import WEBAUTHN_AVAILABLE
+
+        passkey_manager._ensure_tables()
+        passkey_manager._ensure_tables()  # second call must not raise
+        if WEBAUTHN_AVAILABLE:
+            row = db.fetch_one(
+                "SELECT name FROM sqlite_master"
+                " WHERE type='table' AND name='auth_passkeys'"
+            )
+            assert row is not None
+            assert row["name"] == "auth_passkeys"
 
     def test_challenge_cleanup(self, passkey_manager, db):
         """Test cleanup of expired challenges removes only expired rows."""

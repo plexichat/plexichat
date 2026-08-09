@@ -14,6 +14,15 @@ import pytest
 import time
 from unittest.mock import AsyncMock, MagicMock
 
+# Check if pytest-benchmark is available (the benchmark fixture only exists
+# when the plugin is installed; without it those tests error at setup).
+try:
+    import pytest_benchmark  # noqa: F401
+
+    HAS_BENCHMARK = True
+except ImportError:
+    HAS_BENCHMARK = False
+
 
 @pytest.fixture
 def mock_websocket():
@@ -64,19 +73,21 @@ class TestWebSocketPerformance:
         monkeypatch.setattr("src.api.websocket.Connection", MockConnection)
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     async def test_connection_creation_performance(
         self, benchmark, websocket_manager, test_user_with_token
     ):
         """Benchmark WebSocket connection creation."""
         session_manager = websocket_manager["session_manager"]
-        user, token = test_user_with_token
+        user = test_user_with_token["user"]
 
         async def create_connection():
             from src.api.websocket import Connection
 
             ws = AsyncMock()
             conn = Connection(ws, f"test_conn_{time.time()}")
-            session_manager.create_session(conn, user.id, 0)
+            session_manager.add_connection(conn)
+            session_manager.create_session(conn, user_id=user.id, intents=513)
             return conn
 
         async def run_benchmark():
@@ -84,15 +95,20 @@ class TestWebSocketPerformance:
 
         conn = await benchmark.pedantic(run_benchmark, rounds=10)
         assert conn is not None
+        assert conn.connection_id is not None
+        # The connection and its session must actually be registered.
+        assert session_manager.get_connection(conn.connection_id) is conn
+        assert session_manager.get_user_connection_count(user.id) >= 1
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     async def test_event_dispatch_performance(
         self, benchmark, websocket_manager, test_user_with_token
     ):
         """Benchmark event dispatching to a connection."""
         dispatcher = websocket_manager["dispatcher"]
         session_manager = websocket_manager["session_manager"]
-        user, token = test_user_with_token
+        user = test_user_with_token["user"]
 
         from src.api.websocket import Connection
         from src.core.events.models import Event
@@ -100,7 +116,8 @@ class TestWebSocketPerformance:
 
         ws = AsyncMock()
         conn = Connection(ws, f"test_conn_{time.time()}")
-        session_manager.create_session(conn, user.id, 0)
+        session_manager.add_connection(conn)
+        session_manager.create_session(conn, user_id=user.id, intents=513)
 
         event = Event(
             event_type=EventType.MESSAGE_CREATE,
@@ -131,7 +148,8 @@ class TestWebSocketPerformance:
 
             ws = AsyncMock()
             conn = Connection(ws, f"test_conn_{user.id}_{time.time()}")
-            session_manager.create_session(conn, user.id, 0)
+            session_manager.add_connection(conn)
+            session_manager.create_session(conn, user_id=user.id, intents=513)
             connections.append(conn)
 
         elapsed = time.time() - start
@@ -159,7 +177,8 @@ class TestWebSocketPerformance:
 
             ws = AsyncMock()
             conn = Connection(ws, f"test_conn_{user.id}_{time.time()}")
-            session_manager.create_session(conn, user.id, 0)
+            session_manager.add_connection(conn)
+            session_manager.create_session(conn, user_id=user.id, intents=513)
             connections.append(conn)
             user_ids.append(user.id)
 
@@ -187,14 +206,14 @@ class TestWebSocketPerformance:
     async def test_heartbeat_performance(self, websocket_manager, test_user_with_token):
         """Test heartbeat processing performance."""
         session_manager = websocket_manager["session_manager"]
-        user_data = test_user_with_token
-        user = user_data["user"]
+        user = test_user_with_token["user"]
 
         from src.api.websocket import Connection
 
         ws = AsyncMock()
         conn = Connection(ws, f"test_conn_{time.time()}")
-        session_manager.create_session(conn, user.id, 0)
+        session_manager.add_connection(conn)
+        session_manager.create_session(conn, user_id=user.id, intents=513)
 
         times = []
 
@@ -238,7 +257,8 @@ class TestWebSocketMemory:
 
                 ws = AsyncMock()
                 conn = Connection(ws, f"test_conn_{user.id}_{time.time()}")
-                session_manager.create_session(conn, user.id, 0)
+                session_manager.add_connection(conn)
+                session_manager.create_session(conn, user_id=user.id, intents=513)
                 connections.append(conn)
 
             for conn in connections:
@@ -260,7 +280,7 @@ class TestWebSocketMemory:
         """Check for memory leaks in event dispatching."""
         session_manager = websocket_manager["session_manager"]
         dispatcher = websocket_manager["dispatcher"]
-        user, token = test_user_with_token
+        user = test_user_with_token["user"]
 
         from src.api.websocket import Connection
         from src.core.events.models import Event
@@ -268,7 +288,8 @@ class TestWebSocketMemory:
 
         ws = AsyncMock()
         conn = Connection(ws, f"test_conn_{time.time()}")
-        session_manager.create_session(conn, user.id, 0)
+        session_manager.add_connection(conn)
+        session_manager.create_session(conn, user_id=user.id, intents=513)
 
         initial_memory = memory_tracker.snapshot()
 
@@ -315,7 +336,8 @@ class TestWebSocketDegradation:
             for user in stress_test_users[:n]:
                 ws = AsyncMock()
                 conn = Connection(ws, f"test_conn_{user.id}_{time.time()}")
-                session_manager.create_session(conn, user.id, 0)
+                session_manager.add_connection(conn)
+                session_manager.create_session(conn, user_id=user.id, intents=513)
                 connections.append(conn)
                 user_ids.append(user.id)
 
@@ -347,7 +369,7 @@ class TestWebSocketDegradation:
         """Test event throughput remains stable over time."""
         session_manager = websocket_manager["session_manager"]
         dispatcher = websocket_manager["dispatcher"]
-        user, token = test_user_with_token
+        user = test_user_with_token["user"]
 
         from src.api.websocket import Connection
         from src.core.events.models import Event
@@ -355,7 +377,8 @@ class TestWebSocketDegradation:
 
         ws = AsyncMock()
         conn = Connection(ws, f"test_conn_{time.time()}")
-        session_manager.create_session(conn, user.id, 0)
+        session_manager.add_connection(conn)
+        session_manager.create_session(conn, user_id=user.id, intents=513)
 
         batch_times = []
 

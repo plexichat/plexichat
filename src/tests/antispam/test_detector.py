@@ -13,17 +13,17 @@ class TestDMSpamDetector:
 
         detector = DMSpamDetector(db)
         assert detector is not None
+        # A benign single message passes the spam filter with no reason.
+        assert detector.check_message(1, 2, "hello") == (True, None)
         # The exact threshold surface will be analysed as the suite
         # stabilises; this just proves the class is importable and
         # accessible through the canonical constructor.
 
     def test_analyze_text(self, db):
+        """Test that benign DM text passes the spam detector."""
         from src.core.antispam.detector import DMSpamDetector
 
         detector = DMSpamDetector(db)
-        try:
-            verdict = detector.analyze(user_id=1, text="hello friend, how are you?")
-            assert verdict is not None
-        except (AttributeError, NotImplementedError):
-            # Allow graceful skip if class hasn’t finalized public API.
-            pytest.skip("DMSpamDetector.analyze surface still under construction")
+        allowed, reason = detector.check_message(1, 2, "hello friend, how are you?")
+        assert allowed is True
+        assert reason is None

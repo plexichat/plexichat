@@ -88,8 +88,15 @@ class TestAuthPerformance:
             assert result.token is not None
 
         sessions = auth_manager.get_sessions(user.id)
-        assert len(sessions) >= 1
-        assert len(sessions) <= 50
+        # max_per_user is 10 in the test config; each login beyond the cap
+        # evicts the oldest session, so 20 logins must land exactly at the cap.
+        assert len(sessions) == 10
+
+        # Eviction must actually work: revoking one session leaves 9 active.
+        assert auth_manager.revoke_session(user.id, sessions[0].id) is True
+        remaining = auth_manager.get_sessions(user.id)
+        assert len(remaining) == 9
+        assert all(s.id != sessions[0].id for s in remaining)
 
     def test_registration_memory_smoke(self, auth_manager):
         last_username = None
@@ -97,6 +104,7 @@ class TestAuthPerformance:
             last_username = _register(auth_manager, f"mem{i}")
         user = auth_manager.get_user_by_username(last_username)
         assert user is not None
+        assert user.username == last_username
 
     def test_repeated_registration_rejected(self, auth_manager):
         username = _register(auth_manager, "dup")

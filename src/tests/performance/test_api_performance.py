@@ -77,6 +77,8 @@ class TestAPICriticalPaths:
             user_id=user.id, conversation_id=dm.id, content="hello api"
         )
         assert msg is not None
+        assert msg.content == "hello api"
+        assert msg.author_id == user.id
 
     def test_sustained_message_round_trips(self, messaging_manager, test_dm):
         dm, user1, user2 = test_dm
@@ -151,4 +153,6 @@ class TestAPICriticalPaths:
 
         assert errors == []
         messages = messaging_manager.get_messages(user1.id, dm.id, limit=50)
-        assert len(messages) >= 10
+        # Exactly 10 of the 20 workers send a message (even op_ids).
+        assert len(messages) == 10
+        assert all(m.author_id == user1.id for m in messages)

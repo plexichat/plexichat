@@ -42,6 +42,7 @@ class TestWebhookLimits:
         )
 
         assert webhook is not None
+        assert webhook.id is not None
 
 
 class TestDeletedChannel:
@@ -66,6 +67,7 @@ class TestDeletedChannel:
         )
 
         assert webhook is not None
+        assert webhook.id is not None
 
 
 class TestSpecialCharacters:
@@ -96,6 +98,7 @@ class TestSpecialCharacters:
         )
 
         assert webhook is not None
+        assert webhook.name == f"Test Bot {unique_id}"
 
     def test_message_content_special_chars(self, webhook_with_token):
         """Test message content with special characters."""

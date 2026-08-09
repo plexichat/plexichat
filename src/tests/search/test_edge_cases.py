@@ -271,10 +271,8 @@ class TestErrorRecovery:
         """Test module state is consistent after error."""
         db, auth, messaging, servers, search = db_and_search
 
-        try:
+        with pytest.raises(SearchLimitError):
             search.search_messages(1, "test", limit=10000)
-        except SearchLimitError:
-            pass
 
         results = search.search_messages(1, "test", limit=10)
 

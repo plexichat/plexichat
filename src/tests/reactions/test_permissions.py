@@ -20,6 +20,7 @@ class TestServerPermissions:
         reaction = reaction_manager.add_reaction(owner.id, msg.id, "owner_react")
 
         assert reaction is not None
+        assert reaction.emoji == "owner_react"
 
     def test_member_can_add_reaction(self, users_with_server):
         """Test member with permission can add reactions."""
@@ -30,6 +31,7 @@ class TestServerPermissions:
         reaction = reaction_manager.add_reaction(member.id, msg.id, "member_react")
 
         assert reaction is not None
+        assert reaction.emoji == "member_react"
 
     def test_member_without_permission_cannot_add(
         self, auth_manager, server_manager, test_db, reaction_manager, monkeypatch

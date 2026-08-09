@@ -37,7 +37,7 @@ class TestIntegration:
             content="This contains badword in it",
         )
         assert result is not None
-        assert len(result.violations) >= 1
+        assert len(result.violations) == 1
         assert result.violations[0].rule_id == rule.id
 
     def test_check_message_no_match(self, automod_manager, test_server):
@@ -108,7 +108,8 @@ class TestIntegration:
         )
 
         entries = automod_manager.get_audit_log(server.id)
-        assert len(entries) >= 1
+        assert len(entries) == 1
+        assert entries[0].rule_id == rule.id
 
     def test_disabled_rule_does_not_trigger(self, automod_manager, test_server):
         """Test that a disabled rule does not trigger on message check."""

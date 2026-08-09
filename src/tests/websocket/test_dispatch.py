@@ -15,6 +15,8 @@ class TestGatewayDispatcher:
     def test_dispatcher_initialization(self, dispatcher):
         """Test dispatcher initializes correctly."""
         assert dispatcher is not None
+        assert hasattr(dispatcher, "on_event")
+        assert hasattr(dispatcher, "set_event_loop")
 
     @pytest.mark.asyncio
     async def test_send_hello(self, dispatcher, connection):
@@ -219,7 +221,10 @@ class TestDispatchRaw:
         events_list = session_manager.get_replay_events(
             authenticated_connection.session_id, 0
         )
-        assert len(events_list) >= 1
+        # Exactly one event was dispatched
+        assert len(events_list) == 1
+        assert events_list[0]["t"] == "TEST_EVENT"
+        assert events_list[0]["d"] == {"test": "data"}
 
 
 class TestEventCallback:

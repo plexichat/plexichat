@@ -326,16 +326,11 @@ class TestICECandidateInjection:
         parser = ICECandidateParser()
 
         for candidate in malicious_candidates:
-            try:
-                parsed = parser.parse(candidate)
+            parsed = parser.parse(candidate)
+            # Wildcard, broadcast, loopback, and private-address host candidates
+            # must all be rejected outright.
+            with pytest.raises(ICECandidateError):
                 validator.validate(parsed)
-                # Security test: explicitly check for all-interfaces binding which should be rejected
-                if parsed.get("address") == "0.0.0.0":
-                    pytest.fail(
-                        f"Should have rejected malicious candidate: {candidate}"
-                    )
-            except ICECandidateError:
-                pass
 
     def test_relay_candidate_spoofing(self):
         """Test detection of spoofed relay candidates."""
@@ -355,10 +350,9 @@ class TestICECandidateInjection:
         parsed = parser.parse(manipulated_srflx)
 
         validator = ICECandidateValidator()
-        try:
+        # Manipulated srflx candidates referencing private addresses must be rejected.
+        with pytest.raises(ICECandidateError):
             validator.validate(parsed)
-        except ICECandidateError:
-            pass
 
     def test_candidate_priority_manipulation(self):
         """Test detection of manipulated candidate priorities."""
@@ -384,7 +378,9 @@ class TestICECandidateInjection:
             except ICECandidateError:
                 pass
 
-        assert len(candidates) <= 1000
+        # Private (RFC1918) host candidates are legitimate for LAN WebRTC, so
+        # a flood of them must be processed without error or resource blowup.
+        assert len(candidates) == 1000
 
     def test_ipv6_candidate_injection(self):
         """Test handling of malicious IPv6 candidates."""
@@ -398,11 +394,10 @@ class TestICECandidateInjection:
         validator = ICECandidateValidator()
 
         for candidate in malicious_ipv6_candidates:
-            try:
-                parsed = parser.parse(candidate)
+            parsed = parser.parse(candidate)
+            # Loopback, unspecified, and broadcast IPv6 addresses must be rejected.
+            with pytest.raises(ICECandidateError):
                 validator.validate(parsed)
-            except ICECandidateError:
-                pass
 
     def test_tcp_candidate_exploitation(self):
         """Test handling of malicious TCP candidates."""

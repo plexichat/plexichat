@@ -65,3 +65,4 @@ class TestSigning:
     def test_url_signer_initialized(self, media_manager):
         """Test that URL signer is initialized."""
         assert media_manager._url_signer is not None
+        assert callable(media_manager._url_signer.sign_url)

@@ -14,6 +14,7 @@ class TestFixturesWork:
     def test_auth_manager_fixture_exists(self, auth_manager):
         """Test that auth_manager fixture is available."""
         assert auth_manager is not None
+        assert hasattr(auth_manager, "register")
 
     def test_auth_manager_has_required_methods(self, auth_manager):
         """Test that auth_manager has required methods."""
@@ -60,6 +61,7 @@ class TestConvenienceFixtures:
         """Test the test_dm convenience fixture."""
         dm, user1, user2 = test_dm
         assert dm is not None
+        assert user1.id != user2.id
 
 
 class TestDatabaseIsolation:

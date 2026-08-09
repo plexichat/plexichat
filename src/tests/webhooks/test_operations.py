@@ -221,6 +221,7 @@ class TestWebhookErrors:
             wait=True,
         )
         assert result is not None
+        assert result.content == "test"
 
     def test_execute_with_avatar_override(self, webhook_manager, test_db):
         """Can override avatar when executing."""
@@ -241,6 +242,7 @@ class TestWebhookErrors:
             wait=True,
         )
         assert result is not None
+        assert result.content == "test"
 
     def test_execute_with_embeds(self, webhook_manager, test_db):
         """Can execute webhook with embeds."""
@@ -261,6 +263,7 @@ class TestWebhookErrors:
             wait=True,
         )
         assert result is not None
+        assert result.content == "test"
 
     def test_execute_too_many_embeds(self, webhook_manager, test_db, monkeypatch):
         """Cannot exceed embed limit."""

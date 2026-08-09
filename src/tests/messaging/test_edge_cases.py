@@ -67,11 +67,13 @@ class TestEdgeCases:
         """Test searching for messages in a DM conversation."""
         user1, user2 = two_users
         dm = messaging_manager.create_dm(user1.id, user2.id)
-        messaging_manager.send_message(user1.id, dm.id, "find this keyword")
+        hit = messaging_manager.send_message(user1.id, dm.id, "find this keyword")
         messaging_manager.send_message(user1.id, dm.id, "unrelated message")
         results = messaging_manager.search_messages(user1.id, dm.id, "keyword")
         assert isinstance(results, list)
-        assert len(results) >= 1
+        # Exactly one of the two messages contains the keyword
+        assert len(results) == 1
+        assert int(results[0].id) == int(hit.id)
 
     def test_pin_unpin_message(self, messaging_manager, two_users):
         """Test pinning and unpinning a message."""

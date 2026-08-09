@@ -136,6 +136,7 @@ class TestUnblockUser:
         # Should be able to send request now
         request = rel_manager.send_friend_request(user1.id, user2.id)
         assert request is not None
+        assert request.sender_id == user1.id
 
 
 class TestGetBlockedUsers:

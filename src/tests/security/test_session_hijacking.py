@@ -89,13 +89,11 @@ class TestSessionHijacking:
         old_token = result.token
 
         new_token = auth_manager.refresh_session(old_token)
+        assert new_token is not None
 
-        # Refresh may return the same token if it's still valid
-        # The important thing is the refresh operation works
-        if new_token:
-            # Token should still be valid after refresh
-            token_info = auth_manager.verify_token(new_token)
-            assert token_info is not None
+        # Token should still be valid after refresh
+        token_info = auth_manager.verify_token(new_token)
+        assert token_info is not None
 
     def test_session_fixation_prevented(self, auth_manager, test_user):
         """Test that session fixation attacks are prevented."""
@@ -194,8 +192,9 @@ class TestSessionHijacking:
         auth_manager.verify_token(result.token)
 
         sessions = auth_manager.get_sessions(test_user.id)
-        if sessions:
-            assert sessions[0].last_activity is not None
+        assert len(sessions) == 1
+        assert sessions[0].last_activity is not None
+        assert sessions[0].last_activity > 0
 
     def test_session_device_tracking(self, auth_manager, test_user):
         """Test that session device information is tracked."""
@@ -212,9 +211,11 @@ class TestSessionHijacking:
         )
 
         sessions = auth_manager.get_sessions(test_user.id)
-        if sessions and sessions[0].device_id:
-            devices = auth_manager.get_devices(test_user.id)
-            assert len(devices) > 0
+        assert len(sessions) == 1
+        assert sessions[0].device_id is not None
+        devices = auth_manager.get_devices(test_user.id)
+        assert len(devices) == 1
+        assert devices[0].fingerprint == "test_device_123"
 
     def test_suspicious_activity_detection(self, auth_manager, test_user, monkeypatch):
         """Test that a token used from a different IP is flagged when binding is on."""

@@ -184,15 +184,12 @@ class TestAPIRouteSecurity:
 
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
-        try:
-            embeds = [
-                {"title": "Test", "fields": [{"name": "Field", "value": "Value"}]}
-            ]
-            messaging_manager.send_message(
-                user_id=user1.id, conversation_id=dm.id, content="Test", embeds=embeds
-            )
-        except Exception:
-            pass
+        embeds = [{"title": "Test", "fields": [{"name": "Field", "value": "Value"}]}]
+        msg = messaging_manager.send_message(
+            user_id=user1.id, conversation_id=dm.id, content="Test", embeds=embeds
+        )
+        assert msg is not None
+        assert msg.content == "Test"
 
     def test_api_validates_array_bounds(self, messaging_manager, test_user):
         """Test that API validates array bounds."""

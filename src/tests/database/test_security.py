@@ -307,12 +307,10 @@ class TestTransactionIsolation:
         db.begin_transaction()
         db.execute("INSERT INTO test (value) VALUES (?)", (10,), auto_commit=False)
 
-        try:
+        with pytest.raises(Exception):
             db.execute(
                 "INSERT INTO test (value) VALUES (?)", (None,), auto_commit=False
             )
-        except Exception:
-            pass
 
         db.rollback()
 
@@ -416,10 +414,7 @@ class TestSQLInjectionPrevention:
             "1'; SELECT CASE WHEN (1=1) THEN (SELECT 1 UNION SELECT 2) ELSE 1 END--"
         )
         start = time.time()
-        try:
-            db.execute("SELECT * FROM data WHERE id = ?", (injection,))
-        except Exception:
-            pass
+        db.execute("SELECT * FROM data WHERE id = ?", (injection,))
         elapsed = time.time() - start
 
         # Parameterized queries must never execute the injected payload. The
@@ -490,6 +485,7 @@ class TestSQLInjectionPrevention:
 
         result = db.fetch_one("SELECT val FROM nums WHERE id = ?", (1,))
         assert result is not None
+        assert result["val"] == 1e308
         db.close()
 
 

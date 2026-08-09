@@ -31,6 +31,7 @@ class TestSearchUsers:
     def test_search_users_paginated(self, seeded):
         page = seeded.search_users_page(user_id=1, query="searchuser", limit=2)
         assert page is not None
+        assert isinstance(page.results, list)
 
 
 class TestSearchSuggestions:

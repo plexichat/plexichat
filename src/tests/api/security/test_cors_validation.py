@@ -38,7 +38,7 @@ def test_cors_preflight_disallowed_origin(test_client):
 def test_cors_simple_request_allowed_origin(test_client):
     """Test that simple requests succeed for allowed origins."""
     response = test_client.get(
-        "/api/v1/",
+        "/",
         headers={"Origin": "http://testserver"},
     )
 

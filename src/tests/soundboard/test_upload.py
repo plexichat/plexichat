@@ -146,9 +146,9 @@ class TestGetSound:
 
         sounds = soundboard.get_server_sounds(owner.id, server.id)
 
-        assert len(sounds) >= 1
-        sound_ids = [s.id for s in sounds]
-        assert sound.id in sound_ids
+        # Exactly one sound was uploaded
+        assert len(sounds) == 1
+        assert sounds[0].id == sound.id
 
 
 class TestDeleteSound:

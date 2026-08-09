@@ -62,6 +62,24 @@ DEFAULT_TEST_CONFIG = {
         # addresses always pass ``auth.passwords.validate_email``.
         "email_validation": {"strict": False},
     },
+    # Test-friendly Argon2id cost parameters. AuthManager reads these via
+    # config and computes a real dummy hash on every ``auth.setup()`` plus a
+    # real hash on every ``register()`` (``self.crypto.hash_password`` — NOT
+    # the module function the db fixture patches). With production defaults
+    # (time_cost=3, memory_cost=64MB) each of those costs ~70ms — thousands
+    # of tests paid hundreds of seconds of real Argon2 work. The real-hashing
+    # tests construct their own EncryptionManager explicitly and are
+    # unaffected; every generated hash still carries the ``$argon2id$`` PHC
+    # prefix so format assertions hold.
+    "encryption": {
+        "argon2": {
+            "time_cost": 1,
+            "memory_cost": 8,
+            "parallelism": 1,
+            "hash_length": 32,
+            "salt_length": 16,
+        },
+    },
     "messaging": {
         "max_message_length": 4000,
         "max_attachments": 10,
@@ -400,6 +418,21 @@ def migrated_db_template():
             """)
 
     template_db.close()
+
+    # Compact the template so per-test copies are fast. The migrated
+    # database is ~2.9MB mostly because of the 4KB default page size
+    # (hundreds of tables/indexes each occupy at least one page); the
+    # function-scoped ``db`` fixture copies this file for every test
+    # (~4000+ copies per run). Rebuild it on 1KB pages via VACUUM, which
+    # typically shrinks the file ~4x and keeps identical content.
+    import sqlite3 as _sqlite3
+
+    _compact_conn = _sqlite3.connect(template_path)
+    try:
+        _compact_conn.execute("PRAGMA page_size=1024")
+        _compact_conn.execute("VACUUM")
+    finally:
+        _compact_conn.close()
 
     if old_db_conf:
         config.set("database", old_db_conf)

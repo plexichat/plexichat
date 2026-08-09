@@ -311,7 +311,8 @@ class TestDistributedAttacks:
             if not result.allowed:
                 blocked = True
                 break
-        assert blocked
+        assert blocked is True
+        assert i < 100
 
     def test_webhook_channel_flood_attack(self, memory_storage):
         """Test that multiple webhooks can't flood a single channel."""
@@ -342,7 +343,7 @@ class TestDistributedAttacks:
                     break
             if blocked:
                 break
-        assert blocked
+        assert blocked is True
 
 
 class TestBucketManipulation:

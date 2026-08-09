@@ -59,9 +59,43 @@ class TestOAuthFlows:
 
     def test_revoke_token(self, app_manager, test_user):
         """Test revoking an OAuth2 token."""
-        app_manager.create_application(owner_id=test_user.id, name="Revoke App")
-        result = app_manager.revoke_token("nonexistent_token")
-        assert result is True or result is False
+        app = app_manager.create_application(owner_id=test_user.id, name="Revoke App")
+        from src.core.applications.oauth.flows import OAuth2Flow
+        from src.core.applications.oauth.tokens import generate_client_secret
+
+        flow = OAuth2Flow(
+            app_manager._db,
+            {
+                "code_expiry_seconds": 600,
+                "token_expiry_seconds": 604800,
+                "refresh_enabled": True,
+            },
+        )
+        code = flow.create_authorization_code(
+            application_id=app.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
+        client_secret, secret_hash = generate_client_secret()
+        app_manager._db.execute(
+            "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
+            (secret_hash, app.id),
+        )
+        token = flow.exchange_code(
+            app.id, client_secret, code.code, "https://example.com/callback"
+        )
+
+        # Revoking a real token returns True and marks it revoked.
+        assert app_manager.revoke_token(token.access_token) is True
+        row = app_manager._db.fetch_one(
+            "SELECT revoked FROM app_oauth_tokens WHERE id = ?", (token.id,)
+        )
+        assert row is not None
+        assert row["revoked"] == 1
+
+        # Revoking garbage (unparseable token) returns False.
+        assert app_manager.revoke_token("not-a-token") is False
 
     def test_invalid_client_error(self):
         """Test InvalidClientError has correct error field."""
@@ -171,6 +205,7 @@ class TestOAuthFlows:
             app.id, client_secret, code.code, "https://example.com/callback"
         )
         assert token1 is not None
+        assert token1.access_token is not None
 
         with pytest.raises(InvalidGrantError, match="already used"):
             flow.exchange_code(

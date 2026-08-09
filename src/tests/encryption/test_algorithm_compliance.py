@@ -60,9 +60,9 @@ class TestArgon2idCompliance:
         salts = set()
         for hash_str in hashes:
             parts = hash_str.split("$")
-            if len(parts) >= 5:
-                salt = parts[4].split(",")[0] if "," in parts[4] else parts[4]
-                salts.add(salt)
+            assert len(parts) >= 5, f"Unexpected PHC format: {hash_str}"
+            salt = parts[4].split(",")[0] if "," in parts[4] else parts[4]
+            salts.add(salt)
 
         assert len(salts) == 10
 
@@ -102,10 +102,10 @@ class TestArgon2idCompliance:
         hash_str = manager.hash_password(password)
 
         parts = hash_str.split("$")
-        if len(parts) >= 6:
-            hash_b64 = parts[-1]
-            decoded = base64.b64decode(hash_b64 + "==")
-            assert len(decoded) >= 32
+        assert len(parts) >= 6, f"Unexpected PHC format: {hash_str}"
+        hash_b64 = parts[-1]
+        decoded = base64.b64decode(hash_b64 + "=" * (-len(hash_b64) % 4))
+        assert len(decoded) >= 32
 
     def test_argon2id_salt_length(self):
         """Test that salt is at least 16 bytes."""
@@ -114,14 +114,10 @@ class TestArgon2idCompliance:
         hash_str = manager.hash_password(password)
 
         parts = hash_str.split("$")
-        if len(parts) >= 5:
-            salt_part = parts[4].split(",")[0] if "," in parts[4] else parts[4]
-            salt_b64 = salt_part
-            try:
-                decoded = base64.b64decode(salt_b64 + "==")
-                assert len(decoded) >= 16
-            except Exception:
-                pass
+        assert len(parts) >= 5, f"Unexpected PHC format: {hash_str}"
+        salt_b64 = parts[4].split(",")[0] if "," in parts[4] else parts[4]
+        decoded = base64.b64decode(salt_b64 + "=" * (-len(salt_b64) % 4))
+        assert len(decoded) >= 16
 
 
 class TestAES256GCMCompliance:
