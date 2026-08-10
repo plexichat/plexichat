@@ -11,6 +11,7 @@ from src.api.schemas.admin import (
     TelemetryEndpointStat,
     SystemMetrics,
 )
+from src.api.schemas.common import ErrorResponse
 from .utils import check_host_restriction, get_admin_from_token
 from src.core import applications
 import utils.logger as logger
@@ -282,7 +283,13 @@ async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
         raise HTTPException(status_code=500, detail="Failed to query audit log")
 
 
-@router.get("/dashboard/system-alerts")
+@router.get(
+    "/dashboard/system-alerts",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+    },
+)
 async def get_system_alerts(
     request: Request,
     limit: int = 50,

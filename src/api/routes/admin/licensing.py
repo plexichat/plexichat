@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 import utils.licensing as licensing_module
 from src.core.admin.logging import AdminLogEntry, get_admin_logger
@@ -104,7 +105,13 @@ async def get_license_status(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/features")
+@router.get(
+    "/features",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_license_features(request: Request):
     """
     Retrieve feature matrix showing all licensed features and their state.

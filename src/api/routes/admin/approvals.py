@@ -3,7 +3,7 @@ Admin approval workflow routes.
 """
 
 from fastapi import APIRouter, Request, HTTPException
-from src.api.schemas.common import SuccessResponse
+from src.api.schemas.common import ErrorResponse, SuccessResponse
 from .utils import (
     check_host_restriction,
     get_admin_from_token,
@@ -38,7 +38,13 @@ class ApprovalComment(BaseModel):
     comment: str = Field(..., min_length=1, max_length=1000)
 
 
-@router.get("/approvals")
+@router.get(
+    "/approvals",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+    },
+)
 async def list_approvals(
     request: Request, status: Optional[str] = None, action_type: Optional[str] = None
 ):

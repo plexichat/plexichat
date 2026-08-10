@@ -94,6 +94,7 @@ async def admin_bot_stats(
     response_model=List[AdminBotEntry],
     summary="List all applications for admin",
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
         401: {"model": ErrorResponse, "description": "Unauthorized"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
@@ -123,6 +124,7 @@ async def admin_list_applications(
     response_model=List[AdminBotRequestEntry],
     summary="List all bot requests for admin",
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
         401: {"model": ErrorResponse, "description": "Unauthorized"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },

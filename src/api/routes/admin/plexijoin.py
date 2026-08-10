@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request, HTTPException, Query
 from typing import Optional
 
 from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 
 router = APIRouter()
@@ -272,7 +273,15 @@ async def test_connection(request: Request, connection_id: int):
 # === Inbound Requests ===
 
 
-@router.get("/plexijoin/requests")
+@router.get(
+    "/plexijoin/requests",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def list_requests(
     request: Request,
     status: Optional[str] = Query(None, description="Filter by request status"),

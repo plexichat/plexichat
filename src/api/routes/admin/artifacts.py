@@ -164,7 +164,14 @@ async def admin_purge_expired(request: Request) -> RetentionPurgeResponse:
         )
 
 
-@router.post("/retention/server")
+@router.post(
+    "/retention/server",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_set_server_retention(
     request: Request, body: ServerRetentionRequest
 ) -> ServerRetentionResponse:
