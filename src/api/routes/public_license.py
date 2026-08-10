@@ -232,6 +232,7 @@ async def export_license(
         ...,
         min_length=1,
         max_length=_MAX_SIGNATURE_LEN,
+        pattern=r"^[A-Za-z0-9+/]+={0,2}$",
         description="Base64 Ed25519 signature of the nonce",
     ),
 ) -> dict:

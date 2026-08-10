@@ -579,7 +579,18 @@ async def execute_webhook(
                 detail={"error": {"code": 400, "message": "Invalid webhook ID"}},
             )
 
-        tid = int(thread_id) if thread_id else None
+        tid = None
+        if thread_id:
+            try:
+                tid = int(thread_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid thread ID format in execute_webhook: {thread_id}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+                )
         if tid is None and body.thread_id:
             try:
                 tid = int(body.thread_id)
