@@ -15,10 +15,10 @@ class TestTracker:
         assert isinstance(applied, list)
 
     def test_get_applied_migrations(self, migration_manager):
-        """Test getting list of applied migrations."""
+        """The template DB has both migrations recorded as applied."""
         migration_manager.tracker.ensure_table_exists()
         applied = migration_manager.tracker.get_applied_migrations()
-        assert isinstance(applied, list)
+        assert applied == ["000", "001"]
 
     def test_record_migration_start(self, migration_manager):
         """Test recording migration start."""
@@ -62,10 +62,13 @@ class TestTracker:
         assert result is None
 
     def test_get_all_migration_records(self, migration_manager):
-        """Test getting all migration records."""
+        """Records cover both template migrations with completed status."""
         migration_manager.tracker.ensure_table_exists()
         records = migration_manager.tracker.get_all_migration_records()
-        assert isinstance(records, list)
+        versions = {r["version"] for r in records}
+        assert {"000", "001"}.issubset(versions)
+        completed = [r for r in records if r["version"] in ("000", "001")]
+        assert all(r["status"] == "completed" for r in completed)
 
     def test_record_rollback(self, migration_manager):
         """Test recording a migration rollback."""
@@ -91,20 +94,24 @@ class TestTracker:
         migration_manager.tracker.release_lock()
 
     def test_can_run_irreversible_migration_reversible(self, migration_manager):
-        """Test that reversible migrations can always run."""
+        """A reversible migration (no metadata) always runs."""
         can_run, reason = migration_manager.tracker.can_run_irreversible_migration(
             "001", delay_hours=168
         )
-        # Most migrations are reversible, so should return True
-        assert isinstance(can_run, bool)
-        assert isinstance(reason, str)
+        assert can_run is True
+        assert reason == "Migration is reversible"
 
     def test_log_migration(self, migration_manager):
-        """Test logging a migration message."""
+        """Logged messages are retrievable verbatim."""
         migration_manager.tracker.ensure_table_exists()
         migration_manager.tracker.log_migration("001", "INFO", "Test log message")
+        migration_manager.tracker.log_migration("001", "WARNING", "Second message")
         logs = migration_manager.tracker.get_migration_logs("001")
-        assert isinstance(logs, list)
+        assert [log["message"] for log in logs] == [
+            "Test log message",
+            "Second message",
+        ]
+        assert [log["level"] for log in logs] == ["INFO", "WARNING"]
 
     def test_get_migration_logs_empty(self, migration_manager):
         """Test getting logs for migration with no logs."""

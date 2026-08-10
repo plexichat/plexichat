@@ -510,7 +510,7 @@ class TestSoundUsage:
         # Disable per-sound cooldown so the test can replay it twice
         # to verify usage_count aggregation.
         soundboard_manager.update_sound(1, sound1.id, cooldown=0)
-        soundboard_manager.upload_sound(
+        sound2 = soundboard_manager.upload_sound(
             1, 1, "unpopular", SoundFormat.MP3, "url2", 1000, 1.0
         )
 
@@ -522,7 +522,7 @@ class TestSoundUsage:
         # sound1 (played twice) must lead over the never-played sound2.
         assert len(popular) == 2
         assert popular[0].id == sound1.id
-        assert popular[1].id != sound1.id
+        assert popular[1].id == sound2.id
 
     def test_get_recent_sounds(self, soundboard_manager, test_db):
         """Get recently used sounds."""

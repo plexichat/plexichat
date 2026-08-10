@@ -306,7 +306,8 @@ class TestSQLiteLimits:
 
     def test_busy_timeout_behavior(self, sqlite_db):
         """Test that busy timeout prevents immediate lock failures."""
-        # This test documents that busy_timeout=30000 allows writes to queue
+        # This test documents that busy_timeout=5000 (configurable via
+        # database.connection_pool.busy_timeout) allows writes to queue
         # rather than failing immediately
 
         def rapid_write():

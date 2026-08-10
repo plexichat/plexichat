@@ -32,7 +32,9 @@ class TestTwoFactorAuth:
         setup = auth_manager.setup_2fa(user.id)
 
         assert setup.secret is not None
-        assert len(setup.secret) > 0
+        # pyotp.random_base32() always returns a 32-char base32 secret
+        assert len(setup.secret) == 32
+        assert all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" for c in setup.secret)
 
     def test_setup_2fa_returns_qr_uri(self, db, auth_manager):
         """Test 2FA setup returns QR URI."""

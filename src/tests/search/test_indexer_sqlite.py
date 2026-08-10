@@ -159,7 +159,9 @@ class TestSQLiteFTS5MessageSearch:
 
         results = indexer.search_messages(unique_id, conversation_ids=[100])
 
-        assert len(results) >= 1
+        # Exactly one message carries the unique token
+        assert len(results) == 1
+        assert results[0].message_id == message.message_id
 
     def test_search_messages_empty_query(self, db_and_modules):
         """Test search with empty query."""
@@ -248,7 +250,9 @@ class TestSQLiteFTS5UserIndexing:
 
         results = indexer.search_users(unique_id)
 
-        assert len(results) >= 1
+        # Exactly one user matches the unique username token
+        assert len(results) == 1
+        assert results[0].user_id == user.user_id
 
     def test_remove_user(self, db_and_modules):
         """Test removing a user from index."""
@@ -315,7 +319,9 @@ class TestSQLiteFTS5ServerIndexing:
 
         results = indexer.search_servers(unique_id, public_only=True)
 
-        assert len(results) >= 1
+        # Exactly one server matches the unique name token
+        assert len(results) == 1
+        assert results[0].server_id == server.server_id
 
     def test_search_servers_by_category(self, db_and_modules):
         """Test searching servers by category."""

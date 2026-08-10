@@ -295,7 +295,7 @@ class TestHourlyWindowReset:
                 route="GET /test",
             )
             assert result.allowed
-            time.sleep(0.15)
+            time.sleep(0.02)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
@@ -326,7 +326,7 @@ class TestDailyWindowReset:
                 route="GET /test",
             )
             assert result.allowed
-            time.sleep(0.15)
+            time.sleep(0.02)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",

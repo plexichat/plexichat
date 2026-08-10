@@ -124,8 +124,9 @@ def test_audit_log_pii_protection(auth_manager, db):
     assert row["ip_encrypted"] is not None
     assert row["ip_encrypted"] != ip
 
-    # Retrieve via AuthManager
+    # Retrieve via AuthManager: register + login write exactly one
+    # LOGIN_SUCCESS entry for this user.
     history = auth_manager.get_login_history(user_id)
-    assert len(history) > 0
+    assert len(history) == 1
     entry = history[0]
     assert entry.ip_address == ip

@@ -46,7 +46,9 @@ class TestSearchErrors:
         )
 
         results = search_manager.search_messages(1, "hello")
-        assert len(results) >= 1
+        # Exactly one message was indexed
+        assert len(results) == 1
+        assert results[0].id == 1
 
     def test_search_users(self, search_manager, test_db):
         """Search users."""
@@ -58,7 +60,9 @@ class TestSearchErrors:
         search_manager.index_user(1001, "testuser")
 
         results = search_manager.search_users(1001, "testuser")
-        assert len(results) >= 1
+        # Exactly one user was indexed
+        assert len(results) == 1
+        assert results[0].user_id == 1001
 
     def test_search_servers(self, search_manager, test_db):
         """Search servers."""
@@ -72,7 +76,9 @@ class TestSearchErrors:
         search_manager.index_server(1, "Test Server", member_count=1, is_public=True)
 
         results = search_manager.search_servers(1, "Test")
-        assert len(results) >= 1
+        # Exactly one server was indexed
+        assert len(results) == 1
+        assert results[0].server_id == 1
 
     def test_search_with_filters(self, search_manager, test_db):
         """Search with filters."""
@@ -95,7 +101,9 @@ class TestSearchErrors:
         )
 
         results = search_manager.search_messages(1, "hello", conversation_id=1)
-        assert len(results) >= 1
+        # Exactly one message matches the filter
+        assert len(results) == 1
+        assert results[0].id == 1
 
     def test_search_with_author_filter(self, search_manager, test_db):
         """Search with author filter."""
@@ -121,7 +129,9 @@ class TestSearchErrors:
         )
 
         results = search_manager.search_messages(1, "hello", author_id=1)
-        assert len(results) >= 1
+        # Exactly one of the two indexed messages has author_id == 1
+        assert len(results) == 1
+        assert results[0].id == 1
 
     def test_search_pagination(self, search_manager, test_db):
         """Search with pagination."""
@@ -270,7 +280,9 @@ class TestSearchMessageFeatures:
         )
 
         results = search_manager.search_messages(1, "hello")
-        assert len(results) >= 1
+        # Case-insensitive match against the single indexed message
+        assert len(results) == 1
+        assert results[0].id == 1
 
     def test_search_partial_match(self, search_manager, test_db):
         """Search matches partial words."""
@@ -295,7 +307,9 @@ class TestSearchMessageFeatures:
         )
 
         results = search_manager.search_messages(1, "test")
-        assert len(results) >= 1
+        # Prefix match against the single indexed message
+        assert len(results) == 1
+        assert results[0].id == 1
 
 
 class TestSearchUserFeatures:
@@ -311,7 +325,9 @@ class TestSearchUserFeatures:
         search_manager.index_user(1010, "john_doe")
 
         results = search_manager.search_users(1010, "john")
-        assert len(results) >= 1
+        # Exactly one user was indexed
+        assert len(results) == 1
+        assert results[0].user_id == 1010
 
     def test_search_users_partial(self, search_manager, test_db):
         """Search users with partial match."""

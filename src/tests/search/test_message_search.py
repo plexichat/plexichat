@@ -163,7 +163,9 @@ class TestMessageSearchIndexing:
 
         results = search.search_messages(user.id, f"indextest {unique_id}")
 
-        assert len(results) >= 1
+        # Exactly one message matches the unique indexed content
+        assert len(results) == 1
+        assert results[0].message_id == msg.id
 
     def test_remove_from_index(self, auth_manager, messaging_manager, search_manager):
         """Test removing a message from index."""

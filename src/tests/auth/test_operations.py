@@ -931,7 +931,8 @@ class TestAuthManagerDevices:
             auth_manager.login("testuser", "Password123!", device_info=device_info)
 
         devices = auth_manager.get_devices(user.id)
-        assert len(devices) > 0
+        # Exactly one device was registered during the login
+        assert len(devices) == 1
         assert devices[0].fingerprint == "test_device_123"
 
     def test_rename_device_wrong_user(self, db, auth_manager):
@@ -1019,8 +1020,16 @@ class TestAuthManagerAudit:
             with patch.object(encryption, "verify_password", return_value=False):
                 auth_manager.login("testuser", "WrongPassword")
 
+        from src.core.auth.models import AuditEventType
+
         history = auth_manager.get_login_history(user.id)
-        assert len(history) > 0
+        # One successful login + one failed login => exactly two entries
+        assert len(history) == 2
+        event_types = {e.event_type for e in history}
+        assert event_types == {
+            AuditEventType.LOGIN_SUCCESS,
+            AuditEventType.LOGIN_FAILED,
+        }
 
     def test_audit_security_events(self, db, auth_manager):
         """Test security events audit."""
@@ -1033,8 +1042,16 @@ class TestAuthManagerAudit:
         with patch.object(encryption, "verify_password", return_value=True):
             auth_manager.change_password(user.id, "Password123!", "NewPassword456!")
 
+        from src.core.auth.models import AuditEventType
+
         events = auth_manager.get_security_events(user.id)
-        assert len(events) > 0
+        # register + change_password write exactly one audit row each
+        assert len(events) == 2
+        event_types = {e.event_type for e in events}
+        assert event_types == {
+            AuditEventType.REGISTER,
+            AuditEventType.PASSWORD_CHANGE,
+        }
 
 
 class TestAuthManagerUtilities:

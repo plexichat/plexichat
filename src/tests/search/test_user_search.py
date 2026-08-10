@@ -142,7 +142,9 @@ class TestUserSearchIndexing:
 
         results = search.search_users(user.id, f"indexuser_{unique_id}")
 
-        assert len(results) >= 1
+        # Exactly one user matches the unique username
+        assert len(results) == 1
+        assert results[0].user_id == user.id
 
     def test_search_by_display_name(self, db_and_modules):
         """Test searching by display name."""
@@ -164,7 +166,9 @@ class TestUserSearchIndexing:
 
         results = search.search_users(user.id, display_name)
 
-        assert len(results) >= 1
+        # Exactly one user has this unique display name
+        assert len(results) == 1
+        assert results[0].user_id == user.id
 
 
 @pytest.mark.search

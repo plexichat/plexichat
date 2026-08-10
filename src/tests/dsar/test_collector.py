@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -21,7 +23,7 @@ def seeded_user(auth_manager, pii_gen):
 
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
         user = auth_manager.register(
-            username=f"dsaruser_{pytest.random_string() if hasattr(pytest, 'random_string') else 'x'}",
+            username=f"dsaruser_{uuid.uuid4().hex[:8]}",
             email=pii_gen.email(),
             password="TestPass123!",
         )
@@ -69,6 +71,27 @@ class TestDataCollector:
         assert isinstance(counts, dict)
         # At minimum an auth_users row should be counted.
         assert any(k.startswith("identity_") for k in counts.keys())
+
+    def test_identity_collector_returns_registered_user(self, db, seeded_user):
+        """The identity collector must surface the registered user's row."""
+        from src.core.dsar.collectors import IdentityCollector
+
+        result = IdentityCollector(db).collect(seeded_user.id)
+        assert result, "identity collect() must return the seeded user"
+        assert result["id"] == seeded_user.id
+        # Sensitive fields are redacted / never present.
+        assert "password_hash" not in result
+        assert "totp_secret_encrypted" not in result
+        assert "backup_codes_hash" not in result
+
+    def test_unknown_user_collects_empty(self, db):
+        """A user without a row must yield an empty dict per collector."""
+        from src.core.dsar.collectors import IdentityCollector, SessionsCollector
+
+        assert IdentityCollector(db).collect(999_999_999) == {}
+        # Session data is a structured envelope even with no rows.
+        sessions = SessionsCollector(db).collect(999_999_999)
+        assert sessions == {"devices": [], "known_ips": [], "sessions": []}
 
     def test_individual_categories_return(self, db, seeded_user):
         from src.core.dsar.collectors import (
@@ -121,8 +144,7 @@ class TestDataCollector:
 
         for cls in collector_classes:
             collector = cls(db)
-            try:
-                result = collector.collect(seeded_user.id)
-            except Exception:
-                result = {}
+            # Collectors must never raise for a known user; any exception
+            # here is a real schema/query bug that must surface loudly.
+            result = collector.collect(seeded_user.id)
             assert isinstance(result, dict)

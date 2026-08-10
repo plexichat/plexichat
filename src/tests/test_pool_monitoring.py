@@ -226,7 +226,7 @@ class TestPeriodicLogging:
             {
                 "type": "sqlite",
                 "path": ":memory:",
-                "monitoring": {"log_interval_seconds": 1},  # 1 second for testing
+                "monitoring": {"log_interval_seconds": 0.3},  # fast logging for testing
             }
         ):
             db = Database()
@@ -275,13 +275,18 @@ class TestPeriodicLogging:
         with patch.object(logger, "info") as mock_info:
             test_db.start_pool_monitoring()
 
-            # Wait for thread to log stats
-            time.sleep(1.5)
+            # The loop logs immediately and then every interval; a short
+            # wait is enough to capture at least one statistics line.
+            time.sleep(0.7)
 
-            # Should have logged pool stats
             info_calls = [call[0][0].lower() for call in mock_info.call_args_list]
-            any("pool stats" in call or "active" in call for call in info_calls)
-            # Note: May not be logged if no activity, so we just check thread is running
+            stats_lines = [
+                call
+                for call in info_calls
+                if "pool monitoring statistics" in call
+                and "active_connections=" in call
+            ]
+            assert len(stats_lines) >= 1
             assert test_db.monitor._periodic_logging_thread.is_alive()
 
     def test_stop_monitoring_safe_when_not_running(self, test_db):
