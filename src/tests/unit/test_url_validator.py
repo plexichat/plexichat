@@ -274,7 +274,7 @@ def test_generate_csp_nonce_unique_and_base64():
 
 def test_build_admin_csp_header_contains_nonce_and_restrictions():
     header = build_admin_csp_header("abc123")
-    assert f"nonce-abc123" in header
+    assert "nonce-abc123" in header
     assert "default-src 'self'" in header
     assert "frame-ancestors 'none'" in header
     assert "base-uri 'self'" in header

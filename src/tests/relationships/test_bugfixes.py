@@ -13,14 +13,11 @@ Covers all 8 bugs found during audit:
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from src.core.relationships import (
     RelationshipStatus,
     FriendRequestStatus,
-    FriendRequestExistsError,
-    AlreadyFriendsError,
-    NotBlockedError,
 )
 
 

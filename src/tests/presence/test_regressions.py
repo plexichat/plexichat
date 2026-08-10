@@ -7,7 +7,6 @@ like the rest of the cache test suite.
 """
 
 import asyncio
-import time
 from unittest.mock import Mock
 
 import pytest

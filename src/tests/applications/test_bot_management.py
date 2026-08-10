@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from src.core.applications.exceptions import (
     BotRequestError,
-    BotRequestExistsError,
     PermissionDeniedError,
 )
 

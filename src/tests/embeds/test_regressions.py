@@ -19,11 +19,9 @@ from src.core.embeds import (
     InvalidUrlError,
     sanitize_content,
     validate_embed_data,
-    parse_url_metadata,
 )
 from src.core.embeds.models import EmbedType
 from src.core.embeds.validator import MAX_EMBEDS_PER_MESSAGE, validate_url
-from src.utils import encryption
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +182,6 @@ class TestRowToEmbedUnknownType:
     def test_unknown_embed_type_falls_back_to_rich(
         self, db, auth_manager, embeds_manager
     ):
-        from src.core.embeds.manager.base import EmbedManagerBase
 
         row = {
             "id": "999999999999999999",
@@ -441,6 +438,7 @@ class TestFetchWithRedirectsTlsAndSize:
                     "https://example.com/page", "example.com", "93.184.216.34"
                 )
 
+        assert result is not None
         mock_client.stream.assert_called()
         call_kwargs = mock_client.stream.call_args
         assert call_kwargs[1].get("extensions", {}).get("sni_hostname") == "example.com"

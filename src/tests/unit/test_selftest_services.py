@@ -38,6 +38,7 @@ class TestRateLimitSelfTest:
         session = FakeSession()
         ctx = SimpleNamespace(
             requests_module=SimpleNamespace(Session=lambda: session),
+            make_session=lambda: session,
             base_url="http://127.0.0.1:8000",
             results=[],
         )
@@ -47,3 +48,4 @@ class TestRateLimitSelfTest:
         assert session.calls == 3
         assert ctx.results[0]["warning"] is False
         assert ctx.results[0]["status_code"] == 429
+        assert ctx.results[0]["status_codes"] == [200, 200, 429]

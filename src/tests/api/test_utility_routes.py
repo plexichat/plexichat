@@ -7,8 +7,6 @@ These endpoints previously had no dedicated route-level coverage:
 - /capabilities/artifacts (auth-gated capability surface)
 """
 
-import pytest
-
 
 class TestHealthRoutes:
     """Test the health and readiness probes."""

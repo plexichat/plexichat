@@ -1448,7 +1448,7 @@ class TestPostgresMultipleConstraintViolations:
 
     def test_recovery_sequence_not_null_then_unique(self, constraint_test_table):
         """Test recovery from sequence of constraint violations."""
-        pytest.importorskip("psycopg2")
+        psycopg2 = pytest.importorskip("psycopg2")
 
         db = Database()
         db.connect()

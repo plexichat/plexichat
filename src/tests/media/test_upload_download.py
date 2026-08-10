@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.media import setup, get_file, get_file_data, delete_file, upload_file
+from src.core.media import get_file, get_file_data, delete_file, upload_file
 
 
 pytestmark = pytest.mark.integration

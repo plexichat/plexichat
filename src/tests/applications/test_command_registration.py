@@ -162,6 +162,7 @@ class TestCommandRegistration:
             description="Guild",
             server_id=server.id,
         )
+        assert guild_cmd.server_id == server.id
         updated = app_manager.update_command(
             command_id=global_cmd.id,
             name="original",

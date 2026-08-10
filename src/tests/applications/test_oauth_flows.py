@@ -1,7 +1,6 @@
 """Tests for application OAuth2 flows."""
 
 import pytest
-import time
 
 from src.core.applications.models import OAuth2Scope
 from src.core.applications.exceptions import (
@@ -9,7 +8,6 @@ from src.core.applications.exceptions import (
     InvalidScopeError,
     InvalidRedirectUriError,
     InvalidGrantError,
-    AuthorizationCodeExpiredError,
 )
 
 
@@ -244,6 +242,8 @@ class TestOAuthFlows:
         token = flow.exchange_code(
             app.id, client_secret, code.code, "https://example.com/callback"
         )
+        assert token is not None
+        assert token.get("access_token")
 
         # The flow call above consumes the code, so issue a fresh one for
         # the manager-level exchange under test.

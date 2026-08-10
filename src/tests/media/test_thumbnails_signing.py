@@ -28,7 +28,7 @@ def media_setup(db):
 
 class TestSigning:
     def test_signed_url_round_trip(self, media_setup, test_user):
-        from src.core.media import setup, sign_url, verify_signed_url, upload_file
+        from src.core.media import sign_url, verify_signed_url, upload_file
 
         mini_png = (
             b"\x89PNG\r\n\x1a\n"
@@ -51,7 +51,7 @@ class TestSigning:
         assert decoded_id == result.file_id
 
     def test_signature_expired(self, media_setup, test_user):
-        from src.core.media import setup, sign_url, verify_signed_url, upload_file
+        from src.core.media import sign_url, verify_signed_url, upload_file
 
         mini_png = (
             b"\x89PNG\r\n\x1a\n"
@@ -82,7 +82,7 @@ class TestSigning:
 
 class TestThumbnails:
     def test_get_thumbnails_for_image(self, media_setup, test_user):
-        from src.core.media import setup, get_thumbnails, upload_file
+        from src.core.media import get_thumbnails, upload_file
 
         mini_png = (
             b"\x89PNG\r\n\x1a\n"

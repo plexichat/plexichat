@@ -22,7 +22,6 @@ from unittest.mock import Mock
 from src.core.threads import (
     ThreadType,
     ThreadState,
-    ThreadAccessDeniedError,
     PermissionDeniedError,
     ThreadError,
 )
@@ -333,6 +332,7 @@ class TestMessageRetrievalAndCount:
         msg2 = threads.send_message(owner.id, thread.id, "Message 2")
 
         assert threads.get_message_count(thread.id) == 2
+        assert msg2["content"] == "Message 2"
 
         removed = threads.remove_message(owner.id, thread.id, msg1["id"])
         assert removed is True

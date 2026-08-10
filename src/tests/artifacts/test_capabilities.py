@@ -14,8 +14,6 @@ Covers:
 - Never-raises guarantees
 """
 
-import pytest
-
 from src.core.artifacts.capabilities import (
     CapabilityState,
     CapabilityInfo,

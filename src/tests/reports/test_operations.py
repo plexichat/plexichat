@@ -14,7 +14,7 @@ Covers:
 import pytest
 
 from src.core import reports
-from src.core.reports import ReportStatus, ReportCategory, MessageReport, UserReport
+from src.core.reports import ReportStatus, ReportCategory
 
 
 @pytest.fixture

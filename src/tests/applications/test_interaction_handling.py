@@ -7,7 +7,6 @@ from src.core.applications.models import (
     InteractionResponseType,
     InteractionResponse,
 )
-from src.core.applications.exceptions import InteractionExpiredError
 
 
 @pytest.mark.applications
@@ -135,6 +134,8 @@ class TestInteractionHandling:
             user_id=test_user.id,
             data={"name": "test"},
         )
+        assert interaction is not None
+        assert interaction.application_id == app.id
         mock_events.dispatch.assert_called()
         call_args = mock_events.dispatch.call_args
         event = call_args[0][0]

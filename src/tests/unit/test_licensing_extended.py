@@ -9,11 +9,7 @@ import pytest
 from utils.licensing.core import (
     License,
     LicenseManager,
-    LicenseValidationResult,
-    LicenseError,
     InvalidLicenseError,
-    SignatureVerificationError,
-    ExpiredLicenseError,
     generate_keypair,
     sign_license,
 )
@@ -92,6 +88,7 @@ def test_sign_verify_round_trip():
     assert len(base64.b64decode(sig)) == 64
 
     lic = License(**data, signature=sig)
+    assert lic.signature == sig
     mgr = LicenseManager(public_key_bytes=pub)
     mgr.load_from_dict({**data, "signature": sig})
     result = mgr.validate()

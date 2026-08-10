@@ -11,7 +11,6 @@ Covers:
 - Data models (Badge, TierLimits, UserFeatures) and exceptions
 """
 
-import json
 import time
 
 import pytest
