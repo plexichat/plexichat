@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from starlette.types import ASGIApp, Receive, Send, Scope, Message
 
-from typing import Any, Dict, cast
+from typing import Any, Dict, Mapping, Optional, cast
 import re
 import traceback
 import utils.config as config
@@ -79,6 +79,15 @@ def _sanitize_error_message(code: int, message: str, debug: bool) -> str:
     ):
         return "Invalid request"
     return safe_message
+
+
+def _merge_error_headers(
+    cors_headers: Dict[str, str], exc_headers: Optional[Mapping[str, str]]
+) -> Dict[str, str]:
+    """Merge exception-provided headers (e.g. ``Allow``) into CORS headers."""
+    if not exc_headers:
+        return cors_headers
+    return {**cors_headers, **exc_headers}
 
 
 def format_error_response(code: int, message: str, debug: bool = False) -> dict:
@@ -183,7 +192,9 @@ class ErrorHandlingMiddleware:
 
             if isinstance(exc, StarletteHTTPException):
                 http_exc = cast(StarletteHTTPException, exc)
-                headers = _get_cors_headers(request)
+                headers = _merge_error_headers(
+                    _get_cors_headers(request), http_exc.headers
+                )
 
                 debug = False
                 try:
@@ -284,7 +295,7 @@ def setup_exception_handlers(app: FastAPI):
     @app.exception_handler(HTTPException)
     async def fastapi_http_exception_handler(request: Request, exc: HTTPException):
         """Handle FastAPI HTTP exceptions."""
-        headers = _get_cors_headers(request)
+        headers = _merge_error_headers(_get_cors_headers(request), exc.headers)
 
         debug = False
         try:
@@ -316,7 +327,7 @@ def setup_exception_handlers(app: FastAPI):
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         """Handle HTTP exceptions."""
         detail = exc.detail
-        headers = _get_cors_headers(request)
+        headers = _merge_error_headers(_get_cors_headers(request), exc.headers)
 
         debug = False
         try:
