@@ -6,6 +6,8 @@ Provides session-scoped database with transaction-based isolation.
 
 import os
 import shutil
+import tempfile
+from typing import Optional
 
 import utils.config as config
 import utils.logger as logger
@@ -21,7 +23,9 @@ class DatabaseManager:
     transaction-based isolation between tests.
     """
 
-    def __init__(self, test_dir: str = "temp/test_session"):
+    def __init__(self, test_dir: Optional[str] = None):
+        if test_dir is None:
+            test_dir = tempfile.mkdtemp(prefix="plexichat_test_session_")
         self.test_dir = test_dir
         self.db_path = os.path.join(test_dir, "test_session.db")
         self._db = None

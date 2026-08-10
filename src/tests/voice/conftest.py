@@ -2,12 +2,15 @@
 Voice test fixtures.
 """
 
+import shutil
+
 import pytest
 
 # common_utils is now a native package.
 
 
 import utils.config as config  # noqa: E402
+import utils.logger as logger  # noqa: E402
 import utils.version as version  # noqa: E402
 
 # Setup config before importing voice modules
@@ -30,6 +33,25 @@ for _key, _value in DEFAULT_TEST_CONFIG.items():
         _value = _merged
     config.set(_key, _value)
 version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _configure_voice_logger(tmp_path_factory):
+    """Point the shared test logger at a pytest-managed temp dir.
+
+    The SFU adapter tests previously called ``logger.setup()`` with the
+    hardcoded, repo-relative ``temp_test_session/logs`` path at import time,
+    leaving accumulating ``app_*.log`` files in the source tree. This fixture
+    configures the same global logger into a session temp dir (outside the
+    repo) and removes it when the session ends.
+    """
+    log_dir = str(tmp_path_factory.mktemp("voice_logs"))
+    try:
+        logger.setup(log_dir=log_dir, level="WARNING", zip_logs=False)
+    except Exception:
+        pass
+    yield
+    shutil.rmtree(log_dir, ignore_errors=True)
 
 
 @pytest.fixture

@@ -5,16 +5,6 @@ Tests for mediasoup SFU adapter.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# common_utils imported via standard src.utils.common_utils.utils path
-import src.utils.common_utils.utils.logger as logger
-# noqa: E402
-
-# Setup logger for tests
-try:
-    logger.setup(log_dir="temp_test_session/logs", level="WARNING", zip_logs=False)
-except Exception:
-    pass
-
 from src.core.voice.signaling.sfu.mediasoup import MediasoupAdapter  # noqa: E402
 from src.core.voice.signaling.sfu.base import (  # noqa: E402
     TransportDirection,
