@@ -1,5 +1,7 @@
 """
-Database middleware - Ensures database connections are returned to the pool.
+Database middleware - Ensures database connections are cleaned up after requests.
+SQLite connections are reused across requests; PostgreSQL connections are
+returned to the pool.
 """
 
 from starlette.types import ASGIApp, Receive, Send, Scope
@@ -7,8 +9,9 @@ from starlette.types import ASGIApp, Receive, Send, Scope
 
 class DatabaseMiddleware:
     """
-    Middleware that ensures database connections are closed/returned to pool
-    after each request is completed.
+    Middleware that cleans up the thread-local database connection after each
+    request. SQLite connections are rolled back and kept for reuse on the same
+    thread; PostgreSQL connections are returned to the pool.
     """
 
     def __init__(self, app: ASGIApp):
@@ -22,13 +25,22 @@ class DatabaseMiddleware:
         try:
             await self.app(scope, receive, send)
         finally:
-            # Force close the thread-local connection to return it to the pool
+            # Per-dialect cleanup. SQLite connections are thread-local and are
+            # kept alive across requests so they don't pay connection setup
+            # cost (PRAGMA re-setup, mmap remap, WAL churn) on every request;
+            # PostgreSQL connections are returned to the pool.
             # Import inside to avoid circular dependency
             try:
                 import src.api as api
 
                 db = api.get_db()
                 if db:
-                    db.close()
+                    if db.type == "sqlite":
+                        # Never leak a dangling transaction into the next
+                        # request; roll it back but keep the connection.
+                        if db.in_transaction or db.transaction_depth > 0:
+                            db.rollback()
+                    else:
+                        db.close()
             except Exception:
                 pass

@@ -105,6 +105,20 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
+        # Cap the AnyIO default thread limiter used by run_in_threadpool so
+        # sync endpoint handlers can't spawn an unbounded number of worker
+        # threads (anyio 4.13 defaults to 40). The limiter is a context-scoped
+        # RunVar, so it must be set here, inside the running event loop and
+        # before uvicorn spawns request tasks.
+        import anyio.to_thread
+
+        thread_limiter = anyio.to_thread.current_default_thread_limiter()
+        thread_limiter.total_tokens = config.max_worker_threads
+        logger.info(
+            f"AnyIO default thread limiter capped at "
+            f"{config.max_worker_threads} concurrent worker threads"
+        )
+
         from src.static_client import (
             run_static_client_initial_install,
             start_static_client_service,

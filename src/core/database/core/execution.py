@@ -323,6 +323,7 @@ class DatabaseExecutionMixin:
                 "disconnected",
                 "broken pipe",
                 "lost connection",
+                "database is locked",
             ]
         ):
             return True

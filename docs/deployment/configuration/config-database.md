@@ -104,7 +104,7 @@ The following SQLite settings are applied automatically and should not need adju
 
 - **journal_mode=WAL**: Write-Ahead Logging allows concurrent readers and writers
 - **synchronous=NORMAL**: Balances data safety with performance (commits are durable but may be delayed slightly)
-- **busy_timeout=30000**: Waits up to 30 seconds for database locks before failing
+- **busy_timeout=5000**: Waits up to 5 seconds for database locks before failing (configurable via `database.connection_pool.busy_timeout`; lock contention is retried automatically)
 - **foreign_keys=ON**: Enforces referential integrity for foreign key constraints
 
 **Performance Considerations**

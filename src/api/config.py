@@ -64,6 +64,9 @@ class APIConfig:
     openapi_url: Optional[str] = "/openapi.json"
     # Maximum request body size in bytes (default 10MB for voice message uploads)
     max_request_body_size: int = 10 * 1024 * 1024  # 10MB
+    # Cap on the AnyIO default thread limiter used by run_in_threadpool for
+    # sync endpoint handlers (default 16, not anyio's oversubscribed 40).
+    max_worker_threads: int = 16
 
 
 def get_api_config() -> APIConfig:
@@ -177,6 +180,7 @@ def get_api_config() -> APIConfig:
         redoc_url=api_conf.get("redoc_url", "/redoc"),
         openapi_url=api_conf.get("openapi_url", "/openapi.json"),
         max_request_body_size=api_conf.get("max_request_body_size", 10 * 1024 * 1024),
+        max_worker_threads=api_conf.get("max_worker_threads", 16),
     )
     _api_config_cache = result
     _api_config_cache_time = now

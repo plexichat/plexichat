@@ -5,6 +5,8 @@ from .base import BaseEngine
 
 import utils.logger as logger
 
+DEFAULT_BUSY_TIMEOUT_MS = 5000
+
 
 class SqliteEngine(BaseEngine):
     """SQLite database engine implementation."""
@@ -33,7 +35,10 @@ class SqliteEngine(BaseEngine):
         conn.execute("PRAGMA synchronous=NORMAL;")
 
         # Set busy timeout to wait for locks
-        conn.execute("PRAGMA busy_timeout=30000;")
+        busy_timeout_ms = self.config.get("connection_pool", {}).get(
+            "busy_timeout", DEFAULT_BUSY_TIMEOUT_MS
+        )
+        conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)};")
 
         # Enforce foreign keys (disabled by default in SQLite)
         conn.execute("PRAGMA foreign_keys=ON;")
