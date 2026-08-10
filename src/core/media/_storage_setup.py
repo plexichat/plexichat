@@ -52,6 +52,8 @@ class _StorageSetupMixin:
             }
         if "auto_route_to_database" not in cfg:
             cfg["auto_route_to_database"] = {"enabled": False}
+        if "processing_threads" not in cfg:
+            cfg["processing_threads"] = 8
         return cfg
 
     # -- primary storage ---------------------------------------------------------

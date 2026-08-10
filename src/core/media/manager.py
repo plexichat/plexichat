@@ -101,7 +101,8 @@ class MediaManager(
         # Thread pool for CPU-bound background work (compression, thumbnails,
         # dedup scanning, pHash computation). Sized for concurrent upload
         # throughput on a single-process deployment.
-        self._executor = ThreadPoolExecutor(max_workers=32)
+        max_workers = int(self._config.get("processing_threads", 8))
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
         # Deduplication (imported here to avoid circular imports)
         from .deduplication import setup as dedup_setup, DeduplicationManager
