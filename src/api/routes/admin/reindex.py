@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import ErrorResponse
 import src.core.search as search_module
 import utils.logger as logger
 import threading
@@ -210,7 +211,13 @@ async def reindex_status(request: Request):
     }
 
 
-@router.post("/search/reindex/conversation/{conversation_id}")
+@router.post(
+    "/search/reindex/conversation/{conversation_id}",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def reindex_conversation(
     request: Request, conversation_id: int, body: ReindexRequest | None = None
 ):

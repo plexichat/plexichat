@@ -27,7 +27,7 @@ from src.api.schemas.admin import (
     AutomodConfigResponse,
     AutomodConfigUpdateRequest,
 )
-from src.api.schemas.common import SuccessResponse
+from src.api.schemas.common import ErrorResponse, SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
 import src.api as api
 import utils.logger as logger
@@ -89,7 +89,14 @@ def _user_report_to_response(report) -> UserReportResponse:
     )
 
 
-@router.get("/hash-reports", response_model=List[HashReportResponse])
+@router.get(
+    "/hash-reports",
+    response_model=List[HashReportResponse],
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+    },
+)
 async def get_hash_reports(
     request: Request,
     status_filter: Optional[str] = None,
@@ -280,7 +287,14 @@ async def review_user_report(
     return ModerationReportReviewResponse(success=True, action=review.action)
 
 
-@router.get("/blocked-hashes", response_model=List[BlockedHashResponse])
+@router.get(
+    "/blocked-hashes",
+    response_model=List[BlockedHashResponse],
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+    },
+)
 async def get_blocked_hashes(request: Request, limit: int = 100, offset: int = 0):
     """
     List all currently blocked content hashes.
@@ -347,7 +361,14 @@ async def unblock_hash(hash_value: str, request: Request):
     return SuccessResponse(success=True, message=None)
 
 
-@router.get("/blocked-users", response_model=List[BlockedUserResponse])
+@router.get(
+    "/blocked-users",
+    response_model=List[BlockedUserResponse],
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+    },
+)
 async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0):
     """
     Retrieve a list of all currently blocked or banned users.
@@ -572,7 +593,14 @@ async def delete_automod_rule(rule_id: int, request: Request):
         )
 
 
-@router.get("/automod/config", response_model=AutomodConfigResponse)
+@router.get(
+    "/automod/config",
+    response_model=AutomodConfigResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+    },
+)
 async def get_automod_config(request: Request):
     """
     Retrieve the global configuration settings for the AutoMod system.

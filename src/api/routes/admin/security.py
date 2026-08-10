@@ -23,7 +23,7 @@ from src.api.schemas.admin import (
     AccessTokenUsageIPResponse,
     AccessTokenUsagePathResponse,
 )
-from src.api.schemas.common import SuccessResponse
+from src.api.schemas.common import SuccessResponse, ErrorResponse
 from .utils import check_host_restriction, get_admin_from_token
 import utils.logger as logger
 
@@ -90,7 +90,14 @@ async def block_ip(request: Request, body: IPBlockRequest):
     return SuccessResponse(success=True, message=None)
 
 
-@router.get("/security/access-tokens", response_model=List[AccessTokenResponse])
+@router.get(
+    "/security/access-tokens",
+    response_model=List[AccessTokenResponse],
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_access_tokens(request: Request, include_revoked: bool = True):
     """
     List all API access tokens created by administrators.
@@ -220,6 +227,12 @@ async def update_access_token(
 @router.post(
     "/security/access-tokens/{token_id}/rotate",
     response_model=AccessTokenCreateResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def rotate_access_token(
     request: Request,
@@ -263,6 +276,12 @@ async def rotate_access_token(
 @router.post(
     "/security/access-tokens/{token_id}/scopes",
     response_model=AccessTokenScopeResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def add_access_token_scope(
     request: Request,

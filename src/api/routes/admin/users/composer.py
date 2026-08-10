@@ -14,7 +14,7 @@ from src.api.schemas.admin import (
     UserNotesResponse,
     ScheduledDeletionListResponse,
 )
-from src.api.schemas.common import SuccessResponse
+from src.api.schemas.common import ErrorResponse, SuccessResponse
 
 from .base import AdminUsersRouterBase
 from .search import SearchMixin
@@ -58,6 +58,18 @@ class AdminUsersRouter(
         router.post(
             "/users/{user_id}/badges/{badge}",
             response_model=UserBadgeUpdateResponse,
+            responses={
+                400: {"model": ErrorResponse, "description": "Invalid user ID"},
+                401: {
+                    "model": ErrorResponse,
+                    "description": "Invalid or expired token",
+                },
+                403: {
+                    "model": ErrorResponse,
+                    "description": "Insufficient permissions",
+                },
+                404: {"model": ErrorResponse, "description": "User not found"},
+            },
         )(self.add_user_badge)
 
         router.delete(
@@ -101,6 +113,13 @@ class AdminUsersRouter(
         router.get(
             "/admin-users",
             response_model=AdminUserListResponse,
+            responses={
+                401: {"model": ErrorResponse, "description": "Not authenticated"},
+                403: {
+                    "model": ErrorResponse,
+                    "description": "Insufficient permissions",
+                },
+            },
         )(self.list_admin_users)
 
         router.get(

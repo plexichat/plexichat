@@ -630,6 +630,12 @@ async def list_artifacts(
     "/convert-upload",
     response_model=ArtifactResponse,
     summary="Convert an upload to an artifact",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid input"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Attachment or message not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def _convert_upload_impl(
     body: ConvertUploadRequest,

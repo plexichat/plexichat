@@ -3,7 +3,7 @@ Admin role management routes.
 """
 
 from fastapi import APIRouter, Request, HTTPException
-from src.api.schemas.common import SuccessResponse
+from src.api.schemas.common import SuccessResponse, ErrorResponse
 from .utils import check_host_restriction, require_admin_permission
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -33,7 +33,14 @@ class RoleAssignment(BaseModel):
     role_id: int
 
 
-@router.get("/roles")
+@router.get(
+    "/roles",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_roles(request: Request):
     """
     List all available admin roles.

@@ -13,7 +13,7 @@ from src.api.schemas.admin import (
     AdminOTPDisableRequest,
     AdminBackupCodesResponse,
 )
-from src.api.schemas.common import SuccessResponse
+from src.api.schemas.common import SuccessResponse, ErrorResponse
 from .utils import (
     check_host_restriction,
     get_admin_from_token,
@@ -24,7 +24,16 @@ import utils.logger as logger
 router = APIRouter()
 
 
-@router.post("/login", response_model=AdminLoginResponse)
+@router.post(
+    "/login",
+    response_model=AdminLoginResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid credentials"},
+        429: {"model": ErrorResponse, "description": "Too many login attempts"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_login(request: Request, login_data: AdminLoginRequest):
     """
     Authenticate an administrator.
@@ -77,7 +86,18 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
         )
 
 
-@router.post("/verify-otp", response_model=AdminLoginResponse)
+@router.post(
+    "/verify-otp",
+    response_model=AdminLoginResponse,
+    responses={
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid request data or admin ID",
+        },
+        401: {"model": ErrorResponse, "description": "Invalid OTP code"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
     """
     Verify a TOTP code for admin login or setup.
@@ -88,7 +108,13 @@ async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
     from src.core import admin
 
     try:
-        admin_id = int(otp_data.admin_id)
+        try:
+            admin_id = int(otp_data.admin_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid admin ID"}},
+            )
         result = (
             admin.verify_otp_setup(admin_id, otp_data.code, otp_data.challenge_token)
             if otp_data.is_setup

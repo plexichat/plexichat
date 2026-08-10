@@ -7,6 +7,7 @@ import src.api as api
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
+from src.api.schemas.common import ErrorResponse
 from src.api.schemas.stash import (
     StashCollectionCreateRequest,
     StashCollectionListResponse,
@@ -81,7 +82,16 @@ def _item_response(item: Dict[str, Any]) -> StashItemResponse:
     return StashItemResponse.model_validate(item)
 
 
-@router.get("/items", response_model=StashItemListResponse)
+@router.get(
+    "/items",
+    response_model=StashItemListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_items(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -286,6 +296,11 @@ async def grant_item(
     "/items/{item_id}/download-ticket",
     response_model=StashDownloadTicketResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid item or version id"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+    },
 )
 async def create_download_ticket(
     item_id: str,
