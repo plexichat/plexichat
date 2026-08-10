@@ -37,92 +37,154 @@ class DocsRouter(
         router.get("", include_in_schema=False)(self.docs_index)
         router.get("/", include_in_schema=False)(self.docs_index)
 
-        router.get("/getting-started")(self.docs_getting_started)
+        router.get("/getting-started", include_in_schema=False)(
+            self.docs_getting_started
+        )
 
-        router.get("/deployment")(self.docs_deployment)
-        router.get("/configuration")(self.docs_configuration)
-        router.get("/features")(self.docs_features)
-        router.get("/permissions")(self.docs_permissions)
-        router.get("/security")(self.docs_security)
-        router.get("/keyrings")(self.docs_keyrings)
-        router.get("/performance")(self.docs_performance)
+        router.get("/deployment", include_in_schema=False)(self.docs_deployment)
+        router.get("/configuration", include_in_schema=False)(self.docs_configuration)
+        router.get("/features", include_in_schema=False)(self.docs_features)
+        router.get("/permissions", include_in_schema=False)(self.docs_permissions)
+        router.get("/security", include_in_schema=False)(self.docs_security)
+        router.get("/keyrings", include_in_schema=False)(self.docs_keyrings)
+        router.get("/performance", include_in_schema=False)(self.docs_performance)
 
-        router.get("/reference")(self.docs_api_reference)
-        router.get("/reference/{page}")(self.docs_api_page)
+        router.get("/reference", include_in_schema=False)(self.docs_api_reference)
+        router.get("/reference/{page}", include_in_schema=False)(self.docs_api_page)
 
-        router.get("/websocket")(self.docs_websocket_index)
-        router.get("/websocket/{page}")(self.docs_websocket_page)
+        router.get("/websocket", include_in_schema=False)(self.docs_websocket_index)
+        router.get("/websocket/{page}", include_in_schema=False)(
+            self.docs_websocket_page
+        )
 
-        router.get("/rate-limits")(self.docs_rate_limits)
-        router.get("/errors")(self.docs_errors)
+        router.get("/rate-limits", include_in_schema=False)(self.docs_rate_limits)
+        router.get("/errors", include_in_schema=False)(self.docs_errors)
 
-        router.get("/security-logout")(self.docs_security_logout)
-        router.get("/access-blocked")(self.docs_access_blocked)
+        router.get("/security-logout", include_in_schema=False)(
+            self.docs_security_logout
+        )
+        router.get("/access-blocked", include_in_schema=False)(self.docs_access_blocked)
 
-        router.get("/data-types")(self.docs_data_types)
-        router.get("/default-config")(self.docs_default_config)
+        router.get("/data-types", include_in_schema=False)(self.docs_data_types)
+        router.get("/default-config", include_in_schema=False)(self.docs_default_config)
 
-        router.get("/config-authentication")(self.docs_config_authentication)
-        router.get("/config-database")(self.docs_config_database)
-        router.get("/config-valkey")(self.docs_config_valkey)
-        router.get("/config-media")(self.docs_config_media)
-        router.get("/config-voice")(self.docs_config_voice)
-        router.get("/config-websocket")(self.docs_config_websocket)
-        router.get("/config-search")(self.docs_config_search)
-        router.get("/config-rate-limiting")(self.docs_config_rate_limiting)
-        router.get("/config-api")(self.docs_config_api)
-        router.get("/config-email")(self.docs_config_email)
-        router.get("/config-embeds")(self.docs_config_embeds)
+        router.get("/config-authentication", include_in_schema=False)(
+            self.docs_config_authentication
+        )
+        router.get("/config-database", include_in_schema=False)(
+            self.docs_config_database
+        )
+        router.get("/config-valkey", include_in_schema=False)(self.docs_config_valkey)
+        router.get("/config-media", include_in_schema=False)(self.docs_config_media)
+        router.get("/config-voice", include_in_schema=False)(self.docs_config_voice)
+        router.get("/config-websocket", include_in_schema=False)(
+            self.docs_config_websocket
+        )
+        router.get("/config-search", include_in_schema=False)(self.docs_config_search)
+        router.get("/config-rate-limiting", include_in_schema=False)(
+            self.docs_config_rate_limiting
+        )
+        router.get("/config-api", include_in_schema=False)(self.docs_config_api)
+        router.get("/config-email", include_in_schema=False)(self.docs_config_email)
+        router.get("/config-embeds", include_in_schema=False)(self.docs_config_embeds)
 
-        router.get("/end-user/getting-started")(self.docs_end_user_getting_started)
+        router.get("/end-user/getting-started", include_in_schema=False)(
+            self.docs_end_user_getting_started
+        )
 
-        router.get("/deployment/overview")(self.docs_deployment_overview)
-        router.get("/deployment/requirements")(self.docs_deployment_requirements)
-        router.get("/deployment/getting-started")(self.docs_deployment_getting_started)
-        router.get("/deployment/index")(self.docs_deployment_index)
-        router.get("/deployment/postgres-migration")(
+        router.get("/deployment/overview", include_in_schema=False)(
+            self.docs_deployment_overview
+        )
+        router.get("/deployment/requirements", include_in_schema=False)(
+            self.docs_deployment_requirements
+        )
+        router.get("/deployment/getting-started", include_in_schema=False)(
+            self.docs_deployment_getting_started
+        )
+        router.get("/deployment/index", include_in_schema=False)(
+            self.docs_deployment_index
+        )
+        router.get("/deployment/postgres-migration", include_in_schema=False)(
             self.docs_deployment_postgres_migration
         )
-        router.get("/deployment/versioning")(self.docs_deployment_versioning)
+        router.get("/deployment/versioning", include_in_schema=False)(
+            self.docs_deployment_versioning
+        )
 
-        router.get("/migrations")(self.docs_migrations)
-        router.get("/migration-reference")(self.docs_migration_reference)
+        router.get("/migrations", include_in_schema=False)(self.docs_migrations)
+        router.get("/migration-reference", include_in_schema=False)(
+            self.docs_migration_reference
+        )
 
-        router.get("/admin")(self.docs_admin)
-        router.get("/admin/getting-started")(self.docs_admin_getting_started)
-        router.get("/admin/approval-workflows")(self.docs_admin_approval_workflows)
-        router.get("/admin/audit-logging")(self.docs_admin_audit_logging)
-        router.get("/admin/rbac")(self.docs_admin_rbac)
-        router.get("/admin/server-management")(self.docs_admin_server_management)
-        router.get("/admin/operations")(self.docs_admin_operations)
-        router.get("/admin/troubleshooting")(self.docs_admin_troubleshooting)
-        router.get("/admin/user-management")(self.docs_admin_user_management)
-        router.get("/admin/security")(self.docs_admin_security)
+        router.get("/admin", include_in_schema=False)(self.docs_admin)
+        router.get("/admin/getting-started", include_in_schema=False)(
+            self.docs_admin_getting_started
+        )
+        router.get("/admin/approval-workflows", include_in_schema=False)(
+            self.docs_admin_approval_workflows
+        )
+        router.get("/admin/audit-logging", include_in_schema=False)(
+            self.docs_admin_audit_logging
+        )
+        router.get("/admin/rbac", include_in_schema=False)(self.docs_admin_rbac)
+        router.get("/admin/server-management", include_in_schema=False)(
+            self.docs_admin_server_management
+        )
+        router.get("/admin/operations", include_in_schema=False)(
+            self.docs_admin_operations
+        )
+        router.get("/admin/troubleshooting", include_in_schema=False)(
+            self.docs_admin_troubleshooting
+        )
+        router.get("/admin/user-management", include_in_schema=False)(
+            self.docs_admin_user_management
+        )
+        router.get("/admin/security", include_in_schema=False)(self.docs_admin_security)
 
-        router.get("/client-development")(self.docs_client_development)
-        router.get("/client-development/websocket")(self.docs_client_websocket)
+        router.get("/client-development", include_in_schema=False)(
+            self.docs_client_development
+        )
+        router.get("/client-development/websocket", include_in_schema=False)(
+            self.docs_client_websocket
+        )
 
-        router.get("/end-user")(self.docs_end_user_index)
-        router.get("/end-user/passkeys")(self.docs_end_user_passkeys)
-        router.get("/end-user/password-guidance")(self.docs_end_user_password_guidance)
-        router.get("/end-user/permissions")(self.docs_end_user_permissions)
-        router.get("/end-user/two-factor-authentication")(self.docs_end_user_2fa)
+        router.get("/end-user", include_in_schema=False)(self.docs_end_user_index)
+        router.get("/end-user/passkeys", include_in_schema=False)(
+            self.docs_end_user_passkeys
+        )
+        router.get("/end-user/password-guidance", include_in_schema=False)(
+            self.docs_end_user_password_guidance
+        )
+        router.get("/end-user/permissions", include_in_schema=False)(
+            self.docs_end_user_permissions
+        )
+        router.get("/end-user/two-factor-authentication", include_in_schema=False)(
+            self.docs_end_user_2fa
+        )
 
-        router.get("/reference/notifications")(self.docs_api_notifications)
-        router.get("/reference/polls")(self.docs_api_polls)
-        router.get("/reference/voice")(self.docs_api_voice)
-        router.get("/reference/media")(self.docs_api_media)
-        router.get("/reference/reports")(self.docs_api_reports)
-        router.get("/reference/feedback")(self.docs_api_feedback)
-        router.get("/reference/telemetry")(self.docs_api_telemetry)
-        router.get("/reference/system")(self.docs_api_system)
-        router.get("/reference/admin")(self.docs_api_admin)
+        router.get("/reference/notifications", include_in_schema=False)(
+            self.docs_api_notifications
+        )
+        router.get("/reference/polls", include_in_schema=False)(self.docs_api_polls)
+        router.get("/reference/voice", include_in_schema=False)(self.docs_api_voice)
+        router.get("/reference/media", include_in_schema=False)(self.docs_api_media)
+        router.get("/reference/reports", include_in_schema=False)(self.docs_api_reports)
+        router.get("/reference/feedback", include_in_schema=False)(
+            self.docs_api_feedback
+        )
+        router.get("/reference/telemetry", include_in_schema=False)(
+            self.docs_api_telemetry
+        )
+        router.get("/reference/system", include_in_schema=False)(self.docs_api_system)
+        router.get("/reference/admin", include_in_schema=False)(self.docs_api_admin)
 
-        router.get("/deployment/env-generator")(self.docs_env_generator)
+        router.get("/deployment/env-generator", include_in_schema=False)(
+            self.docs_env_generator
+        )
 
-        router.get("/cli/overview")(self.docs_cli_overview)
+        router.get("/cli/overview", include_in_schema=False)(self.docs_cli_overview)
 
-        router.get("/favicon.ico")(self._favicon)
+        router.get("/favicon.ico", include_in_schema=False)(self._favicon)
 
     async def _favicon(self):
         """Return a minimal SVG favicon to prevent 405 errors."""
