@@ -32,7 +32,9 @@ onboarding, and deep links. It does not need a separate deployment or backend.
 - [PlexiSum data model and performance](03_SUM_DATA_MODEL.md)
 - [Migration and implementation strategy](04_MIGRATION_STRATEGY.md)
 - [API contract plan](05_API_CONTRACTS.md)
+- [PlexiSum renderer technical spike](06_SUM_RENDERER_SPIKE.md)
 - [PlexiSum real-time fabric](07_SUM_REALTIME.md)
+- [PlexiSum Univer adapter and fork decision](08_UNIVER_ADAPTER.md)
 
 ## Implementation status
 
