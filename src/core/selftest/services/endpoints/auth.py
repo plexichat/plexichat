@@ -72,7 +72,7 @@ class AuthMixin(EndpointTesterBase):
             logger.warning(f"Could not re-sync password: {_pw_e}")
 
         # --- Login (fresh session, no auth) ---
-        login_session = self.ctx.requests_module.Session()
+        login_session = self.ctx.make_session()
         # Use the same internal-secret source as setup.py so the login
         # request is treated identically (is_internal bypasses blacklist etc).
         internal_secret = api.get_internal_secret()
@@ -119,7 +119,7 @@ class AuthMixin(EndpointTesterBase):
         # requests bypass the blacklist. Use a different prefix to be safe.
         rand_user = f"stuser{random.randint(100000, 999999)}"
         rand_email = f"{rand_user}@selftest.plexichat.com"
-        register_session = self.ctx.requests_module.Session()
+        register_session = self.ctx.make_session()
         if internal_secret:
             register_session.headers.update(
                 {"X-Plexichat-Internal-Secret": internal_secret}
@@ -198,7 +198,6 @@ class AuthMixin(EndpointTesterBase):
                 logger.warning(f"Auth logout -> {resp.status_code}: {resp.text[:200]}")
 
             # Re-login so we can test revoke-all with a valid session
-            time.sleep(0.5)
             logger.debug("Re-logging in for revoke-all test...")
             re_login_resp = login_session.post(
                 f"{self.ctx.base_url}/api/v1/auth/login",

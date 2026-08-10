@@ -44,7 +44,7 @@ class DocsTester:
             return
 
         logger.info("Testing documentation server...")
-        session = self.ctx.requests_module.Session()
+        session = self.ctx.make_session()
         self._add_bypass_header(session)
 
         # Core docs endpoints to test

@@ -757,7 +757,7 @@ class ArtifactsTester:
             self._check(
                 "admin_artifacts_list",
                 "/api/v1/admin/artifacts GET",
-                resp.ok,
+                200 <= resp.status_code < 400,
                 f"GET failed: {resp.status_code}",
             )
 
@@ -779,7 +779,7 @@ class ArtifactsTester:
                 self._check(
                     "admin_artifacts_delete",
                     f"/api/v1/admin/artifacts/{art_id} DELETE",
-                    resp.ok,
+                    200 <= resp.status_code < 400,
                     f"DELETE failed: {resp.status_code}",
                 )
             finally:
@@ -794,7 +794,7 @@ class ArtifactsTester:
             self._check(
                 "admin_retention_purge",
                 "/api/v1/admin/artifacts/retention/purge POST",
-                resp.ok,
+                200 <= resp.status_code < 400,
                 f"POST failed: {resp.status_code}",
             )
 
@@ -806,7 +806,7 @@ class ArtifactsTester:
             self._check(
                 "admin_retention_server",
                 "/api/v1/admin/artifacts/retention/server POST",
-                resp.ok,
+                200 <= resp.status_code < 400,
                 f"POST failed: {resp.status_code}",
             )
         except Exception as e:

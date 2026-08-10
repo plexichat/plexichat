@@ -88,13 +88,9 @@ class SelfTestContext:
         self.results: List[Dict[str, Any]] = []
         self.start_time = 0.0
         self.ram_monitor: Any = None
-        self.session = requests_module.Session()
-        self.other_session = requests_module.Session()
-        self.openapi_spec: Dict[str, Any] = {}
 
         self._other_session_paths: set = set()
         self._admin_role_super_id: Optional[int] = None
-        self._admin_role_support_id: Optional[int] = None
 
         # Service references (populated by SelfTestRunner.__init__)
         self.data: Any = None
@@ -109,3 +105,14 @@ class SelfTestContext:
         self.static_client: Any = None
         self.docs: Any = None
         self.report: Any = None
+
+        self.session = self.make_session()
+        self.other_session = self.make_session()
+        self.openapi_spec: Dict[str, Any] = {}
+
+    def make_session(self, copy_headers_from: Any = None) -> Any:
+        """Create a fresh HTTP session against the running server."""
+        session = self.requests_module.Session()
+        if copy_headers_from is not None:
+            session.headers.update(copy_headers_from)
+        return session

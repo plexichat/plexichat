@@ -141,8 +141,6 @@ class ResourceMixin(EndpointTesterBase):
                 elif label == "delete_application":
                     self.ctx.test_application_id = None
 
-            time.sleep(0.05)
-
     def test_password_reset_confirm(self) -> None:
         """Test password-reset/confirm for the API-created other_user."""
         if not self.ctx.standalone_mode:

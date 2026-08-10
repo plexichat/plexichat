@@ -24,8 +24,9 @@ class RouteDiscovery:
             if resp.status_code != 200:
                 logger.error(f"Failed to fetch OpenAPI spec: {resp.status_code}")
                 return []
+            spec = resp.json()
 
-            self.ctx.openapi_spec = resp.json()
+            self.ctx.openapi_spec = spec
             routes = []
 
             for path, methods in self.ctx.openapi_spec.get("paths", {}).items():

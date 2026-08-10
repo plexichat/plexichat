@@ -58,8 +58,6 @@ class AdminMixin(EndpointTesterBase):
                 f"Migration rollback 001 (pre-test) -> {resp.status_code}: {resp.text[:200]}"
             )
 
-        time.sleep(0.05)
-
         # --- Apply migration 001 ---
         logger.info("Testing POST /api/v1/admin/database/migrations/apply/001...")
         mig_apply_start = time.time()
@@ -85,8 +83,6 @@ class AdminMixin(EndpointTesterBase):
             logger.warning(
                 f"Migration apply 001 -> {resp.status_code}: {resp.text[:200]}"
             )
-
-        time.sleep(0.05)
 
         # --- Rollback migration 001 ---
         logger.info("Testing POST /api/v1/admin/database/migrations/rollback/001...")
@@ -168,8 +164,6 @@ class AdminMixin(EndpointTesterBase):
             logger.warning(
                 f"Access token rotate -> {resp.status_code}: {resp.text[:200]}"
             )
-
-        time.sleep(0.05)
 
         # --- Revoke ---
         # The admin API route is POST /security/access-tokens/{token_id}/revoke
@@ -281,7 +275,6 @@ class AdminMixin(EndpointTesterBase):
         channel_id = self.ctx.test_channel_id
 
         # Step 1: Guarantee the channel has at least one message to export.
-        time.sleep(0.05)
         msg_start = time.time()
         msg_resp = session.post(
             f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages",
@@ -306,8 +299,6 @@ class AdminMixin(EndpointTesterBase):
                 f"{msg_resp.text[:200]}"
             )
             return
-
-        time.sleep(0.05)
 
         # Step 2: Request the transcript export.
         logger.info(
@@ -351,8 +342,6 @@ class AdminMixin(EndpointTesterBase):
             logger.warning("Transcript export response missing export_id")
             return
 
-        time.sleep(0.05)
-
         # Step 3: Fetch the export status using the real export_id.
         logger.info(
             f"Testing GET /api/v1/channels/{channel_id}/messages/export/"
@@ -382,8 +371,6 @@ class AdminMixin(EndpointTesterBase):
             logger.warning(
                 f"Transcript export status -> {resp.status_code}: {resp.text[:200]}"
             )
-
-        time.sleep(0.05)
 
         # Step 4: Download the export using the real export_id.
         logger.info(
@@ -444,8 +431,6 @@ class AdminMixin(EndpointTesterBase):
 
         dsar_request_id = None
 
-        time.sleep(0.05)
-
         # Step 1: User requests a data export.
         logger.info(
             "Testing POST /api/v1/users/@me/data-export (request data export)..."
@@ -473,8 +458,6 @@ class AdminMixin(EndpointTesterBase):
         else:
             logger.warning(f"DSAR request -> {resp.status_code}: {resp.text[:200]}")
             return  # nothing else to test if the request itself failed
-
-        time.sleep(0.05)
 
         # Step 2: User lists their data export requests.
         logger.info("Testing GET /api/v1/users/@me/data-export (list)...")
@@ -516,8 +499,6 @@ class AdminMixin(EndpointTesterBase):
         if not dsar_request_id:
             return
 
-        time.sleep(0.05)
-
         # Step 3: User fetches a single request status.
         logger.info(
             f"Testing GET /api/v1/users/@me/data-export/{dsar_request_id} (status)..."
@@ -543,8 +524,6 @@ class AdminMixin(EndpointTesterBase):
             logger.info(f"DSAR status PASSED -> {resp.status_code}")
         else:
             logger.warning(f"DSAR status -> {resp.status_code}: {resp.text[:200]}")
-
-        time.sleep(0.05)
 
         # Step 4: User cancels the request (cleanup).
         logger.info(
@@ -616,8 +595,6 @@ class AdminMixin(EndpointTesterBase):
             logger.warning(
                 f"Migration apply 001 -> {resp.status_code}: {resp.text[:200]}"
             )
-
-        time.sleep(0.05)
 
         # --- Rollback 001 via new endpoint ---
         logger.info("Testing POST /api/v1/admin/migrations/001/rollback...")

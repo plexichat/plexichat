@@ -73,10 +73,12 @@ class AuthSetupMixin(SetupServiceBase):
 
         try:
             user = auth_mod.get_user_by_username(username)
+            password_already_stored = False
             if not user:
                 logger.debug(f"Creating new test user: {username}")
                 try:
                     user = auth_mod.register_selftest(username, email, password)
+                    password_already_stored = True
                 except Exception as e:
                     if "Email already registered" in str(e):
                         db = api.get_db()
@@ -99,8 +101,11 @@ class AuthSetupMixin(SetupServiceBase):
                 logger.error("Failed to find or create test user")
                 return False
 
+            # register_selftest already stored the correct hash for a freshly
+            # created user; only re-hash when the user pre-existed (the random
+            # password changed on this run, so the stored hash is stale).
             _pwd_db = api.get_db()
-            if _pwd_db:
+            if _pwd_db and not password_already_stored:
                 try:
                     import src.utils.encryption as _setup_enc_pwd
 

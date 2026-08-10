@@ -96,8 +96,6 @@ class BotMixin(EndpointTesterBase):
             )
             logger.error(f"Bot request EXCEPTION: {e}")
 
-        time.sleep(0.05)
-
         # Only attempt approve if request succeeded (captured request_id)
         if not request_succeeded and not self.ctx.test_bot_request_id:
             logger.warning(

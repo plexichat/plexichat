@@ -7,6 +7,8 @@ Supports automated authentication, retry logic, and traceback capture.
 
 import time
 import re
+from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     import requests  # type: ignore
@@ -18,6 +20,7 @@ import utils.logger as logger
 
 from .context import SelfTestContext
 from .services.setup import SetupService
+
 from .services.cleanup import CleanupService
 from .services.data import DataGenerator
 from .services.discovery import RouteDiscovery
@@ -76,6 +79,59 @@ class SelfTestRunner:
         self.ctx.docs = self.docs
         self.ctx.report = self.report
         self.ctx.ram_monitor = self.ram_monitor
+
+    def _resolve_test_path(self, path: str) -> Optional[str]:
+        """Substitute path placeholders with concrete test values.
+
+        Returns ``None`` if any placeholder remains unresolvable. Placeholders
+        must be resolved at request time (not during route collection) because
+        some values are captured mid-run — e.g. ``test_artifact_id`` is only set
+        when the auto-loop POST /artifacts executes.
+        """
+        if "{" not in path and "}" not in path:
+            return path
+        test_path = path
+        for p_name in re.findall(r"\{([a-zA-Z0-9_]+)\}", path):
+            val = self.data.get_param_value(p_name, path)
+            test_path = test_path.replace(f"{{{p_name}}}", val)
+        if "{" in test_path:
+            return None
+        return test_path
+
+    def _prepare_leave_other_user(self) -> bool:
+        """Make other_user a re-joinable member so POST .../servers/{id}/leave
+        can be exercised with other_session (the main admin cannot leave).
+
+        Runs immediately before the leave request so the rejoin is still valid.
+        """
+        if not (
+            self.ctx.other_token
+            and self.ctx.test_channel_id
+            and self.ctx.test_server_id
+        ):
+            return False
+        try:
+            unban_url = f"{self.ctx.base_url}/api/v1/servers/{self.ctx.test_server_id}/bans/{self.ctx.test_other_user_id}"
+            self.ctx.session.delete(unban_url, timeout=5)
+        except Exception:
+            pass
+        try:
+            invite_create_url = f"{self.ctx.base_url}/api/v1/channels/{self.ctx.test_channel_id}/invites"
+            invite_resp = self.ctx.session.post(
+                invite_create_url, json={"max_uses": 10}, timeout=5
+            )
+            if invite_resp.status_code in (200, 201) and self.ctx.test_other_user_id:
+                invite_code = invite_resp.json().get("code")
+                if invite_code:
+                    rejoin_url = (
+                        f"{self.ctx.base_url}/api/v1/channels/invites/{invite_code}"
+                    )
+                    rejoin_resp = self.ctx.other_session.post(rejoin_url, timeout=5)
+                    if rejoin_resp.status_code in (200, 201, 204):
+                        return True
+        except Exception:
+            pass
+        return False
 
     def run_all(self) -> bool:
         """Run all discovered API tests."""
@@ -252,6 +308,7 @@ class SelfTestRunner:
             "/api/v1/suite/sum",
         )
 
+        work_items = []
         for route in routes:
             path = route["path"]
             method = route["method"]
@@ -293,37 +350,6 @@ class SelfTestRunner:
             ):
                 use_other = True
 
-            if "/leave" in path and "/servers/" in path:
-                if (
-                    self.ctx.other_token
-                    and self.ctx.test_channel_id
-                    and self.ctx.test_server_id
-                ):
-                    try:
-                        unban_url = f"{self.ctx.base_url}/api/v1/servers/{self.ctx.test_server_id}/bans/{self.ctx.test_other_user_id}"
-                        self.ctx.session.delete(unban_url, timeout=5)
-                    except Exception:
-                        pass
-                    try:
-                        invite_create_url = f"{self.ctx.base_url}/api/v1/channels/{self.ctx.test_channel_id}/invites"
-                        invite_resp = self.ctx.session.post(
-                            invite_create_url, json={"max_uses": 10}, timeout=5
-                        )
-                        if (
-                            invite_resp.status_code in (200, 201)
-                            and self.ctx.test_other_user_id
-                        ):
-                            invite_code = invite_resp.json().get("code")
-                            if invite_code:
-                                rejoin_url = f"{self.ctx.base_url}/api/v1/channels/invites/{invite_code}"
-                                rejoin_resp = self.ctx.other_session.post(
-                                    rejoin_url, timeout=5
-                                )
-                                if rejoin_resp.status_code in (200, 201, 204):
-                                    use_other = True
-                    except Exception:
-                        pass
-
             # Relationship accept is tested with the MAIN session (admin user
             # accepts the request sent by other_user during setup).
 
@@ -339,27 +365,72 @@ class SelfTestRunner:
                 )
                 continue
 
+            # Detect untestable routes now, but defer value substitution to
+            # request time: some values (e.g. test_artifact_id) are only
+            # captured while the auto-loop runs.
             if "{" in path or "}" in path:
-                test_path = path
-                placeholders = re.findall(r"\{([a-zA-Z0-9_]+)\}", path)
-
-                for p_name in placeholders:
-                    val = self.data.get_param_value(p_name, path)
-                    test_path = test_path.replace(f"{{{p_name}}}", val)
-
-                if "{" in test_path:
+                if self._resolve_test_path(path) is None:
                     logger.debug(
                         f"Skipping endpoint with remaining placeholders: {method} {path}"
                     )
                     continue
 
-                self.endpoints.test_endpoint(method, test_path, route, use_other)
-            else:
-                self.endpoints.test_endpoint(method, path, route, use_other)
+            work_items.append((method, path, route, use_other))
 
-            time.sleep(0.01)
+        # Run mutating endpoints sequentially first (they may create resources
+        # that later reads depend on), then run read-only GETs in parallel.
+        # Placeholders are resolved here, immediately before each request, so
+        # IDs captured by earlier requests in the loop are used.
+        for method, path, route, use_other in work_items:
+            if method == "GET":
+                continue
+            if "/leave" in path and "/servers/" in path:
+                if self._prepare_leave_other_user():
+                    use_other = True
+            test_path = self._resolve_test_path(path)
+            if test_path is None:
+                continue
+            self.endpoints.test_endpoint(method, test_path, route, use_other)
 
-        # Safety net: unblock admin user if still blocked from auto-loop
+        parallel_gets = [item for item in work_items if item[0] == "GET"]
+        if parallel_gets:
+            max_workers = int(self.ctx.config.get("parallel_get_workers", 8))
+            workers = max(1, min(max_workers, len(parallel_gets)))
+
+            def _process_chunk(chunk):
+                sessions = {}
+                try:
+                    for method, raw_path, route, use_other in chunk:
+                        test_path = self._resolve_test_path(raw_path)
+                        if test_path is None:
+                            continue
+                        session = sessions.get(use_other)
+                        if session is None:
+                            src = (
+                                self.ctx.other_session
+                                if use_other
+                                else self.ctx.session
+                            )
+                            session = self.ctx.make_session(
+                                copy_headers_from=src.headers
+                            )
+                            sessions[use_other] = session
+                        self.endpoints.test_endpoint(
+                            method, test_path, route, use_other, session=session
+                        )
+                finally:
+                    for session in sessions.values():
+                        try:
+                            session.close()
+                        except Exception:
+                            pass
+
+            chunks = [[] for _ in range(workers)]
+            for index, item in enumerate(parallel_gets):
+                chunks[index % workers].append(item)
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(_process_chunk, chunks))
         if self.ctx.test_user_id:
             try:
                 resp = self.ctx.session.delete(
@@ -414,7 +485,6 @@ class SelfTestRunner:
                         f"{{{p_name}}}", self.data.get_param_value(p_name, path)
                     )
                 self.endpoints.test_endpoint(method, test_path, route)
-                time.sleep(0.01)
 
         # 8. Explicit bot server flow
         self.endpoints.test_bot_server_integration()

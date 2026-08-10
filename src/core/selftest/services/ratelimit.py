@@ -23,7 +23,7 @@ class RateLimitTester:
     def test_rate_limits(self) -> None:
         logger.info("Testing rate limit enforcement...")
 
-        rate_session = self.ctx.requests_module.Session()
+        rate_session = self.ctx.make_session()
         # No auth headers, no internal-secret header — this session makes
         # unauthenticated requests that still go through rate-limit middleware.
 

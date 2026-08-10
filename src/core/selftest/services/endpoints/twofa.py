@@ -88,8 +88,6 @@ class TwoFAMixin(EndpointTesterBase):
             logger.warning(f"Could not parse 2FA enable response: {e}")
             return
 
-        time.sleep(0.1)
-
         # Step 2: Confirm 2FA with valid TOTP code
         totp_code = self._get_current_totp_code(totp_secret)
         logger.info(
@@ -119,8 +117,6 @@ class TwoFAMixin(EndpointTesterBase):
             logger.warning(f"2FA confirm -> {resp.status_code}: {resp.text[:200]}")
             return
 
-        time.sleep(0.1)
-
         # Step 3: Check 2FA status
         logger.info("Testing GET /api/v1/auth/2fa/status...")
         status_start = time.time()
@@ -144,8 +140,6 @@ class TwoFAMixin(EndpointTesterBase):
             logger.info(f"2FA status PASSED -> {resp.status_code}")
         else:
             logger.warning(f"2FA status -> {resp.status_code}: {resp.text[:200]}")
-
-        time.sleep(0.1)
 
         # Step 4: Disable 2FA
         new_code = self._get_current_totp_code(totp_secret)
@@ -227,8 +221,6 @@ class TwoFAMixin(EndpointTesterBase):
             logger.warning(f"Could not parse admin 2FA begin-setup response: {e}")
             return
 
-        time.sleep(0.1)
-
         # Step 2: Verify OTP
         otp_code = self._get_current_totp_code(otp_secret)
         logger.info("Testing POST /api/v1/admin/verify-otp...")
@@ -260,8 +252,6 @@ class TwoFAMixin(EndpointTesterBase):
         else:
             logger.warning(f"Admin verify-otp -> {resp.status_code}: {resp.text[:200]}")
 
-        time.sleep(0.1)
-
         # Step 3: Regenerate backup codes while OTP is active
         logger.info("Testing POST /api/v1/admin/auth/2fa/regenerate-backup-codes...")
         regen_start = time.time()
@@ -288,8 +278,6 @@ class TwoFAMixin(EndpointTesterBase):
             logger.warning(
                 f"Admin 2FA regenerate -> {resp.status_code}: {resp.text[:200]}"
             )
-
-        time.sleep(0.1)
 
         # Step 4: Disable OTP
         final_code = self._get_current_totp_code(otp_secret)

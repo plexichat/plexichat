@@ -23,10 +23,15 @@ class CoreMixin(EndpointTesterBase):
         path: str,
         route_details: Dict[str, Any],
         use_other: bool = False,
+        session: Any = None,
     ) -> None:
         url_path = path
         query_params = {}
-        active_session = self.ctx.other_session if use_other else self.ctx.session
+        active_session = (
+            session
+            if session is not None
+            else (self.ctx.other_session if use_other else self.ctx.session)
+        )
 
         for param in route_details.get("parameters", []):
             p_name = param.get("name")
@@ -50,8 +55,10 @@ class CoreMixin(EndpointTesterBase):
             )
 
         if (
-            "/channels/invites/" in path or "/servers/invites/" in path
-        ) and method == "POST":
+            session is None
+            and ("/channels/invites/" in path or "/servers/invites/" in path)
+            and method == "POST"
+        ):
             if not use_other and self.ctx.other_session:
                 active_session = self.ctx.other_session
 
@@ -62,7 +69,8 @@ class CoreMixin(EndpointTesterBase):
         # Relationship POST (send friend request) should use OTHER session
         # since setup sends the request from other_user -> admin user
         if (
-            not use_other
+            session is None
+            and not use_other
             and self.ctx.other_token
             and "/relationships" in path
             and method == "POST"

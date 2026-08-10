@@ -50,7 +50,7 @@ class StaticClientTester:
             return
 
         logger.info("Testing static client middleware...")
-        session = self.ctx.requests_module.Session()
+        session = self.ctx.make_session()
         self._add_bypass_header(session)
 
         checks = [

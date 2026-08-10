@@ -4,7 +4,27 @@ import time
 import logging as py_logging
 import uvicorn
 
+import requests
+
 import utils.logger as logger
+
+
+def _wait_until_ready(host: str, port: int, timeout: float = 20.0) -> bool:
+    """Poll /health until the server responds or the timeout elapses.
+
+    Replaces a fixed startup sleep so cold boots don't race the probe and
+    warm boots don't pay an artificial delay.
+    """
+    url = f"http://{host}:{port}/health"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if requests.get(url, timeout=1).status_code == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.05)
+    return False
 
 
 def handle_selftest(server, host: str, port: int) -> None:
@@ -23,7 +43,9 @@ def handle_selftest(server, host: str, port: int) -> None:
     server_thread = threading.Thread(target=uvi_server.run, daemon=True)
     server_thread.start()
 
-    time.sleep(2)
+    if not _wait_until_ready(host, port):
+        logger.error(f"Server did not become healthy within {20.0:.0f}s - aborting")
+        sys.exit(1)
 
     try:
         from src.core.selftest.runner import SelfTestRunner
