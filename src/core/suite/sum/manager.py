@@ -945,7 +945,51 @@ class SumManager(BaseManager):
         with _SESSION_GUARD:
             _WORKBOOK_SESSIONS[int(workbook_id)] = session
         self._evict_sessions()
+        # Refresh the cached index/calculation status once per materialization
+        # (session-cached, so not per read). Never fail the connection over it.
+        try:
+            self._refresh_workbook_status(connection, int(workbook_id))
+        except Exception:
+            import utils.logger as logger
+
+            logger.debug("PlexiSum workbook status refresh failed", exc_info=True)
         return connection
+
+    def _refresh_workbook_status(
+        self, connection: "sqlite3.Connection", workbook_id: int
+    ) -> None:
+        """Recompute index/calculation state from the live workbook file.
+
+        ``index_state`` reflects the sum_indexes table (none / indexed /
+        building); ``calculation_state`` is 'calculated' when any sheet has
+        formula cells (the server evaluates them on read) and 'none'
+        otherwise. Persisted to the main metadata row so list responses do not
+        pay per-file I/O.
+        """
+        index_row = connection.execute(
+            "SELECT COUNT(*) AS total, "
+            "COALESCE(SUM(CASE WHEN state = 'ready' THEN 1 ELSE 0 END), 0) AS ready "
+            "FROM sum_indexes"
+        ).fetchone()
+        total = int(index_row["total"] or 0) if index_row else 0
+        ready = int(index_row["ready"] or 0) if index_row else 0
+        if total == 0:
+            index_state = "none"
+        elif ready >= total:
+            index_state = "indexed"
+        else:
+            index_state = "building"
+        formula_row = connection.execute(
+            "SELECT COUNT(*) AS count FROM sum_cells "
+            "WHERE formula IS NOT NULL AND formula != ''"
+        ).fetchone()
+        formula_count = int(formula_row["count"] or 0) if formula_row else 0
+        calculation_state = "calculated" if formula_count > 0 else "none"
+        self._db.execute(
+            "UPDATE sum_workbooks SET index_state = ?, calculation_state = ? "
+            "WHERE id = ?",
+            (index_state, calculation_state, int(workbook_id)),
+        )
 
     def _blob_bytes(self, workbook_id: int, row) -> bytes:
         """Fetch and integrity-check the stored blob for a workbook row."""
@@ -1703,7 +1747,9 @@ class SumManager(BaseManager):
         title: str,
         scope: str = "personal",
         server_id: Optional[int] = None,
+        template: bool = False,
     ) -> Dict[str, Any]:
+        """Create an empty workbook (or a reusable template when ``template``)."""
         title = str(title or "").strip()
         scope = str(scope or "personal").strip().lower()
         if not title or len(title) > 500:
@@ -1744,7 +1790,65 @@ class SumManager(BaseManager):
                 os.unlink(handle.name)
             except OSError:
                 pass
+        return self._publish_workbook(
+            user_id, title, scope, server_id, data, 0, template=template
+        )
 
+    def create_from_template(
+        self,
+        user_id: int,
+        template_id: int,
+        title: str,
+        scope: str = "personal",
+        server_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Instantiate a copy of a template workbook into a new workbook.
+
+        The template must be visible to ``user_id`` (owner, server member, or
+        live grant). The copy reuses the template's materialized file bytes,
+        keeps its revision (the blob already carries the cells), and starts
+        with an empty operation log so edits to the copy never affect the
+        template.
+        """
+        template = self._workbook(user_id, template_id)
+        if not int(template.get("is_template") or 0):
+            raise SumValidationError("Source workbook is not a template")
+        title = str(title or "").strip()
+        if not title or len(title) > 500:
+            raise SumValidationError("title must be between 1 and 500 characters")
+        scope = str(scope or "personal").strip().lower()
+        if scope not in ("personal", "server"):
+            raise SumValidationError("scope must be personal or server")
+        if scope == "server" and server_id is None:
+            raise SumValidationError("server_id is required for server workbooks")
+        if scope == "personal" and server_id is not None:
+            raise SumValidationError("personal workbooks cannot include server_id")
+        if server_id is not None and not self._is_member(user_id, int(server_id)):
+            raise SumPermissionError("You are not a member of this server")
+        # Materialize the template's current file bytes (operations log is
+        # replayed into the snapshot, so the copy starts fully materialized).
+        data = self._file_bytes(int(template_id))
+        revision = int(template.get("current_revision") or 0)
+        return self._publish_workbook(
+            user_id, title, scope, server_id, data, revision, template=False
+        )
+
+    def _publish_workbook(
+        self,
+        user_id: int,
+        title: str,
+        scope: str,
+        server_id: Optional[int],
+        data: bytes,
+        revision: int,
+        template: bool = False,
+    ) -> Dict[str, Any]:
+        """Shared workbook publication: blob save + artifact + metadata row.
+
+        Used by fresh creation and template instantiation so both paths keep
+        the same transactional guarantees (artifact identity and workbook
+        metadata commit together; the file is stored outside the main DB).
+        """
         # As with revision publication, reject a caller-owned outer
         # transaction before creating an external blob. Otherwise that outer
         # rollback could discard the metadata while the file remains stored.
@@ -1754,7 +1858,9 @@ class SumManager(BaseManager):
             raise SumStorageError(
                 "PlexiSum workbook creation requires a standalone transaction"
             )
-        path, size, checksum = self._save_file(workbook_id, 0, data)
+        workbook_id = self._generate_id()
+        now = int(time.time() * 1000)
+        path, size, checksum = self._save_file(workbook_id, int(revision), data)
         artifact_id = None
         transaction_started = False
         try:
@@ -1776,7 +1882,7 @@ class SumManager(BaseManager):
             )
             artifact_id = int(artifact.id)
             self._db.execute(
-                "INSERT INTO sum_workbooks (id, artifact_id, owner_id, title, scope, server_id, current_revision, blob_path, file_size, checksum, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO sum_workbooks (id, artifact_id, owner_id, title, scope, server_id, current_revision, blob_revision, blob_path, file_size, checksum, is_template, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     workbook_id,
                     artifact_id,
@@ -1784,10 +1890,12 @@ class SumManager(BaseManager):
                     title,
                     scope,
                     server_id,
-                    0,
+                    int(revision),
+                    int(revision),
                     path,
                     size,
                     checksum,
+                    1 if template else 0,
                     now,
                     now,
                 ),
@@ -1796,14 +1904,19 @@ class SumManager(BaseManager):
                 "INSERT INTO sum_revision_blobs "
                 "(id, workbook_id, revision, blob_path, checksum, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (self._generate_id(), workbook_id, 0, path, checksum, now),
+                (self._generate_id(), workbook_id, int(revision), path, checksum, now),
             )
             self._audit(
                 "create",
                 "workbook",
                 workbook_id,
                 user_id,
-                {"title": title, "scope": scope, "artifact_id": artifact_id},
+                {
+                    "title": title,
+                    "scope": scope,
+                    "artifact_id": artifact_id,
+                    "template": bool(template),
+                },
             )
             self._db.commit()
             transaction_started = False
@@ -1825,7 +1938,7 @@ class SumManager(BaseManager):
                 except Exception:
                     pass
             raise
-        self._cache_current_file(workbook_id, 0, data)
+        self._cache_current_file(workbook_id, int(revision), data)
         # The artifact event must follow the commit; otherwise a failed
         # transaction can announce an identity that was rolled back.
         try:
@@ -1841,6 +1954,22 @@ class SumManager(BaseManager):
             import utils.logger as logger
 
             logger.debug("PlexiSum artifact create event failed", exc_info=True)
+        return self.get_workbook(user_id, workbook_id)
+
+    def set_pinned(
+        self, user_id: int, workbook_id: int, pinned: bool
+    ) -> Dict[str, Any]:
+        """Pin (or unpin) a workbook for its owner's home surface."""
+        row = self._workbook(user_id, workbook_id)
+        viewer = self._viewer_permissions(user_id, int(workbook_id), workbook=row)
+        if not viewer.get("can_edit"):
+            raise SumPermissionError("You do not have edit access to this workbook")
+        # Pinning is a home-surface preference, not content activity: it must
+        # not bump updated_at (which drives the recent-workbooks ordering).
+        self._db.execute(
+            "UPDATE sum_workbooks SET pinned = ? WHERE id = ?",
+            (1 if pinned else 0, int(workbook_id)),
+        )
         return self.get_workbook(user_id, workbook_id)
 
     def get_workbook(self, user_id: int, workbook_id: int) -> Dict[str, Any]:
@@ -1859,6 +1988,10 @@ class SumManager(BaseManager):
             else None,
             "current_revision": int(row["current_revision"]),
             "sheets": sheets,
+            "pinned": bool(int(row.get("pinned") or 0)),
+            "is_template": bool(int(row.get("is_template") or 0)),
+            "index_state": str(row.get("index_state") or "none"),
+            "calculation_state": str(row.get("calculation_state") or "none"),
             "created_at": int(row["created_at"]),
             "updated_at": int(row["updated_at"]),
             "my_permissions": self._viewer_permissions(
@@ -1867,7 +2000,11 @@ class SumManager(BaseManager):
         }
 
     def list_workbooks(
-        self, user_id: int, limit: int = 50, offset: int = 0
+        self,
+        user_id: int,
+        limit: int = 50,
+        offset: int = 0,
+        template: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))
@@ -1875,7 +2012,7 @@ class SumManager(BaseManager):
         # shared with this user through a live grant (view or edit).
         now = int(time.time() * 1000)
         where = (
-            "deleted = 0 AND (owner_id = ? OR "
+            "deleted = 0 AND is_template = ? AND (owner_id = ? OR "
             "(scope = 'server' AND server_id IN "
             "(SELECT server_id FROM srv_members WHERE user_id = ?)) OR "
             "EXISTS (SELECT 1 FROM sum_grants g "
@@ -1883,12 +2020,15 @@ class SumManager(BaseManager):
             "AND g.revoked_at IS NULL "
             "AND (g.expires_at IS NULL OR g.expires_at > ?)))"
         )
-        params = (user_id, user_id, user_id, now)
+        params = (1 if template else 0, user_id, user_id, user_id, now)
         count = self._db.fetch_one(
             f"SELECT COUNT(*) AS count FROM sum_workbooks WHERE {where}", params
         )
+        # Pinned workbooks float to the top of the home surface; templates are
+        # newest-first within their own listing.
+        order = "pinned DESC, updated_at DESC" if not template else "updated_at DESC"
         rows = self._db.fetch_all(
-            f"SELECT * FROM sum_workbooks WHERE {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM sum_workbooks WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
             params + (limit, offset),
         )
         items = []
@@ -1906,6 +2046,10 @@ class SumManager(BaseManager):
                     if row.get("server_id") is not None
                     else None,
                     "current_revision": int(row["current_revision"]),
+                    "pinned": bool(int(row.get("pinned") or 0)),
+                    "is_template": bool(int(row.get("is_template") or 0)),
+                    "index_state": str(row.get("index_state") or "none"),
+                    "calculation_state": str(row.get("calculation_state") or "none"),
                     "created_at": int(row["created_at"]),
                     "updated_at": int(row["updated_at"]),
                 }
@@ -2498,6 +2642,13 @@ class SumManager(BaseManager):
                 column_start,
                 column_end,
             )
+            # Keep the home-surface status current after any edit: the read
+            # holds the live connection, so two COUNT queries plus one main-DB
+            # UPDATE here stay cheap while making the status reflect the file.
+            try:
+                self._refresh_workbook_status(connection, int(workbook_id))
+            except Exception:
+                pass
         except sqlite3.Error as exc:
             raise SumStorageError("Workbook file schema is invalid") from exc
         finally:

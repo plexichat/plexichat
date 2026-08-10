@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS sum_workbooks (
     file_size BIGINT NOT NULL DEFAULT 0,
     checksum TEXT,
     deleted INTEGER NOT NULL DEFAULT 0,
+    -- Home-surface metadata. Pinned workbooks float to the top of the owner's
+    -- list; templates are flagged workbooks a user can instantiate copies
+    -- from. index_state / calculation_state are refreshed whenever the file
+    -- is materialized (see SumManager._refresh_workbook_status).
+    pinned INTEGER NOT NULL DEFAULT 0,
+    is_template INTEGER NOT NULL DEFAULT 0,
+    index_state TEXT NOT NULL DEFAULT 'none',
+    calculation_state TEXT NOT NULL DEFAULT 'none',
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
     CHECK (scope IN ('personal', 'server')),
@@ -281,6 +289,22 @@ def _ensure_main_columns(db) -> None:
         db.execute(
             "UPDATE sum_workbooks SET blob_revision = current_revision "
             "WHERE blob_revision = 0 AND current_revision > 0"
+        )
+    # Home-surface metadata columns (additive; older databases get them via
+    # ALTER TABLE so boot-time setup never rewrites the table).
+    if "pinned" not in columns:
+        _add_main_column(db, "sum_workbooks", "pinned", "INTEGER NOT NULL DEFAULT 0")
+    if "is_template" not in columns:
+        _add_main_column(
+            db, "sum_workbooks", "is_template", "INTEGER NOT NULL DEFAULT 0"
+        )
+    if "index_state" not in columns:
+        _add_main_column(
+            db, "sum_workbooks", "index_state", "TEXT NOT NULL DEFAULT 'none'"
+        )
+    if "calculation_state" not in columns:
+        _add_main_column(
+            db, "sum_workbooks", "calculation_state", "TEXT NOT NULL DEFAULT 'none'"
         )
 
 

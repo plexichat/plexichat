@@ -1230,3 +1230,144 @@ def test_sum_xlsx_export_and_import(db, two_users, server_manager):
     values = {(c["row"], c["column"]): c["value"] for c in viewport["cells"]}
     assert values[(0, 0)] == 1
     assert values[(2, 0)] == 3
+
+
+# ── PlexiSum home surface: pinned workbooks, templates, indexing status ──────
+
+
+def test_sum_pin_round_trip_and_ordering(db, two_users, server_manager):
+    """Pinning floats the workbook to the top of the owner's listing."""
+    owner, _ = two_users
+    manager = _sum_manager(db, server_manager)
+    first = manager.create_workbook(owner.id, "Alpha")
+    # updated_at has millisecond resolution; space the creates so ordering is
+    # deterministic instead of racing the same timestamp.
+    time.sleep(0.005)
+    second = manager.create_workbook(owner.id, "Beta")
+
+    items, _ = manager.list_workbooks(owner.id)
+    assert [w["title"] for w in items] == ["Beta", "Alpha"]
+    assert all(not w["pinned"] for w in items)
+
+    updated = manager.set_pinned(owner.id, int(first["id"]), True)
+    assert updated["pinned"] is True
+    assert updated["is_template"] is False
+
+    items, _ = manager.list_workbooks(owner.id)
+    assert [w["title"] for w in items] == ["Alpha", "Beta"]
+    assert items[0]["pinned"] is True
+
+    manager.set_pinned(owner.id, int(first["id"]), False)
+    items, _ = manager.list_workbooks(owner.id)
+    assert [w["title"] for w in items] == ["Beta", "Alpha"]
+    assert all(not w["pinned"] for w in items)
+
+
+def test_sum_pin_requires_edit_access(db, two_users, server_manager):
+    """A view-only grantee cannot pin someone else's workbook."""
+    owner, other = two_users
+    manager = _sum_manager(db, server_manager)
+    workbook = manager.create_workbook(owner.id, "Private")
+    with pytest.raises(SumPermissionError):
+        manager.set_pinned(other.id, int(workbook["id"]), True)
+
+
+def test_sum_template_create_and_instantiate(db, two_users, server_manager):
+    """A template can be seeded, listed separately, and copied into a new
+    workbook without mutating the template or inheriting its template flag."""
+    owner, other = two_users
+    manager = _sum_manager(db, server_manager)
+    template = manager.create_workbook(owner.id, "Budget template", template=True)
+    assert template["is_template"] is True
+    sheet_id = template["sheets"][0]["id"]
+    _seed_cells(
+        manager,
+        owner,
+        template,
+        sheet_id,
+        [(0, 0, 1), (1, 0, 2), (2, 0, 3)],
+    )
+
+    # Templates are excluded from the regular listing and appear in theirs.
+    regular, _ = manager.list_workbooks(owner.id)
+    assert [w["id"] for w in regular] == []
+    templates, _ = manager.list_workbooks(owner.id, template=True)
+    assert [w["id"] for w in templates] == [str(template["id"])]
+
+    copy = manager.create_from_template(
+        owner.id, int(template["id"]), "My budget", "personal", None
+    )
+    assert copy["is_template"] is False
+    assert copy["title"] == "My budget"
+    copy_sheet = copy["sheets"][0]["id"]
+    viewport = manager.read_viewport(
+        owner.id, int(copy["id"]), int(copy_sheet), 0, 50, 0, 20
+    )
+    values = {(c["row"], c["column"]): c["value"] for c in viewport["cells"]}
+    assert values[(0, 0)] == 1
+    assert values[(2, 0)] == 3
+
+    # The template itself is untouched: still a template, same cells.
+    template_again = manager.get_workbook(owner.id, int(template["id"]))
+    assert template_again["is_template"] is True
+    t_viewport = manager.read_viewport(
+        owner.id, int(template["id"]), int(sheet_id), 0, 50, 0, 20
+    )
+    t_values = {(c["row"], c["column"]): c["value"] for c in t_viewport["cells"]}
+    assert t_values[(0, 0)] == 1
+
+    # Editing the copy must not affect the template.
+    manager.apply_operation(
+        owner.id,
+        int(copy["id"]),
+        int(copy_sheet),
+        f"copy-write-{time.time_ns()}",
+        "set_cell",
+        int(copy["current_revision"]),
+        [{"row": 0, "column": 0, "value_type": "number", "value": 99}],
+    )
+    t_viewport = manager.read_viewport(
+        owner.id, int(template["id"]), int(sheet_id), 0, 50, 0, 20
+    )
+    t_values = {(c["row"], c["column"]): c["value"] for c in t_viewport["cells"]}
+    assert t_values[(0, 0)] == 1
+
+
+def test_sum_create_from_non_template_rejected(db, two_users, server_manager):
+    """Only flagged templates can be instantiated."""
+    owner, _ = two_users
+    manager = _sum_manager(db, server_manager)
+    workbook = manager.create_workbook(owner.id, "Not a template")
+    with pytest.raises(SumValidationError, match="not a template"):
+        manager.create_from_template(owner.id, int(workbook["id"]), "Copy", "personal")
+
+
+def test_sum_workbook_status_reflects_cells(db, two_users, server_manager):
+    """Materializing a workbook refreshes index/calculation state on the row."""
+    owner, _ = two_users
+    manager = _sum_manager(db, server_manager)
+    workbook = manager.create_workbook(owner.id, "Status")
+    assert workbook["index_state"] == "none"
+    assert workbook["calculation_state"] == "none"
+    sheet_id = workbook["sheets"][0]["id"]
+    manager.apply_operation(
+        owner.id,
+        int(workbook["id"]),
+        int(sheet_id),
+        f"formula-{time.time_ns()}",
+        "set_cell",
+        int(workbook["current_revision"]),
+        [
+            {
+                "row": 0,
+                "column": 0,
+                "value_type": "formula",
+                "value": 2,
+                "formula": "1+1",
+            }
+        ],
+    )
+    # Force a materialization (the read path opens the live session).
+    manager.read_viewport(owner.id, int(workbook["id"]), int(sheet_id), 0, 50, 0, 20)
+    refreshed = manager.get_workbook(owner.id, int(workbook["id"]))
+    assert refreshed["calculation_state"] == "calculated"

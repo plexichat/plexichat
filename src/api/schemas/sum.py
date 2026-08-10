@@ -11,6 +11,18 @@ class SumWorkbookCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     scope: str = Field("personal", pattern="^(personal|server)$")
     server_id: Optional[SnowflakeID] = None
+    template: bool = False
+
+
+class SumPinRequest(BaseModel):
+    pinned: bool = True
+
+
+class SumCreateFromTemplateRequest(BaseModel):
+    template_id: SnowflakeID
+    title: str = Field(..., min_length=1, max_length=500)
+    scope: str = Field("personal", pattern="^(personal|server)$")
+    server_id: Optional[SnowflakeID] = None
 
 
 class SumSheetResponse(BaseModel):
@@ -43,6 +55,10 @@ class SumWorkbookResponse(BaseModel):
     server_id: Optional[SnowflakeID]
     current_revision: int
     sheets: List[SumSheetResponse] = Field(default_factory=list)
+    pinned: bool = False
+    is_template: bool = False
+    index_state: str = "none"
+    calculation_state: str = "none"
     created_at: int
     updated_at: int
     my_permissions: SumViewerPermissionsResponse = Field(

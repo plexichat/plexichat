@@ -15,12 +15,14 @@ from src.api.schemas.sum import (
     SumConditionalFormatListResponse,
     SumConditionalFormatRequest,
     SumConditionalFormatResponse,
+    SumCreateFromTemplateRequest,
     SumCsvExportResponse,
     SumCsvImportRequest,
     SumCsvImportResponse,
     SumFreezeRequest,
     SumFreezeResponse,
     SumGrantListResponse,
+    SumPinRequest,
     SumWorkbookFileResponse,
     SumWorkbookUploadRequest,
     SumWorkbookUploadResponse,
@@ -118,10 +120,15 @@ def _error(exc: Exception) -> HTTPException:
 async def list_workbooks(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    template: bool = Query(
+        False, description="List template workbooks instead of regular workbooks"
+    ),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumWorkbookListResponse:
     try:
-        items, total = _manager().list_workbooks(current_user.user_id, limit, offset)
+        items, total = _manager().list_workbooks(
+            current_user.user_id, limit, offset, template=template
+        )
         return SumWorkbookListResponse(
             items=[SumWorkbookResponse.model_validate(item) for item in items],
             total=total,
@@ -146,8 +153,53 @@ async def create_workbook(
             body.title,
             body.scope,
             int(body.server_id) if body.server_id is not None else None,
+            template=body.template,
         )
         return SumWorkbookResponse.model_validate(workbook)
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/workbooks/from-template",
+    response_model=SumWorkbookResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_from_template(
+    body: SumCreateFromTemplateRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SumWorkbookResponse:
+    try:
+        workbook = _manager().create_from_template(
+            current_user.user_id,
+            int(body.template_id),
+            body.title,
+            body.scope,
+            int(body.server_id) if body.server_id is not None else None,
+        )
+        return SumWorkbookResponse.model_validate(workbook)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid template id") from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.patch(
+    "/workbooks/{workbook_id}/pin",
+    response_model=SumWorkbookResponse,
+)
+async def set_pinned(
+    workbook_id: str,
+    body: SumPinRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SumWorkbookResponse:
+    try:
+        workbook = _manager().set_pinned(
+            current_user.user_id, int(workbook_id), body.pinned
+        )
+        return SumWorkbookResponse.model_validate(workbook)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid workbook id") from exc
     except Exception as exc:
         raise _error(exc) from exc
 
