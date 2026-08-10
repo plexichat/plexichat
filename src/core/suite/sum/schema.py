@@ -44,6 +44,11 @@ CREATE TABLE IF NOT EXISTS sum_workbooks (
     scope TEXT NOT NULL DEFAULT 'personal',
     server_id BIGINT,
     current_revision BIGINT NOT NULL DEFAULT 0,
+    -- Revision the stored blob_path is materialized at. When it lags
+    -- current_revision the gap is covered by the durable sum_operations log
+    -- and replayed on materialization; coalesced cell writes advance
+    -- current_revision per op but only promote a new blob on flush.
+    blob_revision BIGINT NOT NULL DEFAULT 0,
     blob_path TEXT,
     file_size BIGINT NOT NULL DEFAULT 0,
     checksum TEXT,
@@ -111,6 +116,31 @@ CREATE TABLE IF NOT EXISTS sum_snapshots (
     FOREIGN KEY (workbook_id) REFERENCES sum_workbooks(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_sum_snapshots_workbook ON sum_snapshots(workbook_id, created_at DESC);
+
+-- Durable operation buffer between flushed snapshots. Every cell operation is
+-- appended here (with the revision CAS) before it is acknowledged, so a crash
+-- between flushes loses nothing; materialization replays rows whose
+-- result_revision exceeds the stored blob_revision. Rows up to the flushed
+-- revision are removed during each flush or full-file rewrite, keeping the
+-- buffer bounded by the coalescing window. Workbook cells remain exclusively
+-- in .plexisum files; this table never carries cell data by itself.
+CREATE TABLE IF NOT EXISTS sum_operations (
+    id BIGINT PRIMARY KEY,
+    workbook_id BIGINT NOT NULL,
+    operation_id TEXT NOT NULL,
+    actor_id BIGINT NOT NULL,
+    base_revision BIGINT NOT NULL,
+    result_revision BIGINT NOT NULL,
+    operation_type TEXT NOT NULL,
+    sheet_id TEXT,
+    payload_json TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    FOREIGN KEY (workbook_id) REFERENCES sum_workbooks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sum_operations_workbook_revision
+    ON sum_operations(workbook_id, result_revision);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sum_operations_workbook_operation
+    ON sum_operations(workbook_id, operation_id);
 """
 
 # Required columns are a compact compatibility contract for existing files.
@@ -238,12 +268,28 @@ def _ensure_main_columns(db) -> None:
     without putting workbook cells in the main database.
     """
     columns = _main_table_columns(db, "sum_workbooks")
-    if "artifact_id" in columns:
-        return
-    statement = "ALTER TABLE sum_workbooks ADD COLUMN artifact_id BIGINT"
+    if "artifact_id" not in columns:
+        _add_main_column(db, "sum_workbooks", "artifact_id", "BIGINT")
+    # Existing databases predating the coalesced-write buffer lack
+    # blob_revision; seed it to current_revision so the stored blob is treated
+    # as authoritative (the log is empty for those workbooks, so nothing is
+    # lost). New installs get the CREATE TABLE default of 0.
+    if "blob_revision" not in columns:
+        _add_main_column(
+            db, "sum_workbooks", "blob_revision", "BIGINT NOT NULL DEFAULT 0"
+        )
+        db.execute(
+            "UPDATE sum_workbooks SET blob_revision = current_revision "
+            "WHERE blob_revision = 0 AND current_revision > 0"
+        )
+
+
+def _add_main_column(db, table_name: str, column: str, definition: str) -> None:
+    """Add one metadata column to a Sum main-database table."""
+    statement = f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}"
     if getattr(db, "type", "sqlite") != "sqlite":
         statement = (
-            "ALTER TABLE sum_workbooks ADD COLUMN IF NOT EXISTS artifact_id BIGINT"
+            f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column} {definition}"
         )
     db.execute(statement)
 

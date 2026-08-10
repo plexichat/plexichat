@@ -137,6 +137,57 @@ _WORKBOOK_PRESENCE: Dict[int, Dict[int, Dict[str, Any]]] = {}
 _PRESENCE_LOCK = threading.RLock()
 
 
+# ── Coalesced write sessions ────────────────────────────────────────────────
+# Cell edits are acknowledged durably (main-database ``sum_operations`` log +
+# revision CAS) and applied to a live in-memory copy of the workbook; the
+# immutable blob is only promoted when the write buffer crosses a threshold.
+# This collapses the previous one-full-file-upload-per-edit into one upload per
+# flush window while crash safety is preserved by the durable log, which
+# materialization replays on top of the stored blob. The registry is module
+# level (like ``_WORKBOOK_FILE_CACHE``) so it survives per-request manager
+# instances and is shared across the process's workers.
+
+SUM_SESSION_MAX_ENTRIES = 32  # live in-memory workbook copies per process
+SUM_FLUSH_MAX_OPS = 25  # unflushed ops before a forced flush
+SUM_FLUSH_MAX_MS = 2000  # age of the oldest unflushed op before flush
+
+_WORKBOOK_SESSIONS: "Dict[int, _LiveSession]" = {}
+_WORKBOOK_SESSION_LOCKS: "Dict[int, threading.RLock]" = {}
+_SESSION_GUARD = threading.RLock()
+# Temp-file paths for runtimes without sqlite ``deserialize`` (id -> path),
+# removed when the session connection is closed.
+_SESSION_TMP_PATHS: "Dict[int, str]" = {}
+
+
+class _LiveSession:
+    """An in-memory workbook copy materialized at the current revision.
+
+    ``loaded_blob_revision`` is the revision the stored blob is materialized
+    at; the connection itself always reflects ``current_revision`` because
+    unflushed operations are replayed into it. ``pending`` counts operations
+    applied locally since the last flush and drives the coalescing window.
+    """
+
+    __slots__ = (
+        "connection",
+        "loaded_blob_revision",
+        "pending",
+        "last_flush_ms",
+        "last_access_ms",
+    )
+
+    def __init__(
+        self,
+        connection: "sqlite3.Connection",
+        loaded_blob_revision: int,
+    ) -> None:
+        self.connection = connection
+        self.loaded_blob_revision = int(loaded_blob_revision)
+        self.pending = 0
+        self.last_flush_ms = int(time.time() * 1000)
+        self.last_access_ms = self.last_flush_ms
+
+
 def _prune_presence(now: Optional[float] = None) -> None:
     """Drop presence records whose heartbeats are older than the TTL."""
     if now is None:
@@ -706,19 +757,201 @@ class SumManager(BaseManager):
         self._authorize(row, user_id, mutation=mutation)
         return row
 
+    def _viewer_permissions(
+        self,
+        user_id: int,
+        workbook_id: int,
+        sheet_id: Optional[int] = None,
+        workbook: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Effective access for ``user_id`` on a workbook.
+
+        Returns ``can_view``/``can_edit`` plus the per-sheet ``read_only``
+        ranges that apply to this user so clients can render permission-aware
+        editing without trusting client-supplied capability labels. The owner
+        bypasses range protections; every other authorized user (including
+        edit grantees) is blocked inside ranges the owner locked read-only.
+        """
+        if workbook is None:
+            workbook = self._workbook(user_id, workbook_id)
+        wb_id = int(workbook["id"])
+        is_owner = int(workbook["owner_id"]) == int(user_id)
+
+        can_edit = is_owner
+        if not can_edit and self._has_grant(wb_id, int(user_id), "edit"):
+            can_edit = True
+        if not can_edit:
+            server_id = workbook.get("server_id")
+            if (
+                workbook.get("scope") == "server"
+                and server_id is not None
+                and self._is_member(int(user_id), int(server_id))
+            ):
+                try:
+                    if self._servers and self._servers.has_permission(
+                        int(user_id), int(server_id), "server.manage"
+                    ):
+                        can_edit = True
+                except Exception:
+                    pass
+
+        reason = None
+        if not can_edit:
+            has_view = self._has_grant(wb_id, int(user_id), "view") or self._has_grant(
+                wb_id, int(user_id), "edit"
+            )
+            if not has_view:
+                server_id = workbook.get("server_id")
+                has_view = (
+                    workbook.get("scope") == "server"
+                    and server_id is not None
+                    and self._is_member(int(user_id), int(server_id))
+                )
+            # Unreachable via the public API (``_workbook`` already authorized
+            # view access), but kept explicit for defensive callers.
+            reason = None if has_view else "not_authorized"
+            if has_view:
+                reason = "view_only"
+
+        read_only_ranges: List[Dict[str, Any]] = []
+        if not is_owner and sheet_id is not None:
+            rows = self._db.fetch_all(
+                "SELECT id, sheet_id, row_start, row_end, column_start, "
+                "column_end, permission, created_at FROM sum_range_permissions "
+                "WHERE workbook_id = ? AND sheet_id = ? AND permission = 'read_only' "
+                "ORDER BY row_start, column_start",
+                (wb_id, int(sheet_id)),
+            )
+            for row in rows:
+                read_only_ranges.append(
+                    {
+                        "id": str(row["id"]),
+                        "workbook_id": str(wb_id),
+                        "sheet_id": str(row["sheet_id"]),
+                        "row_start": int(row["row_start"]),
+                        "row_end": int(row["row_end"]),
+                        "column_start": int(row["column_start"]),
+                        "column_end": int(row["column_end"]),
+                        "permission": str(row["permission"]),
+                        "created_at": int(row["created_at"]),
+                    }
+                )
+
+        return {
+            "can_view": True,
+            "can_edit": bool(can_edit),
+            "reason": reason,
+            "read_only_ranges": read_only_ranges,
+        }
+
     # ── workbook file lifecycle ──────────────────────────────────────────────
 
     def _file_bytes(self, workbook_id: int) -> bytes:
-        """Retrieve and integrity-check the current independent workbook file."""
+        """Return the workbook's current materialized state as bytes.
+
+        The live session already includes unflushed operations, so this
+        serializes the in-memory copy instead of downloading a blob. Used by
+        read paths that need an immutable byte snapshot (downloads, snapshots,
+        full-file rewrites); hot viewport reads query the session directly.
+        """
+        with self._session_lock(int(workbook_id)):
+            connection = self._materialized_connection_unlocked(int(workbook_id))
+            return self._serialize_connection(connection)
+
+    def _cache_current_file(self, workbook_id: int, revision: int, data: bytes) -> None:
+        """Publish just-committed file bytes to the read cache."""
+        _WORKBOOK_FILE_CACHE.put((int(workbook_id), int(revision)), data)
+
+    # ── live sessions (coalesced writes) ────────────────────────────────────
+
+    @staticmethod
+    def _session_lock(workbook_id: int) -> threading.RLock:
+        """Return the per-workbook session lock, shared across instances.
+
+        Touching the workbook here also marks the session recently used so
+        eviction never races an in-flight holder (a lock holder is by
+        definition not the least-recently-used candidate).
+        """
+        with _SESSION_GUARD:
+            lock = _WORKBOOK_SESSION_LOCKS.setdefault(
+                int(workbook_id), threading.RLock()
+            )
+        session = _WORKBOOK_SESSIONS.get(int(workbook_id))
+        if session is not None:
+            session.last_access_ms = int(time.time() * 1000)
+        return lock
+
+    @staticmethod
+    def _drop_session(workbook_id: int) -> None:
+        """Discard a live session; its unflushed ops stay durable in the log."""
+        with _SESSION_GUARD:
+            session = _WORKBOOK_SESSIONS.pop(int(workbook_id), None)
+        if session is not None:
+            SumManager._close_session_connection(session.connection)
+
+    @staticmethod
+    def _close_session_connection(connection: "sqlite3.Connection") -> None:
+        try:
+            connection.close()
+        except sqlite3.Error:
+            pass
+        path = _SESSION_TMP_PATHS.pop(id(connection), None)
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _materialized_connection(self, workbook_id: int) -> "sqlite3.Connection":
+        with self._session_lock(int(workbook_id)):
+            return self._materialized_connection_unlocked(int(workbook_id))
+
+    def _materialized_connection_unlocked(
+        self, workbook_id: int
+    ) -> "sqlite3.Connection":
+        """Return a live connection holding the workbook's current state.
+
+        Callers must hold ``self._session_lock(workbook_id)``. The connection
+        is created on first use from the stored blob plus the durable
+        operation log, and rebuilt whenever another writer promoted a newer
+        blob, so it always reflects ``current_revision``.
+        """
         row = self._db.fetch_one(
-            "SELECT blob_path, current_revision, checksum FROM sum_workbooks "
-            "WHERE id = ? AND deleted = 0",
+            "SELECT blob_revision, current_revision, blob_path, checksum "
+            "FROM sum_workbooks WHERE id = ? AND deleted = 0",
             (int(workbook_id),),
         )
         if not row or not row.get("blob_path"):
             raise SumStorageError("Workbook file is not available")
-        revision = int(row.get("current_revision") or 0)
-        cached = _WORKBOOK_FILE_CACHE.get((int(workbook_id), revision))
+        blob_revision = int(row.get("blob_revision") or 0)
+        current_revision = int(row.get("current_revision") or 0)
+        session = _WORKBOOK_SESSIONS.get(int(workbook_id))
+        if session is not None:
+            session.last_access_ms = int(time.time() * 1000)
+            if session.loaded_blob_revision == blob_revision:
+                return session.connection
+            # Another writer promoted a newer blob; rebuild from it.
+            SumManager._drop_session(int(workbook_id))
+        data = self._blob_bytes(int(workbook_id), row)
+        connection = self._open_session_connection(data)
+        try:
+            if current_revision > blob_revision:
+                self._replay_unflushed(connection, int(workbook_id), blob_revision)
+        except Exception:
+            SumManager._close_session_connection(connection)
+            raise
+        session = _LiveSession(connection, blob_revision)
+        session.pending = max(0, current_revision - blob_revision)
+        with _SESSION_GUARD:
+            _WORKBOOK_SESSIONS[int(workbook_id)] = session
+        self._evict_sessions()
+        return connection
+
+    def _blob_bytes(self, workbook_id: int, row) -> bytes:
+        """Fetch and integrity-check the stored blob for a workbook row."""
+        cached = _WORKBOOK_FILE_CACHE.get(
+            (int(workbook_id), int(row.get("blob_revision") or 0))
+        )
         if cached is not None:
             if (
                 row.get("checksum")
@@ -733,12 +966,417 @@ class SumManager(BaseManager):
             raise SumStorageError("Workbook file could not be read") from exc
         if row.get("checksum") and hashlib.sha256(data).hexdigest() != row["checksum"]:
             raise SumStorageError("Workbook file checksum mismatch")
-        _WORKBOOK_FILE_CACHE.put((int(workbook_id), revision), data)
+        _WORKBOOK_FILE_CACHE.put(
+            (int(workbook_id), int(row.get("blob_revision") or 0)), data
+        )
         return data
 
-    def _cache_current_file(self, workbook_id: int, revision: int, data: bytes) -> None:
-        """Publish just-committed file bytes to the read cache."""
-        _WORKBOOK_FILE_CACHE.put((int(workbook_id), int(revision)), data)
+    @staticmethod
+    def _open_session_connection(data: bytes) -> "sqlite3.Connection":
+        """Open workbook bytes as an in-memory connection usable across threads.
+
+        Unlike the per-read openers this connection is long-lived, so it is
+        created with ``check_same_thread=False`` and guarded by the
+        per-workbook session lock. Runtimes without ``deserialize`` fall back
+        to a private temp file whose path is registered for cleanup.
+        """
+        try:
+            if getattr(sqlite3.Connection, "deserialize", None) is None:
+                raise RuntimeError("deserialize unavailable")
+            connection = sqlite3.connect(":memory:", check_same_thread=False)
+            connection.deserialize(data)
+        except Exception:
+            handle = tempfile.NamedTemporaryFile(
+                prefix="plexisum-", suffix=".plexisum", delete=False
+            )
+            handle.write(data)
+            handle.close()
+            connection = sqlite3.connect(handle.name, check_same_thread=False)
+            _SESSION_TMP_PATHS[id(connection)] = handle.name
+        connection.row_factory = sqlite3.Row
+        try:
+            ensure_feature_tables(connection)
+            format_row = connection.execute(
+                "SELECT value FROM sum_meta WHERE key = 'format_version'"
+            ).fetchone()
+            if format_row is None or format_row["value"] != PLEXISUM_FORMAT_VERSION:
+                raise SumStorageError("Unsupported PlexiSum workbook format")
+        except (sqlite3.Error, SumStorageError) as exc:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
+            if isinstance(exc, SumStorageError):
+                raise
+            raise SumStorageError("Workbook file schema could not be upgraded") from exc
+        return connection
+
+    @staticmethod
+    def _serialize_connection(connection: "sqlite3.Connection") -> bytes:
+        """Serialize an in-memory session back to .plexisum bytes."""
+        try:
+            if getattr(sqlite3.Connection, "serialize", None) is None:
+                raise RuntimeError("serialize unavailable")
+            return connection.serialize()
+        except Exception:
+            # Fallback for runtimes without serialize or WAL-mode sources.
+            handle = tempfile.NamedTemporaryFile(
+                prefix="plexisum-", suffix=".plexisum", delete=False
+            )
+            handle.close()
+            try:
+                connection.execute("VACUUM INTO ?", (handle.name,))
+                with open(handle.name, "rb") as file_handle:
+                    return file_handle.read()
+            finally:
+                try:
+                    os.unlink(handle.name)
+                except OSError:
+                    pass
+
+    def _replay_unflushed(
+        self,
+        connection: "sqlite3.Connection",
+        workbook_id: int,
+        after_revision: int,
+    ) -> None:
+        """Apply durable log rows the stored blob does not yet contain."""
+        rows = self._db.fetch_all(
+            "SELECT operation_id, actor_id, base_revision, result_revision, "
+            "operation_type, sheet_id, payload_json, created_at "
+            "FROM sum_operations WHERE workbook_id = ? AND result_revision > ? "
+            "ORDER BY result_revision ASC",
+            (int(workbook_id), int(after_revision)),
+        )
+        for row in rows:
+            payload = self._decode(row["payload_json"], {})
+            cells = payload.get("cells", [])
+            revision = int(row["result_revision"])
+            sheet_id = row.get("sheet_id") or payload.get("sheet_id")
+            for cell in cells:
+                try:
+                    normalized = {
+                        "row": int(cell["row"]),
+                        "column": int(cell["column"]),
+                        "value_type": str(cell.get("value_type", "blank")),
+                        "value": cell.get("value"),
+                        "formula": cell.get("formula"),
+                        "style": cell.get("style"),
+                    }
+                except (KeyError, TypeError, ValueError):
+                    continue
+                self._apply_normalized_cell(
+                    connection,
+                    str(sheet_id),
+                    normalized,
+                    revision,
+                    int(row["created_at"]),
+                )
+            connection.execute(
+                "INSERT INTO sum_operations (operation_id, actor_id, "
+                "base_revision, result_revision, operation_type, payload_json, "
+                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["operation_id"],
+                    row["actor_id"],
+                    int(row["base_revision"]),
+                    revision,
+                    row["operation_type"],
+                    self._json({"sheet_id": str(sheet_id), "cells": cells}),
+                    int(row["created_at"]),
+                ),
+            )
+        if rows:
+            connection.commit()
+
+    def _apply_normalized_cell(
+        self,
+        connection: "sqlite3.Connection",
+        sheet_id: str,
+        cell: Dict[str, Any],
+        revision: int,
+        now: int,
+    ) -> None:
+        """Upsert one normalized cell, honoring the __preserve__ sentinel."""
+        row_index = cell["row"]
+        column_index = cell["column"]
+        if cell["value_type"] == "__preserve__":
+            previous = connection.execute(
+                "SELECT value_type, value_json, formula FROM sum_cells "
+                "WHERE sheet_id = ? AND row_index = ? AND column_index = ?",
+                (sheet_id, row_index, column_index),
+            ).fetchone()
+            if previous:
+                value_type = previous["value_type"]
+                value_json = previous["value_json"]
+                formula = previous["formula"]
+            else:
+                value_type = "blank"
+                value_json = self._json(None)
+                formula = None
+            connection.execute(
+                "INSERT INTO sum_cells (sheet_id, row_index, column_index, "
+                "value_type, value_json, formula, style_json, revision, "
+                "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(sheet_id, row_index, column_index) DO UPDATE SET "
+                "value_type = excluded.value_type, value_json = excluded.value_json, "
+                "formula = excluded.formula, style_json = excluded.style_json, "
+                "revision = excluded.revision, updated_at = excluded.updated_at",
+                (
+                    sheet_id,
+                    row_index,
+                    column_index,
+                    value_type,
+                    value_json,
+                    formula,
+                    self._json(cell["style"]),
+                    revision,
+                    now,
+                ),
+            )
+            return
+        connection.execute(
+            "INSERT INTO sum_cells (sheet_id, row_index, column_index, "
+            "value_type, value_json, formula, style_json, revision, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(sheet_id, row_index, column_index) DO UPDATE SET "
+            "value_type = excluded.value_type, value_json = excluded.value_json, "
+            "formula = excluded.formula, style_json = excluded.style_json, "
+            "revision = excluded.revision, updated_at = excluded.updated_at",
+            (
+                sheet_id,
+                row_index,
+                column_index,
+                cell["value_type"],
+                self._json(cell["value"]),
+                cell["formula"],
+                self._json(cell["style"]),
+                revision,
+                now,
+            ),
+        )
+
+    def _maybe_flush(self, workbook_id: int) -> None:
+        """Promote the live copy when the coalescing window is exceeded.
+
+        Called under the per-workbook session lock after each acknowledged
+        operation. A flush failure never fails the operation itself (it is
+        already durable); the session is dropped so the next access rebuilds
+        from the log and retries the flush on a later write.
+        """
+        now = int(time.time() * 1000)
+        session = _WORKBOOK_SESSIONS.get(int(workbook_id))
+        if session is None:
+            return
+        if session.pending < SUM_FLUSH_MAX_OPS and (
+            now - session.last_flush_ms < SUM_FLUSH_MAX_MS
+        ):
+            return
+        try:
+            self._flush_session_unlocked(int(workbook_id), session)
+        except Exception:
+            import utils.logger as logger
+
+            logger.debug(
+                "PlexiSum: coalesced flush failed for workbook %s",
+                workbook_id,
+                exc_info=True,
+            )
+            SumManager._drop_session(int(workbook_id))
+
+    def _flush_session_unlocked(self, workbook_id: int, session: _LiveSession) -> None:
+        """Store the live copy as a new immutable blob, CAS-gated on blob_revision.
+
+        The CAS makes concurrent multi-worker flushes safe: exactly one writer
+        promotes its snapshot; losers delete their blob and rebuild from the
+        winner (their operations remain durable in the log). The log is
+        compacted up to the flushed revision in the same transaction.
+        """
+        if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
+            self._db, "in_transaction", False
+        ):
+            raise SumStorageError(
+                "PlexiSum revision writes require a standalone transaction"
+            )
+        now = int(time.time() * 1000)
+        revision = self._current_revision(int(workbook_id))
+        data = self._serialize_connection(session.connection)
+        path, size, checksum = self._save_file(int(workbook_id), int(revision), data)
+        try:
+            self._db.begin_transaction()
+            cursor = self._db.execute(
+                "UPDATE sum_workbooks SET blob_revision = ?, blob_path = ?, "
+                "file_size = ?, checksum = ?, updated_at = ? "
+                "WHERE id = ? AND blob_revision = ?",
+                (
+                    int(revision),
+                    path,
+                    size,
+                    checksum,
+                    now,
+                    int(workbook_id),
+                    session.loaded_blob_revision,
+                ),
+            )
+            try:
+                affected = int(cursor.rowcount)
+            finally:
+                cursor.close()
+            if affected != 1:
+                raise SumConflictError("Workbook was flushed by another writer")
+            self._db.execute(
+                "INSERT INTO sum_revision_blobs "
+                "(id, workbook_id, revision, blob_path, checksum, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    self._generate_id(),
+                    int(workbook_id),
+                    int(revision),
+                    path,
+                    checksum,
+                    now,
+                ),
+            )
+            self._db.execute(
+                "DELETE FROM sum_operations WHERE workbook_id = ? "
+                "AND result_revision <= ?",
+                (int(workbook_id), int(revision)),
+            )
+            self._db.commit()
+        except Exception:
+            if getattr(self._db, "in_transaction", False):
+                self._db.rollback()
+            try:
+                self._blob.delete(path)
+            except Exception:
+                pass
+            raise
+        self._cache_current_file(int(workbook_id), int(revision), data)
+        session.loaded_blob_revision = int(revision)
+        session.pending = 0
+        session.last_flush_ms = now
+        self._prune_revision_blobs(int(workbook_id))
+
+    def _evict_sessions(self) -> None:
+        """Drop the least recently used sessions beyond the entry cap.
+
+        Only sessions whose lock can be acquired without blocking are
+        evicted, so a session mid-operation is never closed underneath its
+        holder; those are swept on a later eviction pass. Sessions with
+        pending writes are flushed first (best-effort).
+        """
+        while len(_WORKBOOK_SESSIONS) > SUM_SESSION_MAX_ENTRIES:
+            with _SESSION_GUARD:
+                candidates = sorted(
+                    _WORKBOOK_SESSIONS,
+                    key=lambda wb: _WORKBOOK_SESSIONS[wb].last_access_ms,
+                )
+            victim = None
+            victim_lock = None
+            for candidate in candidates:
+                lock = _WORKBOOK_SESSION_LOCKS.get(candidate)
+                if lock is not None and not lock.acquire(blocking=False):
+                    continue
+                victim = candidate
+                victim_lock = lock
+                break
+            if victim is None:
+                # Every candidate is in use; stop rather than grow unbounded.
+                return
+            try:
+                session = _WORKBOOK_SESSIONS.pop(victim, None)
+                if session is None:
+                    continue
+                if session.pending > 0:
+                    try:
+                        self._flush_session_unlocked(victim, session)
+                    except Exception:
+                        import utils.logger as logger
+
+                        logger.debug(
+                            "PlexiSum: eviction flush failed for workbook %s",
+                            victim,
+                            exc_info=True,
+                        )
+                SumManager._close_session_connection(session.connection)
+            finally:
+                if victim_lock is not None:
+                    victim_lock.release()
+
+    def _current_revision(self, workbook_id: int) -> int:
+        row = self._db.fetch_one(
+            "SELECT current_revision FROM sum_workbooks WHERE id = ?",
+            (int(workbook_id),),
+        )
+        return int(row["current_revision"]) if row else 0
+
+    def _append_op_durable(
+        self,
+        workbook_id: int,
+        operation_id: str,
+        user_id: int,
+        base_revision: int,
+        revision: int,
+        operation_type: str,
+        sheet_id: int,
+        cells: List[Dict[str, Any]],
+        now: int,
+        conflict_message: str,
+    ) -> None:
+        """Durably record an operation and advance the revision counter.
+
+        Both happen in one standalone main-database transaction, so a CAS
+        failure records nothing and a crash before the in-memory apply is
+        recovered by log replay on the next materialization. The caller must
+        not be inside an outer main-database transaction.
+        """
+        if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
+            self._db, "in_transaction", False
+        ):
+            raise SumStorageError(
+                "PlexiSum operation writes require a standalone transaction"
+            )
+        self._db.begin_transaction()
+        try:
+            cursor = self._db.execute(
+                "UPDATE sum_workbooks SET current_revision = ?, updated_at = ? "
+                "WHERE id = ? AND current_revision = ?",
+                (
+                    int(revision),
+                    int(now),
+                    int(workbook_id),
+                    int(base_revision),
+                ),
+            )
+            try:
+                affected = int(cursor.rowcount)
+            finally:
+                cursor.close()
+            if affected != 1:
+                raise SumConflictError(conflict_message)
+            self._db.execute(
+                "INSERT INTO sum_operations (id, workbook_id, operation_id, "
+                "actor_id, base_revision, result_revision, operation_type, "
+                "sheet_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, "
+                "?, ?, ?, ?, ?)",
+                (
+                    self._generate_id(),
+                    int(workbook_id),
+                    str(operation_id),
+                    int(user_id),
+                    int(base_revision),
+                    int(revision),
+                    str(operation_type),
+                    str(sheet_id),
+                    self._json({"sheet_id": str(sheet_id), "cells": cells}),
+                    int(now),
+                ),
+            )
+            self._db.commit()
+        except Exception:
+            if getattr(self._db, "in_transaction", False):
+                self._db.rollback()
+            raise
 
     def _delete_blob_confirmed(self, path: str) -> bool:
         """Delete a blob and confirm that it is no longer present.
@@ -838,10 +1476,11 @@ class SumManager(BaseManager):
         try:
             self._db.begin_transaction()
             cursor = self._db.execute(
-                "UPDATE sum_workbooks SET current_revision = ?, blob_path = ?, "
-                "file_size = ?, checksum = ?, updated_at = ? "
+                "UPDATE sum_workbooks SET current_revision = ?, blob_revision = ?, "
+                "blob_path = ?, file_size = ?, checksum = ?, updated_at = ? "
                 "WHERE id = ? AND current_revision = ?",
                 (
+                    int(revision),
                     int(revision),
                     path,
                     size,
@@ -870,6 +1509,14 @@ class SumManager(BaseManager):
                     now,
                 ),
             )
+            # A full-file rewrite supersedes every buffered operation: the new
+            # blob is complete at ``revision``, so the durable log can be
+            # compacted up to it in the same transaction.
+            self._db.execute(
+                "DELETE FROM sum_operations WHERE workbook_id = ? "
+                "AND result_revision <= ?",
+                (int(workbook_id), int(revision)),
+            )
             self._db.commit()
         except Exception:
             if getattr(self._db, "in_transaction", False):
@@ -877,6 +1524,10 @@ class SumManager(BaseManager):
             self._blob.delete(path)
             raise
         self._cache_current_file(workbook_id, revision, data)
+        # The new blob is authoritative; drop any live session so the next
+        # access rebuilds from it (its content may lack this rewrite).
+        with self._session_lock(int(workbook_id)):
+            self._drop_session(int(workbook_id))
         self._prune_revision_blobs(workbook_id)
         return path, size, checksum
 
@@ -919,8 +1570,50 @@ class SumManager(BaseManager):
             except OSError:
                 pass
 
+    @staticmethod
+    def _open_sqlite_memory(data: bytes) -> Tuple[sqlite3.Connection, Optional[str]]:
+        """Open workbook bytes as an in-memory sqlite connection.
+
+        Hot read paths (viewport, sheet listings) used to write every blob to
+        a temp file and unlink it on every call. ``Connection.deserialize``
+        (Python >= 3.11) loads the bytes straight into ``:memory:``, avoiding
+        the temp-file I/O entirely. Runtimes without ``deserialize`` fall
+        back to the file-backed opener; callers branch on the returned path.
+        """
+        try:
+            if getattr(sqlite3.Connection, "deserialize", None) is None:
+                raise RuntimeError("deserialize unavailable")
+            connection = sqlite3.connect(":memory:")
+            connection.deserialize(data)
+        except Exception:
+            return SumManager._open_sqlite(data)
+        connection.row_factory = sqlite3.Row
+        try:
+            ensure_feature_tables(connection)
+            format_row = connection.execute(
+                "SELECT value FROM sum_meta WHERE key = 'format_version'"
+            ).fetchone()
+            if format_row is None or format_row["value"] != PLEXISUM_FORMAT_VERSION:
+                raise SumStorageError("Unsupported PlexiSum workbook format")
+        except (sqlite3.Error, SumStorageError) as exc:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
+            if isinstance(exc, SumStorageError):
+                raise
+            raise SumStorageError("Workbook file schema could not be upgraded") from exc
+        return connection, None
+
+    @staticmethod
+    def _close_sqlite_memory(connection: sqlite3.Connection) -> None:
+        try:
+            connection.close()
+        except sqlite3.Error:
+            pass
+
     def _read_sheets_from_file(self, data: bytes) -> List[Dict[str, Any]]:
-        connection, path = self._open_sqlite(data)
+        connection, path = self._open_sqlite_memory(data)
         try:
             rows = connection.execute(
                 "SELECT id, name, position, created_at, updated_at FROM sum_sheets ORDER BY position, id"
@@ -938,7 +1631,10 @@ class SumManager(BaseManager):
         except sqlite3.Error as exc:
             raise SumStorageError("Workbook file schema is invalid") from exc
         finally:
-            self._close_sqlite(connection, path)
+            if path is None:
+                self._close_sqlite_memory(connection)
+            else:
+                self._close_sqlite(connection, path)
 
     def _ensure_sheet(self, data: bytes, sheet_id: str) -> None:
         connection, path = self._open_sqlite(data)
@@ -1165,6 +1861,9 @@ class SumManager(BaseManager):
             "sheets": sheets,
             "created_at": int(row["created_at"]),
             "updated_at": int(row["updated_at"]),
+            "my_permissions": self._viewer_permissions(
+                user_id, int(row["id"]), workbook=row
+            ),
         }
 
     def list_workbooks(
@@ -1240,11 +1939,24 @@ class SumManager(BaseManager):
                     int(artifact_id), status=ArtifactStatus.ARCHIVED, emit_event=False
                 )
             self._audit("delete", "workbook", int(workbook_id), user_id)
+            # Purge only buffered operations that are already materialized in
+            # the stored blob; unflushed rows must survive so a restore can
+            # replay them.
+            self._db.execute(
+                "DELETE FROM sum_operations WHERE workbook_id = ? "
+                "AND result_revision <= (SELECT blob_revision FROM "
+                "sum_workbooks WHERE id = ?)",
+                (int(workbook_id), int(workbook_id)),
+            )
             self._db.commit()
         except Exception:
             if getattr(self._db, "in_transaction", False):
                 self._db.rollback()
             raise
+        # Drop any live session; its log rows are gone, so a stale in-memory
+        # copy must never be reused after a restore.
+        with self._session_lock(int(workbook_id)):
+            self._drop_session(int(workbook_id))
         # Emit only after both workbook and artifact state are committed.
         if artifact_id is not None:
             try:
@@ -1295,6 +2007,8 @@ class SumManager(BaseManager):
             if getattr(self._db, "in_transaction", False):
                 self._db.rollback()
             raise
+        with self._session_lock(int(workbook_id)):
+            self._drop_session(int(workbook_id))
         # Emit only after both workbook and artifact state are committed.
         if artifact_id is not None:
             try:
@@ -1688,9 +2402,14 @@ class SumManager(BaseManager):
                         "value": criterion.get("value"),
                     }
                 )
-        data = self._file_bytes(workbook_id)
-        connection, path = self._open_sqlite(data)
+        # Query the live session directly: hot viewport polls must not pay a
+        # serialize + deserialize of the whole workbook per request. The
+        # per-workbook lock is held for the duration of the read so the
+        # connection cannot be dropped or mutated mid-query.
+        _session_lock = self._session_lock(int(workbook_id))
+        _session_lock.acquire()
         try:
+            connection = self._materialized_connection_unlocked(int(workbook_id))
             sheet = connection.execute(
                 "SELECT id FROM sum_sheets WHERE id = ? AND deleted = 0",
                 (str(sheet_id),),
@@ -1770,15 +2489,22 @@ class SumManager(BaseManager):
                 row_index for row_index in sorted(by_row) if not visible[row_index]
             ]
 
-        metadata = self._read_viewport_metadata(
-            connection,
-            str(sheet_id),
-            row_start,
-            row_end,
-            column_start,
-            column_end,
+        try:
+            metadata = self._read_viewport_metadata(
+                connection,
+                str(sheet_id),
+                row_start,
+                row_end,
+                column_start,
+                column_end,
+            )
+        except sqlite3.Error as exc:
+            raise SumStorageError("Workbook file schema is invalid") from exc
+        finally:
+            _session_lock.release()
+        viewer = self._viewer_permissions(
+            user_id, int(workbook_id), sheet_id=int(sheet_id), workbook=workbook
         )
-        self._close_sqlite(connection, path)
         return {
             "workbook_id": str(workbook_id),
             "sheet_id": str(sheet_id),
@@ -1797,6 +2523,8 @@ class SumManager(BaseManager):
             "validations": metadata["validations"],
             "conditional_formats": metadata["conditional_formats"],
             "comments": metadata["comments"],
+            "can_edit": bool(viewer["can_edit"]),
+            "read_only_ranges": viewer["read_only_ranges"],
         }
 
     # ── operations ───────────────────────────────────────────────────────────
@@ -1860,37 +2588,52 @@ class SumManager(BaseManager):
 
         # Idempotency wins over revision staleness: a client retrying an op
         # it already applied (possibly against a newer revision) must receive
-        # the original result rather than a conflict.
-        data = self._file_bytes(workbook_id)
-        connection, path = self._open_sqlite(data)
-        try:
+        # the original result rather than a conflict. Cell operations are
+        # checked against both the live copy's file log and the durable
+        # buffer, so retries after any crash or cross-process flush are
+        # recognized regardless of which copy first recorded the op.
+        with self._session_lock(int(workbook_id)):
+            connection = self._materialized_connection_unlocked(int(workbook_id))
             existing = connection.execute(
                 "SELECT result_revision FROM sum_operations WHERE operation_id = ?",
                 (str(operation_id),),
             ).fetchone()
-        finally:
-            self._close_sqlite(connection, path)
-        if existing is not None:
-            return {
-                "operation_id": operation_id,
-                "revision": int(existing["result_revision"]),
-                "replayed": True,
-            }
-
-        if int(base_revision) != current_revision:
-            raise SumConflictError(f"Workbook revision is {current_revision}")
-
-        if operation_type in STRUCTURAL_OPERATION_TYPES:
-            return self._apply_structural_operation(
-                user_id,
-                workbook_id,
-                sheet_id,
-                operation_id,
-                operation_type,
-                current_revision,
-                cells,
-                data,
+            if existing is not None:
+                return {
+                    "operation_id": operation_id,
+                    "revision": int(existing["result_revision"]),
+                    "replayed": True,
+                }
+            existing_row = self._db.fetch_one(
+                "SELECT result_revision FROM sum_operations "
+                "WHERE workbook_id = ? AND operation_id = ?",
+                (int(workbook_id), str(operation_id)),
             )
+            if existing_row is not None:
+                return {
+                    "operation_id": operation_id,
+                    "revision": int(existing_row["result_revision"]),
+                    "replayed": True,
+                }
+
+            if int(base_revision) != current_revision:
+                raise SumConflictError(f"Workbook revision is {current_revision}")
+
+            if operation_type in STRUCTURAL_OPERATION_TYPES:
+                # Structural changes stay full-file rewrites (they are rare
+                # and inherently touch every row/column); the rewrite builds
+                # on the live copy so buffered edits are preserved.
+                data = self._serialize_connection(connection)
+                return self._apply_structural_operation(
+                    user_id,
+                    workbook_id,
+                    sheet_id,
+                    operation_id,
+                    operation_type,
+                    current_revision,
+                    cells,
+                    data,
+                )
 
         normalized: List[Dict[str, Any]] = []
         for cell in cells:
@@ -1950,101 +2693,73 @@ class SumManager(BaseManager):
             int(workbook_id), int(sheet_id), normalized, user_id
         )
 
-        # ``data`` was already fetched for the idempotency check above; a
-        # second storage download is unnecessary and would double the cost of
-        # every edit for a hot workbook.
         revision = current_revision + 1
         now = int(time.time() * 1000)
 
-        connection, path = self._open_sqlite(data)
-        try:
-            sheet = connection.execute(
-                "SELECT id FROM sum_sheets WHERE id = ? AND deleted = 0",
-                (str(sheet_id),),
-            ).fetchone()
-            if sheet is None:
-                raise SumNotFoundError("Sheet not found")
-            # Data-validation rules are enforced on the write path against
-            # the live workbook file, so invalid values never land in the
-            # file regardless of which client sent them.
-            self._validate_cells(connection, str(sheet_id), normalized)
-            for cell in normalized:
-                row_index = cell["row"]
-                column_index = cell["column"]
-                if cell["value_type"] == "__preserve__":
-                    previous = connection.execute(
-                        "SELECT value_type, value_json, formula FROM sum_cells WHERE sheet_id = ? AND row_index = ? AND column_index = ?",
-                        (str(sheet_id), row_index, column_index),
-                    ).fetchone()
-                    if previous:
-                        value_type = previous["value_type"]
-                        value_json = previous["value_json"]
-                        formula = previous["formula"]
-                    else:
-                        value_type = "blank"
-                        value_json = self._json(None)
-                        formula = None
-                    connection.execute(
-                        "INSERT INTO sum_cells (sheet_id, row_index, column_index, value_type, value_json, formula, style_json, revision, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(sheet_id, row_index, column_index) DO UPDATE SET value_type = excluded.value_type, value_json = excluded.value_json, formula = excluded.formula, style_json = excluded.style_json, revision = excluded.revision, updated_at = excluded.updated_at",
-                        (
-                            str(sheet_id),
-                            row_index,
-                            column_index,
-                            value_type,
-                            value_json,
-                            formula,
-                            self._json(cell["style"]),
-                            revision,
-                            now,
-                        ),
+        with self._session_lock(int(workbook_id)):
+            connection = self._materialized_connection_unlocked(int(workbook_id))
+            try:
+                sheet = connection.execute(
+                    "SELECT id FROM sum_sheets WHERE id = ? AND deleted = 0",
+                    (str(sheet_id),),
+                ).fetchone()
+                if sheet is None:
+                    raise SumNotFoundError("Sheet not found")
+                # Data-validation rules are enforced on the write path
+                # against the live copy, so invalid values never land in the
+                # file regardless of which client sent them.
+                self._validate_cells(connection, str(sheet_id), normalized)
+            except sqlite3.Error as exc:
+                raise SumStorageError("Workbook file could not be updated") from exc
+
+            # Durable first: the log row plus revision CAS are committed
+            # before the in-memory copy is mutated, so a crash in between
+            # loses nothing — materialization replays the buffered operation.
+            self._append_op_durable(
+                int(workbook_id),
+                operation_id,
+                user_id,
+                current_revision,
+                revision,
+                operation_type,
+                sheet_id,
+                normalized,
+                now,
+                f"Workbook revision is {current_revision}",
+            )
+            try:
+                for cell in normalized:
+                    self._apply_normalized_cell(
+                        connection, str(sheet_id), cell, revision, now
                     )
-                    continue
                 connection.execute(
-                    "INSERT INTO sum_cells (sheet_id, row_index, column_index, value_type, value_json, formula, style_json, revision, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(sheet_id, row_index, column_index) DO UPDATE SET value_type = excluded.value_type, value_json = excluded.value_json, formula = excluded.formula, style_json = excluded.style_json, revision = excluded.revision, updated_at = excluded.updated_at",
+                    "INSERT INTO sum_operations (operation_id, actor_id, "
+                    "base_revision, result_revision, operation_type, "
+                    "payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
-                        str(sheet_id),
-                        row_index,
-                        column_index,
-                        cell["value_type"],
-                        self._json(cell["value"]),
-                        cell["formula"],
-                        self._json(cell["style"]),
+                        str(operation_id),
+                        user_id,
+                        current_revision,
                         revision,
+                        operation_type,
+                        self._json({"sheet_id": str(sheet_id), "cells": normalized}),
                         now,
                     ),
                 )
-            self._ensure_axis_metadata(connection, str(sheet_id), normalized)
-            connection.execute(
-                "INSERT INTO sum_operations (operation_id, actor_id, base_revision, result_revision, operation_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    str(operation_id),
-                    user_id,
-                    current_revision,
-                    revision,
-                    operation_type,
-                    self._json({"sheet_id": str(sheet_id), "cells": normalized}),
-                    now,
-                ),
-            )
-            self._bump_statistics(connection, str(sheet_id), normalized)
-            connection.commit()
-            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            connection.commit()
-            with open(path, "rb") as file_handle:
-                updated = file_handle.read()
-        except sqlite3.Error as exc:
-            raise SumStorageError("Workbook file could not be updated") from exc
-        finally:
-            self._close_sqlite(connection, path)
+                self._ensure_axis_metadata(connection, str(sheet_id), normalized)
+                self._bump_statistics(connection, str(sheet_id), normalized)
+                connection.commit()
+            except sqlite3.Error as exc:
+                # The operation is already durable; drop the live copy so the
+                # next access rebuilds from the log. A client retry is then
+                # answered as replayed instead of failing again.
+                self._drop_session(int(workbook_id))
+                raise SumStorageError("Workbook file could not be updated") from exc
+            session = _WORKBOOK_SESSIONS.get(int(workbook_id))
+            if session is not None:
+                session.pending += 1
+            self._maybe_flush(int(workbook_id))
 
-        new_path, size, checksum = self._publish_revision(
-            int(workbook_id),
-            int(current_revision),
-            int(revision),
-            updated,
-            now,
-            "Workbook revision changed during operation",
-        )
         self._audit(
             "edit",
             "operation",
@@ -2590,15 +3305,15 @@ class SumManager(BaseManager):
     ) -> List[Dict[str, Any]]:
         limit = max(1, min(int(limit), 1000))
         self._workbook(user_id, workbook_id)
-        data = self._file_bytes(workbook_id)
-        connection, path = self._open_sqlite(data)
-        try:
-            rows = connection.execute(
-                "SELECT operation_id, actor_id, base_revision, result_revision, operation_type, payload_json, created_at FROM sum_operations WHERE result_revision > ? ORDER BY result_revision ASC LIMIT ?",
-                (int(after_revision), limit),
-            ).fetchall()
-        finally:
-            self._close_sqlite(connection, path)
+        with self._session_lock(int(workbook_id)):
+            connection = self._materialized_connection_unlocked(int(workbook_id))
+            try:
+                rows = connection.execute(
+                    "SELECT operation_id, actor_id, base_revision, result_revision, operation_type, payload_json, created_at FROM sum_operations WHERE result_revision > ? ORDER BY result_revision ASC LIMIT ?",
+                    (int(after_revision), limit),
+                ).fetchall()
+            except sqlite3.Error as exc:
+                raise SumStorageError("Workbook file schema is invalid") from exc
         operations = []
         for row in rows:
             payload = self._decode(row["payload_json"], {})
@@ -4603,6 +5318,9 @@ class SumManager(BaseManager):
                 self._db.execute(
                     "DELETE FROM sum_revision_blobs WHERE workbook_id = ?", (wb_id,)
                 )
+                self._db.execute(
+                    "DELETE FROM sum_operations WHERE workbook_id = ?", (wb_id,)
+                )
                 self._db.execute("DELETE FROM sum_workbooks WHERE id = ?", (wb_id,))
             self._db.commit()
         except Exception:
@@ -4623,6 +5341,10 @@ class SumManager(BaseManager):
                     ", ".join(restore_failures[:10]),
                 )
             raise
+        # Any live sessions for purged workbooks must be discarded.
+        for wb_id in workbook_ids:
+            with self._session_lock(int(wb_id)):
+                self._drop_session(int(wb_id))
 
     def purge_user_data(self, user_id: int) -> None:
         """Permanently erase a user's workbook files and metadata.

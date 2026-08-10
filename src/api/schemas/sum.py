@@ -21,6 +21,19 @@ class SumSheetResponse(BaseModel):
     updated_at: int
 
 
+class SumViewerPermissionsResponse(BaseModel):
+    """Effective access for the requesting user (never trusts client labels).
+
+    ``read_only_ranges`` is populated on per-sheet responses (viewport); at
+    the workbook level it is empty because range protection is sheet-scoped.
+    """
+
+    can_view: bool = True
+    can_edit: bool = True
+    reason: Optional[str] = None
+    read_only_ranges: List["SumRangePermissionResponse"] = Field(default_factory=list)
+
+
 class SumWorkbookResponse(BaseModel):
     id: SnowflakeID
     artifact_id: Optional[SnowflakeID]
@@ -32,6 +45,9 @@ class SumWorkbookResponse(BaseModel):
     sheets: List[SumSheetResponse] = Field(default_factory=list)
     created_at: int
     updated_at: int
+    my_permissions: SumViewerPermissionsResponse = Field(
+        default_factory=SumViewerPermissionsResponse
+    )
 
 
 class SumWorkbookListResponse(BaseModel):
@@ -105,6 +121,8 @@ class SumViewportResponse(BaseModel):
     validations: List[SumValidationInfo] = Field(default_factory=list)
     conditional_formats: List[SumConditionalFormatInfo] = Field(default_factory=list)
     comments: List[SumCommentInfo] = Field(default_factory=list)
+    can_edit: bool = True
+    read_only_ranges: List["SumRangePermissionResponse"] = Field(default_factory=list)
 
 
 class SumCellOperationRequest(BaseModel):
@@ -377,3 +395,11 @@ class SumXlsxExportResponse(BaseModel):
 class SumXlsxImportRequest(BaseModel):
     content: str = Field(..., description="Base64-encoded XLSX file bytes")
     base_revision: int = Field(..., ge=0)
+
+
+# Late-bound forward references: ``SumViewportResponse`` and
+# ``SumViewerPermissionsResponse`` reference ``SumRangePermissionResponse``,
+# which is defined later in this module. Rebuild explicitly so the schemas are
+# fully resolvable on import regardless of pydantic's lazy resolution.
+SumViewportResponse.model_rebuild()
+SumViewerPermissionsResponse.model_rebuild()

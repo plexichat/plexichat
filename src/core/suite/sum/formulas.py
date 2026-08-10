@@ -13,6 +13,7 @@ The engine is deliberately dependency-free and deterministic so it can be
 unit-tested in isolation and reused by viewport reads, CSV export, and sort.
 """
 
+import datetime
 import math
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -37,6 +38,11 @@ ERROR_CODES = (
 
 MAX_DEPENDENCIES = 200_000
 MAX_CALL_DEPTH = 100
+
+# Excel's epoch: serial 1 == 1900-01-01, with the classic 1900 leap-year bug
+# folded into 1899-12-30 (the convention most spreadsheet engines follow).
+# Dates are stored and evaluated as serial numbers.
+_DATE_EPOCH = datetime.date(1899, 12, 30)
 
 # A resolver returns the raw cell as a dict with at least
 # ``value_type`` and ``value`` (and optionally ``formula``), or ``None``.
@@ -297,6 +303,20 @@ def _numeric(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _to_number_or_zero(value: Any) -> float:
+    """Numeric coercion that treats blanks and non-numeric text as zero.
+
+    Used by criteria functions (SUMIF/AVERAGEIF) where Excel silently
+    ignores non-numeric entries in the summed range.
+    """
+    if value is None:
+        return 0.0
+    try:
+        return _to_number(value)
+    except ValueError:
+        return 0.0
+
+
 class FormulaEvaluator:
     """Evaluate parsed formula ASTs against a resolver with hard bounds."""
 
@@ -514,6 +534,19 @@ class FormulaEvaluator:
             if len(args) != 1:
                 return VALUE_ERROR
             return not self._truthy(self._eval(args[0], sheet, seen, depth))
+        if name in ("VLOOKUP", "HLOOKUP"):
+            return self._lookup(name, args, sheet, seen, depth)
+        if name in ("SUMIF", "COUNTIF", "AVERAGEIF"):
+            return self._criteria(name, args, sheet, seen, depth)
+        if name in ("IFERROR", "IFNA"):
+            if len(args) != 2:
+                return VALUE_ERROR
+            value = self._eval(args[0], sheet, seen, depth)
+            if isinstance(value, str) and value in ERROR_CODES:
+                if name == "IFNA" and value != N_A_ERROR:
+                    return value
+                return self._eval(args[1], sheet, seen, depth)
+            return value
 
         values: List[Any] = []
         for arg in args:
@@ -546,6 +579,23 @@ class FormulaEvaluator:
             return self._double(name, values)
         if name in ("CONCAT", "CONCATENATE"):
             return "".join(_to_text(value) for value in values)
+        if name == "EXACT":
+            if len(values) != 2:
+                return VALUE_ERROR
+            return _to_text(values[0]) == _to_text(values[1])
+        if name == "PROPER":
+            if len(values) != 1:
+                return VALUE_ERROR
+            text = _to_text(values[0])
+            return "".join(
+                part[:1].upper() + part[1:].lower() for part in re.split(r"(\s+)", text)
+            )
+        if name == "SUBSTITUTE":
+            return self._substitute(values)
+        if name in ("DATE", "YEAR", "MONTH", "DAY"):
+            return self._date(name, values)
+        if name == "DAYS":
+            return self._days(values)
         return NAME_ERROR
 
     def _expand_arg(
@@ -670,6 +720,275 @@ class FormulaEvaluator:
             text = _to_text(a)
             return text[start : start + length]
         return VALUE_ERROR
+
+    def _range_matrix(
+        self, node: Any, sheet: Optional[str], seen: set, depth: int
+    ) -> List[List[Any]]:
+        """Resolve a ``A1:C10`` ref node into a 2-D matrix of values.
+
+        Lookup and criteria functions need the *shape* of a range (rows ×
+        columns), which the flat ``_expand_arg`` path discards.
+        """
+        if node[0] != "ref" or ":" not in node[1]:
+            return []
+        first, second = node[1].split(":", 1)
+        s1, r1, c1 = parse_cell_ref(first)
+        s2, r2, c2 = parse_cell_ref(second)
+        target = s1 or sheet
+        r_start, r_end = sorted((r1, r2))
+        c_start, c_end = sorted((c1, c2))
+        matrix: List[List[Any]] = []
+        for r in range(r_start, r_end + 1):
+            row_values: List[Any] = []
+            for c in range(c_start, c_end + 1):
+                self._used += 1
+                if self._used > self._dependencies:
+                    raise ValueError(NUM_ERROR)
+                row_values.append(self._resolve(target, r, c, seen, depth + 1))
+            matrix.append(row_values)
+        return matrix
+
+    @staticmethod
+    def _lookup_eq(a: Any, b: Any) -> bool:
+        """Equality used by V/HLOOKUP: numeric cells compare numerically,
+        anything text-like compares as text."""
+        if a is None and b is None:
+            return True
+        if a is None or b is None:
+            return False
+        if isinstance(a, str) or isinstance(b, str):
+            return _to_text(a) == _to_text(b)
+        try:
+            return _to_number(a) == _to_number(b)
+        except ValueError:
+            return _to_text(a) == _to_text(b)
+
+    def _lookup(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """VLOOKUP / HLOOKUP with exact or sorted approximate matching."""
+        if len(args) < 3 or len(args) > 4:
+            return VALUE_ERROR
+        lookup_value = self._eval(args[0], sheet, seen, depth)
+        if is_error(lookup_value):
+            return lookup_value
+        matrix = self._range_matrix(args[1], sheet, seen, depth)
+        if not matrix:
+            return N_A_ERROR
+        try:
+            index = int(_to_number(self._eval(args[2], sheet, seen, depth))) - 1
+        except ValueError as exc:
+            return str(exc)
+        if index < 0:
+            return VALUE_ERROR
+        range_lookup = True
+        if len(args) == 4:
+            range_lookup = bool(self._truthy(self._eval(args[3], sheet, seen, depth)))
+
+        if name == "HLOOKUP":
+            if not matrix[0]:
+                return N_A_ERROR
+            if index >= len(matrix):
+                return REF_ERROR
+            key_row = matrix[0]
+            for c, key in enumerate(key_row):
+                if self._lookup_eq(key, lookup_value):
+                    return matrix[index][c]
+            if range_lookup:
+                try:
+                    target = _to_number(lookup_value)
+                except ValueError:
+                    return N_A_ERROR
+                best = None
+                for c, key in enumerate(key_row):
+                    if key is None or key == "":
+                        continue
+                    try:
+                        if _to_number(key) <= target:
+                            best = matrix[index][c]
+                        else:
+                            break
+                    except ValueError:
+                        continue
+                return best if best is not None else N_A_ERROR
+            return N_A_ERROR
+
+        # VLOOKUP: search the first column.
+        if index >= len(matrix[0]):
+            return REF_ERROR
+        for row in matrix:
+            if not row:
+                continue
+            if self._lookup_eq(row[0], lookup_value):
+                return row[index]
+        if range_lookup:
+            try:
+                target = _to_number(lookup_value)
+            except ValueError:
+                return N_A_ERROR
+            best = None
+            for row in matrix:
+                if not row:
+                    continue
+                key = row[0]
+                if key is None or key == "":
+                    continue
+                try:
+                    if _to_number(key) <= target:
+                        best = row[index]
+                    else:
+                        break
+                except ValueError:
+                    continue
+            return best if best is not None else N_A_ERROR
+        return N_A_ERROR
+
+    def _criteria(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """SUMIF / COUNTIF / AVERAGEIF with operator-prefixed criteria."""
+        if len(args) < 2 or len(args) > 3:
+            return VALUE_ERROR
+        matrix = self._range_matrix(args[0], sheet, seen, depth)
+        if not matrix:
+            return DIV_ZERO if name == "AVERAGEIF" else 0.0
+        first = args[1]
+        if first[0] == "str":
+            criteria: Any = first[1]
+        elif first[0] == "num":
+            criteria = first[1]
+        else:
+            criteria = self._eval(first, sheet, seen, depth)
+        sum_matrix = matrix
+        if len(args) == 3:
+            sum_matrix = self._range_matrix(args[2], sheet, seen, depth)
+        total = 0.0
+        count = 0
+        for r in range(min(len(matrix), len(sum_matrix))):
+            row = matrix[r]
+            sum_row = sum_matrix[r]
+            for c in range(min(len(row), len(sum_row))):
+                if self._criteria_test(criteria, row[c]):
+                    total += _to_number_or_zero(sum_row[c])
+                    count += 1
+        if name == "SUMIF":
+            return float(total)
+        if name == "COUNTIF":
+            return float(count)
+        if name == "AVERAGEIF":
+            return float(total) / count if count else DIV_ZERO
+        return VALUE_ERROR
+
+    @staticmethod
+    def _criteria_test(criteria: Any, value: Any) -> bool:
+        """Match ``value`` against an Excel-style criteria (e.g. ``">2"``)."""
+        if criteria is None:
+            return value is None or value == ""
+        if isinstance(criteria, str):
+            for op in (">=", "<=", "<>", ">", "<", "="):
+                if criteria.startswith(op) and len(criteria) > len(op):
+                    rest = criteria[len(op) :].strip()
+                    try:
+                        target = float(rest)
+                    except ValueError:
+                        return op == "=" and _to_text(value) == rest
+                    try:
+                        number = _to_number(value)
+                    except ValueError:
+                        return False
+                    if op == ">":
+                        return number > target
+                    if op == "<":
+                        return number < target
+                    if op == ">=":
+                        return number >= target
+                    if op == "<=":
+                        return number <= target
+                    if op == "<>":
+                        return number != target
+                    return number == target
+            return _to_text(value) == criteria
+        if isinstance(value, str) or isinstance(value, bool):
+            return value == criteria
+        try:
+            return _to_number(value) == _to_number(criteria)
+        except ValueError:
+            return False
+
+    def _substitute(self, values: List[Any]) -> Any:
+        """SUBSTITUTE(text, old, new, [instance])."""
+        if len(values) < 3 or len(values) > 4:
+            return VALUE_ERROR
+        text = _to_text(values[0])
+        old = _to_text(values[1])
+        new = _to_text(values[2])
+        if old == "":
+            return text
+        if len(values) == 4:
+            try:
+                instance = int(_to_number(values[3]))
+            except ValueError as exc:
+                return str(exc)
+            if instance < 1:
+                return VALUE_ERROR
+            parts = text.split(old)
+            if instance > len(parts) - 1:
+                return text
+            return old.join(parts[:instance]) + new + old.join(parts[instance:])
+        return text.replace(old, new)
+
+    def _date(self, name: str, values: List[Any]) -> Any:
+        """DATE / YEAR / MONTH / DAY over Excel serial dates."""
+        if name == "DATE":
+            if len(values) != 3:
+                return VALUE_ERROR
+            try:
+                year = int(_to_number(values[0]))
+                month = int(_to_number(values[1]))
+                day = int(_to_number(values[2]))
+            except ValueError as exc:
+                return str(exc)
+            # Excel normalizes out-of-range months (13 -> January next year)
+            # and day overflow via date arithmetic.
+            total_months = year * 12 + (month - 1)
+            normalized_year = total_months // 12
+            normalized_month = total_months % 12 + 1
+            if normalized_year < 1:
+                return NUM_ERROR
+            try:
+                base = datetime.date(normalized_year, normalized_month, 1)
+                serial = (base + datetime.timedelta(days=day - 1) - _DATE_EPOCH).days
+            except (ValueError, OverflowError):
+                return NUM_ERROR
+            return float(serial)
+        if len(values) != 1:
+            return VALUE_ERROR
+        try:
+            serial = int(_to_number(values[0]))
+        except ValueError as exc:
+            return str(exc)
+        try:
+            date_value = _DATE_EPOCH + datetime.timedelta(days=serial)
+        except (ValueError, OverflowError):
+            return NUM_ERROR
+        if name == "YEAR":
+            return float(date_value.year)
+        if name == "MONTH":
+            return float(date_value.month)
+        if name == "DAY":
+            return float(date_value.day)
+        return VALUE_ERROR
+
+    def _days(self, values: List[Any]) -> Any:
+        """DAYS(end_date, start_date) -> whole-day difference."""
+        if len(values) != 2:
+            return VALUE_ERROR
+        try:
+            end = int(_to_number(values[0]))
+            start = int(_to_number(values[1]))
+        except ValueError as exc:
+            return str(exc)
+        return float(end - start)
 
 
 def compute_value(

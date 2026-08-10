@@ -49,6 +49,23 @@ adapter (never in the main database).
 - **PlexiSum** — full server data layer (19 tables, ~40 REST endpoints,
   bounded formula engine) with a bounded-viewport grid client, now including a
   real-time gateway fabric (opcodes 64-67) for collaborative editing.
-- **Remaining work** — the PlexiSum renderer is a hand-rolled grid; the spike
-  decision to replace it with a Univer-based renderer (behind the same
-  op/revision contract) is a future fork, not yet shipped.
+- **Renderer** — the **Univer** engine (Apache-2.0, `@univerjs/preset-sheets-core`,
+  pinned 0.25.1, lazy-loaded and code-split) is now the **default** renderer:
+  the workspace auto-mounts it after the first viewport seeds data, with the
+  hand-rolled bounded grid as both the persisted opt-out (`plexisum.renderer`
+  = `'grid'` in localStorage) and the automatic fallback on mount failure.
+  Both renderers share the same op/revision contract; undo/redo is
+  server-backed in both (the workspace's stack persists the inverse op, and
+  Univer's native undo/redo toolbar buttons are hidden while capture-phase
+  Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y interception keeps the engine's internal history
+  from diverging from the server). Per the renderer spike, Univer is never
+  the persistence authority: it renders a bounded viewport, captures edits as
+  idempotent range operations, and the server (including formula evaluation)
+  stays authoritative. License audit: the `@univerjs-pro/*` commercial
+  packages are excluded by avoiding `@univerjs/presets` and the collaboration
+  presets (see `plexichat-client/THIRD_PARTY_NOTICES.md`).
+- **Write path** — cell edits are coalesced: acknowledged durably via the
+  main-database `sum_operations` buffer + revision CAS and applied to a live
+  in-memory copy, with the immutable blob promoted only when the flush window
+  (25 ops / 2 s) is crossed. Crash recovery replays the buffer over the last
+  blob; `blob_revision` tracks the materialized revision.

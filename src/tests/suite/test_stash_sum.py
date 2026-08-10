@@ -11,6 +11,8 @@ from src.core.suite.stash.manager import StashNotFoundError, StashPermissionErro
 from src.core.suite.sum.manager import (
     SumConflictError,
     SumManager,
+    SumNotFoundError,
+    SumPermissionError,
     SumStorageError,
     SumValidationError,
 )
@@ -206,9 +208,9 @@ def test_sum_delete_restore_preserves_sheet_data(db, two_users, server_manager):
         [{"row": 0, "column": 0, "value_type": "text", "value": "kept"}],
     )
     manager.delete_workbook(owner.id, int(workbook["id"]))
-    with pytest.raises(Exception):
+    with pytest.raises(SumNotFoundError):
         manager.get_workbook(owner.id, int(workbook["id"]))
-    with pytest.raises(Exception):
+    with pytest.raises(SumPermissionError):
         manager.restore_workbook(other.id, int(workbook["id"]))
     restored = manager.restore_workbook(owner.id, int(workbook["id"]))
     assert restored["current_revision"] == 1
@@ -266,7 +268,7 @@ def test_sum_sparse_viewport_revision_conflict_and_replay(
             [{"row": 0, "column": 0, "value_type": "text", "value": "stale"}],
         )
 
-    with pytest.raises(Exception):
+    with pytest.raises(SumPermissionError):
         manager.get_workbook(other.id, workbook["id"])
 
 
@@ -343,10 +345,19 @@ def test_sum_download_file_is_base64_and_round_trips(db, two_users, server_manag
     assert upload["revision"] == 2
 
 
-def test_sum_revision_blobs_are_pruned(db, two_users, server_manager, tmp_path):
-    """Superseded immutable revision blobs are garbage-collected."""
+def test_sum_revision_blobs_are_pruned(
+    db, two_users, server_manager, tmp_path, monkeypatch
+):
+    """Superseded immutable revision blobs are garbage-collected.
+
+    Cell writes are normally coalesced (see test_sum_coalescing), so the
+    prune path is exercised here by forcing a flush per operation.
+    """
     import glob
 
+    import src.core.suite.sum.manager as sum_manager_module
+
+    monkeypatch.setattr(sum_manager_module, "SUM_FLUSH_MAX_OPS", 1)
     owner, _ = two_users
     create_sum_tables(db)
     manager = SumManager(db, servers_module=server_manager, storage_dir=str(tmp_path))
