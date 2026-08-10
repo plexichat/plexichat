@@ -2,8 +2,15 @@
 skips = ["B601"]
 confidence = "HIGH"
 severity = "MEDIUM"
-exclude = [".venv", "venv", ".pytest_cache", "cache", "temp", "uploads", "media", "logs", "src/tests", "tests", "**/__pycache__"]
+exclude = [".venv", "venv", ".pytest_cache", "test_artifacts", "cache", "temp", "uploads", "media", "logs", "src/tests", "tests", "**/__pycache__"]
 # Targets limited to src/; test dirs excluded above.
 # B101 (assert) is intentionally NOT globally skipped — assert in production
 # code is a security concern. Use `# nosec B101` for legitimate uses.
 targets = ["src"]
+
+# Keep test-run caches/artifacts out of the repo root.
+[tool.coverage.run]
+data_file = "test_artifacts/coverage/.coverage"
+
+[tool.ruff]
+cache-dir = "test_artifacts/ruff"
