@@ -1,5 +1,7 @@
 """Unit tests for the bounded PlexiSum formula engine."""
 
+import datetime
+
 from src.core.suite.sum.formulas import (
     FormulaEvaluator,
     MAX_CALL_DEPTH,
@@ -211,6 +213,124 @@ def test_compute_value_entry_point():
 
     assert compute_value("formula", None, "A1*7", resolver, sheet="1") == 42.0
     assert compute_value("number", 3, None, resolver) == 3
+
+
+def test_vlookup_exact_and_range_lookup():
+    cells = {
+        ("1", 0, 0): {"value_type": "text", "value": "apple", "formula": None},
+        ("1", 0, 1): {"value_type": "number", "value": 3, "formula": None},
+        ("1", 1, 0): {"value_type": "text", "value": "banana", "formula": None},
+        ("1", 1, 1): {"value_type": "number", "value": 5, "formula": None},
+        ("1", 2, 0): {"value_type": "text", "value": "cherry", "formula": None},
+        ("1", 2, 1): {"value_type": "number", "value": 8, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval('VLOOKUP("banana", A1:B3, 2, FALSE)', resolver) == 5.0
+    assert _eval('VLOOKUP("kiwi", A1:B3, 2, FALSE)', resolver) == "#N/A"
+    assert _eval('VLOOKUP("apple", A1:B3, 5, FALSE)', resolver) == "#REF!"
+    # Approximate match on sorted numeric keys picks the greatest key <= target.
+    numeric = {
+        ("1", 0, 0): {"value_type": "number", "value": 1, "formula": None},
+        ("1", 0, 1): {"value_type": "text", "value": "one", "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 10, "formula": None},
+        ("1", 1, 1): {"value_type": "text", "value": "ten", "formula": None},
+        ("1", 2, 0): {"value_type": "number", "value": 100, "formula": None},
+        ("1", 2, 1): {"value_type": "text", "value": "hundred", "formula": None},
+    }
+    assert _eval("VLOOKUP(42, A1:B3, 2)", _resolver(numeric)) == "ten"
+    assert _eval("VLOOKUP(500, A1:B3, 2)", _resolver(numeric)) == "hundred"
+    assert _eval("VLOOKUP(-5, A1:B3, 2)", _resolver(numeric)) == "#N/A"
+
+
+def test_hlookup():
+    cells = {
+        ("1", 0, 0): {"value_type": "text", "value": "Q1", "formula": None},
+        ("1", 0, 1): {"value_type": "text", "value": "Q2", "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 100, "formula": None},
+        ("1", 1, 1): {"value_type": "number", "value": 200, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval('HLOOKUP("Q2", A1:B2, 2, FALSE)', resolver) == 200.0
+    assert _eval('HLOOKUP("Q3", A1:B2, 2, FALSE)', resolver) == "#N/A"
+    assert _eval('HLOOKUP("Q1", A1:B2, 5, FALSE)', resolver) == "#REF!"
+
+
+def test_sumif_countif_averageif():
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 1, "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 5, "formula": None},
+        ("1", 2, 0): {"value_type": "number", "value": 10, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval('SUMIF(A1:A3, ">2")', resolver) == 15.0
+    assert _eval('COUNTIF(A1:A3, ">2")', resolver) == 2.0
+    assert _eval('AVERAGEIF(A1:A3, ">2")', resolver) == 7.5
+    assert _eval('SUMIF(A1:A3, ">100")', resolver) == 0.0
+    assert _eval('AVERAGEIF(A1:A3, ">100")', resolver) == "#DIV/0!"
+    assert _eval('COUNTIF(A1:A3, "=5")', resolver) == 1.0
+
+
+def test_sumif_with_sum_range():
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 1, "formula": None},
+        ("1", 0, 1): {"value_type": "number", "value": 10, "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 5, "formula": None},
+        ("1", 1, 1): {"value_type": "number", "value": 50, "formula": None},
+        ("1", 2, 0): {"value_type": "number", "value": 10, "formula": None},
+        ("1", 2, 1): {"value_type": "number", "value": 100, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval('SUMIF(A1:A3, ">2", B1:B3)', resolver) == 150.0
+    # Non-numeric entries in the summed range are treated as zero.
+    mixed = {
+        ("1", 0, 0): {"value_type": "number", "value": 5, "formula": None},
+        ("1", 0, 1): {"value_type": "number", "value": 2, "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 5, "formula": None},
+        ("1", 1, 1): {"value_type": "text", "value": "skip", "formula": None},
+    }
+    assert _eval('SUMIF(A1:A2, ">4", B1:B2)', _resolver(mixed)) == 2.0
+
+
+def test_iferror_and_ifna():
+    assert _eval("IFERROR(1/0, 42)") == 42.0
+    assert _eval("IFERROR(2*3, 0)") == 6.0
+    assert _eval('IFERROR(VLOOKUP(99, A1:A2, 1, FALSE), "missing")') == "missing"
+    assert _eval('IFNA(VLOOKUP(99, A1:A2, 1, FALSE), "none")') == "none"
+    # IFNA passes through non-#N/A errors unchanged.
+    assert _eval("IFNA(1/0, 7)") == "#DIV/0!"
+
+
+def test_date_functions():
+    epoch = datetime.date(1899, 12, 30)
+    assert _eval("DATE(2024, 1, 1)") == float((datetime.date(2024, 1, 1) - epoch).days)
+    assert _eval("YEAR(DATE(2024, 6, 15))") == 2024.0
+    assert _eval("MONTH(DATE(2024, 6, 15))") == 6.0
+    assert _eval("DAY(DATE(2024, 6, 15))") == 15.0
+    assert _eval("DAYS(DATE(2024, 1, 10), DATE(2024, 1, 1))") == 9.0
+    # Excel-style month overflow normalizes into the following year.
+    assert _eval("DATE(2024, 13, 1)") == _eval("DATE(2025, 1, 1)")
+    # Date serials round-trip.
+    assert _eval("DAY(0)") == 30.0
+    assert _eval("MONTH(0)") == 12.0
+    assert _eval("YEAR(0)") == 1899.0
+
+
+def test_text_functions_expanded():
+    assert _eval('SUBSTITUTE("hello world", "l", "L")') == "heLLo worLd"
+    assert _eval('SUBSTITUTE("hello world", "l", "L", 2)') == "helLo world"
+    assert _eval('SUBSTITUTE("hello world", "l", "L", 9)') == "hello world"
+    assert _eval('EXACT("abc", "abc")') is True
+    assert _eval('EXACT("abc", "ABC")') is False
+    assert _eval('PROPER("hello world")') == "Hello World"
+
+
+def test_compute_value_cache_key_uses_formula_text():
+    from src.core.suite.sum.formulas import compute_value
+
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 6, "formula": None},
+    }
+    resolver = _resolver(cells)
     # The cache key includes the formula text, so a reused evaluator with a
     # different formula on the same coordinates must not serve stale values.
     assert compute_value("formula", None, "A1+1", resolver, sheet="1") == 7.0
