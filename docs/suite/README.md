@@ -25,17 +25,6 @@ An app is standalone when it has its own home, navigation, creation flow,
 recent/pinned/shared views, empty states, templates, search, settings,
 onboarding, and deep links. It does not need a separate deployment or backend.
 
-## Documents
-
-- [Architecture and app homes](01_ARCHITECTURE.md)
-- [PlexiStash RBAC and storage](02_STASH_RBAC.md)
-- [PlexiSum data model and performance](03_SUM_DATA_MODEL.md)
-- [Migration and implementation strategy](04_MIGRATION_STRATEGY.md)
-- [API contract plan](05_API_CONTRACTS.md)
-- [PlexiSum renderer technical spike](06_SUM_RENDERER_SPIKE.md)
-- [PlexiSum real-time fabric](07_SUM_REALTIME.md)
-- [PlexiSum Univer adapter and fork decision](08_UNIVER_ADAPTER.md)
-
 ## Implementation status
 
 PlexiSuite is no longer a contract-only scaffold. The Stash and Sum domains are
@@ -60,10 +49,10 @@ adapter (never in the main database).
   server-backed in both (the workspace's stack persists the inverse op, and
   Univer's native undo/redo toolbar buttons are hidden while capture-phase
   Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y interception keeps the engine's internal history
-  from diverging from the server). Per the renderer spike, Univer is never
-  the persistence authority: it renders a bounded viewport, captures edits as
-  idempotent range operations, and the server (including formula evaluation)
-  stays authoritative. License audit: the `@univerjs-pro/*` commercial
+  from diverging from the server). Univer is never the persistence
+  authority: it renders a bounded viewport, captures edits as idempotent
+  range operations, and the server (including formula evaluation) stays
+  authoritative. License audit: the `@univerjs-pro/*` commercial
   packages are excluded by avoiding `@univerjs/presets` and the collaboration
   presets (see `plexichat-client/THIRD_PARTY_NOTICES.md`).
 - **Write path** — cell edits are coalesced: acknowledged durably via the
