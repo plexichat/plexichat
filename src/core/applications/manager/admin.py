@@ -91,6 +91,12 @@ class AdminMixin(ApplicationManagerProtocol):
         feature_stats["webhook_retries_pending"] = self._count_rows(
             "webhook_retry_queue", "status = 'pending'"
         )
+        feature_stats["webhook_retries_retrying"] = self._count_rows(
+            "webhook_retry_queue", "status = 'retrying'"
+        )
+        feature_stats["webhook_retries_dead_letter"] = self._count_rows(
+            "webhook_retry_queue", "status = 'dead_letter'"
+        )
         if self._db.table_exists("message_reports"):
             rows = self._db.fetch_all(
                 "SELECT category, COUNT(*) as count FROM message_reports GROUP BY category ORDER BY count DESC LIMIT 10"
@@ -145,7 +151,7 @@ class AdminMixin(ApplicationManagerProtocol):
                 "id": row["id"],
                 "name": row["name"],
                 "owner_id": row["owner_id"],
-                "bot_id": row["bot_id"],
+                "bot_id": (str(row["bot_id"]) if row["bot_id"] is not None else None),
                 "icon_url": row["icon_url"],
                 "approved_servers": row["approved_count"] or 0,
                 "pending_requests": row["pending_count"] or 0,

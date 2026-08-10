@@ -318,6 +318,52 @@ Document test results in your incident-response runbook.
 - Connection pool tuning
 - Caching strategy
 
+## Webhook Delivery Retries
+
+Outbound webhook deliveries (e.g. channel webhooks firing to external
+endpoints) run through a persistent retry queue with exponential backoff
+instead of a single fire-and-forget POST.
+
+### How it works
+
+- Every outbound delivery is enqueued in `webhook_retry_queue` when the
+  first attempt fails (non-`2xx` response or transport error).
+- The `WebhookDeliveryJob` background worker drains due records every
+  `webhooks.delivery_interval_seconds` (default `30`, set `<= 0` to
+  disable). It is started automatically by the server initializer after
+  webhook setup.
+- Backoff is exponential with jitter (`1s`, `2s`, `4s`, ... capped at
+  `60s`). After `webhooks.max_retries` (default 5) failed attempts a
+  delivery is moved to the **dead-letter queue** (`status = 'dead_letter'`)
+  and is no longer retried automatically.
+- Success is recorded as `status = 'delivered'` with the HTTP status.
+- Records in the dead-letter state can be retried manually through the
+  retry-queue API; expired delivered/dead-letter records are cleaned up
+  after the retention window.
+
+### Monitoring
+
+The admin dashboard feature stats surface the retry queue health:
+
+- `webhook_retries_pending` — due or not-yet-attempted deliveries
+- `webhook_retries_retrying` — in the backoff window
+- `webhook_retries_dead_letter` — permanently failed deliveries
+
+A non-zero, growing `webhook_retries_dead_letter` count is the primary
+signal that a downstream endpoint is persistently rejecting deliveries
+(HTTP 4xx/5xx or unreachable) and needs operator attention.
+
+### Operational tasks
+
+- **Investigate dead letters**: list dead-letter entries, inspect
+  `last_error` / `response_status`, fix the downstream endpoint, then
+  trigger a manual retry.
+- **Tune delivery cadence**: lower `delivery_interval_seconds` for faster
+  retry cycles on critical webhooks, or raise `max_retries` for
+  long-lived downstream outages. Changes are picked up on restart.
+
+## Security Operations
+
 **Application Optimization**:
 - Code optimization
 - Caching improvements

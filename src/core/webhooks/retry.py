@@ -97,7 +97,7 @@ class WebhookRetryQueue:
         self._db.execute(
             """INSERT INTO webhook_retry_queue
                (id, webhook_id, event_type, payload, endpoint_url,
-                attempt_count, max_attempts, next_attempt_at,
+                attempt_count, max_attempts, next_retry_at,
                 status, created_at, updated_at, metadata)
                VALUES (?, ?, ?, ?, ?, 0, ?, ?, 'pending', ?, ?, ?)""",
             (
@@ -126,7 +126,7 @@ class WebhookRetryQueue:
             "endpoint_url": endpoint_url,
             "attempt_count": 0,
             "max_attempts": self.MAX_RETRIES,
-            "next_attempt_at": next_attempt_at,
+            "next_retry_at": next_attempt_at,
             "status": "pending",
             "created_at": now,
         }
@@ -190,7 +190,7 @@ class WebhookRetryQueue:
         self._db.execute(
             """UPDATE webhook_retry_queue
                SET status = 'retrying', response_status = ?, last_error = ?,
-                   attempt_count = ?, next_attempt_at = ?, updated_at = ?
+                   attempt_count = ?, next_retry_at = ?, updated_at = ?
                WHERE id = ?""",
             (response_status, error, new_attempt, next_attempt_at, now, retry_id),
         )
@@ -204,7 +204,7 @@ class WebhookRetryQueue:
             "id": retry_id,
             "status": "retrying",
             "attempts": new_attempt,
-            "next_attempt_at": next_attempt_at,
+            "next_retry_at": next_attempt_at,
             "delay_ms": delay,
         }
 
@@ -218,8 +218,8 @@ class WebhookRetryQueue:
         rows = self._db.fetch_all(
             """SELECT * FROM webhook_retry_queue
                WHERE status IN ('pending', 'retrying')
-                 AND next_attempt_at <= ?
-               ORDER BY next_attempt_at ASC
+                 AND next_retry_at <= ?
+               ORDER BY next_retry_at ASC
                LIMIT ?""",
             (now, limit),
         )
@@ -269,7 +269,7 @@ class WebhookRetryQueue:
         result = self._db.execute(
             """UPDATE webhook_retry_queue
                SET status = 'retrying', attempt_count = 0,
-                   next_attempt_at = ?, updated_at = ?
+                   next_retry_at = ?, updated_at = ?
                WHERE id = ? AND status = 'dead_letter'""",
             (now, now, retry_id),
         )
@@ -295,23 +295,23 @@ class WebhookRetryQueue:
 
         # Delete old delivered/failed records past the window
         cutoff = now - self.RETRY_WINDOW_MS
-        self._db.execute(
+        delete_cursor = self._db.execute(
             """DELETE FROM webhook_retry_queue
                WHERE status IN ('delivered', 'dead_letter')
                  AND updated_at < ?""",
             (cutoff,),
         )
-        deleted = self._db.rowcount
+        deleted = int(getattr(delete_cursor, "rowcount", 0) or 0)
 
         # Auto-abandon stuck retrying records
-        self._db.execute(
+        abandon_cursor = self._db.execute(
             """UPDATE webhook_retry_queue
                SET status = 'dead_letter', updated_at = ?
                WHERE status = 'retrying'
                  AND created_at < ?""",
             (now, cutoff),
         )
-        abandoned = self._db.rowcount
+        abandoned = int(getattr(abandon_cursor, "rowcount", 0) or 0)
 
         logger.debug("Cleaned up expired webhook retry records")
         return deleted + abandoned

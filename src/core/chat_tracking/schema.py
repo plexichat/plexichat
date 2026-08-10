@@ -9,15 +9,24 @@ from src.core.database.core.schema_splitter import split_sql_statements
 
 SCHEMA = """
 -- Webhook retry queue table
+-- Kept in lockstep with src/core/webhooks/retry.py (WebhookRetryQueue):
+-- the tracker stores per-attempt delivery metadata (event type, endpoint
+-- URL, ephemeral signing headers, response status and delivery time) so
+-- retries can redeliver without losing delivery context.
 CREATE TABLE IF NOT EXISTS webhook_retry_queue (
     id INTEGER PRIMARY KEY,
     webhook_id INTEGER NOT NULL,
+    event_type TEXT,
     payload TEXT NOT NULL,
+    endpoint_url TEXT,
     attempt_count INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 5,
     next_retry_at INTEGER NOT NULL,
     last_error TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
+    metadata TEXT,
+    response_status INTEGER,
+    delivered_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );

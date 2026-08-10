@@ -260,6 +260,9 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "docs_url": "/docs",
             "redoc_url": "/redoc",
             "openapi_url": "/openapi.json",
+            # Cap on the AnyIO default thread limiter used by run_in_threadpool
+            # (default 16, not anyio's oversubscribed 40).
+            "max_worker_threads": 16,
         },
         "websocket": {
             "heartbeat_interval_ms": 45000,
@@ -733,6 +736,9 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "max_webhooks_per_server": 50,
             "max_message_length": 2000,
             "max_embeds_per_message": 10,
+            # Background retry-delivery sweep: seconds between passes over the
+            # webhook_retry_queue. Set to 0 to disable the worker entirely.
+            "delivery_interval_seconds": 30,
         },
         "automod": {
             "enabled": True,

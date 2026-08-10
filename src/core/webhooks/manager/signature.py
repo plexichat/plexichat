@@ -145,16 +145,24 @@ class SignatureMixin(WebhookManagerTrait):
         if not row:
             return False
 
-        public_key_b64 = dict(row).get("signing_key_public")
-        if not public_key_b64:
+        public_key_bytes = dict(row).get("signing_key_public")
+        if not public_key_bytes:
             return False
 
-        try:
-            public_key = base64.b64decode(public_key_b64)
-        except Exception as e:
-            logger.error(
-                f"Failed to decode signing-key for inbound webhook {webhook_id}: {e}"
-            )
+        # The schema stores the raw 32-byte public key (BLOB/BYTEA). Some
+        # rows may carry a base64 text form instead; normalize both so a
+        # key written by any version verifies.
+        if isinstance(public_key_bytes, str):
+            try:
+                public_key_bytes = base64.b64decode(public_key_bytes.encode("ascii"))
+            except Exception as e:
+                logger.error(
+                    f"Failed to decode signing-key for inbound webhook "
+                    f"{webhook_id}: {e}"
+                )
+                return False
+        elif len(public_key_bytes) != 32:
+            logger.error(f"Signing public key for webhook {webhook_id} is not 32 bytes")
             return False
 
         # Decode the signature (URL-safe or standard base64).
@@ -177,7 +185,7 @@ class SignatureMixin(WebhookManagerTrait):
         )
 
         try:
-            Ed25519PublicKey.from_public_bytes(public_key).verify(
+            Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
                 signature, signed_data
             )
             return True

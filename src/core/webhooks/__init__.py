@@ -37,6 +37,8 @@ from .exceptions import (
     RateLimitError,
     EmbedLimitError,
 )
+from .retry import WebhookRetryQueue
+from .delivery import WebhookDeliverer, WebhookDeliveryError, process_due_retries
 
 __all__ = [
     # Models
@@ -73,6 +75,11 @@ __all__ = [
     # Webhook execution
     "execute_webhook",
     "execute_webhook_by_url",
+    # Outbound delivery + retries
+    "WebhookRetryQueue",
+    "WebhookDeliverer",
+    "WebhookDeliveryError",
+    "process_due_retries",
 ]
 
 _manager = None

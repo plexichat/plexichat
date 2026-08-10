@@ -455,6 +455,26 @@ def initialize_modules(
     )
     modules_store["webhooks"] = webhooks
 
+    # Outbound webhook retry-delivery job: periodically drains the
+    # ``webhook_retry_queue`` so failed deliveries get their backoff attempts.
+    # Disabled when ``webhooks.delivery_interval_seconds <= 0``.
+    try:
+        from src.core.webhooks.delivery import WebhookDeliveryJob
+
+        webhook_cfg = config.get("webhooks", {}) or {}
+        delivery_job = WebhookDeliveryJob(db, webhook_cfg)
+        delivery_job.start()
+        if delivery_job._is_running:
+            modules_store["webhook_delivery"] = delivery_job
+            logger.info("Webhook retry delivery job started")
+        else:
+            logger.info(
+                "Webhook retry delivery job disabled "
+                "(delivery_interval_seconds <= 0 or no database)"
+            )
+    except Exception as e:
+        logger.error(f"Failed to start webhook retry delivery job: {e}")
+
     try:
         timed_init("threads", lambda: threads.setup(db, auth, messaging, servers))
         modules_store["threads"] = threads
