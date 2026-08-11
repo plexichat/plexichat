@@ -916,7 +916,16 @@ class FormulaEvaluator:
             return False
 
     def _substitute(self, values: List[Any]) -> Any:
-        """SUBSTITUTE(text, old, new, [instance])."""
+        """SUBSTITUTE(text, old, new, [instance]).
+
+        When *instance* is provided, only that specific occurrence of *old*
+        is replaced (1-based).
+
+        Example: SUBSTITUTE("hello world", "l", "L", 2)
+          - Finds the 2nd 'l' at position 3
+          - Replaces it with 'L'
+          - Result: "helLo world"
+        """
         if len(values) < 3 or len(values) > 4:
             return VALUE_ERROR
         text = _to_text(values[0])
@@ -931,10 +940,20 @@ class FormulaEvaluator:
                 return str(exc)
             if instance < 1:
                 return VALUE_ERROR
-            parts = text.split(old)
-            if instance > len(parts) - 1:
-                return text
-            return old.join(parts[:instance]) + new + old.join(parts[instance:])
+            # Find the position of the Nth occurrence
+            start = 0
+            count = 0
+            while count < instance:
+                pos = text.find(old, start)
+                if pos == -1:
+                    # Not enough occurrences; return original text
+                    return text
+                count += 1
+                if count == instance:
+                    # Found the Nth occurrence; replace it
+                    return text[:pos] + new + text[pos + len(old) :]
+                start = pos + 1
+            return text
         return text.replace(old, new)
 
     def _date(self, name: str, values: List[Any]) -> Any:
@@ -997,13 +1016,27 @@ def compute_value(
     formula: Optional[str],
     resolver: CellResolver,
     sheet: Optional[str] = None,
+    _evaluator_cache: Optional[Dict[int, FormulaEvaluator]] = None,
 ) -> Any:
     """Top-level entry: return the display/computed value for a cell.
 
     ``sheet`` defaults to ``None`` (single-sheet context); callers that
     resolve against a real workbook should pass the sheet id so cross-sheet
     and same-sheet references hit the right rows.
+
+    An optional *_evaluator_cache* dict (keyed by ``id(resolver)``) allows
+    callers that evaluate many cells with the same resolver to reuse a
+    single ``FormulaEvaluator`` instance, preserving its memoization cache
+    across calls.  Without this, every ``compute_value`` call created a
+    fresh evaluator, discarding previously computed results.
     """
     if value_type == "formula" and formula:
+        if _evaluator_cache is not None:
+            key = id(resolver)
+            evaluator = _evaluator_cache.get(key)
+            if evaluator is None:
+                evaluator = FormulaEvaluator(resolver)
+                _evaluator_cache[key] = evaluator
+            return evaluator.evaluate_cell(sheet, -1, -1, formula)
         return FormulaEvaluator(resolver).evaluate_cell(sheet, -1, -1, formula)
     return value
