@@ -308,7 +308,15 @@ async def get_user_reports(
         )
 
 
-@router.get("/user-reports/counts", response_model=ModerationReportCountsResponse)
+@router.get(
+    "/user-reports/counts",
+    response_model=ModerationReportCountsResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_user_report_counts(request: Request):
     """Get user report counts grouped by status."""
     check_host_restriction(request)
@@ -321,6 +329,13 @@ async def get_user_report_counts(request: Request):
 @router.post(
     "/user-reports/{report_id}/review",
     response_model=ModerationReportReviewResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Report not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def review_user_report(
     report_id: int, review: ModerationReportReviewRequest, request: Request
@@ -342,8 +357,10 @@ async def review_user_report(
     "/blocked-hashes",
     response_model=List[BlockedHashResponse],
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def get_blocked_hashes(request: Request, limit: int = 100, offset: int = 0):
@@ -368,7 +385,16 @@ async def get_blocked_hashes(request: Request, limit: int = 100, offset: int = 0
     ]
 
 
-@router.post("/blocked-hashes", response_model=BlockHashResponse)
+@router.post(
+    "/blocked-hashes",
+    response_model=BlockHashResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def block_hash_manually(block_request: ManualBlockHashRequest, request: Request):
     """
     Manually add a content hash to the blocklist.
@@ -395,7 +421,16 @@ async def block_hash_manually(block_request: ManualBlockHashRequest, request: Re
     )
 
 
-@router.delete("/blocked-hashes/{hash_value}", response_model=SuccessResponse)
+@router.delete(
+    "/blocked-hashes/{hash_value}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def unblock_hash(hash_value: str, request: Request):
     """
     Remove a content hash from the blocklist.
@@ -416,8 +451,10 @@ async def unblock_hash(hash_value: str, request: Request):
     "/blocked-users",
     response_model=List[BlockedUserResponse],
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0):
@@ -441,7 +478,16 @@ async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0)
     ]
 
 
-@router.post("/blocked-users", response_model=BlockUserResponse)
+@router.post(
+    "/blocked-users",
+    response_model=BlockUserResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def block_user(block_request: BlockUserRequest, request: Request):
     """
     Block or ban a specific user from the platform.
@@ -463,7 +509,16 @@ async def block_user(block_request: BlockUserRequest, request: Request):
     return BlockUserResponse(success=True, user_id=block_request.user_id)
 
 
-@router.delete("/blocked-users/{user_id}", response_model=SuccessResponse)
+@router.delete(
+    "/blocked-users/{user_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def unblock_user(user_id: str, request: Request):
     """
     Lift a block or ban from a specific user.
