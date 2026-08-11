@@ -93,8 +93,10 @@ def _user_report_to_response(report) -> UserReportResponse:
     "/hash-reports",
     response_model=List[HashReportResponse],
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def get_hash_reports(
@@ -142,7 +144,15 @@ async def get_hash_reports(
         )
 
 
-@router.get("/hash-reports/counts", response_model=HashReportCountsResponse)
+@router.get(
+    "/hash-reports/counts",
+    response_model=HashReportCountsResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_hash_report_counts(request: Request):
     """
     Get the total number of content hash reports, grouped by status.
@@ -155,7 +165,15 @@ async def get_hash_report_counts(request: Request):
 
 
 @router.post(
-    "/hash-reports/{report_id}/review", response_model=HashReportReviewResponse
+    "/hash-reports/{report_id}/review",
+    response_model=HashReportReviewResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Report not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def review_hash_report(
     report_id: int, review: HashReportReviewRequest, request: Request
@@ -177,7 +195,16 @@ async def review_hash_report(
     return HashReportReviewResponse(success=True, action=review.action)
 
 
-@router.get("/message-reports", response_model=List[MessageReportResponse])
+@router.get(
+    "/message-reports",
+    response_model=List[MessageReportResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_message_reports(
     request: Request,
     status_filter: Optional[str] = None,
@@ -201,7 +228,15 @@ async def get_message_reports(
         )
 
 
-@router.get("/message-reports/counts", response_model=ModerationReportCountsResponse)
+@router.get(
+    "/message-reports/counts",
+    response_model=ModerationReportCountsResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_message_report_counts(request: Request):
     """Get message report counts grouped by status."""
     check_host_restriction(request)
@@ -214,6 +249,13 @@ async def get_message_report_counts(request: Request):
 @router.post(
     "/message-reports/{report_id}/review",
     response_model=ModerationReportReviewResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Report not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def review_message_report(
     report_id: int, review: ModerationReportReviewRequest, request: Request
@@ -233,7 +275,16 @@ async def review_message_report(
     return ModerationReportReviewResponse(success=True, action=review.action)
 
 
-@router.get("/user-reports", response_model=List[UserReportResponse])
+@router.get(
+    "/user-reports",
+    response_model=List[UserReportResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_user_reports(
     request: Request,
     status_filter: Optional[str] = None,

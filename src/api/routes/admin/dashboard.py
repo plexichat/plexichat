@@ -19,7 +19,14 @@ import utils.logger as logger
 router = APIRouter()
 
 
-@router.get("/dashboard", response_model=AdminDashboardResponse)
+@router.get(
+    "/dashboard",
+    response_model=AdminDashboardResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_dashboard(request: Request):
     """
     Retrieve overview statistics for the administrator dashboard.
@@ -127,7 +134,13 @@ async def get_dashboard(request: Request):
         )
 
 
-@router.get("/dashboard/cross-worker-tuning")
+@router.get(
+    "/dashboard/cross-worker-tuning",
+    responses={
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_cross_worker_tuning(request: Request):
     """Return the current poll-loop tuning constants."""
     check_host_restriction(request)
@@ -153,7 +166,14 @@ class _TuningPatch(_BaseModel):
     glide_request_timeout_ms: int | None = None
 
 
-@router.patch("/dashboard/cross-worker-tuning")
+@router.patch(
+    "/dashboard/cross-worker-tuning",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
     """Hot-reload poll-loop tuning constants at runtime.
 
@@ -222,7 +242,14 @@ async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
     return result
 
 
-@router.get("/dashboard/cross-worker-tuning/audit")
+@router.get(
+    "/dashboard/cross-worker-tuning/audit",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
     """Return recent cross-worker tuning audit log entries."""
     check_host_restriction(request)
@@ -286,6 +313,7 @@ async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
 @router.get(
     "/dashboard/system-alerts",
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Insufficient permissions"},
     },
@@ -363,7 +391,14 @@ async def get_system_alerts(
         raise HTTPException(status_code=500, detail="Failed to query system alerts")
 
 
-@router.get("/dashboard/system-alerts/stats")
+@router.get(
+    "/dashboard/system-alerts/stats",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_system_alert_stats(
     request: Request,
     hours: int = 168,

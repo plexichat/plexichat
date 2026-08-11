@@ -65,7 +65,14 @@ def _serialize_access_token_scope(scope) -> AccessTokenScopeResponse:
     )
 
 
-@router.get("/security/blocked-ips", response_model=List[BlockedIPResponse])
+@router.get(
+    "/security/blocked-ips",
+    response_model=List[BlockedIPResponse],
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_blocked_ips(request: Request):
     """
     Retrieve a list of all currently blocked IP addresses.
@@ -77,7 +84,15 @@ async def get_blocked_ips(request: Request):
     return [BlockedIPResponse(**ip) for ip in auth.get_blocked_ips()]
 
 
-@router.post("/security/block-ip", response_model=SuccessResponse)
+@router.post(
+    "/security/block-ip",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def block_ip(request: Request, body: IPBlockRequest):
     """
     Block a specific IP address from accessing the platform.
@@ -94,6 +109,7 @@ async def block_ip(request: Request, body: IPBlockRequest):
     "/security/access-tokens",
     response_model=List[AccessTokenResponse],
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
@@ -110,7 +126,16 @@ async def list_access_tokens(request: Request, include_revoked: bool = True):
     return [_serialize_access_token(t) for t in tokens]
 
 
-@router.post("/security/access-tokens", response_model=AccessTokenCreateResponse)
+@router.post(
+    "/security/access-tokens",
+    response_model=AccessTokenCreateResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        409: {"model": ErrorResponse, "description": "Token name already exists"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def create_access_token(request: Request, body: AccessTokenCreateRequest):
     """
     Create a new permanent API access token for administrative use.
@@ -143,6 +168,12 @@ async def create_access_token(request: Request, body: AccessTokenCreateRequest):
 @router.get(
     "/security/access-tokens/{token_id}",
     response_model=AccessTokenDetailResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_access_token_detail(
     request: Request, token_id: int, recent_limit: int = 100
@@ -190,6 +221,12 @@ async def get_access_token_detail(
 @router.patch(
     "/security/access-tokens/{token_id}",
     response_model=AccessTokenResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def update_access_token(
     request: Request,
@@ -316,6 +353,12 @@ async def add_access_token_scope(
 @router.delete(
     "/security/access-tokens/{token_id}/scopes/{scope_id}",
     response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token scope not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def remove_access_token_scope(request: Request, token_id: int, scope_id: int):
     """Remove an IP or CIDR scope rule from an API access token."""
@@ -333,7 +376,14 @@ async def remove_access_token_scope(request: Request, token_id: int, scope_id: i
 
 
 @router.post(
-    "/security/access-tokens/{token_id}/revoke", response_model=SuccessResponse
+    "/security/access-tokens/{token_id}/revoke",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def revoke_access_token(request: Request, token_id: int):
     """
@@ -367,7 +417,17 @@ async def revoke_access_token(request: Request, token_id: int):
 
 
 @router.post(
-    "/security/access-tokens/{token_id}/unrevoke", response_model=SuccessResponse
+    "/security/access-tokens/{token_id}/unrevoke",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {
+            "model": ErrorResponse,
+            "description": "Access token not found or not revoked",
+        },
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def unrevoke_access_token(request: Request, token_id: int):
     """
@@ -405,7 +465,14 @@ async def unrevoke_access_token(request: Request, token_id: int):
     return SuccessResponse(success=True, message=None)
 
 
-@router.delete("/security/unblock-ip/{ip_address:path}", response_model=SuccessResponse)
+@router.delete(
+    "/security/unblock-ip/{ip_address:path}",
+    response_model=SuccessResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def unblock_ip(request: Request, ip_address: str):
     """
     Remove an IP address from the blocklist.
@@ -418,7 +485,15 @@ async def unblock_ip(request: Request, ip_address: str):
     return SuccessResponse(success=True, message=None)
 
 
-@router.get("/security/banned-usernames", response_model=List[BannedUsernameResponse])
+@router.get(
+    "/security/banned-usernames",
+    response_model=List[BannedUsernameResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_banned_usernames(request: Request):
     """
     Retrieve the list of patterns used to ban specific usernames.
@@ -433,7 +508,15 @@ async def get_banned_usernames(request: Request):
     ]
 
 
-@router.post("/security/banned-usernames", response_model=SuccessResponse)
+@router.post(
+    "/security/banned-usernames",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def add_banned_username(request: Request, body: BannedUsernameCreate):
     """
     Add a new pattern to the list of banned usernames.
@@ -447,7 +530,13 @@ async def add_banned_username(request: Request, body: BannedUsernameCreate):
 
 
 @router.delete(
-    "/security/banned-usernames/{pattern_id}", response_model=SuccessResponse
+    "/security/banned-usernames/{pattern_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def remove_banned_username(request: Request, pattern_id: int):
     """
@@ -461,7 +550,15 @@ async def remove_banned_username(request: Request, pattern_id: int):
     return SuccessResponse(success=True, message=None)
 
 
-@router.post("/security/force-logout", response_model=SuccessResponse)
+@router.post(
+    "/security/force-logout",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def force_logout(request: Request, body: ForceLogoutRequest):
     """
     Immediately invalidate all active sessions for a specific user.
@@ -511,7 +608,15 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
         )
 
 
-@router.post("/security/lock-user", response_model=SuccessResponse)
+@router.post(
+    "/security/lock-user",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_lock_user(request: Request, body: UserLockRequest):
     """
     Lock a user account, preventing all access for a specified duration.
@@ -565,7 +670,15 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
         )
 
 
-@router.post("/security/unlock-user", response_model=SuccessResponse)
+@router.post(
+    "/security/unlock-user",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_unlock_user(request: Request, body: ForceLogoutRequest):
     """
     Unlock a previously locked user account.
@@ -585,7 +698,14 @@ async def admin_unlock_user(request: Request, body: ForceLogoutRequest):
         )
 
 
-@router.post("/security/logout-all", response_model=SuccessResponse)
+@router.post(
+    "/security/logout-all",
+    response_model=SuccessResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def logout_all_users(request: Request):
     """
     Invalidate all active sessions for every user on the platform.

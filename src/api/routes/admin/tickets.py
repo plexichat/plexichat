@@ -10,14 +10,22 @@ from src.api.schemas.admin import (
     NoteResponse,
     InternalNoteCreate,
 )
-from src.api.schemas.common import SuccessResponse
+from src.api.schemas.common import ErrorResponse, SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
 import utils.logger as logger
 
 router = APIRouter()
 
 
-@router.get("/tickets", response_model=List[TicketResponse])
+@router.get(
+    "/tickets",
+    response_model=List[TicketResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_tickets(
     request: Request,
     status_filter: Optional[str] = None,
@@ -57,7 +65,14 @@ async def get_tickets(
         )
 
 
-@router.get("/tickets/{ticket_id}", response_model=TicketResponse)
+@router.get(
+    "/tickets/{ticket_id}",
+    response_model=TicketResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        404: {"model": ErrorResponse, "description": "Ticket not found"},
+    },
+)
 async def get_ticket(ticket_id: int, request: Request):
     """
     Retrieve detailed information for a specific feedback ticket.
@@ -86,7 +101,15 @@ async def get_ticket(ticket_id: int, request: Request):
     )
 
 
-@router.patch("/tickets/{ticket_id}/status", response_model=SuccessResponse)
+@router.patch(
+    "/tickets/{ticket_id}/status",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        404: {"model": ErrorResponse, "description": "Ticket not found"},
+    },
+)
 async def update_ticket_status(
     ticket_id: int, update: TicketStatusUpdate, request: Request
 ):
@@ -106,7 +129,15 @@ async def update_ticket_status(
     return SuccessResponse(success=True, message=None)
 
 
-@router.get("/tickets/{ticket_id}/notes", response_model=List[NoteResponse])
+@router.get(
+    "/tickets/{ticket_id}/notes",
+    response_model=List[NoteResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        404: {"model": ErrorResponse, "description": "Ticket not found"},
+    },
+)
 async def get_ticket_notes(ticket_id: int, request: Request):
     """
     Retrieve all internal administrator notes associated with a ticket.
@@ -134,7 +165,16 @@ async def get_ticket_notes(ticket_id: int, request: Request):
     ]
 
 
-@router.post("/tickets/{ticket_id}/notes", response_model=NoteResponse)
+@router.post(
+    "/tickets/{ticket_id}/notes",
+    response_model=NoteResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        404: {"model": ErrorResponse, "description": "Ticket not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def add_ticket_note(ticket_id: int, note: InternalNoteCreate, request: Request):
     """
     Add a new internal administrator note to a ticket.
