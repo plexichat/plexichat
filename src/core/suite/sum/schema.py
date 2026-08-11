@@ -12,8 +12,7 @@ measured workloads (``sum_statistics`` drives ``sum_indexes``).
 """
 
 import sqlite3
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from src.core.database.core.schema_splitter import split_sql_statements
 
@@ -647,62 +646,3 @@ def create_workbook_file(path: str, workbook_id: Any = None) -> None:
         raise
     finally:
         connection.close()
-
-
-@dataclass(frozen=True)
-class SumWorkbook:
-    workbook_id: str
-    artifact_id: Optional[int]
-    owner_id: int
-    title: str
-    scope: str
-    server_id: Optional[int]
-    current_revision: int
-    sheet_count: int
-    created_at: int
-    updated_at: int
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class SumViewportQuery:
-    workbook_id: str
-    sheet_id: str
-    row_start: int
-    row_end: int
-    column_start: int
-    column_end: int
-    known_revision: Optional[int] = None
-
-
-@dataclass(frozen=True)
-class SumCell:
-    row_key: str
-    column_key: str
-    value_type: str
-    value: Any = None
-    formula: Optional[str] = None
-    style_id: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class SumOperationEnvelope:
-    operation_id: str
-    workbook_id: str
-    actor_id: int
-    base_revision: int
-    result_revision: Optional[int]
-    operation_type: str
-    payload: Dict[str, Any]
-    created_at: int
-
-
-@dataclass(frozen=True)
-class SumViewportResponse:
-    workbook_id: str
-    sheet_id: str
-    revision: int
-    cells: List[SumCell] = field(default_factory=list)
-    row_count: Optional[int] = None
-    column_count: Optional[int] = None
-    has_more: bool = False
