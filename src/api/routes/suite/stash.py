@@ -125,7 +125,15 @@ async def list_items(
 
 
 @router.post(
-    "/items", response_model=StashItemResponse, status_code=status.HTTP_201_CREATED
+    "/items",
+    response_model=StashItemResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_item(
     body: StashItemCreateRequest,
@@ -152,7 +160,16 @@ async def create_item(
         raise _error(exc) from exc
 
 
-@router.get("/items/{item_id}", response_model=StashItemResponse)
+@router.get(
+    "/items/{item_id}",
+    response_model=StashItemResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_item(
     item_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -165,7 +182,16 @@ async def get_item(
         raise _error(exc) from exc
 
 
-@router.patch("/items/{item_id}", response_model=StashItemResponse)
+@router.patch(
+    "/items/{item_id}",
+    response_model=StashItemResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def update_item(
     item_id: str,
     body: StashItemUpdateRequest,
@@ -184,7 +210,16 @@ async def update_item(
         raise _error(exc) from exc
 
 
-@router.post("/items/{item_id}/pin", response_model=StashItemResponse)
+@router.post(
+    "/items/{item_id}/pin",
+    response_model=StashItemResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def pin_item(
     item_id: str,
     body: StashPinRequest,
@@ -200,7 +235,16 @@ async def pin_item(
         raise _error(exc) from exc
 
 
-@router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def delete_item(
     item_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -213,7 +257,16 @@ async def delete_item(
         raise _error(exc) from exc
 
 
-@router.post("/items/{item_id}/restore", response_model=StashItemResponse)
+@router.post(
+    "/items/{item_id}/restore",
+    response_model=StashItemResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def restore_item(
     item_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -229,7 +282,16 @@ async def restore_item(
         raise _error(exc) from exc
 
 
-@router.get("/items/{item_id}/versions", response_model=list[StashVersionResponse])
+@router.get(
+    "/items/{item_id}/versions",
+    response_model=list[StashVersionResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_versions(
     item_id: str,
     limit: int = Query(50, ge=1, le=100),
@@ -248,6 +310,12 @@ async def list_versions(
     "/items/{item_id}/versions",
     response_model=StashVersionResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_version(
     item_id: str,
@@ -269,6 +337,12 @@ async def create_version(
     "/items/{item_id}/grants",
     response_model=StashGrantResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def grant_item(
     item_id: str,
@@ -328,6 +402,12 @@ async def create_download_ticket(
 @router.post(
     "/download-ticket/redeem",
     response_model=StashDownloadRedeemResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def redeem_download_ticket(
     body: StashDownloadRedeemRequest,
@@ -381,7 +461,16 @@ async def redeem_download_ticket(
         raise _error(exc) from exc
 
 
-@router.delete("/grants/{grant_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/grants/{grant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def revoke_grant(
     grant_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -395,7 +484,16 @@ async def revoke_grant(
         raise _error(exc) from exc
 
 
-@router.get("/collections", response_model=StashCollectionListResponse)
+@router.get(
+    "/collections",
+    response_model=StashCollectionListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_collections(
     server_id: Optional[str] = Query(None),
     current_user: TokenInfo = Depends(get_current_user),
@@ -419,6 +517,12 @@ async def list_collections(
     "/collections",
     response_model=StashCollectionResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_collection(
     body: StashCollectionCreateRequest,

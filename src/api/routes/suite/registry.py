@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Query
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
 from src.api.routes.artifacts import _get_manager, _require_server_permission
+from src.api.schemas.common import ErrorResponse
 from src.core.artifacts.capabilities import (
     CapabilityState,
     capability_allows_artifact,
@@ -277,7 +278,15 @@ def _shared_items(user_id: int, limit: int) -> List[Dict[str, Any]]:
     return _sort_and_bound(items, limit)
 
 
-@router.get("/apps", summary="List PlexiSuite apps and capabilities")
+@router.get(
+    "/apps",
+    summary="List PlexiSuite apps and capabilities",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSuite is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_suite_apps(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
@@ -292,7 +301,15 @@ async def list_suite_apps(
     }
 
 
-@router.get("/home/recent", summary="List recent personal PlexiSuite items")
+@router.get(
+    "/home/recent",
+    summary="List recent personal PlexiSuite items",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSuite is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_recent_suite_items(
     limit: int = Query(24, ge=1, le=50),
     current_user: TokenInfo = Depends(get_current_user),
@@ -335,7 +352,15 @@ async def list_recent_suite_items(
     }
 
 
-@router.get("/home/pinned", summary="List pinned PlexiSuite items")
+@router.get(
+    "/home/pinned",
+    summary="List pinned PlexiSuite items",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSuite is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_pinned_suite_items(
     limit: int = Query(24, ge=1, le=50),
     current_user: TokenInfo = Depends(get_current_user),
@@ -356,7 +381,15 @@ async def list_pinned_suite_items(
     }
 
 
-@router.get("/home/shared", summary="List shared PlexiSuite items")
+@router.get(
+    "/home/shared",
+    summary="List shared PlexiSuite items",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSuite is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_shared_suite_items(
     limit: int = Query(24, ge=1, le=50),
     current_user: TokenInfo = Depends(get_current_user),
@@ -366,7 +399,15 @@ async def list_shared_suite_items(
     return {"schemaVersion": 1, "items": items, "total": len(items), "hasMore": False}
 
 
-@router.get("/home/activity", summary="List the caller's Suite activity")
+@router.get(
+    "/home/activity",
+    summary="List the caller's Suite activity",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSuite is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_suite_activity(
     limit: int = Query(24, ge=1, le=50),
     current_user: TokenInfo = Depends(get_current_user),
@@ -399,7 +440,15 @@ async def list_suite_activity(
     return {"schemaVersion": 1, "items": items, "total": len(items), "hasMore": False}
 
 
-@router.get("/search", summary="Search visible PlexiSuite metadata")
+@router.get(
+    "/search",
+    summary="Search visible PlexiSuite metadata",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSuite is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def search_suite(
     q: str = Query(..., min_length=1, max_length=200),
     limit: int = Query(24, ge=1, le=50),

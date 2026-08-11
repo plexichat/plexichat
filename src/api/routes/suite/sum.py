@@ -6,7 +6,7 @@ import src.api as api
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
-from src.api.schemas.common import SnowflakeID
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.api.schemas.sum import (
     SumCellOperationRequest,
     SumCommentListResponse,
@@ -116,7 +116,16 @@ def _error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="PlexiSum operation failed")
 
 
-@router.get("/workbooks", response_model=SumWorkbookListResponse)
+@router.get(
+    "/workbooks",
+    response_model=SumWorkbookListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_workbooks(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -142,6 +151,12 @@ async def list_workbooks(
     "/workbooks",
     response_model=SumWorkbookResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_workbook(
     body: SumWorkbookCreateRequest,
@@ -164,6 +179,12 @@ async def create_workbook(
     "/workbooks/from-template",
     response_model=SumWorkbookResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_from_template(
     body: SumCreateFromTemplateRequest,
@@ -187,6 +208,12 @@ async def create_from_template(
 @router.patch(
     "/workbooks/{workbook_id}/pin",
     response_model=SumWorkbookResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def set_pinned(
     workbook_id: str,
@@ -204,7 +231,16 @@ async def set_pinned(
         raise _error(exc) from exc
 
 
-@router.get("/workbooks/{workbook_id}", response_model=SumWorkbookResponse)
+@router.get(
+    "/workbooks/{workbook_id}",
+    response_model=SumWorkbookResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_workbook(
     workbook_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -219,7 +255,16 @@ async def get_workbook(
         raise _error(exc) from exc
 
 
-@router.delete("/workbooks/{workbook_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/workbooks/{workbook_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def delete_workbook(
     workbook_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -232,7 +277,16 @@ async def delete_workbook(
         raise _error(exc) from exc
 
 
-@router.post("/workbooks/{workbook_id}/restore", response_model=SumWorkbookResponse)
+@router.post(
+    "/workbooks/{workbook_id}/restore",
+    response_model=SumWorkbookResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def restore_workbook(
     workbook_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -250,6 +304,12 @@ async def restore_workbook(
 @router.get(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/viewport",
     response_model=SumViewportResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def read_viewport(
     workbook_id: str,
@@ -294,6 +354,12 @@ async def read_viewport(
 @router.post(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/operations",
     response_model=SumOperationResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def apply_operation(
     workbook_id: str,
@@ -323,6 +389,12 @@ async def apply_operation(
 @router.post(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/sort",
     response_model=SumSortResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def sort_range(
     workbook_id: str,
@@ -351,7 +423,16 @@ async def sort_range(
         raise _error(exc) from exc
 
 
-@router.get("/workbooks/{workbook_id}/operations", response_model=SumReplayResponse)
+@router.get(
+    "/workbooks/{workbook_id}/operations",
+    response_model=SumReplayResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def replay_operations(
     workbook_id: str,
     after_revision: int = Query(0, ge=0),
@@ -377,6 +458,12 @@ async def replay_operations(
     "/workbooks/{workbook_id}/snapshots",
     response_model=SumSnapshotResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_snapshot(
     workbook_id: str,
@@ -394,7 +481,14 @@ async def create_snapshot(
 
 
 @router.get(
-    "/workbooks/{workbook_id}/snapshots", response_model=SumSnapshotListResponse
+    "/workbooks/{workbook_id}/snapshots",
+    response_model=SumSnapshotListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def list_snapshots(
     workbook_id: str,
@@ -415,6 +509,12 @@ async def list_snapshots(
 @router.post(
     "/workbooks/{workbook_id}/snapshots/{snapshot_id}/restore",
     response_model=SumWorkbookResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def restore_snapshot(
     workbook_id: str,
@@ -439,6 +539,12 @@ async def restore_snapshot(
     "/workbooks/{workbook_id}/sheets",
     response_model=SumSheetOpResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_sheet(
     workbook_id: str,
@@ -463,6 +569,12 @@ async def create_sheet(
 @router.patch(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/rename",
     response_model=SumSheetOpResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def rename_sheet(
     workbook_id: str,
@@ -487,6 +599,12 @@ async def rename_sheet(
 @router.delete(
     "/workbooks/{workbook_id}/sheets/{sheet_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def delete_sheet(
     workbook_id: str,
@@ -506,6 +624,12 @@ async def delete_sheet(
 @router.get(
     "/workbooks/{workbook_id}/file",
     response_model=SumWorkbookFileResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def download_file(
     workbook_id: str,
@@ -524,6 +648,12 @@ async def download_file(
 @router.post(
     "/workbooks/{workbook_id}/file",
     response_model=SumWorkbookUploadResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def upload_file(
     workbook_id: str,
@@ -571,6 +701,12 @@ async def upload_file(
 @router.get(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/csv",
     response_model=SumCsvExportResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def export_csv(
     workbook_id: str,
@@ -592,6 +728,12 @@ async def export_csv(
 @router.post(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/csv",
     response_model=SumCsvImportResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def import_csv(
     workbook_id: str,
@@ -617,7 +759,16 @@ async def import_csv(
         raise _error(exc) from exc
 
 
-@router.get("/workbooks/{workbook_id}/grants", response_model=SumGrantListResponse)
+@router.get(
+    "/workbooks/{workbook_id}/grants",
+    response_model=SumGrantListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_grants(
     workbook_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -637,6 +788,12 @@ async def list_grants(
     "/workbooks/{workbook_id}/grants",
     response_model=SumGrantResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def grant_workbook(
     workbook_id: str,
@@ -661,7 +818,16 @@ async def grant_workbook(
         raise _error(exc) from exc
 
 
-@router.delete("/grants/{grant_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/grants/{grant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def revoke_grant(
     grant_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -677,6 +843,12 @@ async def revoke_grant(
 @router.get(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/range-permissions",
     response_model=SumRangePermissionListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def list_range_permissions(
     workbook_id: str,
@@ -702,6 +874,12 @@ async def list_range_permissions(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/range-permissions",
     response_model=SumRangePermissionResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def set_range_permission(
     workbook_id: str,
@@ -733,6 +911,12 @@ async def set_range_permission(
 @router.delete(
     "/workbooks/{workbook_id}/range-permissions/{range_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def remove_range_permission(
     workbook_id: str,
@@ -754,7 +938,16 @@ async def remove_range_permission(
 # ── realtime collaboration / presence ───────────────────────────────────────
 
 
-@router.get("/workbooks/{workbook_id}/presence", response_model=SumPresenceResponse)
+@router.get(
+    "/workbooks/{workbook_id}/presence",
+    response_model=SumPresenceResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_presence(
     workbook_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -768,7 +961,16 @@ async def list_presence(
         raise _error(exc) from exc
 
 
-@router.put("/workbooks/{workbook_id}/presence", response_model=SumPresenceResponse)
+@router.put(
+    "/workbooks/{workbook_id}/presence",
+    response_model=SumPresenceResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def set_presence(
     workbook_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -791,6 +993,12 @@ async def set_presence(
 @router.get(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/freeze",
     response_model=SumFreezeResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_freeze(
     workbook_id: str,
@@ -812,6 +1020,12 @@ async def get_freeze(
 @router.put(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/freeze",
     response_model=SumFreezeResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def set_freeze(
     workbook_id: str,
@@ -843,6 +1057,12 @@ async def set_freeze(
 @router.get(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/validations",
     response_model=SumValidationListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def list_validations(
     workbook_id: str,
@@ -868,6 +1088,12 @@ async def list_validations(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/validations",
     response_model=SumValidationResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def set_validation(
     workbook_id: str,
@@ -902,6 +1128,12 @@ async def set_validation(
 @router.delete(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/validations/{validation_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def delete_validation(
     workbook_id: str,
@@ -929,6 +1161,12 @@ async def delete_validation(
 @router.get(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/conditional-formats",
     response_model=SumConditionalFormatListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def list_conditional_formats(
     workbook_id: str,
@@ -954,6 +1192,12 @@ async def list_conditional_formats(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/conditional-formats",
     response_model=SumConditionalFormatResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def set_conditional_format(
     workbook_id: str,
@@ -987,6 +1231,12 @@ async def set_conditional_format(
 @router.delete(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/conditional-formats/{rule_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def delete_conditional_format(
     workbook_id: str,
@@ -1012,6 +1262,12 @@ async def delete_conditional_format(
 @router.get(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/comments",
     response_model=SumCommentListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def list_comments(
     workbook_id: str,
@@ -1043,6 +1299,12 @@ async def list_comments(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/comments",
     response_model=SumCommentResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def add_comment(
     workbook_id: str,
@@ -1072,6 +1334,12 @@ async def add_comment(
 @router.patch(
     "/workbooks/{workbook_id}/comments/{comment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def resolve_comment(
     workbook_id: str,
@@ -1094,6 +1362,12 @@ async def resolve_comment(
 @router.delete(
     "/workbooks/{workbook_id}/comments/{comment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def delete_comment(
     workbook_id: str,
@@ -1116,6 +1390,12 @@ async def delete_comment(
 @router.get(
     "/workbooks/{workbook_id}/xlsx",
     response_model=SumXlsxExportResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def export_xlsx(
     workbook_id: str,
@@ -1136,6 +1416,12 @@ async def export_xlsx(
 @router.post(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/xlsx",
     response_model=SumCsvImportResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def import_xlsx(
     workbook_id: str,
