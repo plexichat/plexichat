@@ -580,7 +580,7 @@ async def execute_webhook(
             )
 
         tid = None
-        if thread_id:
+        if thread_id and thread_id.strip().lower() != "null":
             try:
                 tid = int(thread_id)
             except (ValueError, TypeError):
@@ -591,7 +591,11 @@ async def execute_webhook(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail={"error": {"code": 400, "message": "Invalid thread ID"}},
                 )
-        if tid is None and body.thread_id:
+        if (
+            tid is None
+            and body.thread_id
+            and str(body.thread_id).strip().lower() != "null"
+        ):
             try:
                 tid = int(body.thread_id)
             except (ValueError, TypeError):

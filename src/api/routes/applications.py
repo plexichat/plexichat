@@ -77,7 +77,7 @@ class BotTokenResponse(BaseModel):
 class InteractionCallbackRequest(BaseModel):
     """Request to respond to an interaction."""
 
-    type: int
+    type: InteractionResponseType
     data: Optional[Dict[str, Any]] = None
 
 
