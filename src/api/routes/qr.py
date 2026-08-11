@@ -32,7 +32,9 @@ router = APIRouter(tags=["Utilities"])
     },
 )
 async def generate_qr(
-    data: str = Query(..., description="The data to encode in the QR code"),
+    data: str = Query(
+        ..., min_length=1, description="The data to encode in the QR code"
+    ),
     size: str = Query(
         "200x200", description="Size of the image in pixels (e.g., 200x200)"
     ),

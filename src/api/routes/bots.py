@@ -5,10 +5,10 @@ Handles server bot approval, user bot requests, bot profiles,
 bot directory browsing, and OAuth authorized application management.
 """
 
-from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends, status
+from typing import Optional, List, Annotated
+from fastapi import APIRouter, HTTPException, Depends, status, Query
 
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
@@ -149,6 +149,20 @@ class BotDirectoryResponse(BaseModel):
 
 
 # === Helper ===
+
+
+def _coerce_nullable_int(value):
+    """Coerce ``null``/empty query values for optional int params to None."""
+    if (
+        value is None
+        or value == ""
+        or (isinstance(value, str) and value.strip().lower() == "null")
+    ):
+        return None
+    return value
+
+
+NullableInt = Annotated[Optional[int], BeforeValidator(_coerce_nullable_int)]
 
 
 def _approved_bot_to_response(bot, app_name=None, app_icon=None) -> ApprovedBotResponse:
@@ -501,14 +515,15 @@ async def review_bot_request(
     response_model=BotProfileResponse,
     summary="Get a bot's public profile",
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid application ID"},
         404: {"model": ErrorResponse, "description": "Profile not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_bot_profile(application_id: str):
+async def get_bot_profile(application_id: int):
     """Get a bot's public profile."""
     try:
-        profile = applications.get_bot_profile(int(application_id))
+        profile = applications.get_bot_profile(application_id)
         if not profile:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -605,22 +620,26 @@ async def update_bot_profile(
     response_model=BotDirectoryResponse,
     summary="Browse the bot directory",
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid server_id"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def list_bot_directory(
-    server_id: Optional[str] = None,
-    q: Optional[str] = None,
-    tag: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    server_id: Annotated[
+        NullableInt,
+        Query(description="Filter out bots already approved on this server"),
+    ] = None,
+    q: Optional[str] = Query(None, description="Search query"),
+    tag: Optional[str] = Query(None, description="Filter by tag"),
+    limit: int = Query(50, ge=1, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
 ):
     """Browse available bots in the directory."""
     try:
         if limit > 100:
             limit = 100
         result = applications.get_bot_directory(
-            server_id=int(server_id) if server_id is not None else None,
+            server_id=server_id,
             include_public=True,
             limit=limit,
             offset=offset,

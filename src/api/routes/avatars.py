@@ -45,7 +45,7 @@ _avatar_checksum_cache = {}  # {uid: checksum}
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_user_avatar(user_id: str, request: Request):
+async def get_user_avatar(user_id: int, request: Request):
     """
     Get user avatar image.
 
@@ -60,14 +60,7 @@ async def get_user_avatar(user_id: str, request: Request):
         )
 
     try:
-        try:
-            uid = int(user_id)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid user ID format for avatar request: {user_id}")
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid user ID"}},
-            )
+        uid = user_id
 
         # 1. Fast check for ETag
         etag_client = request.headers.get("If-None-Match")
@@ -358,6 +351,7 @@ _icon_checksum_cache = {}  # {sid: checksum}
                 "image/jpeg": {},
                 "image/gif": {},
                 "image/webp": {},
+                "image/svg+xml": {},
             },
         },
         400: {"model": ErrorResponse, "description": "Invalid server ID"},
@@ -365,7 +359,7 @@ _icon_checksum_cache = {}  # {sid: checksum}
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_server_icon(server_id: str, request: Request):
+async def get_server_icon(server_id: int, request: Request):
     """
     Get server icon image.
 
@@ -380,14 +374,7 @@ async def get_server_icon(server_id: str, request: Request):
         )
 
     try:
-        try:
-            sid = int(server_id)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid server ID format for icon request: {server_id}")
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}},
-            )
+        sid = server_id
 
         # 1. Fast check for ETag
         etag_client = request.headers.get("If-None-Match")

@@ -243,7 +243,7 @@ class TestOAuthFlows:
             app.id, client_secret, code.code, "https://example.com/callback"
         )
         assert token is not None
-        assert token.get("access_token")
+        assert token.access_token
 
         # The flow call above consumes the code, so issue a fresh one for
         # the manager-level exchange under test.

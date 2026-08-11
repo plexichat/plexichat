@@ -80,7 +80,8 @@ def _redirect_uri_is_allowed(provider: str, redirect_uri: str) -> bool:
     response_model=OAuthLoginResponse,
     summary="Initiate OAuth login",
     responses={
-        400: {"model": ErrorResponse, "description": "Invalid provider"},
+        400: {"model": ErrorResponse, "description": "redirect_uri not allowed"},
+        404: {"model": ErrorResponse, "description": "Unsupported OAuth provider"},
         429: {"model": ErrorResponse, "description": "Too many pending OAuth requests"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
@@ -90,10 +91,10 @@ async def oauth_login_init(
 ) -> OAuthLoginResponse:
     if provider not in OAUTH_PROVIDERS:
         raise HTTPException(
-            status_code=400,
+            status_code=404,
             detail={
                 "error": {
-                    "code": 400,
+                    "code": 404,
                     "message": f"Unsupported OAuth provider: {provider}",
                 }
             },
@@ -214,8 +215,9 @@ async def oauth_login_init(
     response_model=LoginResponse,
     summary="OAuth callback",
     responses={
-        400: {"model": ErrorResponse, "description": "Invalid request or provider"},
+        400: {"model": ErrorResponse, "description": "Invalid request"},
         401: {"model": ErrorResponse, "description": "Authentication failed"},
+        404: {"model": ErrorResponse, "description": "Unsupported OAuth provider"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -226,10 +228,10 @@ async def oauth_callback(
 ) -> LoginResponse:
     if provider not in OAUTH_PROVIDERS:
         raise HTTPException(
-            status_code=400,
+            status_code=404,
             detail={
                 "error": {
-                    "code": 400,
+                    "code": 404,
                     "message": f"Unsupported OAuth provider: {provider}",
                 }
             },
