@@ -15,7 +15,7 @@ Usage:
 import os
 from pathlib import Path
 from typing import Tuple, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import utils.config as config
 import utils.logger as logger
@@ -96,7 +96,7 @@ def _check_certificate_validity(cert_path: str) -> bool:
         cert = x509.load_pem_x509_certificate(cert_data, default_backend())
 
         # Check if certificate is expired or will expire within 7 days
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if cert.not_valid_after_utc.replace(tzinfo=None) < now + timedelta(days=7):
             return False
 
@@ -155,7 +155,7 @@ def _generate_self_signed_cert(
             pass  # Not an IP address, already added as DNS name
 
     # Build certificate
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)

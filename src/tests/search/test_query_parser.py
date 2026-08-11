@@ -3,7 +3,7 @@ Tests for query parser - exhaustive syntax testing.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.core.search.query.parser import QueryParser, parse_query
 from src.core.search.models import FilterType
@@ -81,28 +81,34 @@ class TestQueryParserFilters:
         result = parse_query("before:7d")
         assert len(result.filters) == 1
         assert result.filters[0].filter_type == FilterType.BEFORE_DATE
-        expected = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        expected = (
+            datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
+        ).strftime("%Y-%m-%d")
         assert result.filters[0].value == expected
 
     def test_after_filter_relative_weeks(self):
         """Test after:date filter with relative weeks."""
         result = parse_query("after:2w")
         assert len(result.filters) == 1
-        expected = (datetime.utcnow() - timedelta(weeks=2)).strftime("%Y-%m-%d")
+        expected = (
+            datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(weeks=2)
+        ).strftime("%Y-%m-%d")
         assert result.filters[0].value == expected
 
     def test_before_filter_today(self):
         """Test before:today filter."""
         result = parse_query("before:today")
         assert len(result.filters) == 1
-        expected = datetime.utcnow().strftime("%Y-%m-%d")
+        expected = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
         assert result.filters[0].value == expected
 
     def test_after_filter_yesterday(self):
         """Test after:yesterday filter."""
         result = parse_query("after:yesterday")
         assert len(result.filters) == 1
-        expected = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        expected = (
+            datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+        ).strftime("%Y-%m-%d")
         assert result.filters[0].value == expected
 
     def test_has_link_filter(self):

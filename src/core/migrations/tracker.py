@@ -5,7 +5,7 @@ This module provides the MigrationTracker class for tracking applied migrations,
 recording their status, and managing the migrations_history table.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 import time
 import logging
@@ -16,6 +16,15 @@ import os
 from . import schema
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    """Return the current UTC time as a naive datetime (SQLite-safe).
+
+    ``datetime.utcnow()`` is deprecated since Python 3.12; this keeps the
+    same naive-UTC semantics the tracker's stored values rely on.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class MigrationTracker:
@@ -50,7 +59,7 @@ class MigrationTracker:
         try:
             self.db.execute(
                 "INSERT INTO migration_uptime (start_time, uptime_seconds) VALUES (?, 0)",
-                (datetime.utcnow(),),
+                (_utcnow(),),
             )
             self._current_uptime_session_id = self.db.fetch_last_insert_id()
             logger.info(
@@ -236,7 +245,7 @@ class MigrationTracker:
                 FROM emergency_override_tokens
                 WHERE token = ? AND used_at IS NULL AND expires_at > ?
                 """,
-                (token, datetime.utcnow()),
+                (token, _utcnow()),
             )
 
             if not result:
@@ -261,7 +270,7 @@ class MigrationTracker:
             Generated token
         """
         token = secrets.token_hex(32)
-        expires_at = datetime.utcnow() + timedelta(minutes=expires_minutes)
+        expires_at = _utcnow() + timedelta(minutes=expires_minutes)
 
         try:
             self.db.execute(
@@ -269,7 +278,7 @@ class MigrationTracker:
                 INSERT INTO emergency_override_tokens (token, created_at, expires_at, reason)
                 VALUES (?, ?, ?, ?)
                 """,
-                (token, datetime.utcnow(), expires_at, reason),
+                (token, _utcnow(), expires_at, reason),
             )
             logger.info(f"Generated emergency override token (expires: {expires_at})")
             return token
@@ -292,7 +301,7 @@ class MigrationTracker:
                 SET used_at = ?, used_by = ?
                 WHERE token = ?
                 """,
-                (datetime.utcnow(), used_by, token),
+                (_utcnow(), used_by, token),
             )
             logger.warning(f"Emergency override token used by {used_by}")
         except Exception as e:
@@ -313,7 +322,7 @@ class MigrationTracker:
                 INSERT INTO migration_logs (migration_version, level, message, timestamp)
                 VALUES (?, ?, ?, ?)
                 """,
-                (version, level, message, datetime.utcnow()),
+                (version, level, message, _utcnow()),
             )
         except Exception as e:
             logger.warning(f"Failed to log migration message: {e}")
@@ -412,7 +421,7 @@ class MigrationTracker:
         # Use upsert to handle both new migrations and retries of failed ones
         # Get existing created_at if it exists to preserve it
         existing = self.get_migration_status(version)
-        created_at = existing.get("created_at") if existing else datetime.utcnow()
+        created_at = existing.get("created_at") if existing else _utcnow()
 
         self.db.upsert(
             "migrations_history",
@@ -435,7 +444,7 @@ class MigrationTracker:
                 "running",
                 "system",
                 created_at,
-                datetime.utcnow(),
+                _utcnow(),
                 is_irreversible,
                 depends_on,
                 metadata_json,
@@ -465,7 +474,7 @@ class MigrationTracker:
             SET status = ?, execution_time_ms = ?, rollback_sql = ?, updated_at = ?
             WHERE version = ?
             """,
-            ("completed", execution_time_ms, rollback_sql, datetime.utcnow(), version),
+            ("completed", execution_time_ms, rollback_sql, _utcnow(), version),
         )
 
     def record_migration_failure(self, version: str, error_message: str):
@@ -487,7 +496,7 @@ class MigrationTracker:
             SET status = ?, error_message = ?, updated_at = ?
             WHERE version = ?
             """,
-            ("failed", error_message, datetime.utcnow(), version),
+            ("failed", error_message, _utcnow(), version),
         )
 
     def get_migration_status(self, version: str) -> Optional[Dict[str, Any]]:
@@ -590,7 +599,7 @@ class MigrationTracker:
             SET status = ?, updated_at = ?
             WHERE version = ?
             """,
-            ("rolled_back", datetime.utcnow(), version),
+            ("rolled_back", _utcnow(), version),
         )
 
     def acquire_lock(self, timeout: int = 300) -> bool:
@@ -631,7 +640,7 @@ class MigrationTracker:
                 try:
                     self.db.execute(
                         "INSERT INTO migration_lock (lock_key, locked_at, locked_by) VALUES (?, ?, ?)",
-                        (lock_key, datetime.utcnow(), "system"),
+                        (lock_key, _utcnow(), "system"),
                     )
                     logger.info("Migration lock acquired (SQLite lock table)")
                     return True
@@ -649,7 +658,7 @@ class MigrationTracker:
                         )
                         # If lock is older than 10 minutes, consider it stale and acquire it
                         if isinstance(locked_at, datetime):
-                            age = (datetime.utcnow() - locked_at).total_seconds()
+                            age = (_utcnow() - locked_at).total_seconds()
                         else:
                             age = 0
                         if age > 600:  # 10 minutes
@@ -658,7 +667,7 @@ class MigrationTracker:
                             )
                             self.db.execute(
                                 "UPDATE migration_lock SET locked_at = ?, locked_by = ? WHERE lock_key = ?",
-                                (datetime.utcnow(), "system", lock_key),
+                                (_utcnow(), "system", lock_key),
                             )
                             return True
 

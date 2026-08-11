@@ -1,11 +1,17 @@
 import sqlite3
 import os
+from datetime import datetime
 from typing import Any, Optional, Dict, List, Tuple
 from .base import BaseEngine
 
 import utils.logger as logger
 
 DEFAULT_BUSY_TIMEOUT_MS = 5000
+
+# Python 3.12+ deprecates the sqlite3 default datetime adapter; register an
+# explicit one that preserves the legacy ``str(datetime)`` storage format
+# (``YYYY-MM-DD HH:MM:SS.mmmmmm``) so existing rows stay byte-identical.
+sqlite3.register_adapter(datetime, lambda dt: dt.isoformat(sep=" "))
 
 
 class SqliteEngine(BaseEngine):

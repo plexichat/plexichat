@@ -2,6 +2,7 @@
 Transcript export service - Chat transcript export functionality.
 """
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import json
 import csv
@@ -259,7 +260,7 @@ class TranscriptExportService(BaseService):
         lines = []
         lines.append("=== Plexichat Chat Transcript ===")
         lines.append(
-            f"Generated: {__import__('datetime').datetime.utcnow().isoformat()}"
+            f"Generated: {datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}"
         )
         lines.append(f"Messages: {len(messages)}")
         lines.append("=" * 50)
@@ -305,7 +306,7 @@ class TranscriptExportService(BaseService):
         parts.append("</style></head><body>")
         parts.append("<h1>Plexichat Chat Transcript</h1>")
         parts.append(
-            f"<p>Messages: {len(messages)} | Generated: {__import__('datetime').datetime.utcnow().isoformat()}</p>"
+            f"<p>Messages: {len(messages)} | Generated: {datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}</p>"
         )
         parts.append("<div class='messages'>")
 

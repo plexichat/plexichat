@@ -3,7 +3,7 @@ Tests for search filters.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.core.search.query.filters import FilterProcessor, apply_filters
 from src.core.search.models import (
@@ -223,7 +223,7 @@ class TestFilterProcessor:
 
     def test_before_date_filter(self):
         """Test before:date filter."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         old_ts = int((now - timedelta(days=10)).timestamp() * 1000)
         new_ts = int(now.timestamp() * 1000)
 
@@ -261,7 +261,7 @@ class TestFilterProcessor:
 
     def test_after_date_filter(self):
         """Test after:date filter."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         old_ts = int((now - timedelta(days=10)).timestamp() * 1000)
         new_ts = int(now.timestamp() * 1000)
 

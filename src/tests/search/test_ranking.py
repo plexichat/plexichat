@@ -3,7 +3,7 @@ Tests for search result ranking.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.core.search.query.ranking import RankingEngine, rank_results, RankingWeights
 from src.core.search.models import (
@@ -89,7 +89,7 @@ class TestMessageRanking:
 
     def test_recency_boost(self):
         """Test recent messages get boosted."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         old_ts = int((now - timedelta(days=30)).timestamp() * 1000)
         new_ts = int(now.timestamp() * 1000)
 

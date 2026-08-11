@@ -16,7 +16,7 @@ Supports:
 
 import re
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from ..models import ParsedQuery, QueryFilter, FilterType
 
@@ -143,7 +143,7 @@ class QueryParser:
             amount = int(relative_match.group(1))
             unit = relative_match.group(2).lower()
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             if unit == "d":
                 target = now - timedelta(days=amount)
             elif unit == "w":
@@ -158,9 +158,11 @@ class QueryParser:
             return target.strftime("%Y-%m-%d")
 
         if value.lower() == "today":
-            return datetime.utcnow().strftime("%Y-%m-%d")
+            return datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
         if value.lower() == "yesterday":
-            return (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+            return (
+                datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+            ).strftime("%Y-%m-%d")
 
         for fmt in DATE_FORMATS:
             try:
