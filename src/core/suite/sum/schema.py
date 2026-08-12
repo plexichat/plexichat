@@ -613,15 +613,19 @@ def ensure_feature_tables(connection) -> None:
 def create_workbook_file(path: str, workbook_id: Any = None) -> None:
     """Create a fresh empty ``.plexisum`` workbook file at ``path``.
 
-    The file is an independent SQLite database with the stable physical tables
-    and the dynamic logical schema hooks described above. It is stored through
-    the main file-storage adapter; it is never a main-database table. Existing
-    files are accepted only when their format marker and required columns match
-    the supported contract.
+    The file on disk is a PlexiSum *container* (header + compressed body +
+    checksum).  The body is a SQLite database carrying the stable physical
+    tables and dynamic logical schema hooks described above.  It is stored
+    through the main file-storage adapter; it is never a main-database table.
+    Existing files are accepted only when their format marker and required
+    columns match the supported contract.
     """
+    import datetime
     import sqlite3
 
-    connection = sqlite3.connect(str(path))
+    from .container import encode_container
+
+    connection = sqlite3.connect(":memory:")
     try:
         connection.execute("BEGIN")
         for statement in split_sql_statements(WORKBOOK_FILE_SCHEMA):
@@ -630,6 +634,19 @@ def create_workbook_file(path: str, workbook_id: Any = None) -> None:
         connection.execute(
             "INSERT OR REPLACE INTO sum_meta (key, value) VALUES (?, ?)",
             ("format_version", PLEXISUM_FORMAT_VERSION),
+        )
+        connection.execute(
+            "INSERT OR REPLACE INTO sum_meta (key, value) VALUES (?, ?)",
+            ("container_version", "1"),
+        )
+        connection.execute(
+            "INSERT OR REPLACE INTO sum_meta (key, value) VALUES (?, ?)",
+            (
+                "created_at_date",
+                datetime.datetime.now(datetime.timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+            ),
         )
         if workbook_id is not None:
             connection.execute(
@@ -641,8 +658,13 @@ def create_workbook_file(path: str, workbook_id: Any = None) -> None:
             ("created_at", str(int(__import__("time").time() * 1000))),
         )
         connection.commit()
+        raw_bytes = connection.serialize()
     except Exception:
         connection.rollback()
         raise
     finally:
         connection.close()
+
+    container = encode_container(raw_bytes)
+    with open(path, "wb") as fh:
+        fh.write(container)

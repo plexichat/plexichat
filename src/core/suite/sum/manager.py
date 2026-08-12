@@ -35,6 +35,7 @@ from .schema import (
     SUM_VALUE_TYPES,
     ensure_feature_tables,
 )
+from .segments import SegmentEncoder
 
 MAX_SNAPSHOT_CELLS = 200_000
 MAX_CSV_ROWS = 10_000
@@ -948,7 +949,9 @@ class SumManager(BaseManager):
         # Refresh the cached index/calculation status once per materialization
         # (session-cached, so not per read). Never fail the connection over it.
         try:
-            self._refresh_workbook_status(connection, int(workbook_id))
+            session = _WORKBOOK_SESSIONS.get(int(workbook_id))
+            if session is None or session.pending > 0:
+                self._refresh_workbook_status(connection, int(workbook_id))
         except Exception:
             import utils.logger as logger
 
@@ -992,7 +995,13 @@ class SumManager(BaseManager):
         )
 
     def _blob_bytes(self, workbook_id: int, row) -> bytes:
-        """Fetch and integrity-check the stored blob for a workbook row."""
+        """Fetch and integrity-check the stored blob for a workbook row.
+
+        The blob on disk is a PlexiSum container.  This method decodes it,
+        verifies the SHA-256 checksum over the *uncompressed* payload, and
+        caches the raw SQLite bytes so subsequent hot reads avoid the
+        decompression + I/O cost.
+        """
         cached = _WORKBOOK_FILE_CACHE.get(
             (int(workbook_id), int(row.get("blob_revision") or 0))
         )
@@ -1005,15 +1014,24 @@ class SumManager(BaseManager):
                 raise SumStorageError("Workbook file checksum mismatch")
             return cached
         try:
-            data = self._blob.retrieve(str(row["blob_path"]))
+            container_data = self._blob.retrieve(str(row["blob_path"]))
         except Exception as exc:
             raise SumStorageError("Workbook file could not be read") from exc
-        if row.get("checksum") and hashlib.sha256(data).hexdigest() != row["checksum"]:
+        if container_data[:4] == b"PXSM":
+            from .container import decode_container
+
+            db_bytes, _, _ = decode_container(container_data)
+        else:
+            db_bytes = container_data
+        if (
+            row.get("checksum")
+            and hashlib.sha256(db_bytes).hexdigest() != row["checksum"]
+        ):
             raise SumStorageError("Workbook file checksum mismatch")
         _WORKBOOK_FILE_CACHE.put(
-            (int(workbook_id), int(row.get("blob_revision") or 0)), data
+            (int(workbook_id), int(row.get("blob_revision") or 0)), db_bytes
         )
-        return data
+        return db_bytes
 
     @staticmethod
     def _open_session_connection(data: bytes) -> "sqlite3.Connection":
@@ -1024,6 +1042,10 @@ class SumManager(BaseManager):
         per-workbook session lock. Runtimes without ``deserialize`` fall back
         to a private temp file whose path is registered for cleanup.
         """
+        if data[:4] == b"PXSM":
+            from .container import decode_container
+
+            data, _, _ = decode_container(data)
         try:
             if getattr(sqlite3.Connection, "deserialize", None) is None:
                 raise RuntimeError("deserialize unavailable")
@@ -1057,11 +1079,17 @@ class SumManager(BaseManager):
 
     @staticmethod
     def _serialize_connection(connection: "sqlite3.Connection") -> bytes:
-        """Serialize an in-memory session back to .plexisum bytes."""
+        """Serialize an in-memory session to a PlexiSum container.
+
+        The returned bytes are a complete container (header + compressed body +
+        checksum) ready for storage.
+        """
+        from .container import encode_container
+
         try:
             if getattr(sqlite3.Connection, "serialize", None) is None:
                 raise RuntimeError("serialize unavailable")
-            return connection.serialize()
+            raw = connection.serialize()
         except Exception:
             # Fallback for runtimes without serialize or WAL-mode sources.
             handle = tempfile.NamedTemporaryFile(
@@ -1071,12 +1099,13 @@ class SumManager(BaseManager):
             try:
                 connection.execute("VACUUM INTO ?", (handle.name,))
                 with open(handle.name, "rb") as file_handle:
-                    return file_handle.read()
+                    raw = file_handle.read()
             finally:
                 try:
                     os.unlink(handle.name)
                 except OSError:
                     pass
+        return encode_container(raw)
 
     def _replay_unflushed(
         self,
@@ -1178,6 +1207,8 @@ class SumManager(BaseManager):
                     now,
                 ),
             )
+            # Invalidate any segment covering this row
+            self._invalidate_segment(connection, sheet_id, column_index, row_index)
             return
         connection.execute(
             "INSERT INTO sum_cells (sheet_id, row_index, column_index, "
@@ -1199,6 +1230,25 @@ class SumManager(BaseManager):
                 now,
             ),
         )
+        # Invalidate any segment covering this row
+        self._invalidate_segment(connection, sheet_id, column_index, row_index)
+
+    def _invalidate_segment(
+        self,
+        connection: "sqlite3.Connection",
+        sheet_id: str,
+        column_index: int,
+        row_index: int,
+    ) -> None:
+        """Mark a column segment as stale so it gets rebuilt on next read."""
+        try:
+            connection.execute(
+                "DELETE FROM sum_column_segments "
+                "WHERE sheet_id = ? AND column_id = ? AND row_start <= ? AND row_end > ?",
+                (sheet_id, str(column_index), row_index, row_index),
+            )
+        except sqlite3.Error:
+            pass
 
     def _maybe_flush(self, workbook_id: int) -> None:
         """Promote the live copy when the coalescing window is exceeded.
@@ -1484,17 +1534,20 @@ class SumManager(BaseManager):
                 )
 
     def _save_file(
-        self, workbook_id: int, revision: int, data: bytes
+        self, workbook_id: int, revision: int, raw_bytes: bytes
     ) -> Tuple[str, int, str]:
         """Store a uniquely named immutable revision blob.
 
-        The random suffix prevents two concurrent writers targeting the same
-        revision from overwriting one another before the metadata CAS decides
-        which revision wins.
+        *raw_bytes* must be raw (uncompressed) SQLite bytes.  They are
+        wrapped in the PlexiSum container format before storage.  The
+        returned checksum is the SHA-256 of the *uncompressed* payload.
         """
+        from .container import encode_container
+
+        container = encode_container(raw_bytes)
         key = f"{int(workbook_id)}/rev-{int(revision)}-{uuid.uuid4().hex}.plexisum"
-        path = self._blob.store(data, key)
-        return path, len(data), hashlib.sha256(data).hexdigest()
+        path = self._blob.store(container, key)
+        return path, len(container), hashlib.sha256(raw_bytes).hexdigest()
 
     def _publish_revision(
         self,
@@ -1583,6 +1636,10 @@ class SumManager(BaseManager):
         are backfilled idempotently on every open so older ``.plexisum``
         files created before those tables shipped work transparently.
         """
+        if data[:4] == b"PXSM":
+            from .container import decode_container
+
+            data, _, _ = decode_container(data)
         handle = tempfile.NamedTemporaryFile(
             prefix="plexisum-", suffix=".plexisum", delete=False
         )
@@ -1624,6 +1681,10 @@ class SumManager(BaseManager):
         the temp-file I/O entirely. Runtimes without ``deserialize`` fall
         back to the file-backed opener; callers branch on the returned path.
         """
+        if data[:4] == b"PXSM":
+            from .container import decode_container
+
+            data, _, _ = decode_container(data)
         try:
             if getattr(sqlite3.Connection, "deserialize", None) is None:
                 raise RuntimeError("deserialize unavailable")
@@ -1771,27 +1832,42 @@ class SumManager(BaseManager):
         )
         handle.close()
         try:
+            from .container import decode_container
             from .schema import create_workbook_file
 
             create_workbook_file(handle.name, workbook_id=workbook_id)
-            connection = sqlite3.connect(handle.name)
+            with open(handle.name, "rb") as fh:
+                container_data = fh.read()
+            db_bytes, _, _ = decode_container(container_data)
+            raw_handle = tempfile.NamedTemporaryFile(
+                prefix="plexisum-raw-", suffix=".sqlite", delete=False
+            )
+            raw_handle.write(db_bytes)
+            raw_handle.close()
             try:
-                connection.execute(
-                    "INSERT INTO sum_sheets (id, name, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                    (str(sheet_id), "Sheet 1", 0, now, now),
-                )
-                connection.commit()
+                connection = sqlite3.connect(raw_handle.name)
+                try:
+                    connection.execute(
+                        "INSERT INTO sum_sheets (id, name, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (str(sheet_id), "Sheet 1", 0, now, now),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+                with open(raw_handle.name, "rb") as file_handle:
+                    raw_data = file_handle.read()
             finally:
-                connection.close()
-            with open(handle.name, "rb") as file_handle:
-                data = file_handle.read()
+                try:
+                    os.unlink(raw_handle.name)
+                except OSError:
+                    pass
         finally:
             try:
                 os.unlink(handle.name)
             except OSError:
                 pass
         return self._publish_workbook(
-            user_id, title, scope, server_id, data, 0, template=template
+            user_id, title, scope, server_id, raw_data, 0, template=template
         )
 
     def create_from_template(
@@ -2172,25 +2248,34 @@ class SumManager(BaseManager):
     # ── file download / upload ───────────────────────────────────────────────
 
     def download_file(self, user_id: int, workbook_id: int) -> Dict[str, Any]:
-        """Return the current workbook file for authorized download."""
+        """Return the current workbook file for authorized download.
+
+        The payload is the RAW SQLite bytes (base64-encoded), not the PXSM
+        storage container: ``upload_file`` accepts both forms, and the
+        download/upload round-trip must hand back a file that opens directly
+        as a SQLite database (the previous double-wrapped container could
+        not).
+        """
         row = self._workbook(user_id, workbook_id)
-        data = self._file_bytes(workbook_id)
+        raw_data = self._file_bytes(workbook_id)
+        if raw_data[:4] == b"PXSM":
+            from .container import decode_container
+
+            db_bytes, _, _ = decode_container(raw_data)
+        else:
+            db_bytes = raw_data
         self._audit(
             "download",
             "workbook_file",
             int(workbook_id),
             user_id,
-            {"size": len(data)},
+            {"size": len(db_bytes)},
         )
-        # Base64-encode the bytes: a .plexisum file is a binary SQLite
-        # database and raw bytes are not reliably valid UTF-8, so embedding
-        # them verbatim in a JSON string would 500 on arbitrary binary data.
-        # Base64 also mirrors the upload contract.
         return {
             "workbook_id": str(workbook_id),
             "filename": f"{row['title'] or 'workbook'}.plexisum",
-            "content": base64.b64encode(data).decode("ascii"),
-            "size": len(data),
+            "content": base64.b64encode(db_bytes).decode("ascii"),
+            "size": len(db_bytes),
         }
 
     def upload_file(
@@ -2207,6 +2292,12 @@ class SumManager(BaseManager):
         if len(data) > 50 * 1024 * 1024:
             raise SumValidationError("Workbook file is too large")
         self._validate_workbook_file(data)
+        if data[:4] == b"PXSM":
+            from .container import decode_container
+
+            db_bytes, _, _ = decode_container(data)
+        else:
+            db_bytes = data
         current = self._db.fetch_one(
             "SELECT current_revision FROM sum_workbooks WHERE id = ?",
             (int(workbook_id),),
@@ -2220,7 +2311,7 @@ class SumManager(BaseManager):
             int(workbook_id),
             int(base),
             int(revision),
-            data,
+            db_bytes,
             now,
             "Workbook revision changed during upload",
         )
@@ -2250,15 +2341,31 @@ class SumManager(BaseManager):
 
     def _validate_workbook_file(self, data: bytes) -> None:
         """Validate format, integrity, and resource bounds before storage."""
-        from .schema import PLEXISUM_FORMAT_VERSION
+        from .container import decode_container
 
         max_bytes = 50 * 1024 * 1024
         if not isinstance(data, bytes) or not data:
             raise SumValidationError("Workbook file is required")
         if len(data) > max_bytes:
             raise SumValidationError("Workbook file is too large")
-        if not data.startswith(b"SQLite format 3"):
-            raise SumValidationError("File is not a SQLite database")
+        if data[:4] == b"PXSM":
+            try:
+                db_bytes, _, _ = decode_container(data)
+            except (ValueError, RuntimeError) as exc:
+                raise SumValidationError(
+                    "File is not a valid PlexiSum container"
+                ) from exc
+            if len(db_bytes) > max_bytes:
+                raise SumValidationError("Workbook file is too large")
+            if not db_bytes.startswith(b"SQLite format 3"):
+                raise SumValidationError(
+                    "Container does not contain a valid SQLite database"
+                )
+            data = db_bytes
+        elif not data.startswith(b"SQLite format 3"):
+            raise SumValidationError(
+                "File is not a PlexiSum container or SQLite database"
+            )
         try:
             connection, path = self._open_sqlite(data)
         except SumStorageError as exc:
@@ -2319,6 +2426,179 @@ class SumManager(BaseManager):
     # ── viewport reads ───────────────────────────────────────────────────────
 
     # ── viewport reads ───────────────────────────────────────────────────────
+
+    # ── solo-mode helpers ─────────────────────────────────────────────────
+
+    def _is_solo(self, workbook_id: int) -> bool:
+        """Check if anyone else is subscribed to this workbook."""
+        try:
+            from src.api.websocket.sum import get_sum_subscription_registry
+
+            registry = get_sum_subscription_registry()
+            subscribers = registry.get_subscribers(int(workbook_id))
+            return len(subscribers) <= 1
+        except Exception:
+            return True  # If we can't check, treat as solo
+
+    def _read_viewport_solo(
+        self,
+        user_id: int,
+        workbook_id: int,
+        sheet_id: int,
+        row_start: int,
+        row_end: int,
+        column_start: int,
+        column_end: int,
+        filters: Optional[List[Dict[str, Any]]],
+    ) -> Dict[str, Any]:
+        """Read viewport directly from the stored blob (no in-memory session)."""
+        workbook = self._workbook(user_id, workbook_id)
+        data = self._blob_bytes(int(workbook_id), workbook)
+        if data[:4] == b"PXSM":
+            from .container import decode_container
+
+            raw_db, _, _ = decode_container(data)
+        else:
+            raw_db = data
+
+        handle = tempfile.NamedTemporaryFile(
+            prefix="plexisum-read-", suffix=".db", delete=False
+        )
+        handle.write(raw_db)
+        handle.close()
+
+        try:
+            conn = sqlite3.connect(handle.name)
+            conn.row_factory = sqlite3.Row
+            try:
+                ensure_feature_tables(conn)
+            except Exception:
+                pass
+
+            if (row_end - row_start) * (
+                column_end - column_start
+            ) > self.MAX_VIEWPORT_CELLS:
+                raise SumValidationError("Viewport is too large")
+
+            sheet = conn.execute(
+                "SELECT id FROM sum_sheets WHERE id = ? AND deleted = 0",
+                (str(sheet_id),),
+            ).fetchone()
+            if sheet is None:
+                raise SumNotFoundError("Sheet not found")
+
+            rows = conn.execute(
+                "SELECT row_index, column_index, value_type, value_json, formula, "
+                "style_json, revision "
+                "FROM sum_cells WHERE sheet_id = ? AND row_index >= ? AND row_index < ? "
+                "AND column_index >= ? AND column_index < ? ORDER BY row_index, column_index",
+                (str(sheet_id), row_start, row_end, column_start, column_end),
+            ).fetchall()
+
+            used = conn.execute(
+                "SELECT MAX(row_index) AS max_row, MAX(column_index) AS max_col "
+                "FROM sum_cells WHERE sheet_id = ?",
+                (str(sheet_id),),
+            ).fetchone()
+
+            cells = []
+            formula_cells = []
+            for row in rows:
+                cell_data = {
+                    "row": int(row["row_index"]),
+                    "column": int(row["column_index"]),
+                    "value_type": row["value_type"],
+                    "value": self._decode(row["value_json"]),
+                    "formula": row["formula"],
+                    "style": self._decode(row["style_json"]),
+                    "revision": int(row["revision"]),
+                }
+                if cell_data["value_type"] == "formula" and cell_data["formula"]:
+                    formula_cells.append(
+                        (cell_data["row"], cell_data["column"], cell_data)
+                    )
+                cells.append(cell_data)
+
+            if formula_cells:
+                from .formulas import FormulaEvaluator
+
+                resolver = self._resolver_for(conn)
+                evaluator = FormulaEvaluator(resolver)
+                for row_index, column_index, formula_cell in formula_cells:
+                    formula_cell["computed"] = evaluator.evaluate_cell(
+                        str(sheet_id),
+                        row_index,
+                        column_index,
+                        formula_cell["formula"],
+                    )
+
+            max_row = (
+                int(used["max_row"]) + 1 if used and used["max_row"] is not None else 0
+            )
+            max_col = (
+                int(used["max_col"]) + 1 if used and used["max_col"] is not None else 0
+            )
+
+            hidden_rows = []
+            if filters:
+                by_row = {}
+                for cell in cells:
+                    by_row.setdefault(int(cell["row"]), []).append(cell)
+                visible = {}
+                for row_index in sorted(by_row):
+                    row_cells = by_row[row_index]
+                    matches = True
+                    for criterion in filters:
+                        column_index = int(criterion["column"])
+                        cell = next(
+                            (c for c in row_cells if int(c["column"]) == column_index),
+                            None,
+                        )
+                        value = self._filter_cell_value(cell)
+                        if not self._matches_filter(
+                            value, criterion["operator"], criterion.get("value")
+                        ):
+                            matches = False
+                            break
+                    visible[row_index] = matches
+                hidden_rows = [r for r in sorted(by_row) if not visible[r]]
+
+            metadata = self._read_viewport_metadata(
+                conn, str(sheet_id), row_start, row_end, column_start, column_end
+            )
+            viewer = self._viewer_permissions(
+                user_id,
+                int(workbook_id),
+                sheet_id=int(sheet_id),
+                workbook=workbook,
+            )
+
+            return {
+                "workbook_id": str(workbook_id),
+                "sheet_id": str(sheet_id),
+                "revision": int(workbook["current_revision"]),
+                "row_start": row_start,
+                "row_end": row_end,
+                "column_start": column_start,
+                "column_end": column_end,
+                "row_count": max_row,
+                "column_count": max_col,
+                "has_more": bool(row_end < max_row or column_end < max_col),
+                "cells": cells,
+                "hidden_rows": hidden_rows,
+                "filters": filters or [],
+                "freeze": metadata["freeze"],
+                "validations": metadata["validations"],
+                "conditional_formats": metadata["conditional_formats"],
+                "comments": metadata["comments"],
+                "can_edit": bool(viewer["can_edit"]),
+                "read_only_ranges": viewer["read_only_ranges"],
+            }
+        finally:
+            try:
+                os.unlink(handle.name)
+            except OSError:
+                pass
 
     @staticmethod
     def _filter_cell_value(cell: Optional[Dict[str, Any]]) -> Any:
@@ -2546,6 +2826,36 @@ class SumManager(BaseManager):
                         "value": criterion.get("value"),
                     }
                 )
+        # Solo fast-path: read directly from the stored blob without a
+        # persistent session. Only valid when there is NO live session AND the
+        # stored blob is fully current — an existing session, or unflushed
+        # operations in the durable log (blob_revision behind
+        # current_revision, e.g. after a session was dropped), means the blob
+        # would serve stale data and the read must go through the session,
+        # which replays the log on materialization.
+        if (
+            self._is_solo(int(workbook_id))
+            and int(workbook_id) not in _WORKBOOK_SESSIONS
+        ):
+            _rev_row = self._db.fetch_one(
+                "SELECT blob_revision, current_revision FROM sum_workbooks "
+                "WHERE id = ?",
+                (int(workbook_id),),
+            )
+            if _rev_row is not None and int(_rev_row["blob_revision"]) >= int(
+                _rev_row["current_revision"]
+            ):
+                return self._read_viewport_solo(
+                    user_id,
+                    workbook_id,
+                    sheet_id,
+                    row_start,
+                    row_end,
+                    column_start,
+                    column_end,
+                    normalized_filters,
+                )
+
         # Query the live session directly: hot viewport polls must not pay a
         # serialize + deserialize of the whole workbook per request. The
         # per-workbook lock is held for the duration of the read so the
@@ -2564,6 +2874,60 @@ class SumManager(BaseManager):
                 "SELECT row_index, column_index, value_type, value_json, formula, style_json, revision FROM sum_cells WHERE sheet_id = ? AND row_index >= ? AND row_index < ? AND column_index >= ? AND column_index < ? ORDER BY row_index, column_index",
                 (str(sheet_id), row_start, row_end, column_start, column_end),
             ).fetchall()
+            # Check for segment-backed columns and merge with sparse cells
+            segment_map: Dict[int, Dict[int, Dict[str, Any]]] = {}
+            for col_idx in range(column_start, column_end):
+                try:
+                    seg_rows = connection.execute(
+                        "SELECT segment_id, compressed_values FROM sum_column_segments "
+                        "WHERE sheet_id = ? AND column_id = ? AND row_end > ? AND row_start < ?",
+                        (str(sheet_id), str(col_idx), row_start, row_end),
+                    ).fetchall()
+                    if seg_rows:
+                        col_cells = {}
+                        for seg_row in seg_rows:
+                            decoded = SegmentEncoder.decode_segment(
+                                seg_row["compressed_values"]
+                            )
+                            for cell in decoded.get("cells", []) or []:
+                                if not isinstance(cell, dict):
+                                    continue
+                                r = int(cell.get("row_index", cell.get("row", 0)))
+                                if row_start <= r < row_end:
+                                    col_cells[r] = cell
+                        segment_map[col_idx] = col_cells
+                except Exception:
+                    pass
+            # Merge: segment cells fill gaps, sparse cells take precedence
+            if segment_map:
+                existing_cells = {}
+                for row in rows:
+                    r, c = int(row["row_index"]), int(row["column_index"])
+                    existing_cells[(r, c)] = row
+                for col_idx, col_cells in segment_map.items():
+                    for r, cell in col_cells.items():
+                        if (r, col_idx) not in existing_cells:
+                            rows_list = list(rows)
+                            rows_list.append(
+                                type(
+                                    "Row",
+                                    (),
+                                    {
+                                        "row_index": r,
+                                        "column_index": col_idx,
+                                        "value_type": cell.get("value_type", "blank"),
+                                        "value_json": json.dumps(cell.get("value_json"))
+                                        if cell.get("value_json") is not None
+                                        else None,
+                                        "formula": cell.get("formula"),
+                                        "style_json": json.dumps(cell.get("style_json"))
+                                        if cell.get("style_json") is not None
+                                        else None,
+                                        "revision": 0,
+                                    },
+                                )()
+                            )
+                            rows = rows_list
             used = connection.execute(
                 "SELECT MAX(row_index) AS max_row, MAX(column_index) AS max_col FROM sum_cells WHERE sheet_id = ?",
                 (str(sheet_id),),
@@ -2646,7 +3010,9 @@ class SumManager(BaseManager):
             # holds the live connection, so two COUNT queries plus one main-DB
             # UPDATE here stay cheap while making the status reflect the file.
             try:
-                self._refresh_workbook_status(connection, int(workbook_id))
+                session = _WORKBOOK_SESSIONS.get(int(workbook_id))
+                if session is None or session.pending > 0:
+                    self._refresh_workbook_status(connection, int(workbook_id))
             except Exception:
                 pass
         except sqlite3.Error as exc:
@@ -2719,6 +3085,8 @@ class SumManager(BaseManager):
         base_revision: int,
         cells: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
+        import utils.logger as logger
+
         if not operation_id or len(str(operation_id)) > 200:
             raise SumValidationError("operation_id is required")
         if operation_type not in SUM_OPERATION_TYPES:
@@ -2737,12 +3105,28 @@ class SumManager(BaseManager):
         workbook = self._workbook(user_id, workbook_id, mutation=True)
         current_revision = int(workbook["current_revision"])
 
-        # Idempotency wins over revision staleness: a client retrying an op
-        # it already applied (possibly against a newer revision) must receive
-        # the original result rather than a conflict. Cell operations are
-        # checked against both the live copy's file log and the durable
-        # buffer, so retries after any crash or cross-process flush are
-        # recognized regardless of which copy first recorded the op.
+        # Idempotency check against the main DB log (cheap, no session needed).
+        existing_row = self._db.fetch_one(
+            "SELECT result_revision FROM sum_operations "
+            "WHERE workbook_id = ? AND operation_id = ?",
+            (int(workbook_id), str(operation_id)),
+        )
+        if existing_row is not None:
+            return {
+                "operation_id": operation_id,
+                "revision": int(existing_row["result_revision"]),
+                "replayed": True,
+            }
+
+        if int(base_revision) != current_revision:
+            raise SumConflictError(f"Workbook revision is {current_revision}")
+
+        # Every operation flows through the coalesced live-session path. The
+        # removed "solo fast-path" rewrote the entire blob on every operation
+        # (one full upload per edit), skipped the durable main-database
+        # operation log (breaking idempotent retries, audit, and crash
+        # recovery), and bypassed the session/eviction machinery that the
+        # revision cadence and multi-writer CAS safety depend on.
         with self._session_lock(int(workbook_id)):
             connection = self._materialized_connection_unlocked(int(workbook_id))
             existing = connection.execute(
@@ -2755,25 +3139,8 @@ class SumManager(BaseManager):
                     "revision": int(existing["result_revision"]),
                     "replayed": True,
                 }
-            existing_row = self._db.fetch_one(
-                "SELECT result_revision FROM sum_operations "
-                "WHERE workbook_id = ? AND operation_id = ?",
-                (int(workbook_id), str(operation_id)),
-            )
-            if existing_row is not None:
-                return {
-                    "operation_id": operation_id,
-                    "revision": int(existing_row["result_revision"]),
-                    "replayed": True,
-                }
-
-            if int(base_revision) != current_revision:
-                raise SumConflictError(f"Workbook revision is {current_revision}")
 
             if operation_type in STRUCTURAL_OPERATION_TYPES:
-                # Structural changes stay full-file rewrites (they are rare
-                # and inherently touch every row/column); the rewrite builds
-                # on the live copy so buffered edits are preserved.
                 data = self._serialize_connection(connection)
                 return self._apply_structural_operation(
                     user_id,
@@ -2786,6 +3153,107 @@ class SumManager(BaseManager):
                     data,
                 )
 
+        normalized = self._normalize_cells(operation_type, cells)
+
+        self._check_range_permissions(
+            int(workbook_id), int(sheet_id), normalized, user_id
+        )
+
+        revision = current_revision + 1
+        now = int(time.time() * 1000)
+
+        with self._session_lock(int(workbook_id)):
+            connection = self._materialized_connection_unlocked(int(workbook_id))
+            try:
+                sheet = connection.execute(
+                    "SELECT id FROM sum_sheets WHERE id = ? AND deleted = 0",
+                    (str(sheet_id),),
+                ).fetchone()
+                if sheet is None:
+                    raise SumNotFoundError("Sheet not found")
+                self._validate_cells(connection, str(sheet_id), normalized)
+            except sqlite3.Error as exc:
+                raise SumStorageError("Workbook file could not be updated") from exc
+
+            self._append_op_durable(
+                int(workbook_id),
+                operation_id,
+                user_id,
+                current_revision,
+                revision,
+                operation_type,
+                sheet_id,
+                normalized,
+                now,
+                f"Workbook revision is {current_revision}",
+            )
+            try:
+                for cell in normalized:
+                    self._apply_normalized_cell(
+                        connection, str(sheet_id), cell, revision, now
+                    )
+                connection.execute(
+                    "INSERT INTO sum_operations (operation_id, actor_id, "
+                    "base_revision, result_revision, operation_type, "
+                    "payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(operation_id),
+                        user_id,
+                        current_revision,
+                        revision,
+                        operation_type,
+                        self._json({"sheet_id": str(sheet_id), "cells": normalized}),
+                        now,
+                    ),
+                )
+                self._ensure_axis_metadata(connection, str(sheet_id), normalized)
+                self._bump_statistics(connection, str(sheet_id), normalized)
+                connection.commit()
+            except sqlite3.Error as exc:
+                self._drop_session(int(workbook_id))
+                raise SumStorageError("Workbook file could not be updated") from exc
+            session = _WORKBOOK_SESSIONS.get(int(workbook_id))
+            if session is not None:
+                session.pending += 1
+            self._maybe_flush(int(workbook_id))
+            # Keep the cached index/calculation status current after every
+            # mutation: two COUNTs on the in-memory session plus one main-DB
+            # UPDATE. The materialization-time refresh only fires when a
+            # session is rebuilt (blob behind the log), which misses the very
+            # first buffered operation of a fresh workbook.
+            session = _WORKBOOK_SESSIONS.get(int(workbook_id))
+            if session is not None:
+                try:
+                    self._refresh_workbook_status(session.connection, int(workbook_id))
+                except Exception:
+                    logger.debug(
+                        "PlexiSum workbook status refresh failed", exc_info=True
+                    )
+
+        self._audit(
+            "edit",
+            "operation",
+            workbook_id,
+            user_id,
+            {
+                "operation_id": str(operation_id),
+                "sheet_id": str(sheet_id),
+                "revision": revision,
+                "operation_type": operation_type,
+                "cell_count": len(normalized),
+            },
+        )
+        self._emit_update(workbook, revision, user_id)
+        return {
+            "operation_id": operation_id,
+            "revision": revision,
+            "replayed": False,
+        }
+
+    def _normalize_cells(
+        self, operation_type: str, cells: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Normalize raw operation cells into the canonical internal format."""
         normalized: List[Dict[str, Any]] = []
         for cell in cells:
             try:
@@ -2839,97 +3307,7 @@ class SumManager(BaseManager):
                     "style": cell.get("style"),
                 }
             )
-
-        self._check_range_permissions(
-            int(workbook_id), int(sheet_id), normalized, user_id
-        )
-
-        revision = current_revision + 1
-        now = int(time.time() * 1000)
-
-        with self._session_lock(int(workbook_id)):
-            connection = self._materialized_connection_unlocked(int(workbook_id))
-            try:
-                sheet = connection.execute(
-                    "SELECT id FROM sum_sheets WHERE id = ? AND deleted = 0",
-                    (str(sheet_id),),
-                ).fetchone()
-                if sheet is None:
-                    raise SumNotFoundError("Sheet not found")
-                # Data-validation rules are enforced on the write path
-                # against the live copy, so invalid values never land in the
-                # file regardless of which client sent them.
-                self._validate_cells(connection, str(sheet_id), normalized)
-            except sqlite3.Error as exc:
-                raise SumStorageError("Workbook file could not be updated") from exc
-
-            # Durable first: the log row plus revision CAS are committed
-            # before the in-memory copy is mutated, so a crash in between
-            # loses nothing — materialization replays the buffered operation.
-            self._append_op_durable(
-                int(workbook_id),
-                operation_id,
-                user_id,
-                current_revision,
-                revision,
-                operation_type,
-                sheet_id,
-                normalized,
-                now,
-                f"Workbook revision is {current_revision}",
-            )
-            try:
-                for cell in normalized:
-                    self._apply_normalized_cell(
-                        connection, str(sheet_id), cell, revision, now
-                    )
-                connection.execute(
-                    "INSERT INTO sum_operations (operation_id, actor_id, "
-                    "base_revision, result_revision, operation_type, "
-                    "payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        str(operation_id),
-                        user_id,
-                        current_revision,
-                        revision,
-                        operation_type,
-                        self._json({"sheet_id": str(sheet_id), "cells": normalized}),
-                        now,
-                    ),
-                )
-                self._ensure_axis_metadata(connection, str(sheet_id), normalized)
-                self._bump_statistics(connection, str(sheet_id), normalized)
-                connection.commit()
-            except sqlite3.Error as exc:
-                # The operation is already durable; drop the live copy so the
-                # next access rebuilds from the log. A client retry is then
-                # answered as replayed instead of failing again.
-                self._drop_session(int(workbook_id))
-                raise SumStorageError("Workbook file could not be updated") from exc
-            session = _WORKBOOK_SESSIONS.get(int(workbook_id))
-            if session is not None:
-                session.pending += 1
-            self._maybe_flush(int(workbook_id))
-
-        self._audit(
-            "edit",
-            "operation",
-            workbook_id,
-            user_id,
-            {
-                "operation_id": str(operation_id),
-                "sheet_id": str(sheet_id),
-                "revision": revision,
-                "operation_type": operation_type,
-                "cell_count": len(normalized),
-            },
-        )
-        self._emit_update(workbook, revision, user_id)
-        return {
-            "operation_id": operation_id,
-            "revision": revision,
-            "replayed": False,
-        }
+        return normalized
 
     # ── structural operations (rows / columns) ───────────────────────────────
 
@@ -3065,8 +3443,8 @@ class SumManager(BaseManager):
     ) -> None:
         """Shift cells, axis metadata, statistics, and indexes for an insert/delete.
 
-        Cells are moved deterministically (read, delete, re-insert) so SQLite
-        primary-key ordering can never collide regardless of processing order.
+        Uses SQL range UPDATEs for efficient bulk shifts instead of
+        read-all/delete/reinsert loops.
         """
         if axis == "row":
             index_field = "row_index"
@@ -3077,70 +3455,71 @@ class SumManager(BaseManager):
             axis_table = "sum_columns"
             column_key_field = "column_key"
 
-        # 1. Remove the deleted band first (delete ops only).
+        # 1. Keep the MAX_STRUCTURAL_CELLS check
+        source_bound = at if insert else at + count
+        count_check = connection.execute(
+            f"SELECT COUNT(*) as c FROM sum_cells WHERE sheet_id = ? AND {index_field} >= ?",
+            (sheet_id, source_bound),
+        ).fetchone()
+        if count_check["c"] > MAX_STRUCTURAL_CELLS:
+            raise SumValidationError(
+                "Operation affects too many cells; split it into smaller changes"
+            )
+
+        # 2. Remove the deleted band first (delete ops only).
         if not insert:
             connection.execute(
                 f"DELETE FROM sum_cells WHERE sheet_id = ? AND {index_field} >= ? AND {index_field} < ?",
                 (sheet_id, at, at + count),
             )
 
-        # 2. Move the surviving cells that shift.
+        # 3. Move the surviving cells using SQL range UPDATE.
         if insert:
-            source_bound = at
-            delta = count
-        else:
-            source_bound = at + count
-            delta = -count
-        affected = connection.execute(
-            f"SELECT {index_field} AS idx, column_index, row_index, value_type, value_json, formula, style_json, revision, updated_at FROM sum_cells WHERE sheet_id = ? AND {index_field} >= ?",
-            (sheet_id, source_bound),
-        ).fetchall()
-        if len(affected) > MAX_STRUCTURAL_CELLS:
-            raise SumValidationError(
-                "Operation affects too many cells; split it into smaller changes"
-            )
-        if affected:
-            shifted: List[Tuple[Any, ...]] = []
-            for row in affected:
-                if axis == "row":
-                    new_index = int(row["row_index"]) + delta
-                    column_index = int(row["column_index"])
-                else:
-                    new_index = int(row["column_index"]) + delta
-                    column_index = new_index
-                shifted.append(
-                    (
-                        sheet_id,
-                        new_index if axis == "row" else int(row["row_index"]),
-                        new_index if axis == "column" else column_index,
-                        row["value_type"],
-                        row["value_json"],
-                        row["formula"],
-                        row["style_json"],
-                        int(row["revision"]),
-                        int(row["updated_at"]),
-                    )
-                )
             connection.execute(
-                f"DELETE FROM sum_cells WHERE sheet_id = ? AND {index_field} >= ?",
-                (sheet_id, source_bound),
+                f"UPDATE sum_cells SET {index_field} = {index_field} + ? "
+                f"WHERE sheet_id = ? AND {index_field} >= ?",
+                (count, sheet_id, at),
             )
-            connection.executemany(
-                "INSERT INTO sum_cells (sheet_id, row_index, column_index, value_type, value_json, formula, style_json, revision, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                shifted,
+        else:
+            connection.execute(
+                f"UPDATE sum_cells SET {index_field} = {index_field} - ? "
+                f"WHERE sheet_id = ? AND {index_field} >= ?",
+                (count, sheet_id, at + count),
             )
 
-        # 3. Axis metadata (sum_rows / sum_columns) stays in sync.
+        # 4. Axis metadata (sum_rows / sum_columns) stays in sync.
         if insert:
             connection.execute(
                 f"UPDATE {axis_table} SET position = position + ? WHERE sheet_id = ? AND position >= ?",
                 (count, sheet_id, at),
             )
             now = int(time.time() * 1000)
-            for i in range(at, at + count):
-                connection.execute(
-                    f"INSERT OR IGNORE INTO {axis_table} (id, sheet_id, stable_key, position, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (str(self._generate_id()), sheet_id, f"{axis}-{i}", i, now),
+            rows_data = [
+                (str(self._generate_id()), sheet_id, f"{axis}-{i}", i, now)
+                for i in range(at, at + count)
+            ]
+            if axis == "row":
+                connection.executemany(
+                    "INSERT OR IGNORE INTO sum_rows (id, sheet_id, stable_key, position, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    rows_data,
+                )
+            else:
+                cols_data = [
+                    (
+                        str(self._generate_id()),
+                        sheet_id,
+                        f"{axis}-{i}",
+                        _column_letter(i),
+                        i,
+                        now,
+                    )
+                    for i in range(at, at + count)
+                ]
+                connection.executemany(
+                    "INSERT OR IGNORE INTO sum_columns (id, sheet_id, stable_key, display_name, data_type, position, created_at) "
+                    "VALUES (?, ?, ?, ?, 'text', ?, ?)",
+                    cols_data,
                 )
         else:
             connection.execute(
@@ -3152,22 +3531,61 @@ class SumManager(BaseManager):
                 (count, sheet_id, at + count),
             )
 
-        # 4. Query statistics and managed indexes follow column moves.
+        # 5. Query statistics and managed indexes follow column moves.
         if column_key_field:
             if insert:
                 connection.execute(
-                    "UPDATE sum_statistics SET column_key = CAST(CAST(column_key AS INTEGER) + ? AS TEXT) WHERE sheet_id = ? AND CAST(column_key AS INTEGER) >= ?",
+                    "UPDATE sum_statistics SET column_key = CAST(CAST(column_key AS INTEGER) + ? AS TEXT) "
+                    "WHERE sheet_id = ? AND CAST(column_key AS INTEGER) >= ?",
+                    (count, sheet_id, at),
+                )
+                connection.execute(
+                    "UPDATE sum_indexes SET column_key = CAST(CAST(column_key AS INTEGER) + ? AS TEXT) "
+                    "WHERE sheet_id = ? AND CAST(column_key AS INTEGER) >= ?",
                     (count, sheet_id, at),
                 )
             else:
                 connection.execute(
-                    "DELETE FROM sum_statistics WHERE sheet_id = ? AND CAST(column_key AS INTEGER) >= ? AND CAST(column_key AS INTEGER) < ?",
+                    "DELETE FROM sum_statistics WHERE sheet_id = ? "
+                    "AND CAST(column_key AS INTEGER) >= ? AND CAST(column_key AS INTEGER) < ?",
                     (sheet_id, at, at + count),
                 )
                 connection.execute(
-                    "UPDATE sum_statistics SET column_key = CAST(CAST(column_key AS INTEGER) - ? AS TEXT) WHERE sheet_id = ? AND CAST(column_key AS INTEGER) >= ?",
+                    "UPDATE sum_statistics SET column_key = CAST(CAST(column_key AS INTEGER) - ? AS TEXT) "
+                    "WHERE sheet_id = ? AND CAST(column_key AS INTEGER) >= ?",
                     (count, sheet_id, at + count),
                 )
+                connection.execute(
+                    "DELETE FROM sum_indexes WHERE sheet_id = ? "
+                    "AND CAST(column_key AS INTEGER) >= ? AND CAST(column_key AS INTEGER) < ?",
+                    (sheet_id, at, at + count),
+                )
+                connection.execute(
+                    "UPDATE sum_indexes SET column_key = CAST(CAST(column_key AS INTEGER) - ? AS TEXT) "
+                    "WHERE sheet_id = ? AND CAST(column_key AS INTEGER) >= ?",
+                    (count, sheet_id, at + count),
+                )
+
+        # 6. Column segments follow column moves.
+        if column_key_field:
+            if insert:
+                connection.execute(
+                    "UPDATE sum_column_segments SET column_id = CAST(CAST(column_id AS INTEGER) + ? AS TEXT) "
+                    "WHERE sheet_id = ? AND CAST(column_id AS INTEGER) >= ?",
+                    (count, sheet_id, at),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM sum_column_segments WHERE sheet_id = ? "
+                    "AND CAST(column_id AS INTEGER) >= ? AND CAST(column_id AS INTEGER) < ?",
+                    (sheet_id, at, at + count),
+                )
+                connection.execute(
+                    "UPDATE sum_column_segments SET column_id = CAST(CAST(column_id AS INTEGER) - ? AS TEXT) "
+                    "WHERE sheet_id = ? AND CAST(column_id AS INTEGER) >= ?",
+                    (count, sheet_id, at + count),
+                )
+
         # Index entries embed row/column coordinates; invalidate and re-promote.
         self._invalidate_sheet_indexes(connection, sheet_id)
 
@@ -3289,33 +3707,39 @@ class SumManager(BaseManager):
         values into DDL (stable keys are generated, not user-controlled).
         """
         now = int(time.time() * 1000)
-        rows_needed: Dict[int, None] = {}
-        columns_needed: Dict[int, None] = {}
+        rows_needed: set = set()
+        columns_needed: set = set()
         for cell in cells:
-            rows_needed.setdefault(int(cell["row"]), None)
-            columns_needed.setdefault(int(cell["column"]), None)
-        for row_index in rows_needed:
-            connection.execute(
-                "INSERT OR IGNORE INTO sum_rows (id, sheet_id, stable_key, position, created_at) VALUES (?, ?, ?, ?, ?)",
-                (
-                    str(self._generate_id()),
-                    sheet_id,
-                    f"row-{row_index}",
-                    row_index,
-                    now,
-                ),
+            rows_needed.add(int(cell["row"]))
+            columns_needed.add(int(cell["column"]))
+
+        if rows_needed:
+            rows_data = [
+                (str(self._generate_id()), sheet_id, f"row-{r}", r, now)
+                for r in rows_needed
+            ]
+            connection.executemany(
+                "INSERT OR IGNORE INTO sum_rows (id, sheet_id, stable_key, position, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                rows_data,
             )
-        for column_index in columns_needed:
-            connection.execute(
-                "INSERT OR IGNORE INTO sum_columns (id, sheet_id, stable_key, display_name, data_type, position, created_at) VALUES (?, ?, ?, ?, 'text', ?, ?)",
+
+        if columns_needed:
+            cols_data = [
                 (
                     str(self._generate_id()),
                     sheet_id,
-                    f"col-{column_index}",
-                    _column_letter(column_index),
-                    column_index,
+                    f"col-{c}",
+                    _column_letter(c),
+                    c,
                     now,
-                ),
+                )
+                for c in columns_needed
+            ]
+            connection.executemany(
+                "INSERT OR IGNORE INTO sum_columns (id, sheet_id, stable_key, display_name, data_type, position, created_at) "
+                "VALUES (?, ?, ?, ?, 'text', ?, ?)",
+                cols_data,
             )
 
     def _bump_statistics(
@@ -3335,20 +3759,38 @@ class SumManager(BaseManager):
         counts: Dict[int, int] = {}
         for cell in cells:
             counts[int(cell["column"])] = counts.get(int(cell["column"]), 0) + 1
+
+        column_keys = list(counts.keys())
+        if not column_keys:
+            return
+
+        # Batch fetch existing counts
+        placeholders = ",".join("?" * len(column_keys))
+        existing = connection.execute(
+            f"SELECT column_key, access_count FROM sum_statistics "
+            f"WHERE sheet_id = ? AND column_key IN ({placeholders})",
+            (sheet_id, *[str(k) for k in column_keys]),
+        ).fetchall()
+        existing_map = {str(r["column_key"]): int(r["access_count"]) for r in existing}
+
+        # Batch upsert
+        rows = []
         crossed: List[str] = []
         for column_index, cell_count in counts.items():
             column_key = str(column_index)
-            previous_row = connection.execute(
-                "SELECT access_count FROM sum_statistics WHERE sheet_id = ? AND column_key = ?",
-                (sheet_id, column_key),
-            ).fetchone()
-            previous = int(previous_row["access_count"]) if previous_row else 0
-            connection.execute(
-                "INSERT INTO sum_statistics (sheet_id, column_key, access_count, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(sheet_id, column_key) DO UPDATE SET access_count = sum_statistics.access_count + excluded.access_count, updated_at = excluded.updated_at",
-                (sheet_id, column_key, cell_count, now),
-            )
+            previous = existing_map.get(column_key, 0)
+            rows.append((sheet_id, column_key, cell_count, now))
             if previous < INDEX_PROMOTION_THRESHOLD <= previous + cell_count:
                 crossed.append(column_key)
+
+        connection.executemany(
+            "INSERT INTO sum_statistics (sheet_id, column_key, access_count, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(sheet_id, column_key) DO UPDATE SET "
+            "access_count = sum_statistics.access_count + excluded.access_count, "
+            "updated_at = excluded.updated_at",
+            rows,
+        )
+
         if crossed:
             try:
                 self._promote_indexes(connection, sheet_id, now, crossed)
@@ -3445,6 +3887,31 @@ class SumManager(BaseManager):
             )
             count += 1
 
+            # Pack column into dense segments when it has enough cells
+            if len(entries) >= 1000:
+                try:
+                    segments = SegmentEncoder.pack_column(entries)
+                    for seg_id, seg_data in segments:
+                        decoded = SegmentEncoder.decode_segment(seg_data)
+                        connection.execute(
+                            "INSERT OR REPLACE INTO sum_column_segments "
+                            "(sheet_id, column_id, segment_id, row_start, row_end, "
+                            "encoding, compressed_values, statistics_json) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                sheet_id,
+                                column_key,
+                                seg_id,
+                                decoded["row_start"],
+                                decoded["row_end"],
+                                decoded["encoding"],
+                                seg_data,
+                                json.dumps(decoded.get("statistics", {})),
+                            ),
+                        )
+                except Exception:
+                    pass
+
     # ── replay / snapshots ────────────────────────────────────────────────────
 
     def replay_operations(
@@ -3512,7 +3979,10 @@ class SumManager(BaseManager):
 
         # Validate the source before creating the external snapshot object. This
         # keeps schema/format failures from producing an unreachable blob.
-        path = self._blob.store(data, key)
+        from .container import encode_container
+
+        container_data = encode_container(data)
+        path = self._blob.store(container_data, key)
         try:
             self._db.begin_transaction()
             self._db.execute(
@@ -3647,11 +4117,17 @@ class SumManager(BaseManager):
         if not row or not row.get("blob_path"):
             raise SumNotFoundError("Snapshot not found")
         try:
-            data = self._blob.retrieve(str(row["blob_path"]))
+            container_data = self._blob.retrieve(str(row["blob_path"]))
         except Exception as exc:
             raise SumStorageError("Snapshot file could not be read") from exc
+        if container_data[:4] == b"PXSM":
+            from .container import decode_container
+
+            db_bytes, _, _ = decode_container(container_data)
+        else:
+            db_bytes = container_data
         if row.get("checksum"):
-            actual = hashlib.sha256(data).hexdigest()
+            actual = hashlib.sha256(db_bytes).hexdigest()
             if actual != row["checksum"]:
                 raise SumValidationError("Snapshot checksum mismatch")
         current = self._db.fetch_one(
@@ -3665,7 +4141,7 @@ class SumManager(BaseManager):
             int(workbook_id),
             int(base_revision),
             int(revision),
-            data,
+            db_bytes,
             now,
             "Workbook revision changed during restore",
         )
@@ -4513,12 +4989,45 @@ class SumManager(BaseManager):
         ).fetchall()
         if not rules:
             return
+
+        # Build a set of (row, col) -> cell for the cells being written
+        cell_map: Dict[tuple, Dict[str, Any]] = {}
         for cell in cells:
-            if cell.get("value_type") in ("blank", "__preserve__", "formula"):
-                continue
-            row_index = int(cell["row"])
-            column_index = int(cell["column"])
-            for rule in rules:
+            cell_map[(int(cell["row"]), int(cell["column"]))] = cell
+
+        # Fetch existing cells in the affected ranges in ONE query
+        if not cell_map:
+            return
+        rows = [r for r, c in cell_map.keys()]
+        cols = [c for r, c in cell_map.keys()]
+        min_row, max_row = min(rows), max(rows)
+        min_col, max_col = min(cols), max(cols)
+
+        existing = connection.execute(
+            "SELECT row_index, column_index, value_type, value_json FROM sum_cells "
+            "WHERE sheet_id = ? AND row_index >= ? AND row_index <= ? "
+            "AND column_index >= ? AND column_index <= ?",
+            (sheet_id, min_row, max_row, min_col, max_col),
+        ).fetchall()
+
+        # Merge existing cells into map
+        for row in existing:
+            key = (int(row["row_index"]), int(row["column_index"]))
+            if key not in cell_map:
+                cell_map[key] = {
+                    "row": key[0],
+                    "column": key[1],
+                    "value_type": row["value_type"],
+                    "value": json.loads(row["value_json"])
+                    if row["value_json"]
+                    else None,
+                }
+
+        # Validate each rule against the cell map
+        for rule in rules:
+            for (row_index, column_index), cell in cell_map.items():
+                if cell.get("value_type") in ("blank", "__preserve__", "formula"):
+                    continue
                 if not (
                     int(rule["row_start"]) <= row_index < int(rule["row_end"])
                     and int(rule["column_start"])
@@ -4579,7 +5088,6 @@ class SumManager(BaseManager):
                         raise SumValidationError(message)
                     if before is not None and numeric > float(before):
                         raise SumValidationError(message)
-                break
 
     # ── conditional formatting ───────────────────────────────────────────────
 
