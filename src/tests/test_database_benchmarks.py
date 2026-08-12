@@ -191,7 +191,11 @@ def benchmark_db_sqlite(tmp_path):
     """Create a temporary SQLite database for benchmarking."""
     db_path = str(tmp_path / "benchmark.db")
 
-    # Configure for benchmarking
+    # Configure for benchmarking. ``max_connections`` must comfortably exceed
+    # the largest concurrent worker count in this file (10 threads in
+    # ``test_concurrent_connection_acquisition`` plus the main thread), since
+    # every worker gets its own thread-local pool checkout and the pool is
+    # shared — with max=5 those tests exhausted the pool with TimeoutError.
     config.setup(
         config_path=str(tmp_path / "benchmark_config.yaml"),
         default_config={
@@ -200,11 +204,20 @@ def benchmark_db_sqlite(tmp_path):
                 "path": db_path,
                 "connection_pool": {
                     "min_connections": 1,
-                    "max_connections": 5,
+                    "max_connections": 20,
+                    "cache_size_kb": -1024,
+                    "mmap_size": 1048576,
+                    "journal_size_limit": 1048576,
                 },
             }
         },
     )
+
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once, so without a reset the engine stays bound to whichever config the
+    # FIRST construction in the process saw (e.g. a postgres config set by an
+    # earlier test) and ``connect()`` would fail against the wrong backend.
+    Database.reset()
 
     db = Database()
 

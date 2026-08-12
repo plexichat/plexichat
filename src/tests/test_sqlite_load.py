@@ -53,8 +53,31 @@ def sqlite_db(setup_module):
         except OSError:
             pass
 
-    default_config = {"database": {"type": "sqlite", "path": db_path}}
+    default_config = {
+        "database": {
+            "type": "sqlite",
+            "path": db_path,
+            # ``max_connections`` must exceed the largest worker count in
+            # this file (50 threads in ``test_concurrent_writes_50_threads``)
+            # because every worker keeps its own thread-local checkout from
+            # the shared pool — the default max of 16 made that test block
+            # 30s per pool.get_connection() and effectively hang.
+            "connection_pool": {
+                "min_connections": 2,
+                "max_connections": 64,
+                "connect_timeout": 5,
+                "cache_size_kb": -1024,
+                "mmap_size": 1048576,
+                "journal_size_limit": 1048576,
+            },
+        }
+    }
     config.setup(config_path=config_path, default_config=default_config)
+
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once — drop it so this test's ``Database()`` re-initialises against
+    # the fresh config above instead of a stale earlier instance.
+    Database.reset()
 
     db = Database()
     db.connect()

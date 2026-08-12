@@ -66,6 +66,21 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "min_connections": 5,
                 "max_connections": 100,
                 "connect_timeout": 10,
+                # Per-connection SQLite memory knobs (KB of page cache,
+                # mmap size in bytes, WAL journal cap in bytes). Production
+                # defaults keep the cache large for hot deployments; tests
+                # override these to tiny values so thousands of per-test
+                # pools stay lean.
+                "cache_size_kb": -32000,
+                "mmap_size": 268435456,
+                "journal_size_limit": 67108864,
+                "temp_store": "MEMORY",
+                # Checked-out connections idle longer than this (seconds) are
+                # reclaimed when the pool is exhausted (or on a periodic reap)
+                # instead of blocking callers for the full connect timeout.
+                # This self-heals connections leaked into worker-thread
+                # thread-local storage by AnyIO ``run_in_threadpool`` queries.
+                "idle_reclaim_seconds": 5.0,
             },
             "monitoring": {
                 "slow_query_threshold_ms": 1000,
@@ -408,7 +423,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "webhook_multiplier": 1.0,
             "admin_bypass": True,
             "internal_bypass": True,
-            "bypass_secret": secrets.token_hex(32),
         },
         "servers": {
             "server_name_min_length": 2,

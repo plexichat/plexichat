@@ -56,6 +56,13 @@ def db_config(setup_module):
     default_config = {"database": {"type": "sqlite", "path": db_path}}
     config.setup(config_path=config_path, default_config=default_config)
 
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once, so without a reset the engine would stay bound to whichever
+    # config the FIRST test in the process used. Drop it so this test's
+    # ``Database()`` re-initialises against the fresh config above (also
+    # closes the previous instance's pool + monitor thread, so no leak).
+    Database.reset()
+
     yield config_path
 
     gc.collect()
@@ -274,30 +281,55 @@ class TestTransactionIsolation:
         db.close()
 
     def test_transaction_isolation_concurrent_reads(self, db_config):
+        # ``Database`` is a process-wide singleton whose connections are
+        # thread-local, so concurrent connections are exercised across
+        # threads: the writer thread holds an uncommitted transaction while
+        # the main thread (its own connection) must not see the write.
         db1 = Database()
         db1.connect()
         db1.execute("CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER)")
         db1.execute("INSERT INTO counter (value) VALUES (?)", (0,))
-        db1.close()
 
-        db2 = Database()
-        db2.connect()
-        db2.begin_transaction()
-        db2.execute("UPDATE counter SET value = 100 WHERE id = 1", auto_commit=False)
+        writer_done = threading.Event()
+        writer_error = []
 
-        db3 = Database()
-        db3.connect()
-        result = db3.fetch_one("SELECT value FROM counter WHERE id = 1")
+        def writer():
+            try:
+                db2 = Database()
+                db2.connect()
+                db2.begin_transaction()
+                db2.execute(
+                    "UPDATE counter SET value = 100 WHERE id = 1", auto_commit=False
+                )
+                writer_done.set()
+                # Keep the transaction open until the reader thread confirms
+                # it cannot see the uncommitted write.
+                while not writer_release.is_set():
+                    time.sleep(0.01)
+                db2.commit()
+                db2.close()
+            except Exception as e:  # pragma: no cover - failure reporting
+                writer_error.append(e)
+                writer_done.set()
+
+        writer_release = threading.Event()
+        t = threading.Thread(target=writer)
+        t.start()
+        assert writer_done.wait(timeout=10), "writer thread did not start"
+
+        # Main thread's own connection must not see the uncommitted write.
+        result = db1.fetch_one("SELECT value FROM counter WHERE id = 1")
         assert result["value"] == 0
 
-        db2.commit()
+        writer_release.set()
+        t.join(timeout=10)
+        assert not writer_error, f"writer thread failed: {writer_error}"
 
-        db3._query_cache.clear()
-        result = db3.fetch_one("SELECT value FROM counter WHERE id = 1")
+        db1._query_cache.clear()
+        result = db1.fetch_one("SELECT value FROM counter WHERE id = 1")
         assert result["value"] == 100
 
-        db2.close()
-        db3.close()
+        db1.close()
 
     def test_transaction_error_handling(self, db_config):
         db = Database()
@@ -954,24 +986,40 @@ class TestDatabaseSecurity:
         db.close()
 
     def test_connection_state_isolation(self, db_config):
+        # ``Database`` is a process-wide singleton, so connection state is
+        # isolated per thread (thread-local connections). A transaction
+        # opened on the main thread must not leak into another thread's
+        # connection state.
         db1 = Database()
         db1.connect()
         db1.execute("CREATE TABLE state_test (id INTEGER PRIMARY KEY, data TEXT)")
 
-        db2 = Database()
-        db2.connect()
+        other_state = {}
+
+        def worker():
+            db2 = Database()
+            db2.connect()
+            other_state["in_transaction"] = db2.in_transaction
+            other_state["depth"] = db2.transaction_depth
+            db2.close()
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join(timeout=10)
 
         db1.begin_transaction()
         db1.execute(
             "INSERT INTO state_test (data) VALUES (?)", ("from_db1",), auto_commit=False
         )
 
-        assert db1._in_transaction is True
-        assert db2._in_transaction is False
+        assert db1.in_transaction is True
+        assert db1.transaction_depth == 1
+        # The other thread's connection was never touched by our transaction.
+        assert other_state["in_transaction"] is False
+        assert other_state["depth"] == 0
 
         db1.rollback()
         db1.close()
-        db2.close()
 
     def test_sql_injection_in_like_clause(self, db_config):
         db = Database()

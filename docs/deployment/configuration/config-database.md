@@ -231,7 +231,7 @@ These settings help detect network failures and stale connections without waitin
 
 ## Connection Pool
 
-Connection pool settings for PostgreSQL (ignored for SQLite).
+Connection pool settings. `min_connections`/`max_connections`/`connect_timeout` apply to PostgreSQL; the SQLite pool applies `min_connections`/`max_connections` and the self-healing `idle_reclaim_seconds` setting below.
 
 ### Configuration
 
@@ -241,6 +241,7 @@ database:
     min_connections: 5
     max_connections: 100
     connect_timeout: 10
+    idle_reclaim_seconds: 5.0  # SQLite only: reclaim leaked/idle connections
 ```
 
 ### Deployment Considerations
@@ -280,6 +281,14 @@ Creating new database connections is expensive (requires network round-trip, aut
 - **High-Latency Networks**: Increase to 15-20 seconds for geographically distributed deployments
 
 **Rationale**: Timeout prevents indefinite waiting when database is unavailable or overloaded. Too short causes unnecessary failures during brief load spikes. Too long delays error reporting.
+
+**Idle Reclaim (SQLite)**
+
+- **Default**: 5 seconds
+- **Purpose**: Prevents connection-pool exhaustion from leaked thread-local connections (e.g. AnyIO `run_in_threadpool` workers that check out a connection and never return it). When the pool is exhausted, connections idle longer than `idle_reclaim_seconds` are closed and reclaimed so new checkouts succeed instead of blocking for the full `connect_timeout`.
+- **Current-thread guard**: A connection owned by the calling thread is never reclaimed, so in-flight work is never disrupted from the same thread.
+- **Periodic sweep**: The connection monitor additionally reaps connections idle longer than 60 seconds during its regular cycle.
+- **Long-running queries**: Because a reclaimed connection is closed only when idle past the threshold, very long queries (longer than the threshold) on a fully-exhausted pool may be interrupted and transparently retried by the execution layer when not inside a transaction. Raise `idle_reclaim_seconds` if you run batch operations that routinely exceed the threshold.
 
 **Pool Sizing Guidelines**
 

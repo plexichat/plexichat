@@ -29,12 +29,21 @@ def _temporary_database_config(database_conf: dict):
     The config module exposes a live :class:`ConfigLoader` (``config.get/set``)
     rather than a module-level ``config_data`` dict, so the old
     ``patch.dict(config.config_data, ...)`` pattern no longer applies.
+
+    ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    once, so each config swap must also drop the cached instance — otherwise
+    the next ``Database()`` returns the instance bound to whatever config the
+    FIRST construction saw (engine path, age thresholds, monitor thread) and
+    every test in this file sees stale settings. ``reset()`` tears down the
+    old pool + monitor thread too, so no state leaks between tests.
     """
     old = config.get("database")
     config.set("database", database_conf)
+    Database.reset()
     try:
         yield
     finally:
+        Database.reset()
         config.set("database", old)
 
 
@@ -222,13 +231,12 @@ class TestPeriodicLogging:
     @pytest.fixture
     def test_db(self):
         """Create a test database instance."""
-        with _temporary_database_config(
-            {
-                "type": "sqlite",
-                "path": ":memory:",
-                "monitoring": {"log_interval_seconds": 0.3},  # fast logging for testing
-            }
-        ):
+        # ``monitoring`` is read from the TOP-LEVEL config section (see
+        # Database.__init__: ``config.get("monitoring", {})``), so it must be
+        # set separately from the ``database`` section. ``_isolate_global_config``
+        # restores it after each test.
+        with _temporary_database_config({"type": "sqlite", "path": ":memory:"}):
+            config.set("monitoring", {"log_interval_seconds": 0.3})
             db = Database()
             yield db
             # Cleanup
@@ -236,13 +244,16 @@ class TestPeriodicLogging:
 
     def test_start_pool_monitoring_creates_thread(self, test_db):
         """Test that starting monitoring creates a background thread."""
-        assert test_db.monitor._periodic_logging_thread is None
-
-        test_db.start_pool_monitoring()
-
+        # ``Database()`` auto-starts the pool monitor thread in ``__init__``
+        # (for sqlite/postgres), so it must already exist and be running.
         assert test_db.monitor._periodic_logging_thread is not None
         assert test_db.monitor._periodic_logging_thread.is_alive()
         assert test_db.monitor._periodic_logging_thread.daemon
+
+        # start_pool_monitoring is idempotent: the same thread object is kept.
+        first_thread = test_db.monitor._periodic_logging_thread
+        test_db.start_pool_monitoring()
+        assert test_db.monitor._periodic_logging_thread is first_thread
 
     def test_monitoring_thread_name(self, test_db):
         """Test that monitoring thread has proper name."""

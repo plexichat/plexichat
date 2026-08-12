@@ -76,7 +76,9 @@ class FakeGlideClient:
         k = self._key(key)
         old = self._data.get(k)
 
-        from glide_sync import ConditionalChange  # pyright: ignore[reportMissingImports]
+        import importlib
+
+        ConditionalChange = importlib.import_module("glide_sync").ConditionalChange
 
         if conditional_set is ConditionalChange.ONLY_IF_DOES_NOT_EXIST:
             if k in self._data:
@@ -88,7 +90,11 @@ class FakeGlideClient:
         self._data[k] = self._val(value)
 
         if expiry is not None:
-            from glide_sync import ExpirySet, ExpiryType  # pyright: ignore[reportMissingImports]
+            import importlib
+
+            glide_sync = importlib.import_module("glide_sync")
+            ExpirySet = glide_sync.ExpirySet
+            ExpiryType = glide_sync.ExpiryType
 
             if isinstance(expiry, ExpirySet):
                 secs = float(expiry.value)

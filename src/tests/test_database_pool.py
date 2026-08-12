@@ -43,6 +43,11 @@ def test_connection_age_eviction(setup_logging):
         config_path=str(temp_dir / "config_age.yaml"), default_config=db_config
     )
 
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once — drop it so this test's ``Database()`` re-initialises against the
+    # short max-age config above instead of a stale earlier instance.
+    Database.reset()
+
     db = Database()
     db.connect()
 
@@ -84,6 +89,11 @@ def test_connection_idle_eviction(setup_logging):
     config.setup(
         config_path=str(temp_dir / "config_idle.yaml"), default_config=db_config
     )
+
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once — drop it so this test's ``Database()`` re-initialises against the
+    # short max-idle config above instead of a stale earlier instance.
+    Database.reset()
 
     db = Database()
     db.connect()
@@ -153,6 +163,12 @@ def test_monitoring_log_interval_config(setup_logging):
     config.setup(
         config_path=str(temp_dir / "config_mon.yaml"), default_config=db_config
     )
+
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once, so drop it here — otherwise ``Database()`` returns the instance
+    # bound to whatever config an earlier test in the process used (interval
+    # 30 instead of 42) and this test sees stale monitor settings.
+    Database.reset()
 
     db = Database()
     assert db.monitor._periodic_log_interval == 42

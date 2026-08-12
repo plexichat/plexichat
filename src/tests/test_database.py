@@ -62,6 +62,13 @@ def db_config(setup_module):
     default_config = {"database": {"type": "sqlite", "path": db_path}}
     config.setup(config_path=config_path, default_config=default_config)
 
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once, so without a reset the engine would stay bound to whichever
+    # config the FIRST test in the process used. Drop it so this test's
+    # ``Database()`` re-initialises against the fresh config above (also
+    # closes the previous instance's pool + monitor thread, so no leak).
+    Database.reset()
+
     yield config_path, temp_dir
 
     # Force garbage collection before cleanup
@@ -1540,6 +1547,9 @@ class TestPostgresConnectionPoolAcquisition:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton: drop it so this test's
+        # ``Database()`` re-initialises against the fresh config above.
+        Database.reset()
         return pg_config
 
     def test_pool_minconn_validation(self, postgres_pool_config):
@@ -1604,6 +1614,9 @@ class TestPostgresPlaceholderConversionComplex:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton: drop it so this test's
+        # ``Database()`` re-initialises against the fresh config above.
+        Database.reset()
 
     def test_nested_single_quotes_with_placeholders(self):
         """Test placeholder conversion with nested single quotes."""
@@ -1787,6 +1800,9 @@ class TestPostgresConnectionTimeout:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton: drop it so this test's
+        # ``Database()`` re-initialises against the fresh config above.
+        Database.reset()
         return pg_config
 
     def test_timeout_config_is_set(self, postgres_timeout_config):

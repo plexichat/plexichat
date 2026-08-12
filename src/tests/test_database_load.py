@@ -176,7 +176,14 @@ def load_test_db(tmp_path):
     # config.get(key, default=None) never raises for a missing key.
     saved_config = config.get("database")
 
-    # Use file-based SQLite for proper concurrent access with WAL mode
+    # Use file-based SQLite for proper concurrent access with WAL mode.
+    # ``max_connections`` must exceed the largest worker count in this file
+    # (150 threads in ``test_150_concurrent_queries`` plus the main thread),
+    # because every worker checks out its own thread-local connection from
+    # the shared pool and keeps it for the whole worker lifetime — a smaller
+    # max made the concurrent tests block 30s per pool.get_connection() and
+    # effectively hang. The short ``connect_timeout`` keeps any genuine
+    # exhaustion visible fast instead of a long wait.
     db_path = str(tmp_path / "load_test.db")
 
     config.set(
@@ -184,8 +191,25 @@ def load_test_db(tmp_path):
         {
             "type": "sqlite",
             "path": db_path,
+            "connection_pool": {
+                "min_connections": 2,
+                "max_connections": 200,
+                "connect_timeout": 5,
+                # Tiny per-connection caches: the production defaults
+                # (~32MB page cache + 256MB mmap per connection) would
+                # reserve hundreds of MB across this pool's workers.
+                "cache_size_kb": -1024,
+                "mmap_size": 1048576,
+                "journal_size_limit": 1048576,
+            },
         },
     )
+
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once, so without a reset the engine stays bound to whatever config the
+    # FIRST construction in the process saw (e.g. a postgres config from an
+    # earlier test file) and these load tests would hammer the wrong backend.
+    Database.reset()
 
     db = Database()
     db.connect()

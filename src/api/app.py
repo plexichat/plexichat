@@ -96,6 +96,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         setup_exception_handlers,
         create_rate_limit_middleware,
     )
+    from .middleware.database import DatabaseMiddleware
 
     config = get_api_config()
     # Debug CORS config
@@ -188,6 +189,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
     app.add_middleware(AuthenticationMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(DatabaseMiddleware)
 
     if enable_rate_limiting:
         from src.core import ratelimit
@@ -272,7 +274,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     bytes_seen["n"] += chunk_len
                 return msg
 
-            request._receive = _bounded_receive  # type: ignore[attr-defined]
+            object.__setattr__(request, "_receive", _bounded_receive)
             try:
                 return await call_next(request)
             except _BodyTooLarge:

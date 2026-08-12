@@ -59,8 +59,27 @@ def db_config(setup_module):
         except OSError:
             pass
 
-    default_config = {"database": {"type": "sqlite", "path": db_path}}
+    # Small per-connection caches: the production defaults (~32MB page
+    # cache + 256MB mmap per connection) blow up RAM across many tests.
+    default_config = {
+        "database": {
+            "type": "sqlite",
+            "path": db_path,
+            "connection_pool": {
+                "min_connections": 2,
+                "max_connections": 16,
+                "cache_size_kb": -1024,
+                "mmap_size": 1048576,
+                "journal_size_limit": 1048576,
+            },
+        }
+    }
     config.setup(config_path=config_path, default_config=default_config)
+
+    # The singleton may still be bound to an earlier test's engine/config
+    # (and an earlier file's db file that has since been deleted). Rebuild
+    # it so ``Database()`` binds to this test's fresh path.
+    Database.reset()
 
     yield config_path
 
@@ -1109,6 +1128,12 @@ class TestPostgresErrorRecoveryReal:
         }
         config_path = str(temp_dir / "postgres_recovery_config.yaml")
         config.setup(config_path=config_path, default_config=pg_config)
+        # ``Database`` is a process-wide singleton whose ``__init__`` runs
+        # only once — drop it so ``Database()`` re-initialises against the
+        # postgres config above (and the connect attempt below properly
+        # skips when no server is reachable) instead of a stale sqlite
+        # instance that would happily connect and then fail on postgres SQL.
+        Database.reset()
         return config_path
 
     @pytest.fixture
@@ -1412,6 +1437,10 @@ class TestPostgresMultipleConstraintViolations:
         }
         config_path = str(temp_dir / "multi_constraint_config.yaml")
         config.setup(config_path=config_path, default_config=pg_config)
+        # ``Database`` is a process-wide singleton whose ``__init__`` runs
+        # only once — drop it so ``Database()`` re-initialises against the
+        # postgres config above instead of a stale sqlite instance.
+        Database.reset()
         return config_path
 
     @pytest.fixture
@@ -1549,6 +1578,10 @@ class TestPostgresConnectionPoolFailureRecovery:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton — drop it so this test's
+        # ``Database()`` re-initialises against the postgres config above
+        # instead of a stale earlier instance.
+        Database.reset()
 
         db = Database()
 
@@ -1575,6 +1608,10 @@ class TestPostgresConnectionPoolFailureRecovery:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton — drop it so this test's
+        # ``Database()`` re-initialises against the postgres config above
+        # instead of a stale earlier instance.
+        Database.reset()
 
         db = Database()
         pool_config = db.config.get("connection_pool", {})
