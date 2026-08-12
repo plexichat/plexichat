@@ -17,7 +17,7 @@ def _get_plexijoin_manager(request):
     import src.api as api_mod
     from src.core.plexijoin import PlexiJoinManager
     from src.core.admin.logging import get_admin_logger
-    from utils import licensing as license_module  # type: ignore[import]
+    import utils.licensing as license_module
 
     db = api_mod.get_db()
     if db is None:
@@ -75,7 +75,16 @@ def _get_plexijoin_manager(request):
 # === Outbound Connections ===
 
 
-@router.get("/plexijoin/connections")
+@router.get(
+    "/plexijoin/connections",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def list_connections(
     request: Request,
     status: Optional[str] = Query(None, description="Filter by connection status"),
@@ -125,7 +134,16 @@ async def list_connections(
         )
 
 
-@router.get("/plexijoin/connections/{connection_id}")
+@router.get(
+    "/plexijoin/connections/{connection_id}",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Connection not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def get_connection(request: Request, connection_id: int):
     """Get a specific connection by ID."""
     check_host_restriction(request)
@@ -163,7 +181,16 @@ async def get_connection(request: Request, connection_id: int):
         )
 
 
-@router.post("/plexijoin/connections")
+@router.post(
+    "/plexijoin/connections",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def create_connection(request: Request):
     """Create a new outbound federation connection."""
     check_host_restriction(request)
@@ -216,7 +243,16 @@ async def create_connection(request: Request):
         )
 
 
-@router.delete("/plexijoin/connections/{connection_id}")
+@router.delete(
+    "/plexijoin/connections/{connection_id}",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Connection not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def delete_connection(request: Request, connection_id: int):
     """Disconnect and delete an outbound connection."""
     check_host_restriction(request)
@@ -249,7 +285,16 @@ async def delete_connection(request: Request, connection_id: int):
         )
 
 
-@router.post("/plexijoin/connections/{connection_id}/test")
+@router.post(
+    "/plexijoin/connections/{connection_id}/test",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Connection not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def test_connection(request: Request, connection_id: int):
     """Test connectivity to a remote instance."""
     check_host_restriction(request)
@@ -329,7 +374,17 @@ async def list_requests(
         )
 
 
-@router.post("/plexijoin/requests/{request_id}/approve")
+@router.post(
+    "/plexijoin/requests/{request_id}/approve",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def approve_request(request: Request, request_id: int):
     """Approve an inbound federation request."""
     check_host_restriction(request)
@@ -361,7 +416,17 @@ async def approve_request(request: Request, request_id: int):
         )
 
 
-@router.post("/plexijoin/requests/{request_id}/deny")
+@router.post(
+    "/plexijoin/requests/{request_id}/deny",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def deny_request(request: Request, request_id: int):
     """Deny an inbound federation request."""
     check_host_restriction(request)
@@ -396,7 +461,15 @@ async def deny_request(request: Request, request_id: int):
 # === Status & Analytics ===
 
 
-@router.get("/plexijoin/status")
+@router.get(
+    "/plexijoin/status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def get_status(request: Request):
     """Get federation health summary."""
     check_host_restriction(request)
@@ -417,7 +490,16 @@ async def get_status(request: Request):
         )
 
 
-@router.get("/plexijoin/traffic")
+@router.get(
+    "/plexijoin/traffic",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def get_traffic(
     request: Request,
     hours: int = Query(24, ge=1, le=168),

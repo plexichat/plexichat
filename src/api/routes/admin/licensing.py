@@ -61,7 +61,14 @@ def _audit_license_action(
         logger.debug(f"Failed to audit license action: {exc}")
 
 
-@router.get("/status")
+@router.get(
+    "/status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_license_status(request: Request):
     """
     Retrieve current license status and validation state.
@@ -153,7 +160,15 @@ async def get_license_features(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/validate")
+@router.post(
+    "/validate",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def validate_license_key(request: Request, body: LicenseKey):
     """
     Validate a proposed license payload without applying it.
@@ -184,7 +199,15 @@ async def validate_license_key(request: Request, body: LicenseKey):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/apply")
+@router.post(
+    "/apply",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid license key"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     """
     Apply a new license key.
@@ -312,7 +335,15 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     }
 
 
-@router.post("/check")
+@router.post(
+    "/check",
+    responses={
+        400: {"model": ErrorResponse, "description": "License validation failed"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def force_validate_license(request: Request):
     """
     Force a license validation check of the current license.
