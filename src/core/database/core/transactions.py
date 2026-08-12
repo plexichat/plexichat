@@ -22,6 +22,10 @@ class _DatabaseTransactionProtocol(Protocol):
 
     def _invalidate_query_cache(self) -> None: ...
 
+    def _touch_pool(self, conn: Any, in_transaction: bool = False) -> None: ...
+
+    def _is_no_transaction(self, e: Exception) -> bool: ...
+
 
 class DatabaseTransactionMixin:
     def _invalidate_query_cache(self) -> None:
@@ -34,14 +38,18 @@ class DatabaseTransactionMixin:
         except Exception:
             return
 
-    def begin_transaction(self) -> None:
+    def begin_transaction(self: _DatabaseTransactionProtocol) -> None:
         self._invalidate_query_cache()
-        conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
+        conn = self._get_conn()
         if self.transaction_depth == 0:
-            if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
+            if self.type == "sqlite":
                 conn.execute("BEGIN")
             self.in_transaction = True
             self.transaction_depth = 1
+            # Protect the just-opened transaction from idle reclaim even if it
+            # pauses between BEGIN and its first statement. ``_touch_pool`` is
+            # exception-safe and a no-op for non-SQLite pools.
+            self._touch_pool(conn, in_transaction=True)
             return
 
         # Nested transaction
@@ -58,9 +66,9 @@ class DatabaseTransactionMixin:
             or "no transaction" in err_str
         )
 
-    def commit(self) -> None:
+    def commit(self: _DatabaseTransactionProtocol) -> None:
         self._invalidate_query_cache()
-        conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
+        conn = self._get_conn()
         if self.transaction_depth > 1:
             cursor = conn.cursor()
             try:
@@ -80,27 +88,29 @@ class DatabaseTransactionMixin:
             return
 
         if self.transaction_depth == 1:
-            if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
+            if self.type == "sqlite":
                 try:
                     conn.execute("COMMIT")
                 except Exception as e:
                     if self._is_no_transaction(e):
                         self.transaction_depth = 0
                         self.in_transaction = False
+                        self._touch_pool(conn, in_transaction=False)
                         return
                     raise
             else:
                 conn.commit()
             self.transaction_depth = 0
             self.in_transaction = False
+            self._touch_pool(conn, in_transaction=False)
         elif self.transaction_depth == 0:
             pass
         else:
             conn.commit()
 
-    def rollback(self) -> None:
+    def rollback(self: _DatabaseTransactionProtocol) -> None:
         self._invalidate_query_cache()
-        conn = self._get_conn()  # pyright: ignore[reportAttributeAccessIssue]
+        conn = self._get_conn()
         if self.transaction_depth > 0:
             # Nested rollback: undo only the innermost savepoint so the
             # enclosing transaction remains intact (standard savepoint
@@ -117,6 +127,7 @@ class DatabaseTransactionMixin:
                         conn.rollback()
                         self.transaction_depth = 0
                         self.in_transaction = False
+                        self._touch_pool(conn, in_transaction=False)
                         return
                     raise
                 finally:
@@ -124,19 +135,21 @@ class DatabaseTransactionMixin:
                 self.transaction_depth -= 1
                 return
 
-            if self.type == "sqlite":  # pyright: ignore[reportAttributeAccessIssue]
+            if self.type == "sqlite":
                 try:
                     conn.execute("ROLLBACK")
                 except Exception as e:
                     if self._is_no_transaction(e):
                         self.transaction_depth = 0
                         self.in_transaction = False
+                        self._touch_pool(conn, in_transaction=False)
                         return
                     raise
             else:
                 conn.rollback()
             self.transaction_depth = 0
             self.in_transaction = False
+            self._touch_pool(conn, in_transaction=False)
         else:
             conn.rollback()
             self.in_transaction = False

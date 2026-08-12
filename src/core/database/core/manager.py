@@ -32,7 +32,29 @@ class Database(
     DatabaseMaintenanceMixin,
     DatabaseMetricsMixin,
 ):
+    _instance = None
+    _instance_lock = threading.Lock()
+
+    def __new__(cls):
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                cls._instance._initialized = False
+            return cls._instance
+
     def __init__(self):
+        # Thread-safe one-time init. ``__new__`` already serialises instance
+        # creation via ``_instance_lock``, but ``__init__`` runs once per
+        # caller unless guarded — concurrent first-use (e.g. 40 load-test
+        # threads each calling ``Database()`` at once) would otherwise race
+        # on ``self.engine``/``self.monitor``/``self._pool`` assignments and
+        # spawn several monitor threads, crashing the interpreter.
+        with self._instance_lock:
+            if getattr(self, "_initialized", False):
+                return
+            self._init_once()
+
+    def _init_once(self):
         db_config = config.get("database")
 
         if db_config is None:
@@ -81,8 +103,124 @@ class Database(
         self._max_connection_age_seconds = max_age_hours * 3600
 
         logger.info(f"Database initialized with type: {self.type}")
-        if self.type == "postgres":
+        if self.type in ("postgres", "sqlite"):
             self.start_pool_monitoring()
+        self._initialized = True
+
+    @classmethod
+    def reset(cls) -> None:
+        """Tear down the singleton so the next ``Database()`` re-initialises.
+
+        The process-wide singleton pattern (``__new__`` caches ``_instance``
+        and ``__init__`` runs only once) means the engine, connection pool,
+        and pool-monitor thread are bound to whatever config the first
+        construction saw. This is a problem for tests that re-point
+        ``config`` per test: every later ``Database()`` returned the stale
+        instance and silently kept using the old path/engine, so tests that
+        register hardcoded usernames saw the previous test's rows and tests
+        that swapped to a new DB path kept connecting to the old one.
+
+        ``reset()`` stops the monitor thread, closes every pooled and
+        thread-local connection, clears connection metadata, and drops the
+        cached instance so the next ``Database()`` builds a fresh engine +
+        pool against the current config. Safe to call at any time (it is
+        also what keeps repeated test resets from leaking one pool + one
+        monitor thread per test).
+        """
+        with cls._instance_lock:
+            inst = cls._instance
+            if inst is None:
+                return
+            try:
+                inst.stop_pool_monitoring()
+            except Exception:
+                pass
+
+            # Close EVERY known connection: the pool's idle set, the current
+            # thread's checked-out connection, and — via the monitor's
+            # metadata — connections checked out by OTHER threads that the
+            # pool no longer tracks in ``_available``. Without this last
+            # pass, ``reset()`` would leak those open sqlite3 handles.
+            seen = set()
+            pool = getattr(inst, "_pool", None)
+            if pool is not None:
+                if type(pool).__name__ == "SqlitePool":
+                    # sqlite pool: close idle connections and reset counters.
+                    # Checked-out connections (incl. other threads') are
+                    # closed below via the monitor's connection metadata.
+                    try:
+                        with pool._lock:
+                            for conn in list(pool._available):
+                                try:
+                                    conn.close()
+                                except Exception:
+                                    pass
+                                seen.add(id(conn))
+                            pool._available.clear()
+                            pool._in_use.clear()
+                            getattr(pool, "_by_id", {}).clear()
+                            getattr(pool, "_checked_out", {}).clear()
+                            pool._total_created = 0
+                            # Wake threads blocked in ``get_connection`` on
+                            # this pool (e.g. a worker mid-query during
+                            # shutdown). Without a notify they sleep the full
+                            # ``connect_timeout`` (30s default) while holding
+                            # their thread slot, stalling shutdown and — in
+                            # the test suite — making later tests queue 30s
+                            # behind them.
+                            pool._condition.notify_all()
+                    except Exception:
+                        pass
+                else:
+                    # psycopg2 ThreadedConnectionPool (or mock): close all
+                    # pooled connections properly instead of silently
+                    # dropping them via sqlite-only attribute access.
+                    try:
+                        pool.closeall()
+                    except Exception:
+                        try:
+                            for conn in list(getattr(pool, "_pool", [])):
+                                try:
+                                    conn.close()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+            local = getattr(inst, "_local", None)
+            if local is not None:
+                old_conn = getattr(local, "connection", None)
+                if old_conn is not None:
+                    try:
+                        old_conn.close()
+                    except Exception:
+                        pass
+                    seen.add(id(old_conn))
+                local.connection = None
+                local.transaction_depth = 0
+                local.in_transaction = False
+            monitor = getattr(inst, "monitor", None)
+            if monitor is not None:
+                try:
+                    for conn_id, meta in list(monitor._connection_metadata.items()):
+                        if conn_id in seen:
+                            continue
+                        conn = meta.get("connection")
+                        if conn is not None:
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
+                    monitor._connection_metadata.clear()
+                except Exception:
+                    pass
+            # Query-cache keys don't include the database path; drop cached
+            # results so a re-pointed instance can't serve stale rows.
+            try:
+                with inst._query_cache_lock:
+                    inst._query_cache.clear()
+            except Exception:
+                pass
+            cls._instance = None
 
     def fetch_last_insert_id(self) -> Optional[int]:
         """Get the last insert ID (compatibility shim for migration tracker).

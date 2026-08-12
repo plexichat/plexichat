@@ -65,6 +65,12 @@ class _DatabaseExecutionProtocol(Protocol):
 
     def _get_conn(self, auto_connect: bool = True) -> DbConnection: ...
 
+    def _validate_transaction_state(self) -> None: ...
+
+    def _handle_execution_error(
+        self, conn: Any, cursor: Any, e: BaseException, query: str
+    ) -> None: ...
+
     def execute(
         self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True
     ) -> DbCursor: ...
@@ -146,7 +152,7 @@ class DatabaseExecutionMixin:
         auto_commit: bool = True,
     ) -> DbCursor:
         if self.transaction_depth > 0:
-            self._validate_transaction_state()  # pyright: ignore[reportAttributeAccessIssue]
+            self._validate_transaction_state()
 
         upper_query = query.strip().upper()
         if any(
@@ -229,7 +235,7 @@ class DatabaseExecutionMixin:
 
                 self.monitor.record_error(type(e).__name__)
                 temp_conn = getattr(self._local, "connection", None)
-                self._handle_execution_error(  # pyright: ignore[reportAttributeAccessIssue]
+                self._handle_execution_error(
                     temp_conn, locals().get("cursor"), e, query
                 )
                 raise
@@ -241,7 +247,7 @@ class DatabaseExecutionMixin:
         auto_commit: bool = True,
     ) -> DbCursor:
         if self.transaction_depth > 0:
-            self._validate_transaction_state()  # pyright: ignore[reportAttributeAccessIssue]
+            self._validate_transaction_state()
 
         query_sanitized = self._sanitize_sqlite_query(query)
         query_conv = dialect.convert_placeholders(query_sanitized, self.type)
@@ -293,7 +299,7 @@ class DatabaseExecutionMixin:
 
                 self.monitor.record_error(type(e).__name__)
                 temp_conn = getattr(self._local, "connection", None)
-                self._handle_execution_error(  # pyright: ignore[reportAttributeAccessIssue]
+                self._handle_execution_error(
                     temp_conn, locals().get("cursor"), e, query
                 )
                 raise
@@ -319,6 +325,7 @@ class DatabaseExecutionMixin:
                 "connection refused",
                 "connection reset",
                 "connection closed",
+                "closed database",
                 "no connection",
                 "disconnected",
                 "broken pipe",

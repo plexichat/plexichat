@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Protocol
 import utils.logger as logger
 
 from ..engines.postgres import PostgresEngine
+from ..engines.sqlite import MONITOR_IDLE_RECLAIM_SECONDS
 from .types import DbConnection
 
 
@@ -46,6 +47,8 @@ class _DatabaseConnectionProtocol(Protocol):
     def get_pool_stats(self) -> Dict[str, Any]: ...
 
     def reap_connections(self) -> int: ...
+
+    def _touch_pool(self, conn: Any, in_transaction: bool = False) -> None: ...
 
 
 class DatabaseConnectionMixin:
@@ -109,6 +112,7 @@ class DatabaseConnectionMixin:
             if is_valid and fast_path:
                 self._local.last_valid_check = now
                 self.monitor.update_connection_last_used(conn_id)
+                self._touch_pool(conn, in_transaction=bool(self.in_transaction))
                 return conn
 
             if is_valid and self.type == "postgres":
@@ -118,7 +122,7 @@ class DatabaseConnectionMixin:
                 if is_valid and hasattr(conn, "poll"):
                     PsycopgOperationalError = Exception
                     try:
-                        from psycopg2 import OperationalError as PsycopgOperationalError  # type: ignore
+                        from psycopg2 import OperationalError as PsycopgOperationalError
                     except Exception:
                         pass
                     try:
@@ -145,6 +149,7 @@ class DatabaseConnectionMixin:
             if is_valid:
                 self._local.last_valid_check = now
                 self.monitor.update_connection_last_used(conn_id)
+                self._touch_pool(conn, in_transaction=bool(self.in_transaction))
                 return conn
             else:
                 logger.warning(
@@ -163,6 +168,25 @@ class DatabaseConnectionMixin:
 
         self.connect()
         return self._local.connection
+
+    def _touch_pool(
+        self: _DatabaseConnectionProtocol,
+        conn: DbConnection,
+        in_transaction: bool = False,
+    ) -> None:
+        """Refresh the pool's idle tracking for ``conn`` (SQLite pools only).
+
+        Called on every connection acquisition/use so actively-used
+        connections are never reclaimed as idle. ``in_transaction`` marks
+        connections whose owner is inside a transaction so open transactions
+        are never reclaimed mid-flight. Never allowed to break the query path.
+        """
+        touch = getattr(self._pool, "touch", None)
+        if callable(touch):
+            try:
+                touch(conn, in_transaction)
+            except Exception:
+                pass
 
     def connect(self: _DatabaseConnectionProtocol) -> Optional[DbConnection]:
         with self._lock:
@@ -202,6 +226,29 @@ class DatabaseConnectionMixin:
                     else:
                         logger.error(f"Failed to acquire PostgreSQL connection: {e}")
                     raise
+            elif self.type == "sqlite":
+                if not self._pool:
+                    pool_config = self.config.get("connection_pool", {})
+                    min_conn = pool_config.get("min_connections", 2)
+                    max_conn = pool_config.get("max_connections", 16)
+                    self._pool = self.engine.create_pool(min_conn, max_conn)
+                pool_config = self.config.get("connection_pool", {})
+                connect_timeout = pool_config.get("connect_timeout", 10)
+                try:
+                    conn = self.engine.connect(self._pool)
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "pool" in err_str and (
+                        "exhaust" in err_str or "no available" in err_str
+                    ):
+                        logger.error(
+                            "SQLite connection pool exhausted: no available connections"
+                        )
+                    elif "timeout" in err_str:
+                        logger.error(f"Connection timeout: {e}")
+                    else:
+                        logger.error(f"Failed to acquire SQLite connection: {e}")
+                    raise
             else:
                 conn = self.engine.connect()
 
@@ -224,6 +271,7 @@ class DatabaseConnectionMixin:
                     "acquired_at": time.time(),
                 },
             )
+            self._touch_pool(conn, in_transaction=bool(self.in_transaction))
 
             logger.info(
                 "Connected to "
@@ -242,11 +290,14 @@ class DatabaseConnectionMixin:
             return
         self.engine.close_connection(conn, pool, params)
 
-    def close(self: _DatabaseConnectionProtocol) -> None:
+    def close(self: _DatabaseConnectionProtocol, force: bool = False) -> None:
+        # NOTE: ``force`` is effectively deprecated — PostgreSQL computes its
+        # own force-close from connection age, and SQLite always releases the
+        # thread-local connection now (see the sqlite branch below). It is
+        # kept for API compatibility with existing callers.
         conn = None
         if hasattr(self._local, "connection"):
             conn = self._local.connection
-            self._local.connection = None
 
         if conn:
             conn_id = id(conn)
@@ -272,22 +323,53 @@ class DatabaseConnectionMixin:
                         f"PRAGMA optimize failed on connection {conn_id}", exc_info=True
                     )
 
-            force_close = False
-            metadata = self.monitor.get_connection_metadata(conn_id)
-            if metadata and self._max_connection_age_seconds > 0:
-                age = time.time() - metadata.get("created_at", 0)
-                if age > self._max_connection_age_seconds:
-                    logger.info(
-                        f"Closing connection {conn_id} on thread exit (age: {age:.1f}s > {self._max_connection_age_seconds}s)"
-                    )
-                    force_close = True
+            if self.type == "postgres":
+                force_close = False
+                metadata = self.monitor.get_connection_metadata(conn_id)
+                if metadata and self._max_connection_age_seconds > 0:
+                    age = time.time() - metadata.get("created_at", 0)
+                    if age > self._max_connection_age_seconds:
+                        logger.info(
+                            f"Closing connection {conn_id} on thread exit (age: {age:.1f}s > {self._max_connection_age_seconds}s)"
+                        )
+                        force_close = True
 
-            try:
-                self.engine.close_connection(conn, self._pool, {"close": force_close})
-            except Exception as e:
-                logger.error(f"Error returning connection {conn_id} to pool: {e}")
-            finally:
-                self.monitor.remove_connection_metadata(conn_id)
+                try:
+                    self.engine.close_connection(
+                        conn, self._pool, {"close": force_close}
+                    )
+                except Exception as e:
+                    logger.error(f"Error returning connection {conn_id} to pool: {e}")
+                finally:
+                    self.monitor.remove_connection_metadata(conn_id)
+                self._local.connection = None
+            elif self.type == "sqlite":
+                # SQLite: always release the thread-local connection so
+                # ``close()`` actually leaves the instance disconnected
+                # (state cleared), as callers and tests expect.
+                #
+                # ``force`` is intentionally IGNORED here: a non-force close
+                # previously kept the connection warm in thread-local, which
+                # (a) contradicted the ``cleared thread-local connection
+                # state`` log emitted at the end of ``close()`` and (b) made
+                # tests asserting ``connection is None`` after close fail.
+                # ``close_params {"close": True}`` force-closes the sqlite
+                # connection (removing it from the pool's accounting) so the
+                # next ``connect()``/``_get_conn()`` transparently re-acquires
+                # a fresh pooled connection.
+                #
+                # Production hot path is unaffected: DatabaseMiddleware keeps
+                # SQLite connections alive in thread-local across requests and
+                # only calls ``close()`` for PostgreSQL. This ``close()`` is
+                # hit by explicit/error-path cleanup, migrations CLI, and
+                # shutdown, where destroying the connection is correct.
+                try:
+                    self.engine.close_connection(conn, self._pool, {"close": True})
+                except Exception as e:
+                    logger.error(f"Error closing SQLite connection {conn_id}: {e}")
+                finally:
+                    self.monitor.remove_connection_metadata(conn_id)
+                self._local.connection = None
 
         self._local.transaction_depth = 0
         self._local.in_transaction = False
@@ -302,7 +384,7 @@ class DatabaseConnectionMixin:
         self.monitor.start_pool_monitoring(self.get_pool_stats, self.reap_connections)
 
     def reap_connections(self: _DatabaseConnectionProtocol) -> int:
-        if self.type != "postgres" or not self._pool:
+        if not self._pool:
             return 0
 
         reaped_count = 0
@@ -335,6 +417,22 @@ class DatabaseConnectionMixin:
                     logger.error(f"Error reaping connection {conn_id}: {e}")
                 finally:
                     self.monitor.remove_connection_metadata(conn_id)
+
+        # Also reclaim checked-out connections that went idle (thread-local
+        # conns never returned by worker threads), so leaked connections cannot
+        # permanently starve the pool even between exhaustion events. Active
+        # connections are protected: the Database layer refreshes their usage
+        # time on every query via ``pool.touch``. The monitor uses a longer
+        # window than the exhaustion-time reclaim so the middleware's
+        # keep-alive connections on request threads are not churned.
+        try:
+            pool_reap = getattr(self._pool, "reap_idle", None)
+            if callable(pool_reap):
+                reaped = pool_reap(MONITOR_IDLE_RECLAIM_SECONDS)
+                if isinstance(reaped, int):
+                    reaped_count += reaped
+        except Exception:
+            pass
 
         return reaped_count
 

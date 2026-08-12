@@ -1,5 +1,7 @@
 import sqlite3
 import os
+import threading
+import time
 from datetime import datetime
 from typing import Any, Optional, Dict, List, Tuple
 from .base import BaseEngine
@@ -7,21 +9,242 @@ from .base import BaseEngine
 import utils.logger as logger
 
 DEFAULT_BUSY_TIMEOUT_MS = 5000
+# The periodic monitor reclaims idle checked-out connections on a longer
+# window than the exhaustion-time reclaim, so the middleware's per-request-
+# thread keep-alive connections are not churned on every monitor tick.
+MONITOR_IDLE_RECLAIM_SECONDS = 60.0
+# A checked-out connection inside a transaction is only treated as "live"
+# (and therefore protected from reclaim) while it has been idle for less than
+# this window. Beyond it the owner is presumed gone — even if its thread ident
+# was recycled to a new thread — so the abandoned transaction's locks and pool
+# capacity are reclaimed instead of leaking forever. No real SQLite
+# transaction pauses between statements for this long.
+IN_TRANSACTION_ALIVE_GRACE_SECONDS = 60.0
 
-# Python 3.12+ deprecates the sqlite3 default datetime adapter; register an
-# explicit one that preserves the legacy ``str(datetime)`` storage format
-# (``YYYY-MM-DD HH:MM:SS.mmmmmm``) so existing rows stay byte-identical.
 sqlite3.register_adapter(datetime, lambda dt: dt.isoformat(sep=" "))
+
+
+class SqlitePool:
+    """Simple thread-safe pool for SQLite connections.
+
+    Beyond the classic idle/active accounting, every checked-out connection is
+    tracked with its last-usage time (refreshed by ``touch`` from the Database
+    layer on every query) and its owning thread. This lets the pool reclaim
+    connections that were checked out into thread-local storage and never
+    returned — e.g. by an AnyIO ``run_in_threadpool`` worker that ran a single
+    query — instead of letting them permanently starve the pool.
+    """
+
+    def __init__(
+        self,
+        create_conn,
+        min_size: int,
+        max_size: int,
+        idle_reclaim_seconds: float = 5.0,
+    ):
+        self._create_conn = create_conn
+        self._min_size = min_size
+        self._max_size = max_size
+        # Checked-out connections idle longer than this are reclaimed when the
+        # pool is exhausted (or on a periodic reap) instead of blocking callers
+        # for the full connect timeout.
+        self._idle_reclaim_seconds = idle_reclaim_seconds
+        self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._available: List[Any] = []
+        self._in_use: set = set()
+        self._by_id: Dict[int, Any] = {}
+        # id(conn) -> (monotonic last-usage, owner thread ident, in-transaction flag)
+        self._checked_out: Dict[int, Tuple[float, Optional[int], bool]] = {}
+        self._total_created = 0
+
+        for _ in range(min_size):
+            self._available.append(self._create_conn())
+            self._total_created += 1
+
+    def get_connection(self, timeout: float = 30.0) -> Any:
+        deadline = time.monotonic() + timeout
+        with self._condition:
+            if not self._available and self._total_created >= self._max_size:
+                # Exhausted: before blocking for the connect timeout, reclaim
+                # checked-out connections that have gone idle (the thread-local
+                # leak case) so capacity is restored promptly.
+                self._reap_idle_unlocked()
+            while not self._available and self._total_created >= self._max_size:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "SQLite connection pool exhausted: no available connections"
+                    )
+                self._condition.wait(remaining)
+
+            if self._available:
+                conn = self._available.pop()
+            else:
+                conn = self._create_conn()
+                self._total_created += 1
+
+            conn_id = id(conn)
+            self._in_use.add(conn_id)
+            self._by_id[conn_id] = conn
+            self._checked_out[conn_id] = (
+                time.monotonic(),
+                threading.current_thread().ident,
+                False,
+            )
+            return conn
+
+    def touch(self, conn: Any, in_transaction: bool = False) -> None:
+        """Record that ``conn`` was just used (called per query by the DB layer).
+
+        Keeps actively-used connections from being reclaimed as idle.
+        ``in_transaction`` marks a connection whose owner is inside a
+        transaction, so an alive owner's open transaction is never reclaimed
+        mid-flight (that would abort it).
+        """
+        conn_id = id(conn)
+        with self._condition:
+            usage = self._checked_out.get(conn_id)
+            if usage is not None:
+                self._checked_out[conn_id] = (
+                    time.monotonic(),
+                    usage[1],
+                    bool(in_transaction),
+                )
+
+    def _reap_idle_unlocked(self, max_idle_seconds: Optional[float] = None) -> int:
+        """Close checked-out connections idle past the reclaim threshold.
+
+        Caller must hold ``self._condition``. The current thread's own
+        connection is never reclaimed, and an owner thread whose connection
+        was reclaimed transparently reconnects on its next use (``_get_conn``
+        detects the closed connection and rebuilds it).
+
+        A connection whose owner is mid-query for longer than the threshold
+        could be closed underneath it; SQLite statements are atomic in
+        autocommit mode and the execution layer retries "closed database"
+        errors on a fresh connection (outside transactions), so this surfaces
+        as a transparent reconnect rather than data loss.
+
+        Connections inside an open transaction whose owner thread is still
+        alive are NEVER reclaimed (reclaiming would abort the transaction).
+        An abandoned transaction whose owner thread has exited is reclaimed so
+        its locks and pool capacity are released.
+        """
+        threshold = (
+            self._idle_reclaim_seconds if max_idle_seconds is None else max_idle_seconds
+        )
+        now = time.monotonic()
+        current_ident = threading.current_thread().ident
+        reaped = 0
+        for conn_id, (last_used, owner_ident, in_transaction) in list(
+            self._checked_out.items()
+        ):
+            if owner_ident == current_ident:
+                continue
+            if now - last_used < threshold:
+                continue
+            if in_transaction and self._thread_alive(owner_ident):
+                # Protect a live owner's open transaction, but only within a
+                # generous grace window (see IN_TRANSACTION_ALIVE_GRACE_SECONDS).
+                if now - last_used < IN_TRANSACTION_ALIVE_GRACE_SECONDS:
+                    continue
+            # Pop both trackers together so a missing ``_by_id`` entry (should
+            # never happen) cannot leave a zombie entry retried forever.
+            conn = self._by_id.pop(conn_id, None)
+            self._checked_out.pop(conn_id, None)
+            if conn is None:
+                continue
+            self._in_use.discard(conn_id)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._total_created -= 1
+            reaped += 1
+        if reaped:
+            self._condition.notify_all()
+        return reaped
+
+    def reap_idle(self, max_idle_seconds: Optional[float] = None) -> int:
+        """Reclaim idle checked-out connections (thread-safe public wrapper).
+
+        ``max_idle_seconds`` overrides the configured threshold; the periodic
+        monitor passes a longer window than the exhaustion-time reclaim so
+        keep-alive connections on request threads are not churned.
+        """
+        with self._condition:
+            return self._reap_idle_unlocked(max_idle_seconds)
+
+    @staticmethod
+    def _thread_alive(ident: Optional[int]) -> bool:
+        """Return True if the thread with the given ident is still running."""
+        if ident is None:
+            return False
+        try:
+            return any(t.ident == ident and t.is_alive() for t in threading.enumerate())
+        except Exception:
+            return False
+
+    def return_connection(self, conn: Any, force_close: bool = False) -> None:
+        with self._condition:
+            conn_id = id(conn)
+            tracked = conn_id in self._in_use
+            self._in_use.discard(conn_id)
+            self._by_id.pop(conn_id, None)
+            self._checked_out.pop(conn_id, None)
+            if not tracked:
+                # Already reclaimed (closed) by ``_reap_idle_unlocked`` —
+                # nothing left to return or account for.
+                self._condition.notify()
+                return
+            if force_close:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._total_created -= 1
+                self._condition.notify()
+                return
+
+            if len(self._available) < self._max_size:
+                self._available.append(conn)
+                self._condition.notify()
+            else:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._total_created -= 1
+
+    def get_stats(self) -> Dict[str, Any]:
+        with self._lock:
+            active = len(self._in_use)
+            idle = len(self._available)
+            total = self._total_created
+            return {
+                "active_connections": active,
+                "idle_connections": idle,
+                "total_connections": total,
+                "max_connections": self._max_size,
+                "min_connections": self._min_size,
+                "utilization_percent": (active / self._max_size * 100)
+                if self._max_size > 0
+                else 0.0,
+            }
 
 
 class SqliteEngine(BaseEngine):
     """SQLite database engine implementation."""
 
-    def connect(self, pool: Optional[Any] = None) -> sqlite3.Connection:
-        # SQLite doesn't use the pool parameter here but we accept it for signature compatibility
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self._pool: Optional[SqlitePool] = None
+        self._pool_config = config.get("connection_pool", {})
+
+    def _create_single_connection(self) -> sqlite3.Connection:
         db_path = self.config.get("path", "data/database.db")
 
-        # Ensure directory exists
         db_dir = os.path.dirname(db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir)
@@ -34,57 +257,82 @@ class SqliteEngine(BaseEngine):
         )
         conn.row_factory = sqlite3.Row
 
-        # Enable WAL (Write-Ahead Logging) for concurrency
         conn.execute("PRAGMA journal_mode=WAL;")
-
-        # Recommended for WAL mode: allow readers during writes with minimal sync cost
         conn.execute("PRAGMA synchronous=NORMAL;")
 
-        # Set busy timeout to wait for locks
-        busy_timeout_ms = self.config.get("connection_pool", {}).get(
-            "busy_timeout", DEFAULT_BUSY_TIMEOUT_MS
-        )
+        busy_timeout_ms = self._pool_config.get("busy_timeout", DEFAULT_BUSY_TIMEOUT_MS)
         conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)};")
 
-        # Enforce foreign keys (disabled by default in SQLite)
         conn.execute("PRAGMA foreign_keys=ON;")
 
-        # --- Performance PRAGMAs ---
+        # These PRAGMAs control per-connection memory. The defaults are
+        # tuned for the production server; tests override them via the
+        # ``connection_pool`` config (``cache_size_kb``, ``mmap_size``,
+        # ``journal_size_limit``) so thousands of per-test pools stay tiny
+        # instead of reserving ~32MB page cache + 256MB mmap each.
+        cache_size_kb = self._pool_config.get("cache_size_kb", -32000)
+        conn.execute(f"PRAGMA cache_size={int(cache_size_kb)};")
 
-        # Increase page cache to ~32 MB (negative = KB, default is 2000 pages /
-        # ~2-8 MB depending on page size).  A larger cache means fewer disk reads.
-        conn.execute("PRAGMA cache_size=-32000;")
+        mmap_size = self._pool_config.get("mmap_size", 268435456)
+        conn.execute(f"PRAGMA mmap_size={int(mmap_size)};")
 
-        # Memory-mapped I/O up to 256 MB.  Lets SQLite treat the DB file as if it
-        # were in memory, avoiding read() / write() syscalls entirely for hot pages.
-        conn.execute("PRAGMA mmap_size=268435456;")
+        temp_store = self._pool_config.get("temp_store", "MEMORY")
+        conn.execute(f"PRAGMA temp_store={temp_store};")
 
-        # Store temporary tables, indices, and sort results in memory instead of
-        # in on-disk temp files.  Falls back to disk automatically if needed.
-        conn.execute("PRAGMA temp_store=MEMORY;")
-
-        # Cap the WAL file at ~64 MB so it doesn't grow unbounded between
-        # checkpoints on a long-running server.
-        conn.execute("PRAGMA journal_size_limit=67108864;")
+        journal_size_limit = self._pool_config.get("journal_size_limit", 67108864)
+        conn.execute(f"PRAGMA journal_size_limit={int(journal_size_limit)};")
 
         return conn
 
-    def get_pool_stats(self, pool: Any) -> Dict[str, Any]:
-        """Get SQLite-specific database statistics."""
-        stats = {
-            "active_connections": 0,
-            "idle_connections": 0,
-            "total_connections": 0,
-            "max_connections": 0,
-            "min_connections": 0,
-            "utilization_percent": 0,
-            "database_type": "sqlite",
-        }
-
-        # Try to get SQLite-specific metrics if connection is available
+    def create_pool(self, min_conn: int, max_conn: int) -> SqlitePool:
+        logger.info(f"Creating SQLite connection pool (min={min_conn}, max={max_conn})")
+        start_time = time.time()
         try:
-            # Note: SQLite doesn't have connection pooling like PostgreSQL
-            # These metrics are placeholders for monitoring consistency
+            pool = SqlitePool(
+                create_conn=self._create_single_connection,
+                min_size=min_conn,
+                max_size=max_conn,
+                idle_reclaim_seconds=float(
+                    self._pool_config.get("idle_reclaim_seconds", 5.0)
+                ),
+            )
+            elapsed = time.time() - start_time
+            logger.info(
+                f"SQLite connection pool created successfully in {elapsed:.2f}s"
+            )
+            self._pool = pool
+            return pool
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(
+                f"SQLite connection pool creation FAILED after {elapsed:.2f}s: {e}"
+            )
+            raise
+
+    def connect(self, pool: Optional[Any] = None) -> sqlite3.Connection:
+        if pool is not None and isinstance(pool, SqlitePool):
+            # Honor the configured ``connect_timeout`` (default 30s) so pool
+            # exhaustion surfaces fast instead of every thread blocking the
+            # hardcoded 30s default.
+            timeout = self._pool_config.get("connect_timeout", 30.0)
+            return pool.get_connection(timeout=timeout)
+        return self._create_single_connection()
+
+    def get_pool_stats(self, pool: Any) -> Dict[str, Any]:
+        stats: Dict[str, Any]
+        if isinstance(pool, SqlitePool):
+            stats = pool.get_stats()
+        else:
+            stats = {
+                "active_connections": 0,
+                "idle_connections": 0,
+                "total_connections": 0,
+                "max_connections": 0,
+                "min_connections": 0,
+                "utilization_percent": 0,
+            }
+
+        try:
             stats["database_type"] = "sqlite"
             stats["database_path"] = self.config.get("path", "data/database.db")
         except Exception as e:
@@ -95,7 +343,6 @@ class SqliteEngine(BaseEngine):
     def get_detailed_stats(
         self, conn: Optional[sqlite3.Connection] = None
     ) -> Dict[str, Any]:
-        """Get detailed SQLite database statistics for monitoring."""
         stats = {
             "database_type": "sqlite",
             "database_path": self.config.get("path", "data/database.db"),
@@ -110,19 +357,15 @@ class SqliteEngine(BaseEngine):
             return stats
 
         try:
-            # Get page size
             cursor = conn.cursor()
             cursor.execute("PRAGMA page_size;")
             stats["page_size"] = cursor.fetchone()[0] or 0
 
-            # Get page count
             cursor.execute("PRAGMA page_count;")
             stats["page_count"] = cursor.fetchone()[0] or 0
 
-            # Calculate database size
             stats["database_size_bytes"] = stats["page_size"] * stats["page_count"]
 
-            # Get WAL file size (if WAL mode is enabled)
             cursor.execute("PRAGMA journal_mode;")
             journal_mode = cursor.fetchone()[0] or ""
             if journal_mode.upper() == "WAL":
@@ -143,8 +386,17 @@ class SqliteEngine(BaseEngine):
         pool: Optional[Any] = None,
         close_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if conn:
-            conn.close()
+        if not conn:
+            return
+
+        if isinstance(pool, SqlitePool):
+            should_close = close_params.get("close", False) if close_params else False
+            pool.return_connection(conn, force_close=should_close)
+        else:
+            try:
+                conn.close()
+            except Exception as e:
+                logger.debug(f"Could not close connection: {e}")
 
     def get_table_exists_query(self, table_name: str) -> Tuple[str, Tuple]:
         return "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (
@@ -161,14 +413,12 @@ class SqliteEngine(BaseEngine):
         table: str,
         columns: List[str],
         conflict_columns: List[str],
-        update_columns: List[str],
+        update_columns: Optional[List[str]] = None,
     ) -> str:
-        # SQLite uses the same syntax as Postgres for modern versions (ON CONFLICT)
-        # but Database class implementation for SQLite used ON CONFLICT as well
-        # actually looking at core.py:1221, SQLite used INSERT OR IGNORE
-        # and 1260, upsert used ON CONFLICT.
         safe_cols = ", ".join(columns)
         placeholders = ", ".join(["?"] * len(columns))
         conflict_cols = ", ".join(conflict_columns)
-        updates = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
-        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"
+        if update_columns:
+            updates = ", ".join([f"{c} = excluded.{c}" for c in update_columns])
+            return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"
+        return f"INSERT OR REPLACE INTO {table} ({safe_cols}) VALUES ({placeholders})"
