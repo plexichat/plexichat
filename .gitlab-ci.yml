@@ -5,6 +5,8 @@ stages:
   - lint
   - security
   - test
+  - performance
+  - metrics
   - timestamp
   - docker
   - request-merge
@@ -304,15 +306,138 @@ security:dependency_scanning:
   resource_group: plexichat-ci
 
 # =========================================================
-# TEST STAGE (API Self-Test)
+# TEST STAGE (Unit/Integration + API Self-Test)
 # =========================================================
+
+test:pytest:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  script:
+    # Full unit + integration suite. ``--maxfail=20`` keeps a broken commit
+    # from burning the whole 1h timeout listing failures; the default pytest.ini
+    # addopts already deselect slow/performance/postgres tests. The JUnit
+    # report feeds the performance:no_slow_tests gate in the next stage.
+    - python -m pytest -q --maxfail=20 --durations=25 --junitxml=test-results.xml
+  artifacts:
+    when: always
+    reports:
+      junit: test-results.xml
+    paths:
+      - test-results.xml
+    expire_in: 1 week
+
+# =========================================================
+# PERFORMANCE STAGE (test-duration gate)
+# =========================================================
+
+# Hard gate: the whole test stage is green, but any single test slower than
+# 5 seconds still fails the pipeline. Prevents performance regressions from
+# slipping in as the suite grows. Uses only the Python stdlib, so it does not
+# extend .python_base (no dependency install for a trivial parser). Note that
+# pytest.ini deselects ``slow``/``performance``-marked tests from the run, so
+# this gate deliberately enforces only the fast suite that CI actually runs.
+performance:no_slow_tests:
+  stage: performance
+  image:
+    name: python:3.14.6-slim-trixie
+    pull_policy: if-not-present
+  needs:
+    - test:pytest
+  script:
+    # The metrics JSON is uploaded alongside the gate verdict and feeds the
+    # metrics:trend job in the next stage.
+    - python scripts/check_slow_tests.py test-results.xml --threshold 5.0 --job test:pytest --metrics-out test-durations.json
+  artifacts:
+    when: always
+    paths:
+      - test-durations.json
+    expire_in: 1 week
+  allow_failure: false
+  resource_group: plexichat-ci
+
+# =========================================================
+# METRICS STAGE (per-job duration trend)
+# =========================================================
+
+# Accumulates the per-job test durations from the performance gate on the
+# ``ci-metrics`` branch (JSONL history + rendered index.html) so regressions
+# show over time. Mirrors the ots:push_proofs pattern: fetch the branch,
+# append, render, push back. allow_failure keeps a transient push race from
+# reddening the pipeline; the next run catches the branch up.
+metrics:trend:
+  stage: metrics
+  image:
+    name: python:3.14.6-slim-trixie
+    pull_policy: if-not-present
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
+    - git config --global user.email "ci@plexichat.com"
+    - git config --global user.name "Plexichat CI"
+  needs:
+    - performance:no_slow_tests
+  script:
+    # The ci-metrics branch only tracks ci-metrics.jsonl + index.html, so
+    # checking it out would delete scripts/ from the worktree.  Copy the
+    # publish script to /tmp first, and fetch the branch (CI only checks
+    # out the pipeline ref by default, so ci-metrics is not local).
+    - cp scripts/trend_publish.py /tmp/trend_publish.py
+    - git fetch origin ci-metrics || true
+    - |
+      if git rev-parse --verify origin/ci-metrics >/dev/null 2>&1; then
+        git checkout -B ci-metrics origin/ci-metrics
+      else
+        git checkout --orphan ci-metrics
+        git rm -rf . 2>/dev/null || true
+      fi
+    - python /tmp/trend_publish.py merge --metrics test-durations.json --history ci-metrics.jsonl --out ci-metrics.jsonl
+    - python /tmp/trend_publish.py render --history ci-metrics.jsonl --out index.html --project "$CI_PROJECT_PATH" --gate 5.0
+    - |
+      git add ci-metrics.jsonl index.html
+      if git diff --cached --quiet; then
+        echo "No new metrics to commit"
+      else
+        git commit -m "CI metrics: $CI_COMMIT_SHORT_SHA"
+        PUSHED=0
+        for attempt in 1 2 3; do
+          if git push origin ci-metrics 2>/dev/null; then
+            PUSHED=1
+            break
+          fi
+          echo "push attempt $attempt failed; rebasing onto remote"
+          git pull --rebase origin ci-metrics 2>/dev/null || true
+        done
+        if [ "$PUSHED" != "1" ]; then
+          echo "WARN: ci-metrics push failed after retries (trend catches up next run)"
+        fi
+      fi
+  artifacts:
+    when: always
+    paths:
+      - index.html
+      - ci-metrics.jsonl
+    expire_in: 1 year
+  allow_failure: true
+  resource_group: plexichat-ci
 
 test:self_test:
   extends: .python_base
   stage: test
+  timeout: 1h
   script:
     - mkdir -p .plexichat
-    - python main.py self-test
+    # Protected branches (master, etc.) set $PLEXICHAT_LICENSE in the CI
+    # secret store, so the licensed-only PlexiJoin endpoints can be exercised.
+    # On non-protected branches (feature branches like plexisuite-expansion)
+    # the variable is absent, so we pass --unlicensed to skip those
+    # license-gated routes. The self-test never auto-detects licensing state
+    # from the machine, so the operator must opt in explicitly via the flag.
+    - |
+      if [ -n "${PLEXICHAT_LICENSE:-}" ]; then
+        python main.py self-test
+      else
+        python main.py self-test --unlicensed
+      fi
 
 docker:build_and_push:
   stage: docker
