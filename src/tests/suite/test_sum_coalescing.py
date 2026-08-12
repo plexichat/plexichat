@@ -156,6 +156,83 @@ def test_full_rewrite_preserves_unflushed_edits(
     assert len(files) == 2
 
 
+def test_solo_workbook_edits_coalesce_one_blob_per_flush_window(
+    db, two_users, server_manager, tmp_path, monkeypatch
+):
+    """Solo (no other subscribers) workbook edits promote one blob per window.
+
+    Regression guard for the removed "solo fast-path": for workbooks without
+    websocket subscribers it rewrote the entire workbook blob on EVERY
+    operation — one full file upload per keystroke — and skipped the durable
+    operation log. Every edit must now flow through the coalesced
+    live-session machinery: N edits in a flush window produce exactly ONE
+    immutable blob promotion at the window's closing revision, never one per
+    edit.
+    """
+    owner, _ = two_users
+    create_sum_tables(db)
+    # Pin the age-based window so the op-count threshold is the ONLY flush
+    # source; the promoted-revision list is then exact and deterministic even
+    # on very slow CI workers.
+    monkeypatch.setattr(sum_manager_module, "SUM_FLUSH_MAX_MS", 10**6)
+    manager = SumManager(db, servers_module=server_manager, storage_dir=str(tmp_path))
+    workbook = manager.create_workbook(owner.id, "Solo Coalesced")
+    sheet_id = workbook["sheets"][0]["id"]
+    workbook_id = int(workbook["id"])
+
+    # The workbook is genuinely solo: nobody else is subscribed to it.
+    assert manager._is_solo(workbook_id) is True
+
+    # Record every blob promotion after creation (the rev-0 blob is written by
+    # create_workbook before this wrapper is installed). ``_save_file`` is the
+    # single promotion chokepoint for both coalesced flushes and rewrites.
+    promoted = []
+    original_save_file = manager._save_file
+
+    def recording_save_file(workbook_id, revision, raw_bytes):
+        promoted.append(int(revision))
+        return original_save_file(workbook_id, revision, raw_bytes)
+
+    monkeypatch.setattr(manager, "_save_file", recording_save_file)
+
+    total = sum_manager_module.SUM_FLUSH_MAX_OPS * 2  # two full flush windows
+
+    # First window, one op short of the threshold: edits stay buffered in the
+    # live session — no new blob is written (only the rev-0 creation blob).
+    for i in range(sum_manager_module.SUM_FLUSH_MAX_OPS - 1):
+        _apply(manager, owner, workbook_id, sheet_id, f"solo-{i}", i, 0, i)
+    assert promoted == []
+    files = sorted(glob.glob(str(tmp_path / str(workbook_id) / "rev-*.plexisum")))
+    assert len(files) == 1
+
+    # Cross both windows: the flush fires exactly at each window's closing
+    # revision, promoting one blob per window for all 50 buffered edits.
+    for i in range(sum_manager_module.SUM_FLUSH_MAX_OPS - 1, total):
+        _apply(manager, owner, workbook_id, sheet_id, f"solo-{i}", i, 0, i)
+
+    # Exactly ONE promotion per window, at its closing revision. A per-edit
+    # rewrite path would have recorded every revision from 1 to 50 here.
+    assert promoted == [
+        sum_manager_module.SUM_FLUSH_MAX_OPS,
+        sum_manager_module.SUM_FLUSH_MAX_OPS * 2,
+    ]
+
+    # Blob cadence on disk matches: rev-0 (creation) + one blob per window.
+    files = sorted(glob.glob(str(tmp_path / str(workbook_id) / "rev-*.plexisum")))
+    assert len(files) == 3
+
+    # A fresh process rebuilds every edit from the stored blobs (nothing was
+    # lost to coalescing).
+    SumManager._drop_session(workbook_id)
+    sum_manager_module._WORKBOOK_FILE_CACHE.drop_workbook(workbook_id)
+    fresh = SumManager(db, servers_module=server_manager, storage_dir=str(tmp_path))
+    viewport = fresh.read_viewport(
+        owner.id, workbook_id, int(sheet_id), 0, total + 2, 0, 2
+    )
+    values = {int(c["row"]): c["value"] for c in viewport["cells"] if c["column"] == 0}
+    assert values == {i: i for i in range(total)}
+
+
 def test_conflict_and_idempotent_retry_still_work(
     db, two_users, server_manager, tmp_path
 ):

@@ -78,8 +78,9 @@ def opcode_handler(session_manager, mock_auth_module):
         auth_module=mock_auth_module,
         # Servers boundary as a Mock so channel-visibility filtering helpers
         # (typing recipients, voice state targets) are exercisable without a
-        # live database.
-        servers_module=Mock(),
+        # live database — and so the READY payload path (which now resolves
+        # guilds through this injected boundary) stays DB-free in tests.
+        servers_module=Mock(get_servers=Mock(return_value=[])),
     )
 
 

@@ -64,7 +64,7 @@ def cross_worker_mocks():
         }
     }
     _orig_config_get = _real_config.get
-    _real_config.get = lambda key, default=None: fake_config.get(key, default)  # type: ignore[method-assign]
+    _real_config.get = lambda key, default=None: fake_config.get(key, default)
 
     # --- session manager ---
     m_sm = MagicMock()
@@ -112,7 +112,7 @@ def cross_worker_mocks():
     async def _tiny_sleep(_sec: float) -> None:
         pass
 
-    ws_mod.asyncio.sleep = _tiny_sleep  # type: ignore[assignment]
+    ws_mod.asyncio.sleep = _tiny_sleep
 
     yield {
         "ws_mod": ws_mod,
@@ -121,7 +121,7 @@ def cross_worker_mocks():
     }
 
     # Restore originals
-    _real_config.get = _orig_config_get  # type: ignore[method-assign]
+    _real_config.get = _orig_config_get
     ws_mod._session_manager = _orig_sm
     ws_mod._dispatcher = _orig_dispatcher
     ws_mod._setup_complete = _orig_setup_complete
@@ -134,7 +134,7 @@ def cross_worker_mocks():
         ws_mod._cross_worker_stop.clear()
     ws_mod._cross_worker_task = _orig_task
     ws_mod._create_pubsub_client = _orig_create
-    ws_mod.asyncio.sleep = _orig_sleep  # type: ignore[assignment]
+    ws_mod.asyncio.sleep = _orig_sleep
     ws_mod._MAX_BACKOFF_SEC = _orig_max_backoff
     ws_mod._BACKOFF_RESET_AFTER_POLLS = _orig_reset_polls
     ws_mod._POLL_INTERVAL_SEC = _orig_poll_interval
@@ -344,7 +344,7 @@ class TestCrossWorkerReconnection:
             status = cross_worker_listener_status()
             assert status == {"enabled": False}
         finally:
-            _cfg.get = _orig  # type: ignore[method-assign]
+            _cfg.get = _orig
 
     def test_health_includes_worker_id(self, cross_worker_mocks):
         """cross_worker_listener_status() includes the worker_id field."""

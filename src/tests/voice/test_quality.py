@@ -2,9 +2,11 @@
 Tests for connection quality monitoring.
 """
 
+import asyncio
 import pytest
 
 from src.core.voice.signaling import (
+    close as signaling_close,
     setup,
     create_voice_connection,
     get_connection_quality,
@@ -34,7 +36,10 @@ def signaling_setup(db_and_modules):
         turn_ttl=3600,
     )
 
-    return voice
+    yield voice
+
+    # Clean up SFU adapter sessions to prevent ResourceWarning.
+    asyncio.run(signaling_close())
 
 
 class TestConnectionQuality:

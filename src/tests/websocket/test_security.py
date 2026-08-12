@@ -2,6 +2,7 @@
 
 import pytest
 import time
+from unittest.mock import patch
 
 from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
 from src.api.websocket.connection import Connection, ConnectionState
@@ -772,6 +773,34 @@ class TestCompressionSecurity:
             sample_identify_payload,
         )
         assert connection.compress is True
+
+    @pytest.mark.asyncio
+    async def test_identify_resolves_guilds_via_injected_servers_module(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
+        """READY guilds come from the injected servers boundary only.
+
+        Regression: ConnectionHandler used to ignore its injected
+        ``servers_module`` and reach into the process-global ``src.api``
+        manager, firing a real ``get_servers`` query from an AnyIO worker
+        thread on every identify. Each distinct worker thread then kept a
+        SQLite pool connection in thread-local state forever, exhausting
+        the shared pool (max 16) across the suite and stalling later
+        identifies for the full 30s connect timeout. Guard the global path
+        so this can never silently regress.
+        """
+        servers_mock = opcode_handler._connection_handler._servers
+        assert servers_mock is not None
+        with patch(
+            "src.api.get_servers",
+            side_effect=AssertionError("global servers must not be used"),
+        ):
+            await opcode_handler.handle(
+                connection,
+                GatewayOpcode.IDENTIFY,
+                sample_identify_payload,
+            )
+        servers_mock.get_servers.assert_called_once_with(12345)
 
     def test_compression_disabled_by_default(self, connection):
         """Test compression is disabled by default."""

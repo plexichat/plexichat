@@ -2,9 +2,11 @@
 Tests for complete voice connection flow.
 """
 
+import asyncio
 import pytest
 
 from src.core.voice.signaling import (
+    close as signaling_close,
     setup,
     get_voice_server_info,
     create_voice_connection,
@@ -39,7 +41,7 @@ a=rtpmap:111 opus/48000/2
 SAMPLE_ICE_CANDIDATE = "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host"
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def signaling_setup(db_and_modules):
     """Setup signaling module for tests."""
     db, auth, servers, relationships, presence, voice = db_and_modules
@@ -54,7 +56,10 @@ def signaling_setup(db_and_modules):
         turn_ttl=3600,
     )
 
-    return voice
+    yield voice
+
+    # Clean up SFU adapter sessions to prevent ResourceWarning.
+    asyncio.run(signaling_close())
 
 
 class TestVoiceConnectionFlow:

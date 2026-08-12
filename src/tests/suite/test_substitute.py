@@ -42,7 +42,7 @@ def test_substitute_instance_1():
 def test_substitute_instance_2():
     """Replace only the second occurrence."""
     assert _eval('SUBSTITUTE("hello world", "l", "L", 2)') == "helLo world"
-    assert _eval('SUBSTITUTE("abcabc", "a", "X", 2)') == "abcbcX"
+    assert _eval('SUBSTITUTE("abcabc", "a", "X", 2)') == "abcXbc"
     assert _eval('SUBSTITUTE("aaa", "a", "b", 2)') == "aba"
 
 
