@@ -46,7 +46,7 @@ class OTPVerifyRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    admin_id: str = Field(..., description="Admin ID")
+    admin_id: int = Field(..., description="Admin ID")
     code: str = Field(..., min_length=6, max_length=8, description="OTP code")
     is_setup: bool = Field(False, description="Whether this is for initial setup")
     challenge_token: str = Field(

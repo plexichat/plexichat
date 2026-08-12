@@ -25,7 +25,15 @@ from src.core.suite.registry.schema import AppManifest
 from src.core.suite.stash import StashManager
 from src.core.suite.sum.manager import SumManager
 
-router = APIRouter(prefix="/suite", tags=["PlexiSuite"])
+router = APIRouter(
+    prefix="/suite",
+    tags=["PlexiSuite"],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+    },
+)
 
 
 _SUITE_MANIFESTS = (

@@ -34,7 +34,15 @@ from src.core.suite.stash.manager import (
     StashValidationError,
 )
 
-router = APIRouter(prefix="/suite/stash", tags=["PlexiStash"])
+router = APIRouter(
+    prefix="/suite/stash",
+    tags=["PlexiStash"],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+    },
+)
 
 
 def _require_stash_capability() -> None:

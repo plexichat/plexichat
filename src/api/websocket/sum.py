@@ -192,14 +192,19 @@ async def relay_sum_op(
     }
 
     sent = 0
+    # Cache authorization results for this relay burst
+    _auth_cache: Dict[int, bool] = {}
     for conn in connections:
         if not conn.user_id:
             continue
-        # Revalidate per recipient: an unauthorized user must never receive
-        # workbook deltas even if a stale subscription still routes to them.
-        try:
-            manager.get_workbook(int(conn.user_id), int(workbook_id))
-        except Exception:
+        uid = int(conn.user_id)
+        if uid not in _auth_cache:
+            try:
+                manager.get_workbook(uid, int(workbook_id))
+                _auth_cache[uid] = True
+            except Exception:
+                _auth_cache[uid] = False
+        if not _auth_cache[uid]:
             continue
         if not (
             hasattr(conn, "is_selftest") and conn.is_selftest

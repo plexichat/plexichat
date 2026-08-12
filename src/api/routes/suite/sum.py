@@ -63,7 +63,15 @@ from src.core.suite.sum.manager import (
     SumValidationError,
 )
 
-router = APIRouter(prefix="/suite/sum", tags=["PlexiSum"])
+router = APIRouter(
+    prefix="/suite/sum",
+    tags=["PlexiSum"],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+    },
+)
 
 
 def _require_sum_capability() -> None:

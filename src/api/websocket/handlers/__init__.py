@@ -59,7 +59,7 @@ class OpcodeHandler:
         from .sum import SumHandler
 
         self._connection_handler = ConnectionHandler(
-            session_manager, auth_module, presence_module
+            session_manager, auth_module, presence_module, servers_module
         )
         self._presence_handler = PresenceHandler(presence_module)
         self._voice_handler = VoiceHandler(servers_module)

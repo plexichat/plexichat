@@ -16,6 +16,7 @@ from src.core.auth.models import TokenInfo
 if TYPE_CHECKING:
     from src.core.auth.manager import AuthManager
     from src.core.presence.manager import PresenceManager
+    from src.core.servers.manager import ServerManager
 
 
 class ConnectionHandler:
@@ -26,6 +27,7 @@ class ConnectionHandler:
         session_manager: SessionManager,
         auth_module: Optional["AuthManager"] = None,
         presence_module: Optional["PresenceManager"] = None,
+        servers_module: Optional["ServerManager"] = None,
     ):
         """
         Initialize the connection handler.
@@ -34,10 +36,14 @@ class ConnectionHandler:
             session_manager: Session manager instance
             auth_module: Auth module for token verification
             presence_module: Presence module for status updates
+            servers_module: Servers module used to resolve guilds for the
+                READY payload. Injected so the handler never has to reach
+                into the process-global ``src.api`` state.
         """
         self._session_manager = session_manager
         self._auth: Optional["AuthManager"] = auth_module
         self._presence: Optional["PresenceManager"] = presence_module
+        self._servers: Optional["ServerManager"] = servers_module
 
     async def handle_heartbeat(
         self,
@@ -239,10 +245,16 @@ class ConnectionHandler:
             except Exception:
                 pass
 
-        # Import servers module to get user's servers
-        import src.api as api
-
-        servers_mod = api.get_servers()
+        # Resolve guilds through the INJECTED servers boundary only, so the
+        # handler stays fully self-contained (and unit tests never touch a
+        # live database). Reaching into the process-global ``src.api`` here
+        # used to fire a real ``get_servers`` query from an AnyIO worker
+        # thread on every identify; each distinct worker thread then held a
+        # SQLite pool connection in thread-local state forever, exhausting
+        # the shared pool (max 16) and stalling later identifies for the
+        # full connect timeout. The gateway always injects the servers
+        # module, so a handler without one simply reports no guilds.
+        servers_mod = self._servers
         if servers_mod:
             try:
                 servers = await run_in_threadpool(servers_mod.get_servers, user_id)
