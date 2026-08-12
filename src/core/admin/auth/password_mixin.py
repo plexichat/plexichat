@@ -262,7 +262,7 @@ def force_password_change_target(
     try:
         from src.core.admin.permissions import log_admin_action
     except Exception:  # pragma: no cover -- audit module unavailable
-        log_admin_action = None  # type: ignore[assignment]
+        log_admin_action = None
 
     if log_admin_action is None:
         logger.critical(

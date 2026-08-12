@@ -3,18 +3,44 @@ QR code generation endpoints.
 """
 
 import io
-from typing import Any, cast
+from typing import Any, Protocol, cast
+
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from src.api.schemas.common import ErrorResponse
+import utils.logger as logger
 
 try:
     import qrcode
     from qrcode.image.pure import PyPNGImage
 except ImportError:
-    qrcode = None  # type: ignore
-    PyPNGImage = None  # type: ignore
+    qrcode = None
+    PyPNGImage = None
 
-from fastapi import APIRouter, Query, Response, HTTPException, status
-from src.api.schemas.common import ErrorResponse
-import utils.logger as logger
+
+class _QRCode(Protocol):
+    def add_data(self, data: str) -> None: ...
+
+    def make(self, fit: bool = True) -> None: ...
+
+    def make_image(self, **kwargs: Any) -> Any: ...
+
+
+class _QRCodeConstants(Protocol):
+    ERROR_CORRECT_L: int
+
+
+class _QRCodeModule(Protocol):
+    constants: _QRCodeConstants
+
+    def QRCode(
+        self,
+        *,
+        version: None,
+        error_correction: int,
+        box_size: int,
+        border: int,
+    ) -> _QRCode: ...
+
 
 router = APIRouter(tags=["Utilities"])
 
@@ -59,6 +85,8 @@ async def generate_qr(
 
     from fastapi.concurrency import run_in_threadpool
 
+    qrcode_module = cast(_QRCodeModule, qrcode)
+
     def _generate():
         try:
             try:
@@ -71,9 +99,9 @@ async def generate_qr(
             height = max(10, min(1000, height))
 
             # Create QR code
-            qr = qrcode.QRCode(  # type: ignore
+            qr = qrcode_module.QRCode(
                 version=None,  # Automatically determine version
-                error_correction=qrcode.constants.ERROR_CORRECT_L,  # type: ignore
+                error_correction=qrcode_module.constants.ERROR_CORRECT_L,
                 box_size=10,
                 border=4,
             )

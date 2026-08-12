@@ -8,12 +8,12 @@ from typing import Optional, Dict, Tuple, List, Any, cast
 try:
     import fcntl as fcntl  # POSIX-only fcntl
 except ImportError:
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
 
 try:
     import msvcrt as msvcrt  # Windows-only; for byte-range file locking
 except ImportError:
-    msvcrt = None  # type: ignore[assignment]
+    msvcrt = None
 
 import utils.config as config
 import utils.logger as logger
@@ -217,7 +217,7 @@ class DSARLog:
 
         with open(self.file_path, "a+") as f:
             if fcntl:
-                fcntl.flock(f, fcntl.LOCK_EX)  # type: ignore
+                fcntl.flock(f, fcntl.LOCK_EX)
 
             try:
                 prev_hash = self._read_last_hash_from_handle(f)
@@ -237,7 +237,7 @@ class DSARLog:
                 return checksum
             finally:
                 if fcntl:
-                    fcntl.flock(f, fcntl.LOCK_UN)  # type: ignore
+                    fcntl.flock(f, fcntl.LOCK_UN)
 
     def _ensure_lock_file(self) -> None:
         """Make sure the byte-range lock file exists with non-zero length.

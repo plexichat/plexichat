@@ -81,7 +81,7 @@ class EnrichmentMixin(SearchManagerBase):
         # ``.get(i)`` for safe misses).
         from src.core.database import (
             cache_set,
-            cache_get_many,  # type: ignore[attr-defined]  # duck-typed on cache backend
+            cache_get_many,  # duck-typed on cache backend
             dialect,
             valkey_available,
         )

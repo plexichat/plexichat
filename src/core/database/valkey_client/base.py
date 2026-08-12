@@ -1,7 +1,8 @@
+import importlib
 import json
 import dataclasses
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Union, cast
 
 import utils.config as config
 import utils.logger as logger
@@ -127,13 +128,12 @@ class ValkeyClientBase:
             return False
 
         try:
-            from glide_sync import (  # pyright: ignore[reportMissingImports]
-                GlideClient,
-                GlideClientConfiguration,
-                NodeAddress,
-                ServerCredentials,
-                BackoffStrategy,
-            )
+            glide_sync = cast(Any, importlib.import_module("glide_sync"))
+            GlideClient = glide_sync.GlideClient
+            GlideClientConfiguration = glide_sync.GlideClientConfiguration
+            NodeAddress = glide_sync.NodeAddress
+            ServerCredentials = glide_sync.ServerCredentials
+            BackoffStrategy = glide_sync.BackoffStrategy
         except ImportError:
             logger.error(
                 "valkey-glide-sync package not installed. Install with: pip install valkey-glide-sync"
@@ -219,7 +219,7 @@ class ValkeyClientBase:
         keys: Optional[List[str]] = None,
         args: Optional[List[Any]] = None,
     ) -> Any:
-        from glide_sync import Script  # pyright: ignore[reportMissingImports]
+        Script = cast(Any, importlib.import_module("glide_sync")).Script
 
         self._ensure_connected()
         client = self._client

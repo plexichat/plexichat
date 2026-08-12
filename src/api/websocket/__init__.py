@@ -461,12 +461,13 @@ def _create_pubsub_client(valkey_cfg: dict) -> Any | None:
     connection fails.
     """
     try:
-        from glide_sync import (  # pyright: ignore[reportMissingImports]
-            GlideClient,
-            GlideClientConfiguration,
-            NodeAddress,
-            ServerCredentials,
-        )
+        import importlib
+
+        glide_sync = importlib.import_module("glide_sync")
+        GlideClient = glide_sync.GlideClient
+        GlideClientConfiguration = glide_sync.GlideClientConfiguration
+        NodeAddress = glide_sync.NodeAddress
+        ServerCredentials = glide_sync.ServerCredentials
     except ImportError:
         logger.info("Cross-worker listener: valkey-glide-sync not available — skipping")
         return None

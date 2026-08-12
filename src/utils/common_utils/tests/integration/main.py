@@ -52,7 +52,7 @@ def main():
     print("[*] Now importing and running script2.py...\n")
 
     # Import and run the second script
-    from script2 import run_tests  # type: ignore[reportMissingImports]
+    from .script2 import run_tests
 
     run_tests()
 

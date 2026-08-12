@@ -196,12 +196,12 @@ class MessageStatusService(BaseService):
             # Normalize IDs for SQLite bindings; in some call paths these can be
             # str-like SnowflakeIDs which may not match integer columns.
             try:
-                conv_id_norm: SnowflakeID = int(conversation_id)  # type: ignore[arg-type]
+                conv_id_norm: SnowflakeID = int(conversation_id)
             except Exception:
                 conv_id_norm = conversation_id
 
             try:
-                user_id_norm: SnowflakeID = int(user_id)  # type: ignore[arg-type]
+                user_id_norm: SnowflakeID = int(user_id)
             except Exception:
                 user_id_norm = user_id
 

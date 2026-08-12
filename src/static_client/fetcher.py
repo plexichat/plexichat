@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
-import requests  # type: ignore[import-untyped]
+import requests
 
 import utils.logger as logger
 from src.utils.common_utils.utils.version.core import (

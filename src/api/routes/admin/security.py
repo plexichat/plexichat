@@ -525,7 +525,7 @@ async def add_banned_username(request: Request, body: BannedUsernameCreate):
     admin_id = get_admin_from_token(request)
     from src.core import admin
 
-    admin.add_banned_username(body.pattern, body.reason, admin_id, body.is_regex)  # type: ignore
+    admin.add_banned_username(body.pattern, body.reason or "", admin_id, body.is_regex)
     return SuccessResponse(success=True, message=None)
 
 

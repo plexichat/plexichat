@@ -14,7 +14,7 @@ class SavedSearchesService:
 
     def __init__(self, db: Any) -> None:
         """Initialize saved searches service."""
-        from .repositories.saved_searches import SavedSearchesRepository  # type: ignore
+        from ..repositories.saved_searches import SavedSearchesRepository
 
         self._db = db
         self._repo = SavedSearchesRepository(db)

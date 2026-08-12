@@ -5,7 +5,7 @@ Declares all shared attributes and methods that auth mixins access via self
 but are defined on sibling mixins or the parent AuthManager class.
 
 Each mixin inherits from this class so pyright can resolve cross-mixin
-attribute access without requiring # pyright: ignore comments.
+attribute access without static suppression comments.
 """
 
 from typing import Any, Optional, Dict

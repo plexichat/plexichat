@@ -98,7 +98,7 @@ class AiortcPeer:
     """A peer in the aiortc SFU."""
 
     peer_id: str
-    pc: RTCPeerConnection  # type: ignore
+    pc: Any
     producers: Dict[str, SFUProducer] = field(default_factory=dict)
     consumers: Dict[str, SFUConsumer] = field(default_factory=dict)
     transports: Dict[str, SFUTransport] = field(default_factory=dict)

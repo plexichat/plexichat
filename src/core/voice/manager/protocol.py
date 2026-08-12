@@ -50,6 +50,11 @@ class VoiceProtocol:
     def _get_channel_user_count(self, channel_id: SnowflakeID) -> int:
         return 0
 
+    def _get_channel_user_counts_bulk(
+        self, channel_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, int]:
+        return {}
+
     def _get_channel_settings(self, channel_id: SnowflakeID) -> Dict[str, Any]:
         return {}
 

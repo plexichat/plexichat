@@ -3,9 +3,10 @@ Hardware-rooted vault for master key management.
 Supports TPM 2.0 (via tpm2-pytss), HSM (via PKCS#11), and environment-derived KEK.
 """
 
+import importlib
 import os
 from functools import lru_cache
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, cast
 from pathlib import Path
 
 import utils.logger as logger
@@ -43,7 +44,8 @@ class HardwareVault:
         that was defined but never called, leaving TPM support as dead code.
         """
         try:
-            from tpm2_pytss import ESYS_Context  # type: ignore[import-not-found]
+            tpm2_pytss = cast(Any, importlib.import_module("tpm2_pytss"))
+            ESYS_Context = tpm2_pytss.ESYS_Context
 
             with ESYS_Context() as ctx:
                 # Check for TPM presence without deep interaction yet
@@ -80,7 +82,7 @@ class HardwareVault:
                     return
 
             # Try to import PyKCS11
-            from PyKCS11 import PyKCS11  # type: ignore[import-not-found]
+            PyKCS11 = cast(Any, importlib.import_module("PyKCS11")).PyKCS11
 
             # Test HSM connection
             pkcs11 = PyKCS11.PyKCS11Lib()
@@ -232,7 +234,7 @@ class HardwareVault:
         2. Derive a key from a master key stored in HSM
         """
         try:
-            from PyKCS11 import PyKCS11  # type: ignore[import-not-found]
+            PyKCS11 = cast(Any, importlib.import_module("PyKCS11")).PyKCS11
 
             pkcs11 = PyKCS11.PyKCS11Lib()
             pkcs11.load(self._hsm_config["library_path"])
@@ -350,12 +352,14 @@ class HardwareVault:
             return None
 
         try:
-            from tpm2_pytss import ESYS_Context, TPM2B_PUBLIC, TPM2B_SENSITIVE_CREATE  # type: ignore[import-not-found]
-            from tpm2_pytss.constants import (  # type: ignore[import-not-found]
-                ESYS_TR,
-                TPM2_ALG,
-                TPMA_OBJECT,
-            )
+            tpm2_pytss = cast(Any, importlib.import_module("tpm2_pytss"))
+            tpm2_constants = cast(Any, importlib.import_module("tpm2_pytss.constants"))
+            ESYS_Context = tpm2_pytss.ESYS_Context
+            TPM2B_PUBLIC = tpm2_pytss.TPM2B_PUBLIC
+            TPM2B_SENSITIVE_CREATE = tpm2_pytss.TPM2B_SENSITIVE_CREATE
+            ESYS_TR = tpm2_constants.ESYS_TR
+            TPM2_ALG = tpm2_constants.TPM2_ALG
+            TPMA_OBJECT = tpm2_constants.TPMA_OBJECT
 
             with ESYS_Context() as ctx:
                 # Create a primary key under the storage hierarchy

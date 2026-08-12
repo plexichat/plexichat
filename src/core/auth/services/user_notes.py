@@ -15,7 +15,7 @@ class UserNotesService:
 
     def __init__(self, db: Any, encryption_enabled: bool = True) -> None:
         """Initialize user notes service."""
-        from .repositories.user_notes import UserNotesRepository  # type: ignore
+        from ..repositories.user_notes import UserNotesRepository
 
         self._db = db
         self._repo = UserNotesRepository(db)

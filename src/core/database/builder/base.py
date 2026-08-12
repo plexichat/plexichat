@@ -125,7 +125,7 @@ class Query(ABC, QueryBuilderProtocol):
                 ]
                 cursor.execute(sql, param_values)
 
-                if isinstance(self, SelectQuery):  # type: ignore  # Forward reference
+                if isinstance(self, SelectQuery):  # Forward reference
                     results = cursor.fetchall()
                     logger.debug(f"Query returned {len(results)} rows")
                     return results
@@ -146,7 +146,7 @@ class Query(ABC, QueryBuilderProtocol):
                     pg_sql = dialect.convert_placeholders(sql, self.db_type)
                     cursor.execute(pg_sql, param_values)
 
-                    if isinstance(self, SelectQuery):  # type: ignore
+                    if isinstance(self, SelectQuery):
                         results = cursor.fetchall()
                         logger.debug(f"Query returned {len(results)} rows")
                         return results
@@ -180,7 +180,7 @@ class TableQuery(Query):
         self.table_name = self._validate_identifier(table_name, "table")
         self.schema_registry = schema_registry
 
-    def insert(self, data: Dict[str, Any]) -> "InsertQuery":  # type: ignore
+    def insert(self, data: Dict[str, Any]) -> "InsertQuery":
         """Start building an INSERT query."""
         from .insert import InsertQuery
 
@@ -193,7 +193,7 @@ class TableQuery(Query):
             self.connection, self.table_name, data, self.db_type, self.schema_registry
         )
 
-    def select(self, columns: Optional[List[str]] = None) -> "SelectQuery":  # type: ignore
+    def select(self, columns: Optional[List[str]] = None) -> "SelectQuery":
         """Start building a SELECT query."""
         from .select import SelectQuery
 
@@ -205,7 +205,7 @@ class TableQuery(Query):
             self.schema_registry,
         )
 
-    def update(self, data: Dict[str, Any]) -> "UpdateQuery":  # type: ignore
+    def update(self, data: Dict[str, Any]) -> "UpdateQuery":
         """Start building an UPDATE query."""
         from .update import UpdateQuery
 
@@ -218,7 +218,7 @@ class TableQuery(Query):
             self.connection, self.table_name, data, self.db_type, self.schema_registry
         )
 
-    def delete(self) -> "DeleteQuery":  # type: ignore
+    def delete(self) -> "DeleteQuery":
         """Start building a DELETE query."""
         from .delete import DeleteQuery
 

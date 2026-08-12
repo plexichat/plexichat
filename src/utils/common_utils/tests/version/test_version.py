@@ -369,7 +369,7 @@ class TestVersionDataclass:
     def test_version_immutable(self):
         ver = Version(VersionStage.ALPHA, 1, 0, 1)
         with pytest.raises(AttributeError):
-            ver.major = 2  # type: ignore
+            setattr(ver, "major", 2)
 
     def test_version_equality(self):
         v1 = Version(VersionStage.ALPHA, 1, 0, 1)
@@ -397,7 +397,7 @@ class TestVersionDataclass:
     def test_version_frozen(self):
         ver = Version(VersionStage.ALPHA, 1, 0, 1)
         with pytest.raises(AttributeError):
-            ver.stage = VersionStage.BETA  # type: ignore
+            setattr(ver, "stage", VersionStage.BETA)
 
 
 class TestVersionConstraints:

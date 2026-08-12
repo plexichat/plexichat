@@ -12,7 +12,7 @@ import json
 import hashlib
 import time
 from pathlib import Path
-from typing import Optional, Dict, Tuple, Any, cast
+from typing import ContextManager, Optional, Dict, Tuple, Any, cast
 
 import utils.config as config
 import utils.logger as logger
@@ -27,14 +27,14 @@ import utils.logger as logger
 # slimmer critical section (single-file flock instead of byte-range lock).
 # ---------------------------------------------------------------------------
 try:
-    import fcntl  # type: ignore[import-not-found]
+    import fcntl
 except ImportError:
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
 
 try:
-    import msvcrt  # type: ignore[import-not-found]
+    import msvcrt
 except ImportError:
-    msvcrt = None  # type: ignore[assignment]
+    msvcrt = None
 
 
 class _NoOpLock:
@@ -55,13 +55,13 @@ class _FcntlLock:
 
     def __enter__(self) -> "_FcntlLock":
         if fcntl is not None:  # defensive: caller already checked
-            fcntl.flock(self._fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]  # fcntl is Linux-only
+            fcntl.flock(self._fd, fcntl.LOCK_EX)  # fcntl is Linux-only
         return self
 
     def __exit__(self, *exc: object) -> None:
         try:
             if fcntl is not None:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]  # fcntl is Linux-only
+                fcntl.flock(self._fd, fcntl.LOCK_UN)  # fcntl is Linux-only
         except Exception:
             pass
 
@@ -100,7 +100,7 @@ class _MsvcrtLock:
             pass
 
 
-def _file_lock(file_handle) -> object:
+def _file_lock(file_handle) -> ContextManager[object]:
     """Return a context manager that holds an OS-level exclusive lock."""
     if fcntl is not None:
         return _FcntlLock(file_handle.fileno())
@@ -242,7 +242,9 @@ class DeletionLog:
 
         try:
             with open(self.file_path, "a+") as f:
-                with _file_lock(f):  # type: ignore[no-untyped-def]  # _file_lock typed as `object`; runtime is a contextmanager
+                with _file_lock(
+                    f
+                ):  # _file_lock typed as `object`; runtime is a contextmanager
                     prev_hash = self._read_last_hash_from_handle(f)
                     entry["prev_hash"] = prev_hash
 

@@ -51,9 +51,9 @@ class S3Storage(StorageBackendBase):
         self._path_prefix = path_prefix.strip("/")
 
         try:
-            import boto3  # type: ignore[reportMissingImports]
-            from botocore.config import Config  # type: ignore[reportMissingImports]
-            from botocore.exceptions import ClientError  # type: ignore[reportMissingImports]
+            import boto3
+            from botocore.config import Config
+            from botocore.exceptions import ClientError
 
             self._ClientError = ClientError
         except ImportError:

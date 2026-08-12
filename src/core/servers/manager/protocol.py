@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from src.core.base import SnowflakeID
 from ..models import AuditLogAction
@@ -24,22 +24,22 @@ class ServerProtocol:
     audit_handler: Any = None
 
     def _get_timestamp(self) -> int:
-        return super()._get_timestamp()  # type: ignore[misc]
+        return cast(ServerProtocol, super())._get_timestamp()
 
     def _generate_id(self) -> int:
-        return super()._generate_id()  # type: ignore[misc]
+        return cast(ServerProtocol, super())._generate_id()
 
     def _user_exists(self, user_id: SnowflakeID) -> bool:
-        return super()._user_exists(user_id)  # type: ignore[misc]
+        return cast(ServerProtocol, super())._user_exists(user_id)
 
     def _is_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> bool:
-        return super()._is_member(server_id, user_id)  # type: ignore[misc]
+        return cast(ServerProtocol, super())._is_member(server_id, user_id)
 
     def _validate_server_name(self, name: str) -> str:
-        return super()._validate_server_name(name)  # type: ignore[misc]
+        return cast(ServerProtocol, super())._validate_server_name(name)
 
     def _cache_invalidate(self, prefix: str, key: Optional[Any] = None) -> None:
-        super()._cache_invalidate(prefix, key)  # type: ignore[misc]
+        cast(ServerProtocol, super())._cache_invalidate(prefix, key)
 
     def _log_audit(
         self,
@@ -51,21 +51,21 @@ class ServerProtocol:
         changes: Optional[Dict[str, Any]] = None,
         reason: Optional[str] = None,
     ) -> None:
-        super()._log_audit(  # type: ignore[reportAttributeAccessIssue]
+        cast(ServerProtocol, super())._log_audit(
             server_id, user_id, action, target_type, target_id, changes, reason
         )
 
     def get_server(self, server_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Any]:
-        return super().get_server(server_id, user_id)  # type: ignore[misc]
+        return cast(ServerProtocol, super()).get_server(server_id, user_id)
 
     def get_channel(
         self, channel_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Any]:
         # Canonical (channel_id, user_id) order matches manager/base.py.
-        return super().get_channel(channel_id, user_id)  # type: ignore[misc]
+        return cast(ServerProtocol, super()).get_channel(channel_id, user_id)
 
     def get_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Any]:
-        return super().get_member(server_id, user_id)  # type: ignore[misc]
+        return cast(ServerProtocol, super()).get_member(server_id, user_id)
 
     def get_permissions(
         self,
@@ -73,7 +73,9 @@ class ServerProtocol:
         server_id: SnowflakeID,
         channel_id: Optional[SnowflakeID] = None,
     ) -> Dict[str, bool]:
-        return super().get_permissions(user_id, server_id, channel_id)  # type: ignore[misc]
+        return cast(ServerProtocol, super()).get_permissions(
+            user_id, server_id, channel_id
+        )
 
     def require_permission(
         self,
@@ -82,4 +84,6 @@ class ServerProtocol:
         permission: str,
         channel_id: Optional[SnowflakeID] = None,
     ) -> None:
-        super().require_permission(user_id, server_id, permission, channel_id)  # type: ignore[misc]
+        cast(ServerProtocol, super()).require_permission(
+            user_id, server_id, permission, channel_id
+        )

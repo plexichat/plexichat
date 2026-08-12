@@ -111,7 +111,9 @@ def cache_get_many(keys):
     client = get_client()
     if client and is_available() and hasattr(client, "mget_json"):
         try:
-            bulk = client.mget_json(list(keys)) or {}  # type: ignore[attr-defined]  # mget_json is duck-typed on the underlying client
+            bulk = (
+                client.mget_json(list(keys)) or {}
+            )  # mget_json is duck-typed on the underlying client
             for k in keys:
                 v = bulk.get(k)
                 if v is not None:

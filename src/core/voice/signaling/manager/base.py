@@ -165,3 +165,19 @@ class SignalingManagerBase:
             except Exception:
                 pass
         return self._sfu
+
+    async def close(self) -> None:
+        """Release resources held by the signaling manager.
+
+        Closes the SFU adapter (and any HTTP sessions it owns) and drops
+        active connection references so garbage collection can reclaim them
+        without triggering ResourceWarning.
+        """
+        if self._sfu is not None:
+            try:
+                await self._sfu.close()
+            except Exception:
+                pass
+            self._sfu = None
+        self._connections.clear()
+        self._rooms.clear()

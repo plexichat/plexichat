@@ -6,8 +6,9 @@ as well as preparing and sending push payloads to Firebase Cloud Messaging
 and Apple Push Notification service.
 """
 
+import importlib
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
@@ -258,7 +259,9 @@ class PushManager:
 
         try:
             # Try to use firebase-admin SDK
-            from firebase_admin import messaging as fcm_messaging  # type: ignore
+            fcm_messaging = cast(
+                Any, importlib.import_module("firebase_admin.messaging")
+            )
 
             message = fcm_messaging.Message(
                 token=token,
@@ -327,7 +330,7 @@ class PushManager:
 
         try:
             import httpx  # already a project dep
-            import jwt  # type: ignore  # PyJWT, optional dep — see note below
+            import jwt  # PyJWT, optional dep — see note below
             import time as _time
 
             # ---- config sanity ----
@@ -370,7 +373,9 @@ class PushManager:
                     payload,
                     p8_key,
                     algorithm="ES256",
-                    headers={"kid": key_id},  # type: ignore  # cryptography strict-types p8_key but dict[str|None] is validated at runtime
+                    headers={
+                        "kid": key_id
+                    },  # cryptography strict-types p8_key but dict[str|None] is validated at runtime
                 )
                 # Refresh 5 minutes before expiry to keep clock-skew safe.
                 self._apns_jwt_cache[cache_key] = (

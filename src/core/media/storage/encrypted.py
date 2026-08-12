@@ -6,7 +6,7 @@ Files are encrypted before upload and decrypted after download.
 """
 
 import io
-from typing import BinaryIO, Tuple, Optional
+from typing import BinaryIO, Tuple, Optional, cast
 
 import utils.logger as logger
 
@@ -248,7 +248,10 @@ class EncryptedStorage(StorageBackendBase):
                     generator = self._streaming_encryptor.decrypt_stream_generator(
                         fresh_enc_stream, aad
                     )
-                    return cleanup_wrapper(generator, fresh_enc_stream), original_size  # type: ignore
+                    return cast(
+                        Tuple[BinaryIO, int],
+                        (cleanup_wrapper(generator, fresh_enc_stream), original_size),
+                    )
             except Exception as e:
                 logger.error(f"Failed to initialize decrypted stream for {path}: {e}")
                 if enc_stream:

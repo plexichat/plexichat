@@ -23,7 +23,7 @@ class DatabaseStorage(RateLimitStorage):
     def _ensure_table(self):
         """Create the rate limit table if it doesn't exist."""
         # Database.execute handles placeholder conversion if needed
-        self._db.execute(  # type: ignore[attr-defined]
+        self._db.execute(
             """CREATE TABLE IF NOT EXISTS ratelimit_buckets (
                 key TEXT PRIMARY KEY,
                 bucket_type TEXT,
@@ -36,12 +36,12 @@ class DatabaseStorage(RateLimitStorage):
         )
         # Database class handles index creation differences if any (usually similar)
         if self._db.type == "sqlite":
-            self._db.execute(  # type: ignore[attr-defined]
+            self._db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ratelimit_expires ON ratelimit_buckets(expires_at)"
             )
         else:
             # PostgreSQL syntax
-            self._db.execute(  # type: ignore[attr-defined]
+            self._db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ratelimit_expires ON ratelimit_buckets(expires_at)"
             )
 
@@ -49,12 +49,12 @@ class DatabaseStorage(RateLimitStorage):
         """Remove expired buckets."""
         now = time.time()
         # Database.execute converts ? to %s for PostgreSQL
-        self._db.execute("DELETE FROM ratelimit_buckets WHERE expires_at < ?", (now,))  # type: ignore[attr-defined]
+        self._db.execute("DELETE FROM ratelimit_buckets WHERE expires_at < ?", (now,))
 
     def get_bucket(self, key: str) -> Optional[Dict[str, Any]]:
         """Get bucket state."""
         self._cleanup()
-        row = self._db.fetch_one(  # type: ignore[attr-defined]
+        row = self._db.fetch_one(
             "SELECT tokens, last_update, data FROM ratelimit_buckets WHERE key = ?",
             (key,),
         )
@@ -85,7 +85,7 @@ class DatabaseStorage(RateLimitStorage):
 
         data_json = json.dumps(state_copy)
 
-        self._db.upsert(  # type: ignore[attr-defined]
+        self._db.upsert(
             "ratelimit_buckets",
             ["key", "bucket_type", "tokens", "last_update", "expires_at", "data"],
             (
@@ -101,26 +101,26 @@ class DatabaseStorage(RateLimitStorage):
 
     def delete_bucket(self, key: str) -> bool:
         """Delete a bucket."""
-        cursor = self._db.execute("DELETE FROM ratelimit_buckets WHERE key = ?", (key,))  # type: ignore[attr-defined]
+        cursor = self._db.execute("DELETE FROM ratelimit_buckets WHERE key = ?", (key,))
         return cursor.rowcount > 0
 
     def get_keys_by_prefix(self, prefix: str) -> List[str]:
         """Get keys by prefix."""
-        rows = self._db.fetch_all(  # type: ignore[attr-defined]
+        rows = self._db.fetch_all(
             "SELECT key FROM ratelimit_buckets WHERE key LIKE ?", (f"{prefix}%",)
         )
         return [row["key"] for row in rows]
 
     def delete_by_prefix(self, prefix: str) -> int:
         """Delete keys by prefix."""
-        cursor = self._db.execute(  # type: ignore[attr-defined]
+        cursor = self._db.execute(
             "DELETE FROM ratelimit_buckets WHERE key LIKE ?", (f"{prefix}%",)
         )
         return cursor.rowcount
 
     def clear_all(self) -> None:
         """Clear all buckets."""
-        self._db.execute("DELETE FROM ratelimit_buckets")  # type: ignore[attr-defined]
+        self._db.execute("DELETE FROM ratelimit_buckets")
 
     def increment(self, key: str, field: str, amount: int = 1) -> int:
         """Increment a field (non-atomic for extra fields)."""
@@ -181,20 +181,20 @@ class DatabaseStorage(RateLimitStorage):
         expires_at = now + ttl
 
         # First, ensure entry exists
-        self._db.insert_or_ignore(  # type: ignore[attr-defined]
+        self._db.insert_or_ignore(
             "ratelimit_buckets",
             ["key", "tokens", "last_update", "expires_at"],
             (key, float(capacity), float(now), float(expires_at)),
         )
 
-        self._db.begin_transaction()  # type: ignore[attr-defined]
+        self._db.begin_transaction()
         try:
-            row = self._db.fetch_one(  # type: ignore[attr-defined]
+            row = self._db.fetch_one(
                 "SELECT tokens, last_update FROM ratelimit_buckets WHERE key = ?",
                 (key,),
             )
             if not row:
-                self._db.rollback()  # type: ignore[attr-defined]
+                self._db.rollback()
                 return True, capacity, 0.0
 
             tokens = float(row["tokens"])
@@ -208,7 +208,7 @@ class DatabaseStorage(RateLimitStorage):
                 tokens -= cost
                 allowed = True
 
-            self._db.execute(  # type: ignore[attr-defined]
+            self._db.execute(
                 """
                 UPDATE ratelimit_buckets 
                 SET tokens = ?, last_update = ?, expires_at = ? 
@@ -217,7 +217,7 @@ class DatabaseStorage(RateLimitStorage):
                 (tokens, now, expires_at, key),
             )
 
-            self._db.commit()  # type: ignore[attr-defined]
+            self._db.commit()
 
             remaining = int(tokens)
             reset_after = (cost - tokens) / refill_rate if not allowed else 0.0
@@ -225,7 +225,7 @@ class DatabaseStorage(RateLimitStorage):
 
         except Exception as exc:
             try:
-                self._db.rollback()  # type: ignore[attr-defined]
+                self._db.rollback()
             except Exception:
                 pass
             # SECURITY: the previous ``except Exception: return

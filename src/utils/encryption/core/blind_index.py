@@ -51,4 +51,4 @@ class BlindIndexMixin(EncryptionCoreProtocol):
         seed_bytes = hashlib.blake2b(kek, key=scope.encode(), digest_size=8).digest()
         seed = int.from_bytes(seed_bytes, byteorder="big")
 
-        return xxhash.xxh64(data.lower().strip().encode(), seed=seed).hexdigest()  # type: ignore[union-attr]
+        return xxhash.xxh64(data.lower().strip().encode(), seed=seed).hexdigest()

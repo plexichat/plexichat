@@ -365,3 +365,11 @@ class SFUAdapter(ABC):
         Override in subclasses that support quality reporting.
         """
         pass
+
+    async def close(self) -> None:
+        """Release resources held by the adapter.
+
+        Subclasses that own network sessions (e.g. aiohttp) should override
+        this to close them explicitly, preventing ResourceWarning on GC.
+        """
+        pass

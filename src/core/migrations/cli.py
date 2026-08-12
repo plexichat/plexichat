@@ -104,13 +104,19 @@ def setup_config():
         }
         env_source = "POSTGRES_HOST"
 
+    database_type = str(db_config.get("type", "sqlite"))
+    postgres_config = db_config.get("postgres")
+    postgres_host = (
+        postgres_config.get("host", "") if isinstance(postgres_config, dict) else ""
+    )
+    database_path = db_config.get("path", "")
     cli_logger.info(
         "Database config resolved from %s: type=%s%s",
         env_source,
-        db_config["type"],
-        f" host={db_config.get('postgres', {}).get('host', '')}"  # type: ignore[union-attr]
-        if db_config["type"] == "postgres"
-        else f" path={db_config.get('path', '')}",
+        database_type,
+        f" host={postgres_host}"
+        if database_type == "postgres"
+        else f" path={database_path}",
     )
 
     # 3. Check if config.yaml exists on disk — if so, prefer it over env-only config

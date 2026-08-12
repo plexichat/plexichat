@@ -1,6 +1,7 @@
+import importlib
 import secrets
 import time
-from typing import Optional
+from typing import Any, Optional, cast
 
 import utils.logger as logger
 
@@ -11,7 +12,10 @@ class LockMixin(ValkeyClientBase):
     def acquire_lock(
         self, key: str, timeout: float = 10.0, lock_timeout: int = 30000
     ) -> Optional[str]:
-        from glide_sync import ExpirySet, ExpiryType, ConditionalChange  # pyright: ignore[reportMissingImports]
+        glide_sync = cast(Any, importlib.import_module("glide_sync"))
+        ExpirySet = glide_sync.ExpirySet
+        ExpiryType = glide_sync.ExpiryType
+        ConditionalChange = glide_sync.ConditionalChange
 
         self._ensure_connected()
         client = self._client

@@ -92,14 +92,14 @@ def rename_passkey(user_id: int, passkey_id: int, new_name: str) -> bool:
 
 
 try:
-    from webauthn import (  # type: ignore
+    from webauthn import (
         generate_authentication_options,
         generate_registration_options,
         verify_authentication_response,
         verify_registration_response,
     )
-    from webauthn.helpers import options_to_json  # type: ignore
-    from webauthn.helpers.structs import (  # type: ignore
+    from webauthn.helpers import options_to_json
+    from webauthn.helpers.structs import (
         AttestationConveyancePreference,
         AuthenticatorSelectionCriteria,
         PublicKeyCredentialDescriptor,
@@ -114,16 +114,16 @@ except ImportError:
 
     from typing import Any
 
-    generate_authentication_options: Any = None  # type: ignore
-    generate_registration_options: Any = None  # type: ignore
-    verify_authentication_response: Any = None  # type: ignore
-    verify_registration_response: Any = None  # type: ignore
-    options_to_json: Any = None  # type: ignore
-    AttestationConveyancePreference: Any = None  # type: ignore
-    AuthenticatorSelectionCriteria: Any = None  # type: ignore
-    PublicKeyCredentialDescriptor: Any = None  # type: ignore
-    ResidentKeyRequirement: Any = None  # type: ignore
-    UserVerificationRequirement: Any = None  # type: ignore
+    generate_authentication_options: Any = None
+    generate_registration_options: Any = None
+    verify_authentication_response: Any = None
+    verify_registration_response: Any = None
+    options_to_json: Any = None
+    AttestationConveyancePreference: Any = None
+    AuthenticatorSelectionCriteria: Any = None
+    PublicKeyCredentialDescriptor: Any = None
+    ResidentKeyRequirement: Any = None
+    UserVerificationRequirement: Any = None
 
 
 @dataclass

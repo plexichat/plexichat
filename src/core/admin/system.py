@@ -8,9 +8,9 @@ import threading
 from typing import Dict, Any
 
 try:
-    import psutil  # type: ignore
+    import psutil
 except ImportError:
-    psutil = None  # type: ignore
+    psutil = None
 
 # Store process start time for uptime calculation
 _process_start_time = time.time()

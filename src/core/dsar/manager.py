@@ -426,7 +426,7 @@ class DSARManager:
             if media is not None and hasattr(media, "_backend"):
                 # media manager exposes the active backend lazily.
                 try:
-                    storage = media._backend  # type: ignore[attr-defined]
+                    storage = media._backend
                 except Exception:
                     storage = None
 
@@ -484,9 +484,9 @@ class DSARManager:
                     media_mod = _dsar_api.get_media()
                     s3_client = None
                     if media_mod is not None and hasattr(media_mod, "get_s3_client"):
-                        s3_client = media_mod.get_s3_client()  # type: ignore[attr-defined]
+                        s3_client = media_mod.get_s3_client()
                     elif media_mod is not None and hasattr(media_mod, "_s3_client"):
-                        s3_client = media_mod._s3_client  # type: ignore[attr-defined]
+                        s3_client = media_mod._s3_client
                     if s3_client is not None and hasattr(s3_client, "delete_object"):
                         # Resolve the bucket at runtime; fall back
                         # to logging without delete if no public bucket

@@ -2,10 +2,14 @@ import os
 import secrets
 import threading
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Protocol, Tuple, cast
 
 import utils.logger as logger
 import utils.config as config
+
+
+class _ServerQueryDatabase(Protocol):
+    def fetch_all(self, query: str, params: tuple = ()) -> list[dict[str, Any]]: ...
 
 
 def initialize_modules(
@@ -42,12 +46,6 @@ def initialize_modules(
         app_config["webhook_signature_secret"] = secrets.token_hex(32)
         config.set("applications", app_config)
         logger.info("Generated and persisted webhook_signature_secret")
-
-    rl_config = config.get("rate_limiting", {})
-    if not rl_config.get("bypass_secret"):
-        rl_config["bypass_secret"] = secrets.token_hex(32)
-        config.set("rate_limiting", rl_config)
-        logger.info("Generated and persisted rate-limit bypass_secret")
 
     failed_modules = []
 
@@ -414,7 +412,7 @@ def initialize_modules(
     modules_store["automod"] = automod
 
     try:
-        all_servers = db.fetch_all(
+        all_servers = cast(_ServerQueryDatabase, db).fetch_all(
             "SELECT id, owner_id FROM srv_servers WHERE deleted = 0"
         )
         server_count = 0

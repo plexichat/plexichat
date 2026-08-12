@@ -4,11 +4,11 @@ from .base import BaseEngine
 import utils.logger as logger
 
 try:
-    import psycopg2  # type: ignore
-    import psycopg2.extras  # type: ignore
-    import psycopg2.pool  # type: ignore
+    import psycopg2
+    import psycopg2.extras
+    import psycopg2.pool
 except ImportError:
-    psycopg2 = None  # type: ignore
+    psycopg2 = None
 
 
 class PostgresEngine(BaseEngine):
@@ -19,8 +19,8 @@ class PostgresEngine(BaseEngine):
             return pool.getconn()
 
         try:
-            import psycopg2  # type: ignore
-            from psycopg2.extras import RealDictCursor  # type: ignore
+            import psycopg2
+            from psycopg2.extras import RealDictCursor
         except ImportError:
             logger.error(
                 "psycopg2 not installed. Please install with: pip install psycopg2-binary"
@@ -52,8 +52,8 @@ class PostgresEngine(BaseEngine):
 
     def create_pool(self, min_conn: int, max_conn: int) -> Any:
         try:
-            from psycopg2.pool import ThreadedConnectionPool  # type: ignore
-            from psycopg2.extras import RealDictCursor  # type: ignore
+            from psycopg2.pool import ThreadedConnectionPool
+            from psycopg2.extras import RealDictCursor
         except ImportError:
             raise ImportError("psycopg2 not installed")
 

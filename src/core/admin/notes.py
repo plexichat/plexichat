@@ -378,7 +378,7 @@ class AdminNotesManager:
             HTML rendered content
         """
         try:
-            import markdown  # type: ignore
+            import markdown
 
             return markdown.markdown(content, extensions=["extra", "nl2br"])
         except ImportError:
