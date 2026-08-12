@@ -13,8 +13,8 @@ from pydantic import BaseModel
 import utils.config as config
 import utils.logger as logger
 from src.core.migrations.manager import MigrationManager
-from src.core.database import Database
 from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import ErrorResponse
 
 # Valid migration version pattern (3 digits)
 VERSION_PATTERN = re.compile(r"^\d{3}$")
@@ -95,7 +95,11 @@ class EmergencyOverrideResponse(BaseModel):
 
 def get_migration_manager() -> MigrationManager:
     """Dependency injection for migration manager."""
-    db = Database()
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise RuntimeError("Database not initialized")
     return MigrationManager(db)
 
 
@@ -113,7 +117,14 @@ def validate_version(version: str) -> None:
         )
 
 
-@router.get("/migrations", response_model=MigrationListResponse)
+@router.get(
+    "/migrations",
+    response_model=MigrationListResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_migrations(
     request: Request,
     manager: MigrationManager = Depends(get_migration_manager),
@@ -203,7 +214,13 @@ async def list_migrations(
         )
 
 
-@router.get("/migrations/status")
+@router.get(
+    "/migrations/status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_migration_system_status(
     request: Request,
     manager: MigrationManager = Depends(get_migration_manager),
@@ -227,7 +244,16 @@ async def get_migration_system_status(
         )
 
 
-@router.get("/migrations/{version}", response_model=MigrationDetailResponse)
+@router.get(
+    "/migrations/{version}",
+    response_model=MigrationDetailResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid migration version"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Migration not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_migration_details(
     request: Request,
     version: str,
@@ -317,7 +343,15 @@ async def get_migration_details(
         )
 
 
-@router.post("/migrations/{version}/run", response_model=MigrationRunResponse)
+@router.post(
+    "/migrations/{version}/run",
+    response_model=MigrationRunResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def run_migration(
     request: Request,
     version: str,
@@ -390,7 +424,14 @@ async def run_migration(
         )
 
 
-@router.post("/migrations/{version}/rollback")
+@router.post(
+    "/migrations/{version}/rollback",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def rollback_migration(
     request: Request,
     version: str,
@@ -434,7 +475,15 @@ async def rollback_migration(
         )
 
 
-@router.post("/migrations/emergency-override", response_model=EmergencyOverrideResponse)
+@router.post(
+    "/migrations/emergency-override",
+    response_model=EmergencyOverrideResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def generate_emergency_override(
     request: Request,
     body: EmergencyOverrideRequest,

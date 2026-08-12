@@ -131,7 +131,15 @@ async def list_approvals(
     return {"approvals": approvals}
 
 
-@router.get("/approvals/{approval_id}")
+@router.get(
+    "/approvals/{approval_id:int}",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Approval request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_approval(request: Request, approval_id: int):
     """
     Get details of a specific approval request.
@@ -203,7 +211,16 @@ async def get_approval(request: Request, approval_id: int):
         }
 
 
-@router.post("/approvals/request", response_model=SuccessResponse)
+@router.post(
+    "/approvals/request",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def request_approval(request: Request, approval_data: ApprovalRequest):
     """
     Create a new approval request for a sensitive action.
@@ -322,7 +339,17 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
     )
 
 
-@router.post("/approvals/{approval_id}/approve", response_model=SuccessResponse)
+@router.post(
+    "/approvals/{approval_id}/approve",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Approval request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def approve_request(request: Request, approval_id: int):
     """
     Approve an approval request.
@@ -474,7 +501,17 @@ async def approve_request(request: Request, approval_id: int):
     return SuccessResponse(success=True, message="Approval recorded")
 
 
-@router.post("/approvals/{approval_id}/reject", response_model=SuccessResponse)
+@router.post(
+    "/approvals/{approval_id}/reject",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Approval request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def reject_request(
     request: Request, approval_id: int, decision: ApprovalDecision
 ):
@@ -570,7 +607,17 @@ async def reject_request(
     return SuccessResponse(success=True, message="Approval request rejected")
 
 
-@router.delete("/approvals/{approval_id}", response_model=SuccessResponse)
+@router.delete(
+    "/approvals/{approval_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Approval request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def cancel_approval(request: Request, approval_id: int):
     """
     Cancel a pending approval request. Only the requester or a super admin can cancel.
@@ -668,7 +715,17 @@ class ApprovalCommentModel(BaseModel):
     comment: str = Field(..., min_length=1, max_length=1000)
 
 
-@router.post("/approvals/{approval_id}/comments", response_model=SuccessResponse)
+@router.post(
+    "/approvals/{approval_id}/comments",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Approval request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def add_approval_comment(
     request: Request, approval_id: int, body: ApprovalCommentModel
 ):
@@ -725,7 +782,16 @@ async def add_approval_comment(
     return SuccessResponse(success=True, message="Comment added")
 
 
-@router.get("/approvals/{approval_id}/comments")
+@router.get(
+    "/approvals/{approval_id}/comments",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Approval request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_approval_comments(request: Request, approval_id: int):
     """
     Get all comments for an approval request.

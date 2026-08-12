@@ -25,7 +25,14 @@ class ReindexRequest(BaseModel):
     force: bool = False
 
 
-@router.post("/search/reindex")
+@router.post(
+    "/search/reindex",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def reindex_search(request: Request, body: ReindexRequest | None = None):
     check_host_restriction(request)
     get_admin_from_token(request)
@@ -54,7 +61,15 @@ async def reindex_search(request: Request, body: ReindexRequest | None = None):
         )
 
 
-@router.post("/search/reindex/standalone")
+@router.post(
+    "/search/reindex/standalone",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        409: {"model": ErrorResponse, "description": "Reindex already in progress"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def reindex_standalone(request: Request, body: ReindexRequest | None = None):
     """
     Reindex search by reading raw encrypted messages from the database
@@ -195,7 +210,13 @@ async def reindex_standalone(request: Request, body: ReindexRequest | None = Non
     }
 
 
-@router.get("/search/reindex/status")
+@router.get(
+    "/search/reindex/status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+    },
+)
 async def reindex_status(request: Request):
     """Get current reindex status."""
     check_host_restriction(request)

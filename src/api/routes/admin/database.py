@@ -4,6 +4,7 @@ Admin database monitoring routes.
 
 from fastapi import APIRouter, Request, HTTPException
 from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import ErrorResponse
 import src.api as api
 import utils.logger as logger
 from src.core.migrations.manager import MigrationManager
@@ -11,7 +12,13 @@ from src.core.migrations.manager import MigrationManager
 router = APIRouter()
 
 
-@router.get("/database/pool-health")
+@router.get(
+    "/database/pool-health",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_db_pool_health(request: Request):
     """
     Retrieve the current health and connection pool statistics for the database.
@@ -36,7 +43,13 @@ async def get_db_pool_health(request: Request):
         )
 
 
-@router.get("/database/migrations/status")
+@router.get(
+    "/database/migrations/status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_migration_status(request: Request):
     """
     Get current migration status including applied, pending, and failed migrations.
@@ -60,7 +73,13 @@ async def get_migration_status(request: Request):
         )
 
 
-@router.get("/database/migrations/integrity")
+@router.get(
+    "/database/migrations/integrity",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def validate_migration_integrity(request: Request):
     """
     Validate integrity of applied migrations by comparing checksums.
@@ -84,7 +103,14 @@ async def validate_migration_integrity(request: Request):
         )
 
 
-@router.post("/database/migrations/apply-all")
+@router.post(
+    "/database/migrations/apply-all",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def apply_all_migrations(request: Request, dry_run: bool = False):
     """
     Apply all pending migrations.
@@ -111,7 +137,14 @@ async def apply_all_migrations(request: Request, dry_run: bool = False):
         )
 
 
-@router.post("/database/migrations/apply/{version}")
+@router.post(
+    "/database/migrations/apply/{version}",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def apply_migration(request: Request, version: str, dry_run: bool = False):
     """
     Apply a specific migration by version.
@@ -139,7 +172,14 @@ async def apply_migration(request: Request, version: str, dry_run: bool = False)
         )
 
 
-@router.post("/database/migrations/rollback/{version}")
+@router.post(
+    "/database/migrations/rollback/{version}",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def rollback_migration(request: Request, version: str):
     """
     Rollback a specific migration by version.

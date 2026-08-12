@@ -567,7 +567,16 @@ def _rule_to_response(rule) -> AutomodRuleResponse:
     )
 
 
-@router.get("/automod/rules", response_model=List[AutomodRuleResponse])
+@router.get(
+    "/automod/rules",
+    response_model=List[AutomodRuleResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_automod_rules(request: Request, server_id: str):
     """
     Retrieve the list of AutoMod rules configured for a specific server.
@@ -586,7 +595,16 @@ async def get_automod_rules(request: Request, server_id: str):
         )
 
 
-@router.post("/automod/rules", response_model=AutomodRuleResponse)
+@router.post(
+    "/automod/rules",
+    response_model=AutomodRuleResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
     """
     Create a new AutoMod rule for a server.
@@ -627,7 +645,17 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
         )
 
 
-@router.patch("/automod/rules/{rule_id}", response_model=AutomodRuleResponse)
+@router.patch(
+    "/automod/rules/{rule_id}",
+    response_model=AutomodRuleResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Rule not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def update_automod_rule(
     rule_id: int, body: AutomodRuleUpdateRequest, request: Request
 ):
@@ -674,7 +702,17 @@ async def update_automod_rule(
         )
 
 
-@router.delete("/automod/rules/{rule_id}", response_model=SuccessResponse)
+@router.delete(
+    "/automod/rules/{rule_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Rule not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def delete_automod_rule(rule_id: int, request: Request):
     """
     Permanently delete an AutoMod rule.
@@ -720,7 +758,16 @@ async def get_automod_config(request: Request):
     )
 
 
-@router.put("/automod/config", response_model=AutomodConfigResponse)
+@router.put(
+    "/automod/config",
+    response_model=AutomodConfigResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def update_automod_config(body: AutomodConfigUpdateRequest, request: Request):
     """
     Update the global AutoMod configuration settings.

@@ -142,7 +142,14 @@ async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
         )
 
 
-@router.post("/logout", response_model=SuccessResponse)
+@router.post(
+    "/logout",
+    response_model=SuccessResponse,
+    responses={
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_logout(request: Request):
     """
     Invalidate an administrator session.
@@ -158,7 +165,16 @@ async def admin_logout(request: Request):
     return SuccessResponse(success=True, message="Logged out successfully")
 
 
-@router.post("/auth/change-password", response_model=SuccessResponse)
+@router.post(
+    "/auth/change-password",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_change_password(request: Request, body: AdminChangePasswordRequest):
     """
     Change the password for the current administrator.
@@ -180,7 +196,15 @@ async def admin_change_password(request: Request, body: AdminChangePasswordReque
 
 
 @router.post(
-    "/auth/force-password-change/{target_admin_id}", response_model=SuccessResponse
+    "/auth/force-password-change/{target_admin_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid admin ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Target admin not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def admin_force_password_change(request: Request, target_admin_id: str):
     """
@@ -229,7 +253,16 @@ async def admin_force_password_change(request: Request, target_admin_id: str):
         )
 
 
-@router.get("/auth/security-status", response_model=AdminSecurityStatusResponse)
+@router.get(
+    "/auth/security-status",
+    response_model=AdminSecurityStatusResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Admin user not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_security_status(request: Request):
     """Return the current admin account security settings and posture."""
     check_host_restriction(request)
@@ -255,7 +288,16 @@ async def admin_security_status(request: Request):
     )
 
 
-@router.post("/auth/2fa/begin-setup", response_model=AdminLoginResponse)
+@router.post(
+    "/auth/2fa/begin-setup",
+    response_model=AdminLoginResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_begin_otp_setup(request: Request, body: AdminOTPSetupBeginRequest):
     """Start a new OTP setup flow for the current admin account."""
     check_host_restriction(request)
@@ -283,7 +325,16 @@ async def admin_begin_otp_setup(request: Request, body: AdminOTPSetupBeginReques
     )
 
 
-@router.post("/auth/2fa/disable", response_model=SuccessResponse)
+@router.post(
+    "/auth/2fa/disable",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_disable_otp(request: Request, body: AdminOTPDisableRequest):
     """Disable OTP for the current admin after password and OTP verification."""
     check_host_restriction(request)
@@ -300,7 +351,14 @@ async def admin_disable_otp(request: Request, body: AdminOTPDisableRequest):
 
 
 @router.post(
-    "/auth/2fa/regenerate-backup-codes", response_model=AdminBackupCodesResponse
+    "/auth/2fa/regenerate-backup-codes",
+    response_model=AdminBackupCodesResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def admin_regenerate_backup_codes(
     request: Request, body: AdminOTPSetupBeginRequest

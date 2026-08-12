@@ -6,12 +6,20 @@ import os
 from fastapi import APIRouter, Request, HTTPException
 from typing import List, Optional
 from src.api.schemas.admin import LogFileInfo, LogViewResponse
+from src.api.schemas.common import ErrorResponse
 from .utils import check_host_restriction, get_admin_from_token
 
 router = APIRouter()
 
 
-@router.get("/logs", response_model=List[LogFileInfo])
+@router.get(
+    "/logs",
+    response_model=List[LogFileInfo],
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_admin_logs(request: Request):
     """
     List all available system log files.
@@ -25,7 +33,16 @@ async def list_admin_logs(request: Request):
     return [LogFileInfo(**log_info) for log_info in logs.list_logs()]
 
 
-@router.get("/logs/{filename}", response_model=LogViewResponse)
+@router.get(
+    "/logs/{filename}",
+    response_model=LogViewResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid filename"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Log file not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def read_admin_log(
     request: Request,
     filename: str,

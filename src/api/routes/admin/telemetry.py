@@ -17,12 +17,21 @@ from src.api.schemas.admin import (
     TelemetryExportResponse,
 )
 from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 
 router = APIRouter()
 
 
-@router.get("/telemetry/stats", response_model=TelemetryStatsResponse)
+@router.get(
+    "/telemetry/stats",
+    response_model=TelemetryStatsResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_telemetry_stats(
     request: Request,
     hours: int = 24,
@@ -82,7 +91,15 @@ async def get_telemetry_stats(
         )
 
 
-@router.get("/telemetry/history", response_model=TelemetryHistoryResponse)
+@router.get(
+    "/telemetry/history",
+    response_model=TelemetryHistoryResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_telemetry_history(
     request: Request,
     endpoint: str,
@@ -119,7 +136,14 @@ async def get_telemetry_history(
         )
 
 
-@router.post("/telemetry/reset", response_model=TelemetryResetResponse)
+@router.post(
+    "/telemetry/reset",
+    response_model=TelemetryResetResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def reset_telemetry_stats(request: Request):
     """
     Clear all collected telemetry data from the system.
@@ -141,7 +165,14 @@ async def reset_telemetry_stats(request: Request):
         )
 
 
-@router.get("/telemetry/export")
+@router.get(
+    "/telemetry/export",
+    responses={
+        400: {"model": ErrorResponse, "description": "Unsupported format"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def export_telemetry_stats(
     request: Request,
     format: str = "json",

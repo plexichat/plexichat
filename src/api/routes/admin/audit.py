@@ -3,26 +3,53 @@ Admin audit log routes for querying and exporting audit records.
 """
 
 from fastapi import APIRouter, Request, HTTPException, Query
-from typing import Optional
+from typing import Optional, Annotated
 from datetime import datetime
 import csv
 import io
 
+from pydantic import BeforeValidator
+
 from .utils import check_host_restriction
+from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 
 router = APIRouter()
 
 
-@router.get("/audit/logs")
+def _coerce_nullable_int(value):
+    """Coerce ``null``/empty query values for optional int params to None."""
+    if (
+        value is None
+        or value == ""
+        or (isinstance(value, str) and value.strip().lower() == "null")
+    ):
+        return None
+    return value
+
+
+NullableInt = Annotated[Optional[int], BeforeValidator(_coerce_nullable_int)]
+
+
+@router.get(
+    "/audit/logs",
+    responses={
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid filter or pagination parameter",
+        },
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Database not available"},
+    },
+)
 async def get_audit_logs(
     request: Request,
     action_family: Optional[str] = Query(None, description="Filter by action family"),
     status: Optional[str] = Query(None, description="Filter by status"),
-    admin_id: Optional[int] = Query(None, description="Filter by admin ID"),
+    admin_id: Annotated[NullableInt, Query(description="Filter by admin ID")] = None,
     target_type: Optional[str] = Query(None, description="Filter by target type"),
-    date_from: Optional[int] = Query(None, description="Start timestamp (ms)"),
-    date_to: Optional[int] = Query(None, description="End timestamp (ms)"),
+    date_from: Annotated[NullableInt, Query(description="Start timestamp (ms)")] = None,
+    date_to: Annotated[NullableInt, Query(description="End timestamp (ms)")] = None,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=200, description="Items per page"),
 ):
@@ -177,15 +204,29 @@ async def get_audit_stats(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/audit/logs/export")
+@router.get(
+    "/audit/logs/export",
+    responses={
+        200: {
+            "description": "The exported audit log file",
+            "content": {
+                "text/csv": {"schema": {"type": "string"}},
+                "application/json": {"schema": {"type": "object"}},
+            },
+        },
+        400: {"model": ErrorResponse, "description": "Invalid filter parameter"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Database not available"},
+    },
+)
 async def export_audit_logs(
     request: Request,
     action_family: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    admin_id: Optional[int] = Query(None),
+    admin_id: Annotated[NullableInt, Query()] = None,
     target_type: Optional[str] = Query(None),
-    date_from: Optional[int] = Query(None),
-    date_to: Optional[int] = Query(None),
+    date_from: Annotated[NullableInt, Query()] = None,
+    date_to: Annotated[NullableInt, Query()] = None,
     format: str = Query("csv", pattern="^(csv|json)$"),
 ):
     """

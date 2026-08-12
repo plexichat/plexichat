@@ -95,7 +95,15 @@ async def list_roles(request: Request):
     return {"roles": roles}
 
 
-@router.get("/roles/{role_id}")
+@router.get(
+    "/roles/{role_id}",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_role(request: Request, role_id: int):
     """
     Get details of a specific role.
@@ -151,7 +159,16 @@ async def get_role(request: Request, role_id: int):
         }
 
 
-@router.post("/roles", response_model=SuccessResponse)
+@router.post(
+    "/roles",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def create_role(request: Request, role_data: RoleCreate):
     """
     Create a new admin role.
@@ -225,7 +242,17 @@ async def create_role(request: Request, role_data: RoleCreate):
     return SuccessResponse(success=True, message="Role updated successfully")
 
 
-@router.put("/roles/{role_id}", response_model=SuccessResponse)
+@router.put(
+    "/roles/{role_id:int}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
     """
     Update an existing admin role.
@@ -323,7 +350,17 @@ async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
     return SuccessResponse(success=True, message="Role updated successfully")
 
 
-@router.delete("/roles/{role_id}", response_model=SuccessResponse)
+@router.delete(
+    "/roles/{role_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def delete_role(request: Request, role_id: int):
     """
     Delete an admin role.
@@ -409,7 +446,17 @@ async def delete_role(request: Request, role_id: int):
     return SuccessResponse(success=True, message="Role deleted successfully")
 
 
-@router.post("/roles/assign", response_model=SuccessResponse)
+@router.post(
+    "/roles/assign",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role or admin not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def assign_role(request: Request, assignment: RoleAssignment):
     """
     Assign a role to an admin.
@@ -511,7 +558,17 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     return SuccessResponse(success=True, message="Role assigned successfully")
 
 
-@router.delete("/roles/{admin_id}/{role_id}", response_model=SuccessResponse)
+@router.delete(
+    "/roles/{admin_id}/{role_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role assignment not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def revoke_role(request: Request, admin_id: int, role_id: int):
     """
     Revoke a role from an admin.
@@ -584,7 +641,15 @@ async def revoke_role(request: Request, admin_id: int, role_id: int):
     return SuccessResponse(success=True, message="Role revoked successfully")
 
 
-@router.get("/admins/{admin_id}/roles")
+@router.get(
+    "/admins/{admin_id}/roles",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_admin_roles(request: Request, admin_id: int):
     """
     Get all roles assigned to a specific admin.
