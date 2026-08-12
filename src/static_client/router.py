@@ -145,7 +145,9 @@ def _build_paths(
         admin_path=admin_path,
         docs_path=docs_path,
         static_prefixes=static_prefixes,
-        api_prefixes=tuple(dict.fromkeys(api_prefixes)),  # type: ignore  # dataclass strict-tuple-size mismatch is a false positive
+        api_prefixes=tuple(
+            dict.fromkeys(api_prefixes)
+        ),  # dataclass strict-tuple-size mismatch is a false positive
         static_files=("/favicon.svg", "/config.js", "/robots.txt"),
     )
 

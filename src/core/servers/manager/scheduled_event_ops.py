@@ -8,9 +8,9 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
 try:
-    from dateutil.rrule import rrulestr  # type: ignore
+    from dateutil.rrule import rrulestr
 except ImportError:
-    rrulestr = None  # type: ignore
+    rrulestr = None
 
 import utils.config as config
 import utils.logger as logger
@@ -132,7 +132,7 @@ class ScheduledEventManager:
             if rrulestr is None:
                 raise ScheduledEventError("Recurring events require python-dateutil")
             try:
-                rrulestr(rrule)  # type: ignore
+                rrulestr(rrule)
             except Exception:
                 raise ScheduledEventError("Invalid RRULE format")
 

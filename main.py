@@ -25,7 +25,7 @@ CLI options (full details in ``python main.py -h`` and
                     self-test suite against it, then exit
     create-config   Generate a default config file and exit
     version         Show the server version string and exit
-    rotate-secrets  Regenerate rate-limit bypass and webhook signature secrets
+    rotate-secrets  Regenerate webhook signature secrets
     migrate-db      Run pending database migrations and exit (--dry-run supported)
     migrate-kek     Manage Key Encryption Key (KEK) migrations
                     (--kek-keyring/--kek-old-env/--kek-new-env/--kek-all/

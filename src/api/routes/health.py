@@ -91,7 +91,11 @@ async def health_check() -> HealthResponse:
             # success: if the import raises, both metrics return
             # None with a single log line; if one method call
             # raises, the other can still succeed.
-            from src.core.events import event_manager  # type: ignore[attr-defined]  # populated by events.setup() at runtime
+            from src.core import events as events_module
+
+            event_manager = getattr(events_module, "event_manager", None)
+            if event_manager is None:
+                raise RuntimeError("Event manager is not initialized")
 
             try:
                 events_metrics = event_manager.get_loss_metrics()

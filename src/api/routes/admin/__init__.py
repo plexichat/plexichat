@@ -3,6 +3,7 @@ Admin API router - combines modular routes.
 """
 
 from fastapi import APIRouter
+from src.api.schemas.common import ErrorResponse
 from .auth import router as auth_router
 from .dashboard import router as dashboard_router
 from .tickets import router as tickets_router
@@ -24,7 +25,13 @@ from .plexijoin import router as plexijoin_router
 from .capabilities import router as capabilities_router
 from .artifacts import router as admin_artifacts_router
 
-router = APIRouter()
+router = APIRouter(
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+    },
+)
 
 # Register routes
 router.include_router(auth_router)

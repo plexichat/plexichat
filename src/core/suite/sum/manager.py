@@ -1046,12 +1046,20 @@ class SumManager(BaseManager):
             from .container import decode_container
 
             data, _, _ = decode_container(data)
+        connection = None
         try:
             if getattr(sqlite3.Connection, "deserialize", None) is None:
                 raise RuntimeError("deserialize unavailable")
             connection = sqlite3.connect(":memory:", check_same_thread=False)
             connection.deserialize(data)
         except Exception:
+            # Close the :memory: connection that may have been created
+            # before falling back to a temp-file-backed connection.
+            if connection is not None:
+                try:
+                    connection.close()
+                except sqlite3.Error:
+                    pass
             handle = tempfile.NamedTemporaryFile(
                 prefix="plexisum-", suffix=".plexisum", delete=False
             )
@@ -1685,12 +1693,20 @@ class SumManager(BaseManager):
             from .container import decode_container
 
             data, _, _ = decode_container(data)
+        connection = None
         try:
             if getattr(sqlite3.Connection, "deserialize", None) is None:
                 raise RuntimeError("deserialize unavailable")
             connection = sqlite3.connect(":memory:")
             connection.deserialize(data)
         except Exception:
+            # Close the :memory: connection that may have been created
+            # before falling back to a temp-file-backed connection.
+            if connection is not None:
+                try:
+                    connection.close()
+                except sqlite3.Error:
+                    pass
             return SumManager._open_sqlite(data)
         connection.row_factory = sqlite3.Row
         try:

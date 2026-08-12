@@ -213,7 +213,7 @@ class MemberHandler:
 
         cache_delete(f"is_member:{server_id}:{user_id}")
         invalidate_pattern(f"perms:{user_id}:{server_id}:*")
-        self.manager.get_servers.invalidate(user_id)  # type: ignore
+        self.manager.get_servers.invalidate(user_id)
 
         result = self.get_member(server_id, user_id)
         assert result is not None

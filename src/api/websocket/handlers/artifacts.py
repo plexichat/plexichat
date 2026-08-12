@@ -165,7 +165,7 @@ class ArtifactHandler:
                 logger.debug(f"Failed to load artifact ops for replay: {e}")
 
         try:
-            await send_artifact_sync(connection, artifact_id, snapshot, ops=ops)  # type: ignore[arg-type]
+            await send_artifact_sync(connection, artifact_id, snapshot, ops=ops)
         except Exception as e:
             logger.debug(f"Failed to send artifact sync: {e}")
 

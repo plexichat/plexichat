@@ -234,6 +234,9 @@ class ErrorHandlingMiddleware:
 
             if isinstance(exc, RequestValidationError):
                 headers = _get_cors_headers(request)
+                # Documented contract: validation errors surface as 400
+                # (docs/errors.md "Validation Errors (400)"), matching
+                # ERROR_MAPPINGS' ValidationError -> 400.
                 response = JSONResponse(
                     status_code=400,
                     content=format_error_response(400, "Request validation failed"),
@@ -378,6 +381,8 @@ def setup_exception_handlers(app: FastAPI):
         else:
             message = "Request validation failed"
 
+        # Documented contract: validation errors surface as 400
+        # (docs/errors.md "Validation Errors (400)").
         return JSONResponse(
             status_code=400,
             content=format_error_response(400, message),

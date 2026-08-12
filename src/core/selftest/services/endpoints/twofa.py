@@ -10,7 +10,7 @@ import hashlib
 import utils.logger as logger
 
 try:
-    import pyotp  # type: ignore
+    import pyotp
 except ImportError:
     pyotp = None
 

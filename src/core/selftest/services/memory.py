@@ -9,9 +9,9 @@ the self-test remains usable as a diagnostic tool.
 import threading
 
 try:
-    import psutil  # type: ignore
+    import psutil
 except ImportError:
-    psutil = None  # type: ignore
+    psutil = None
 
 
 def _read_proc_status_rss_mb() -> float:

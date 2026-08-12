@@ -276,3 +276,19 @@ def get_quality_stats(channel_id: int) -> list:
 def get_active_connections(channel_id: int) -> List[Dict[str, Any]]:
     """Get all active connections in a channel."""
     return _get_manager().get_active_connections(channel_id)
+
+
+async def close() -> None:
+    """Release resources held by the signaling module.
+
+    Closes the SignalingManager (and any SFU adapter HTTP sessions) so
+    that garbage collection does not trigger ResourceWarning.
+    """
+    global _manager, _setup_complete
+    if _manager is not None:
+        try:
+            await _manager.close()
+        except Exception:
+            pass
+        _manager = None
+    _setup_complete = False

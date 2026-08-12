@@ -160,8 +160,10 @@ class ChannelOpsMixin(VoiceProtocol):
         # the per-row COUNT that ``_row_to_voice_channel`` would
         # otherwise fire. Net: an N-channels list query is now exactly
         # 1 SELECT-listing + 1 SELECT-COUNT instead of N+1.
-        prefetched_counts = self._get_channel_user_counts_bulk(  # type: ignore[attr-defined]  # mixed in via ops mixin
-            [r["id"] for r in visible_rows]
+        prefetched_counts = (
+            self._get_channel_user_counts_bulk(  # mixed in via ops mixin
+                [r["id"] for r in visible_rows]
+            )
         )
 
         channels: List[VoiceChannel] = []

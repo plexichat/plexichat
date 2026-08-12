@@ -7,7 +7,7 @@ Extracts routes from the FastAPI OpenAPI spec and manages exclusions.
 from typing import List, Dict, Any, Set
 
 import utils.logger as logger
-from utils import licensing as license_module  # type: ignore
+from utils import licensing as license_module
 
 from ..context import SelfTestContext
 
