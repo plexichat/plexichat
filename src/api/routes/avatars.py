@@ -27,7 +27,7 @@ _avatar_checksum_cache = {}  # {uid: checksum}
 
 
 @router.get(
-    "/users/{user_id}",
+    "/users/{user_id:int}",
     summary="Get user avatar",
     responses={
         200: {

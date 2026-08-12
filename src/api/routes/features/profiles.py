@@ -5,7 +5,7 @@ from typing import Optional, List
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
-from .common import parse_id, raise_bad_request
+from .common import raise_bad_request
 
 router = APIRouter()
 
@@ -24,14 +24,14 @@ class ProfileUpdateRequest(BaseModel):
 
 
 @router.get(
-    "/users/{user_id}/profile",
+    "/users/{user_id:int}/profile",
     summary="Get user profile",
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
 async def get_user_profile(
-    user_id: str, current_user: TokenInfo = Depends(get_current_user)
+    user_id: int, current_user: TokenInfo = Depends(get_current_user)
 ):
-    uid = parse_id(user_id, "user ID")
+    uid = user_id
 
     db = api.get_db()
     from src.core.profiles.manager import ProfileManager

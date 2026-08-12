@@ -217,7 +217,7 @@ async def get_license_challenge() -> dict:
     summary="Export the active license after verifying a signed challenge",
     responses={
         200: {"description": "The full license document."},
-        400: {"description": "Malformed nonce or signature."},
+        400: {"description": "Malformed nonce."},
         401: {"description": "Missing, unknown, expired, or already-used nonce."},
         403: {"description": "Signature did not verify against the public key."},
         404: {"description": "No license is loaded on this instance (free tier)."},
@@ -251,13 +251,13 @@ async def export_license(
         sig_bytes = base64.b64decode(signature, validate=True)
     except Exception:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Signature is not valid base64",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signature did not verify against the Plexichat public key",
         )
     if len(sig_bytes) != 64:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Signature must decode to exactly 64 bytes",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signature did not verify against the Plexichat public key",
         )
 
     public_key_bytes = _get_public_key_bytes()

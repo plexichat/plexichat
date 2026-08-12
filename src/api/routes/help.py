@@ -58,7 +58,15 @@ def _get_help_style():
     """
 
 
-@router.get("/security-logout")
+@router.get(
+    "/security-logout",
+    responses={
+        200: {
+            "description": "HTML help page",
+            "content": {"text/html": {"schema": {"type": "string"}}},
+        }
+    },
+)
 async def security_logout_help():
     """Help page explaining security logouts."""
     html = f"""
@@ -90,7 +98,15 @@ async def security_logout_help():
     return HTMLResponse(content=html)
 
 
-@router.get("/access-blocked")
+@router.get(
+    "/access-blocked",
+    responses={
+        200: {
+            "description": "HTML help page",
+            "content": {"text/html": {"schema": {"type": "string"}}},
+        }
+    },
+)
 async def access_blocked_help():
     """Help page explaining IP blocks."""
     html = f"""

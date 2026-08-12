@@ -244,18 +244,18 @@ async def update_report_status(
 
 
 @router.get(
-    "/reports/{report_id}",
+    "/reports/{report_id:int}",
     summary="Get report details",
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
 async def get_report_details(
-    report_id: str, current_user: TokenInfo = Depends(get_current_user)
+    report_id: int, current_user: TokenInfo = Depends(get_current_user)
 ):
     db: DatabaseProtocol | None = api.get_db()
     if not db:
         raise_internal("Database not available")
 
-    rid = parse_id(report_id, "report ID")
+    rid = report_id
 
     row = db.fetch_one("SELECT * FROM reports WHERE id = ?", (rid,))
     if not row:

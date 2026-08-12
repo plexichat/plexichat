@@ -37,10 +37,12 @@ def _emoji_to_response(emoji) -> EmojiResponse:
 
 def _invalidate_emoji_cache(server_id: int, emoji_id: Optional[int] = None) -> None:
     """Invalidate cached emoji list/detail entries for all viewers of a server."""
-    invalidate_pattern(f"{get_server_emojis.cache_key_prefix}:str:{server_id}:*")  # type: ignore
+    invalidate_pattern(
+        f"{getattr(get_server_emojis, 'cache_key_prefix', '')}:str:{server_id}:*"
+    )
     if emoji_id is not None:
         invalidate_pattern(
-            f"{get_emoji.cache_key_prefix}:str:{server_id}:str:{emoji_id}:*"  # type: ignore
+            f"{getattr(get_emoji, 'cache_key_prefix', '')}:str:{server_id}:str:{emoji_id}:*"
         )
 
 
@@ -513,7 +515,7 @@ async def create_emoji(
 
 
 @router.patch(
-    "/{server_id}/emojis/{emoji_id}",
+    "/{server_id}/emojis/{emoji_id:int}",
     response_model=EmojiResponse,
     summary="Update custom emoji",
     responses={
@@ -526,7 +528,7 @@ async def create_emoji(
 )
 async def update_emoji(
     server_id: str,
-    emoji_id: str,
+    emoji_id: int,
     body: EmojiUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> EmojiResponse:
@@ -549,17 +551,7 @@ async def update_emoji(
         )
 
     try:
-        try:
-            sid = int(server_id)
-            eid = int(emoji_id)
-        except (ValueError, TypeError):
-            logger.warning(
-                f"Invalid ID format for emoji update: {server_id}/{emoji_id}"
-            )
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid ID"}},
-            )
+        sid = int(server_id)
 
         # Check permissions
         if servers_mod:
@@ -583,11 +575,11 @@ async def update_emoji(
         try:
             emoji = reactions.update_custom_emoji(
                 user_id=current_user.user_id,
-                emoji_id=eid,
+                emoji_id=emoji_id,
                 name=body.name,
             )
 
-            _invalidate_emoji_cache(sid, eid)
+            _invalidate_emoji_cache(sid, emoji_id)
 
             # Dispatch WebSocket event (fire-and-forget, errors are self-contained)
             asyncio.create_task(_dispatch_emoji_update(sid))
@@ -602,7 +594,7 @@ async def update_emoji(
                 )
             elif "Permission" in exc_name:
                 logger.warning(
-                    f"User {current_user.user_id} denied permission to update emoji {eid}"
+                    f"User {current_user.user_id} denied permission to update emoji {emoji_id}"
                 )
                 raise HTTPException(
                     status_code=403, detail={"error": {"code": 403, "message": str(e)}}
@@ -616,7 +608,7 @@ async def update_emoji(
                     status_code=409, detail={"error": {"code": 409, "message": str(e)}}
                 )
 
-            logger.error(f"Failed to update emoji {eid}: {e}", exc_info=True)
+            logger.error(f"Failed to update emoji {emoji_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
                 detail={"error": {"code": 500, "message": f"Update failed: {str(e)}"}},

@@ -1143,7 +1143,7 @@ async def get_artifact(
 
 
 @router.patch(
-    "/{artifact_id}",
+    "/{artifact_id:int}",
     response_model=ArtifactResponse,
     summary="Update an artifact",
     responses={
@@ -1155,22 +1155,14 @@ async def get_artifact(
     },
 )
 async def update_artifact(
-    artifact_id: str,
+    artifact_id: int,
     body: ArtifactUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ArtifactResponse:
     """Update mutable fields of an artifact."""
     try:
-        try:
-            aid = int(artifact_id)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
-            )
-
         manager = _get_manager()
-        artifact = manager.get(aid)
+        artifact = manager.get(artifact_id)
         if artifact is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1233,7 +1225,7 @@ async def update_artifact(
         if "retention_policy" in getattr(body, "model_fields_set", set()):
             update_fields["retention_policy"] = body.retention_policy
 
-        updated = manager.update(aid, **update_fields)
+        updated = manager.update(artifact_id, **update_fields)
         if updated is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
