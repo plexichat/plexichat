@@ -38,23 +38,24 @@ adapter (never in the main database).
   download tickets) plus a client workspace app mounted inside the suite
   launcher.
 - **PlexiSum** — full server data layer (19 tables, ~40 REST endpoints,
-  bounded formula engine) with a bounded-viewport grid client, now including a
-  real-time gateway fabric (opcodes 64-67) for collaborative editing.
+  bounded formula engine) with a bounded-viewport client (rendered through the
+  Univer engine), now including a real-time gateway fabric (opcodes 64-67) for
+  collaborative editing.
 - **Renderer** — the **Univer** engine (Apache-2.0, `@univerjs/preset-sheets-core`,
-  pinned 0.25.1, lazy-loaded and code-split) is now the **default** renderer:
-  the workspace auto-mounts it after the first viewport seeds data, with the
-  hand-rolled bounded grid as both the persisted opt-out (`plexisum.renderer`
-  = `'grid'` in localStorage) and the automatic fallback on mount failure.
-  Both renderers share the same op/revision contract; undo/redo is
-  server-backed in both (the workspace's stack persists the inverse op, and
-  Univer's native undo/redo toolbar buttons are hidden while capture-phase
-  Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y interception keeps the engine's internal history
-  from diverging from the server). Univer is never the persistence
-  authority: it renders a bounded viewport, captures edits as idempotent
-  range operations, and the server (including formula evaluation) stays
-  authoritative. License audit: the `@univerjs-pro/*` commercial
-  packages are excluded by avoiding `@univerjs/presets` and the collaboration
-  presets (see `plexichat-client/THIRD_PARTY_NOTICES.md`).
+  pinned 0.25.1, lazy-loaded and code-split) is the **only** renderer: the
+  workspace auto-mounts it after the first viewport seeds data, and the
+  hand-rolled bounded grid was removed (if mounting throws, the workspace
+  surfaces the error). Undo/redo is server-backed (the workspace's stack
+  persists the inverse op, and Univer's native undo/redo toolbar buttons are
+  hidden while capture-phase Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y interception keeps
+  the engine's internal history from diverging from the server). Univer is
+  never the persistence authority: it renders a bounded viewport and captures
+  edits as idempotent range operations. Formulas are computed client-side by
+  the workspace's `ClientFormulaRuntime`; the server's bounded evaluator
+  recomputes on read as the durable authority. License audit: the
+  `@univerjs-pro/*` commercial packages are excluded by avoiding
+  `@univerjs/presets` and the collaboration presets (see
+  `plexichat-client/THIRD_PARTY_NOTICES.md`).
 - **Write path** — cell edits are coalesced: acknowledged durably via the
   main-database `sum_operations` buffer + revision CAS and applied to a live
   in-memory copy, with the immutable blob promoted only when the flush window

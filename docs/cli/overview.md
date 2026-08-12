@@ -115,7 +115,7 @@ python main.py version
 
 ### `rotate-secrets`
 
-Regenerate the `rate_limiting.bypass_secret` and `applications.webhook_signature_secret` values in the config file with new cryptographically random values.
+Regenerate the `applications.webhook_signature_secret` value in the config file with a new cryptographically random value.
 
 ```bash
 python main.py rotate-secrets

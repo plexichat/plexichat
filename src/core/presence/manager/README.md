@@ -31,7 +31,7 @@ The `PresenceManager` class is composed via mixins:
 `PresenceManagerBase` declares `_db`, `_auth`, `_relationships`, `_servers`,
 `_config`, `_typing_timeout_ms`, and `_presence_timeout_ms` as class-level typed
 attributes. Every mixin inherits from this base class, so pyright sees all `self.*`
-references as known, typed attributes. No `# type: ignore` comments or file-level
+references as known, typed attributes. No `` comments or file-level
 suppressions are needed.
 
 ## Composition

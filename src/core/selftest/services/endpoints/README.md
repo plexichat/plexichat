@@ -32,7 +32,7 @@ The `EndpointTester` class is composed via mixins:
 `EndpointTesterBase` declares `ctx: SelfTestContext` as a class-level typed
 attribute. Every mixin inherits from this base class, so pyright sees
 `self.ctx` as a known, typed attribute on every `self` reference. No
-`# type: ignore` comments or file-level suppressions are needed.
+`` comments or file-level suppressions are needed.
 
 ## Usage
 

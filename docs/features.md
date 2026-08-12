@@ -141,7 +141,7 @@ API: [Reports Routes](api/reports.md) | [Feedback Routes](api/feedback.md)
 - Multi-tier rate limiting: global, per-user, per-IP, per-route
 - Bot and webhook multipliers for appropriate scaling
 - Admin and internal bypass options
-- Configurable bypass secret for service-to-service communication
+- Internal services skip rate limits via the runtime-generated internal secret header
 
 Configuration: [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) | Docs: [Rate Limits](rate-limits.md)
 

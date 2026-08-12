@@ -108,7 +108,7 @@ The pre-commit hooks use `language: system` — they run your locally-installed 
 pip install ruff pyright bandit[toml] detect-secrets pre-commit
 ```
 
-The CI image installs these automatically. Windows users: note that `valkey-glide-sync` has no Windows wheels, so Valkey-related pyright diagnostics are suppressed with `# pyright: ignore[reportMissingImports]`.
+The CI image installs these automatically. Native Windows users should use WSL 2 because `valkey-glide-sync` has no Windows wheels.
 
 ### Dependency Management
 

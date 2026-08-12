@@ -25,7 +25,7 @@ The server defines these baseline limits in the `rate_limiting` config section:
 
 **Bypass options**:
 - Admin bypass: enabled (admin users skip rate limits)
-- Internal bypass: enabled (internal services skip rate limits via bypass secret)
+- Internal bypass: enabled (internal services skip rate limits via internal secret header)
 
 Servers can override these values through configuration. See [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) for details.
 
