@@ -7,7 +7,7 @@ Subcommands:
   self-test       Start server and run API self-test suite, then exit
   create-config   Generate default config/config.yaml and exit
   version         Show version string and exit
-  rotate-secrets  Rotate rate-limit bypass and webhook signature secrets
+  rotate-secrets  Rotate webhook signature secrets
   migrate-db      Run pending database migrations and exit
   migrate-kek     Enter KEK key migration mode (see subcommand help)
 """
@@ -19,7 +19,7 @@ import secrets
 import argparse
 from difflib import get_close_matches
 from pathlib import Path
-from typing import Optional
+from typing import NoReturn, Optional
 
 import yaml
 
@@ -58,11 +58,24 @@ _MEDIA_SIGNING_KEY_PLACEHOLDERS = {
 }
 
 
+def _check_port_available(host: str, port: int) -> None:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1.0)
+        try:
+            s.connect((host, port))
+            logger.error(f"Port {port} on {host} is already in use - cannot start")
+            sys.exit(1)
+        except OSError:
+            pass
+
+
 def _ensure_media_signing_key() -> None:
     """Auto-generate ``media.signing_key`` if it is still a placeholder.
 
     Mirrors the per-installation pattern used for
-    ``rate_limiting.bypass_secret`` and ``applications.webhook_signature_secret``
+    ``internal_secret`` and ``applications.webhook_signature_secret``
     in ``initializer.initialize_modules``. Runs before
     ``_check_security_keys()`` so the placeholder warning does not fire on
     a fresh install.
@@ -99,7 +112,7 @@ _SUBCOMMANDS = frozenset(
 class _SuggestionParser(argparse.ArgumentParser):
     """ArgumentParser that suggests similar subcommands on invalid choice."""
 
-    def error(self, message: str) -> None:  # type: ignore[override]
+    def error(self, message: str) -> NoReturn:
         # Suggest close matches when a subcommand is misspelled
         if "invalid choice" in message:
             match = re.search(r"'([^']+)'", message)
@@ -210,13 +223,25 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     ).set_defaults(handler="_cmd_pre_flight")
 
     # self-test
-    _add(
+    st_parser = _add(
         "self-test",
         help="Run the API self-test suite and exit",
         description="Start the server on 127.0.0.1, run the automated "
         "self-test suite against it, then shut down and exit. "
         "Returns exit code 0 on success, 1 on failure.",
-    ).set_defaults(handler="_cmd_self_test")
+    )
+    st_parser.add_argument(
+        "--unlicensed",
+        action="store_true",
+        help="Run in unlicensed mode: skip license-gated endpoints "
+        "(e.g. /api/v1/admin/plexijoin/*) that return 403 without a "
+        "valid license, so the suite passes on an unlicensed "
+        "installation. Unlicensed mode is opt-in ONLY -- the flag is "
+        "the sole switch; it is never inferred from the machine's "
+        "license state. Without it, a missing/invalid license surfaces "
+        "as self-test failures for those endpoints.",
+    )
+    st_parser.set_defaults(handler="_cmd_self_test")
 
     # create-config
     _add(
@@ -238,9 +263,8 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     _add(
         "rotate-secrets",
         help="Rotate security secrets in the config file and exit",
-        description="Regenerate rate_limiting.bypass_secret and "
-        "applications.webhook_signature_secret with new random values "
-        "and persist them back to the config file. Requires an existing "
+        description="Regenerate applications.webhook_signature_secret with a new "
+        "random value and persist it back to the config file. Requires an existing "
         "config file to modify.",
     ).set_defaults(handler="_cmd_rotate_secrets")
 
@@ -392,6 +416,15 @@ def _run_startup(args: argparse.Namespace, project_root: str) -> tuple:
             ("info", f"Config loaded from auto-detected path: {config_path}")
         )
 
+    host = args.host or os.getenv(
+        "HOST", config.get("server", {}).get("host", "127.0.0.1")
+    )
+    port = args.port or int(
+        os.getenv("PORT", config.get("server", {}).get("port", 8000))
+    )
+
+    _check_port_available(host, port)
+
     log_config = config.get("logging", {})
     media_config = config.get("media", {})
     log_dir = media_config.get("logs_dir", os.path.join(project_root, "logs"))
@@ -434,13 +467,6 @@ def _run_startup(args: argparse.Namespace, project_root: str) -> tuple:
 
     app = create_application(server, *main_modules)
     server.app = app
-
-    host = args.host or os.getenv(
-        "HOST", config.get("server", {}).get("host", "127.0.0.1")
-    )
-    port = args.port or int(
-        os.getenv("PORT", config.get("server", {}).get("port", 8000))
-    )
 
     return server, host, port, config_path
 
@@ -513,22 +539,16 @@ def _cmd_rotate_secrets(args: argparse.Namespace) -> None:
         config_path = setup_config(project_root, server.get_default_config())
 
     print(f"Rotating secrets in {config_path}...")
-    rl_config = config.get("rate_limiting", {})
     app_config = config.get("applications", {})
 
-    rl_config["bypass_secret"] = secrets.token_hex(32)
     app_config["webhook_signature_secret"] = secrets.token_hex(32)
 
-    config.set("rate_limiting", rl_config)
     config.set("applications", app_config)
 
     with open(config_path, "w") as f:
         yaml.dump(config.get_all(), f, default_flow_style=False)
 
-    print(
-        "Successfully rotated rate_limiting.bypass_secret "
-        "and applications.webhook_signature_secret"
-    )
+    print("Successfully rotated applications.webhook_signature_secret")
 
 
 def _cmd_migrate_db(args: argparse.Namespace) -> None:
@@ -541,7 +561,12 @@ def _cmd_migrate_kek(args: argparse.Namespace) -> None:
 
 def _cmd_self_test(args: argparse.Namespace) -> None:
     server, host, port, _config_path = _run_startup(args, project_root)
-    handle_selftest(server, host, port)
+    handle_selftest(
+        server,
+        host,
+        port,
+        unlicensed=getattr(args, "unlicensed", False),
+    )
 
 
 def _cmd_pre_flight(args: argparse.Namespace) -> None:

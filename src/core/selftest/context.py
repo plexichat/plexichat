@@ -17,11 +17,16 @@ class SelfTestContext:
         config: dict,
         requests_module: Any,
         standalone_mode: bool = True,
+        unlicensed: bool = False,
     ):
         self.base_url = base_url.rstrip("/")
         self.config = config
         self.requests_module = requests_module
         self.standalone_mode = standalone_mode
+        # True when the operator passed ``--unlicensed`` to the self-test
+        # command. Free-tier detection (no license file on this machine) is
+        # handled separately via discovery.plexijoin_expected_statuses().
+        self.unlicensed = unlicensed
 
         self._test_password: Optional[str] = None
         self._setup_other_username: Optional[str] = None

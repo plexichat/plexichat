@@ -86,7 +86,11 @@ class SetupService(
             self.create_test_emoji()
             self.create_test_sticker()
             self.create_test_thread()
-            self.create_test_plexijoin_resources()
+            if not self.ctx.unlicensed:
+                # PlexiJoin is license-gated: on an unlicensed/free-tier
+                # install the POST returns 403, so skip seeding test
+                # resources for it entirely.
+                self.create_test_plexijoin_resources()
             self.ensure_approval_comments_table()
 
             logger.info(

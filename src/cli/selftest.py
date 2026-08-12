@@ -1,4 +1,5 @@
 import sys
+import socket
 import threading
 import time
 import logging as py_logging
@@ -7,6 +8,17 @@ import uvicorn
 import requests
 
 import utils.logger as logger
+
+
+def _is_port_in_use(host: str, port: int) -> bool:
+    """Check if a TCP port is already in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1.0)
+        try:
+            s.connect((host, port))
+            return True
+        except OSError:
+            return False
 
 
 def _wait_until_ready(host: str, port: int, timeout: float = 20.0) -> bool:
@@ -27,9 +39,18 @@ def _wait_until_ready(host: str, port: int, timeout: float = 20.0) -> bool:
     return False
 
 
-def handle_selftest(server, host: str, port: int) -> None:
+def handle_selftest(
+    server,
+    host: str,
+    port: int,
+    unlicensed: bool = False,
+) -> None:
     logger.info("Starting Self-Test Mode...")
     host = "127.0.0.1"
+
+    if _is_port_in_use(host, port):
+        logger.error(f"Port {port} is already in use - cannot start self-test")
+        sys.exit(1)
 
     py_logging.getLogger("AppLogger").setLevel(py_logging.INFO)
 
@@ -50,7 +71,10 @@ def handle_selftest(server, host: str, port: int) -> None:
     try:
         from src.core.selftest.runner import SelfTestRunner
 
-        runner = SelfTestRunner(base_url=f"http://{host}:{port}")
+        runner = SelfTestRunner(
+            base_url=f"http://{host}:{port}",
+            unlicensed=unlicensed,
+        )
         success = runner.run_all()
 
         uvi_server.should_exit = True

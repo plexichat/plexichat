@@ -13,7 +13,7 @@ This package is the user-facing entry point invoked via `python main.py`. It han
 | `self-test` | Start server on `127.0.0.1`, run API self-test suite, shut down |
 | `create-config` | Generate default `config/config.yaml` and exit |
 | `version` | Show version string and exit |
-| `rotate-secrets` | Regenerate `rate_limiting.bypass_secret` and `applications.webhook_signature_secret` |
+| `rotate-secrets` | Regenerate `applications.webhook_signature_secret` |
 | `migrate-db` | Run pending database migrations and exit |
 | `migrate-kek` | Enter KEK key migration mode (validate, migrate, or rollback keyrings) |
 

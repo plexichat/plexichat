@@ -7,13 +7,16 @@ Supports automated authentication, retry logic, and traceback capture.
 
 import time
 import re
-from typing import Optional
+from typing import Any, Optional
 from concurrent.futures import ThreadPoolExecutor
+import importlib
 
 try:
-    import requests  # type: ignore
+    requests: Any = importlib.import_module("requests")
+    HAS_REQUESTS = True
 except ImportError:
-    requests = None  # type: ignore
+    requests = None
+    HAS_REQUESTS = False
 
 import utils.config as config
 import utils.logger as logger
@@ -38,7 +41,12 @@ from .services.memory import RamMonitor
 class SelfTestRunner:
     """Automated API test runner."""
 
-    def __init__(self, base_url: str, standalone_mode: bool = True):
+    def __init__(
+        self,
+        base_url: str,
+        standalone_mode: bool = True,
+        unlicensed: bool = False,
+    ):
         if requests is None:
             raise RuntimeError("requests dependency is required for selftest runner")
 
@@ -48,6 +56,7 @@ class SelfTestRunner:
             config=selftest_cfg,
             requests_module=requests,
             standalone_mode=standalone_mode,
+            unlicensed=unlicensed,
         )
 
         # Service composition — each service operates on the shared context
@@ -79,6 +88,14 @@ class SelfTestRunner:
         self.ctx.docs = self.docs
         self.ctx.report = self.report
         self.ctx.ram_monitor = self.ram_monitor
+
+        # Unlicensed mode is EXPLICIT-ONLY: the runner treats PlexiJoin
+        # endpoints as license-gated only when the operator passes
+        # ``--unlicensed``. There is deliberately no auto-detection from
+        # the license state of the machine -- a missing license file must
+        # surface as a self-test failure unless the operator opts in, so
+        # CI and operators can rely on the flag being the sole switch.
+        self.ctx.unlicensed = unlicensed
 
     def _resolve_test_path(self, path: str) -> Optional[str]:
         """Substitute path placeholders with concrete test values.
@@ -217,6 +234,20 @@ class SelfTestRunner:
             logger.info("Admin tests disabled -- excluding all /admin/ endpoints")
             for route in routes:
                 if "/admin/" in route["path"]:
+                    excluded.add(f"{route['method']}:{route['path']}")
+
+        # --- License-gated endpoints (unlicensed mode) ---
+        # Without a valid license, PlexiJoin (the licensed feature) rejects
+        # every /api/v1/admin/plexijoin/* route with 403. Only when the
+        # operator explicitly passes ``--unlicensed`` do we exclude those
+        # routes instead of failing the whole suite.
+        if self.ctx.unlicensed:
+            logger.info(
+                "Unlicensed mode (explicit flag): excluding license-gated "
+                "/plexijoin/ endpoints from the suite"
+            )
+            for route in routes:
+                if "/plexijoin/" in route["path"]:
                     excluded.add(f"{route['method']}:{route['path']}")
 
         # --- Browser-required endpoints (cannot be tested via HTTP API) ---

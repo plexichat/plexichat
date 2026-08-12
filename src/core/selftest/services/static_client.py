@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import utils.config as config
 import utils.logger as logger
+import src.api as api
 
 from ..context import SelfTestContext
 
@@ -26,18 +27,17 @@ class StaticClientTester:
     def __init__(self, ctx: SelfTestContext):
         self.ctx = ctx
 
-    def _add_bypass_header(self, session) -> None:
-        """Add rate-limit bypass header to session if available."""
-        rl_config = config.get("rate_limiting", {})
-        bypass_secret = rl_config.get("bypass_secret")
-        if bypass_secret:
-            session.headers.update({"X-RateLimit-Bypass": bypass_secret})
+    def _add_internal_secret_header(self, session) -> None:
+        """Add internal secret header to session if available."""
+        internal_secret = api.get_internal_secret()
+        if internal_secret:
+            session.headers.update({"X-Plexichat-Internal-Secret": internal_secret})
             logger.debug(
-                f"Added X-RateLimit-Bypass header to static_client session: {bypass_secret[:8]}..."
+                f"Added X-Plexichat-Internal-Secret header to static_client session: {internal_secret[:8]}..."
             )
         else:
             logger.warning(
-                "No rate_limiting.bypass_secret found in config - static_client may be rate limited"
+                "No internal_secret found - static_client may be rate limited"
             )
 
     def test_static_client(self) -> None:
@@ -51,7 +51,7 @@ class StaticClientTester:
 
         logger.info("Testing static client middleware...")
         session = self.ctx.make_session()
-        self._add_bypass_header(session)
+        self._add_internal_secret_header(session)
 
         checks = [
             ("/", [200, 503]),
