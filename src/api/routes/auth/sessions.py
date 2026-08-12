@@ -154,7 +154,7 @@ async def get_sessions_list(
 
 
 @router.delete(
-    "/sessions/{session_id}",
+    "/sessions/{session_id:int}",
     response_model=SuccessResponse,
     summary="Revoke session",
     responses={
@@ -165,7 +165,7 @@ async def get_sessions_list(
     },
 )
 async def revoke_session(
-    session_id: str, current_user: TokenInfo = Depends(get_current_user)
+    session_id: int, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     auth = api.get_auth()
     if not auth:
@@ -176,20 +176,13 @@ async def revoke_session(
         )
 
     try:
-        sid = int(session_id)
-    except ValueError:
-        logger.warning(f"Invalid session ID format: {session_id}")
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid session ID"}},
-        )
-
-    try:
-        auth.revoke_session(current_user.user_id, sid)
-        logger.info(f"User {current_user.user_id} revoked session {sid}")
+        auth.revoke_session(current_user.user_id, session_id)
+        logger.info(f"User {current_user.user_id} revoked session {session_id}")
         return SuccessResponse(success=True, message=None)
     except UserNotFoundError:
-        logger.warning(f"Session {sid} not found for user {current_user.user_id}")
+        logger.warning(
+            f"Session {session_id} not found for user {current_user.user_id}"
+        )
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Session not found"}},

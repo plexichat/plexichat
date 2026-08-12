@@ -285,7 +285,7 @@ async def update_presence(
 
 
 @router.get(
-    "/users/{user_id}/presence",
+    "/users/{user_id:int}/presence",
     response_model=PresenceResponse,
     summary="Get user presence",
     responses={
@@ -295,7 +295,7 @@ async def update_presence(
     },
 )
 def get_user_presence(
-    user_id: str, current_user: TokenInfo = Depends(get_current_user)
+    user_id: int, current_user: TokenInfo = Depends(get_current_user)
 ) -> PresenceResponse:
     """
     Get a user's presence.
@@ -312,30 +312,21 @@ def get_user_presence(
 
     try:
         try:
-            uid = int(user_id)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid user ID format for presence request: {user_id}")
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid user ID"}},
-            )
-
-        try:
-            pres = presence.get_visible_presence(current_user.user_id, uid)
+            pres = presence.get_visible_presence(current_user.user_id, user_id)
             if not pres:
                 return PresenceResponse(
-                    user_id=SnowflakeID(uid),
+                    user_id=SnowflakeID(user_id),
                     status="offline",
                     custom_status=None,
                     custom_emoji=None,
                     last_seen=None,
                 )
-            return _presence_to_response(pres, uid)
+            return _presence_to_response(pres, user_id)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
                 return PresenceResponse(
-                    user_id=SnowflakeID(uid),
+                    user_id=SnowflakeID(user_id),
                     status="offline",
                     custom_status=None,
                     custom_emoji=None,
@@ -343,7 +334,7 @@ def get_user_presence(
                 )
 
             logger.error(
-                f"Failed to fetch presence for user {uid} (requested by {current_user.user_id}): {e}",
+                f"Failed to fetch presence for user {user_id} (requested by {current_user.user_id}): {e}",
                 exc_info=True,
             )
             raise HTTPException(

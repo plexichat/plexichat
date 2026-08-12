@@ -28,7 +28,7 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
     async def edit_message(
         self,
         channel_id: str,
-        message_id: str,
+        message_id: int,
         body: MessageUpdateRequest,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> MessageResponse:
@@ -51,7 +51,6 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
 
         try:
             try:
-                mid = int(message_id)
                 cid = int(channel_id)
             except ValueError:
                 raise HTTPException(
@@ -135,7 +134,7 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                 except Exception as e:
                     logger.warning(f"Automod fast check failed for message edit: {e}")
 
-            msg = messaging.edit_message(current_user.user_id, mid, body.content)
+            msg = messaging.edit_message(current_user.user_id, message_id, body.content)
 
             author_username, author_avatar_url, author_badges = (
                 self._resolve_author_info(current_user, auth)

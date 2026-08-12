@@ -85,7 +85,7 @@ class MessagesCRUDRouter(
         )(self.get_message)
 
         router.patch(
-            "/channels/{channel_id}/messages/{message_id}",
+            "/channels/{channel_id}/messages/{message_id:int}",
             response_model=MessageResponse,
             summary="Edit message",
             responses=_edit_responses,

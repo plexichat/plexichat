@@ -20,7 +20,7 @@ import utils.logger as logger
 class DeletionMixin:
     async def delete_relationship(
         self: RelationshipBaseProtocol,
-        user_id: str,
+        user_id: int,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> SuccessResponse:
         """
@@ -43,18 +43,7 @@ class DeletionMixin:
 
         try:
             try:
-                target_id = int(user_id)
-            except (ValueError, TypeError):
-                logger.warning(
-                    f"User {current_user.user_id} provided invalid target ID: {user_id}"
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Invalid user ID"}},
-                )
-
-            try:
-                rel = relationships.get_relationship(current_user.user_id, target_id)
+                rel = relationships.get_relationship(current_user.user_id, user_id)
 
                 status = getattr(rel, "status", None)
                 if status is None and isinstance(rel, dict):
@@ -75,36 +64,36 @@ class DeletionMixin:
                     )
 
                 if status_str in ("friend", "friends"):
-                    relationships.remove_friend(current_user.user_id, target_id)
+                    relationships.remove_friend(current_user.user_id, user_id)
                     await self._dispatch_relationship_event(
                         "remove",
                         current_user.user_id,
-                        target_id,
+                        user_id,
                         {
-                            "user_id": str(target_id),
+                            "user_id": str(user_id),
                         },
                     )
                     await self._dispatch_relationship_event(
                         "remove",
-                        target_id,
+                        user_id,
                         current_user.user_id,
                         {
                             "user_id": str(current_user.user_id),
                         },
                     )
                 elif status_str == "blocked":
-                    relationships.unblock_user(current_user.user_id, target_id)
+                    relationships.unblock_user(current_user.user_id, user_id)
                     await self._dispatch_relationship_event(
                         "remove",
                         current_user.user_id,
-                        target_id,
+                        user_id,
                         {
-                            "user_id": str(target_id),
+                            "user_id": str(user_id),
                         },
                     )
                 elif status_str == "pending_incoming":
                     row = relationships._get_pending_request(
-                        target_id, current_user.user_id
+                        user_id, current_user.user_id
                     )
                     if not row:
                         raise HTTPException(
@@ -121,14 +110,14 @@ class DeletionMixin:
                     await self._dispatch_relationship_event(
                         "remove",
                         current_user.user_id,
-                        target_id,
+                        user_id,
                         {
-                            "user_id": str(target_id),
+                            "user_id": str(user_id),
                         },
                     )
                     await self._dispatch_relationship_event(
                         "remove",
-                        target_id,
+                        user_id,
                         current_user.user_id,
                         {
                             "user_id": str(current_user.user_id),
@@ -136,7 +125,7 @@ class DeletionMixin:
                     )
                 elif status_str == "pending_outgoing":
                     row = relationships._get_pending_request(
-                        current_user.user_id, target_id
+                        current_user.user_id, user_id
                     )
                     if not row:
                         raise HTTPException(
@@ -153,14 +142,14 @@ class DeletionMixin:
                     await self._dispatch_relationship_event(
                         "remove",
                         current_user.user_id,
-                        target_id,
+                        user_id,
                         {
-                            "user_id": str(target_id),
+                            "user_id": str(user_id),
                         },
                     )
                     await self._dispatch_relationship_event(
                         "remove",
-                        target_id,
+                        user_id,
                         current_user.user_id,
                         {
                             "user_id": str(current_user.user_id),
@@ -170,10 +159,10 @@ class DeletionMixin:
                     try:
                         friends = relationships.get_friends(current_user.user_id)
                         if any(
-                            int(getattr(f, "friend_id", 0)) == int(target_id)
+                            int(getattr(f, "friend_id", 0)) == int(user_id)
                             for f in friends
                         ):
-                            relationships.remove_friend(current_user.user_id, target_id)
+                            relationships.remove_friend(current_user.user_id, user_id)
                         else:
                             raise HTTPException(
                                 status_code=404,
@@ -189,7 +178,7 @@ class DeletionMixin:
 
                 try:
                     self._invalidate_relationship_list_cache(
-                        current_user.user_id, target_id
+                        current_user.user_id, user_id
                     )
                 except Exception as e:
                     logger.debug(
@@ -212,7 +201,7 @@ class DeletionMixin:
                 )
             except Exception as e:
                 logger.error(
-                    f"Failed to delete relationship between {current_user.user_id} and {target_id}: {e}",
+                    f"Failed to delete relationship between {current_user.user_id} and {user_id}: {e}",
                     exc_info=True,
                 )
                 raise HTTPException(

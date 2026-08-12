@@ -291,8 +291,8 @@ async def passkey_authenticate(
         )
     except ValueError as e:
         raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            status_code=401,
+            detail={"error": {"code": 401, "message": str(e)}},
         )
     except Exception as e:
         logger.error(f"Passkey authentication failed: {e}", exc_info=True)
@@ -393,7 +393,7 @@ async def revoke_passkey(
 
 
 @router.patch(
-    "/passkeys/{passkey_id}",
+    "/passkeys/{passkey_id:int}",
     response_model=SuccessResponse,
     summary="Rename a passkey",
     responses={
