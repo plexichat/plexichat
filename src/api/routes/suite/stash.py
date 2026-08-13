@@ -15,6 +15,7 @@ from src.api.schemas.stash import (
     StashDownloadRedeemRequest,
     StashDownloadRedeemResponse,
     StashDownloadTicketResponse,
+    StashFileUploadRequest,
     StashGrantRequest,
     StashGrantResponse,
     StashItemCreateRequest,
@@ -71,7 +72,7 @@ def _manager() -> StashManager:
         db = api.get_db()
         if db is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
-        return StashManager(db, servers_module=api.get_servers())
+        return StashManager(db, servers_module=api.get_servers(), media=api.get_media())
 
 
 def _error(exc: Exception) -> HTTPException:
@@ -164,6 +165,80 @@ async def create_item(
             tags=body.tags,
         )
         return _item_response(item)
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/upload",
+    response_model=StashItemResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        413: {"model": ErrorResponse, "description": "File is too large"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def upload_file(
+    body: StashFileUploadRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> StashItemResponse:
+    """Upload file bytes to Stash: store a media object, then reference it.
+
+    The bytes go through the existing media storage boundary (which owns
+    content-type detection, sanitization, and size limits) and the Stash item
+    references the returned media object id. No filesystem path is accepted.
+    """
+    try:
+        import base64 as base64_module
+
+        raw = body.content
+        if raw.startswith("data:"):
+            comma = raw.find(",")
+            if comma == -1 or ";base64" not in raw[:comma].lower():
+                raise HTTPException(status_code=400, detail="Invalid file payload")
+            encoded = raw[comma + 1 :]
+        else:
+            encoded = raw
+        if len(encoded) > 70_000_000:
+            raise HTTPException(status_code=413, detail="File is too large")
+        try:
+            data = base64_module.b64decode(encoded, validate=True)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail="Invalid base64 payload"
+            ) from exc
+        if len(data) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File is too large")
+
+        media = api.get_media()
+        if media is None:
+            raise HTTPException(status_code=503, detail="Media storage is unavailable")
+        upload = media.upload_file(
+            current_user.user_id,
+            data,
+            body.filename,
+            body.content_type,
+        )
+        item = _manager().create_item(
+            current_user.user_id,
+            item_type="file",
+            title=body.title,
+            scope=body.scope,
+            server_id=int(body.server_id) if body.server_id is not None else None,
+            description=body.description,
+            media_object_id=str(upload.file_id),
+            metadata={
+                "size": int(upload.size),
+                "content_type": upload.content_type,
+            },
+            tags=body.tags,
+        )
+        return _item_response(item)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _error(exc) from exc
 

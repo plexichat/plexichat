@@ -23,6 +23,19 @@ STASH_PERMISSIONS = (
     "manage_versions",
 )
 
+# Permissions a personal-item owner may delegate to another user. Privileged
+# mutations (``share``, ``delete``, ``manage_versions``) are excluded: letting a
+# grantee delete or reshare the owner's personal item is an IDOR/privilege
+# escalation. Server-scoped items keep the full set (governed by the server
+# permission boundary instead).
+PERSONAL_ITEM_GRANTABLE_PERMISSIONS = (
+    "view_metadata",
+    "preview",
+    "download",
+    "edit",
+    "move",
+)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS stash_items (
     id BIGINT PRIMARY KEY,

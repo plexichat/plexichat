@@ -32,6 +32,19 @@ class StashItemUpdateRequest(BaseModel):
     tags: Optional[List[str]] = Field(None, max_length=100)
 
 
+class StashFileUploadRequest(BaseModel):
+    """Upload a file's bytes straight into Stash (media object + item)."""
+
+    title: str = Field(..., min_length=1, max_length=500)
+    filename: str = Field(..., min_length=1, max_length=255)
+    content: str = Field(..., min_length=1, description="Base64-encoded file bytes")
+    content_type: Optional[str] = Field(None, max_length=255)
+    scope: str = Field("personal", pattern="^(personal|server)$")
+    server_id: Optional[SnowflakeID] = None
+    description: Optional[str] = Field(None, max_length=4000)
+    tags: List[str] = Field(default_factory=list, max_length=100)
+
+
 class StashItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -50,6 +63,7 @@ class StashItemResponse(BaseModel):
     pinned: bool
     created_at: int
     updated_at: int
+    grants: Optional[List[Dict[str, Any]]] = None
 
 
 class StashItemListResponse(BaseModel):
@@ -99,6 +113,7 @@ class StashDownloadTicketResponse(BaseModel):
     ticket: str
     item_id: SnowflakeID
     version_id: Optional[SnowflakeID] = None
+    media_object_id: Optional[str] = None
     expires_at: int
 
 

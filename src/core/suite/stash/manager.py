@@ -12,7 +12,11 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.core.base import BaseManager
-from .schema import STASH_ITEM_TYPES, STASH_PERMISSIONS
+from .schema import (
+    PERSONAL_ITEM_GRANTABLE_PERMISSIONS,
+    STASH_ITEM_TYPES,
+    STASH_PERMISSIONS,
+)
 
 
 class StashNotFoundError(LookupError):
@@ -238,7 +242,16 @@ class StashManager(BaseManager):
         ):
             return False
         permissions = self._decode(row.get("permissions_json"), [])
-        return permission in permissions or "*" in permissions
+        if permission in permissions or "*" in permissions:
+            return True
+        # Being able to mutate an item implies the ability to read its
+        # metadata/preview: an editor must be able to view what they edit.
+        if permission in ("view_metadata", "preview") and any(
+            p in permissions
+            for p in ("edit", "manage_versions", "move", "share", "delete")
+        ):
+            return True
+        return False
 
     def _authorize(
         self,
@@ -283,9 +296,12 @@ class StashManager(BaseManager):
         server_id = row.get("server_id")
         if server_id is not None and self._can_manage_server(user_id, int(server_id)):
             return True
-        return self._grant_permissions(
-            int(row["id"]), user_id, "preview"
-        ) or self._grant_permissions(int(row["id"]), user_id, "download")
+        # Editors re-point media (update_item -> _resolve_media_object), so
+        # they legitimately handle the opaque media reference and may see it.
+        return any(
+            self._grant_permissions(int(row["id"]), user_id, permission)
+            for permission in ("edit", "preview", "download")
+        )
 
     def _row_to_item(
         self, row: Dict[str, Any], *, include_storage: bool = False
@@ -380,9 +396,67 @@ class StashManager(BaseManager):
         if not row:
             raise StashNotFoundError("Stash item not found")
         self._authorize(row, user_id, "view_metadata")
-        return self._row_to_item(
+        item = self._row_to_item(
             row, include_storage=self._can_expose_storage(row, user_id)
         )
+        # Only the owner (or a server administrator/moderator) may see who an
+        # item is shared with, so grants are never leaked to ordinary grantees.
+        is_owner = int(row["owner_id"]) == int(user_id)
+        server_id = row.get("server_id")
+        can_see_grants = is_owner or (
+            server_id is not None
+            and self._can_administer_server(user_id, int(server_id))
+        )
+        if can_see_grants:
+            item["grants"] = self._item_grants(int(item_id))
+        return item
+
+    def _project_item_after_mutation(
+        self, user_id: int, item_id: int
+    ) -> Dict[str, Any]:
+        """Project an item for a user who just passed an edit/restore check.
+
+        Mutations authorize on ``edit`` (or owner/server-admin), which must not
+        then require a separate ``view_metadata`` grant to read the result back.
+        Grants stay owner/server-admin scoped, matching ``get_item``.
+        """
+        row = self._db.fetch_one(
+            "SELECT * FROM stash_items WHERE id = ? AND deleted = 0", (int(item_id),)
+        )
+        if not row:
+            raise StashNotFoundError("Stash item not found")
+        item = self._row_to_item(
+            row, include_storage=self._can_expose_storage(row, user_id)
+        )
+        is_owner = int(row["owner_id"]) == int(user_id)
+        server_id = row.get("server_id")
+        if is_owner or (
+            server_id is not None
+            and self._can_administer_server(user_id, int(server_id))
+        ):
+            item["grants"] = self._item_grants(int(item_id))
+        return item
+
+    def _item_grants(self, item_id: int) -> List[Dict[str, Any]]:
+        """Return the active (non-revoked) grants for an item."""
+        rows = self._db.fetch_all(
+            "SELECT id, subject_id, permissions_json, expires_at, created_at "
+            "FROM stash_grants WHERE item_id = ? AND revoked_at IS NULL "
+            "ORDER BY created_at",
+            (int(item_id),),
+        )
+        grants: List[Dict[str, Any]] = []
+        for row in rows:
+            grants.append(
+                {
+                    "id": str(row["id"]),
+                    "subject_id": str(row["subject_id"]),
+                    "permissions": self._decode(row.get("permissions_json"), []),
+                    "expires_at": row.get("expires_at"),
+                    "created_at": int(row.get("created_at", 0)),
+                }
+            )
+        return grants
 
     def list_items(
         self,
@@ -491,7 +565,10 @@ class StashManager(BaseManager):
             updates["collection_id"] = collection_id
         if "media_object_id" in fields:
             media_object_id = fields["media_object_id"]
-            self._resolve_media_object(media_object_id, int(row["owner_id"]))
+            # The person attaching the media is the editor; resolve access
+            # against them (not the original owner) so a server manager who
+            # uploads a new file can attach it without being wrongly rejected.
+            self._resolve_media_object(media_object_id, user_id)
             updates["media_object_id"] = media_object_id
         if "metadata" in fields:
             updates["metadata_json"] = self._json(fields["metadata"], {})
@@ -511,14 +588,33 @@ class StashManager(BaseManager):
                 f"UPDATE stash_items SET {assignments}, updated_at = ? WHERE id = ?",
                 tuple(updates.values()) + (now, int(item_id)),
             )
-            self._audit(
-                "move" if set(updates) == {"collection_id"} else "edit",
-                "item",
-                int(item_id),
-                user_id,
-                {"fields": sorted(updates)},
-            )
-        return self.get_item(user_id, item_id)
+        self._audit(
+            "update",
+            "item",
+            item_id,
+            user_id,
+            {"item_type": row["item_type"], "scope": row["scope"]},
+        )
+        return self._project_item_after_mutation(user_id, item_id)
+
+    def _can_administer_server(self, user_id: int, server_id: int) -> bool:
+        """Return whether the caller may perform lifecycle actions on a server.
+
+        A server manager always qualifies; server admins/moderators also
+        qualify so moderation/restore is consistent with the create path
+        (which only requires membership).
+        """
+        if self._servers is None:
+            return False
+        if self._can_manage_server(user_id, server_id):
+            return True
+        for permission in ("server.admin", "server.moderator"):
+            try:
+                if self._servers.has_permission(user_id, server_id, permission):
+                    return True
+            except Exception:
+                pass
+        return False
 
     def set_pinned(self, user_id: int, item_id: int, pinned: bool) -> Dict[str, Any]:
         row = self._db.fetch_one(
@@ -532,7 +628,7 @@ class StashManager(BaseManager):
             (1 if pinned else 0, int(time.time() * 1000), int(item_id)),
         )
         self._audit("edit", "item", int(item_id), user_id, {"pinned": bool(pinned)})
-        return self.get_item(user_id, item_id)
+        return self._project_item_after_mutation(user_id, item_id)
 
     def delete_item(self, user_id: int, item_id: int) -> None:
         row = self._db.fetch_one(
@@ -562,11 +658,11 @@ class StashManager(BaseManager):
         server_manager = (
             server_id is not None
             and self._is_member(user_id, int(server_id))
-            and self._can_manage_server(user_id, int(server_id))
+            and self._can_administer_server(user_id, int(server_id))
         )
         if not owner and not server_manager:
             raise StashPermissionError(
-                "Only the owner or server manager can restore this item"
+                "Only the owner or a server manager can restore this item"
             )
         now = int(time.time() * 1000)
         self._db.execute(
@@ -586,7 +682,7 @@ class StashManager(BaseManager):
             raise StashNotFoundError("Stash item not found")
         self._authorize(row, user_id, "manage_versions", mutation=True)
         media_object_id = fields.get("media_object_id")
-        self._resolve_media_object(media_object_id, int(row["owner_id"]))
+        self._resolve_media_object(media_object_id, user_id)
         version_id = self._generate_id()
         now = int(time.time() * 1000)
         self._db.execute(
@@ -680,6 +776,19 @@ class StashManager(BaseManager):
             permission not in STASH_PERMISSIONS for permission in clean
         ):
             raise StashValidationError("permissions contains an unknown value")
+        # A personal item's owner may only delegate non-privileged permissions.
+        # Granting ``share``/``delete``/``manage_versions`` to a third party
+        # would let them delete or reshare the owner's item (IDOR / privilege
+        # escalation); those stay owned by the item owner.
+        if row["scope"] == "personal":
+            disallowed = set(clean) & (
+                set(STASH_PERMISSIONS) - set(PERSONAL_ITEM_GRANTABLE_PERMISSIONS)
+            )
+            if disallowed:
+                raise StashValidationError(
+                    "Personal items cannot delegate privileged permissions: "
+                    + ", ".join(sorted(disallowed))
+                )
         subject = self._db.fetch_one(
             "SELECT id FROM auth_users WHERE id = ?", (int(subject_id),)
         )

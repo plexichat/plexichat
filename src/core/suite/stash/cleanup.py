@@ -84,16 +84,31 @@ class StashCleanupJob:
         purged = 0
         expired = 0
         try:
-            from src.core.suite.stash import StashManager
+            from src.core.suite import stash as stash_domain
 
-            manager = StashManager(self._db)
+            # Prefer the bootstrapped singleton: it already carries the media
+            # and servers modules, which the retention purge needs to resolve
+            # and permanently delete referenced media objects. Fall back to a
+            # directly-constructed manager (without media) only when the domain
+            # has not been initialised, so isolated callers still work.
+            try:
+                manager = stash_domain.get_manager()
+            except RuntimeError:
+                from src.core.suite.stash import StashManager
+
+                manager = StashManager(self._db)
             purged = manager.purge_deleted_items(self._retention_days())
         except Exception as exc:
             logger.error(f"Stash deleted-item purge failed: {exc}")
         try:
-            from src.core.suite.stash import StashManager
+            from src.core.suite import stash as stash_domain
 
-            manager = StashManager(self._db)
+            try:
+                manager = stash_domain.get_manager()
+            except RuntimeError:
+                from src.core.suite.stash import StashManager
+
+                manager = StashManager(self._db)
             expired = manager.cleanup_expired_tickets()
         except Exception as exc:
             logger.error(f"Stash ticket cleanup failed: {exc}")
