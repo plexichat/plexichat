@@ -1243,7 +1243,7 @@ def test_sum_pin_round_trip_and_ordering(db, two_users, server_manager):
     # updated_at has millisecond resolution; space the creates so ordering is
     # deterministic instead of racing the same timestamp.
     time.sleep(0.005)
-    second = manager.create_workbook(owner.id, "Beta")
+    manager.create_workbook(owner.id, "Beta")
 
     items, _ = manager.list_workbooks(owner.id)
     assert [w["title"] for w in items] == ["Beta", "Alpha"]
@@ -1340,6 +1340,39 @@ def test_sum_create_from_non_template_rejected(db, two_users, server_manager):
     workbook = manager.create_workbook(owner.id, "Not a template")
     with pytest.raises(SumValidationError, match="not a template"):
         manager.create_from_template(owner.id, int(workbook["id"]), "Copy", "personal")
+
+
+def test_sum_set_template_toggle(db, two_users, server_manager):
+    """An existing workbook can be marked/unmarked as a template by its owner,
+    moving it between the template and regular listings."""
+    owner, other = two_users
+    manager = _sum_manager(db, server_manager)
+    workbook = manager.create_workbook(owner.id, "Budget")
+    wb_id = int(workbook["id"])
+    assert workbook["is_template"] is False
+
+    marked = manager.set_template(owner.id, wb_id, True)
+    assert marked["is_template"] is True
+    regular, _ = manager.list_workbooks(owner.id)
+    templates, _ = manager.list_workbooks(owner.id, template=True)
+    assert [w["id"] for w in regular] == []
+    assert [w["id"] for w in templates] == [str(wb_id)]
+
+    unmarked = manager.set_template(owner.id, wb_id, False)
+    assert unmarked["is_template"] is False
+    regular, _ = manager.list_workbooks(owner.id)
+    templates, _ = manager.list_workbooks(owner.id, template=True)
+    assert [w["id"] for w in regular] == [str(wb_id)]
+    assert [w["id"] for w in templates] == []
+
+
+def test_sum_set_template_requires_edit_access(db, two_users, server_manager):
+    """A non-editor cannot mark someone else's workbook as a template."""
+    owner, other = two_users
+    manager = _sum_manager(db, server_manager)
+    workbook = manager.create_workbook(owner.id, "Private")
+    with pytest.raises(SumPermissionError):
+        manager.set_template(other.id, int(workbook["id"]), True)
 
 
 def test_sum_workbook_status_reflects_cells(db, two_users, server_manager):

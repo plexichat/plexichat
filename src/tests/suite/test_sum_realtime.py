@@ -106,6 +106,34 @@ def test_sum_registry_subscribe_unsubscribe_multitab():
     assert registry.get_subscribers(100) == set()
 
 
+def test_sum_registry_unsubscribe_preserves_sibling_tabs():
+    """An explicit SUM_UNSUBSCRIBE from one tab must not drop the user's other
+    tab from the global subscriber set (regression: the old implementation
+    discarded the user_id unconditionally)."""
+    registry = SumSubscriptionRegistry()
+    registry.subscribe(10, 100, "conn-a")
+    registry.subscribe(10, 100, "conn-b")
+
+    assert registry.get_subscribers(100) == {10}
+
+    # conn-a explicitly unsubscribes; conn-b must keep receiving relays.
+    registry.unsubscribe(10, 100, "conn-a")
+    assert registry.get_subscribers(100) == {10}
+
+    # Only when the last tab unsubscribes is the user removed.
+    registry.unsubscribe(10, 100, "conn-b")
+    assert registry.get_subscribers(100) == set()
+
+
+def test_sum_registry_unsubscribe_without_connection_removes_user():
+    """Without a connection id, unsubscribe is a full user removal."""
+    registry = SumSubscriptionRegistry()
+    registry.subscribe(10, 100, "conn-a")
+    registry.subscribe(10, 100, "conn-b")
+    registry.unsubscribe(10, 100)
+    assert registry.get_subscribers(100) == set()
+
+
 def test_sum_registry_unsubscribe_all():
     registry = SumSubscriptionRegistry()
     registry.subscribe(10, 100, "conn-a")

@@ -2064,6 +2064,32 @@ class SumManager(BaseManager):
         )
         return self.get_workbook(user_id, workbook_id)
 
+    def set_template(
+        self, user_id: int, workbook_id: int, is_template: bool
+    ) -> Dict[str, Any]:
+        """Mark (or unmark) a workbook as a reusable template.
+
+        Only an editor may toggle the flag. Templates are server-flagged
+        workbooks listed by ``list_workbooks(template=True)`` and instantiated
+        through ``create_from_template``.
+        """
+        row = self._workbook(user_id, workbook_id)
+        viewer = self._viewer_permissions(user_id, int(workbook_id), workbook=row)
+        if not viewer.get("can_edit"):
+            raise SumPermissionError("You do not have edit access to this workbook")
+        now = int(time.time() * 1000)
+        self._db.execute(
+            "UPDATE sum_workbooks SET is_template = ?, updated_at = ? WHERE id = ?",
+            (1 if is_template else 0, now, int(workbook_id)),
+        )
+        self._audit(
+            "set_template" if is_template else "unset_template",
+            "workbook",
+            int(workbook_id),
+            user_id,
+        )
+        return self.get_workbook(user_id, workbook_id)
+
     def get_workbook(self, user_id: int, workbook_id: int) -> Dict[str, Any]:
         row = self._workbook(user_id, workbook_id)
         sheets = self._read_sheets_from_file(self._file_bytes(workbook_id))
@@ -2097,6 +2123,7 @@ class SumManager(BaseManager):
         limit: int = 50,
         offset: int = 0,
         template: bool = False,
+        search: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))
@@ -2112,16 +2139,20 @@ class SumManager(BaseManager):
             "AND g.revoked_at IS NULL "
             "AND (g.expires_at IS NULL OR g.expires_at > ?)))"
         )
-        params = (1 if template else 0, user_id, user_id, user_id, now)
+        params: list = [1 if template else 0, user_id, user_id, user_id, now]
+        if search:
+            needle = f"%{str(search).strip().lower()}%"
+            where += " AND LOWER(title) LIKE ?"
+            params.append(needle)
         count = self._db.fetch_one(
-            f"SELECT COUNT(*) AS count FROM sum_workbooks WHERE {where}", params
+            f"SELECT COUNT(*) AS count FROM sum_workbooks WHERE {where}", tuple(params)
         )
         # Pinned workbooks float to the top of the home surface; templates are
         # newest-first within their own listing.
         order = "pinned DESC, updated_at DESC" if not template else "updated_at DESC"
         rows = self._db.fetch_all(
             f"SELECT * FROM sum_workbooks WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
-            params + (limit, offset),
+            tuple(params) + (limit, offset),
         )
         items = []
         for row in rows:

@@ -56,20 +56,34 @@ class SumSubscriptionRegistry:
     def unsubscribe(
         self, user_id: int, workbook_id: int, connection_id: Optional[str] = None
     ) -> None:
-        """Unsubscribe a user/connection from a workbook."""
+        """Unsubscribe a user/connection from a workbook.
+
+        Multi-tab safe: when ``connection_id`` is given, only that connection's
+        subscription is removed. The user is dropped from the global
+        ``_subs`` set only when no remaining connection by the same user is
+        still subscribed to the workbook, so one tab unsubscribing (or being
+        torn down) cannot silence SUM_OP relays to the user's other tabs.
+        """
         with self._lock:
-            subs = self._subs.get(int(workbook_id))
-            if subs is not None:
-                subs.discard(int(user_id))
-                if not subs:
-                    self._subs.pop(int(workbook_id), None)
+            wid = int(workbook_id)
+            uid = int(user_id)
             if connection_id:
                 workbooks = self._connection_subs.get(connection_id)
                 if workbooks is not None:
-                    workbooks.discard(int(workbook_id))
+                    workbooks.discard(wid)
                     if not workbooks:
                         self._connection_subs.pop(connection_id, None)
                         self._connection_users.pop(connection_id, None)
+            still_subscribed = bool(connection_id) and any(
+                wid in conn_workbooks and self._connection_users.get(conn) == uid
+                for conn, conn_workbooks in self._connection_subs.items()
+            )
+            if not still_subscribed:
+                subs = self._subs.get(wid)
+                if subs is not None:
+                    subs.discard(uid)
+                    if not subs:
+                        self._subs.pop(wid, None)
 
     def get_subscribers(self, workbook_id: int) -> Set[int]:
         """Return the set of subscribed user_ids for a workbook (copy)."""

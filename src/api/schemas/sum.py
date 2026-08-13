@@ -18,6 +18,10 @@ class SumPinRequest(BaseModel):
     pinned: bool = True
 
 
+class SumTemplateRequest(BaseModel):
+    is_template: bool = True
+
+
 class SumCreateFromTemplateRequest(BaseModel):
     template_id: SnowflakeID
     title: str = Field(..., min_length=1, max_length=500)

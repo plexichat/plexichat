@@ -145,7 +145,7 @@ def test_full_rewrite_preserves_unflushed_edits(
         0,
         [{"row": 0, "column": 0, "value_type": "text", "value": "kept"}],
     )
-    created = manager.create_sheet(owner.id, workbook_id, "Second")
+    manager.create_sheet(owner.id, workbook_id, "Second")
 
     viewport = manager.read_viewport(owner.id, workbook_id, int(sheet_id), 0, 5, 0, 2)
     assert viewport["cells"][0]["value"] == "kept"

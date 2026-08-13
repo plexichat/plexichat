@@ -61,3 +61,24 @@ adapter (never in the main database).
   in-memory copy, with the immutable blob promoted only when the flush window
   (25 ops / 2 s) is crossed. Crash recovery replays the buffer over the last
   blob; `blob_revision` tracks the materialized revision.
+- **Client write-ahead log** — every queued edit is persisted to an IndexedDB
+  WAL (`shared/client-wal.js`) before it is sent and removed only on server
+  ack. Pending ops are replayed idempotently (with rebase-on-conflict) on
+  workspace mount and on gateway reconnect, so edits survive page reloads and
+  brief outages.
+- **Charts / pivot / sparklines** — the workspace surfaces the previously
+  unwired client modules: an SVG chart panel, a pivot-table summarizer, and
+  sparkline previews, all driven by the current selection.
+- **Templates** — workbooks can be marked/unmarked as templates in-place
+  (`PATCH /suite/sum/workbooks/{id}/template`; client "Save as template"), not
+  only created as empty templates.
+- **Settings & onboarding** — a PlexiSum settings section (render-quality/
+  pixel-ratio preference) and a first-run onboarding empty state with a create
+  CTA are wired in.
+- **Search** — `/suite/search` performs server-side Sum title search (SQL
+  `LIKE`) rather than filtering a bounded in-memory list, so matches beyond the
+  first page are found.
+- **Realtime efficiency** — the workspace skips redundant full viewport
+  reloads: a `WORKBOOK_UPDATE` at a revision already applied via a `SUM_OP`
+  delta is ignored, and the 15 s poll fallback only runs while the gateway is
+  disconnected.

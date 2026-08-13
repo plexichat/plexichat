@@ -43,6 +43,7 @@ from src.api.schemas.sum import (
     SumSnapshotCreateRequest,
     SumSnapshotListResponse,
     SumSnapshotResponse,
+    SumTemplateRequest,
     SumValidationListResponse,
     SumValidationRequest,
     SumValidationResponse,
@@ -231,6 +232,32 @@ async def set_pinned(
     try:
         workbook = _manager().set_pinned(
             current_user.user_id, int(workbook_id), body.pinned
+        )
+        return SumWorkbookResponse.model_validate(workbook)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid workbook id") from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.patch(
+    "/workbooks/{workbook_id}/template",
+    response_model=SumWorkbookResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiSum is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def set_template(
+    workbook_id: str,
+    body: SumTemplateRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SumWorkbookResponse:
+    try:
+        workbook = _manager().set_template(
+            current_user.user_id, int(workbook_id), body.is_template
         )
         return SumWorkbookResponse.model_validate(workbook)
     except (ValueError, TypeError) as exc:

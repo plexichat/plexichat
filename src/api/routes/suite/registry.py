@@ -478,21 +478,18 @@ async def search_suite(
     )
     items = [_artifact_home_item(artifact) for artifact in artifacts]
     stash_manager, sum_manager = _suite_managers()
-    lowered = query.lower()
     if _domain_available("plexistash"):
         stash_items, _ = stash_manager.list_items(
             current_user.user_id, limit=limit, search=query
         )
         items.extend(_stash_home_item(item) for item in stash_items)
     if _domain_available("plexisum"):
+        # Server-side title search: matches workbooks beyond the first page,
+        # unlike the previous bounded-list-then-filter approach.
         sum_items, _ = sum_manager.list_workbooks(
-            current_user.user_id, limit=limit, offset=0
+            current_user.user_id, limit=limit, offset=0, search=query
         )
-        items.extend(
-            _sum_home_item(item)
-            for item in sum_items
-            if lowered in str(item.get("title", "")).lower()
-        )
+        items.extend(_sum_home_item(item) for item in sum_items)
     bounded_items = _sort_and_bound(items, int(limit))
     return {
         "schemaVersion": 1,
