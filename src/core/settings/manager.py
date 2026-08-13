@@ -77,6 +77,35 @@ class SettingsManager(BaseManager):
             return row.get("value")
         return None
 
+    def get_one(self, user_id: SnowflakeID, key: str) -> Optional[UserSetting]:
+        """
+        Get a single setting as a ``UserSetting`` object using a targeted query.
+
+        Args:
+            user_id: User ID
+            key: Setting key
+
+        Returns:
+            The ``UserSetting`` or None if not found
+        """
+        row = self._db.fetch_one(
+            "SELECT id, user_id, key, value, created_at, updated_at "
+            "FROM user_settings WHERE user_id = ? AND key = ?",
+            (user_id, key),
+        )
+
+        if row:
+            logger.debug(f"Retrieved setting '{key}' for user {user_id}")
+            return UserSetting(
+                id=row.get("id"),
+                user_id=row.get("user_id"),
+                key=row.get("key"),
+                value=row.get("value"),
+                created_at=row.get("created_at"),
+                updated_at=row.get("updated_at"),
+            )
+        return None
+
     def set(self, user_id: SnowflakeID, key: str, value: str) -> UserSetting:
         """
         Set a setting value (insert or update).
@@ -124,21 +153,28 @@ class SettingsManager(BaseManager):
                 updated_at=now,
             )
 
-        # Check limit before inserting
-        count = self.get_count(user_id)
-        if count >= self.config.max_settings_per_user:
-            raise SettingsLimitExceeded(
-                f"User has reached maximum of {self.config.max_settings_per_user} settings"
+        # Inserting a new key: enforce the per-user limit atomically so that
+        # concurrent requests cannot both pass the check and exceed the limit.
+        self._db.begin_transaction()
+        try:
+            count = self.get_count(user_id)
+            if count >= self.config.max_settings_per_user:
+                raise SettingsLimitExceeded(
+                    f"User has reached maximum of {self.config.max_settings_per_user} settings"
+                )
+
+            setting_id = self._generate_id()
+
+            self._db.execute(
+                """INSERT INTO user_settings (id, user_id, key, value, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (setting_id, user_id, key, value, now, now),
             )
-
-        # Insert new
-        setting_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO user_settings (id, user_id, key, value, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (setting_id, user_id, key, value, now, now),
-        )
+        except Exception:
+            self._db.rollback()
+            raise
+        else:
+            self._db.commit()
 
         logger.info(f"Created setting '{key}' for user {user_id}")
         return UserSetting(

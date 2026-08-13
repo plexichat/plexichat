@@ -27,17 +27,26 @@ class SegmentEncoder:
 
     @staticmethod
     def _encode_runlength(cells: List[Dict[str, Any]]) -> bytes:
-        """Encode consecutive equal-value cells as [{value, count}]."""
+        """Encode consecutive equal-value cells as [{value, count}] runs."""
         runs: List[Dict[str, Any]] = []
+        rows: List[int] = []
         for cell in cells:
-            key = (cell.get("value_type"), cell.get("value_json"), cell.get("formula"))
+            key = (
+                cell.get("value_type"),
+                cell.get("value_json"),
+                cell.get("formula"),
+                cell.get("style_json"),
+            )
+            rows.append(int(cell.get("row_index", cell.get("row", 0))))
             if runs and runs[-1]["key"] == key:
                 runs[-1]["count"] += 1
             else:
                 runs.append({"key": key, "count": 1, "cell": cell})
         # If run-length is not shorter than plain, fall back
         encoded_runs = [{"value": run["cell"], "count": run["count"]} for run in runs]
-        rl_bytes = json.dumps(encoded_runs, separators=(",", ":")).encode("utf-8")
+        rl_bytes = json.dumps(
+            {"runs": encoded_runs, "rows": rows}, separators=(",", ":")
+        ).encode("utf-8")
         plain_bytes = SegmentEncoder._encode_plain(cells)
         if len(rl_bytes) >= len(plain_bytes):
             return b"\x00" + plain_bytes
@@ -47,30 +56,53 @@ class SegmentEncoder:
     def _decode_runlength(data: bytes) -> List[Dict[str, Any]]:
         if data[0:1] == b"\x00":
             return SegmentEncoder._decode_plain(data[1:])
-        runs = json.loads(data[1:])
+        info = json.loads(data[1:])
+        # New format: {"runs": [...], "rows": [...]}; legacy blobs were a bare
+        # list of runs and had no row indices (lossy — treat as sequential).
+        if isinstance(info, dict):
+            runs = info.get("runs", [])
+            rows = info.get("rows")
+        else:
+            runs = info
+            rows = None
         cells: List[Dict[str, Any]] = []
+        position = 0
         for run in runs:
             cell = run["value"]
             for _ in range(run["count"]):
-                cells.append(cell)
+                out = dict(cell)
+                if rows is not None:
+                    out["row_index"] = int(rows[position])
+                cells.append(out)
+                position += 1
         return cells
 
     @staticmethod
     def _encode_delta(cells: List[Dict[str, Any]]) -> bytes:
         """Encode sequential number cells as [base, ...deltas]."""
         numbers = []
+        rows: List[int] = []
         for cell in cells:
-            if cell.get("value_type") == "number":
-                numbers.append(float(cell.get("value_json", 0)))
-            else:
+            if (
+                cell.get("value_type") != "number"
+                or cell.get("style_json") is not None
+                or cell.get("formula") is not None
+            ):
                 return b"\x00" + SegmentEncoder._encode_plain(cells)
+            numbers.append(float(cell.get("value_json", 0)))
+            rows.append(int(cell.get("row_index", cell.get("row", 0))))
         if not numbers:
             return b"\x00" + SegmentEncoder._encode_plain(cells)
         deltas = [numbers[0]]
         for i in range(1, len(numbers)):
             deltas.append(numbers[i] - numbers[i - 1])
         result = json.dumps(
-            {"base": numbers[0], "deltas": deltas, "count": len(numbers)},
+            {
+                "base": numbers[0],
+                "deltas": deltas,
+                "count": len(numbers),
+                "rows": rows,
+            },
             separators=(",", ":"),
         ).encode("utf-8")
         plain_bytes = SegmentEncoder._encode_plain(cells)
@@ -80,23 +112,30 @@ class SegmentEncoder:
 
     @staticmethod
     def _decode_delta(
-        data: bytes, original_cells: Optional[List[Dict[str, Any]]] = None
+        data: bytes, row_start: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         if data[0:1] == b"\x00":
             return SegmentEncoder._decode_plain(data[1:])
         info = json.loads(data[1:])
         base = info["base"]
         deltas = info["deltas"]
+        rows = info.get("rows")
         numbers = [base]
         for d in deltas[1:]:
             numbers.append(numbers[-1] + d)
         cells = []
         for i, num in enumerate(numbers):
+            if rows is not None:
+                row_index = int(rows[i])
+            elif row_start is not None:
+                row_index = row_start + i
+            else:
+                row_index = i
             cells.append(
                 {
-                    "row_index": i,
+                    "row_index": row_index,
                     "value_type": "number",
-                    "value_json": num,
+                    "value_json": json.dumps(num),
                     "formula": None,
                     "style_json": None,
                 }
@@ -107,10 +146,17 @@ class SegmentEncoder:
     def _encode_dictionary(cells: List[Dict[str, Any]]) -> bytes:
         """Encode low-cardinality text cells by storing unique values once."""
         values = []
+        rows = []
         for cell in cells:
             values.append(
-                (cell.get("value_type"), cell.get("value_json"), cell.get("formula"))
+                (
+                    cell.get("value_type"),
+                    cell.get("value_json"),
+                    cell.get("formula"),
+                    cell.get("style_json"),
+                )
             )
+            rows.append(int(cell.get("row_index", cell.get("row", 0))))
         unique = list(dict.fromkeys(values))
         if len(unique) >= len(values) * 0.7:
             return b"\x00" + SegmentEncoder._encode_plain(cells)
@@ -119,10 +165,16 @@ class SegmentEncoder:
         result = json.dumps(
             {
                 "unique": [
-                    {"value_type": u[0], "value_json": u[1], "formula": u[2]}
+                    {
+                        "value_type": u[0],
+                        "value_json": u[1],
+                        "formula": u[2],
+                        "style_json": u[3],
+                    }
                     for u in unique
                 ],
                 "indices": indices,
+                "rows": rows,
             },
             separators=(",", ":"),
         ).encode("utf-8")
@@ -138,14 +190,17 @@ class SegmentEncoder:
         info = json.loads(data[1:])
         unique = info["unique"]
         indices = info["indices"]
+        rows = info.get("rows")
         cells = []
-        for idx in indices:
+        for position, idx in enumerate(indices):
             entry = unique[idx]
             cells.append(
                 {
+                    "row_index": int(rows[position]) if rows is not None else position,
                     "value_type": entry["value_type"],
                     "value_json": entry["value_json"],
                     "formula": entry["formula"],
+                    "style_json": entry.get("style_json"),
                 }
             )
         return cells
@@ -161,7 +216,13 @@ class SegmentEncoder:
             return "delta"
         # Check run-length potential
         values = [
-            (c.get("value_type"), c.get("value_json"), c.get("formula")) for c in cells
+            (
+                c.get("value_type"),
+                c.get("value_json"),
+                c.get("formula"),
+                c.get("style_json"),
+            )
+            for c in cells
         ]
         runs = 1
         for i in range(1, len(values)):
@@ -251,22 +312,27 @@ class SegmentEncoder:
 
         if isinstance(raw_cells, str):
             cell_bytes = raw_cells.encode("latin-1")
+        elif isinstance(raw_cells, (list, tuple)):
+            # Empty segments encode ``cells`` as an empty JSON list rather than
+            # a latin-1 string; short-circuit instead of decoding an empty blob.
+            return {
+                "encoding": encoding,
+                "cells": list(raw_cells),
+                "row_start": row_start,
+                "row_end": outer.get("row_end", 0),
+                "statistics": outer.get("statistics", {}),
+            }
         else:
             cell_bytes = raw_cells
 
         decoder_map = {
             "plain": SegmentEncoder._decode_plain,
             "runlength": SegmentEncoder._decode_runlength,
-            "delta": SegmentEncoder._decode_delta,
+            "delta": lambda d: SegmentEncoder._decode_delta(d, row_start),
             "dictionary": SegmentEncoder._decode_dictionary,
         }
         decoder = decoder_map.get(encoding, SegmentEncoder._decode_plain)
         cells = decoder(cell_bytes)
-
-        if encoding == "delta" and cells:
-            for i, cell in enumerate(cells):
-                if "row_index" in cell:
-                    cell["row_index"] = row_start + i
 
         return {
             "encoding": encoding,

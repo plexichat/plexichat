@@ -15,10 +15,13 @@ from ..exceptions import (
     FriendRequestExistsError,
     FriendRequestNotFoundError,
     PermissionDeniedError,
+    RelationshipValidationError,
     UserBlockedError,
 )
 from .helpers import RelationshipHelpersMixin
 from .protocol import RelationshipMixinProtocol
+
+MAX_FRIEND_REQUEST_MESSAGE_LENGTH = 256
 
 
 class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
@@ -32,6 +35,12 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
     ) -> FriendRequest:
         """Send a friend request to another user."""
         self._validate_users(sender_id, recipient_id)
+
+        if message is not None and len(message) > MAX_FRIEND_REQUEST_MESSAGE_LENGTH:
+            raise RelationshipValidationError(
+                f"Friend request message exceeds maximum length of "
+                f"{MAX_FRIEND_REQUEST_MESSAGE_LENGTH} characters"
+            )
 
         if self._is_blocked(sender_id, recipient_id):
             raise UserBlockedError(

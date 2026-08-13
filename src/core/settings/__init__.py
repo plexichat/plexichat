@@ -32,6 +32,7 @@ __all__ = [
     "set_setting",
     "delete_setting",
     "get_all_settings",
+    "get_setting_limit",
     "UserSetting",
     "SettingsConfig",
 ]
@@ -87,6 +88,20 @@ def get_all_settings(user_id: int) -> Dict[str, str]:
     _ensure_setup()
     assert _manager is not None
     return _manager.get_all(user_id)
+
+
+def get_setting_limit() -> int:
+    """Return the maximum number of settings allowed per user."""
+    _ensure_setup()
+    assert _manager is not None
+    return _manager.config.max_settings_per_user
+
+
+def get_one(user_id: int, key: str) -> Optional[UserSetting]:
+    """Get a single setting as a ``UserSetting`` using a targeted query."""
+    _ensure_setup()
+    assert _manager is not None
+    return _manager.get_one(user_id, key)
 
 
 def get_settings_list(user_id: int) -> List[UserSetting]:

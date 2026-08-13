@@ -1,4 +1,7 @@
+import time
 from typing import Any, Dict, Optional, Tuple, cast
+
+from src.utils.encryption import generate_snowflake_id
 
 
 class AvatarProtocol:
@@ -6,10 +9,10 @@ class AvatarProtocol:
     _setup_complete: bool = False
 
     def _get_timestamp(self) -> int:
-        return cast(AvatarProtocol, super())._get_timestamp()
+        return int(time.time() * 1000)
 
     def _generate_id(self) -> int:
-        return cast(AvatarProtocol, super())._generate_id()
+        return generate_snowflake_id()
 
     def _get_db(self):
         return cast(AvatarProtocol, super())._get_db()

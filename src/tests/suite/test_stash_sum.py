@@ -19,6 +19,8 @@ from src.core.suite.sum.manager import (
 from src.core.artifacts.capabilities import CapabilityInfo, CapabilityState
 from src.core.artifacts.manager import ArtifactManager
 from src.core.artifacts.models import ArtifactType
+from src.api.schemas.stash import StashFileUploadRequest
+from pydantic import ValidationError
 
 
 def test_stash_personal_items_are_owner_scoped(db, two_users, server_manager):
@@ -1404,3 +1406,50 @@ def test_sum_workbook_status_reflects_cells(db, two_users, server_manager):
     manager.read_viewport(owner.id, int(workbook["id"]), int(sheet_id), 0, 50, 0, 20)
     refreshed = manager.get_workbook(owner.id, int(workbook["id"]))
     assert refreshed["calculation_state"] == "calculated"
+
+
+def test_stash_file_upload_request_validates_payload():
+    body = StashFileUploadRequest(
+        title="Sheet",
+        filename="sheet.plexisum",
+        content="UFhTTQ==",  # "PXSM"
+        content_type="application/x-plexisum",
+        tags=["sheet", "sheet"],  # deduped by the manager, not the schema
+    )
+    assert body.title == "Sheet"
+    assert body.filename == "sheet.plexisum"
+    assert body.scope == "personal"
+
+    with pytest.raises(ValidationError):
+        StashFileUploadRequest(title="", filename="x", content="eA==")
+    with pytest.raises(ValidationError):
+        StashFileUploadRequest(title="x", filename="x", content="")
+    with pytest.raises(ValidationError):
+        StashFileUploadRequest(title="x", filename="x", content="eA==", scope="team")
+
+
+def test_stash_upload_flow_creates_file_item(
+    db, two_users, server_manager, media_manager
+):
+    """The endpoint-equivalent flow: bytes -> media object -> Stash file item."""
+    owner, _ = two_users
+    create_stash_tables(db)
+    manager = StashManager(db, servers_module=server_manager, media=media_manager)
+    uploaded = media_manager.upload_file(
+        user_id=owner.id,
+        file_data=b"PXSM-container-bytes",
+        filename="local.plexisum",
+        content_type="application/x-plexisum",
+    )
+    item = manager.create_item(
+        owner.id,
+        item_type="file",
+        title="Local workbook",
+        media_object_id=str(uploaded.file_id),
+        metadata={"size": uploaded.size, "content_type": uploaded.content_type},
+        tags=["plexisum"],
+    )
+    fetched = manager.get_item(owner.id, item["id"])
+    assert fetched["item_type"] == "file"
+    assert fetched["metadata"]["content_type"] == "application/x-plexisum"
+    assert "plexisum" in fetched["tags"]

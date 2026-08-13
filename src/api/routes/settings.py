@@ -3,18 +3,38 @@ User Settings routes - Cloud-synced key-value store for user preferences.
 """
 
 import time
+import json
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Body
 
 import src.api as api
-from src.core.database import cached
+from src.core.database import cached, invalidate_pattern
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.settings import SettingValue, SettingResponse, SettingsResponse
+from src.api.schemas.settings import (
+    SettingValue,
+    SettingResponse,
+    SettingsResponse,
+    BulkSettingsResponse,
+)
 from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.core.settings.exceptions import (
+    SettingsLimitExceeded,
+    SettingsKeyTooLong,
+    SettingsValueTooLong,
+    SettingsKeyReserved,
+)
 
 import utils.logger as logger
 
 router = APIRouter(tags=["User Settings"])
+
+
+def _invalidate_user_settings_cache(user_id: int) -> None:
+    """Invalidate all cached settings reads for a user (both list and per-key)."""
+    # GET /            -> user_settings_all_api:current_user:TokenInfo:<uid>
+    # GET /{key}       -> user_setting_api:current_user:TokenInfo:<uid>:key:<value>
+    invalidate_pattern(f"user_settings_all_api:*:TokenInfo:{user_id}")
+    invalidate_pattern(f"user_setting_api:*:TokenInfo:{user_id}:*")
 
 
 @router.get(
@@ -52,7 +72,7 @@ def get_all_settings(
         return SettingsResponse(
             settings=settings,
             count=count,
-            limit=100,  # Default limit from SettingsConfig
+            limit=settings_module.get_setting_limit(),
         )
     except Exception as e:
         logger.error(
@@ -66,7 +86,7 @@ def get_all_settings(
 
 @router.put(
     "/bulk",
-    response_model=SuccessResponse,
+    response_model=BulkSettingsResponse,
     summary="Bulk update settings",
     responses={
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
@@ -74,8 +94,9 @@ def get_all_settings(
     },
 )
 async def bulk_update_settings(
-    body: Dict[str, Any], current_user: TokenInfo = Depends(get_current_user)
-) -> SuccessResponse:
+    body: Dict[str, Any] = Body(...),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> BulkSettingsResponse:
     """
     Update multiple settings at once.
 
@@ -91,6 +112,8 @@ async def bulk_update_settings(
             detail={"error": {"code": 500, "message": "Settings module not available"}},
         )
 
+    failures: Dict[str, str] = {}
+    updated = 0
     try:
         for key, raw_value in body.items():
             # Convert value to string for storage
@@ -99,8 +122,6 @@ async def bulk_update_settings(
             # Special case for focused channel
             if key == "_focused_channel" and presence_module:
                 try:
-                    import json
-
                     data = json.loads(value)
                     cid = data.get("channel_id")
                     sid = data.get("server_id")
@@ -110,17 +131,33 @@ async def bulk_update_settings(
                         channel_id=int(cid) if cid and str(cid) != "0" else None,
                         server_id=int(sid) if sid and str(sid) != "0" else None,
                     )
+                    updated += 1
                 except Exception as e:
-                    logger.debug(f"Bulk: Failed to update focused channel: {e}")
+                    failures[key] = f"Failed to update focused channel: {e}"
                 continue
 
             # Standard settings
             try:
                 settings_module.set_setting(current_user.user_id, key, value)
+                updated += 1
+            except (
+                SettingsLimitExceeded,
+                SettingsKeyTooLong,
+                SettingsValueTooLong,
+                SettingsKeyReserved,
+            ) as e:
+                failures[key] = str(e)
             except Exception as e:
-                logger.warning(f"Bulk: Failed to set setting '{key}': {e}")
+                failures[key] = f"Unexpected error: {e}"
 
-        return SuccessResponse(success=True, message=None)
+        _invalidate_user_settings_cache(current_user.user_id)
+
+        return BulkSettingsResponse(
+            success=len(failures) == 0,
+            updated=updated,
+            failed=len(failures),
+            failures=failures,
+        )
     except Exception as e:
         logger.error(f"Bulk update failed: {e}", exc_info=True)
         raise HTTPException(
@@ -157,9 +194,8 @@ def get_setting(
         )
 
     try:
-        # Get the full setting object
-        settings_list = settings_module.get_settings_list(current_user.user_id)
-        setting = next((s for s in settings_list if s.key == key), None)
+        # Use a targeted query instead of loading and scanning every setting
+        setting = settings_module.get_one(current_user.user_id, key)
 
         if not setting:
             logger.warning(f"Setting '{key}' not found for user {current_user.user_id}")
@@ -209,13 +245,13 @@ async def set_setting(
 
     Creates or updates the setting with the given key.
     """
-    # Special case for focused channel tracking (transient presence state)
+    # Special case for focused channel tracking (transient presence state).
+    # On a malformed payload we must NOT silently store the raw JSON string as
+    # a setting, so we surface the error instead of falling through.
     if key == "_focused_channel":
         presence_module = api.get_presence()
         if presence_module:
             try:
-                import json
-
                 data = json.loads(body.value)
                 cid = data.get("channel_id")
                 sid = data.get("server_id")
@@ -231,8 +267,19 @@ async def set_setting(
                     created_at=int(time.time() * 1000),
                     updated_at=int(time.time() * 1000),
                 )
+            except HTTPException:
+                raise
             except Exception as e:
-                logger.debug(f"Failed to update focused channel: {e}")
+                logger.warning(f"Failed to update focused channel: {e}")
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Invalid _focused_channel payload",
+                        }
+                    },
+                )
 
     settings_module = api.get_settings()
     if not settings_module:
@@ -245,21 +292,22 @@ async def set_setting(
     try:
         try:
             setting = settings_module.set_setting(current_user.user_id, key, body.value)
-        except Exception as e:
-            exc_name = type(e).__name__
-            if any(
-                x in exc_name
-                for x in ["LimitExceeded", "KeyTooLong", "ValueTooLong", "KeyReserved"]
-            ):
-                logger.warning(
-                    f"Failed to set setting '{key}' for user {current_user.user_id}: {e}"
-                )
-                raise HTTPException(
-                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
-                )
-            raise
+        except (
+            SettingsLimitExceeded,
+            SettingsKeyTooLong,
+            SettingsValueTooLong,
+            SettingsKeyReserved,
+        ) as e:
+            logger.warning(
+                f"Failed to set setting '{key}' for user {current_user.user_id}: {e}"
+            )
+            raise HTTPException(
+                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            )
 
         logger.info(f"Set setting '{key}' for user {current_user.user_id}")
+
+        _invalidate_user_settings_cache(current_user.user_id)
 
         return SettingResponse(
             key=setting.key,
@@ -320,6 +368,8 @@ async def delete_setting(
             )
 
         logger.info(f"Deleted setting '{key}' for user {current_user.user_id}")
+
+        _invalidate_user_settings_cache(current_user.user_id)
 
         return SuccessResponse(success=True, message=None)
     except HTTPException:

@@ -20,6 +20,7 @@ from ..exceptions import (
     InviteNotFoundError,
     InviteExpiredError,
     InviteMaxUsesError,
+    PermissionDeniedError,
 )
 from ..permission_utils import can_manage_member
 from src.core.database import cache_delete
@@ -278,6 +279,15 @@ class MemberHandler:
             params.append(1 if deafened else 0)
             changes["deafened"] = {"old": member.deafened, "new": deafened}
 
+        if timeout_until is not None or timeout_reason is not None:
+            # Timeouts are a moderation action. The system actor (user_id == 0,
+            # e.g. AutoMod) is allowed to apply them without an explicit role,
+            # but a real user must hold members.manage_roles.
+            if user_id != 0:
+                self.manager.require_permission(
+                    user_id, server_id, "members.manage_roles"
+                )
+
         if timeout_until is not None:
             # require permission check if not self? normally members.manage_roles or similar
             # but for AutoMod we trust the system.
@@ -415,6 +425,22 @@ class MemberHandler:
         """Unban a user from a server."""
         self.manager.require_permission(user_id, server_id, "members.ban")
 
+        server = self.manager.get_server(server_id, user_id)
+        is_owner = server is not None and server.owner_id == user_id
+        target_is_owner = server is not None and server.owner_id == banned_user_id
+
+        # The owner can never be banned; guard against it regardless.
+        if target_is_owner:
+            raise CannotModifyOwnerError("Cannot unban the server owner")
+
+        # Apply the same role-hierarchy rules as ban/kick. The banned user may
+        # no longer be a member (their rows are removed on ban), in which case
+        # target_roles is empty and any permitted moderator may unban them.
+        user_roles = self.manager._get_member_role_rows(server_id, user_id)
+        target_roles = self.manager._get_member_role_rows(server_id, banned_user_id)
+        if not can_manage_member(user_roles, target_roles, is_owner, target_is_owner):
+            raise RoleHierarchyError("Cannot unban a member with equal or higher role")
+
         existing = self.db.fetch_one(
             "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
             (server_id, banned_user_id),
@@ -433,7 +459,18 @@ class MemberHandler:
 
     def get_bans(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Ban]:
         """Get all bans for a server."""
-        self.manager.require_permission(user_id, server_id, "bans.view")
+        # Viewing the ban list is a ban-management action. Allow anyone who can
+        # ban members, or any actor explicitly granted the dedicated bans.view
+        # permission. (bans.view is part of SERVER_PERMISSIONS so owners and
+        # administrators implicitly satisfy it via the all-true permission set.)
+        if not (
+            self.manager.has_permission(user_id, server_id, "members.ban")
+            or self.manager.has_permission(user_id, server_id, "bans.view")
+        ):
+            raise PermissionDeniedError(
+                "Missing required permission: members.ban or bans.view",
+                "members.ban",
+            )
         rows = self.db.fetch_all(
             "SELECT * FROM srv_bans WHERE server_id = ?", (server_id,)
         )

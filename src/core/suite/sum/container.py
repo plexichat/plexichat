@@ -18,16 +18,9 @@ File layout::
 """
 
 import hashlib
-import importlib
 import struct
-from typing import Any
 
-_zstd: Any = None
-try:
-    _zstd = importlib.import_module("zstandard")
-    HAS_ZSTD = True
-except ImportError:
-    HAS_ZSTD = False
+import zstandard as _zstd
 
 # ── format constants ────────────────────────────────────────────────────────
 
@@ -48,15 +41,11 @@ FLAG_ENCRYPTED = 1 << 1
 
 def compress_zstd(data: bytes) -> bytes:
     """Compress *data* with zstandard (default level)."""
-    if not HAS_ZSTD:
-        raise RuntimeError("zstandard library is not installed")
     return _zstd.ZstdCompressor().compress(data)
 
 
 def decompress_zstd(data: bytes) -> bytes:
     """Decompress zstandard-compressed *data*."""
-    if not HAS_ZSTD:
-        raise RuntimeError("zstandard library is not installed")
     return _zstd.ZstdDecompressor().decompress(data)
 
 
@@ -71,8 +60,9 @@ def encode_container(
     """Wrap raw SQLite bytes into the PlexiSum container format.
 
     *compression* is ``COMPRESS_ZSTD`` (default) or ``COMPRESS_NONE``.
-    When zstandard is unavailable the data is stored uncompressed regardless
-    of the requested mode.
+    The default always zstd-compresses the payload; ``COMPRESS_NONE`` is kept
+    only for explicit uncompressed encodes (e.g. in-browser saves) and for
+    decoding legacy files — there is no silent fallback.
     """
     if wal_bytes:
         # Store db_len (4 bytes big-endian) + db_bytes + wal_bytes
@@ -83,12 +73,14 @@ def encode_container(
 
     flags = FLAG_WAL if wal_bytes else 0
 
-    if compression == COMPRESS_ZSTD and HAS_ZSTD:
+    if compression == COMPRESS_ZSTD:
         compressed = compress_zstd(payload)
         compression_byte = COMPRESS_ZSTD
-    else:
+    elif compression == COMPRESS_NONE:
         compressed = payload
         compression_byte = COMPRESS_NONE
+    else:
+        raise ValueError(f"Unknown compression mode: {compression}")
 
     header = (
         MAGIC

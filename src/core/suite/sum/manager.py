@@ -2949,6 +2949,13 @@ class SumManager(BaseManager):
                     for r, cell in col_cells.items():
                         if (r, col_idx) not in existing_cells:
                             rows_list = list(rows)
+                            # Segment cells now carry ``value_json``/``style_json``
+                            # as pre-encoded JSON strings (delta, runlength, plain,
+                            # and dictionary encoders all normalize to this), so
+                            # pass them through instead of re-serializing: a
+                            # double ``json.dumps`` corrupted every segment-backed
+                            # value type (numbers became strings, strings gained
+                            # quotes) on the read path.
                             rows_list.append(
                                 type(
                                     "Row",
@@ -2957,13 +2964,9 @@ class SumManager(BaseManager):
                                         "row_index": r,
                                         "column_index": col_idx,
                                         "value_type": cell.get("value_type", "blank"),
-                                        "value_json": json.dumps(cell.get("value_json"))
-                                        if cell.get("value_json") is not None
-                                        else None,
+                                        "value_json": cell.get("value_json"),
                                         "formula": cell.get("formula"),
-                                        "style_json": json.dumps(cell.get("style_json"))
-                                        if cell.get("style_json") is not None
-                                        else None,
+                                        "style_json": cell.get("style_json"),
                                         "revision": 0,
                                     },
                                 )()
@@ -3897,7 +3900,8 @@ class SumManager(BaseManager):
                 continue
             index_id = f"idx-{sheet_id}-{column_key}-{self._generate_id()}"
             entries = connection.execute(
-                "SELECT value_json, row_index FROM sum_cells WHERE sheet_id = ? AND column_index = ? AND value_type != 'blank'",
+                "SELECT row_index, value_type, value_json, formula, style_json "
+                "FROM sum_cells WHERE sheet_id = ? AND column_index = ? AND value_type != 'blank'",
                 (sheet_id, int(column_key)),
             ).fetchall()
             if not entries:

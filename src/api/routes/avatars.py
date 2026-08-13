@@ -19,11 +19,44 @@ from src.api.schemas.common import ErrorResponse, SuccessResponse
 import utils.logger as logger
 
 import hashlib
+from typing import Optional
 
 router = APIRouter(tags=["Avatars"])
 
 # Local in-memory cache for checksums to avoid DB hits for ETags
 _avatar_checksum_cache = {}  # {uid: checksum}
+
+
+def _invalidate_user_avatar_cache(user_id: int) -> None:
+    """Drop all cached avatar state so a re-upload/deletion is reflected.
+
+    The route keeps its own in-process checksum cache (``_avatar_checksum_cache``)
+    which is never refreshed by the manager, and the manager caches the ETag
+    checksum in Valkey under ``user_avatar_checksum:{user_id}``. Both must be
+    cleared or clients keep receiving ``304 Not Modified`` for the old avatar.
+    """
+    _avatar_checksum_cache.pop(user_id, None)
+    try:
+        from src.core.database import invalidate_pattern
+
+        invalidate_pattern(f"user_avatar_checksum:{user_id}")
+    except Exception as e:  # pragma: no cover - cache invalidation is best-effort
+        logger.debug(
+            f"Failed to invalidate user avatar checksum cache for {user_id}: {e}"
+        )
+
+
+def _invalidate_server_icon_cache(server_id: int) -> None:
+    """Drop all cached server-icon state so a re-upload/deletion is reflected."""
+    _icon_checksum_cache.pop(server_id, None)
+    try:
+        from src.core.database import invalidate_pattern
+
+        invalidate_pattern(f"server_icon_checksum:{server_id}")
+    except Exception as e:  # pragma: no cover - cache invalidation is best-effort
+        logger.debug(
+            f"Failed to invalidate server icon checksum cache for {server_id}: {e}"
+        )
 
 
 @router.get(
@@ -77,12 +110,14 @@ async def get_user_avatar(user_id: int, request: Request):
 
         # Flexible ETag check (handles weak tags and quotes)
         if checksum and etag_client:
-            # Check for exact match, quoted match, or weak match
+            # Check for exact match, quoted match, or weak match.
+            # NOTE: only an exact match is accepted - a substring check
+            # (``checksum in etag_client``) previously let any client ETag
+            # containing the checksum substring return 304.
             if (
                 etag_client == checksum
                 or etag_client == f'"{checksum}"'
                 or etag_client == f'W/"{checksum}"'
-                or checksum in etag_client
             ):
                 return Response(status_code=304)
 
@@ -256,6 +291,7 @@ async def upload_my_avatar(
             logger.debug(
                 f"Failed to invalidate cache for user {current_user.user_id} after avatar upload: {e}"
             )
+        _invalidate_user_avatar_cache(current_user.user_id)
 
         return AvatarUploadResponse(
             success=True,
@@ -322,6 +358,7 @@ async def delete_my_avatar(
             logger.debug(
                 f"Failed to invalidate cache for user {current_user.user_id} after avatar deletion: {e}"
             )
+        _invalidate_user_avatar_cache(current_user.user_id)
 
         return SuccessResponse(success=deleted, message=None)
     except HTTPException:
@@ -510,6 +547,7 @@ async def upload_server_icon(
     """
     avatars = api.get_avatars()
     servers = api.get_servers()
+    sid: Optional[int] = None
 
     if not avatars:
         logger.error("Avatars module not available")
@@ -638,6 +676,10 @@ async def upload_server_icon(
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
+    finally:
+        # Always drop cached icon state so a re-upload is reflected.
+        if sid is not None:
+            _invalidate_server_icon_cache(sid)
 
 
 @router.delete(
@@ -747,6 +789,7 @@ async def delete_server_icon(
             logger.debug(
                 f"Failed to invalidate cache for server {sid} after icon deletion: {e}"
             )
+        _invalidate_server_icon_cache(sid)
 
         return SuccessResponse(success=deleted, message=None)
     except HTTPException:

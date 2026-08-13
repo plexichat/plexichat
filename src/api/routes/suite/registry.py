@@ -226,7 +226,9 @@ def _suite_managers() -> tuple[StashManager, SumManager]:
     try:
         stash_manager = stash_domain.get_manager()
     except RuntimeError:
-        stash_manager = StashManager(db, servers_module=api.get_servers())
+        stash_manager = StashManager(
+            db, servers_module=api.get_servers(), media=api.get_media()
+        )
     try:
         sum_manager = sum_domain.get_manager()
     except RuntimeError:

@@ -234,8 +234,6 @@ class Member:
     username: Optional[str] = None  # Populated via enrichment
     avatar_url: Optional[str] = None  # Populated via enrichment
     roles: List[SnowflakeID] = field(default_factory=list)
-    deaf: bool = False
-    mute: bool = False
     pending: bool = False
     premium_since: Optional[int] = None
     permissions: Optional[Dict[str, bool]] = None
@@ -255,8 +253,6 @@ class Member:
             "updated_at": self.updated_at,
             "nickname": self.nickname,
             "roles": [str(r) for r in self.roles],
-            "deaf": self.deaf,
-            "mute": self.mute,
             "muted": self.muted,
             "deafened": self.deafened,
             "avatar_url": self.avatar_url,
@@ -449,6 +445,7 @@ SERVER_PERMISSIONS = {
     # Member management
     "members.kick": "Kick members",
     "members.ban": "Ban members",
+    "bans.view": "View server bans",
     "members.manage_nicknames": "Change other members nicknames",
     "members.manage_roles": "Assign and remove roles",
     # Invite management

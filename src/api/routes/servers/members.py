@@ -6,6 +6,7 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.servers import (
     MemberResponse,
     PresenceResponse,
+    MemberUpdateRequest,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.database import cached
@@ -154,6 +155,109 @@ def get_server_members(
 
         logger.error(
             f"Failed to fetch members for server {server_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.patch(
+    "/{server_id}/members/{member_id}",
+    response_model=MemberResponse,
+    summary="Update a server member",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid ID"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Member not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def update_server_member(
+    server_id: str,
+    member_id: str,
+    payload: MemberUpdateRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> MemberResponse:
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+
+    try:
+        try:
+            sid = int(server_id)
+            mid = int(member_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
+            )
+
+        db = api.get_db()
+        if not db:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database not available"}},
+            )
+        row = db.fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        if not row:
+            row = db.fetch_one(
+                "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
+                (sid, mid),
+            )
+        if not row:
+            raise HTTPException(status_code=404, detail="Member not found")
+
+        target_user_id = row["user_id"]
+
+        member = servers_mod.update_member(
+            current_user.user_id,
+            sid,
+            target_user_id,
+            nickname=payload.nickname,
+            muted=payload.muted,
+            deafened=payload.deafened,
+            timeout_until=payload.timeout_until,
+            timeout_reason=payload.timeout_reason,
+        )
+
+        user = None
+        auth = api.get_auth()
+        if auth:
+            users_map = auth.get_users_bulk([target_user_id])
+            user = users_map.get(target_user_id) or users_map.get(str(target_user_id))
+
+        return MemberResponse(
+            member_id=SnowflakeID(int(member.id)),
+            user_id=SnowflakeID(int(member.user_id)),
+            username=str(getattr(user, "username", None) or f"User {member.user_id}"),
+            nickname=member.nickname,
+            avatar_url=getattr(user, "avatar_url", None),
+            joined_at=member.joined_at,
+            roles=[SnowflakeID(r) for r in (member.roles or [])],
+            timeout_until=member.timeout_until,
+            timeout_reason=member.timeout_reason,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Exists" in exc_name:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Member not found"}},
+            )
+        elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
+            raise HTTPException(
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            )
+
+        logger.error(
+            f"Failed to update member {member_id} in server {server_id}: {e}",
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}

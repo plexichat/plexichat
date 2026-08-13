@@ -45,7 +45,7 @@ class MemberOpsMixin(ServerProtocol):
             query += " AND id > ?"
             params.append(after_id)
 
-        query += " ORDER BY joined_at LIMIT ?"
+        query += " ORDER BY id LIMIT ?"
         params.append(limit)
 
         rows = self._db.fetch_all(query, tuple(params))

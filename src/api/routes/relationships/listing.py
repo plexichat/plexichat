@@ -4,7 +4,7 @@ Listing mixin - GET /@me route handler for fetching all relationships.
 
 from typing import List
 
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Query
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -21,11 +21,15 @@ class ListingMixin:
     def get_relationships(
         self,
         current_user: TokenInfo = Depends(get_current_user),
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
     ) -> List[DetailedRelationshipInfo]:
         """
         Get all relationships for current user (cached for 60s).
 
         Returns friends, pending requests, and blocked users with user info.
+
+        Results are capped by ``limit`` and can be paged with ``offset``.
         """
         relationships = api.get_relationships()
         auth = api.get_auth()
@@ -189,7 +193,7 @@ class ListingMixin:
                     )
                 )
 
-            return result
+            return result[offset : offset + limit]
         except HTTPException:
             raise
         except Exception as e:

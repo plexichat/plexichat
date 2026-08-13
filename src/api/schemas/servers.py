@@ -160,6 +160,20 @@ class MemberResponse(BaseModel):
     timeout_reason: Optional[str] = Field(None, description="Reason for timeout")
 
 
+class MemberUpdateRequest(BaseModel):
+    """Request body for updating a server member."""
+
+    nickname: Optional[str] = Field(
+        None, description="Server-specific nickname", max_length=100
+    )
+    muted: Optional[bool] = Field(None, description="Server mute state")
+    deafened: Optional[bool] = Field(None, description="Server deafen state")
+    timeout_until: Optional[int] = Field(
+        None, description="Timestamp (ms) until the member is timed out"
+    )
+    timeout_reason: Optional[str] = Field(None, description="Reason for the timeout")
+
+
 class RoleResponse(BaseModel):
     """Role information response."""
 

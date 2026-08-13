@@ -305,7 +305,7 @@ class RoleHandler:
 
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
-            user_id, channel.server_id, "roles.manage", channel_id
+            user_id, channel.server_id, "channels.manage", channel_id
         )
 
         now = self.manager._get_timestamp()
@@ -382,7 +382,7 @@ class RoleHandler:
 
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
-            user_id, channel.server_id, "roles.manage", channel_id
+            user_id, channel.server_id, "channels.manage", channel_id
         )
 
         self.db.execute(
@@ -587,38 +587,9 @@ class RoleHandler:
                     base_perms, role_overrides, member_override
                 )
 
-        # 4. Check for timeout
-        member = self.manager.get_member(server_id, user_id)
-        if member and member.timeout_until:
-            role_ids = [r["id"] for r in role_rows]
-            role_overrides = []
-            if role_ids:
-                # Validate role_ids are integers to prevent SQL injection
-                if not all(isinstance(rid, int) for rid in role_ids):
-                    raise ValueError("All role IDs must be integers")
-                # Avoid dynamic IN clause to satisfy bandit - use individual queries
-                override_rows = []
-                for role_id in role_ids:
-                    row = self.db.fetch_one(
-                        "SELECT * FROM srv_channel_overrides WHERE channel_id = ? AND target_type = 'role' AND target_id = ?",
-                        (channel_id, role_id),
-                    )
-                    if row:
-                        override_rows.append(row)
-                role_overrides = [dict(row) for row in override_rows]
-
-            member_override_row = self.db.fetch_one(
-                """SELECT * FROM srv_channel_overrides 
-                   WHERE channel_id = ? AND target_type = 'member' AND target_id = ?""",
-                (channel_id, user_id),
-            )
-            member_override = dict(member_override_row) if member_override_row else None
-
-            result = apply_channel_overrides(
-                base_perms, role_overrides, member_override
-            )
-
-        # 4. Check for timeout
+        # 4. Check for timeout. Channel overrides (if any) were already applied
+        #    above; here we only revoke the interaction permissions of a timed-out
+        #    member on top of the resolved permission set.
         member = self.manager.get_member(server_id, user_id)
         if member and member.timeout_until:
             now = self.manager._get_timestamp()

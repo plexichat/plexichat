@@ -129,6 +129,9 @@ class AvatarUserMixin(AvatarProtocol):
         self._cache_binary(
             f"user_avatar_meta:{user_id}", f"{content_type}|{checksum}".encode()
         )
+        # Invalidate any previously cached ETag/checksum so 304 caching
+        # cannot serve a stale avatar after an update.
+        self._delete_cached_binary(f"user_avatar_checksum:{user_id}")
 
         logger.info(
             f"Avatar uploaded for user {user_id}: {width}x{height}, {len(processed_data)} bytes"
@@ -229,6 +232,7 @@ class AvatarUserMixin(AvatarProtocol):
         # Invalidate cache
         self._delete_cached_binary(f"user_avatar_bin:{user_id}")
         self._delete_cached_binary(f"user_avatar_meta:{user_id}")
+        self._delete_cached_binary(f"user_avatar_checksum:{user_id}")
 
         deleted = result.rowcount if hasattr(result, "rowcount") else 0
         if deleted:

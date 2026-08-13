@@ -129,6 +129,9 @@ class AvatarServerMixin(AvatarProtocol):
         self._cache_binary(
             f"server_icon_meta:{server_id}", f"{content_type}|{checksum}".encode()
         )
+        # Invalidate any previously cached ETag/checksum so 304 caching
+        # cannot serve a stale icon after an update.
+        self._delete_cached_binary(f"server_icon_checksum:{server_id}")
 
         logger.info(
             f"Icon uploaded for server {server_id}: {width}x{height}, {len(processed_data)} bytes"
@@ -233,6 +236,7 @@ class AvatarServerMixin(AvatarProtocol):
         # Invalidate cache
         self._delete_cached_binary(f"server_icon_bin:{server_id}")
         self._delete_cached_binary(f"server_icon_meta:{server_id}")
+        self._delete_cached_binary(f"server_icon_checksum:{server_id}")
 
         deleted = result.rowcount if hasattr(result, "rowcount") else 0
         if deleted:

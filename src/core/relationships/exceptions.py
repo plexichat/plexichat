@@ -81,3 +81,9 @@ class PermissionDeniedError(RelationshipError):
     """User does not have permission to perform this action."""
 
     pass
+
+
+class RelationshipValidationError(RelationshipError):
+    """A relationship operation was rejected due to invalid input."""
+
+    pass

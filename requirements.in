@@ -90,6 +90,10 @@ qrcode[pil]==8.2
 
 # S3-compatible Storage (optional)
 boto3==1.43.56
+
+# PlexiSum container compression (zstd). Hard dependency — the container
+# encoder always zstd-compresses and never silently falls back to raw.
+zstandard==0.25.0
 # msgpack pinned to 1.2.1+ clears GHSA-xxxx (pip-audit)
 msgpack==1.2.1
 

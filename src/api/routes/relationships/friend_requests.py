@@ -18,6 +18,7 @@ from src.core.relationships.exceptions import (
     FriendRequestExistsError,
     FriendRequestNotFoundError,
     PermissionDeniedError,
+    RelationshipValidationError,
     SelfRelationshipError,
     UserBlockedError,
     UserNotFoundError,
@@ -94,6 +95,11 @@ class FriendRequestMixin:
                     status_code=404,
                     detail={"error": {"code": 404, "message": "User not found"}},
                 )
+            except RelationshipValidationError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": str(exc)}},
+                )
             except Exception as e:
                 logger.error(
                     f"Failed to send friend request from {current_user.user_id} to {target_id}: {e}",
@@ -127,31 +133,64 @@ class FriendRequestMixin:
                 except Exception as e:
                     logger.debug(f"Failed to get usernames for relationship event: {e}")
 
-            await asyncio.gather(
-                self._dispatch_relationship_event(
-                    "add",
-                    target_id,
-                    current_user.user_id,
-                    {
-                        "user_id": str(current_user.user_id),
-                        "username": sender_username,
-                        "status": "pending_incoming",
-                        "message": body.message,
-                        "created_at": getattr(request, "created_at", None),
-                    },
-                ),
-                self._dispatch_relationship_event(
-                    "add",
-                    current_user.user_id,
-                    target_id,
-                    {
-                        "user_id": str(target_id),
-                        "username": target_username,
-                        "status": "pending_outgoing",
-                        "created_at": getattr(request, "created_at", None),
-                    },
-                ),
-            )
+            req_status = getattr(request, "status", None)
+            if req_status is not None and hasattr(req_status, "value"):
+                req_status = req_status.value
+            auto_accepted = req_status == "accepted"
+
+            if auto_accepted:
+                # A reverse pending request existed, so send_friend_request auto-accepted
+                # it: both users are now friends. Emit "friend" events, not pending ones.
+                await asyncio.gather(
+                    self._dispatch_relationship_event(
+                        "add",
+                        target_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                            "username": sender_username,
+                            "status": "friend",
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                    self._dispatch_relationship_event(
+                        "add",
+                        current_user.user_id,
+                        target_id,
+                        {
+                            "user_id": str(target_id),
+                            "username": target_username,
+                            "status": "friend",
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                )
+            else:
+                await asyncio.gather(
+                    self._dispatch_relationship_event(
+                        "add",
+                        target_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                            "username": sender_username,
+                            "status": "pending_incoming",
+                            "message": body.message,
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                    self._dispatch_relationship_event(
+                        "add",
+                        current_user.user_id,
+                        target_id,
+                        {
+                            "user_id": str(target_id),
+                            "username": target_username,
+                            "status": "pending_outgoing",
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                )
 
             try:
                 self._invalidate_relationship_list_cache(
@@ -160,12 +199,7 @@ class FriendRequestMixin:
             except Exception as e:
                 logger.debug(f"Failed to invalidate relationship cache in create: {e}")
 
-            req_status = getattr(request, "status", None)
-            if req_status is not None and hasattr(req_status, "value"):
-                req_status = req_status.value
-            response_status = (
-                "friend" if req_status == "accepted" else "pending_outgoing"
-            )
+            response_status = "friend" if auto_accepted else "pending_outgoing"
 
             return RelationshipResponse(
                 user_id=SnowflakeID(target_id),
