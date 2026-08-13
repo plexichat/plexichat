@@ -37,10 +37,10 @@ class _UploadMixin:
 
     def _read_stream_to_temp(self, stream: BinaryIO) -> Tuple[str, int, str, bytes]:
         temp_file = tempfile.NamedTemporaryFile(delete=False)
-        bytes_read = 0
-        hasher = hashlib.sha256()
-        header = b""
         try:
+            bytes_read = 0
+            hasher = hashlib.sha256()
+            header = b""
             while True:
                 chunk = stream.read(65536)
                 if not chunk:
@@ -50,10 +50,21 @@ class _UploadMixin:
                 temp_file.write(chunk)
                 hasher.update(chunk)
                 bytes_read += len(chunk)
-        finally:
             temp_file.flush()
             temp_file.close()
-        return temp_file.name, bytes_read, hasher.hexdigest(), header
+            return temp_file.name, bytes_read, hasher.hexdigest(), header
+        except Exception:
+            # Ensure the unmanaged temp file is removed on any failure so a
+            # failed/aborted stream does not leak orphaned files on disk.
+            try:
+                temp_file.close()
+            except Exception:
+                pass
+            try:
+                os.unlink(temp_file.name)
+            except OSError:
+                pass
+            raise
 
     def _read_stream_to_memory(
         self, stream: BinaryIO, max_bytes: int

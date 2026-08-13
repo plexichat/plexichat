@@ -126,7 +126,7 @@ class _FilesMixin:
             "filename = ? OR url LIKE ? OR "
             "metadata LIKE ? OR metadata LIKE ? OR metadata LIKE ? OR "
             "metadata LIKE ? OR metadata LIKE ? OR metadata LIKE ? OR "
-            "metadata LIKE ? OR metadata LIKE ? OR metadata LIKE ?)",
+            "metadata LIKE ? OR metadata LIKE ?)",
             (
                 checksum or "",
                 file.filename,

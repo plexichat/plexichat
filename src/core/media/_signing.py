@@ -3,6 +3,8 @@
 URL-signing methods mixed into MediaManager.
 """
 
+import os
+import base64
 import time
 import logging
 from typing import Optional, Tuple
@@ -13,13 +15,34 @@ from .security import UrlSigner
 
 logger = logging.getLogger(__name__)
 
+# Keys that must never be used to sign URLs - they are publicly known.
+_INSECURE_SIGNING_KEYS = {
+    "",
+    "change-this-secret-key",
+    "CHANGE_THIS_SIGNING_KEY",
+    "change-me",
+    "changeme",
+}
+
 
 class _SigningMixin:
     """URL-signing methods mixed into MediaManager."""
 
     def _init_url_signer(self) -> UrlSigner:
+        secret_key = self._config.get("signing_key")
+        if not secret_key or secret_key in _INSECURE_SIGNING_KEYS:
+            # No secure signing key configured: generate an ephemeral per-process
+            # key rather than falling back to a publicly-known default that anyone
+            # could use to forge signed URLs / proxy tokens.
+            secret_key = base64.b64encode(os.urandom(32)).decode()
+            self._config["signing_key"] = secret_key
+            logger.warning(
+                "MEDIA_SIGNING_KEY is not configured or uses an insecure default; "
+                "generated an ephemeral signing key for this process. Set a stable, "
+                "secret signing_key in config to keep signed URLs valid across restarts."
+            )
         return UrlSigner(
-            secret_key=self._config.get("signing_key", "change-this-secret-key"),
+            secret_key=secret_key,
             default_expiry=self._config.get("signing_expiry", 3600),
         )
 
