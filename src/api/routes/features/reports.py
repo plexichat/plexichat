@@ -6,10 +6,27 @@ import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
-from .common import parse_id, raise_bad_request, raise_forbidden, raise_internal
+from .common import (
+    parse_id,
+    raise_bad_request,
+    raise_forbidden,
+    raise_internal,
+    raise_not_found,
+)
 from .protocol import DatabaseProtocol
 
 router = APIRouter()
+
+
+def _is_safe_url(url: str) -> bool:
+    """Return True only for http(s) URLs with a network location."""
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    except Exception:
+        return False
 
 
 class EnhancedReportRequest(BaseModel):
@@ -59,6 +76,10 @@ async def submit_enhanced_report(
             f"Invalid priority. Must be one of: {', '.join(valid_priorities)}"
         )
 
+    # REP-4: only supported target types are accepted
+    if body.target_type not in ("message", "user"):
+        raise_bad_request("target_type must be 'message' or 'user'")
+
     db: DatabaseProtocol | None = api.get_db()
     if not db:
         raise_internal("Database not available")
@@ -68,6 +89,12 @@ async def submit_enhanced_report(
     import time
 
     target_id = parse_id(body.target_id, "target ID")
+
+    # REP-5: evidence URLs must be well-formed http(s) links
+    if body.evidence_urls:
+        for url in body.evidence_urls:
+            if not _is_safe_url(url):
+                raise_bad_request(f"Invalid evidence URL: {url}")
 
     now = int(time.time() * 1000)
     report_id = generate_snowflake_id()
@@ -81,16 +108,30 @@ async def submit_enhanced_report(
         channel_id = int(body.channel_id) if body.channel_id else None
         server_id = int(body.server_id) if body.server_id else None
         messaging = api.get_messaging()
+        msg = None
         if messaging:
             try:
                 msg = messaging.get_message(current_user.user_id, target_id)
-                if msg:
-                    reported_user_id = msg.author_id
-                    message_content = msg.content[:500] if msg.content else None
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to fetch message {target_id} for report: {e}")
+        if not msg:
+            raise_bad_request("Message not found")
+        reported_user_id = msg.author_id
+        # REP-3: reporters may not report their own content
+        if reported_user_id == current_user.user_id:
+            raise_bad_request("You cannot report your own message")
+        message_content = msg.content[:500] if msg.content else None
     elif body.target_type == "user":
         reported_user_id = target_id
+        # REP-4: the reported user must actually exist
+        user_row = db.fetch_one(
+            "SELECT id FROM auth_users WHERE id = ?", (reported_user_id,)
+        )
+        if not user_row:
+            raise_bad_request("Reported user not found")
+        # REP-3: reporters may not report themselves
+        if reported_user_id == current_user.user_id:
+            raise_bad_request("You cannot report yourself")
 
     evidence_urls_str = json.dumps(body.evidence_urls) if body.evidence_urls else None
 
@@ -171,70 +212,42 @@ async def update_report_status(
 
     now = int(time.time() * 1000)
 
-    updates = ["status = ?", "updated_at = ?"]
-    params: list = [body.status, now]
+    # Static, fully-parameterized UPDATE. Every updatable column is present as a
+    # COALESCE so only the fields explicitly provided in the request change;
+    # omitted fields keep their current value. This avoids building SQL from
+    # interpolated column names (bandit B608).
+    is_review = body.status in ("investigating", "resolved", "dismissed", "escalated")
 
-    def _has_column(name: str, _db: DatabaseProtocol = db) -> bool:
-        try:
-            return bool(_db.column_exists("reports", name))
-        except Exception:
-            return True
-
-    ALLOWED_UPDATE_COLUMNS = {
-        "status",
-        "updated_at",
-        "priority",
-        "assigned_to",
-        "admin_notes",
-        "resolution",
-        "resolved_at",
-        "resolved_by",
-        "escalated_at",
-        "evidence_urls",
-        "reviewed_at",
-        "reviewed_by",
-    }
-
-    if body.priority:
-        updates.append("priority = ?")
-        params.append(body.priority)
-    if body.assigned_to:
-        updates.append("assigned_to = ?")
-        params.append(int(body.assigned_to))
-    if body.admin_notes:
-        updates.append("admin_notes = ?")
-        params.append(body.admin_notes)
-    if body.resolution:
-        updates.append("resolution = ?")
-        params.append(body.resolution)
-        if _has_column("resolved_at", db):
-            updates.append("resolved_at = ?")
-            params.append(now)
-        if _has_column("resolved_by", db):
-            updates.append("resolved_by = ?")
-            params.append(current_user.user_id)
-    if body.status == "escalated" and _has_column("escalated_at", db):
-        updates.append("escalated_at = ?")
-        params.append(now)
-
-    if body.status in ("investigating", "resolved", "dismissed", "escalated"):
-        if _has_column("reviewed_at", db):
-            updates.append("reviewed_at = ?")
-            params.append(now)
-        if _has_column("reviewed_by", db):
-            updates.append("reviewed_by = ?")
-            params.append(current_user.user_id)
-
-    for u in updates:
-        col = u.split(" = ")[0].strip()
-        if col not in ALLOWED_UPDATE_COLUMNS:
-            raise_bad_request(f"Invalid column: {col}")
-
-    params.append(rid)
+    params = [
+        body.status,
+        now,
+        body.priority,  # None -> keep existing
+        int(body.assigned_to) if body.assigned_to else None,
+        body.admin_notes,  # None -> keep existing
+        body.resolution,  # None -> keep existing
+        now if body.resolution else None,  # resolved_at
+        current_user.user_id if body.resolution else None,  # resolved_by
+        now if body.status == "escalated" else None,  # escalated_at
+        now if is_review else None,  # reviewed_at
+        current_user.user_id if is_review else None,  # reviewed_by
+        rid,
+    ]
 
     try:
         db.execute(
-            f"UPDATE reports SET {', '.join(updates)} WHERE id = ?",
+            """UPDATE reports
+               SET status = ?,
+                   updated_at = ?,
+                   priority = COALESCE(?, priority),
+                   assigned_to = COALESCE(?, assigned_to),
+                   admin_notes = COALESCE(?, admin_notes),
+                   resolution = COALESCE(?, resolution),
+                   resolved_at = COALESCE(?, resolved_at),
+                   resolved_by = COALESCE(?, resolved_by),
+                   escalated_at = COALESCE(?, escalated_at),
+                   reviewed_at = COALESCE(?, reviewed_at),
+                   reviewed_by = COALESCE(?, reviewed_by)
+               WHERE id = ?""",
             tuple(params),
         )
         return {"success": True, "report_id": str(rid), "status": body.status}
@@ -263,7 +276,7 @@ async def get_report_details(
     if not row:
         row = db.fetch_one("SELECT * FROM user_reports WHERE id = ?", (rid,))
     if not row:
-        raise_bad_request("Report not found")
+        raise_not_found("Report not found")
 
     data = dict(row)
     is_reporter = data.get("reporter_id") == current_user.user_id

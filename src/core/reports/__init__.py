@@ -15,8 +15,6 @@ Usage:
     report = reports.report_message(reporter_id, message_id, reason, details)
 """
 
-from src.core.database.core.schema_splitter import split_sql_statements
-
 import time
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
@@ -101,68 +99,6 @@ class UserReport:
     resolution: Optional[str]
 
 
-SCHEMA = """
--- Message reports
-CREATE TABLE IF NOT EXISTS message_reports (
-    id BIGINT PRIMARY KEY,
-    message_id BIGINT NOT NULL,
-    channel_id BIGINT NOT NULL,
-    server_id BIGINT,
-    reporter_id BIGINT NOT NULL,
-    reported_user_id BIGINT NOT NULL,
-    reason TEXT NOT NULL,
-    category TEXT NOT NULL DEFAULT 'other',
-    details TEXT,
-    message_content TEXT,
-    evidence_urls TEXT,
-    priority TEXT NOT NULL DEFAULT 'medium',
-    status TEXT NOT NULL DEFAULT 'pending',
-    reported_at BIGINT NOT NULL,
-    reviewed_at BIGINT,
-    reviewed_by BIGINT,
-    admin_notes TEXT,
-    action_taken TEXT,
-    assigned_to BIGINT,
-    escalated_at BIGINT,
-    resolution TEXT
-);
-
--- User reports
-CREATE TABLE IF NOT EXISTS user_reports (
-    id BIGINT PRIMARY KEY,
-    reported_user_id BIGINT NOT NULL,
-    reporter_id BIGINT NOT NULL,
-    reason TEXT NOT NULL,
-    category TEXT NOT NULL DEFAULT 'other',
-    details TEXT,
-    evidence_message_ids TEXT,
-    evidence_urls TEXT,
-    priority TEXT NOT NULL DEFAULT 'medium',
-    status TEXT NOT NULL DEFAULT 'pending',
-    reported_at BIGINT NOT NULL,
-    reviewed_at BIGINT,
-    reviewed_by BIGINT,
-    admin_notes TEXT,
-    action_taken TEXT,
-    assigned_to BIGINT,
-    escalated_at BIGINT,
-    resolution TEXT
-);
-
--- Indexes
-CREATE INDEX IF NOT EXISTS idx_message_reports_status ON message_reports(status);
-CREATE INDEX IF NOT EXISTS idx_message_reports_reporter ON message_reports(reporter_id);
-CREATE INDEX IF NOT EXISTS idx_message_reports_reported ON message_reports(reported_user_id);
-CREATE INDEX IF NOT EXISTS idx_message_reports_message ON message_reports(message_id);
-CREATE INDEX IF NOT EXISTS idx_message_reports_priority ON message_reports(priority);
-CREATE INDEX IF NOT EXISTS idx_message_reports_assigned ON message_reports(assigned_to);
-CREATE INDEX IF NOT EXISTS idx_user_reports_status ON user_reports(status);
-CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports(reporter_id);
-CREATE INDEX IF NOT EXISTS idx_user_reports_reported ON user_reports(reported_user_id);
-CREATE INDEX IF NOT EXISTS idx_user_reports_priority ON user_reports(priority);
-CREATE INDEX IF NOT EXISTS idx_user_reports_assigned ON user_reports(assigned_to);
-"""
-
 _db: Any = None
 _messaging = None
 _setup_complete = False
@@ -193,19 +129,15 @@ def _get_db():
 
 
 def create_tables(db) -> None:
-    """Create report tables."""
-    statements = split_sql_statements(SCHEMA)
-    for statement in statements:
-        if statement:
-            try:
-                converted = (
-                    db.convert_schema(statement)
-                    if hasattr(db, "convert_schema")
-                    else statement
-                )
-                db.execute(converted)
-            except Exception as e:
-                logger.error(f"Failed to create reports table: {e}")
+    """Create report tables.
+
+    Delegates to the canonical schema definition in
+    ``src.core.reports.schema`` so the unified ``reports`` table and the
+    legacy ``message_reports`` / ``user_reports`` tables stay in sync.
+    """
+    from src.core.reports.schema import create_tables as _schema_create_tables
+
+    _schema_create_tables(db)
 
 
 def _get_config(key: str, default: Any = None) -> Any:
@@ -290,7 +222,11 @@ def report_message(
                                 f"Automatically created media hash report for {att.checksum[:16]} from message {message_id}"
                             )
                         except Exception as e:
-                            logger.debug(f"Media report already exists or failed: {e}")
+                            logger.warning(
+                                f"Media hash report creation failed for "
+                                f"{att.checksum[:16] if att.checksum else 'unknown'} "
+                                f"(message {message_id}): {e}"
+                            )
         except Exception as e:
             logger.warning(f"Failed to extract attachments for media report: {e}")
 
@@ -331,6 +267,38 @@ def get_message_report(report_id: int) -> Optional[MessageReport]:
         return None
 
     return _row_to_message_report(row)
+
+
+def find_open_message_report(
+    reporter_id: int, message_id: int
+) -> Optional[MessageReport]:
+    """Return the reporter's most recent still-pending message report, if any.
+
+    Used to make submissions idempotent: re-reporting the same message does not
+    flood the moderation queue with duplicates.
+    """
+    db = _get_db()
+    row = db.fetch_one(
+        """SELECT * FROM message_reports
+           WHERE reporter_id = ? AND message_id = ? AND status = 'pending'
+           ORDER BY reported_at DESC LIMIT 1""",
+        (reporter_id, message_id),
+    )
+    return _row_to_message_report(row) if row else None
+
+
+def find_open_user_report(
+    reporter_id: int, reported_user_id: int
+) -> Optional[UserReport]:
+    """Return the reporter's most recent still-pending user report, if any."""
+    db = _get_db()
+    row = db.fetch_one(
+        """SELECT * FROM user_reports
+           WHERE reporter_id = ? AND reported_user_id = ? AND status = 'pending'
+           ORDER BY reported_at DESC LIMIT 1""",
+        (reporter_id, reported_user_id),
+    )
+    return _row_to_user_report(row) if row else None
 
 
 def get_message_reports(

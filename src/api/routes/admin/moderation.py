@@ -246,6 +246,87 @@ async def get_message_report_counts(request: Request):
     )
 
 
+@router.get(
+    "/reports",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_enhanced_reports(
+    request: Request,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List enhanced (``reports`` table) reports for moderator review.
+
+    The enhanced submission pipeline persists to the ``reports`` table, which
+    is separate from ``message_reports``/``user_reports``. Exposing it here
+    keeps those reports visible in the moderator queue instead of orphaned.
+    """
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database unavailable"}},
+        )
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    clauses = []
+    params: List[Any] = []
+    if status_filter:
+        clauses.append("status = ?")
+        params.append(status_filter)
+    where = (" AND ".join(clauses)) if clauses else "1=1"
+    rows = db.fetch_all(
+        f"SELECT * FROM reports WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        tuple(params + [limit, offset]),
+    )
+    total_row = db.fetch_one(
+        f"SELECT COUNT(*) AS count FROM reports WHERE {where}", tuple(params)
+    )
+    total = int(total_row["count"]) if total_row else 0
+    return {
+        "items": [dict(row) for row in rows],
+        "total": total,
+        "has_more": offset + len(rows) < total,
+    }
+
+
+@router.get(
+    "/reports/counts",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_enhanced_report_counts(request: Request):
+    """Counts of enhanced reports grouped by status."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database unavailable"}},
+        )
+    counts: Dict[str, int] = {}
+    rows = db.fetch_all("SELECT status, COUNT(*) as count FROM reports GROUP BY status")
+    total = 0
+    for row in rows:
+        status = row["status"]
+        count = int(row["count"])
+        counts[status] = count
+        total += count
+    counts["total"] = total
+    return counts
+
+
 @router.post(
     "/message-reports/{report_id}/review",
     response_model=ModerationReportReviewResponse,
