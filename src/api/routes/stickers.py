@@ -5,17 +5,80 @@ Sticker routes - Sticker and pack management endpoints.
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Query
 
+import time
+
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.stickers import StickerResponse, StickerPackResponse
 from src.api.schemas.common import ErrorResponse
 from src.core.stickers import PackType
+from src.core.stickers.exceptions import (
+    InvalidStickerFormatError,
+    StickerTooLargeError,
+    InvalidStickerNameError,
+    StickerLimitError,
+    PackLimitError,
+    PackNotFoundError,
+    PermissionDeniedError,
+)
+
+# Hard ceiling applied at the HTTP boundary so a single request cannot buffer
+# an unbounded body into memory before the manager's own size check runs.
+STICKER_MAX_UPLOAD_BYTES = 524288
+
+# Expected, user-facing failures from the sticker manager. These carry safe
+# messages worth returning; everything else is collapsed to a generic 500 so
+# internal state (SQL, file paths) never leaks to clients.
+_STICKER_CLIENT_ERRORS = (
+    InvalidStickerFormatError,
+    StickerTooLargeError,
+    InvalidStickerNameError,
+    StickerLimitError,
+    PackLimitError,
+    PackNotFoundError,
+)
 
 router = APIRouter(tags=["Stickers"])
 
 
-async def _dispatch_stickers_update(server_id: int):
+def _check_sticker_create_rate_limit(user_id: int) -> None:
+    """Throttle sticker creation per user (best-effort).
+
+    Reuses the shared rate-limit manager used by the media module. If the
+    manager cannot be initialised we skip the check rather than blocking
+    legitimate requests.
+    """
+    try:
+        import src.core.ratelimit as ratelimit
+        from src.core.ratelimit.storage import MemoryStorage
+
+        if not ratelimit.is_setup():
+            ratelimit.setup(storage_backend=MemoryStorage(), enable_global_limit=False)
+        manager = ratelimit.get_manager()
+    except Exception as e:
+        logger.debug(f"Sticker rate-limit unavailable, skipping check: {e}")
+        return
+
+    now_seconds = int(time.time())
+    minute_window = now_seconds - (now_seconds % 60)
+    key = f"stickers:create:minute:{user_id}:{minute_window}"
+    count = manager.increment_custom_usage(key, "count", 0, ttl=120)
+    max_per_minute = 20
+    if count >= max_per_minute:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Sticker creation rate limit exceeded. Please try again later.",
+                }
+            },
+        )
+    manager.increment_custom_usage(key, "count", 1, ttl=120)
+
+
+async def _dispatch_stickers_update(server_id: int, user_id: int):
     """Helper to dispatch GUILD_STICKERS_UPDATE via WebSocket."""
     try:
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
@@ -37,12 +100,15 @@ async def _dispatch_stickers_update(server_id: int):
         if not user_ids:
             return
 
-        # Get current stickers for the payload
-        packs = stickers_mod.get_server_packs(0, server_id)
+        # Get current stickers for the payload. The acting user is already a
+        # verified server member (the create/delete routes gate on membership),
+        # so pass their id instead of the old hardcoded 0 that always failed the
+        # membership check and silently suppressed the broadcast.
+        packs = stickers_mod.get_server_packs(user_id, server_id)
 
         response_packs = []
         for pack in packs:
-            pack_stickers = stickers_mod.get_pack_stickers(0, pack.id)
+            pack_stickers = stickers_mod.get_pack_stickers(user_id, pack.id)
             pack_response = StickerPackResponse.model_validate(pack)
             pack_response.stickers = [
                 StickerResponse.model_validate(s) for s in pack_stickers
@@ -106,7 +172,7 @@ async def get_server_stickers(
         return response_packs
     except Exception as e:
         logger.error(f"Failed to fetch stickers for server {sid}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to load server stickers")
 
 
 @router.post(
@@ -128,12 +194,23 @@ async def create_sticker(
     if not stickers_mod:
         raise HTTPException(status_code=500, detail="Stickers module not available")
 
+    # Throttle abusive sticker creation.
+    _check_sticker_create_rate_limit(current_user.user_id)
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid server ID")
 
     try:
+        # Cap the request body before reading it fully into memory.
+        declared_size = image.size
+        if declared_size is not None and declared_size > STICKER_MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Sticker file is too large",
+            )
+
         # Get or create server pack
         packs = stickers_mod.get_server_packs(current_user.user_id, sid)
         target_pack = next((p for p in packs if p.pack_type == PackType.SERVER), None)
@@ -152,6 +229,11 @@ async def create_sticker(
 
         # Read file
         content = await image.read()
+        if len(content) > STICKER_MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Sticker file is too large",
+            )
 
         sticker = stickers_mod.create_sticker_from_file(
             user_id=current_user.user_id,
@@ -165,13 +247,26 @@ async def create_sticker(
         # Dispatch update as background task (don't block response)
         import asyncio
 
-        asyncio.create_task(_dispatch_stickers_update(sid))
+        asyncio.create_task(_dispatch_stickers_update(sid, current_user.user_id))
 
         return StickerResponse.model_validate(sticker)
 
+    except HTTPException:
+        raise
+    except (
+        InvalidStickerFormatError,
+        StickerTooLargeError,
+        InvalidStickerNameError,
+        StickerLimitError,
+        PackLimitError,
+        PackNotFoundError,
+    ) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to create sticker: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to create sticker")
 
 
 @router.delete(
@@ -201,11 +296,14 @@ async def delete_sticker(
 
         # Dispatch update if server sticker
         if server_id:
-            await _dispatch_stickers_update(server_id)
+            await _dispatch_stickers_update(server_id, current_user.user_id)
 
         return {"success": True}
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.error(f"Failed to delete sticker {sticker_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete sticker")
 
 
 @router.post(
@@ -257,5 +355,7 @@ async def get_sticker_suggestions(
         )
         return [StickerResponse.model_validate(s.sticker) for s in suggestions]
     except Exception as e:
-        logger.error(f"Sticker suggestion error: {e}")
-        return []
+        logger.error(f"Sticker suggestion error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to load sticker suggestions"
+        )

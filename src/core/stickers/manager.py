@@ -98,7 +98,10 @@ class StickerManager:
         if not self._media:
             raise RuntimeError("Media module not configured")
 
-        # Basic format detection
+        # Validate the content type up-front. Only raster PNG, animated PNG and
+        # Lottie JSON are accepted; never map a generic ``image/*`` (e.g.
+        # ``image/svg+xml``) onto PNG — an SVG stored as a sticker is a stored
+        # XSS vector if it is ever rendered outside a hardened <img> context.
         if content_type == "application/json":
             sticker_format = StickerFormat.LOTTIE
         elif content_type == "image/png":
@@ -106,32 +109,67 @@ class StickerManager:
         elif content_type == "image/apng":
             sticker_format = StickerFormat.APNG
         else:
-            # Default to PNG if image, or raise error
-            if content_type.startswith("image/"):
-                sticker_format = StickerFormat.PNG
-            else:
-                allowed = self._config.get("allowed_formats", ["png", "apng", "json"])
-                raise InvalidStickerFormatError(
-                    f"Unsupported content type: {content_type}", content_type, allowed
-                )
+            allowed = self._config.get("allowed_formats", ["png", "apng", "json"])
+            raise InvalidStickerFormatError(
+                f"Unsupported content type: {content_type}", content_type, allowed
+            )
+
+        # Reject oversized uploads before contacting storage.
+        max_size = self._config.get("max_sticker_size", 524288)
+        if len(image_data) > max_size:
+            raise StickerTooLargeError(
+                f"Sticker exceeds maximum size of {max_size} bytes",
+                max_size,
+                len(image_data),
+            )
+
+        # Validate the target pack and the caller's permission before uploading
+        # so a denied or invalid request cannot leave an orphaned media object.
+        pack = self.get_pack(pack_id, user_id)
+        if not pack:
+            raise PackNotFoundError("Sticker pack not found")
+        if (
+            pack.pack_type == PackType.SERVER
+            and pack.server_id
+            and not self._check_server_permission(user_id, pack.server_id)
+        ):
+            raise PermissionDeniedError(
+                "Missing permission to manage server", "server.manage"
+            )
 
         filename = f"sticker_{name}.{content_type.split('/')[-1]}"
 
         # Upload
         result = self._media.upload_file(user_id, image_data, filename, content_type)
-
-        return self.add_sticker(
-            user_id=user_id,
-            pack_id=pack_id,
-            name=name,
-            format=sticker_format,
-            url=result.url,
-            size=len(image_data),
-            tags=tags,
-            related_emoji=related_emoji,
-            width=result.metadata.get("width") if result.metadata else None,
-            height=result.metadata.get("height") if result.metadata else None,
-        )
+        try:
+            return self.add_sticker(
+                user_id=user_id,
+                pack_id=pack_id,
+                name=name,
+                format=sticker_format,
+                url=result.url,
+                size=len(image_data),
+                tags=tags,
+                related_emoji=related_emoji,
+                width=result.metadata.get("width") if result.metadata else None,
+                height=result.metadata.get("height") if result.metadata else None,
+            )
+        except Exception:
+            # Roll back the just-uploaded file so storage does not accumulate
+            # orphaned media objects when validation (size/format/name/limit)
+            # fails after the bytes were already written.
+            try:
+                if hasattr(self._media, "delete_file_permanently"):
+                    self._media.delete_file_permanently(user_id, int(result.file_id))
+                elif hasattr(self._media, "delete_file"):
+                    self._media.delete_file(user_id, int(result.file_id))
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to clean up orphaned sticker media %s: %s",
+                    getattr(result, "file_id", "?"),
+                    cleanup_err,
+                )
+            raise
 
     def _check_server_permission(self, user_id: int, server_id: int) -> bool:
         if not self._servers:
@@ -690,6 +728,16 @@ class StickerManager:
         if self._messaging:
             msg = self._messaging.get_message(user_id, message_id)
             if not msg:
+                raise MessageNotFoundError("Message not found")
+        else:
+            # Fallback: when the messaging module is unavailable, verify the
+            # message exists and belongs to this user directly so usage stats
+            # cannot be associated with arbitrary messages.
+            row = self._db.fetch_one(
+                "SELECT 1 FROM msg_messages WHERE id = ? AND author_id = ?",
+                (message_id, user_id),
+            )
+            if not row:
                 raise MessageNotFoundError("Message not found")
         now = self._get_timestamp()
         usage_id = self._generate_id()
