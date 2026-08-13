@@ -2497,30 +2497,23 @@ class SumManager(BaseManager):
         column_start: int,
         column_end: int,
         filters: Optional[List[Dict[str, Any]]],
+        workbook: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Read viewport directly from the stored blob (no in-memory session)."""
-        workbook = self._workbook(user_id, workbook_id)
+        """Read viewport directly from the stored blob (no in-memory session).
+
+        Opens the blob through ``_open_sqlite_memory`` (deserialize straight
+        into ``:memory:``) instead of writing it to a temp file and reopening
+        it on every poll. That removed the per-read disk write + reopen cost
+        that solo/read-only viewers paid on each scroll. The caller passes the
+        already-authorized workbook row so this path also skips a redundant
+        metadata lookup.
+        """
+        if workbook is None:
+            workbook = self._workbook(user_id, workbook_id)
         data = self._blob_bytes(int(workbook_id), workbook)
-        if data[:4] == b"PXSM":
-            from .container import decode_container
-
-            raw_db, _, _ = decode_container(data)
-        else:
-            raw_db = data
-
-        handle = tempfile.NamedTemporaryFile(
-            prefix="plexisum-read-", suffix=".db", delete=False
-        )
-        handle.write(raw_db)
-        handle.close()
-
+        connection, path = self._open_sqlite_memory(data)
         try:
-            conn = sqlite3.connect(handle.name)
-            conn.row_factory = sqlite3.Row
-            try:
-                ensure_feature_tables(conn)
-            except Exception:
-                pass
+            conn = connection
 
             if (row_end - row_start) * (
                 column_end - column_start
@@ -2642,10 +2635,10 @@ class SumManager(BaseManager):
                 "read_only_ranges": viewer["read_only_ranges"],
             }
         finally:
-            try:
-                os.unlink(handle.name)
-            except OSError:
-                pass
+            if path is None:
+                self._close_sqlite_memory(connection)
+            else:
+                self._close_sqlite(connection, path)
 
     @staticmethod
     def _filter_cell_value(cell: Optional[Dict[str, Any]]) -> Any:
@@ -2901,6 +2894,7 @@ class SumManager(BaseManager):
                     column_start,
                     column_end,
                     normalized_filters,
+                    workbook=workbook,
                 )
 
         # Query the live session directly: hot viewport polls must not pay a
