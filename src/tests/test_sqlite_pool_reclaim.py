@@ -14,7 +14,6 @@ and reclaims idle checked-out connections when the pool is exhausted (or on a
 periodic reap) so a leaked worker can never permanently starve the pool.
 """
 
-import os
 import threading
 import time
 

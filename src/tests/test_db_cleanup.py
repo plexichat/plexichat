@@ -9,7 +9,6 @@ Verifies that the db fixture properly cleans up:
 
 import os
 import tempfile
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -141,8 +140,6 @@ class TestDatabaseConfigRestore:
 
     def test_config_is_restored(self, db):
         """Database config path is restored after the test."""
-        import copy
-
         from utils.config import _config_instance as _config_loader
 
         # Verify config has database section
