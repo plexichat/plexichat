@@ -141,11 +141,16 @@ async def list_workbooks(
     template: bool = Query(
         False, description="List template workbooks instead of regular workbooks"
     ),
+    search: str = Query("", max_length=200, description="Title substring search"),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumWorkbookListResponse:
     try:
         items, total = _manager().list_workbooks(
-            current_user.user_id, limit, offset, template=template
+            current_user.user_id,
+            limit,
+            offset,
+            template=template,
+            search=search.strip() or None,
         )
         return SumWorkbookListResponse(
             items=[SumWorkbookResponse.model_validate(item) for item in items],
