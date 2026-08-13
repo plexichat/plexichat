@@ -6,9 +6,9 @@ and KEK (Key Encryption Key) via environment variables or HSM/TPM vault.
 """
 
 import base64
+import hashlib
 import json
 import os
-import secrets
 import threading
 import time
 from pathlib import Path
@@ -60,8 +60,36 @@ class Keyring:
 
         # Initialize blind index root key if it doesn't exist
         if not self.blind_index_root_key and self.keys:
-            self.blind_index_root_key = secrets.token_bytes(32)
+            self.blind_index_root_key = self._derive_blind_index_root_key()
             self.save()
+
+    def _derive_blind_index_root_key(self) -> bytes:
+        """Deterministically derive the blind-index root key from the KEK.
+
+        Derived (rather than randomly generated) so that every
+        :class:`EncryptionManager` instance in the process computes the
+        same blind index regardless of *when* its keyring was loaded. The
+        previous ``secrets.token_bytes(32)`` generation produced a new key
+        each time a keyring was loaded after keys already existed, so a
+        long-lived module singleton (created before any keys) disagreed
+        with later-created managers and lookups silently failed.
+        """
+        kek = self._get_kek(fallback=False)
+        return hashlib.blake2b(
+            kek, key=b"plexichat:blind-index-root:v1", digest_size=32
+        ).digest()
+
+    def get_blind_index_root_key(self) -> bytes:
+        """Return the blind-index root key, deriving and persisting it lazily.
+
+        Derived deterministically from the KEK so every manager instance
+        agrees, and persisted so it also survives KEK rotation (a manager
+        created later loads the persisted value instead of re-deriving).
+        """
+        if self.blind_index_root_key is None:
+            self.blind_index_root_key = self._derive_blind_index_root_key()
+            self.save()
+        return self.blind_index_root_key
 
     @staticmethod
     def _default_kek_env_var(keyring_path: Path) -> str:

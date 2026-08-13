@@ -1164,3 +1164,57 @@ class TestCryptographicEdgeCases:
                 base64.b64decode(parts[2])
             except Exception:
                 pytest.fail("Encrypted data part is not valid base64")
+
+
+class TestBlindIndexStability:
+    """Blind indexes must agree across EncryptionManager instances.
+
+    Regression coverage for the divergence where a long-lived manager
+    (created before any keyring key existed) computed a different blind
+    index than a later manager that lazily generated a *random*
+    ``blind_index_root_key``. Both the module singleton (created at
+    process start) and per-request managers (created later) must agree.
+    """
+
+    def test_blind_index_stable_across_manager_instances(self, monkeypatch, tmp_path):
+        """Different managers derive the same blind index for a value."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Manager created before any key exists (mirrors the module singleton).
+        early = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+
+        # A later manager generates the first keyring key.
+        mid = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+        mid.keyring.get_key()
+
+        # A still-later manager loads the now-populated keyring.
+        late = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+
+        value = "test-encryption@example.com"
+        early_idx = early.blind_index(value, "user_email")
+        mid_idx = mid.blind_index(value, "user_email")
+        late_idx = late.blind_index(value, "user_email")
+
+        assert early_idx == mid_idx == late_idx
+
+    def test_blind_index_survives_keyring_reload(self, monkeypatch, tmp_path):
+        """The persisted root key is reused rather than re-randomised."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        first = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+        value = "stable@example.com"
+        first_idx = first.blind_index(value, "user_email")
+
+        # Reload the same keyring from disk in a fresh manager instance.
+        reloaded = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+        assert reloaded.blind_index(value, "user_email") == first_idx
