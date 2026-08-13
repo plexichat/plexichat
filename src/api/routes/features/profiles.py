@@ -67,6 +67,19 @@ async def update_own_profile(
             banner_url=body.banner_url,
             social_links=body.social_links,
         )
+
+        # Forward custom status / emoji to the profile custom-status store,
+        # preserving any sibling fields the client did not mention (the manager
+        # treats unspecified fields as "leave unchanged").
+        extra: dict = {}
+        if "status" in body.model_fields_set:
+            extra["text"] = body.status
+        if "status_emoji" in body.model_fields_set:
+            extra["emoji"] = body.status_emoji
+        if extra:
+            svc.set_custom_status(user_id=current_user.user_id, **extra)
+            result = svc.get_profile(current_user.user_id)
+
         return {"success": True, "profile": result}
     except ValueError as e:
         raise_bad_request(str(e))
