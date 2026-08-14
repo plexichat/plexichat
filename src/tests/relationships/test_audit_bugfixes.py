@@ -34,23 +34,31 @@ class TestRel1CacheInvalidationPattern:
         RelationshipsBase._invalidate_relationship_list_cache(None, 1, 2)
 
         assert captured["patterns"] == [
-            "relationships_api:*:current_user:*:1",
-            "relationships_api:*:current_user:*:2",
+            "relationships_api:*:current_user:TokenInfo:1:*",
+            "relationships_api:*:current_user:TokenInfo:2:*",
         ]
-        assert all("*:current_user:*" in p for p in captured["patterns"])
+        assert all(":current_user:TokenInfo:" in p for p in captured["patterns"])
 
     def test_pattern_matches_generated_listing_key(self):
         """The pattern matches the key format produced for a listing route.
 
-        Listing route keys look like:
-            relationships_api:<Router repr>:current_user:TokenInfo:<uid>
-        The old pattern (without the leading wildcard) never matched.
+        The real listing key carries the router-instance segment, the
+        ``TokenInfo:`` segment, and trailing ``:limit:...:offset:...`` segments::
+
+            relationships_api:<Router repr>:current_user:TokenInfo:<uid>:limit:int:100:offset:int:0
+
+        The corrected glob ``relationships_api:*:current_user:TokenInfo:<uid>:*``
+        matches this; the previous glob (missing ``TokenInfo:`` and the trailing
+        ``*``) never matched, so invalidation was a silent no-op.
         """
         generated_key = (
-            "relationships_api:RelationshipsRouter:<...>:current_user:TokenInfo:42"
+            "relationships_api:RelationshipsRouter:<...>:"
+            "current_user:TokenInfo:42:limit:int:100:offset:int:0"
         )
-        pattern = "relationships_api:*:current_user:*42"
-        assert fnmatch.fnmatch(generated_key, pattern)
+        new_pattern = "relationships_api:*:current_user:TokenInfo:42:*"
+        old_pattern = "relationships_api:*:current_user:*:42"
+        assert fnmatch.fnmatch(generated_key, new_pattern)
+        assert not fnmatch.fnmatch(generated_key, old_pattern)
 
 
 class TestRel3FriendRequestMessageLength:

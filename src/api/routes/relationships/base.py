@@ -58,4 +58,4 @@ class RelationshipsBase:
             # ``relationships_api:<Router repr>:current_user:TokenInfo:<uid>``.
             # The leading router-instance segment must be wildcarded so the
             # invalidation glob actually matches the generated keys.
-            invalidate_pattern(f"{prefix}:*:current_user:*:{normalized_id}")
+            invalidate_pattern(f"{prefix}:*:current_user:TokenInfo:{normalized_id}:*")
