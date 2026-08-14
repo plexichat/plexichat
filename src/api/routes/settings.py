@@ -2,13 +2,14 @@
 User Settings routes - Cloud-synced key-value store for user preferences.
 """
 
-import time
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends, Body
 
 import src.api as api
-from src.core.database import cached, invalidate_pattern
+from src.core.database.cache.decorators import cached
+from src.core.database.cache.operations import invalidate_cached, invalidate_pattern
+from src.core.database.cache.serialization import generate_cache_key
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.settings import (
     SettingValue,
@@ -29,12 +30,25 @@ import utils.logger as logger
 router = APIRouter(tags=["User Settings"])
 
 
-def _invalidate_user_settings_cache(user_id: int) -> None:
-    """Invalidate all cached settings reads for a user (both list and per-key)."""
-    # GET /            -> user_settings_all_api:current_user:TokenInfo:<uid>
-    # GET /{key}       -> user_setting_api:current_user:TokenInfo:<uid>:key:<value>
-    invalidate_pattern(f"user_settings_all_api:*:TokenInfo:{user_id}")
-    invalidate_pattern(f"user_setting_api:*:TokenInfo:{user_id}:*")
+def _invalidate_user_settings_cache(
+    current_user: TokenInfo, keys: Optional[list] = None
+) -> None:
+    """Invalidate all cached settings reads for a user (both list and per-key).
+
+    Cache keys are produced by ``generate_cache_key`` from the route function
+    arguments, so we reconstruct the exact keys here instead of relying on a
+    glob pattern that can never line up with the generated key layout (the
+    per-key key embeds ``str:<key>`` and yields a different colon count than any
+    static pattern). This guarantees GET /settings and GET /{key} stop serving
+    stale data after a write.
+    """
+    invalidate_cached(generate_cache_key("user_settings_all_api", current_user))
+    if keys:
+        for key in keys:
+            invalidate_cached(generate_cache_key("user_setting_api", key, current_user))
+    else:
+        # Unknown key set (defensive) — wipe every per-key cache for the user.
+        invalidate_pattern(f"user_setting_api:*:*:TokenInfo:{current_user.user_id}")
 
 
 @router.get(
@@ -116,8 +130,10 @@ async def bulk_update_settings(
     updated = 0
     try:
         for key, raw_value in body.items():
-            # Convert value to string for storage
-            value = str(raw_value) if not isinstance(raw_value, str) else raw_value
+            # Convert non-string values to JSON so they round-trip correctly
+            # (a plain ``str()`` would mangle booleans/None/dicts, e.g.
+            # ``True`` -> "True" and break later boolean comparisons).
+            value = raw_value if isinstance(raw_value, str) else json.dumps(raw_value)
 
             # Special case for focused channel
             if key == "_focused_channel" and presence_module:
@@ -131,6 +147,8 @@ async def bulk_update_settings(
                         channel_id=int(cid) if cid and str(cid) != "0" else None,
                         server_id=int(sid) if sid and str(sid) != "0" else None,
                     )
+                    # Persist so GET /_focused_channel stays consistent with PUT.
+                    settings_module.set_setting(current_user.user_id, key, value)
                     updated += 1
                 except Exception as e:
                     failures[key] = f"Failed to update focused channel: {e}"
@@ -150,7 +168,7 @@ async def bulk_update_settings(
             except Exception as e:
                 failures[key] = f"Unexpected error: {e}"
 
-        _invalidate_user_settings_cache(current_user.user_id)
+        _invalidate_user_settings_cache(current_user, keys=list(body.keys()))
 
         return BulkSettingsResponse(
             success=len(failures) == 0,
@@ -245,6 +263,14 @@ async def set_setting(
 
     Creates or updates the setting with the given key.
     """
+    settings_module = api.get_settings()
+    if not settings_module:
+        logger.error("Settings module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Settings module not available"}},
+        )
+
     # Special case for focused channel tracking (transient presence state).
     # On a malformed payload we must NOT silently store the raw JSON string as
     # a setting, so we surface the error instead of falling through.
@@ -261,11 +287,15 @@ async def set_setting(
                     channel_id=int(cid) if cid and str(cid) != "0" else None,
                     server_id=int(sid) if sid and str(sid) != "0" else None,
                 )
+                # Persist so GET /_focused_channel returns the same value.
+                setting = settings_module.set_setting(
+                    current_user.user_id, key, body.value
+                )
                 return SettingResponse(
-                    key=key,
-                    value=body.value,
-                    created_at=int(time.time() * 1000),
-                    updated_at=int(time.time() * 1000),
+                    key=setting.key,
+                    value=setting.value,
+                    created_at=setting.created_at,
+                    updated_at=setting.updated_at,
                 )
             except HTTPException:
                 raise
@@ -280,14 +310,6 @@ async def set_setting(
                         }
                     },
                 )
-
-    settings_module = api.get_settings()
-    if not settings_module:
-        logger.error("Settings module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Settings module not available"}},
-        )
 
     try:
         try:
@@ -307,7 +329,7 @@ async def set_setting(
 
         logger.info(f"Set setting '{key}' for user {current_user.user_id}")
 
-        _invalidate_user_settings_cache(current_user.user_id)
+        _invalidate_user_settings_cache(current_user, keys=[key])
 
         return SettingResponse(
             key=setting.key,
@@ -369,7 +391,7 @@ async def delete_setting(
 
         logger.info(f"Deleted setting '{key}' for user {current_user.user_id}")
 
-        _invalidate_user_settings_cache(current_user.user_id)
+        _invalidate_user_settings_cache(current_user, keys=[key])
 
         return SuccessResponse(success=True, message=None)
     except HTTPException:
