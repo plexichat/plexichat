@@ -21,45 +21,7 @@ ots:timestamp_commit:
   stage: timestamp
   script:
     - pip install opentimestamps
-    - |
-      python3 << 'PYEOF'
-      import hashlib, os, sys
-      from opentimestamps.core.timestamp import Timestamp, DetachedTimestampFile
-      from opentimestamps.core.op import OpSHA256
-      from opentimestamps.core.serialize import StreamSerializationContext
-      from opentimestamps.calendar import RemoteCalendar
-
-      commit_sha = os.environ["CI_COMMIT_SHA"]
-      project = os.environ["CI_PROJECT_PATH"].replace("/", "_")
-      sha256 = hashlib.sha256(commit_sha.encode()).digest()
-
-      stamp = Timestamp(sha256)
-      dtf = DetachedTimestampFile(OpSHA256(), stamp)
-
-      calendars = [
-          "https://ots.btc.catallaxy.com",
-          "https://a.calendar.opentimestamps.org",
-          "https://b.calendar.opentimestamps.org",
-      ]
-      for cal_url in calendars:
-          try:
-              cal = RemoteCalendar(cal_url)
-              cal_stamp = cal.submit(sha256, timeout=30)
-              dtf.timestamp.merge(cal_stamp)
-              print(f"Submitted to {cal_url}")
-              break
-          except Exception as e:
-              print(f"Calendar {cal_url} failed: {e}", file=sys.stderr)
-              continue
-
-      out_dir = "ots-proofs"
-      os.makedirs(out_dir, exist_ok=True)
-      out_path = os.path.join(out_dir, f"{project}_{commit_sha[:12]}.ots")
-      with open(out_path, "wb") as f:
-          ctx = StreamSerializationContext(f)
-          dtf.serialize(ctx)
-      print(f"Proof saved: {out_path} ({os.path.getsize(out_path)} bytes)")
-      PYEOF
+    - python ci-tooling/ots_stamp.py
   artifacts:
     paths:
       - ots-proofs/
@@ -77,45 +39,7 @@ ots:push_proofs:
     - ots:timestamp_commit
   script:
     - pip install opentimestamps
-    - |
-      python3 << 'PYEOF'
-      import hashlib, os, sys, subprocess
-      from opentimestamps.core.timestamp import Timestamp, DetachedTimestampFile
-      from opentimestamps.core.op import OpSHA256
-      from opentimestamps.core.serialize import StreamSerializationContext
-      from opentimestamps.calendar import RemoteCalendar
-
-      commit_sha = os.environ["CI_COMMIT_SHA"]
-      project = os.environ["CI_PROJECT_PATH"].replace("/", "_")
-      sha256 = hashlib.sha256(commit_sha.encode()).digest()
-
-      stamp = Timestamp(sha256)
-      dtf = DetachedTimestampFile(OpSHA256(), stamp)
-
-      calendars = [
-          "https://ots.btc.catallaxy.com",
-          "https://a.calendar.opentimestamps.org",
-          "https://b.calendar.opentimestamps.org",
-      ]
-      for cal_url in calendars:
-          try:
-              cal = RemoteCalendar(cal_url)
-              cal_stamp = cal.submit(sha256, timeout=30)
-              dtf.timestamp.merge(cal_stamp)
-              print(f"Submitted to {cal_url}")
-              break
-          except Exception as e:
-              print(f"Calendar {cal_url} failed: {e}", file=sys.stderr)
-              continue
-
-      out_dir = "ots-proofs"
-      os.makedirs(out_dir, exist_ok=True)
-      out_path = os.path.join(out_dir, f"{project}_{commit_sha[:12]}.ots")
-      with open(out_path, "wb") as f:
-          ctx = StreamSerializationContext(f)
-          dtf.serialize(ctx)
-      print(f"Proof saved: {out_path}")
-      PYEOF
+    - python ci-tooling/ots_stamp.py
     - git config user.email "ci@plexichat.com"
     - git config user.name "Plexichat CI"
     - git fetch origin ots-proofs || true
@@ -347,7 +271,7 @@ performance:no_slow_tests:
   script:
     # The metrics JSON is uploaded alongside the gate verdict and feeds the
     # metrics:trend job in the next stage.
-    - python scripts/check_slow_tests.py test-results.xml --threshold 5.0 --job test:pytest --metrics-out test-durations.json
+    - python ci-tooling/check_slow_tests.py test-results.xml --threshold 5.0 --job test:pytest --metrics-out test-durations.json
   artifacts:
     when: always
     paths:
@@ -378,10 +302,10 @@ metrics:trend:
     - performance:no_slow_tests
   script:
     # The ci-metrics branch only tracks ci-metrics.jsonl + index.html, so
-    # checking it out would delete scripts/ from the worktree.  Copy the
+    # checking it out would delete ci-tooling/ from the worktree.  Copy the
     # publish script to /tmp first, and fetch the branch (CI only checks
     # out the pipeline ref by default, so ci-metrics is not local).
-    - cp scripts/trend_publish.py /tmp/trend_publish.py
+    - cp ci-tooling/trend_publish.py /tmp/trend_publish.py
     - git fetch origin ci-metrics || true
     - |
       if git rev-parse --verify origin/ci-metrics >/dev/null 2>&1; then

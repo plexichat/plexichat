@@ -1,0 +1,34 @@
+# Plexichat development / pre-commit toolchain.
+#
+# Direct dev dependencies only. Generate the fully-pinned lock with:
+#   uv pip compile requirements-dev.in --generate-hashes -o requirements-dev.txt
+# Dev / CI environments sync to this lock (which also pulls in every
+# runtime dependency via ``-r requirements.in``):
+#   uv pip sync requirements-dev.txt
+#
+# Rationale: every hook in .pre-commit-config.yaml uses
+# ``language: system``, so the binaries below must exist in the active
+# Python environment. Pinning them here (and syncing to the compiled
+# requirements-dev.txt) makes the lint/static-analysis toolchain
+# reproducible and stops ``uv pip sync requirements.txt`` from silently
+# stripping developer tooling (pyright, detect-secrets, ...).
+
+-r requirements.in
+
+# pre-commit: runs the hooks defined in .pre-commit-config.yaml.
+pre-commit==4.6.0
+
+# ruff + ruff-format: the ``ruff`` and ``ruff-format`` hooks.
+ruff==0.15.12
+
+# pyright: the ``pyright`` type-check hook.
+pyright==1.1.411
+
+# bandit: the ``bandit`` security-lint hook.
+bandit==1.9.4
+
+# detect-secrets: the ``detect-secrets`` secret-scanning hook.
+detect-secrets==1.5.0
+
+# pip-audit: dependency vulnerability scanning (run against both lock files).
+pip-audit==2.10.1
