@@ -7,11 +7,13 @@ and Apple Push Notification service.
 """
 
 import importlib
+import json
 import time
 from typing import Optional, List, Dict, Any, cast
 
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
+from src.core.push.exceptions import PermissionDeniedError
 
 
 class PushManager:
@@ -25,10 +27,12 @@ class PushManager:
         self._notifications = notifications_module
         self._fcm_available = False
         self._apns_available = False
+        self._vapid_available = False
         self._check_push_services()
+        self._ensure_push_token_columns()
 
     def _check_push_services(self) -> None:
-        """Check if FCM/APNs credentials are available."""
+        """Check if FCM/APNs/VAPID credentials are available."""
         try:
             import utils.config as config
 
@@ -39,8 +43,31 @@ class PushManager:
                 self._fcm_available = True
             if push_config.get("apns_cert_path") or push_config.get("apns_token_path"):
                 self._apns_available = True
+            if push_config.get("vapid_private_key") and push_config.get(
+                "vapid_subject"
+            ):
+                self._vapid_available = True
         except Exception:
             pass
+
+    def _ensure_push_token_columns(self) -> None:
+        """Add p256dh/auth columns for Web Push if a pre-existing DB lacks them."""
+        try:
+            existing = {
+                row["name"]
+                for row in self._db.fetch_all("PRAGMA table_info(push_tokens)")
+            }
+        except Exception:
+            return
+        for column in ("p256dh", "auth"):
+            if column in existing:
+                continue
+            try:
+                self._db.execute(f"ALTER TABLE push_tokens ADD COLUMN {column} TEXT")
+            except Exception:
+                # Another process may have added it concurrently, or the
+                # table does not exist yet — either way it is safe to ignore.
+                pass
 
     def _get_timestamp(self) -> int:
         return int(time.time() * 1000)
@@ -55,16 +82,20 @@ class PushManager:
         platform: str,
         device_id: Optional[str] = None,
         app_version: Optional[str] = None,
+        p256dh: Optional[str] = None,
+        auth: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Register a push notification token for a user's device.
 
         Args:
             user_id: ID of the user
-            token: Push notification token (FCM or APNs)
+            token: Push notification token (FCM/APNs token or Web Push endpoint)
             platform: Platform type (ios, android, web)
             device_id: Optional device identifier
             app_version: Optional app version string
+            p256dh: Web Push subscription P-256 ECDH public key (web only)
+            auth: Web Push subscription auth secret (web only)
 
         Returns:
             Token record dict
@@ -75,13 +106,6 @@ class PushManager:
                 f"Unsupported platform: {platform}. Use: {self.SUPPORTED_PLATFORMS}"
             )
 
-        # Check token limit per user
-        count_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM push_tokens WHERE user_id = ?",
-            (user_id,),
-        )
-        count = count_row["count"] if count_row else 0
-
         now = self._get_timestamp()
 
         # Check if this token already exists (for any user - re-registration)
@@ -90,20 +114,35 @@ class PushManager:
             (token,),
         )
         if existing:
-            # Token exists - update it to new user/device
+            # A push token is a credential bound to the device that generated
+            # it. Re-registering a token that already belongs to a *different*
+            # user would let account B hijack account A's notifications, so we
+            # reject cross-user re-registration outright.
+            if existing["user_id"] != user_id:
+                raise PermissionDeniedError(
+                    "This push token is already registered to another account"
+                )
+            # Same user re-registering (e.g. refreshed subscription) — update.
             self._db.execute(
-                """UPDATE push_tokens SET user_id = ?, platform = ?, device_id = ?,
-                   app_version = ?, updated_at = ?, last_used_at = ?
+                """UPDATE push_tokens SET platform = ?, device_id = ?,
+                   app_version = ?, p256dh = ?, auth = ?, updated_at = ?,
+                   last_used_at = ?
                    WHERE token = ?""",
-                (user_id, platform, device_id, app_version, now, now, token),
+                (platform, device_id, app_version, p256dh, auth, now, now, token),
             )
             row = self._db.fetch_one(
                 "SELECT * FROM push_tokens WHERE token = ?", (token,)
             )
             return dict(row) if row else {}
 
+        # Check token limit per user (only enforced when a brand new token row
+        # is created — re-registering an existing token never adds a row).
+        count_row = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM push_tokens WHERE user_id = ?",
+            (user_id,),
+        )
+        count = count_row["count"] if count_row else 0
         if count >= self.MAX_TOKENS_PER_USER:
-            # Remove the oldest token
             oldest = self._db.fetch_one(
                 "SELECT id FROM push_tokens WHERE user_id = ? ORDER BY updated_at ASC LIMIT 1",
                 (user_id,),
@@ -116,9 +155,21 @@ class PushManager:
         token_id = self._generate_id()
         self._db.execute(
             """INSERT INTO push_tokens
-               (id, user_id, token, platform, device_id, app_version, created_at, updated_at, last_used_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (token_id, user_id, token, platform, device_id, app_version, now, now, now),
+               (id, user_id, token, platform, device_id, app_version, p256dh, auth, created_at, updated_at, last_used_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                token_id,
+                user_id,
+                token,
+                platform,
+                device_id,
+                app_version,
+                p256dh,
+                auth,
+                now,
+                now,
+                now,
+            ),
         )
 
         logger.debug(f"Push token registered for user {user_id} on {platform}")
@@ -192,13 +243,11 @@ class PushManager:
 
         for token_record in tokens:
             token = token_record["token"]
-            platform = token_record["platform"]
-
             success = self._send_to_platform(
-                token, platform, title, body, data, badge, sound, priority
+                token_record, title, body, data, badge, sound, priority
             )
 
-            if success:
+            if success is True:
                 sent_count += 1
                 # Update last used
                 now = self._get_timestamp()
@@ -206,9 +255,13 @@ class PushManager:
                     "UPDATE push_tokens SET last_used_at = ? WHERE token = ?",
                     (now, token),
                 )
-            else:
-                # Token may be invalid - mark for cleanup
+            elif success is False:
+                # Token is genuinely invalid (e.g. subscription expired) -
+                # mark for cleanup.
                 invalid_tokens.append(token)
+            # ``None`` means delivery was skipped because of missing
+            # configuration (VAPID not set) or incomplete subscription data;
+            # the token is neither counted nor invalidated.
 
         # Clean up invalid tokens
         for token in invalid_tokens:
@@ -219,16 +272,21 @@ class PushManager:
 
     def _send_to_platform(
         self,
-        token: str,
-        platform: str,
+        token_record: Dict[str, Any],
         title: str,
         body: str,
         data: Optional[Dict[str, Any]],
         badge: Optional[int],
         sound: str,
         priority: str,
-    ) -> bool:
-        """Send push notification to a specific platform."""
+    ) -> Optional[bool]:
+        """Send push notification to a specific platform.
+
+        Returns ``True`` on successful delivery, ``False`` when the token is
+        invalid (caller should drop it), and ``None`` when delivery was
+        skipped due to missing configuration/subscription data (the token is
+        left intact).
+        """
         try:
             import utils.config as config
 
@@ -236,11 +294,85 @@ class PushManager:
         except Exception:
             push_config = {}
 
-        if platform == "android" or platform == "web":
+        token = token_record["token"]
+        platform = token_record["platform"]
+        if platform == "web":
+            return self._send_web_push(token_record, title, body, data, push_config)
+        elif platform == "android":
             return self._send_fcm(token, title, body, data, push_config)
         elif platform == "ios":
             return self._send_apns(token, title, body, data, badge, sound, push_config)
         return False
+
+    def _send_web_push(
+        self,
+        token_record: Dict[str, Any],
+        title: str,
+        body: str,
+        data: Optional[Dict[str, Any]],
+        push_config: Dict[str, Any],
+    ) -> Optional[bool]:
+        """Send a Web Push notification using the VAPID protocol.
+
+        For the ``web`` platform the stored ``token`` is the subscription
+        endpoint; the P-256 public key (``p256dh``) and auth secret
+        (``auth``) are required to encrypt the payload.  Previously web
+        subscriptions were silently handed to FCM as if the endpoint were an
+        FCM token, so every browser push was dropped.  Here we encrypt and
+        deliver the message directly to the browser push service.
+
+        Returns ``True`` on successful delivery, ``False`` when the
+        subscription is rejected by the push service (caller should drop the
+        token), and ``None`` when delivery was skipped because VAPID is not
+        configured or the subscription is incomplete (token left intact).
+        """
+        if not self._vapid_available:
+            logger.debug(
+                "VAPID not configured - cannot deliver Web Push to "
+                f"{token_record.get('token', '')[:16]}..."
+            )
+            return None
+
+        p256dh = token_record.get("p256dh")
+        auth = token_record.get("auth")
+        endpoint = token_record.get("token")
+        if not p256dh or not auth or not endpoint:
+            logger.debug("Web Push subscription missing p256dh/auth/endpoint")
+            return None
+
+        try:
+            from pywebpush import WebPushException, webpush
+        except ImportError:
+            logger.warning("pywebpush not installed - Web Push unavailable")
+            return None
+
+        subscription_info = {
+            "endpoint": endpoint,
+            "keys": {"p256dh": p256dh, "auth": auth},
+        }
+        payload = json.dumps({"title": title, "body": body, "data": data or {}})
+        try:
+            webpush(
+                subscription_info=subscription_info,
+                data=payload,
+                vapid_private_key=push_config["vapid_private_key"],
+                vapid_claims={"sub": push_config["vapid_subject"]},
+                content_encoding="aes128gcm",
+            )
+            logger.debug(f"Web Push sent to {endpoint[:16]}...")
+            return True
+        except WebPushException as e:
+            # 404/410 from the push service means the subscription is gone;
+            # the caller treats a False return as "remove this token".
+            response = getattr(e, "response", None)
+            status = getattr(response, "status_code", None)
+            logger.warning(
+                f"Web Push failed for {endpoint[:16]}... (status={status}, {e})"
+            )
+            return False
+        except Exception as e:
+            logger.error(f"Web Push failed for {endpoint[:16]}...: {e}")
+            return False
 
     def _send_fcm(
         self,

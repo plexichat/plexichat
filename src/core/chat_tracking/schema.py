@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS push_tokens (
     platform TEXT NOT NULL,
     device_id TEXT,
     app_version TEXT,
+    p256dh TEXT,
+    auth TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     last_used_at INTEGER,

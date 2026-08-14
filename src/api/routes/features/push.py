@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -6,6 +6,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from .common import raise_bad_request
+from src.core.push.exceptions import PermissionDeniedError
 
 router = APIRouter()
 
@@ -15,6 +16,8 @@ class PushTokenRequest(BaseModel):
     platform: str = Field(..., description="Platform: ios, android, or web")
     device_id: Optional[str] = Field(None, description="Device identifier")
     app_version: Optional[str] = Field(None, description="App version string")
+    p256dh: Optional[str] = Field(None, description="Web Push P-256 public key")
+    auth: Optional[str] = Field(None, description="Web Push auth secret")
 
 
 @router.post(
@@ -40,10 +43,14 @@ async def register_push_token(
             platform=body.platform,
             device_id=body.device_id,
             app_version=body.app_version,
+            p256dh=body.p256dh,
+            auth=body.auth,
         )
         return {"success": True, "token_record": result}
     except ValueError as e:
         raise_bad_request(str(e))
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
 
 @router.get(
