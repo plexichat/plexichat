@@ -176,6 +176,10 @@ class StickerManager:
             return True
         return self._servers.has_permission(user_id, server_id, "server.manage")
 
+    def _user_owns_pack(self, user_id: int, pack: "StickerPack") -> bool:
+        """True when ``user_id`` created the pack (personal / purchased packs)."""
+        return pack.created_by == user_id
+
     def _is_server_member(self, user_id: int, server_id: int) -> bool:
         if not self._servers:
             return True
@@ -293,15 +297,12 @@ class StickerManager:
             raise PackNotFoundError("Sticker pack not found")
         if pack.pack_type == PackType.DEFAULT:
             raise PermissionDeniedError("Cannot delete default packs")
-        if (
-            pack.pack_type == PackType.SERVER
-            and pack.server_id
-            and not self._check_server_permission(user_id, pack.server_id)
-        ):
-            raise PermissionDeniedError(
-                "Missing permission to manage server", "server.manage"
-            )
-        elif pack.pack_type != PackType.SERVER and pack.created_by != user_id:
+        if pack.pack_type == PackType.SERVER and pack.server_id:
+            if not self._check_server_permission(user_id, pack.server_id):
+                raise PermissionDeniedError(
+                    "Missing permission to manage server", "server.manage"
+                )
+        elif not self._user_owns_pack(user_id, pack):
             raise PermissionDeniedError("Can only delete own packs")
         self._db.execute("DELETE FROM sticker_stickers WHERE pack_id = ?", (pack_id,))
         self._db.execute("DELETE FROM sticker_packs WHERE id = ?", (pack_id,))
@@ -323,15 +324,12 @@ class StickerManager:
         pack = self.get_pack(pack_id, user_id)
         if not pack:
             raise PackNotFoundError("Sticker pack not found")
-        if (
-            pack.pack_type == PackType.SERVER
-            and pack.server_id
-            and not self._check_server_permission(user_id, pack.server_id)
-        ):
-            raise PermissionDeniedError(
-                "Missing permission to manage server", "server.manage"
-            )
-        elif pack.pack_type != PackType.SERVER and pack.created_by != user_id:
+        if pack.pack_type == PackType.SERVER and pack.server_id:
+            if not self._check_server_permission(user_id, pack.server_id):
+                raise PermissionDeniedError(
+                    "Missing permission to manage server", "server.manage"
+                )
+        elif not self._user_owns_pack(user_id, pack):
             raise PermissionDeniedError("Can only add stickers to own packs")
         name = self._validate_sticker_name(name)
         allowed = self._config.get("allowed_formats", ["png", "apng", "json"])
@@ -450,15 +448,12 @@ class StickerManager:
         pack = self.get_pack(sticker.pack_id, user_id)
         if not pack:
             raise PackNotFoundError("Sticker pack not found")
-        if (
-            pack.pack_type == PackType.SERVER
-            and pack.server_id
-            and not self._check_server_permission(user_id, pack.server_id)
-        ):
-            raise PermissionDeniedError(
-                "Missing permission to manage server", "server.manage"
-            )
-        elif pack.pack_type != PackType.SERVER and pack.created_by != user_id:
+        if pack.pack_type == PackType.SERVER and pack.server_id:
+            if not self._check_server_permission(user_id, pack.server_id):
+                raise PermissionDeniedError(
+                    "Missing permission to manage server", "server.manage"
+                )
+        elif not self._user_owns_pack(user_id, pack):
             raise PermissionDeniedError("Can only remove stickers from own packs")
         self._db.execute("DELETE FROM sticker_stickers WHERE id = ?", (sticker_id,))
         self._db.execute(
@@ -490,15 +485,12 @@ class StickerManager:
         pack = self.get_pack(sticker.pack_id, user_id)
         if not pack:
             raise PackNotFoundError("Sticker pack not found")
-        if (
-            pack.pack_type == PackType.SERVER
-            and pack.server_id
-            and not self._check_server_permission(user_id, pack.server_id)
-        ):
-            raise PermissionDeniedError(
-                "Missing permission to manage server", "server.manage"
-            )
-        elif pack.pack_type != PackType.SERVER and pack.created_by != user_id:
+        if pack.pack_type == PackType.SERVER and pack.server_id:
+            if not self._check_server_permission(user_id, pack.server_id):
+                raise PermissionDeniedError(
+                    "Missing permission to manage server", "server.manage"
+                )
+        elif not self._user_owns_pack(user_id, pack):
             raise PermissionDeniedError("Can only update stickers in own packs")
 
         updates: Dict[str, Any] = {}
@@ -542,17 +534,14 @@ class StickerManager:
         pack = self.get_pack(pack_id, user_id)
         if not pack:
             raise PackNotFoundError("Sticker pack not found")
-        if (
-            pack.pack_type == PackType.SERVER
-            and pack.server_id
-            and not self._check_server_permission(user_id, pack.server_id)
-        ):
-            raise PermissionDeniedError(
-                "Missing permission to manage server", "server.manage"
-            )
         if pack.pack_type == PackType.DEFAULT:
             raise PermissionDeniedError("Cannot modify default packs")
-        if pack.pack_type != PackType.SERVER and pack.created_by != user_id:
+        if pack.pack_type == PackType.SERVER and pack.server_id:
+            if not self._check_server_permission(user_id, pack.server_id):
+                raise PermissionDeniedError(
+                    "Missing permission to manage server", "server.manage"
+                )
+        elif not self._user_owns_pack(user_id, pack):
             raise PermissionDeniedError("Can only update own packs")
 
         updates: Dict[str, Any] = {}
@@ -701,9 +690,10 @@ class StickerManager:
         """Permission query used by message senders.
 
         Server packs (pack_type=SERVER, server_id != NULL) require
-        membership; "personal" packs (pack_type=SERVER,
-        server_id IS NULL) require ownership of the pack
-        (``created_by == user_id``); default packs are open to everyone.
+        membership; "personal" packs (``PackType.PERSONAL``) and server packs
+        without a server require ownership of the pack
+        (``created_by == user_id``); default and purchased packs are open to
+        everyone.
         """
         sticker = self.get_sticker(sticker_id)
         if not sticker:
@@ -711,13 +701,12 @@ class StickerManager:
         pack = self.get_pack(sticker.pack_id, user_id)
         if not pack:
             return False
+        if pack.pack_type in (PackType.DEFAULT, PackType.PURCHASED):
+            return True
         if pack.pack_type == PackType.SERVER and pack.server_id:
             return self._is_server_member(user_id, pack.server_id)
-        if pack.pack_type == PackType.SERVER and pack.server_id is None:
-            # Personal pack — caller must own it.
-            return pack.created_by == user_id
-        # PackType.DEFAULT or other: accessible by anyone
-        return True
+        # SERVER (no server) and PERSONAL packs require ownership.
+        return pack.created_by == user_id
 
     def send_sticker(
         self, user_id: int, message_id: int, sticker_id: int
@@ -762,6 +751,12 @@ class StickerManager:
     ) -> List[StickerSuggestion]:
         if not content or not content.strip():
             return []
+        # Only surface a server's stickers to members of that server. Without
+        # this check any authenticated user could enumerate another server's
+        # sticker pack by simply passing its server_id.
+        if server_id is not None and self._servers is not None:
+            if not self._is_server_member(user_id, server_id):
+                server_id = None
         max_suggestions = limit or self._config.get("max_suggestions", 10)
         content_lower = content.lower()
         words = set(re.findall(r"\w+", content_lower))

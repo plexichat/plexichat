@@ -25,7 +25,7 @@ from src.core.stickers.exceptions import (
 
 # Hard ceiling applied at the HTTP boundary so a single request cannot buffer
 # an unbounded body into memory before the manager's own size check runs.
-STICKER_MAX_UPLOAD_BYTES = 524288
+STICKER_MAX_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MiB
 
 # Expected, user-facing failures from the sticker manager. These carry safe
 # messages worth returning; everything else is collapsed to a generic 500 so
@@ -292,7 +292,7 @@ async def delete_sticker(
         pack = stickers_mod.get_pack(sticker.pack_id, current_user.user_id)
         server_id = pack.server_id if pack else None
 
-        stickers_mod.remove_sticker(current_user.user_id, sid)
+        stickers_mod.delete_sticker(current_user.user_id, sid)
 
         # Dispatch update if server sticker
         if server_id:
@@ -301,6 +301,8 @@ async def delete_sticker(
         return {"success": True}
     except PermissionDeniedError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except PackNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to delete sticker {sticker_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete sticker")
@@ -323,8 +325,14 @@ async def send_sticker_usage(
     try:
         sid = int(sticker_id)
         mid = int(message_id)
+        if not stickers_mod.can_use_sticker(current_user.user_id, sid):
+            raise PermissionDeniedError(
+                "You do not have permission to use this sticker"
+            )
         stickers_mod.send_sticker(current_user.user_id, mid, sid)
         return {"success": True}
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         # Log but don't fail hard if usage tracking fails
         logger.warning(f"Failed to track sticker usage: {e}")
