@@ -225,7 +225,6 @@ def _build_where(filters: Dict[str, Any]) -> tuple[str, List[Any]]:
     for col in (
         "conversation_id",
         "channel_id",
-        "server_id",
         "author_id",
         "status",
     ):
@@ -235,6 +234,24 @@ def _build_where(filters: Dict[str, Any]) -> tuple[str, List[Any]]:
             if col == "status" and hasattr(value, "value"):
                 value = value.value
             params.append(value)
+
+    # Server id: accepts a single value or a list (used by the Suite shared
+    # feed to gather the caller's memberships in one query).
+    server_id = filters.get("server_id")
+    if server_id is not None:
+        if isinstance(server_id, (list, tuple, set, frozenset)):
+            ids = [int(v) for v in server_id]
+            if not ids:
+                # ``IN ()`` is invalid SQL; an empty membership set must
+                # match nothing rather than raise a syntax error.
+                clauses.append("1 = 0")
+            else:
+                placeholders = ", ".join("?" for _ in ids)
+                clauses.append(f"a.server_id IN ({placeholders})")
+                params.extend(ids)
+        else:
+            clauses.append("a.server_id = ?")
+            params.append(server_id)
 
     # Artifact type: accepts a single value or a list.
     artifact_type = filters.get("artifact_type")
@@ -314,7 +331,16 @@ def count_artifacts(db, filters: Optional[Dict[str, Any]] = None) -> int:
 # === Artifact ops log (artifact_ops table) ===
 
 # Op types that carry no durable document state and are never persisted.
-_TRANSIENT_OP_TYPES = {"cursor", "snapshot_request", "typing", "selection"}
+# ``presence`` / ``presence_leave`` announce board participants (the roster is
+# ephemeral by design, like live cursors) and must never bloat the ops log.
+_TRANSIENT_OP_TYPES = {
+    "cursor",
+    "snapshot_request",
+    "typing",
+    "selection",
+    "presence",
+    "presence_leave",
+}
 _MAX_ARTIFACT_OP_BYTES = 256 * 1024
 
 

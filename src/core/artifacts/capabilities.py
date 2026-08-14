@@ -11,9 +11,10 @@ cannot reach config or licensing get a best-effort `MISCONFIGURED`/`DISABLED`
 state rather than an exception.
 """
 
+import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 
 class CapabilityState(str, Enum):
@@ -131,28 +132,27 @@ def _eval_plexiscript(artifacts: Dict[str, Any]) -> CapabilityInfo:
 
 
 def _eval_plexiboard(artifacts: Dict[str, Any]) -> CapabilityInfo:
-    enabled = artifacts.get("enabled", True)
-    wb = artifacts.get("whiteboard", {}) or {}
-    wb_enabled = wb.get("enabled", True)
-    if enabled is False or wb_enabled is False:
-        return CapabilityInfo(
-            feature="plexiboard",
-            state=CapabilityState.DISABLED_BY_CONFIG,
-            message="Plexiboard (whiteboard) is disabled in the server configuration.",
-            details={"artifacts_enabled": enabled, "whiteboard_enabled": wb_enabled},
-        )
-    if not _has_feature("artifacts_whiteboard"):
-        return CapabilityInfo(
-            feature="plexiboard",
-            state=CapabilityState.DISABLED_BY_LICENSE,
-            message="Whiteboard requires a license.",
-            details={},
-        )
+    """Return the same verdict as the whiteboard capability.
+
+    ``plexiboard`` is an alias for ``artifacts_whiteboard``: the Suite
+    manifest and ``artifact_type_capability`` both reference the latter. A
+    single evaluator keeps the two keys from ever disagreeing (previously
+    ``plexiboard`` defaulted to enabled while ``artifacts_whiteboard``
+    defaulted to disabled, so the admin panel could show contradictory
+    states for the same feature).
+    """
+    info = _eval_whiteboard(artifacts)
+    if info.state == CapabilityState.AVAILABLE:
+        message = "Plexiboard is enabled."
+    elif info.state == CapabilityState.DISABLED_BY_LICENSE:
+        message = "Whiteboard requires a license."
+    else:
+        message = "Plexiboard (whiteboard) is disabled in the server configuration."
     return CapabilityInfo(
         feature="plexiboard",
-        state=CapabilityState.AVAILABLE,
-        message="Plexiboard is enabled.",
-        details={"whiteboard_enabled": wb_enabled},
+        state=info.state,
+        message=message,
+        details=dict(info.details),
     )
 
 
@@ -321,6 +321,30 @@ def _eval_voice_recording(artifacts: Dict[str, Any]) -> CapabilityInfo:
     )
 
 
+def _evaluators() -> Dict[str, Callable[[Dict[str, Any]], CapabilityInfo]]:
+    """Return the per-feature evaluator registry.
+
+    Kept as a function so ``get_capability`` can evaluate a single feature
+    without paying for the others (notably the voice-transcription provider
+    import, which is unnecessary for Suite/artifact capability checks).
+    """
+    return {
+        "artifacts": _eval_artifacts,
+        "artifacts_whiteboard": _eval_whiteboard,
+        "voice_transcription": _eval_voice_transcription,
+        "voice_recording": _eval_voice_recording,
+        "plexiscribe": _eval_plexiscribe,
+        "plexiscript": _eval_plexiscript,
+        "plexiboard": _eval_plexiboard,
+        "plexistash": lambda artifacts: _eval_suite_feature(
+            artifacts, "plexistash", "PlexiStash"
+        ),
+        "plexisum": lambda artifacts: _eval_suite_feature(
+            artifacts, "plexisum", "PlexiSum"
+        ),
+    }
+
+
 def get_artifact_capabilities(
     config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, CapabilityInfo]:
@@ -338,15 +362,7 @@ def get_artifact_capabilities(
     try:
         artifacts = _load_config(config)
         return {
-            "artifacts": _eval_artifacts(artifacts),
-            "artifacts_whiteboard": _eval_whiteboard(artifacts),
-            "voice_transcription": _eval_voice_transcription(artifacts),
-            "voice_recording": _eval_voice_recording(artifacts),
-            "plexiscribe": _eval_plexiscribe(artifacts),
-            "plexiscript": _eval_plexiscript(artifacts),
-            "plexiboard": _eval_plexiboard(artifacts),
-            "plexistash": _eval_suite_feature(artifacts, "plexistash", "PlexiStash"),
-            "plexisum": _eval_suite_feature(artifacts, "plexisum", "PlexiSum"),
+            feature: evaluate(artifacts) for feature, evaluate in _evaluators().items()
         }
     except Exception:
         # Last-resort fallback so the endpoint can never crash.
@@ -380,24 +396,62 @@ def capability_allows_artifact(
     )
 
 
+# Process-local memoization for the no-config hot path. Suite routes and
+# capability gates call ``get_capability(feature)`` on every request; the
+# underlying license/config lookups are already cached, but re-running the
+# evaluator (and, for voice transcription, the provider availability probe)
+# on each call is still avoidable work. A short TTL bounds staleness after a
+# license hot-swap or config reload to a couple of seconds.
+_capability_cache: Dict[str, tuple[float, CapabilityInfo]] = {}
+_CAPABILITY_CACHE_TTL_SECONDS = 5.0
+
+
+def clear_capability_cache() -> None:
+    """Drop memoized capability results (call after a license/config change)."""
+    _capability_cache.clear()
+
+
 def get_capability(
     feature: str, config: Optional[Dict[str, Any]] = None
 ) -> CapabilityInfo:
     """
     Return the :class:`CapabilityInfo` for a single feature.
 
-    Unknown features resolve to a ``MISCONFIGURED`` state with a helpful
-    message. Never raises.
+    Evaluates only the requested feature (rather than the whole catalog) so
+    hot paths like the Suite route capability gates don't import the voice
+    transcription provider on every request. Unknown features resolve to a
+    ``MISCONFIGURED`` state with a helpful message. Never raises.
+
+    When ``config`` is omitted the result is memoized for a few seconds
+    (see ``_CAPABILITY_CACHE_TTL_SECONDS``); explicit configs bypass the
+    cache so callers and tests always get a freshly-evaluated result.
     """
-    capabilities = get_artifact_capabilities(config)
-    info = capabilities.get(feature)
-    if info is None:
-        return CapabilityInfo(
+    if config is None:
+        now = time.monotonic()
+        cached = _capability_cache.get(feature)
+        if cached is not None and now - cached[0] < _CAPABILITY_CACHE_TTL_SECONDS:
+            return cached[1]
+    try:
+        artifacts = _load_config(config)
+        evaluator = _evaluators().get(feature)
+        if evaluator is None:
+            info = CapabilityInfo(
+                feature=feature,
+                state=CapabilityState.MISCONFIGURED,
+                message=f"Unknown capability feature: '{feature}'.",
+                details={},
+            )
+        else:
+            info = evaluator(artifacts)
+    except Exception:
+        info = CapabilityInfo(
             feature=feature,
             state=CapabilityState.MISCONFIGURED,
-            message=f"Unknown capability feature: '{feature}'.",
+            message="Unable to evaluate the requested capability.",
             details={},
         )
+    if config is None:
+        _capability_cache[feature] = (time.monotonic(), info)
     return info
 
 
@@ -416,6 +470,7 @@ __all__ = [
     "CapabilityInfo",
     "get_artifact_capabilities",
     "get_capability",
+    "clear_capability_cache",
     "artifact_type_capability",
     "capability_allows_artifact",
     "capability_to_dict",

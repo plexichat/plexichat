@@ -10,7 +10,7 @@ handlers, and no voice-specific call logic (those are introduced by later
 groups). Permission/visibility checks are performed by the route layer.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import utils.config as config
 import utils.logger as logger
@@ -458,7 +458,7 @@ class ArtifactManager(BaseManager):
         self,
         filters: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[SnowflakeID] = None,
-        server_id: Optional[SnowflakeID] = None,
+        server_id: Optional[Union[SnowflakeID, List[SnowflakeID]]] = None,
         channel_id: Optional[SnowflakeID] = None,
         author_id: Optional[SnowflakeID] = None,
     ) -> List[Artifact]:

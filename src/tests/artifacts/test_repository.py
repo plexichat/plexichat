@@ -58,6 +58,8 @@ def test_transient_op_types_not_persisted(db, artifact_builder):
     assert append_artifact_op(db, artifact.id, "snapshot_request", 1, {}) is None
     assert append_artifact_op(db, artifact.id, "typing", 1, {}) is None
     assert append_artifact_op(db, artifact.id, "selection", 1, {}) is None
+    assert append_artifact_op(db, artifact.id, "presence", 1, {"name": "a"}) is None
+    assert append_artifact_op(db, artifact.id, "presence_leave", 1, {}) is None
 
     assert list_artifact_ops(db, artifact.id) == []
 
@@ -97,3 +99,24 @@ def test_payload_json_column_round_trip(db, artifact_builder):
     )
     assert updated is not None
     assert updated.payload == {"rev": 2, "content": "hi"}
+
+
+def test_list_artifacts_filters_by_server_id_list(db, artifact_builder):
+    """``server_id`` accepts a list so the Suite shared feed can gather the
+    caller's authorized servers in a single ``IN (...)`` query instead of
+    one query per membership."""
+    from src.core.artifacts.repository import list_artifacts
+
+    a1 = _seed_artifact(db, artifact_builder, server_id=11)
+    a2 = _seed_artifact(db, artifact_builder, server_id=22)
+    a3 = _seed_artifact(db, artifact_builder, server_id=33)
+
+    results = list_artifacts(db, {"server_id": [11, 22]})
+    assert {int(a.id) for a in results} == {int(a1.id), int(a2.id)}
+
+    # A single scalar server_id is still supported.
+    results = list_artifacts(db, {"server_id": 33})
+    assert [int(a.id) for a in results] == [int(a3.id)]
+
+    # An empty list matches nothing.
+    assert list_artifacts(db, {"server_id": []}) == []

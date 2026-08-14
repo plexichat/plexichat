@@ -230,6 +230,40 @@ class TestCapabilityHelpers:
         assert info.state == CapabilityState.MISCONFIGURED
         assert "does_not_exist" in info.message
 
+    def test_get_capability_only_evaluates_requested_feature(self, monkeypatch):
+        """``get_capability`` must not evaluate unrelated features.
+
+        Hot paths like the Suite capability gates ask for a single feature;
+        evaluating the whole catalog would import the voice-transcription
+        provider on every request. A single-feature lookup must never invoke
+        the voice evaluator.
+        """
+        import src.core.artifacts.capabilities as caps_mod
+
+        calls: list = []
+
+        def tracking_voice(artifacts):
+            calls.append("voice_transcription")
+            return CapabilityInfo(
+                feature="voice_transcription",
+                state=CapabilityState.AVAILABLE,
+                message="ok",
+                details={},
+            )
+
+        monkeypatch.setattr(caps_mod, "_eval_voice_transcription", tracking_voice)
+
+        info = get_capability("artifacts", {})
+        assert info.feature == "artifacts"
+        assert calls == []
+
+        # Requesting the voice feature itself still invokes its evaluator.
+        voice = get_capability(
+            "voice_transcription", {"voice": {"transcription": {"enabled": True}}}
+        )
+        assert voice.feature == "voice_transcription"
+        assert calls == ["voice_transcription"]
+
     def test_artifact_type_capability_mapping(self):
         """Artifact types must map to capability names."""
         assert artifact_type_capability("whiteboard") == "artifacts_whiteboard"
@@ -341,3 +375,77 @@ class TestConfigLoading:
             assert _load_config(None) == {}
         finally:
             loader._invalidate_cache()
+
+
+# =============================================================================
+# Whiteboard alias + memoization
+# =============================================================================
+
+
+class TestWhiteboardAlias:
+    """``plexiboard`` and ``artifacts_whiteboard`` are one gate."""
+
+    def test_alias_matches_disabled(self):
+        caps = get_artifact_capabilities({"whiteboard": {"enabled": False}})
+        assert caps["plexiboard"].state == caps["artifacts_whiteboard"].state
+        assert caps["plexiboard"].state == CapabilityState.DISABLED_BY_CONFIG
+
+    def test_alias_matches_enabled(self, monkeypatch):
+        import src.core.artifacts.capabilities as caps_mod
+
+        monkeypatch.setattr(
+            caps_mod, "_has_feature", lambda feature, default=False: True
+        )
+        caps = get_artifact_capabilities({"whiteboard": {"enabled": True}})
+        assert caps["plexiboard"].state == CapabilityState.AVAILABLE
+        assert caps["artifacts_whiteboard"].state == CapabilityState.AVAILABLE
+
+    def test_alias_matches_unlicensed(self):
+        # Empty config: whiteboard disabled by config (default False), so both
+        # keys must agree rather than one falling through to a license verdict.
+        caps = get_artifact_capabilities({})
+        assert caps["plexiboard"].state == caps["artifacts_whiteboard"].state
+
+
+class TestCapabilityMemoization:
+    """The no-config ``get_capability`` path memoizes for a short TTL."""
+
+    def test_memoizes_and_clears(self, monkeypatch):
+        import src.core.artifacts.capabilities as caps_mod
+
+        caps_mod.clear_capability_cache()
+        calls = {"n": 0}
+        real_evaluators = caps_mod._evaluators
+
+        def counting():
+            calls["n"] += 1
+            return real_evaluators()
+
+        monkeypatch.setattr(caps_mod, "_evaluators", counting)
+
+        first = caps_mod.get_capability("artifacts")
+        second = caps_mod.get_capability("artifacts")
+        assert first.feature == second.feature
+        # The second call is served from the cache without re-evaluating.
+        assert calls["n"] == 1
+
+        caps_mod.clear_capability_cache()
+        caps_mod.get_capability("artifacts")
+        assert calls["n"] == 2
+
+    def test_explicit_config_bypasses_cache(self, monkeypatch):
+        import src.core.artifacts.capabilities as caps_mod
+
+        caps_mod.clear_capability_cache()
+        calls = {"n": 0}
+        real_evaluators = caps_mod._evaluators
+
+        def counting():
+            calls["n"] += 1
+            return real_evaluators()
+
+        monkeypatch.setattr(caps_mod, "_evaluators", counting)
+        caps_mod.get_capability("artifacts", {})
+        caps_mod.get_capability("artifacts", {})
+        # Explicit configs are always freshly evaluated.
+        assert calls["n"] == 2

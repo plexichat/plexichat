@@ -307,6 +307,11 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     after_expiry = licensing_module.get_expiry_timestamp()
     after_features = after_state.get("features", {})
     after_limits = after_state.get("limits", {})
+    # Feature/capability availability is derived from the license, so drop any
+    # memoized capability verdicts before the audit trail records the swap.
+    from src.core.artifacts.capabilities import clear_capability_cache
+
+    clear_capability_cache()
     _audit_license_action(
         request,
         _admin_id,
@@ -383,6 +388,9 @@ async def force_validate_license(request: Request):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="License validation failed",
         )
+    from src.core.artifacts.capabilities import clear_capability_cache
+
+    clear_capability_cache()
     after_instance = licensing_module.get_instance_id()
     _audit_license_action(
         request,

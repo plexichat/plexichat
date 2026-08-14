@@ -102,7 +102,7 @@ example whiteboard strokes and edits). Operations are ordered per artifact by
 | `id`         | INTEGER | Auto-incrementing local row id (`PRIMARY KEY AUTOINCREMENT`). |
 | `artifact_id`| INTEGER | NOT NULL; the artifact this op belongs to. |
 | `seq`        | INTEGER | NOT NULL; monotonic per-artifact sequence number. |
-| `op_type`    | TEXT    | NOT NULL; e.g. `stroke`, `edit`, `cursor`, `snapshot`. |
+| `op_type`    | TEXT    | NOT NULL; e.g. `stroke`, `edit`, `cursor`, `snapshot`. PlexiScribe's OT fabric persists `text`, `ins_block`, `del_block`, `set_type`, `set_style`, `set_marks`, and `replace_all`; `presence` / `presence_leave` / `cursor` / `typing` / `selection` are transient and never persisted. |
 | `actor_id`   | INTEGER | Nullable; user who produced the op. |
 | `data`       | TEXT    | NOT NULL; JSON-encoded op payload. |
 | `created_at` | INTEGER | NOT NULL. |
@@ -514,10 +514,16 @@ the artifact event types. It is part of both `default_intents()` and
 (`subscribe` / `unsubscribe` / `get_subscribers`) and the async relay
 helpers used by the opcode handlers:
 
-- `relay_artifact_op(dispatcher, artifact_id, op, actor_id, exclude_user_id)`
-  fans an `ARTIFACT_OP` out to all other subscribers of an artifact. It only
-  relays — persistence of the op is the responsibility of a later group
-  (editor / ops persistence).
+- `relay_artifact_op(dispatcher, artifact_id, op, actor_id, exclude_user_id,
+  seq=None)` fans an `ARTIFACT_OP` out to all other subscribers of an artifact.
+  It only relays — persistence of the op is the responsibility of the opcode
+  handler. When the caller supplies the server-assigned `seq` it is carried in
+  the relayed frame's `d.seq` so clients can total-order ops for OT
+  convergence.
+- `send_artifact_ack(connection, artifact_id, op, seq)` echoes a persisted op
+  back to its actor with its assigned `seq`. The actor already applied the op
+  optimistically, so this frame is an acknowledgement (recognised by the op's
+  `client_id`), not a re-application.
 - `send_artifact_sync(connection, artifact_id, snapshot)` emits an
   `ARTIFACT_SYNC` full snapshot to a single connection (bootstrap for late
   joiners). The snapshot dict is fetched by the caller.
