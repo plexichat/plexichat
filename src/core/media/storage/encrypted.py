@@ -6,7 +6,7 @@ Files are encrypted before upload and decrypted after download.
 """
 
 import io
-from typing import BinaryIO, Tuple, Optional, cast
+from typing import BinaryIO, Tuple, Optional, Iterator, cast
 
 import utils.logger as logger
 
@@ -16,6 +16,32 @@ from ..exceptions import StorageReadError, StorageWriteError
 
 # Threshold for streaming encryption (files larger than this use streaming)
 STREAMING_THRESHOLD = 10 * 1024 * 1024  # 10MB
+
+
+class _GeneratorStream(io.RawIOBase):
+    """Adapt an iterator of bytes into a BinaryIO with a ``read`` method."""
+
+    def __init__(self, gen: Iterator[bytes]) -> None:
+        self._gen = gen
+        self._buffer = b""
+
+    def read(self, n: int = -1) -> bytes:
+        if n == -1:
+            chunks = [self._buffer]
+            self._buffer = b""
+            for chunk in self._gen:
+                chunks.append(chunk)
+            return b"".join(chunks)
+        while len(self._buffer) < n:
+            try:
+                chunk = next(self._gen)
+            except StopIteration:
+                break
+            else:
+                self._buffer += chunk
+        result = self._buffer[:n]
+        self._buffer = self._buffer[n:]
+        return result
 
 
 class EncryptedStorage(StorageBackendBase):
@@ -250,7 +276,12 @@ class EncryptedStorage(StorageBackendBase):
                     )
                     return cast(
                         Tuple[BinaryIO, int],
-                        (cleanup_wrapper(generator, fresh_enc_stream), original_size),
+                        (
+                            _GeneratorStream(
+                                cleanup_wrapper(generator, fresh_enc_stream)
+                            ),
+                            original_size,
+                        ),
                     )
             except Exception as e:
                 logger.error(f"Failed to initialize decrypted stream for {path}: {e}")

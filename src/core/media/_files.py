@@ -154,8 +154,10 @@ class _FilesMixin:
             try:
                 encrypted_url = decrypt_data(attachment["url_encrypted"])
             except Exception:
-                # An undecodable encrypted reference cannot be proven unrelated.
-                return False
+                # Corrupted encrypted reference — skip rather than blocking all
+                # deletions.  The original ``return False`` meant a single bad
+                # row prevented *any* file from ever being deleted.
+                continue
             if file.filename in str(encrypted_url):
                 return False
         avatar_count = self._db.fetch_one(

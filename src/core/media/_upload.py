@@ -330,8 +330,8 @@ class _UploadMixin:
             f"(backend: {storage_backend}, size: {final_size}{compression_info})"
         )
 
-        # Fire-and-forget: rate-limit update
-        self._executor.submit(self._update_rate_limit, user_id, final_size)
+        # Rate-limit update (synchronous: must count before returning)
+        self._update_rate_limit(user_id, final_size)
 
         return UploadResult(
             file_id=file_id,
@@ -592,8 +592,8 @@ class _UploadMixin:
                 checksum=checksum,
             )
 
-            # Fire-and-forget: rate-limit update + background pHash dedup
-            self._executor.submit(self._update_rate_limit, user_id, result.size)
+            # Rate-limit update (synchronous) + background pHash dedup
+            self._update_rate_limit(user_id, result.size)
             if (
                 self._dedup_manager
                 and media_type == MediaType.IMAGE
