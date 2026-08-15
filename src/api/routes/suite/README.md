@@ -25,10 +25,17 @@ POST   /api/v1/suite/stash/items
 GET    /api/v1/suite/stash/items/{item_id}
 PATCH  /api/v1/suite/stash/items/{item_id}
 DELETE /api/v1/suite/stash/items/{item_id}
-POST   /api/v1/suite/stash/items/{item_id}/shares
-DELETE /api/v1/suite/stash/shares/{grant_id}
+POST   /api/v1/suite/stash/items/{item_id}/grants
+DELETE /api/v1/suite/stash/grants/{grant_id}
 GET    /api/v1/suite/stash/items/{item_id}/versions
+POST   /api/v1/suite/stash/items/{item_id}/versions
+POST   /api/v1/suite/stash/items/{item_id}/pin
+POST   /api/v1/suite/stash/items/{item_id}/restore
 POST   /api/v1/suite/stash/items/{item_id}/download-ticket
+POST   /api/v1/suite/stash/download-ticket/redeem
+POST   /api/v1/suite/stash/upload
+GET    /api/v1/suite/stash/collections
+POST   /api/v1/suite/stash/collections
 ```
 
 Every metadata, preview, download, share, version, and mutation route performs

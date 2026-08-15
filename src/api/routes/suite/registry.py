@@ -6,7 +6,8 @@ Stash mutations and Sum workbook persistence remain separate domains and are not
 silently routed through the generic artifact payload.
 """
 
-from typing import Any, Dict, Iterable, List
+import json
+from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -17,7 +18,6 @@ from src.core.artifacts.capabilities import (
     CapabilityState,
     capability_allows_artifact,
     capability_to_dict,
-    get_artifact_capabilities,
     get_capability,
 )
 from src.core.artifacts.models import Artifact
@@ -103,12 +103,33 @@ _SUITE_MANIFESTS = (
     ),
 )
 
-_CONTRACT_ONLY_CAPABILITIES = set()
 _ARTIFACT_APP_IDS = {
     "plexiscribe": "plexiscribe",
     "plexiscript": "plexiscript",
     "whiteboard": "plexiboard",
 }
+
+# Only artifact types that map to a dedicated PlexiSuite app belong in the
+# suite home feeds. Voice calls, uploads, files, and transcripts are chat
+# artifacts surfaced by the chat artifacts pane, not suite work; surfacing
+# them here (with a ``plexichat`` appId and a click that just closes back to
+# chat) was misleading and produced dead cards.
+_SUITE_ARTIFACT_TYPES = frozenset(_ARTIFACT_APP_IDS)
+
+
+def _suite_artifacts(artifacts: Iterable[Artifact]) -> List[Artifact]:
+    """Return only artifacts that map to a dedicated PlexiSuite app.
+
+    Voice calls, uploads, files, and transcripts are chat artifacts surfaced by
+    the chat artifacts pane. Surfacing them in the suite feeds (with a
+    ``plexichat`` appId and a click that just closes back to chat) produced
+    misleading dead cards, so they are excluded here.
+    """
+    return [
+        artifact
+        for artifact in artifacts
+        if artifact.artifact_type.value in _SUITE_ARTIFACT_TYPES
+    ]
 
 
 def _manifest_dict(
@@ -128,11 +149,7 @@ def _manifest_dict(
         "supportsOffline": manifest.supports_offline,
         "availability": "available",
     }
-    if manifest.app_id in _CONTRACT_ONLY_CAPABILITIES:
-        # Reserved for future suite apps whose backend is not yet available.
-        result["availability"] = "contract_only"
-        result["backendPhase"] = "contract_only"
-    elif capability is not None:
+    if capability is not None:
         result["capabilityState"] = capability_to_dict(capability)
         result["availability"] = capability.state.value
     return result
@@ -251,40 +268,72 @@ def _member_server_ids(user_id: int, limit: int = 100) -> List[int]:
 
 
 def _shared_artifacts(
-    user_id: int, server_ids: List[int], limit: int
+    user_id: int,
+    server_ids: List[int],
+    limit: int,
+    search: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Gather server artifacts only where the existing RBAC boundary permits view."""
     manager = _get_manager()
-    results: List[Dict[str, Any]] = []
-    for server_id in server_ids:
-        if not _require_server_permission(user_id, server_id, "artifact.view"):
-            continue
-        artifacts = manager.list_with_filters(
-            filters={"sort_by": "updated_at", "sort_order": "desc", "limit": limit},
-            server_id=server_id,
-        )
-        results.extend(
-            _artifact_home_item(artifact)
-            for artifact in artifacts
-            if capability_allows_artifact(artifact.artifact_type)
-        )
-    return _sort_and_bound(results, limit)
+    if not server_ids:
+        return []
+    # Single ``server_id IN (...)`` query across the caller's memberships
+    # instead of one query per membership. Fetch a bounded multiple so the
+    # post-query authorization/capability filtering cannot starve the feed.
+    fetch_limit = min(max(int(limit) * len(server_ids), int(limit)), 2000)
+    filters: Dict[str, Any] = {
+        "sort_by": "updated_at",
+        "sort_order": "desc",
+        "limit": fetch_limit,
+    }
+    if search:
+        filters["search"] = search
+    artifacts = manager.list_with_filters(filters=filters, server_id=server_ids)
+
+    # Authorize lazily: RBAC is checked only for servers that actually
+    # produced a result (and memoized per request), instead of paying one
+    # permission lookup per membership up front. Most memberships contribute
+    # no suite artifacts, so this removes the dominant N+1 on the shared feed.
+    permission_cache: Dict[int, bool] = {}
+
+    def authorized(server_id: Optional[int]) -> bool:
+        if server_id is None:
+            return False
+        sid = int(server_id)
+        if sid not in permission_cache:
+            permission_cache[sid] = _require_server_permission(
+                user_id, sid, "artifact.view"
+            )
+        return permission_cache[sid]
+
+    items = [
+        _artifact_home_item(artifact)
+        for artifact in _suite_artifacts(artifacts)
+        if capability_allows_artifact(artifact.artifact_type)
+        and authorized(artifact.server_id)
+    ]
+    return _sort_and_bound(items, int(limit))
 
 
-def _shared_items(user_id: int, limit: int) -> List[Dict[str, Any]]:
+def _shared_items(
+    user_id: int, limit: int, search: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """Gather server-scoped Stash, Sum, and authorized artifact items."""
     stash_manager, sum_manager = _suite_managers()
     server_ids = _member_server_ids(user_id)
     items: List[Dict[str, Any]] = []
     if _domain_available("plexistash"):
-        stash_items, _ = stash_manager.list_items(user_id, limit=limit, scope="server")
+        stash_items, _ = stash_manager.list_items(
+            user_id, limit=limit, scope="server", search=search
+        )
         items.extend(_stash_home_item(item) for item in stash_items)
     if _domain_available("plexisum"):
-        sum_items, _ = sum_manager.list_workbooks(user_id, limit=limit, offset=0)
-        items.extend(
-            _sum_home_item(item) for item in sum_items if item.get("scope") == "server"
+        # Server-scoped only, filtered in SQL rather than fetched-then-discarded.
+        sum_items, _ = sum_manager.list_workbooks(
+            user_id, limit=limit, offset=0, scope="server", search=search
         )
-    items.extend(_shared_artifacts(user_id, server_ids, limit))
+        items.extend(_sum_home_item(item) for item in sum_items)
+    items.extend(_shared_artifacts(user_id, server_ids, limit, search=search))
     return _sort_and_bound(items, limit)
 
 
@@ -302,7 +351,14 @@ async def list_suite_apps(
 ) -> Dict[str, Any]:
     """Return the capability-aware app catalog for the authenticated user."""
     del current_user  # Authentication is the visibility boundary for this catalog.
-    capabilities = get_artifact_capabilities()
+    # Evaluate only the capabilities the Suite manifests reference. The full
+    # catalog includes voice transcription/recording, whose evaluators import
+    # the transcription provider on every call — wasted work on this hot path.
+    capabilities = {
+        manifest.capability: get_capability(manifest.capability)
+        for manifest in _SUITE_MANIFESTS
+        if manifest.capability
+    }
     return {
         "schemaVersion": 1,
         "apps": [
@@ -340,8 +396,8 @@ async def list_recent_suite_items(
     }
     items: List[Dict[str, Any]] = [
         _artifact_home_item(artifact)
-        for artifact in manager.list_with_filters(
-            filters=filters, author_id=current_user.user_id
+        for artifact in _suite_artifacts(
+            manager.list_with_filters(filters=filters, author_id=current_user.user_id)
         )
     ]
     stash_manager, sum_manager = _suite_managers()
@@ -409,6 +465,39 @@ async def list_shared_suite_items(
     return {"schemaVersion": 1, "items": items, "total": len(items), "hasMore": False}
 
 
+def _activity_summary(
+    details_json: Any, action: str, resource_type: str
+) -> Optional[str]:
+    """Render audit details as a short, human-readable summary, never raw JSON."""
+    if not details_json:
+        return None
+    try:
+        details = json.loads(details_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(details, dict):
+        return None
+    parts: List[str] = []
+    if details.get("pinned") is True:
+        parts.append("pinned")
+    if details.get("template") is True:
+        parts.append("set as template")
+    if "subject_id" in details:
+        parts.append(f"with user {details['subject_id']}")
+    permissions = details.get("permissions")
+    if isinstance(permissions, list) and permissions:
+        parts.append(", ".join(str(p) for p in permissions))
+    if details.get("scope"):
+        parts.append(str(details["scope"]))
+    if details.get("item_type"):
+        parts.append(str(details["item_type"]))
+    if details.get("version_id") is not None:
+        parts.append(f"version {details['version_id']}")
+    if parts:
+        return ", ".join(parts)
+    return None
+
+
 @router.get(
     "/home/activity",
     summary="List the caller's Suite activity",
@@ -439,7 +528,9 @@ async def list_suite_activity(
             "appId": "plexistash" if row["domain"] == "stash" else "plexisum",
             "artifactType": row["domain"],
             "title": f"{row['action']} {row['resource_type']}",
-            "summary": row.get("details_json"),
+            "summary": _activity_summary(
+                row.get("details_json"), row["action"], row["resource_type"]
+            ),
             "status": "activity",
             "resourceId": str(row["resource_id"]) if row.get("resource_id") else None,
             "createdAt": row["created_at"],
@@ -478,7 +569,7 @@ async def search_suite(
         },
         author_id=current_user.user_id,
     )
-    items = [_artifact_home_item(artifact) for artifact in artifacts]
+    items = [_artifact_home_item(artifact) for artifact in _suite_artifacts(artifacts)]
     stash_manager, sum_manager = _suite_managers()
     if _domain_available("plexistash"):
         stash_items, _ = stash_manager.list_items(
@@ -492,6 +583,9 @@ async def search_suite(
             current_user.user_id, limit=limit, offset=0, search=query
         )
         items.extend(_sum_home_item(item) for item in sum_items)
+    # Universal search must also cover server-scoped (shared) items, matching
+    # the scope of ``/suite/home/shared``, rather than personal scope only.
+    items.extend(_shared_items(current_user.user_id, int(limit), search=query))
     bounded_items = _sort_and_bound(items, int(limit))
     return {
         "schemaVersion": 1,
