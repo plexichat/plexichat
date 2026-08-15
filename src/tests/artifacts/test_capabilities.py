@@ -71,8 +71,9 @@ class TestArtifactCapabilities:
         caps = get_artifact_capabilities({})
         # The suite-level artifacts gate is on by default.
         assert caps["artifacts"].state == CapabilityState.AVAILABLE
-        # Whiteboard artifacts default to DISABLED (its enabled default is False).
-        assert caps["artifacts_whiteboard"].state == CapabilityState.DISABLED_BY_CONFIG
+        # Whiteboard artifacts default to enabled, so without a license they
+        # are disabled by license (not config).
+        assert caps["artifacts_whiteboard"].state == CapabilityState.DISABLED_BY_LICENSE
         # Voice recording is on by default.
         assert caps["voice_recording"].state == CapabilityState.AVAILABLE
         # License-gated features fall back to disabled_by_license without a
@@ -401,10 +402,11 @@ class TestWhiteboardAlias:
         assert caps["artifacts_whiteboard"].state == CapabilityState.AVAILABLE
 
     def test_alias_matches_unlicensed(self):
-        # Empty config: whiteboard disabled by config (default False), so both
-        # keys must agree rather than one falling through to a license verdict.
+        # Empty config: whiteboard defaults to enabled, so without a license
+        # both keys resolve to the same disabled_by_license verdict.
         caps = get_artifact_capabilities({})
         assert caps["plexiboard"].state == caps["artifacts_whiteboard"].state
+        assert caps["artifacts_whiteboard"].state == CapabilityState.DISABLED_BY_LICENSE
 
 
 class TestCapabilityMemoization:

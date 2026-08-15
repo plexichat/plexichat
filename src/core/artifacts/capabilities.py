@@ -159,7 +159,7 @@ def _eval_plexiboard(artifacts: Dict[str, Any]) -> CapabilityInfo:
 def _eval_whiteboard(artifacts: Dict[str, Any]) -> CapabilityInfo:
     enabled = artifacts.get("enabled", True)
     whiteboard = artifacts.get("whiteboard", {}) or {}
-    wb_enabled = whiteboard.get("enabled", False)
+    wb_enabled = whiteboard.get("enabled", True)
     if enabled is False or wb_enabled is False:
         return CapabilityInfo(
             feature="artifacts_whiteboard",
