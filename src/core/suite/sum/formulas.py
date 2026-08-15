@@ -760,7 +760,14 @@ class FormulaEvaluator:
             except (ValueError, OverflowError):
                 return NUM_ERROR
         if name in ("ROUND", "ROUNDUP", "ROUNDDOWN"):
-            digits = int(_to_number(b))
+            try:
+                digits = int(_to_number(b))
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
+            # Spreadsheets cap rounding precision at 15 digits. Without a
+            # clamp, ``ROUND(1, 99999999999)`` computes ``10 ** digits`` as a
+            # multi-gigabyte big integer and stalls/OOMs the viewport read.
+            digits = max(-15, min(digits, 15))
             factor = 10**digits
             number = _to_number(a)
             if name == "ROUND":

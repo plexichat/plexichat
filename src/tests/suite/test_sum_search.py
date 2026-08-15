@@ -9,7 +9,9 @@ no route or client ever sent it).
 import asyncio
 import types
 
-from src.core.suite.sum.manager import SumManager
+import pytest
+
+from src.core.suite.sum.manager import SumManager, SumValidationError
 from src.core.suite.sum.schema import create_tables as create_sum_tables
 
 
@@ -66,6 +68,33 @@ def test_list_workbooks_search_is_scoped_to_visible_workbooks(
 
     items, total = manager.list_workbooks(other.id, search="private")
     assert total == 0
+
+
+def test_list_workbooks_scope_filter_is_server_side(db, two_users, server_manager):
+    """``scope`` filters in SQL instead of fetching-then-discarding.
+
+    The Suite shared feed only wants server-scoped workbooks; before this the
+    manager returned the caller's personal workbooks too and the registry
+    discarded them in Python. The scope filter must be pushed down.
+    """
+    owner, _ = two_users
+    server = server_manager.create_server(owner.id, "Scoped server")
+    manager = _make_manager(db, server_manager)
+
+    manager.create_workbook(owner.id, "Personal note")
+    manager.create_workbook(owner.id, "Server doc", scope="server", server_id=server.id)
+
+    items, total = manager.list_workbooks(owner.id, scope="server")
+    assert total == 1
+    assert items[0]["title"] == "Server doc"
+
+    items, total = manager.list_workbooks(owner.id, scope="personal")
+    assert total == 1
+    assert items[0]["title"] == "Personal note"
+
+    # An unsupported scope is rejected rather than silently ignored.
+    with pytest.raises(SumValidationError):
+        manager.list_workbooks(owner.id, scope="bogus")
 
 
 def test_list_workbooks_search_excludes_templates_in_regular_listing(

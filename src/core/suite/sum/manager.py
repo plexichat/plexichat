@@ -1883,7 +1883,14 @@ class SumManager(BaseManager):
             except OSError:
                 pass
         return self._publish_workbook(
-            user_id, title, scope, server_id, raw_data, 0, template=template
+            user_id,
+            title,
+            scope,
+            server_id,
+            raw_data,
+            0,
+            template=template,
+            workbook_id=workbook_id,
         )
 
     def create_from_template(
@@ -1934,6 +1941,7 @@ class SumManager(BaseManager):
         data: bytes,
         revision: int,
         template: bool = False,
+        workbook_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Shared workbook publication: blob save + artifact + metadata row.
 
@@ -1950,7 +1958,7 @@ class SumManager(BaseManager):
             raise SumStorageError(
                 "PlexiSum workbook creation requires a standalone transaction"
             )
-        workbook_id = self._generate_id()
+        workbook_id = workbook_id if workbook_id is not None else self._generate_id()
         now = int(time.time() * 1000)
         path, size, checksum = self._save_file(workbook_id, int(revision), data)
         artifact_id = None
@@ -2124,6 +2132,7 @@ class SumManager(BaseManager):
         offset: int = 0,
         template: bool = False,
         search: Optional[str] = None,
+        scope: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))
@@ -2140,6 +2149,12 @@ class SumManager(BaseManager):
             "AND (g.expires_at IS NULL OR g.expires_at > ?)))"
         )
         params: list = [1 if template else 0, user_id, user_id, user_id, now]
+        if scope is not None:
+            normalized_scope = str(scope).strip().lower()
+            if normalized_scope not in ("personal", "server"):
+                raise SumValidationError("scope must be personal or server")
+            where += " AND scope = ?"
+            params.append(normalized_scope)
         if search:
             needle = f"%{str(search).strip().lower()}%"
             where += " AND LOWER(title) LIKE ?"
@@ -2439,11 +2454,6 @@ class SumManager(BaseManager):
             )
             if object_count > 1_000:
                 raise SumValidationError("Workbook contains too many SQLite objects")
-            meta = connection.execute(
-                "SELECT value FROM sum_meta WHERE key = 'format_version'"
-            ).fetchone()
-            if meta is None or meta["value"] != PLEXISUM_FORMAT_VERSION:
-                raise SumValidationError("File is not a supported PlexiSum workbook")
             sheet_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM sum_sheets WHERE deleted = 0"
@@ -2949,13 +2959,6 @@ class SumManager(BaseManager):
                     for r, cell in col_cells.items():
                         if (r, col_idx) not in existing_cells:
                             rows_list = list(rows)
-                            # Segment cells now carry ``value_json``/``style_json``
-                            # as pre-encoded JSON strings (delta, runlength, plain,
-                            # and dictionary encoders all normalize to this), so
-                            # pass them through instead of re-serializing: a
-                            # double ``json.dumps`` corrupted every segment-backed
-                            # value type (numbers became strings, strings gained
-                            # quotes) on the read path.
                             rows_list.append(
                                 type(
                                     "Row",
@@ -2976,72 +2979,66 @@ class SumManager(BaseManager):
                 "SELECT MAX(row_index) AS max_row, MAX(column_index) AS max_col FROM sum_cells WHERE sheet_id = ?",
                 (str(sheet_id),),
             ).fetchone()
-        except sqlite3.Error as exc:
-            raise SumStorageError("Workbook file schema is invalid") from exc
 
-        cells: List[Dict[str, Any]] = []
-        formula_cells: List[Tuple[int, int, Dict[str, Any]]] = []
-        for row in rows:
-            cell_data: Dict[str, Any] = {
-                "row": int(row["row_index"]),
-                "column": int(row["column_index"]),
-                "value_type": row["value_type"],
-                "value": self._decode(row["value_json"]),
-                "formula": row["formula"],
-                "style": self._decode(row["style_json"]),
-                "revision": int(row["revision"]),
-            }
-            if cell_data["value_type"] == "formula" and cell_data["formula"]:
-                formula_cells.append((cell_data["row"], cell_data["column"], cell_data))
-            cells.append(cell_data)
-
-        if formula_cells:
-            # Formulas are evaluated on read against the same file, so the
-            # viewport returns live computed values (bounded, cycle-safe).
-            resolver = self._resolver_for(connection)
-            evaluator = FormulaEvaluator(resolver)
-            for row_index, column_index, formula_cell in formula_cells:
-                formula_cell["computed"] = evaluator.evaluate_cell(
-                    str(sheet_id), row_index, column_index, formula_cell["formula"]
-                )
-        max_row = (
-            int(used["max_row"]) + 1 if used and used["max_row"] is not None else 0
-        )
-        max_col = (
-            int(used["max_col"]) + 1 if used and used["max_col"] is not None else 0
-        )
-
-        # Server-side filtering: rows that fail every criterion are reported as
-        # hidden. Cells for hidden rows are still returned so the client can
-        # restore them instantly when the filter is cleared; the UI greys out
-        # hidden rows instead of deleting data.
-        hidden_rows: List[int] = []
-        if normalized_filters:
-            by_row: Dict[int, List[Dict[str, Any]]] = {}
-            for cell in cells:
-                by_row.setdefault(int(cell["row"]), []).append(cell)
-            visible: Dict[int, bool] = {}
-            for row_index in sorted(by_row):
-                row_cells = by_row[row_index]
-                matches = True
-                for criterion in normalized_filters:
-                    column_index = int(criterion["column"])
-                    cell: Optional[Dict[str, Any]] = next(
-                        (c for c in row_cells if int(c["column"]) == column_index),
-                        None,
+            cells: List[Dict[str, Any]] = []
+            formula_cells: List[Tuple[int, int, Dict[str, Any]]] = []
+            for row in rows:
+                cell_data: Dict[str, Any] = {
+                    "row": int(row["row_index"]),
+                    "column": int(row["column_index"]),
+                    "value_type": row["value_type"],
+                    "value": self._decode(row["value_json"]),
+                    "formula": row["formula"],
+                    "style": self._decode(row["style_json"]),
+                    "revision": int(row["revision"]),
+                }
+                if cell_data["value_type"] == "formula" and cell_data["formula"]:
+                    formula_cells.append(
+                        (cell_data["row"], cell_data["column"], cell_data)
                     )
-                    value = self._filter_cell_value(cell)
-                    if not self._matches_filter(
-                        value, criterion["operator"], criterion.get("value")
-                    ):
-                        matches = False
-                        break
-                visible[row_index] = matches
-            hidden_rows = [
-                row_index for row_index in sorted(by_row) if not visible[row_index]
-            ]
+                cells.append(cell_data)
 
-        try:
+            if formula_cells:
+                resolver = self._resolver_for(connection)
+                evaluator = FormulaEvaluator(resolver)
+                for row_index, column_index, formula_cell in formula_cells:
+                    formula_cell["computed"] = evaluator.evaluate_cell(
+                        str(sheet_id), row_index, column_index, formula_cell["formula"]
+                    )
+            max_row = (
+                int(used["max_row"]) + 1 if used and used["max_row"] is not None else 0
+            )
+            max_col = (
+                int(used["max_col"]) + 1 if used and used["max_col"] is not None else 0
+            )
+
+            # Server-side filtering
+            hidden_rows: List[int] = []
+            if normalized_filters:
+                by_row: Dict[int, List[Dict[str, Any]]] = {}
+                for cell in cells:
+                    by_row.setdefault(int(cell["row"]), []).append(cell)
+                visible: Dict[int, bool] = {}
+                for row_index in sorted(by_row):
+                    row_cells = by_row[row_index]
+                    matches = True
+                    for criterion in normalized_filters:
+                        column_index = int(criterion["column"])
+                        cell: Optional[Dict[str, Any]] = next(
+                            (c for c in row_cells if int(c["column"]) == column_index),
+                            None,
+                        )
+                        value = self._filter_cell_value(cell)
+                        if not self._matches_filter(
+                            value, criterion["operator"], criterion.get("value")
+                        ):
+                            matches = False
+                            break
+                    visible[row_index] = matches
+                hidden_rows = [
+                    row_index for row_index in sorted(by_row) if not visible[row_index]
+                ]
+
             metadata = self._read_viewport_metadata(
                 connection,
                 str(sheet_id),
@@ -3050,9 +3047,6 @@ class SumManager(BaseManager):
                 column_start,
                 column_end,
             )
-            # Keep the home-surface status current after any edit: the read
-            # holds the live connection, so two COUNT queries plus one main-DB
-            # UPDATE here stay cheap while making the status reflect the file.
             try:
                 session = _WORKBOOK_SESSIONS.get(int(workbook_id))
                 if session is None or session.pending > 0:
@@ -3199,10 +3193,6 @@ class SumManager(BaseManager):
 
         normalized = self._normalize_cells(operation_type, cells)
 
-        self._check_range_permissions(
-            int(workbook_id), int(sheet_id), normalized, user_id
-        )
-
         revision = current_revision + 1
         now = int(time.time() * 1000)
 
@@ -3218,6 +3208,10 @@ class SumManager(BaseManager):
                 self._validate_cells(connection, str(sheet_id), normalized)
             except sqlite3.Error as exc:
                 raise SumStorageError("Workbook file could not be updated") from exc
+
+            self._check_range_permissions(
+                int(workbook_id), int(sheet_id), normalized, user_id
+            )
 
             self._append_op_durable(
                 int(workbook_id),
@@ -3461,6 +3455,24 @@ class SumManager(BaseManager):
 
         revision = self._write_file_revision(
             workbook_id, user_id, operation_type, updated
+        )
+        self._db.execute(
+            "INSERT INTO sum_operations (operation_id, workbook_id, actor_id, base_revision, result_revision, operation_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(operation_id),
+                int(workbook_id),
+                user_id,
+                base_revision,
+                revision,
+                operation_type,
+                self._json(
+                    {
+                        "sheet_id": str(sheet_id),
+                        "anchor": {"at": at, "count": count, "axis": axis},
+                    }
+                ),
+                now,
+            ),
         )
         self._shift_range_permissions(
             int(workbook_id),

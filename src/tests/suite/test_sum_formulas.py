@@ -334,3 +334,21 @@ def test_compute_value_cache_key_uses_formula_text():
     # The cache key includes the formula text, so a reused evaluator with a
     # different formula on the same coordinates must not serve stale values.
     assert compute_value("formula", None, "A1+1", resolver, sheet="1") == 7.0
+
+
+def test_round_exponent_is_clamped_to_spreadsheet_precision():
+    """ROUND/ROUNDUP/ROUNDDOWN clamp the digit count to ±15.
+
+    A pathological exponent (e.g. ``ROUND(1, 99999999999)``) used to compute
+    ``10 ** digits`` as a multi-gigabyte big integer and stall/OOM the
+    viewport read. The digit count must now clamp to the spreadsheet
+    precision bound and return instantly.
+    """
+    assert _eval("ROUND(1, 99999999999)") == 1.0
+    assert _eval("ROUNDUP(1, 99999999999)") == 1.0
+    assert _eval("ROUNDDOWN(1, 99999999999)") == 1.0
+    # A huge negative exponent clamps to -15 digits and rounds to zero.
+    assert _eval("ROUND(1.5, -99999999999)") == 0.0
+    # Precision inside the ±15 window is unchanged.
+    assert _eval("ROUND(1.2345, 2)") == 1.23
+    assert _eval("ROUND(123.456, -2)") == 100.0
