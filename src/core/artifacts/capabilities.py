@@ -21,6 +21,7 @@ class CapabilityState(str, Enum):
     """Availability state for a single capability/feature."""
 
     AVAILABLE = "available"
+    EVALUATION = "evaluation"
     DISABLED_BY_CONFIG = "disabled_by_config"
     DISABLED_BY_LICENSE = "disabled_by_license"
     DEPENDENCY_MISSING = "dependency_missing"
@@ -62,6 +63,51 @@ def _has_feature(feature: str) -> bool:
         return False
 
 
+def _evaluation_window(artifacts: Dict[str, Any]) -> tuple[bool, int]:
+    """Return ``(enabled, ttl_days)`` for the license-free evaluation fallback.
+
+    Evaluation mode lets a deployment try a licensed feature without a license;
+    content created during evaluation is treated as ephemeral and cleared by the
+    evaluation cleanup job after ``ttl_days``. It is opt-in and defaults off.
+    """
+    evaluation = artifacts.get("evaluation", {}) or {}
+    enabled = bool(evaluation.get("enabled", False))
+    try:
+        ttl_days = max(1, int(evaluation.get("ttl_days", 30)))
+    except (TypeError, ValueError):
+        ttl_days = 30
+    return enabled, ttl_days
+
+
+def _license_or_eval(
+    feature: str, label: str, artifacts: Dict[str, Any]
+) -> CapabilityInfo:
+    """Resolve an unlicensed, config-enabled feature to eval or disabled.
+
+    Callers only reach this helper after confirming the feature is unlicensed.
+    When evaluation mode is enabled the feature becomes usable in
+    ``EVALUATION`` state (and is therefore subject to auto-expiry); otherwise
+    it stays ``DISABLED_BY_LICENSE``.
+    """
+    eval_enabled, ttl_days = _evaluation_window(artifacts)
+    if eval_enabled:
+        return CapabilityInfo(
+            feature=feature,
+            state=CapabilityState.EVALUATION,
+            message=(
+                f"{label} is running in evaluation mode and will be "
+                f"automatically cleared after {ttl_days} days."
+            ),
+            details={"evaluation": True, "ttl_days": ttl_days},
+        )
+    return CapabilityInfo(
+        feature=feature,
+        state=CapabilityState.DISABLED_BY_LICENSE,
+        message=f"{label} requires a license.",
+        details={"licensed_feature": feature},
+    )
+
+
 def _eval_artifacts(artifacts: Dict[str, Any]) -> CapabilityInfo:
     enabled = artifacts.get("enabled", True)
     if enabled is False:
@@ -91,12 +137,7 @@ def _eval_plexiscribe(artifacts: Dict[str, Any]) -> CapabilityInfo:
             details={"artifacts_enabled": enabled, "plexiscribe_enabled": ps_enabled},
         )
     if not _has_feature("plexiscribe"):
-        return CapabilityInfo(
-            feature="plexiscribe",
-            state=CapabilityState.DISABLED_BY_LICENSE,
-            message="Plexiscribe requires a license.",
-            details={},
-        )
+        return _license_or_eval("plexiscribe", "Plexiscribe", artifacts)
     return CapabilityInfo(
         feature="plexiscribe",
         state=CapabilityState.AVAILABLE,
@@ -117,12 +158,7 @@ def _eval_plexiscript(artifacts: Dict[str, Any]) -> CapabilityInfo:
             details={"artifacts_enabled": enabled, "plexiscript_enabled": psc_enabled},
         )
     if not _has_feature("plexiscript"):
-        return CapabilityInfo(
-            feature="plexiscript",
-            state=CapabilityState.DISABLED_BY_LICENSE,
-            message="Plexiscript requires a license.",
-            details={},
-        )
+        return _license_or_eval("plexiscript", "Plexiscript", artifacts)
     return CapabilityInfo(
         feature="plexiscript",
         state=CapabilityState.AVAILABLE,
@@ -168,15 +204,7 @@ def _eval_whiteboard(artifacts: Dict[str, Any]) -> CapabilityInfo:
             details={"artifacts_enabled": enabled, "whiteboard_enabled": wb_enabled},
         )
     if not _has_feature("artifacts_whiteboard"):
-        return CapabilityInfo(
-            feature="artifacts_whiteboard",
-            state=CapabilityState.DISABLED_BY_LICENSE,
-            message=(
-                "Whiteboard artifacts require a license that enables the "
-                "'artifacts_whiteboard' feature."
-            ),
-            details={"licensed_feature": "artifacts_whiteboard"},
-        )
+        return _license_or_eval("artifacts_whiteboard", "Whiteboard", artifacts)
     return CapabilityInfo(
         feature="artifacts_whiteboard",
         state=CapabilityState.AVAILABLE,
@@ -285,12 +313,7 @@ def _eval_suite_feature(
             details={"artifacts_enabled": enabled, "feature_enabled": feature_enabled},
         )
     if not _has_feature(feature):
-        return CapabilityInfo(
-            feature=feature,
-            state=CapabilityState.DISABLED_BY_LICENSE,
-            message=f"{label} requires a license.",
-            details={"licensed_feature": feature},
-        )
+        return _license_or_eval(feature, label, artifacts)
     return CapabilityInfo(
         feature=feature,
         state=CapabilityState.AVAILABLE,
@@ -386,13 +409,21 @@ def artifact_type_capability(feature_type: Any) -> str:
     }.get(str(value), "artifacts")
 
 
+def is_usable(state: CapabilityState) -> bool:
+    """Return whether a capability state permits use (available or evaluation).
+
+    Every feature gate should route through this helper so the evaluation
+    fallback behaves identically to a licensed deployment.
+    """
+    return state in (CapabilityState.AVAILABLE, CapabilityState.EVALUATION)
+
+
 def capability_allows_artifact(
     feature_type: Any, config: Optional[Dict[str, Any]] = None
 ) -> bool:
-    """Return whether the artifact type is currently available."""
-    return (
+    """Return whether the artifact type is currently usable."""
+    return is_usable(
         get_capability(artifact_type_capability(feature_type), config).state
-        == CapabilityState.AVAILABLE
     )
 
 
@@ -473,5 +504,6 @@ __all__ = [
     "clear_capability_cache",
     "artifact_type_capability",
     "capability_allows_artifact",
+    "is_usable",
     "capability_to_dict",
 ]
