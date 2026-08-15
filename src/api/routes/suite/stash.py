@@ -35,6 +35,14 @@ from src.core.suite.stash.manager import (
     StashValidationError,
 )
 
+# Upload payload ceilings. The base64 (encoded) ceiling is checked before
+# decoding to fail fast on absurd requests; the decoded ceiling is checked
+# after decoding so a valid base64 payload cannot silently exceed the stored
+# media size limits. Both must be larger than any configured media-type limit
+# so the media boundary remains the authoritative gate.
+MAX_UPLOAD_ENCODED_LEN = 70_000_000
+MAX_UPLOAD_DECODED_BYTES = 50 * 1024 * 1024
+
 router = APIRouter(
     prefix="/suite/stash",
     tags=["PlexiStash"],
@@ -202,7 +210,7 @@ async def upload_file(
             encoded = raw[comma + 1 :]
         else:
             encoded = raw
-        if len(encoded) > 70_000_000:
+        if len(encoded) > MAX_UPLOAD_ENCODED_LEN:
             raise HTTPException(status_code=413, detail="File is too large")
         try:
             data = base64_module.b64decode(encoded, validate=True)
@@ -210,7 +218,7 @@ async def upload_file(
             raise HTTPException(
                 status_code=400, detail="Invalid base64 payload"
             ) from exc
-        if len(data) > 50 * 1024 * 1024:
+        if len(data) > MAX_UPLOAD_DECODED_BYTES:
             raise HTTPException(status_code=413, detail="File is too large")
 
         media = api.get_media()
@@ -498,48 +506,51 @@ async def redeem_download_ticket(
 ) -> StashDownloadRedeemResponse:
     """Redeem a ticket once and recheck item authorization at use time."""
     try:
-        result = _manager().redeem_download_ticket(current_user.user_id, body.ticket)
+        # Resolve and sign the media URL *before* the ticket is consumed so a
+        # transient media-storage failure does not burn a one-time ticket with
+        # nothing returned.
+        resolved = _manager().resolve_download_ticket(current_user.user_id, body.ticket)
         media_url = None
-        media_object_id = result.get("media_object_id")
+        media_object_id = resolved.get("media_object_id")
         if media_object_id:
-            try:
-                media = api.get_media()
-                if media is not None:
-                    # Stash stores an opaque reference. Resolve filenames first;
-                    # numeric IDs remain supported for existing records. Never
-                    # expose a storage path or unresolved opaque reference as a
-                    # usable download URL.
-                    media_file = media.get_file_by_filename(str(media_object_id))
-                    if media_file is None and str(media_object_id).isdigit():
-                        media_file = media.get_file(int(media_object_id))
-                    if media_file is not None:
-                        # Bound the signed URL by the ticket's remaining
-                        # lifetime so a redeemed ticket cannot outlive its own
-                        # expiry window (sign_url caps at 1h).
-                        remaining_ms = result.get("expires_at", 0)
-                        now_ms = int(time.time() * 1000)
-                        expires_in = 3600
-                        if remaining_ms:
-                            expires_in = max(
-                                1,
-                                min(
-                                    3600,
-                                    (int(remaining_ms) - now_ms) // 1000,
-                                ),
-                            )
-                        signed = media.sign_url(
-                            int(media_file.id), expires_in=expires_in
-                        )
-                        media_url = signed.url
-            except Exception:
-                # The ticket remains redeemed; do not expose storage internals
-                # or turn a valid metadata redemption into a server error.
-                media_url = None
+            media = api.get_media()
+            if media is None:
+                raise HTTPException(
+                    status_code=503, detail="Media storage is unavailable"
+                )
+            # Stash stores an opaque reference. Resolve filenames first;
+            # numeric IDs remain supported for existing records. Never expose
+            # a storage path or unresolved opaque reference as a usable URL.
+            media_file = media.get_file_by_filename(str(media_object_id))
+            if media_file is None and str(media_object_id).isdigit():
+                media_file = media.get_file(int(media_object_id))
+            if media_file is None:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Stash media object is unavailable",
+                )
+            # Bound the signed URL by the ticket's remaining lifetime so a
+            # redeemed ticket cannot outlive its own expiry window (sign_url
+            # caps at 1h).
+            remaining_ms = resolved.get("expires_at", 0)
+            now_ms = int(time.time() * 1000)
+            expires_in = 3600
+            if remaining_ms:
+                expires_in = max(
+                    1,
+                    min(3600, (int(remaining_ms) - now_ms) // 1000),
+                )
+            signed = media.sign_url(int(media_file.id), expires_in=expires_in)
+            media_url = signed.url
+
+        result = _manager().redeem_download_ticket(current_user.user_id, body.ticket)
         result["media_url"] = media_url
         # The API returns only the safe signed URL, not the opaque storage
         # reference that was used to resolve it.
         result.pop("media_object_id", None)
         return StashDownloadRedeemResponse.model_validate(result)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _error(exc) from exc
 

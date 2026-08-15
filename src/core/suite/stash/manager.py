@@ -10,6 +10,7 @@ import json
 import secrets
 import time
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from src.core.base import BaseManager
 from .schema import (
@@ -101,6 +102,31 @@ class StashManager(BaseManager):
             if not allowed:
                 raise StashPermissionError("You cannot reference this media object")
         return media_file
+
+    @staticmethod
+    def _validate_link_metadata(
+        item_type: str, metadata: Optional[Dict[str, Any]]
+    ) -> None:
+        """Reject unsafe link URLs before they are persisted as metadata.
+
+        Link items store a URL in ``metadata.url``. The client only performs a
+        shallow regex check, so the server is the authoritative boundary:
+        accept only absolute http(s) URLs so a future link-preview/renderer
+        cannot be coerced into fetching ``file:``, ``javascript:``, or
+        internal/private endpoints (SSRF / XSS).
+        """
+        if item_type != "link":
+            return
+        url = (metadata or {}).get("url")
+        if url is None:
+            # A link without a URL is tolerated (draft/empty), matching the
+            # existing permissive behavior for other metadata.
+            return
+        if not isinstance(url, str):
+            raise StashValidationError("link url must be a string")
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise StashValidationError("link url must be an absolute http(s) URL")
 
     def _audit(
         self,
@@ -272,15 +298,16 @@ class StashManager(BaseManager):
             if mutation:
                 # Edits, shares, and deletes of server-scoped content are
                 # governed by the server permission boundary, never by an
-                # item grant.
-                if owner or self._can_manage_server(user_id, int(server_id)):
+                # item grant. Server admins/moderators may perform lifecycle
+                # mutations alongside explicit server managers.
+                if owner or self._can_administer_server(user_id, int(server_id)):
                     return
             elif permission in ("preview", "download"):
                 # Storage exposure is grant-gated even within a server:
                 # seeing metadata never implies permission to fetch bytes.
                 if (
                     owner
-                    or self._can_manage_server(user_id, int(server_id))
+                    or self._can_administer_server(user_id, int(server_id))
                     or self._grant_permissions(int(item["id"]), user_id, permission)
                 ):
                     return
@@ -294,7 +321,9 @@ class StashManager(BaseManager):
         if int(row["owner_id"]) == int(user_id):
             return True
         server_id = row.get("server_id")
-        if server_id is not None and self._can_manage_server(user_id, int(server_id)):
+        if server_id is not None and self._can_administer_server(
+            user_id, int(server_id)
+        ):
             return True
         # Editors re-point media (update_item -> _resolve_media_object), so
         # they legitimately handle the opaque media reference and may see it.
@@ -360,6 +389,7 @@ class StashManager(BaseManager):
         ):
             raise StashPermissionError("You are not a member of this server")
         self._validate_collection(user_id, collection_id, scope, server_id)
+        self._validate_link_metadata(item_type, metadata)
         self._resolve_media_object(media_object_id, user_id)
         now = int(time.time() * 1000)
         item_id = self._generate_id()
@@ -482,6 +512,11 @@ class StashManager(BaseManager):
             permissions = self._decode(grant_row.get("permissions_json"), [])
             if "view_metadata" in permissions or "*" in permissions:
                 grant_item_ids.append(int(grant_row["item_id"]))
+        # Bound the IN-clause so a user with an unbounded number of grants
+        # cannot inflate a listing query into a pathological parameter list.
+        # The listing is already capped by limit/offset; this only constrains
+        # the grant-derived visibility set.
+        grant_item_ids = grant_item_ids[:500]
 
         clauses = ["deleted = 0"]
         if grant_item_ids:
@@ -571,6 +606,7 @@ class StashManager(BaseManager):
             self._resolve_media_object(media_object_id, user_id)
             updates["media_object_id"] = media_object_id
         if "metadata" in fields:
+            self._validate_link_metadata(row["item_type"], fields["metadata"])
             updates["metadata_json"] = self._json(fields["metadata"], {})
         if "tags" in fields:
             clean_tags = sorted(
@@ -826,8 +862,24 @@ class StashManager(BaseManager):
                 now,
             ),
             ["item_id", "subject_type", "subject_id"],
-            ["permissions_json", "expires_at", "revoked_at", "created_by"],
+            ["permissions_json", "expires_at", "revoked_at"],
         )
+        # On re-grant the upsert keeps the pre-existing row's id; the freshly
+        # generated ``grant_id`` is never persisted in that case. Return the
+        # authoritative row so a subsequent ``revoke_grant`` targets the real
+        # grant instead of a phantom id (which previously 404'd).
+        persisted = self._db.fetch_one(
+            "SELECT id, permissions_json, expires_at FROM stash_grants "
+            "WHERE item_id = ? AND subject_type = 'user' AND subject_id = ?",
+            (int(item_id), str(subject_id)),
+        )
+        persisted_id = int(persisted["id"]) if persisted else grant_id
+        persisted_permissions = (
+            self._decode(persisted.get("permissions_json"), clean)
+            if persisted
+            else clean
+        )
+        persisted_expiry = persisted.get("expires_at") if persisted else expires_at
         self._audit(
             "share",
             "item",
@@ -836,12 +888,12 @@ class StashManager(BaseManager):
             {"subject_id": int(subject_id), "permissions": clean},
         )
         return {
-            "id": str(grant_id),
+            "id": str(persisted_id),
             "item_id": str(item_id),
             "subject_type": "user",
             "subject_id": str(subject_id),
-            "permissions": clean,
-            "expires_at": expires_at,
+            "permissions": persisted_permissions,
+            "expires_at": persisted_expiry,
         }
 
     def create_download_ticket(
@@ -909,8 +961,15 @@ class StashManager(BaseManager):
             "expires_at": expires_at,
         }
 
-    def redeem_download_ticket(self, user_id: int, ticket: str) -> Dict[str, Any]:
-        """Redeem a ticket once, rechecking item authorization at redemption."""
+    def _ticket_target(
+        self, user_id: int, ticket: str
+    ) -> Tuple[Dict[str, Any], Optional[Any]]:
+        """Resolve a ticket's row + target media object id without consuming it.
+
+        Validates the token, its subject/expiry, the item's liveness, and the
+        caller's ``download`` authorization. Returns ``(row, media_object_id)``
+        so the caller can sign a URL *before* the ticket is marked redeemed.
+        """
         if not ticket or len(ticket) > 256:
             raise StashValidationError("Invalid download ticket")
         token_hash = hashlib.sha256(ticket.encode("utf-8")).hexdigest()
@@ -940,6 +999,28 @@ class StashManager(BaseManager):
             )
             if version and version.get("media_object_id"):
                 media_object_id = version["media_object_id"]
+        return row, media_object_id
+
+    def resolve_download_ticket(self, user_id: int, ticket: str) -> Dict[str, Any]:
+        """Resolve a ticket's media target *without* consuming it.
+
+        Lets the route sign a media URL first, so a transient media-storage
+        failure cannot burn a one-time ticket with nothing returned.
+        """
+        row, media_object_id = self._ticket_target(user_id, ticket)
+        version_id = row.get("version_id")
+        return {
+            "item_id": str(row["item_id"]),
+            "version_id": str(version_id) if version_id is not None else None,
+            "media_object_id": str(media_object_id) if media_object_id else None,
+            "expires_at": int(row["expires_at"]),
+        }
+
+    def redeem_download_ticket(self, user_id: int, ticket: str) -> Dict[str, Any]:
+        """Redeem a ticket once, rechecking item authorization at redemption."""
+        row, media_object_id = self._ticket_target(user_id, ticket)
+        version_id = row.get("version_id")
+        now = int(time.time() * 1000)
         cursor = self._db.execute(
             "UPDATE stash_download_tickets SET redeemed_at = ? "
             "WHERE id = ? AND redeemed_at IS NULL AND expires_at > ?",

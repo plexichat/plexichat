@@ -205,3 +205,66 @@ class TestStashUploadRoute:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 403
+
+    def test_upload_server_scoped_requires_membership(
+        self, stash_media_dir, test_client, stash_enabled, auth_manager, server_manager
+    ):
+        import src.api.routes.suite.stash as stash_routes
+
+        # Server owner (and therefore member) and a separate, non-member user.
+        token_owner, owner = _register_and_login(auth_manager, "owner")
+        token_intruder, _ = _register_and_login(auth_manager, "intruder")
+        server = server_manager.create_server(owner.id, "Stash server")
+
+        payload = _upload_payload(b"server scoped bytes")
+        payload["scope"] = "server"
+        payload["server_id"] = str(server.id)
+        owner_headers = {"Authorization": f"Bearer {token_owner}"}
+        intruder_headers = {"Authorization": f"Bearer {token_intruder}"}
+
+        # A non-member must be rejected before any media is written.
+        resp_intruder = test_client.post(
+            UPLOAD_URL, json=payload, headers=intruder_headers
+        )
+        assert resp_intruder.status_code == 403, resp_intruder.text
+
+        # The server owner (a member) may upload server-scoped items.
+        resp_owner = test_client.post(UPLOAD_URL, json=payload, headers=owner_headers)
+        assert resp_owner.status_code == 201, resp_owner.text
+        assert resp_owner.json()["scope"] == "server"
+        assert resp_owner.json()["server_id"] == str(server.id)
+
+    def test_upload_rejects_oversized_decoded_payload(
+        self, stash_media_dir, test_client, stash_enabled, auth_manager, monkeypatch
+    ):
+        import src.api.routes.suite.stash as stash_routes
+
+        monkeypatch.setattr(stash_routes, "MAX_UPLOAD_DECODED_BYTES", 100)
+        token, _ = _register_and_login(auth_manager)
+        # 200 decoded bytes exceeds the (lowered) 100-byte ceiling.
+        payload = _upload_payload(b"x" * 200)
+        resp = test_client.post(
+            UPLOAD_URL, json=payload, headers={"Authorization": f"Bearer {token}"}
+        )
+        assert resp.status_code == 413, resp.text
+
+    def test_upload_rejects_oversized_base64_payload(
+        self, stash_media_dir, test_client, stash_enabled, auth_manager, monkeypatch
+    ):
+        import src.api.routes.suite.stash as stash_routes
+
+        monkeypatch.setattr(stash_routes, "MAX_UPLOAD_ENCODED_LEN", 100)
+        token, _ = _register_and_login(auth_manager)
+        # An over-long base64 string trips the encoded-length ceiling before
+        # any decoding happens.
+        payload = {
+            "title": "Big",
+            "filename": "big.bin",
+            "content": "A" * 200,
+            "content_type": "application/octet-stream",
+            "scope": "personal",
+        }
+        resp = test_client.post(
+            UPLOAD_URL, json=payload, headers={"Authorization": f"Bearer {token}"}
+        )
+        assert resp.status_code == 413, resp.text
