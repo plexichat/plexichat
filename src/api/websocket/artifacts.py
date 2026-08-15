@@ -126,6 +126,7 @@ async def relay_artifact_op(
     op: Dict[str, object],
     actor_id: int,
     exclude_user_id: Optional[int] = None,
+    seq: Optional[int] = None,
 ) -> int:
     """
     Fan out an ARTIFACT_OP delta to the artifact's subscribers.
@@ -168,13 +169,18 @@ async def relay_artifact_op(
     session_manager: SessionManager = dispatcher._session_manager
     connections = session_manager.get_connections_for_users(list(subscribers))
 
+    d: Dict[str, object] = {
+        "artifact_id": int(artifact_id),
+        "actor_id": int(actor_id),
+        "op": op,
+    }
+    # Carry the server-assigned op sequence so clients can order ops and
+    # acknowledge their own pending edits (OT convergence).
+    if seq is not None:
+        d["seq"] = int(seq)
     payload = {
         "op": int(GatewayOpcode.ARTIFACT_OP),
-        "d": {
-            "artifact_id": int(artifact_id),
-            "actor_id": int(actor_id),
-            "op": op,
-        },
+        "d": d,
     }
 
     sent = 0
@@ -275,4 +281,38 @@ async def send_artifact_sync(
         return await connection.send_json(payload)
     except Exception as e:  # pragma: no cover - defensive
         logger.debug(f"Failed to send ARTIFACT_SYNC to {connection.connection_id}: {e}")
+        return False
+
+
+async def send_artifact_ack(
+    connection: Connection,
+    artifact_id: int,
+    op: Dict[str, object],
+    seq: int,
+) -> bool:
+    """Echo a persisted op back to its actor with the assigned ``seq``.
+
+    The actor already applied the op optimistically, so this frame is not a
+    re-application; the client recognises its own ``client_id`` and treats the
+    echo as an acknowledgement that lets it commit the pending op.
+    """
+    if not (
+        hasattr(connection, "is_selftest") and connection.is_selftest
+    ) and not connection.check_rate_limit(120):
+        return False
+
+    actor_id = getattr(connection, "user_id", None)
+    payload = {
+        "op": int(GatewayOpcode.ARTIFACT_OP),
+        "d": {
+            "artifact_id": int(artifact_id),
+            "actor_id": int(actor_id) if actor_id is not None else None,
+            "seq": int(seq),
+            "op": op,
+        },
+    }
+    try:
+        return await connection.send_json(payload)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Failed to ack ARTIFACT_OP to {connection.connection_id}: {e}")
         return False

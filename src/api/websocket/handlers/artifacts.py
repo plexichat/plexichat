@@ -28,6 +28,7 @@ from src.api.websocket.connection import Connection
 from src.api.websocket.artifacts import (
     get_artifact_subscription_registry,
     relay_artifact_op,
+    send_artifact_ack,
     send_artifact_sync,
 )
 from src.core.artifacts.repository import get_artifact
@@ -258,6 +259,7 @@ class ArtifactHandler:
         # storage failure must never break the live fan-out, and transient op
         # types (cursor, presence, snapshot requests) are skipped. Non-existent
         # artifacts are skipped by ``append_artifact_op`` itself.
+        seq: Optional[int] = None
         if artifact is not None:
             try:
                 from src.core.artifacts.manager import ArtifactManager
@@ -265,7 +267,7 @@ class ArtifactHandler:
                 manager = ArtifactManager(
                     api.get_db(), config.get("artifacts", {}) or {}
                 )
-                await asyncio.to_thread(
+                seq = await asyncio.to_thread(
                     manager.append_op,
                     artifact_id,
                     op.get("op_type") or "op",
@@ -275,7 +277,7 @@ class ArtifactHandler:
             except Exception as e:
                 logger.warning(f"Failed to persist artifact op for {artifact_id}: {e}")
 
-        # Relay to other subscribers.
+        # Relay to other subscribers, carrying the server-assigned seq.
         try:
             await relay_artifact_op(
                 dispatcher=dispatcher,
@@ -283,8 +285,17 @@ class ArtifactHandler:
                 op=op,
                 actor_id=connection.user_id,
                 exclude_user_id=connection.user_id,
+                seq=seq,
             )
         except Exception as e:
             logger.warning(f"Failed to relay artifact op: {e}")
+
+        # Acknowledge the actor with the assigned seq so it can commit its
+        # optimistic local op (OT). Transient ops (seq is None) are skipped.
+        if seq is not None:
+            try:
+                await send_artifact_ack(connection, artifact_id, op, seq)
+            except Exception as e:
+                logger.debug(f"Failed to ack artifact op for {artifact_id}: {e}")
 
         return None, None, None

@@ -132,8 +132,12 @@ The artifacts real-time fabric uses opcodes 60-63:
 | 62 | `ARTIFACT_OP` | C→S→C | Relay a realtime delta op to subscribers |
 | 63 | `ARTIFACT_SYNC` | S→C | Full snapshot for late joiners |
 
-Relay and snapshot helpers live in `src/api/websocket/artifacts.py`
-(`relay_artifact_op`, `send_artifact_sync`).
+Relay, acknowledgement, and snapshot helpers live in
+`src/api/websocket/artifacts.py` (`relay_artifact_op`, `send_artifact_ack`,
+`send_artifact_sync`). Persisted `ARTIFACT_OP`s are assigned a per-artifact
+`seq` (from the `artifact_ops` log); the seq rides in `d.seq` on the relayed
+frame and is echoed back to the actor via `send_artifact_ack` so clients can
+commit optimistic OT edits.
 
 ## Rate Limiting
 
