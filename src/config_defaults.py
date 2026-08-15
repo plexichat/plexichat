@@ -806,6 +806,15 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         "artifacts": {
             "enabled": True,
             "default_retention_days": None,  # None = artifacts never expire by default
+            "evaluation": {
+                # License-free evaluation of the licensed Suite apps
+                # (PlexiScribe/Script/Board/Stash/Sum). When enabled and the
+                # deployment lacks the matching license feature, the apps are
+                # usable in an ephemeral "evaluation" state and their content
+                # is auto-deleted after ttl_days by the retention cleanup job.
+                "enabled": False,
+                "ttl_days": 30,
+            },
             "allow_per_server_override": True,
             "max_artifact_size_mb": 200,
             "plexiscribe": {

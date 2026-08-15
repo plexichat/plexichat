@@ -155,9 +155,9 @@ def _get_sum_manager():
 def _capability_allows_sum() -> bool:
     """Fail closed unless the plexisum capability is fully available."""
     try:
-        from src.core.artifacts.capabilities import CapabilityState, get_capability
+        from src.core.artifacts.capabilities import get_capability, is_usable
 
-        return get_capability("plexisum").state == CapabilityState.AVAILABLE
+        return is_usable(get_capability("plexisum").state)
     except Exception:  # pragma: no cover - defensive
         return False
 

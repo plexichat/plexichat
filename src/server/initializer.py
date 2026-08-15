@@ -184,11 +184,11 @@ def initialize_modules(
     # the plexistash capability is available and an interval is configured.
     try:
         from src.core.artifacts.capabilities import (
-            CapabilityState,
             get_capability,
+            is_usable,
         )
 
-        if get_capability("plexistash").state == CapabilityState.AVAILABLE:
+        if is_usable(get_capability("plexistash").state):
             from src.core.suite.stash.cleanup import StashCleanupJob
 
             stash_cfg = config.get("artifacts", {}).get("plexistash", {}) or {}

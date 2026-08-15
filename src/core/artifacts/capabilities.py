@@ -108,6 +108,24 @@ def _license_or_eval(
     )
 
 
+def evaluation_ttl_days(config: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    """Return the evaluation retention window (days), or ``None``.
+
+    Suite/artifact content created while the license-free evaluation fallback
+    is active is ephemeral: it is purged by the retention cleanup job after
+    this many days. Returns ``None`` when evaluation mode is off or the
+    deployment holds the master ``artifacts`` license feature (licensed
+    deployments keep their normal retention policy).
+    """
+    artifacts = _load_config(config)
+    enabled, ttl_days = _evaluation_window(artifacts)
+    if not enabled:
+        return None
+    if _has_feature("artifacts"):
+        return None
+    return ttl_days
+
+
 def _eval_artifacts(artifacts: Dict[str, Any]) -> CapabilityInfo:
     enabled = artifacts.get("enabled", True)
     if enabled is False:
@@ -180,6 +198,8 @@ def _eval_plexiboard(artifacts: Dict[str, Any]) -> CapabilityInfo:
     info = _eval_whiteboard(artifacts)
     if info.state == CapabilityState.AVAILABLE:
         message = "Plexiboard is enabled."
+    elif info.state == CapabilityState.EVALUATION:
+        message = "Plexiboard is running in evaluation mode."
     elif info.state == CapabilityState.DISABLED_BY_LICENSE:
         message = "Whiteboard requires a license."
     else:
@@ -505,5 +525,6 @@ __all__ = [
     "artifact_type_capability",
     "capability_allows_artifact",
     "is_usable",
+    "evaluation_ttl_days",
     "capability_to_dict",
 ]

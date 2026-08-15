@@ -30,7 +30,7 @@ import src.api as api
 import utils.logger as logger
 
 from src.api.websocket.opcodes import GatewayOpcode
-from src.core.artifacts.capabilities import CapabilityState, get_capability
+from src.core.artifacts.capabilities import get_capability, is_usable
 from src.core.suite.sum.manager import SumManager
 from src.core.suite.sum.schema import create_tables as create_sum_tables
 
@@ -130,7 +130,7 @@ class SumTester:
 
     def _capability_allows_sum(self) -> bool:
         try:
-            return get_capability("plexisum").state == CapabilityState.AVAILABLE
+            return is_usable(get_capability("plexisum").state)
         except Exception:  # pragma: no cover - defensive
             return False
 

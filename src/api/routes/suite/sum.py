@@ -54,7 +54,7 @@ from src.api.schemas.sum import (
     SumXlsxExportResponse,
     SumXlsxImportRequest,
 )
-from src.core.artifacts.capabilities import CapabilityState, get_capability
+from src.core.artifacts.capabilities import get_capability, is_usable
 from src.core.suite import sum as sum_domain
 from src.core.suite.sum.manager import (
     SumConflictError,
@@ -76,9 +76,9 @@ router = APIRouter(
 
 
 def _require_sum_capability() -> None:
-    """Fail closed when PlexiSum is disabled or unlicensed."""
+    """Fail closed when PlexiSum is disabled and not in evaluation mode."""
     info = get_capability("plexisum")
-    if info.state != CapabilityState.AVAILABLE:
+    if not is_usable(info.state):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={

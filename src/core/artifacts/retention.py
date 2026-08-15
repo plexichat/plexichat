@@ -135,7 +135,12 @@ def resolve_retention_days(
 
     default_days = artifacts_cfg.get("default_retention_days")
     if default_days is None:
-        return None
+        # License-free evaluation mode makes suite/artifact content ephemeral.
+        from src.core.artifacts.capabilities import evaluation_ttl_days
+
+        default_days = evaluation_ttl_days(artifacts_cfg)
+        if default_days is None:
+            return None
     try:
         days = int(default_days)
     except (TypeError, ValueError):

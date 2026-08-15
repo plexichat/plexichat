@@ -338,6 +338,92 @@ class TestLicenseGating:
 
 
 # =============================================================================
+# Evaluation mode (license-free trial)
+# =============================================================================
+
+
+class TestEvaluationMode:
+    """License-free evaluation mode gates + retention fallback."""
+
+    def test_eval_state_when_unlicensed(self):
+        """Unlicensed + evaluation enabled -> EVALUATION state, not disabled."""
+        caps = get_artifact_capabilities(
+            {"evaluation": {"enabled": True, "ttl_days": 7}}
+        )
+        assert caps["plexiscribe"].state == CapabilityState.EVALUATION
+        assert caps["plexiscript"].state == CapabilityState.EVALUATION
+        assert caps["plexistash"].state == CapabilityState.EVALUATION
+        assert caps["plexisum"].state == CapabilityState.EVALUATION
+        assert caps["artifacts_whiteboard"].state == CapabilityState.EVALUATION
+        assert caps["plexiboard"].state == CapabilityState.EVALUATION
+        assert caps["plexiscribe"].details["ttl_days"] == 7
+
+    def test_eval_off_keeps_disabled(self):
+        """Without evaluation enabled, unlicensed features stay disabled."""
+        caps = get_artifact_capabilities({})
+        assert caps["plexiscribe"].state == CapabilityState.DISABLED_BY_LICENSE
+
+    def test_eval_licensed_stays_available(self, monkeypatch):
+        """A license overrides evaluation mode back to AVAILABLE."""
+        import src.core.artifacts.capabilities as caps_mod
+
+        monkeypatch.setattr(
+            caps_mod, "_has_feature", lambda feature, default=False: True
+        )
+        caps = get_artifact_capabilities({"evaluation": {"enabled": True}})
+        assert caps["plexiscribe"].state == CapabilityState.AVAILABLE
+
+    def test_is_usable(self):
+        """is_usable accepts available + evaluation, rejects the rest."""
+        from src.core.artifacts.capabilities import is_usable
+
+        assert is_usable(CapabilityState.AVAILABLE) is True
+        assert is_usable(CapabilityState.EVALUATION) is True
+        assert is_usable(CapabilityState.DISABLED_BY_LICENSE) is False
+        assert is_usable(CapabilityState.DISABLED_BY_CONFIG) is False
+        assert is_usable(CapabilityState.MISCONFIGURED) is False
+
+    def test_capability_allows_artifact_in_eval(self):
+        """Evaluation mode must allow whiteboard artifacts."""
+        assert (
+            capability_allows_artifact("whiteboard", {"evaluation": {"enabled": True}})
+            is True
+        )
+
+    def test_evaluation_ttl_days_off(self):
+        """No eval -> no retention window."""
+        from src.core.artifacts.capabilities import evaluation_ttl_days
+
+        assert evaluation_ttl_days({}) is None
+        assert evaluation_ttl_days({"evaluation": {"enabled": False}}) is None
+
+    def test_evaluation_ttl_days_on(self, monkeypatch):
+        """Eval enabled + unlicensed -> ttl retention window."""
+        from src.core.artifacts.capabilities import evaluation_ttl_days
+        import src.core.artifacts.capabilities as caps_mod
+
+        monkeypatch.setattr(
+            caps_mod, "_has_feature", lambda feature, default=False: False
+        )
+        assert (
+            evaluation_ttl_days({"evaluation": {"enabled": True, "ttl_days": 15}}) == 15
+        )
+
+    def test_evaluation_ttl_days_licensed(self, monkeypatch):
+        """A licensed deployment ignores the evaluation retention window."""
+        from src.core.artifacts.capabilities import evaluation_ttl_days
+        import src.core.artifacts.capabilities as caps_mod
+
+        monkeypatch.setattr(
+            caps_mod, "_has_feature", lambda feature, default=False: True
+        )
+        assert (
+            evaluation_ttl_days({"evaluation": {"enabled": True, "ttl_days": 15}})
+            is None
+        )
+
+
+# =============================================================================
 # Config loading
 # =============================================================================
 

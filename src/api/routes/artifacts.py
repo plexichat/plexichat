@@ -25,9 +25,9 @@ from odf.opendocument import OpenDocumentText
 from odf.text import P
 from src.core.artifacts.models import ArtifactType, ArtifactStatus
 from src.core.artifacts.capabilities import (
-    CapabilityState,
     artifact_type_capability,
     get_capability,
+    is_usable,
 )
 from src.api.schemas.artifacts import (
     ArtifactCreateRequest,
@@ -191,7 +191,7 @@ def _require_artifact_capability(artifact_type: ArtifactType) -> str:
     """Fail closed when the requested artifact feature is unavailable."""
     feature = _artifact_capability_for_type(artifact_type)
     info = get_capability(feature, config.get("artifacts", {}) or {})
-    if info.state != CapabilityState.AVAILABLE:
+    if not is_usable(info.state):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={

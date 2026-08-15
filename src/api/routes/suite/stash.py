@@ -28,7 +28,7 @@ from src.api.schemas.stash import (
 )
 from src.core.suite import stash as stash_domain
 from src.core.suite.stash import StashManager
-from src.core.artifacts.capabilities import CapabilityState, get_capability
+from src.core.artifacts.capabilities import get_capability, is_usable
 from src.core.suite.stash.manager import (
     StashNotFoundError,
     StashPermissionError,
@@ -55,9 +55,9 @@ router = APIRouter(
 
 
 def _require_stash_capability() -> None:
-    """Fail closed when PlexiStash is disabled or unlicensed."""
+    """Fail closed when PlexiStash is disabled and not in evaluation mode."""
     info = get_capability("plexistash")
-    if info.state != CapabilityState.AVAILABLE:
+    if not is_usable(info.state):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={

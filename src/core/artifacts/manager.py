@@ -116,6 +116,13 @@ class ArtifactManager(BaseManager):
 
         if days is None:
             days = artifacts_cfg.get("default_retention_days")
+        if days is None:
+            # License-free evaluation mode makes suite/artifact content
+            # ephemeral: fall back to the evaluation retention window so new
+            # artifacts are auto-purged by the retention cleanup job.
+            from .capabilities import evaluation_ttl_days
+
+            days = evaluation_ttl_days(artifacts_cfg)
 
         return days
 

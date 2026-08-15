@@ -15,10 +15,10 @@ from src.api.middleware.authentication import TokenInfo, get_current_user
 from src.api.routes.artifacts import _get_manager, _require_server_permission
 from src.api.schemas.common import ErrorResponse
 from src.core.artifacts.capabilities import (
-    CapabilityState,
     capability_allows_artifact,
     capability_to_dict,
     get_capability,
+    is_usable,
 )
 from src.core.artifacts.models import Artifact
 from src.core.suite.registry.schema import AppManifest
@@ -228,7 +228,7 @@ def _sort_and_bound(
 
 def _domain_available(capability: str) -> bool:
     """Fail closed when a licensed suite domain is unavailable or unlicensed."""
-    return get_capability(capability).state == CapabilityState.AVAILABLE
+    return is_usable(get_capability(capability).state)
 
 
 def _suite_managers() -> tuple[StashManager, SumManager]:
