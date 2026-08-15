@@ -855,7 +855,7 @@ static_client:
   config_injection:
     enabled: true
     filename: config.js
-    public_server_url: http://localhost:8000
+    public_server_url: ""
     content: 'window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", hideServerField:
       true, defaultTheme: "ocean", version: "{version}" };'
   invite_redirect: true

@@ -928,7 +928,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "licensed_feature": "plexisum",
             },
             "whiteboard": {
-                "enabled": False,
+                "enabled": True,
                 "licensed_feature": "artifacts_whiteboard",
                 "max_participants": 50,
                 "persist_ops": True,
@@ -1098,7 +1098,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "x_frame_options": "SAMEORIGIN",
                 "referrer_policy": "strict-origin-when-cross-origin",
                 "permissions_policy": "geolocation=(), microphone=(self), camera=()",
-                "content_security_policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-hashes' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';",
+                "content_security_policy": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';",
             },
             "rate_limit": {
                 "enabled": True,
@@ -1120,7 +1120,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "config_injection": {
                 "enabled": True,
                 "filename": "config.js",
-                "public_server_url": "http://localhost:8000",
+                "public_server_url": "",
                 "content": 'window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", hideServerField: true, defaultTheme: "ocean", version: "{version}" };',
             },
             "invite_redirect": True,

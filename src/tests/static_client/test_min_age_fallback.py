@@ -184,3 +184,71 @@ def test_config_template_does_not_raise_keyerror():
     assert "a.1.0-60" in out
     assert "{origin}" not in out
     assert "{version}" not in out
+
+
+def test_config_injection_defaults_to_empty_public_server_url(monkeypatch):
+    """A stock install must not hard-code localhost:8000.
+
+    ``public_server_url`` defaults to empty so the router falls back to the
+    request's actual origin — the previous default silently pointed every
+    non-localhost deployment's client at http://localhost:8000.
+    """
+    monkeypatch.delenv("PLEXICHAT_PUBLIC_SERVER_URL", raising=False)
+    from src.static_client.config import get_static_client_config
+
+    cfg = get_static_client_config()
+    assert cfg.config_injection.public_server_url == ""
+
+
+def test_config_injection_env_override_is_honoured(monkeypatch):
+    """An explicit env override still wins over the empty default."""
+    monkeypatch.setenv("PLEXICHAT_PUBLIC_SERVER_URL", "https://chat.example.com")
+    from src.static_client.config import get_static_client_config
+
+    cfg = get_static_client_config()
+    assert cfg.config_injection.public_server_url == "https://chat.example.com"
+
+
+def test_security_headers_csp_defaults_are_consistent():
+    """All three CSP defaults must agree: no inline scripts (they are now
+    externalized) while inline styles remain allowed for runtime <style>
+    injection."""
+    from src.static_client.config import SecurityHeadersConfig, get_static_client_config
+
+    dataclass_default = SecurityHeadersConfig().content_security_policy
+    fallback = get_static_client_config().security_headers.content_security_policy
+    assert dataclass_default == fallback
+
+    assert "script-src 'self' https://cdn.jsdelivr.net" in fallback
+    script_src = fallback.split("script-src", 1)[1].split(";", 1)[0]
+    assert "'unsafe-inline'" not in script_src
+    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in fallback
+
+
+def test_request_origin_prefers_origin_then_host():
+    """The runtime origin used for config.js must reflect the request."""
+    from src.static_client.router import StaticClientMiddleware
+
+    with_origin = {
+        "scheme": "https",
+        "headers": [
+            (b"origin", b"https://chat.example.com"),
+            (b"host", b"internal:8000"),
+        ],
+    }
+    assert (
+        StaticClientMiddleware._request_origin(with_origin)
+        == "https://chat.example.com"
+    )
+
+    host_only = {
+        "scheme": "http",
+        "headers": [(b"host", b"chat.example.com")],
+    }
+    assert (
+        StaticClientMiddleware._request_origin(host_only) == "http://chat.example.com"
+    )
+
+    assert (
+        StaticClientMiddleware._request_origin({"scheme": "http", "headers": []}) == ""
+    )
