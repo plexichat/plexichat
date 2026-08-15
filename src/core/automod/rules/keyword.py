@@ -87,8 +87,6 @@ class KeywordRule(BaseRule):
 
             start = pos + 1
 
-        return False
-
     def _parse_severity(self, sev_str: str) -> ViolationSeverity:
         """Parse severity string to enum."""
         mapping = {

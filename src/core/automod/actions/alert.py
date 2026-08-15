@@ -99,10 +99,11 @@ class AlertModeratorsAction(BaseAction):
 
         if server_config:
             try:
-                cfg = json.loads(server_config["config"])
+                raw = server_config["config"]
+                cfg = raw if isinstance(raw, dict) else json.loads(raw)
                 if "alert_channel_id" in cfg:
                     return cfg["alert_channel_id"]
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
         return automod_config.get("default_alert_channel_id")
