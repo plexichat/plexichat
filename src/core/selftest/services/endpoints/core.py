@@ -77,6 +77,20 @@ class CoreMixin(EndpointTesterBase):
         ):
             active_session = self.ctx.other_session
 
+        # Report endpoints must be filed by the OTHER user against content the
+        # admin owns (e.g. the reference message), otherwise the route's
+        # "cannot report your own content" guard rejects the auto-loop request
+        # with a 400. The OTHER user is a server member with read access to the
+        # reference message, so the report is valid.
+        if (
+            session is None
+            and not use_other
+            and self.ctx.other_token
+            and ("/reports/messages" in path or "/reports/enhanced" in path)
+            and method == "POST"
+        ):
+            active_session = self.ctx.other_session
+
         json_body = None
         files = None
         form_data = {}

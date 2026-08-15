@@ -406,6 +406,19 @@ class DataGenerator:
                 else:
                     body["user_id"] = "1"
 
+            if "reports/messages" in path and method == "POST":
+                # Reported by the OTHER user (see test_endpoint session switch)
+                # against the admin-owned reference message, so the route's own
+                # content guard does not reject it.
+                if self.ctx.test_message_id:
+                    body["message_id"] = str(self.ctx.test_message_id)
+                if self.ctx.test_channel_id:
+                    body["channel_id"] = str(self.ctx.test_channel_id)
+                if self.ctx.test_server_id:
+                    body["server_id"] = str(self.ctx.test_server_id)
+                body["reason"] = "Self-test message report"
+                body["category"] = "spam"
+
             if "admin/roles" in path and (
                 method == "POST" or method == "PUT" or method == "PATCH"
             ):
@@ -463,8 +476,21 @@ class DataGenerator:
                 body["token"] = secrets.token_urlsafe(32)
 
             if "reports/enhanced" in path and method == "POST":
+                # Filed by the OTHER user (see test_endpoint session switch)
+                # against the admin-owned reference message.
                 body["priority"] = "medium"
-                body["status"] = "open"
+                body["target_type"] = "message"
+                if self.ctx.test_message_id:
+                    body["target_id"] = str(self.ctx.test_message_id)
+                if self.ctx.test_channel_id:
+                    body["channel_id"] = str(self.ctx.test_channel_id)
+                if self.ctx.test_server_id:
+                    body["server_id"] = str(self.ctx.test_server_id)
+                body["reason"] = "Self-test enhanced report"
+                body["category"] = "spam"
+                # Schema-driven generation invents an invalid evidence URL list;
+                # clear it so the route's URL guard does not reject the request.
+                body.pop("evidence_urls", None)
 
             if "scheduled-messages" in path and method == "POST":
                 body["scheduled_at"] = int(time.time() * 1000) + 120000

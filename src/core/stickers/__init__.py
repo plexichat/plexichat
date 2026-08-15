@@ -161,6 +161,11 @@ def remove_sticker(user_id: int, sticker_id: int) -> bool:
     return _get_manager().delete_sticker(user_id, sticker_id)
 
 
+def can_use_sticker(user_id: int, sticker_id: int) -> bool:
+    """Return True if the user is permitted to use the given sticker."""
+    return _get_manager().can_use_sticker(user_id, sticker_id)
+
+
 def send_sticker(user_id: int, message_id: int, sticker_id: int) -> StickerUsage:
     """Send a sticker in a message (track usage)."""
     return _get_manager().send_sticker(user_id, message_id, sticker_id)

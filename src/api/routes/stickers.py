@@ -292,7 +292,7 @@ async def delete_sticker(
         pack = stickers_mod.get_pack(sticker.pack_id, current_user.user_id)
         server_id = pack.server_id if pack else None
 
-        stickers_mod.delete_sticker(current_user.user_id, sid)
+        stickers_mod.remove_sticker(current_user.user_id, sid)
 
         # Dispatch update if server sticker
         if server_id:
