@@ -151,7 +151,7 @@ lint:pre-commit:
         pip install --upgrade pip
         pip install --require-hashes -r requirements.txt
       fi
-    - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit
+    - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit pip-audit
   script:
     - |
       if [ -n "$CI_COMMIT_TAG" ] || [ -n "$CI_MERGE_REQUEST_IID" ]; then
