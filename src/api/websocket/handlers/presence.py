@@ -124,9 +124,8 @@ class PresenceHandler:
 
         try:
             assert connection.user_id is not None
-            await run_in_threadpool(
-                self._presence.set_status, connection.user_id, status_enum
-            )
+            uid = connection.user_id
+            await run_in_threadpool(self._presence.set_status, uid, status_enum)
 
             if activity:
                 activity_name = activity.get("name", "").strip()
@@ -134,30 +133,56 @@ class PresenceHandler:
                     try:
                         await run_in_threadpool(
                             self._presence.set_activity,
-                            connection.user_id,
+                            uid,
                             activity["activity_type"],
                             activity_name,
                             details=activity["details"],
                             state=activity["state"],
                         )
                     except Exception:
-                        logger.warning(
-                            f"Failed to set activity for user {connection.user_id}"
-                        )
+                        logger.warning(f"Failed to set activity for user {uid}")
 
-            # Dispatch presence update to friends
-            assert connection.user_id is not None
-            stored_custom_status = (
-                (custom_status or "")[:128] if custom_status is not None else None
-            )
-            stored_custom_emoji = (
-                (custom_emoji or "")[:64] if custom_emoji is not None else None
-            )
+            # Persist + broadcast custom status. (P2 fix)
+            #
+            # ``custom_status`` is only present when the client is explicitly
+            # updating it. When it is omitted (e.g. a reconnect that just
+            # re-asserts the connection status) we must NOT wipe the existing
+            # persisted custom status, so we leave it untouched and simply
+            # reflect it in the broadcast.
+            broadcast_status = status if status != "invisible" else "offline"
+            broadcast_custom: Optional[str] = None
+            broadcast_emoji: Optional[str] = None
+            if custom_status is not None:
+                text = (custom_status or "").strip()
+                emoji = (custom_emoji or "").strip() if custom_emoji else None
+                if text:
+                    await run_in_threadpool(
+                        self._presence.set_custom_status, uid, text, emoji
+                    )
+                    broadcast_custom = text if broadcast_status != "offline" else None
+                    broadcast_emoji = emoji if broadcast_status != "offline" else None
+                else:
+                    await run_in_threadpool(self._presence.clear_custom_status, uid)
+            else:
+                try:
+                    pres = await run_in_threadpool(self._presence.get_presence, uid)
+                    if pres and pres.custom_status:
+                        cs_text = pres.custom_status.text
+                        cs_emoji = pres.custom_status.emoji
+                        broadcast_custom = (
+                            cs_text if broadcast_status != "offline" else None
+                        )
+                        broadcast_emoji = (
+                            cs_emoji if broadcast_status != "offline" else None
+                        )
+                except Exception:
+                    logger.debug(f"Failed to read persisted presence for {uid}")
+
             await self._dispatch_presence_to_friends(
-                connection.user_id,
-                status if status != "invisible" else "offline",
-                stored_custom_status if status != "invisible" else None,
-                stored_custom_emoji if status != "invisible" else None,
+                uid,
+                broadcast_status,
+                broadcast_custom,
+                broadcast_emoji,
             )
         except Exception as e:
             logger.warning(f"Presence update failed: {e}")

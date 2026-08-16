@@ -204,27 +204,26 @@ async def update_presence(
             from fastapi.concurrency import run_in_threadpool
 
             def perform_presence_update():
-                """All synchronous DB/logic calls in one threadpool execution."""
-                import src.api as api
+                """All synchronous DB/logic calls in one threadpool execution.
 
-                db = api.get_db()
-                try:
-                    status_enum = UserStatus(body.status)
-                    presence.set_status(current_user.user_id, status_enum)
+                NOTE: the presence manager owns its own database connection; we
+                must NOT open or close ``api.get_db()`` here. ``api.get_db()``
+                returns the process-wide shared connection, so closing it would
+                break every subsequent request in the whole server.
+                """
+                status_enum = UserStatus(body.status)
+                presence.set_status(current_user.user_id, status_enum)
 
-                    if body.custom_status or body.custom_emoji:
-                        presence.set_custom_status(
-                            user_id=current_user.user_id,
-                            text=(body.custom_status or ""),
-                            emoji=body.custom_emoji,
-                        )
-                    else:
-                        presence.clear_custom_status(current_user.user_id)
+                if body.custom_status or body.custom_emoji:
+                    presence.set_custom_status(
+                        user_id=current_user.user_id,
+                        text=(body.custom_status or ""),
+                        emoji=body.custom_emoji,
+                    )
+                else:
+                    presence.clear_custom_status(current_user.user_id)
 
-                    return presence.get_presence(current_user.user_id)
-                finally:
-                    if db:
-                        db.close()
+                return presence.get_presence(current_user.user_id)
 
             pres = await run_in_threadpool(perform_presence_update)
             response = _presence_to_response(pres, current_user.user_id)

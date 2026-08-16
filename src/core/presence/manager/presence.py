@@ -37,6 +37,11 @@ class PresenceMixin(PresenceManagerBase):
                     # purge it so the next call rebuilds a valid entry.
                     cache_delete(f"presence:{user_id}")
 
+        # Drop any custom status that has already expired before we read it,
+        # so stale statuses never surface through REST reads or
+        # ``get_visible_presence`` (which delegates to this method).
+        self._cleanup_expired_custom_status(user_id)
+
         query = """
             SELECT
                 p.status, p.last_seen, p.updated_at,

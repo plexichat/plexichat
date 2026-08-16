@@ -58,6 +58,29 @@ class _ScanningMixin:
                 )
                 return
 
+            # Large / streamed uploads are written to storage before the scan
+            # runs, so the original bytes are no longer held in memory. Read
+            # them back from storage so they still get scanned. (Fix: previously
+            # the scan was only dispatched when ``file_data`` was in memory,
+            # leaving streamed/chunked uploads stuck in PENDING forever.)
+            if file_data is None:
+                file = self.get_file(file_id)
+                if file is None:
+                    logger.error(f"Background scan: file {file_id} not found")
+                    self._db.execute(
+                        "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
+                        (ScanStatus.ERROR.value, "file not found", file_id),
+                    )
+                    return
+                file_data = self._storage.retrieve(file.storage_path)
+                if file_data is None:
+                    logger.error(f"Background scan: could not read file {file_id}")
+                    self._db.execute(
+                        "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
+                        (ScanStatus.ERROR.value, "could not read file", file_id),
+                    )
+                    return
+
             status, result = self._scanner.scan_bytes(file_data)
             self._db.execute(
                 "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",

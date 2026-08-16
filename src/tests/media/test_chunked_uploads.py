@@ -103,3 +103,39 @@ class TestChunkedSessions:
     def test_cleanup_expired(self, chunked, test_user):
         # No expired sessions; the helper must simply return 0.
         assert chunked.cleanup_expired() == 0
+
+    def test_duplicate_chunk_index_does_not_complete(self, chunked, test_user):
+        # M7 fix: resending the same chunk index repeatedly must NOT mark the
+        # session complete (that would leave the rest of the file as
+        # pre-allocated zero bytes).
+        chunk_size = chunked._config["chunk_size"]
+        session = chunked.create_session(
+            user_id=test_user.id,
+            filename="dup.bin",
+            content_type="application/octet-stream",
+            total_size=3 * chunk_size,
+        )
+        last = None
+        for _ in range(3):
+            last = chunked.upload_chunk(session.id, test_user.id, 0, b"A" * chunk_size)
+        assert last.success is True
+        # Only one distinct chunk was received.
+        assert last.uploaded_chunks == 1
+        assert last.is_complete is False
+
+    def test_all_distinct_chunks_complete(self, chunked, test_user):
+        chunk_size = chunked._config["chunk_size"]
+        n = 3
+        session = chunked.create_session(
+            user_id=test_user.id,
+            filename="all.bin",
+            content_type="application/octet-stream",
+            total_size=n * chunk_size,
+        )
+        last = None
+        for i in range(n):
+            last = chunked.upload_chunk(
+                session.id, test_user.id, i, bytes([65 + i]) * chunk_size
+            )
+        assert last.uploaded_chunks == n
+        assert last.is_complete is True

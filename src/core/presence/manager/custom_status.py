@@ -45,15 +45,26 @@ class CustomStatusMixin(PresenceManagerBase):
         self._validate_user(user_id)
         self._ensure_presence_record(user_id)
 
-        now = self._get_timestamp()
+        # Normalize text: a custom status must be a non-empty, bounded string.
+        # Whitespace-only / missing text is treated as clearing the status.
+        normalized_text = (text or "").strip()
+        if not normalized_text:
+            return self.clear_custom_status(user_id)
 
+        max_len = self._config.get("max_custom_status_length", 128)
+        if len(normalized_text) > max_len:
+            normalized_text = normalized_text[:max_len]
+
+        emoji = (emoji or "").strip() if emoji else None
         if emoji and len(emoji) > 64:
             emoji = emoji[:64]
+
+        now = self._get_timestamp()
 
         self._db.upsert(
             "pres_custom_status",
             ["user_id", "text", "emoji", "expires_at", "created_at"],
-            (user_id, text, emoji, expires_at, now),
+            (user_id, normalized_text, emoji, expires_at, now),
             ["user_id"],
             ["text", "emoji", "expires_at"],
         )

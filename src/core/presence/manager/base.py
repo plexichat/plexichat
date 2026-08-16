@@ -51,6 +51,10 @@ class PresenceManagerBase(BaseManager):
         """Get user status. Overridden by StatusMixin."""
         raise NotImplementedError
 
+    def _cleanup_expired_custom_status(self, user_id: int) -> None:
+        """Remove an expired custom status. Overridden by CustomStatusMixin."""
+        raise NotImplementedError
+
     def __init__(
         self, db, auth_module=None, relationships_module=None, servers_module=None
     ):

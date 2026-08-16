@@ -10,9 +10,10 @@ Provides:
 
 import os
 import time
+import json
 import hashlib
 import tempfile
-from typing import Optional, List
+from typing import Optional, List, Set
 
 from src.core.database.core.schema_splitter import split_sql_statements
 from dataclasses import dataclass
@@ -51,6 +52,7 @@ class UploadSession:
     expires_at: int
     temp_path: Optional[str] = None
     checksum: Optional[str] = None
+    received_chunks: Optional[str] = None
 
 
 @dataclass
@@ -109,6 +111,20 @@ def create_tables(db) -> None:
                 db.execute(converted)
             except Exception as e:
                 logger.error(f"Failed to create chunked upload table: {e}")
+
+    # Ensure the received-chunks tracking column exists (safe on existing DBs).
+    try:
+        alter = (
+            db.convert_schema(
+                "ALTER TABLE media_upload_sessions ADD COLUMN received_chunks TEXT"
+            )
+            if hasattr(db, "convert_schema")
+            else "ALTER TABLE media_upload_sessions ADD COLUMN received_chunks TEXT"
+        )
+        db.execute(alter)
+    except Exception:
+        # Column already exists or backend does not support ALTER — ignore.
+        pass
 
 
 class ChunkedUploadManager:
@@ -244,7 +260,8 @@ class ChunkedUploadManager:
         row = self._db.fetch_one(
             """SELECT id, user_id, filename, content_type, total_size, chunk_size,
                       total_chunks, uploaded_chunks, uploaded_bytes, status,
-                      created_at, updated_at, expires_at, temp_path, checksum
+                      created_at, updated_at, expires_at, temp_path, checksum,
+                      received_chunks
                FROM media_upload_sessions
                WHERE id = ? AND user_id = ?""",
             (session_id, user_id),
@@ -270,6 +287,7 @@ class ChunkedUploadManager:
                 expires_at=row["expires_at"],
                 temp_path=row["temp_path"],
                 checksum=row["checksum"],
+                received_chunks=row.get("received_chunks"),
             )
         else:
             return UploadSession(
@@ -288,6 +306,7 @@ class ChunkedUploadManager:
                 expires_at=row[12],
                 temp_path=row[13],
                 checksum=row[14],
+                received_chunks=row[15],
             )
 
     def upload_chunk(
@@ -371,6 +390,19 @@ class ChunkedUploadManager:
                     error="Checksum mismatch",
                 )
 
+        # Track distinct received chunk indices so a client cannot "complete" an
+        # upload by resending the same chunk over and over (which would leave the
+        # rest of the file as pre-allocated zero bytes). (M7 fix)
+        received: Set[int] = set()
+        if session.received_chunks:
+            try:
+                received = set(int(x) for x in json.loads(session.received_chunks))
+            except Exception:
+                received = set()
+
+        is_new_chunk = chunk_index not in received
+        received.add(chunk_index)
+
         # Write chunk to temp file
         try:
             offset = chunk_index * session.chunk_size
@@ -385,24 +417,36 @@ class ChunkedUploadManager:
                 success=False,
                 session_id=session_id,
                 chunk_index=chunk_index,
-                uploaded_chunks=session.uploaded_chunks,
+                uploaded_chunks=len(received),
                 total_chunks=session.total_chunks,
-                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                progress_percent=(len(received) / session.total_chunks) * 100,
                 is_complete=False,
                 error=f"Write failed: {e}",
             )
 
-        # Update session
-        uploaded_chunks = session.uploaded_chunks + 1
-        uploaded_bytes = session.uploaded_bytes + len(chunk_data)
+        # Update session. Only distinct chunks count toward completion.
+        uploaded_chunks = len(received)
+        if is_new_chunk:
+            uploaded_bytes = session.uploaded_bytes + len(chunk_data)
+        else:
+            uploaded_bytes = session.uploaded_bytes
+
         is_complete = uploaded_chunks >= session.total_chunks
         status = "completed" if is_complete else "in_progress"
 
         self._db.execute(
             """UPDATE media_upload_sessions 
-               SET uploaded_chunks = ?, uploaded_bytes = ?, status = ?, updated_at = ?
+               SET uploaded_chunks = ?, uploaded_bytes = ?, status = ?, 
+                   received_chunks = ?, updated_at = ?
                WHERE id = ?""",
-            (uploaded_chunks, uploaded_bytes, status, now, session_id),
+            (
+                uploaded_chunks,
+                uploaded_bytes,
+                status,
+                json.dumps(sorted(received)),
+                now,
+                session_id,
+            ),
         )
 
         progress = (uploaded_chunks / session.total_chunks) * 100
@@ -514,16 +558,39 @@ class ChunkedUploadManager:
                     error="Checksum mismatch",
                 )
 
-        uploaded_chunks = session.uploaded_chunks + 1
-        uploaded_bytes = session.uploaded_bytes + bytes_written
+        # Track distinct received chunk indices (see M7 fix in upload_chunk).
+        received: Set[int] = set()
+        if session.received_chunks:
+            try:
+                received = set(int(x) for x in json.loads(session.received_chunks))
+            except Exception:
+                received = set()
+
+        is_new_chunk = chunk_index not in received
+        received.add(chunk_index)
+
+        uploaded_chunks = len(received)
+        if is_new_chunk:
+            uploaded_bytes = session.uploaded_bytes + bytes_written
+        else:
+            uploaded_bytes = session.uploaded_bytes
+
         is_complete = uploaded_chunks >= session.total_chunks
         status = "completed" if is_complete else "in_progress"
 
         self._db.execute(
             """UPDATE media_upload_sessions 
-               SET uploaded_chunks = ?, uploaded_bytes = ?, status = ?, updated_at = ?
+               SET uploaded_chunks = ?, uploaded_bytes = ?, status = ?, 
+                   received_chunks = ?, updated_at = ?
                WHERE id = ?""",
-            (uploaded_chunks, uploaded_bytes, status, now, session_id),
+            (
+                uploaded_chunks,
+                uploaded_bytes,
+                status,
+                json.dumps(sorted(received)),
+                now,
+                session_id,
+            ),
         )
 
         progress = (uploaded_chunks / session.total_chunks) * 100

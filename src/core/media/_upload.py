@@ -536,11 +536,10 @@ class _UploadMixin:
                 ),
             )
 
-            # Background malware scan — fire-and-forget
-            if file_data is not None:
-                self._executor.submit(
-                    self._background_scan, file_id, file_data, user_id
-                )
+            # Background malware scan — fire-and-forget. The scan helper
+            # retrieves the bytes from storage when ``file_data`` is None
+            # (large / streamed / chunked uploads), so every upload is scanned.
+            self._executor.submit(self._background_scan, file_id, file_data, user_id)
 
             # Background dedup registration
             if dedup_result and self._dedup_manager is not None:

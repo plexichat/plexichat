@@ -291,6 +291,34 @@ class StickerManager:
         )
         return [self._row_to_pack(row) for row in rows]
 
+    def _purge_sticker_media(self, user_id: int, url: Optional[str]) -> None:
+        """Best-effort deletion of the media file backing a sticker's URL.
+
+        Stickers persist only the public ``url`` (not the media file id), so the
+        underlying file is resolved via the stored filename and removed. This
+        prevents orphaned media from accumulating after a sticker/pack is
+        deleted. (S1 fix)
+        """
+        if not url or not self._media:
+            return
+        filename = url.rsplit("/", 1)[-1] if "/" in url else url
+        if not filename:
+            return
+        try:
+            media_file = self._media.get_file_by_filename(filename)
+            if media_file is None:
+                return
+            file_id = int(media_file.id)
+            try:
+                if hasattr(self._media, "delete_file_permanently"):
+                    self._media.delete_file_permanently(user_id, file_id)
+                else:
+                    self._media.delete_file(user_id, file_id)
+            except Exception as del_err:
+                logger.warning("Failed to delete sticker media %s: %s", url, del_err)
+        except Exception as e:
+            logger.warning(f"Failed to resolve sticker media for {url}: {e}")
+
     def delete_pack(self, user_id: int, pack_id: int) -> bool:
         pack = self.get_pack(pack_id, user_id)
         if not pack:
@@ -304,8 +332,13 @@ class StickerManager:
                 )
         elif not self._user_owns_pack(user_id, pack):
             raise PermissionDeniedError("Can only delete own packs")
+        sticker_rows = self._db.fetch_all(
+            "SELECT url FROM sticker_stickers WHERE pack_id = ?", (pack_id,)
+        )
         self._db.execute("DELETE FROM sticker_stickers WHERE pack_id = ?", (pack_id,))
         self._db.execute("DELETE FROM sticker_packs WHERE id = ?", (pack_id,))
+        for row in sticker_rows:
+            self._purge_sticker_media(user_id, row["url"])
         return True
 
     def add_sticker(
@@ -460,6 +493,7 @@ class StickerManager:
             "UPDATE sticker_packs SET updated_at = ? WHERE id = ?",
             (self._get_timestamp(), pack.id),
         )
+        self._purge_sticker_media(user_id, sticker.url)
         logger.debug("Sticker %s deleted by user %s", sticker_id, user_id)
         return True
 
