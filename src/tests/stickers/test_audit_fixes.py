@@ -127,3 +127,80 @@ class TestStickerUploadHardening:
             )
         after = test_db.fetch_one("SELECT COUNT(*) AS c FROM media_files")["c"]
         assert after == before
+
+    def test_svg_disguised_as_png_rejected_by_magic_bytes(
+        self, test_db, messaging_manager, server_manager, media_manager
+    ):
+        # S1: the format must be derived from the file's bytes, not the
+        # client-declared Content-Type. An SVG document uploaded with a
+        # ``image/png`` Content-Type is a stored-XSS vector and must be
+        # rejected.
+        mgr = self._manager(test_db, messaging_manager, server_manager, media_manager)
+        pack = mgr.create_pack(1, "P", pack_type=PackType.PERSONAL)
+        with pytest.raises(InvalidStickerFormatError):
+            mgr.create_sticker_from_file(1, pack.id, "xss", SVG_BYTES, "image/png", 10)
+
+    def test_valid_png_accepted_under_png_content_type(
+        self, test_db, messaging_manager, server_manager, media_manager
+    ):
+        mgr = self._manager(test_db, messaging_manager, server_manager, media_manager)
+        pack = mgr.create_pack(1, "P", pack_type=PackType.PERSONAL)
+        sticker = mgr.create_sticker_from_file(
+            1, pack.id, "ok", PNG_BYTES, "image/png", 10
+        )
+        assert sticker.format.value in ("png", "apng")
+
+    def test_json_content_type_requires_valid_json(
+        self, test_db, messaging_manager, server_manager, media_manager
+    ):
+        mgr = self._manager(test_db, messaging_manager, server_manager, media_manager)
+        pack = mgr.create_pack(1, "P", pack_type=PackType.PERSONAL)
+        with pytest.raises(InvalidStickerFormatError):
+            # Declared JSON but the bytes are not JSON at all.
+            mgr.create_sticker_from_file(
+                1, pack.id, "bad", b"<svg></svg>", "application/json", 10
+            )
+
+
+class TestStickerUsageAuthorshipWithMessaging:
+    """S2: usage must be attributed only to the caller's own messages."""
+
+    def _make_sticker(self, sticker_manager, user_id=1):
+        pack = sticker_manager.create_pack(
+            user_id, "Personal", pack_type=PackType.PERSONAL
+        )
+        return sticker_manager.add_sticker(
+            user_id, pack.id, "hi", StickerFormat.PNG, "url", 10
+        )
+
+    def test_send_sticker_rejects_other_authors_message(
+        self, sticker_manager, messaging_manager, monkeypatch
+    ):
+        sticker = self._make_sticker(sticker_manager, user_id=1)
+
+        class FakeMsg:
+            author_id = 2  # owned by a different user
+
+        monkeypatch.setattr(
+            sticker_manager._messaging,
+            "get_message",
+            lambda uid, mid: FakeMsg(),
+        )
+        with pytest.raises(PermissionDeniedError):
+            sticker_manager.send_sticker(1, 555, sticker.id)
+
+    def test_send_sticker_allows_own_message(
+        self, sticker_manager, messaging_manager, monkeypatch
+    ):
+        sticker = self._make_sticker(sticker_manager, user_id=1)
+
+        class FakeMsg:
+            author_id = 1
+
+        monkeypatch.setattr(
+            sticker_manager._messaging,
+            "get_message",
+            lambda uid, mid: FakeMsg(),
+        )
+        usage = sticker_manager.send_sticker(1, 555, sticker.id)
+        assert usage is not None

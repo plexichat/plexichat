@@ -728,6 +728,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "stickers": {
             "max_packs_per_server": 50,
+            "max_packs_per_user": 100,
             "max_stickers_per_pack": 100,
             "max_sticker_size": 524288,
             "max_sticker_name_length": 32,

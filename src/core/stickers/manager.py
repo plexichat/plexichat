@@ -52,6 +52,31 @@ class StickerManager:
         """Load sticker configuration from global config."""
         return config.get("stickers", {})
 
+    _STICKER_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+    @staticmethod
+    def _detect_sticker_format(data: bytes) -> Optional[str]:
+        """Detect the on-disk format of sticker bytes from magic bytes.
+
+        Returns one of ``"png"`` (also covers APNG), ``"json"`` (Lottie), or
+        ``None`` for anything unsupported or unsafe (SVG, HTML, plain text,
+        garbage). The PNG magic is required: a ``image/png`` Content-Type whose
+        bytes are actually SVG/HTML must be rejected, since a ``*.png`` sticker
+        that is really an SVG/HTML document is a stored-XSS vector.
+        """
+        if not data:
+            return None
+        stripped = data.lstrip()
+        if stripped[:1] in (b"{", b"["):
+            try:
+                json.loads(data.decode("utf-8", "replace"))
+                return "json"
+            except Exception:
+                return None
+        if data[:8] == StickerManager._STICKER_PNG_MAGIC:
+            return "png"
+        return None
+
     def _get_timestamp(self) -> int:
         return int(time.time() * 1000)
 
@@ -98,16 +123,32 @@ class StickerManager:
         if not self._media:
             raise RuntimeError("Media module not configured")
 
-        # Validate the content type up-front. Only raster PNG, animated PNG and
-        # Lottie JSON are accepted; never map a generic ``image/*`` (e.g.
-        # ``image/svg+xml``) onto PNG — an SVG stored as a sticker is a stored
-        # XSS vector if it is ever rendered outside a hardened <img> context.
+        # Determine the real format from the file's magic bytes, not the
+        # client-declared Content-Type. A declared ``image/png`` whose bytes
+        # are actually SVG/HTML must be rejected (stored-XSS vector). The
+        # declared Content-Type is then required to be consistent with what the
+        # bytes actually are.
+        detected = self._detect_sticker_format(image_data)
         if content_type == "application/json":
+            if detected != "json":
+                raise InvalidStickerFormatError(
+                    "Content-Type is JSON but file is not valid JSON",
+                    content_type,
+                    ["json"],
+                )
             sticker_format = StickerFormat.LOTTIE
-        elif content_type == "image/png":
-            sticker_format = StickerFormat.PNG
-        elif content_type == "image/apng":
-            sticker_format = StickerFormat.APNG
+        elif content_type in ("image/png", "image/apng"):
+            if detected != "png":
+                raise InvalidStickerFormatError(
+                    "Content-Type is PNG/APNG but file is not a PNG image",
+                    content_type,
+                    ["png", "apng"],
+                )
+            sticker_format = (
+                StickerFormat.APNG
+                if content_type == "image/apng"
+                else StickerFormat.PNG
+            )
         else:
             allowed = self._config.get("allowed_formats", ["png", "apng", "json"])
             raise InvalidStickerFormatError(
@@ -215,6 +256,22 @@ class StickerManager:
             if count_row and count_row["count"] >= max_packs:
                 raise PackLimitError(
                     f"Server has reached maximum of {max_packs} sticker packs",
+                    max_packs,
+                    count_row["count"],
+                )
+        elif pack_type == PackType.PERSONAL:
+            # Personal packs were previously created as SERVER packs with a NULL
+            # server_id and therefore bypassed the per-server limit entirely,
+            # letting a single user create an unbounded number of packs (S2).
+            count_row = self._db.fetch_one(
+                "SELECT COUNT(*) as count FROM sticker_packs "
+                "WHERE created_by = ? AND pack_type = ?",
+                (user_id, PackType.PERSONAL.value),
+            )
+            max_packs = self._config.get("max_packs_per_user", 100)
+            if count_row and count_row["count"] >= max_packs:
+                raise PackLimitError(
+                    f"User has reached maximum of {max_packs} personal sticker packs",
                     max_packs,
                     count_row["count"],
                 )
@@ -752,6 +809,14 @@ class StickerManager:
             msg = self._messaging.get_message(user_id, message_id)
             if not msg:
                 raise MessageNotFoundError("Message not found")
+            # Sticker usage must be attributed only to the caller's own
+            # messages. ``get_message`` only verifies the caller is a
+            # participant of the conversation, so a participant could otherwise
+            # attach usage stats to another user's message.
+            if getattr(msg, "author_id", None) != user_id:
+                raise PermissionDeniedError(
+                    "Sticker usage can only be attached to your own messages"
+                )
         else:
             # Fallback: when the messaging module is unavailable, verify the
             # message exists and belongs to this user directly so usage stats
@@ -796,8 +861,19 @@ class StickerManager:
         words = set(re.findall(r"\w+", content_lower))
         suggestions = []
         rows = self._db.fetch_all(
-            "SELECT s.*, COUNT(u.id) as usage_count FROM sticker_stickers s INNER JOIN sticker_packs p ON s.pack_id = p.id LEFT JOIN sticker_usage u ON s.id = u.sticker_id WHERE (p.pack_type = ? OR (p.pack_type = ? AND p.server_id = ?)) GROUP BY s.id",
-            (PackType.DEFAULT.value, PackType.SERVER.value, server_id or 0),
+            "SELECT s.*, COUNT(u.id) as usage_count FROM sticker_stickers s "
+            "INNER JOIN sticker_packs p ON s.pack_id = p.id "
+            "LEFT JOIN sticker_usage u ON s.id = u.sticker_id "
+            "WHERE (p.pack_type = ? OR (p.pack_type = ? AND p.server_id = ?) "
+            "   OR (p.pack_type = ? AND p.created_by = ?)) "
+            "GROUP BY s.id",
+            (
+                PackType.DEFAULT.value,
+                PackType.SERVER.value,
+                server_id or 0,
+                PackType.PERSONAL.value,
+                user_id,
+            ),
         )
         for row in rows:
             sticker = self._row_to_sticker(row)
