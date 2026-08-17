@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS media_upload_sessions (
     expires_at INTEGER NOT NULL,
     temp_path TEXT,
     checksum TEXT,
-    chunk_checksums TEXT
+    chunk_checksums TEXT,
+    received_chunks TEXT
 );
 
 -- Indexes
@@ -111,20 +112,6 @@ def create_tables(db) -> None:
                 db.execute(converted)
             except Exception as e:
                 logger.error(f"Failed to create chunked upload table: {e}")
-
-    # Ensure the received-chunks tracking column exists (safe on existing DBs).
-    try:
-        alter = (
-            db.convert_schema(
-                "ALTER TABLE media_upload_sessions ADD COLUMN received_chunks TEXT"
-            )
-            if hasattr(db, "convert_schema")
-            else "ALTER TABLE media_upload_sessions ADD COLUMN received_chunks TEXT"
-        )
-        db.execute(alter)
-    except Exception:
-        # Column already exists or backend does not support ALTER — ignore.
-        pass
 
 
 class ChunkedUploadManager:

@@ -4,6 +4,7 @@ File retrieval, deletion, and access-check methods mixed into MediaManager.
 """
 
 import os
+import time
 import logging
 from typing import Optional, Dict, List, Tuple, BinaryIO
 
@@ -12,6 +13,18 @@ from .exceptions import MediaError, PermissionDeniedError
 from src.utils.encryption import decrypt_data
 
 logger = logging.getLogger(__name__)
+
+# Retry window for transient SQLite write-lock contention (see
+# ``_retry_on_db_lock``). Background upload tasks and synchronous deletes can
+# briefly contend for the single WAL write lock; a short bounded retry is safe
+# because those tasks commit within microseconds and never deadlock.
+_LOCK_RETRY_ATTEMPTS = 6
+_LOCK_RETRY_BASE_DELAY_S = 0.02
+
+
+def _is_db_lock_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return "locked" in msg or "busy" in msg
 
 
 class _FilesMixin:
@@ -222,6 +235,42 @@ class _FilesMixin:
             return None
         return self._row_to_media_file(row)
 
+    def _run_transaction(self, begin, commit, rollback, body) -> None:
+        """Execute ``body`` inside one transaction, rolling back on any error."""
+        begin()
+        try:
+            body()
+            commit()
+        except BaseException:
+            try:
+                rollback()
+            except Exception:
+                pass
+            raise
+
+    def _retry_on_db_lock(self, fn) -> None:
+        """Run ``fn``, retrying transient SQLite write-lock contention.
+
+        ``delete_file_permanently`` removes a media row inside an explicit
+        transaction while the fire-and-forget tasks spawned by ``upload_file``
+        (malware scan, thumbnails, pHash dedup, dedup registration) can still
+        be writing to the same database. In WAL mode only one writer may hold
+        the lock at a time, so the delete's write can transiently fail with
+        ``database is locked``. The ``execute`` layer deliberately does not
+        retry inside transactions (re-running one statement could double-apply
+        it), so we retry the whole transaction instead: those background tasks
+        commit within microseconds and never deadlock, making a short bounded
+        retry safe and correct.
+        """
+        for attempt in range(_LOCK_RETRY_ATTEMPTS):
+            try:
+                fn()
+                return
+            except Exception as exc:
+                if not _is_db_lock_error(exc) or attempt == _LOCK_RETRY_ATTEMPTS - 1:
+                    raise
+                time.sleep(_LOCK_RETRY_BASE_DELAY_S * (2**attempt))
+
     def delete_file_permanently(self, user_id: int, file_id: int) -> bool:
         """Remove an owned, unreferenced media record and its storage object."""
         file = self._get_file_for_permanent_delete(file_id)
@@ -236,10 +285,6 @@ class _FilesMixin:
         if not callable(begin) or not callable(commit) or not callable(rollback):
             raise MediaError("Media deletion requires transactional database support")
 
-        # Keep the reference check and metadata deletion in one database
-        # transaction.  The check above is only a cheap preflight; this second
-        # check is authoritative and prevents a concurrent attachment from
-        # being created between the check and delete.
         storage = self._get_storage_by_backend(file.storage_backend.value)
         deletion_timestamp = self._get_timestamp()
 
@@ -247,42 +292,45 @@ class _FilesMixin:
         # storage. If the worker dies after this commit, every guarded writer
         # continues to reject the reference and a later cleanup can retry the
         # storage removal safely.
-        try:
-            begin()
-            lock_cursor = self._db.execute(
-                "UPDATE media_files SET deleted = 1, deleted_at = ? WHERE id = ?",
-                (deletion_timestamp, int(file_id)),
-                auto_commit=False,
-            )
-            try:
-                if int(getattr(lock_cursor, "rowcount", 0)) != 1:
-                    raise MediaError("Media object is unavailable")
-            finally:
+        def _publish_tombstone() -> None:
+            def _body() -> None:
+                lock_cursor = self._db.execute(
+                    "UPDATE media_files SET deleted = 1, deleted_at = ? WHERE id = ?",
+                    (deletion_timestamp, int(file_id)),
+                    auto_commit=False,
+                )
+                try:
+                    if int(getattr(lock_cursor, "rowcount", 0)) != 1:
+                        raise MediaError("Media object is unavailable")
+                finally:
+                    lock_cursor.close()
+                lock_cursor = self._db.execute(
+                    "INSERT INTO media_file_deletion_locks "
+                    "(media_file_id, requested_by, requested_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(media_file_id) DO NOTHING",
+                    (int(file_id), int(user_id), deletion_timestamp),
+                    auto_commit=False,
+                )
                 lock_cursor.close()
-            lock_cursor = self._db.execute(
-                "INSERT INTO media_file_deletion_locks "
-                "(media_file_id, requested_by, requested_at) VALUES (?, ?, ?) "
-                "ON CONFLICT(media_file_id) DO NOTHING",
-                (int(file_id), int(user_id), deletion_timestamp),
-                auto_commit=False,
-            )
-            lock_cursor.close()
-            tombstone_cursor = self._db.execute(
-                "INSERT INTO media_file_deletion_tombstones "
-                "(media_file_id, filename, requested_by, requested_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(media_file_id) DO NOTHING",
-                (int(file_id), file.filename, int(user_id), deletion_timestamp),
-                auto_commit=False,
-            )
-            tombstone_cursor.close()
-            if not self.can_delete_file_permanently(file_id):
-                raise MediaError("Media object is still referenced")
-            commit()
+                tombstone_cursor = self._db.execute(
+                    "INSERT INTO media_file_deletion_tombstones "
+                    "(media_file_id, filename, requested_by, requested_at) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(media_file_id) DO NOTHING",
+                    (int(file_id), file.filename, int(user_id), deletion_timestamp),
+                    auto_commit=False,
+                )
+                tombstone_cursor.close()
+                if not self.can_delete_file_permanently(file_id):
+                    raise MediaError("Media object is still referenced")
+
+            self._run_transaction(begin, commit, rollback, _body)
+
+        try:
+            self._retry_on_db_lock(_publish_tombstone)
         except MediaError:
-            rollback()
             raise
         except Exception as exc:
-            rollback()
             raise MediaError("Could not publish media deletion tombstone") from exc
 
         try:
@@ -295,23 +343,34 @@ class _FilesMixin:
                 raise
             raise MediaError("Underlying media object could not be deleted") from exc
 
+        def _remove_metadata() -> None:
+            def _body() -> None:
+                # Delete the metadata rows first so the DELETE is the first
+                # write of the transaction and acquires the WAL write lock up
+                # front. ``decrement_reference`` opens with a SELECT; if that
+                # read ran first, the subsequent write would be a
+                # read-snapshot -> write upgrade that fails immediately with
+                # ``database is locked`` (SQLite does not run the busy handler
+                # for a stale-snapshot upgrade) whenever a background upload
+                # task briefly holds the write lock.
+                self._db.execute(
+                    "DELETE FROM media_files WHERE id = ?",
+                    (int(file_id),),
+                    auto_commit=False,
+                )
+                self._db.execute(
+                    "DELETE FROM media_file_deletion_locks WHERE media_file_id = ?",
+                    (int(file_id),),
+                    auto_commit=False,
+                )
+                if file.checksum and self._dedup_manager is not None:
+                    self._dedup_manager.decrement_reference(file.checksum)
+
+            self._run_transaction(begin, commit, rollback, _body)
+
         try:
-            begin()
-            if file.checksum and self._dedup_manager is not None:
-                self._dedup_manager.decrement_reference(file.checksum)
-            self._db.execute(
-                "DELETE FROM media_files WHERE id = ?",
-                (int(file_id),),
-                auto_commit=False,
-            )
-            self._db.execute(
-                "DELETE FROM media_file_deletion_locks WHERE media_file_id = ?",
-                (int(file_id),),
-                auto_commit=False,
-            )
-            commit()
+            self._retry_on_db_lock(_remove_metadata)
         except Exception as exc:
-            rollback()
             # The object is already gone, so retain the tombstone and leave
             # metadata for an idempotent repair job rather than resurrecting a
             # reference to missing storage.
