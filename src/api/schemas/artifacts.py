@@ -42,6 +42,13 @@ class ArtifactResponse(BaseModel):
     )
     created_at: int = Field(..., description="Creation timestamp (ms)")
     updated_at: int = Field(..., description="Last-update timestamp (ms)")
+    my_permissions: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Authoritative permissions for the requesting user, computed "
+            "server-side (can_edit / can_view)."
+        ),
+    )
 
 
 class _PayloadSizeMixin:

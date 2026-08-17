@@ -8,8 +8,10 @@ authorization (previously always 403'd) and PATCH-style payload merging on
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from src.api.routes.artifacts import _authorize_scope, _deep_merge_payload, router
+from src.api.schemas.artifacts import ArtifactCreateRequest, ArtifactUpdateRequest
 
 
 def test_literal_artifact_routes_precede_dynamic_route():
@@ -118,3 +120,26 @@ def test_merge_list_replaces_wholesale():
     base = {"strokes": [{"x": 0}]}
     merged = _deep_merge_payload(base, {"strokes": [{"x": 1}, {"x": 2}]})
     assert merged == {"strokes": [{"x": 1}, {"x": 2}]}
+
+
+# === payload size bound (create + update) ===
+
+
+def test_create_payload_over_1mb_is_rejected():
+    oversized = {"content": "x" * (1024 * 1024 + 1)}
+    with pytest.raises(ValidationError) as exc:
+        ArtifactCreateRequest(artifact_type="upload", title="big", payload=oversized)
+    assert "payload exceeds maximum size" in str(exc.value)
+
+
+def test_update_payload_over_1mb_is_rejected():
+    oversized = {"content": "x" * (1024 * 1024 + 1)}
+    with pytest.raises(ValidationError) as exc:
+        ArtifactUpdateRequest(payload=oversized)
+    assert "payload exceeds maximum size" in str(exc.value)
+
+
+def test_create_payload_under_limit_is_accepted():
+    ok = {"content": "x" * 1024}
+    body = ArtifactCreateRequest(artifact_type="upload", title="ok", payload=ok)
+    assert body.payload["content"] == "x" * 1024

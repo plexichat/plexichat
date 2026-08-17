@@ -9,6 +9,7 @@ caller must be a participant/owner of the conversation.
 
 import html as _html
 import json
+import re
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 
@@ -321,6 +322,208 @@ def _validate_artifact_scope(
     return conversation_id, channel_id, server_id
 
 
+def _my_permissions(user_id: int, artifact: Any) -> Dict[str, Any]:
+    """Compute authoritative ``can_edit``/``can_view`` for the current user.
+
+    Mirrors ``_authorize_scope`` without raising, so the client renders
+    permission-aware UI from server truth instead of guessing at key paths
+    (which previously produced misleading "editable" states followed by 403s).
+    """
+    raw_server = getattr(artifact, "server_id", None)
+    raw_conversation = getattr(artifact, "conversation_id", None)
+    raw_author = getattr(artifact, "author_id", 0)
+    server_id = int(raw_server) if raw_server is not None else None
+    conversation_id = int(raw_conversation) if raw_conversation is not None else None
+    author_id = int(raw_author) if raw_author is not None else 0
+
+    def _allowed(permission: str) -> bool:
+        if _require_server_permission(user_id, server_id, permission):
+            return True
+        if _is_conversation_member(api.get_messaging(), conversation_id, user_id):
+            conv_server = _conversation_server_id(conversation_id)
+            if (
+                server_id is None
+                or conv_server is None
+                or conv_server == int(server_id)
+            ):
+                return True
+        return (
+            author_id == int(user_id) and server_id is None and conversation_id is None
+        )
+
+    return {
+        "can_edit": _allowed("artifact.edit"),
+        "can_view": _allowed("artifact.view"),
+    }
+
+
+def _artifact_response(user_id: int, artifact: Any) -> ArtifactResponse:
+    """Build an artifact response with server-computed permissions attached."""
+    response = ArtifactResponse.model_validate(artifact)
+    response.my_permissions = _my_permissions(user_id, artifact)
+    return response
+
+
+def _json_loads(value: Any) -> Any:
+    """Parse a JSON string without raising; returns any other value unchanged."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def _artifact_scribe_html(payload: Dict[str, Any]) -> str:
+    """Return the content HTML of a plexiscribe payload across stored shapes.
+
+    The editor historically stored ``payload.document`` as a serialized JSON
+    string while the launcher templates stored it as a dict with a direct
+    ``content_html`` key. Both (and a nested ``document.document`` shape) are
+    normalized here so exports and text extraction never return raw JSON.
+    """
+    doc = _json_loads(payload.get("document"))
+    if isinstance(doc, dict):
+        if isinstance(doc.get("content_html"), str):
+            return doc["content_html"]
+        inner = doc.get("document")
+        if isinstance(inner, dict) and isinstance(inner.get("content_html"), str):
+            return inner["content_html"]
+    top = payload.get("content_html")
+    if isinstance(top, str):
+        return top
+    return ""
+
+
+def _artifact_script_text(payload: Dict[str, Any]) -> str:
+    """Return the readable source of a plexiscript payload."""
+    content = payload.get("content")
+    if isinstance(content, str) and content:
+        return content
+    source = _json_loads(payload.get("source"))
+    if isinstance(source, dict):
+        for key in ("content", "source", "text"):
+            if isinstance(source.get(key), str):
+                return source[key]
+    if isinstance(source, str):
+        return source
+    return ""
+
+
+def _artifact_board_text(payload: Dict[str, Any]) -> str:
+    """Return readable text from a whiteboard payload's ``board`` JSON."""
+    board = _json_loads(payload.get("board"))
+    if not isinstance(board, dict):
+        return ""
+    parts: List[str] = []
+    for element in board.get("text_elements") or []:
+        if isinstance(element, dict) and element.get("text"):
+            parts.append(str(element["text"]))
+    for shape in board.get("shapes") or []:
+        if isinstance(shape, dict):
+            for key in ("label", "text", "title"):
+                if shape.get(key):
+                    parts.append(str(shape[key]))
+                    break
+    for frame in board.get("frames") or []:
+        if isinstance(frame, dict) and frame.get("name"):
+            parts.append(str(frame["name"]))
+    return "\n".join(parts)
+
+
+def _strip_html_markup(value: str) -> str:
+    """Convert HTML to plain text (tags removed, entities decoded)."""
+    text = re.sub(r"<[^>]+>", " ", value or "")
+    text = _html.unescape(text).replace("\xa0", " ")
+    return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+
+def _artifact_export_text(
+    artifact_type_value: str, payload: Dict[str, Any], summary: Optional[str]
+) -> str:
+    """Extract human-readable text for any artifact payload shape."""
+    if artifact_type_value == "plexiscribe":
+        return _strip_html_markup(_artifact_scribe_html(payload)) or (summary or "")
+    if artifact_type_value == "plexiscript":
+        return _artifact_script_text(payload)
+    if artifact_type_value == "whiteboard":
+        return _artifact_board_text(payload) or (summary or "")
+    return str(payload.get("content") or payload.get("text") or summary or "")
+
+
+def _artifact_native_bytes(value: Any) -> bytes:
+    """Serialize a native-format export value that may be str, dict, or None."""
+    if isinstance(value, str):
+        return value.encode("utf-8", "replace")
+    if value is None:
+        return b"{}"
+    return json.dumps(value, ensure_ascii=False).encode("utf-8", "replace")
+
+
+def _artifact_export_html(
+    artifact: Any, artifact_type_value: str, payload: Dict[str, Any]
+) -> str:
+    """Render a standalone HTML export document."""
+    if artifact_type_value == "plexiscribe":
+        body = _artifact_scribe_html(payload)
+    elif artifact_type_value == "plexiscript":
+        body = "<pre>" + _html.escape(_artifact_script_text(payload)) + "</pre>"
+    elif artifact_type_value == "whiteboard":
+        body = "<pre>" + _html.escape(_artifact_board_text(payload)) + "</pre>"
+    else:
+        body = _html.escape(str(payload.get("content") or payload.get("text") or ""))
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        f"<title>{_html.escape(artifact.title or '')}</title></head>"
+        f"<body><h1>{_html.escape(artifact.title or '')}</h1>{body}</body></html>"
+    )
+
+
+def _artifact_export_markdown(artifact: Any, text: str) -> str:
+    """Render a Markdown export document."""
+    title = _html.escape(artifact.title or "")
+    summary = _html.escape(artifact.summary or "")
+    if artifact.artifact_type.value == "plexiscript":
+        body = "```\n" + text + "\n```"
+    else:
+        body = text
+    return f"# {title}\n\n{summary}\n\n{body}\n"
+
+
+def _latin1_safe(value: str) -> str:
+    """Force text into latin-1 so FPDF core fonts never raise on non-ASCII."""
+    return value.encode("latin-1", "replace").decode("latin-1")
+
+
+def _artifact_export_pdf(artifact: Any, text: str) -> bytes:
+    """Render a PDF export using extracted text (latin-1 safe)."""
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=2.0)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "", 11)
+    title = _latin1_safe(artifact.title or "Document")
+    pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "", 10)
+    for line in _latin1_safe(text or "").splitlines():
+        pdf.multi_cell(0, 6, line, new_x="LMARGIN", new_y="NEXT")
+    pdf_bytes = pdf.output()
+    return bytes(pdf_bytes) if pdf_bytes else b""
+
+
+def _artifact_export_odt(artifact: Any, text: str) -> bytes:
+    """Render an ODT export using extracted text."""
+    doc = OpenDocumentText()
+    doc_text = getattr(doc, "text")
+    doc_text.addElement(P(text=artifact.title or "Document"))
+    doc_text.addElement(P(text=""))
+    for line in (text or "").splitlines():
+        doc_text.addElement(P(text=line))
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 def _get_manager():
     db = api.get_db()
     if db is None:
@@ -472,7 +675,7 @@ async def create_artifact(
         }
         _emit_artifact_message(ArtifactResponse.model_validate(artifact), author)
 
-        return ArtifactResponse.model_validate(artifact)
+        return _artifact_response(current_user.user_id, artifact)
     except HTTPException:
         raise
     except Exception as e:
@@ -507,9 +710,16 @@ async def list_artifacts(
     sort_order: str = "desc",
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    include_payload: bool = Query(True),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ArtifactListResponse:
-    """List artifacts with query filters."""
+    """List artifacts with query filters.
+
+    ``include_payload=False`` omits the (up to 1 MB) type-specific payload
+    from every item so metadata-only listings (e.g. the Suite's Scribe/Script/
+    Board libraries) never ship full document bodies over the wire. Single-artifact
+    GETs and the chat artifacts pane keep ``include_payload=True``.
+    """
     try:
         conv_id = int(conversation_id) if conversation_id is not None else None
         chan_id = int(channel_id) if channel_id is not None else None
@@ -611,8 +821,13 @@ async def list_artifacts(
         )
         total = manager.count(filters)
 
+        items = [_artifact_response(current_user.user_id, a) for a in artifacts]
+        if not include_payload:
+            for item in items:
+                item.payload = {}
+
         return ArtifactListResponse(
-            items=[ArtifactResponse.model_validate(a) for a in artifacts],
+            items=items,
             total=total,
             has_more=(offset + limit) < total,
         )
@@ -828,7 +1043,7 @@ async def _convert_upload_impl(
         }
         _emit_artifact_message(ArtifactResponse.model_validate(artifact), author)
 
-        return ArtifactResponse.model_validate(artifact)
+        return _artifact_response(current_user.user_id, artifact)
     except HTTPException:
         raise
     except Exception as e:
@@ -929,77 +1144,37 @@ async def _export_artifact_impl(
 
         payload = artifact.payload or {}
         artifact_type_value = artifact.artifact_type.value
-
-        def _extract_text() -> str:
-            """Pull the human-readable text for export from the artifact payload."""
-            if artifact_type_value == "plexiscribe":
-                return payload.get("content_html") or payload.get("document") or ""
-            if artifact_type_value == "plexiscript":
-                return payload.get("source") or payload.get("content") or ""
-            if artifact_type_value == "whiteboard":
-                return payload.get("board") or ""
-            return (
-                payload.get("content") or payload.get("text") or artifact.summary or ""
-            )
+        text = _artifact_export_text(artifact_type_value, payload, artifact.summary)
 
         if (
             export_format == "plexiscribe"
             and artifact.artifact_type.value == "plexiscribe"
         ):
-            data: bytes = (payload.get("document") or "{}").encode("utf-8", "replace")
+            data = _artifact_native_bytes(payload.get("document"))
         elif (
             export_format == "plexiscript"
             and artifact.artifact_type.value == "plexiscript"
         ):
-            data = (payload.get("source") or payload.get("content") or "{}").encode(
-                "utf-8", "replace"
+            data = _artifact_native_bytes(
+                payload.get("source") or payload.get("content")
             )
         elif (
             export_format == "plexiboard"
             and artifact.artifact_type.value == "whiteboard"
         ):
-            data = (payload.get("board") or "{}").encode("utf-8", "replace")
+            data = _artifact_native_bytes(payload.get("board"))
         elif export_format == "txt":
-            data = _extract_text().encode("utf-8", "replace")
+            data = text.encode("utf-8", "replace")
         elif export_format == "md":
-            md = (
-                f"# {_html.escape(artifact.title)}\n\n"
-                f"{_html.escape(artifact.summary or '')}\n\n"
-                f"```\n{_html.escape(payload.get('content', ''))}\n```"
-            )
-            data = md.encode("utf-8", "replace")
+            data = _artifact_export_markdown(artifact, text).encode("utf-8", "replace")
         elif export_format == "html":
-            content = payload.get("content", "")
-            html_doc = (
-                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                f"<title>{_html.escape(artifact.title or '')}</title></head>"
-                "<body><h1>"
-                f"{_html.escape(artifact.title or '')}</h1><pre>"
-                f"{_html.escape(str(content))}</pre></body></html>"
+            data = _artifact_export_html(artifact, artifact_type_value, payload).encode(
+                "utf-8", "replace"
             )
-            data = html_doc.encode("utf-8", "replace")
         elif export_format == "pdf":
-            pdf = FPDF()
-            pdf.set_auto_page_break(auto=True, margin=2.0)
-            pdf.add_page()
-            pdf.set_font("Helvetica", "", 11)
-            pdf.cell(0, 10, artifact.title or "Document", new_x="LMARGIN", new_y="NEXT")
-            pdf.ln(2)
-            pdf.set_font("Helvetica", "", 10)
-            for line in (_extract_text() or "").splitlines():
-                pdf.multi_cell(0, 6, line)
-            pdf_bytes = pdf.output()
-            data = bytes(pdf_bytes) if pdf_bytes else b""
+            data = _artifact_export_pdf(artifact, text)
         elif export_format == "odt":
-            doc = OpenDocumentText()
-            doc_text = getattr(doc, "text")
-            doc_text.addElement(P(text=artifact.title or "Document"))
-            doc_text.addElement(P(text=""))
-            for line in (_extract_text() or "").splitlines():
-                doc_text.addElement(P(text=line))
-            buf = BytesIO()
-            doc.save(buf)
-            data = buf.getvalue()
+            data = _artifact_export_odt(artifact, text)
         else:
             data = str(payload).encode("utf-8", "replace")
 
@@ -1131,7 +1306,7 @@ async def get_artifact(
         )
         _require_artifact_capability(artifact.artifact_type)
 
-        return ArtifactResponse.model_validate(artifact)
+        return _artifact_response(current_user.user_id, artifact)
     except HTTPException:
         raise
     except Exception as e:
@@ -1231,7 +1406,7 @@ async def update_artifact(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"error": {"code": 404, "message": "Artifact not found"}},
             )
-        return ArtifactResponse.model_validate(updated)
+        return _artifact_response(current_user.user_id, updated)
     except HTTPException:
         raise
     except Exception as e:
