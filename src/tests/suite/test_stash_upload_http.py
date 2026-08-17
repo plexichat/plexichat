@@ -75,6 +75,13 @@ def stash_media_dir(tmp_path):
             "max_total_size_per_day": 10 * 1024 * 1024 * 1024,
         },
     }
+    # ``config.get`` caches lookups and is only invalidated on reload/set. The
+    # direct assignment above bypasses that cache, so without an explicit
+    # invalidation an earlier ``config.get("media")`` (cached by another
+    # fixture earlier in the session) would make ``media.setup`` read the stale
+    # default storage path and write the upload outside this temp dir,
+    # producing an order-dependent FileNotFoundError.
+    config._config_instance._invalidate_cache()
     return upload_dir
 
 
@@ -129,9 +136,16 @@ class TestStashUploadRoute:
         assert media_row["checksum"] == hashlib.sha256(payload).hexdigest()
         assert int(media_row["uploaded_by"]) == int(user.id)
 
-        # The decoded bytes reached local storage byte-for-byte.
-        stored = stash_media_dir / media_row["storage_path"]
-        assert stored.read_bytes() == payload
+        # The decoded bytes reached storage byte-for-byte. Read them back
+        # through the media module so the assertion uses the same storage
+        # backend the upload actually wrote to -- this is robust to how the
+        # local base path is resolved and does not depend on reconstructing
+        # the path from the test's temp directory.
+        from src.core import media as media_module
+
+        stored_bytes, stored_ct = media_module.get_file_data(int(media_object_id))
+        assert stored_bytes == payload
+        assert stored_ct == "text/plain"
 
         # Stash item persisted, owned by the uploader and referencing the object.
         item_row = db.fetch_one(
@@ -209,8 +223,6 @@ class TestStashUploadRoute:
     def test_upload_server_scoped_requires_membership(
         self, stash_media_dir, test_client, stash_enabled, auth_manager, server_manager
     ):
-        import src.api.routes.suite.stash as stash_routes
-
         # Server owner (and therefore member) and a separate, non-member user.
         token_owner, owner = _register_and_login(auth_manager, "owner")
         token_intruder, _ = _register_and_login(auth_manager, "intruder")
@@ -268,3 +280,84 @@ class TestStashUploadRoute:
             UPLOAD_URL, json=payload, headers={"Authorization": f"Bearer {token}"}
         )
         assert resp.status_code == 413, resp.text
+
+
+class TestShareLinkDownloadRoute:
+    """``POST /suite/stash/share-links/download`` wires share links into the
+    existing download-ticket redeem flow, so a link granting ``download``
+    actually lets a recipient fetch bytes."""
+
+    def _create_link(self, test_client, token, item_id, **kwargs):
+        resp = test_client.post(
+            f"/api/v1/suite/stash/items/{item_id}/share-links",
+            json=kwargs,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_share_link_downloads_end_to_end(
+        self, stash_media_dir, test_client, stash_enabled, auth_manager
+    ):
+        owner_token, owner = _register_and_login(auth_manager, "owner")
+        recipient_token, _ = _register_and_login(auth_manager, "recipient")
+
+        # Owner uploads a file and shares it with download permission.
+        upload = test_client.post(
+            UPLOAD_URL,
+            json=_upload_payload(b"share me please"),
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        assert upload.status_code == 201, upload.text
+        item_id = upload.json()["id"]
+        link = self._create_link(
+            test_client,
+            owner_token,
+            item_id,
+            permissions=["view_metadata", "download"],
+        )
+
+        # Recipient exchanges the share token for a download ticket.
+        ticket_resp = test_client.post(
+            "/api/v1/suite/stash/share-links/download",
+            json={"token": link["token"]},
+            headers={"Authorization": f"Bearer {recipient_token}"},
+        )
+        assert ticket_resp.status_code == 201, ticket_resp.text
+        ticket = ticket_resp.json()["ticket"]
+        assert ticket
+
+        # And redeems it for a signed media URL.
+        redeem_resp = test_client.post(
+            "/api/v1/suite/stash/download-ticket/redeem",
+            json={"ticket": ticket},
+            headers={"Authorization": f"Bearer {recipient_token}"},
+        )
+        assert redeem_resp.status_code == 200, redeem_resp.text
+        assert redeem_resp.json()["media_url"]
+
+    def test_share_link_without_download_permission_gets_403(
+        self, stash_media_dir, test_client, stash_enabled, auth_manager
+    ):
+        owner_token, owner = _register_and_login(auth_manager, "owner")
+        recipient_token, _ = _register_and_login(auth_manager, "recipient")
+
+        upload = test_client.post(
+            UPLOAD_URL,
+            json=_upload_payload(b"metadata only"),
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        item_id = upload.json()["id"]
+        link = self._create_link(
+            test_client,
+            owner_token,
+            item_id,
+            permissions=["view_metadata", "preview"],
+        )
+
+        resp = test_client.post(
+            "/api/v1/suite/stash/share-links/download",
+            json={"token": link["token"]},
+            headers={"Authorization": f"Bearer {recipient_token}"},
+        )
+        assert resp.status_code == 403, resp.text

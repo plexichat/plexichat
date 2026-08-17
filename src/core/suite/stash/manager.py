@@ -5,6 +5,7 @@ content belongs to ``src.core.media``; this layer stores opaque media object
 references plus organization and authorization metadata.
 """
 
+import difflib
 import hashlib
 import json
 import secrets
@@ -13,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from src.core.base import BaseManager
+from src.utils import encryption
 from .schema import (
     PERSONAL_ITEM_GRANTABLE_PERMISSIONS,
     STASH_ITEM_TYPES,
@@ -279,6 +281,109 @@ class StashManager(BaseManager):
             return True
         return False
 
+    def _collection_ancestors(self, collection_id: int) -> List[int]:
+        """Return the collection id plus all of its ancestor collection ids.
+
+        The traversal is cycle-guarded: a malformed parent chain cannot loop
+        forever (or inflate into a pathological query), it simply terminates
+        once an already-visited id is reached.
+        """
+        ids: List[int] = []
+        seen = set()
+        current: Optional[int] = int(collection_id)
+        while current is not None and current not in seen:
+            seen.add(current)
+            ids.append(current)
+            row = self._db.fetch_one(
+                "SELECT parent_id FROM stash_collections WHERE id = ?",
+                (current,),
+            )
+            current = (
+                int(row["parent_id"])
+                if row and row.get("parent_id") is not None
+                else None
+            )
+        return ids
+
+    def _collection_grant_permissions(
+        self, item: Dict[str, Any], user_id: int
+    ) -> List[str]:
+        """Return the permissions inherited from the item's collection chain."""
+        collection_id = item.get("collection_id")
+        if collection_id is None:
+            return []
+        now = int(time.time() * 1000)
+        permissions: set = set()
+        for ancestor in self._collection_ancestors(int(collection_id)):
+            row = self._db.fetch_one(
+                "SELECT permissions_json, expires_at FROM stash_collection_grants "
+                "WHERE collection_id = ? AND subject_id = ? AND revoked_at IS NULL",
+                (ancestor, str(user_id)),
+            )
+            if not row:
+                continue
+            if row.get("expires_at") is not None and int(row["expires_at"]) <= now:
+                continue
+            permissions.update(self._decode(row.get("permissions_json"), []))
+        return list(permissions)
+
+    def _collection_granted(
+        self, item: Dict[str, Any], user_id: int, permission: str
+    ) -> bool:
+        """Return whether ``permission`` is inherited from a collection grant."""
+        permissions = self._collection_grant_permissions(item, user_id)
+        if permission in permissions or "*" in permissions:
+            return True
+        if permission in ("view_metadata", "preview") and any(
+            p in permissions
+            for p in ("edit", "manage_versions", "move", "share", "delete")
+        ):
+            return True
+        return False
+
+    def _collection_descendants(self, collection_id: int) -> set:
+        """Return a collection plus all of its descendant collection ids."""
+        result = {int(collection_id)}
+        frontier = [int(collection_id)]
+        while frontier:
+            next_frontier: List[int] = []
+            for cid in frontier:
+                rows = self._db.fetch_all(
+                    "SELECT id FROM stash_collections WHERE parent_id = ?", (cid,)
+                )
+                for row in rows:
+                    descendant = int(row["id"])
+                    if descendant not in result:
+                        result.add(descendant)
+                        next_frontier.append(descendant)
+            frontier = next_frontier
+        return result
+
+    def _collection_granted_item_ids(self, user_id: int) -> List[int]:
+        """Return item ids visible through an inherited collection grant."""
+        now = int(time.time() * 1000)
+        grant_rows = self._db.fetch_all(
+            "SELECT collection_id FROM stash_collection_grants "
+            "WHERE subject_id = ? AND revoked_at IS NULL "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            (str(user_id), now),
+        )
+        if not grant_rows:
+            return []
+        visible_collections: set = set()
+        for row in grant_rows:
+            visible_collections.update(
+                self._collection_descendants(int(row["collection_id"]))
+            )
+        if not visible_collections:
+            return []
+        placeholders = ", ".join("?" for _ in visible_collections)
+        item_rows = self._db.fetch_all(
+            f"SELECT id FROM stash_items WHERE deleted = 0 AND collection_id IN ({placeholders})",
+            tuple(visible_collections),
+        )
+        return [int(row["id"]) for row in item_rows]
+
     def _authorize(
         self,
         item: Dict[str, Any],
@@ -292,7 +397,11 @@ class StashManager(BaseManager):
         owner = int(item["owner_id"]) == int(user_id)
         server_id = item.get("server_id")
         if item["scope"] == "personal":
-            if owner or self._grant_permissions(int(item["id"]), user_id, permission):
+            if (
+                owner
+                or self._grant_permissions(int(item["id"]), user_id, permission)
+                or self._collection_granted(item, user_id, permission)
+            ):
                 return
         elif server_id is not None and self._is_member(user_id, int(server_id)):
             if mutation:
@@ -331,6 +440,59 @@ class StashManager(BaseManager):
             self._grant_permissions(int(row["id"]), user_id, permission)
             for permission in ("edit", "preview", "download")
         )
+
+    def _can_expose_storage_batch(
+        self, rows: List[Dict[str, Any]], user_id: int
+    ) -> Dict[int, bool]:
+        """Compute storage exposure for a whole page of rows in few queries.
+
+        ``list_items`` renders up to ``limit`` rows; calling
+        ``_can_expose_storage`` per row would fan out to three grant lookups
+        plus a server-admin check *per item*. This batches the grant lookups
+        into a single IN-clause query and memoizes the server-admin check per
+        server, so a full page costs a handful of queries instead of hundreds.
+        """
+        if not rows:
+            return {}
+        item_ids = [int(row["id"]) for row in rows]
+        placeholders = ", ".join("?" for _ in item_ids)
+        now = int(time.time() * 1000)
+        grant_rows = self._db.fetch_all(
+            f"SELECT item_id, permissions_json, expires_at FROM stash_grants "
+            f"WHERE subject_type = 'user' AND subject_id = ? "
+            f"AND revoked_at IS NULL AND item_id IN ({placeholders})",
+            (str(user_id), *item_ids),
+        )
+        exposed_by_grant: set = set()
+        for grant_row in grant_rows:
+            if (
+                grant_row.get("expires_at") is not None
+                and int(grant_row["expires_at"]) <= now
+            ):
+                continue
+            permissions = self._decode(grant_row.get("permissions_json"), [])
+            if "*" in permissions or any(
+                p in permissions for p in ("edit", "preview", "download")
+            ):
+                exposed_by_grant.add(int(grant_row["item_id"]))
+
+        admin_cache: Dict[int, bool] = {}
+        result: Dict[int, bool] = {}
+        for row in rows:
+            item_id = int(row["id"])
+            if int(row["owner_id"]) == int(user_id) or item_id in exposed_by_grant:
+                result[item_id] = True
+                continue
+            server_id = row.get("server_id")
+            if server_id is not None:
+                sid = int(server_id)
+                if sid not in admin_cache:
+                    admin_cache[sid] = self._can_administer_server(user_id, sid)
+                if admin_cache[sid]:
+                    result[item_id] = True
+                    continue
+            result[item_id] = False
+        return result
 
     def _row_to_item(
         self, row: Dict[str, Any], *, include_storage: bool = False
@@ -417,6 +579,8 @@ class StashManager(BaseManager):
         self._audit(
             "create", "item", item_id, user_id, {"item_type": item_type, "scope": scope}
         )
+        if media_object_id is not None:
+            self._index_item_text(item_id, media_object_id)
         return self.get_item(user_id, item_id)
 
     def get_item(self, user_id: int, item_id: int) -> Dict[str, Any]:
@@ -498,6 +662,7 @@ class StashManager(BaseManager):
         scope: Optional[str] = None,
         server_id: Optional[int] = None,
         pinned: Optional[bool] = None,
+        collection_id: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))
@@ -517,6 +682,8 @@ class StashManager(BaseManager):
         # The listing is already capped by limit/offset; this only constrains
         # the grant-derived visibility set.
         grant_item_ids = grant_item_ids[:500]
+        grant_item_ids.extend(self._collection_granted_item_ids(user_id))
+        grant_item_ids = list(dict.fromkeys(grant_item_ids))[:500]
 
         clauses = ["deleted = 0"]
         if grant_item_ids:
@@ -552,12 +719,20 @@ class StashManager(BaseManager):
         if pinned is not None:
             clauses.append("pinned = ?")
             params.append(1 if pinned else 0)
+        if collection_id is not None:
+            # Items may also be surfaced via a collection grant; the visibility
+            # clauses above still gate access, this only narrows to a folder.
+            clauses.append("collection_id = ?")
+            params.append(int(collection_id))
         if search:
             needle = f"%{str(search).strip().lower()}%"
             clauses.append(
-                "(LOWER(title) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ? OR LOWER(tags_json) LIKE ?)"
+                "(LOWER(title) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ? "
+                "OR LOWER(tags_json) LIKE ? "
+                "OR EXISTS (SELECT 1 FROM stash_item_text t "
+                "WHERE t.item_id = stash_items.id AND LOWER(t.content_text) LIKE ?))"
             )
-            params.extend([needle, needle, needle])
+            params.extend([needle, needle, needle, needle])
         where = " AND ".join(clauses)
         count_row = self._db.fetch_one(
             f"SELECT COUNT(*) AS count FROM stash_items WHERE {where}", tuple(params)
@@ -567,10 +742,9 @@ class StashManager(BaseManager):
             tuple(params + [limit, offset]),
         )
         total = int(count_row["count"]) if count_row else 0
+        exposure = self._can_expose_storage_batch(rows, user_id)
         return [
-            self._row_to_item(
-                row, include_storage=self._can_expose_storage(row, user_id)
-            )
+            self._row_to_item(row, include_storage=exposure[int(row["id"])])
             for row in rows
         ], total
 
@@ -739,6 +913,8 @@ class StashManager(BaseManager):
             (version_id, media_object_id, now, item_id),
         )
         self._audit("edit", "version", version_id, user_id, {"item_id": int(item_id)})
+        if media_object_id is not None:
+            self._index_item_text(int(item_id), media_object_id)
         return self.get_version(user_id, item_id, version_id)
 
     def list_versions(
@@ -989,7 +1165,22 @@ class StashManager(BaseManager):
         )
         if not item:
             raise StashNotFoundError("Stash item not found")
-        self._authorize(item, user_id, "download")
+        share_link_id = row.get("share_link_id")
+        if share_link_id is not None:
+            # Share-link-issued ticket: the link itself is the authorization.
+            # Re-check it at redemption so a revoked/expired link invalidates
+            # outstanding tickets even though the recipient holds a valid
+            # ticket token.
+            link = self._db.fetch_one(
+                "SELECT revoked_at, expires_at FROM stash_share_links WHERE id = ?",
+                (int(share_link_id),),
+            )
+            if not link or link.get("revoked_at") is not None:
+                raise StashPermissionError("Share link was revoked")
+            if link.get("expires_at") is not None and int(link["expires_at"]) <= now:
+                raise StashPermissionError("Share link has expired")
+        else:
+            self._authorize(item, user_id, "download")
         version_id = row.get("version_id")
         media_object_id = item.get("media_object_id")
         if version_id is not None:
@@ -1220,7 +1411,11 @@ class StashManager(BaseManager):
         return purged_count
 
     def create_collection(
-        self, user_id: int, name: str, server_id: Optional[int] = None
+        self,
+        user_id: int,
+        name: str,
+        server_id: Optional[int] = None,
+        parent_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         name = str(name or "").strip()
         if not name or len(name) > 200:
@@ -1229,24 +1424,53 @@ class StashManager(BaseManager):
             )
         if server_id is not None and not self._is_member(user_id, int(server_id)):
             raise StashPermissionError("You are not a member of this server")
+        if parent_id is not None:
+            parent = self._db.fetch_one(
+                "SELECT id, owner_id, server_id FROM stash_collections WHERE id = ?",
+                (int(parent_id),),
+            )
+            if not parent:
+                raise StashValidationError("parent_id does not identify a collection")
+            # Nested collections must be owned by the same user and share the
+            # same scope: a personal folder cannot nest under a server folder
+            # (or vice versa), which would let a server member inherit access
+            # to a personal owner's content through a scope-confused parent.
+            if int(parent["owner_id"]) != int(user_id):
+                raise StashPermissionError(
+                    "Parent collection is not owned by this user"
+                )
+            parent_server = parent.get("server_id")
+            if server_id is None:
+                if parent_server is not None:
+                    raise StashValidationError(
+                        "Personal collection cannot nest under a server collection"
+                    )
+            elif parent_server is None or int(parent_server) != int(server_id):
+                raise StashValidationError(
+                    "Server collection must nest under the same server"
+                )
         collection_id = self._generate_id()
         now = int(time.time() * 1000)
         self._db.execute(
-            "INSERT INTO stash_collections (id, owner_id, name, server_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (collection_id, user_id, name, server_id, now, now),
+            "INSERT INTO stash_collections (id, owner_id, name, server_id, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (collection_id, user_id, name, server_id, parent_id, now, now),
         )
         self._audit(
             "create",
             "collection",
             collection_id,
             user_id,
-            {"scope": "server" if server_id is not None else "personal"},
+            {
+                "scope": "server" if server_id is not None else "personal",
+                "parent_id": parent_id,
+            },
         )
         return {
             "id": str(collection_id),
             "owner_id": str(user_id),
             "name": name,
             "server_id": str(server_id) if server_id is not None else None,
+            "parent_id": str(parent_id) if parent_id is not None else None,
             "created_at": now,
             "updated_at": now,
         }
@@ -1275,8 +1499,514 @@ class StashManager(BaseManager):
                 "server_id": str(row["server_id"])
                 if row.get("server_id") is not None
                 else None,
+                "parent_id": str(row["parent_id"])
+                if row.get("parent_id") is not None
+                else None,
                 "created_at": int(row["created_at"]),
                 "updated_at": int(row["updated_at"]),
             }
             for row in rows
         ]
+
+    # ── collection grants (inherited by contained items) ─────────────────────
+
+    def _collection_row(self, collection_id: int) -> Dict[str, Any]:
+        row = self._db.fetch_one(
+            "SELECT * FROM stash_collections WHERE id = ?", (int(collection_id),)
+        )
+        if not row:
+            raise StashNotFoundError("Stash collection not found")
+        return row
+
+    def _can_grant_collection(self, collection: Dict[str, Any], user_id: int) -> None:
+        if int(collection["owner_id"]) == int(user_id):
+            return
+        server_id = collection.get("server_id")
+        if server_id is not None and self._can_administer_server(
+            user_id, int(server_id)
+        ):
+            return
+        raise StashPermissionError("Not authorized to manage this collection")
+
+    def grant_collection(
+        self,
+        user_id: int,
+        collection_id: int,
+        subject_id: int,
+        permissions: List[str],
+        expires_at: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        collection = self._collection_row(collection_id)
+        self._can_grant_collection(collection, user_id)
+        clean = sorted(set(permissions))
+        if not clean or any(
+            permission not in STASH_PERMISSIONS for permission in clean
+        ):
+            raise StashValidationError("permissions contains an unknown value")
+        disallowed = set(clean) - set(PERSONAL_ITEM_GRANTABLE_PERMISSIONS)
+        if disallowed:
+            raise StashValidationError(
+                "Collections cannot delegate privileged permissions: "
+                + ", ".join(sorted(disallowed))
+            )
+        subject = self._db.fetch_one(
+            "SELECT id FROM auth_users WHERE id = ?", (int(subject_id),)
+        )
+        if not subject:
+            raise StashValidationError("subject_id does not identify a user")
+        grant_id = self._generate_id()
+        now = int(time.time() * 1000)
+        self._db.upsert(
+            "stash_collection_grants",
+            [
+                "id",
+                "collection_id",
+                "subject_id",
+                "permissions_json",
+                "expires_at",
+                "revoked_at",
+                "created_by",
+                "created_at",
+            ],
+            (
+                grant_id,
+                int(collection_id),
+                int(subject_id),
+                self._json(clean, []),
+                expires_at,
+                None,
+                user_id,
+                now,
+            ),
+            ["collection_id", "subject_id"],
+            ["permissions_json", "expires_at", "revoked_at"],
+        )
+        persisted = self._db.fetch_one(
+            "SELECT id, permissions_json, expires_at FROM stash_collection_grants "
+            "WHERE collection_id = ? AND subject_id = ?",
+            (int(collection_id), int(subject_id)),
+        )
+        persisted_id = int(persisted["id"]) if persisted else grant_id
+        self._audit(
+            "share_collection",
+            "collection",
+            int(collection_id),
+            user_id,
+            {"subject_id": int(subject_id), "permissions": clean},
+        )
+        return {
+            "id": str(persisted_id),
+            "collection_id": str(collection_id),
+            "subject_id": str(subject_id),
+            "permissions": self._decode(persisted.get("permissions_json"), clean)
+            if persisted
+            else clean,
+            "expires_at": persisted.get("expires_at") if persisted else expires_at,
+        }
+
+    def revoke_collection_grant(self, user_id: int, grant_id: int) -> None:
+        grant = self._db.fetch_one(
+            "SELECT * FROM stash_collection_grants WHERE id = ?", (int(grant_id),)
+        )
+        if not grant:
+            raise StashNotFoundError("Stash collection grant not found")
+        collection = self._collection_row(int(grant["collection_id"]))
+        self._can_grant_collection(collection, user_id)
+        self._db.execute(
+            "UPDATE stash_collection_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+            (int(time.time() * 1000), int(grant_id)),
+        )
+        self._audit(
+            "revoke_collection_share",
+            "collection_grant",
+            int(grant_id),
+            user_id,
+            {"collection_id": int(grant["collection_id"])},
+        )
+
+    def list_collection_grants(
+        self, user_id: int, collection_id: int
+    ) -> List[Dict[str, Any]]:
+        collection = self._collection_row(collection_id)
+        self._can_grant_collection(collection, user_id)
+        rows = self._db.fetch_all(
+            "SELECT id, subject_id, permissions_json, expires_at, created_at "
+            "FROM stash_collection_grants WHERE collection_id = ? AND revoked_at IS NULL "
+            "ORDER BY created_at",
+            (int(collection_id),),
+        )
+        grants: List[Dict[str, Any]] = []
+        for row in rows:
+            grants.append(
+                {
+                    "id": str(row["id"]),
+                    "collection_id": str(collection_id),
+                    "subject_id": str(row["subject_id"]),
+                    "permissions": self._decode(row.get("permissions_json"), []),
+                    "expires_at": row.get("expires_at"),
+                    "created_at": int(row.get("created_at", 0)),
+                }
+            )
+        return grants
+
+    # ── share links (opaque, optionally password-protected, read-only) ───────
+
+    def create_share_link(
+        self,
+        user_id: int,
+        item_id: int,
+        *,
+        password: Optional[str] = None,
+        permissions: Optional[List[str]] = None,
+        expires_at: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        row = self._db.fetch_one(
+            "SELECT * FROM stash_items WHERE id = ? AND deleted = 0", (int(item_id),)
+        )
+        if not row:
+            raise StashNotFoundError("Stash item not found")
+        self._authorize(row, user_id, "share", mutation=True)
+        clean = sorted(set(permissions or ["view_metadata", "preview", "download"]))
+        disallowed = set(clean) - {"view_metadata", "preview", "download"}
+        if disallowed:
+            raise StashValidationError(
+                "Share links can only grant read permissions: "
+                + ", ".join(sorted(disallowed))
+            )
+        now = int(time.time() * 1000)
+        if expires_at is not None and int(expires_at) <= now:
+            raise StashValidationError("Share link expiry must be in the future")
+        token = secrets.token_urlsafe(32)
+        link_id = self._generate_id()
+        self._db.execute(
+            "INSERT INTO stash_share_links "
+            "(id, item_id, token_hash, password_hash, permissions_json, expires_at, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                link_id,
+                int(item_id),
+                hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                encryption.hash_password(password) if password else None,
+                self._json(clean, []),
+                expires_at,
+                user_id,
+                now,
+            ),
+        )
+        self._audit(
+            "share_link_created",
+            "item",
+            int(item_id),
+            user_id,
+            {"password_protected": bool(password)},
+        )
+        return {
+            "id": str(link_id),
+            "item_id": str(item_id),
+            "token": token,
+            "password_protected": bool(password),
+            "permissions": clean,
+            "expires_at": expires_at,
+            "created_at": now,
+        }
+
+    def _resolve_share_link_row(
+        self, token: str, password: Optional[str] = None
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Validate a share link's token + password; return ``(link, item)``.
+
+        Raises ``StashPermissionError`` for an invalid/expired/revoked link or a
+        wrong password, and ``StashNotFoundError`` when the target item is gone.
+        Shared by ``resolve_share_link`` (metadata) and
+        ``create_share_download_ticket`` (bytes) so both enforce the same
+        checks.
+        """
+        if not token or len(token) > 256:
+            raise StashPermissionError("Invalid or expired share link")
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        link = self._db.fetch_one(
+            "SELECT * FROM stash_share_links WHERE token_hash = ?", (token_hash,)
+        )
+        now = int(time.time() * 1000)
+        if not link or link.get("revoked_at") is not None:
+            raise StashPermissionError("Invalid or expired share link")
+        if link.get("expires_at") is not None and int(link["expires_at"]) <= now:
+            raise StashPermissionError("Invalid or expired share link")
+        if link.get("password_hash"):
+            if not password or not encryption.verify_password(
+                password, link["password_hash"]
+            ):
+                raise StashPermissionError("Invalid or expired share link")
+        item = self._db.fetch_one(
+            "SELECT * FROM stash_items WHERE id = ? AND deleted = 0",
+            (int(link["item_id"]),),
+        )
+        if not item:
+            raise StashNotFoundError("Stash item not found")
+        return link, item
+
+    def resolve_share_link(
+        self, user_id: int, token: str, password: Optional[str] = None
+    ) -> Dict[str, Any]:
+        link, item = self._resolve_share_link_row(token, password)
+        self._db.execute(
+            "UPDATE stash_share_links SET access_count = access_count + 1 WHERE id = ?",
+            (int(link["id"]),),
+        )
+        return {
+            "item_id": str(item["id"]),
+            "media_object_id": item.get("media_object_id"),
+            "permissions": self._decode(link.get("permissions_json"), []),
+            "expires_at": link.get("expires_at"),
+        }
+
+    def create_share_download_ticket(
+        self,
+        user_id: int,
+        token: str,
+        password: Optional[str] = None,
+        version_id: Optional[int] = None,
+        ttl_seconds: int = 300,
+    ) -> Dict[str, Any]:
+        """Issue a short-lived download ticket to a share-link recipient.
+
+        The share link's token + password are the recipient's authorization; no
+        item grant or server membership is required. The link must carry the
+        ``download`` permission. The ticket is stamped with the share link id so
+        redemption re-validates the link (a revoked/expired link invalidates
+        outstanding tickets) instead of the normal item authorization.
+        """
+        link, item = self._resolve_share_link_row(token, password)
+        permissions = self._decode(link.get("permissions_json"), [])
+        if "download" not in permissions and "*" not in permissions:
+            raise StashPermissionError("Share link does not permit download")
+        media_object_id = item.get("media_object_id")
+        if version_id is not None:
+            version = self._db.fetch_one(
+                "SELECT media_object_id FROM stash_versions "
+                "WHERE id = ? AND item_id = ?",
+                (int(version_id), int(item["id"])),
+            )
+            if not version:
+                raise StashNotFoundError("Stash version not found")
+            media_object_id = version.get("media_object_id") or media_object_id
+        if not media_object_id:
+            raise StashValidationError("Stash item has no downloadable media object")
+        try:
+            ttl = max(1, min(int(ttl_seconds), 300))
+        except (TypeError, ValueError) as exc:
+            raise StashValidationError("ttl_seconds must be an integer") from exc
+
+        now = int(time.time() * 1000)
+        expires_at = now + ttl * 1000
+        ticket = secrets.token_urlsafe(32)
+        self._db.execute(
+            "INSERT INTO stash_download_tickets "
+            "(id, item_id, version_id, subject_id, share_link_id, token_hash, "
+            "expires_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                self._generate_id(),
+                int(item["id"]),
+                int(version_id) if version_id is not None else None,
+                int(user_id),
+                int(link["id"]),
+                hashlib.sha256(ticket.encode("utf-8")).hexdigest(),
+                expires_at,
+                now,
+            ),
+        )
+        self._audit(
+            "download_ticket_created",
+            "item",
+            int(item["id"]),
+            user_id,
+            {
+                "share_link_id": int(link["id"]),
+                "version_id": version_id,
+                "expires_at": expires_at,
+            },
+        )
+        return {
+            "ticket": ticket,
+            "item_id": str(item["id"]),
+            "version_id": str(version_id) if version_id is not None else None,
+            "media_object_id": str(media_object_id),
+            "expires_at": expires_at,
+        }
+
+    def revoke_share_link(self, user_id: int, link_id: int) -> None:
+        link = self._db.fetch_one(
+            "SELECT * FROM stash_share_links WHERE id = ?", (int(link_id),)
+        )
+        if not link:
+            raise StashNotFoundError("Stash share link not found")
+        item = self._db.fetch_one(
+            "SELECT * FROM stash_items WHERE id = ? AND deleted = 0",
+            (int(link["item_id"]),),
+        )
+        if not item:
+            raise StashNotFoundError("Stash item not found")
+        self._authorize(item, user_id, "share", mutation=True)
+        self._db.execute(
+            "UPDATE stash_share_links SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+            (int(time.time() * 1000), int(link_id)),
+        )
+        self._audit("share_link_revoked", "item", int(link["item_id"]), user_id)
+
+    def list_share_links(self, user_id: int, item_id: int) -> List[Dict[str, Any]]:
+        item = self._db.fetch_one(
+            "SELECT * FROM stash_items WHERE id = ? AND deleted = 0", (int(item_id),)
+        )
+        if not item:
+            raise StashNotFoundError("Stash item not found")
+        self._authorize(item, user_id, "share", mutation=True)
+        rows = self._db.fetch_all(
+            "SELECT id, password_hash, permissions_json, expires_at, revoked_at, "
+            "access_count, created_at FROM stash_share_links WHERE item_id = ? "
+            "ORDER BY created_at",
+            (int(item_id),),
+        )
+        links: List[Dict[str, Any]] = []
+        for row in rows:
+            links.append(
+                {
+                    "id": str(row["id"]),
+                    "item_id": str(item_id),
+                    "password_protected": bool(row.get("password_hash")),
+                    "permissions": self._decode(row.get("permissions_json"), []),
+                    "expires_at": row.get("expires_at"),
+                    "revoked_at": row.get("revoked_at"),
+                    "access_count": int(row.get("access_count", 0)),
+                    "created_at": int(row.get("created_at", 0)),
+                }
+            )
+        return links
+
+    # ── full-text indexing + version diff ─────────────────────────────────────
+
+    def _media_bytes(self, media_object_id: Optional[str]) -> Optional[bytes]:
+        """Read a referenced media object's bytes, if the boundary allows it."""
+        if self._media is None or media_object_id is None:
+            return None
+        value = str(media_object_id)
+        file_id: Optional[int] = None
+        if value.isdigit():
+            file_id = int(value)
+        else:
+            media_file = self._media.get_file_by_filename(value)
+            if media_file is not None:
+                file_id = int(media_file.id)
+        if file_id is None:
+            return None
+        try:
+            data, _ = self._media.get_file_data(file_id)
+            return data if isinstance(data, bytes) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _decode_text(data: Optional[bytes]) -> Optional[str]:
+        if data is None:
+            return None
+        try:
+            return data.decode("utf-8")
+        except (UnicodeDecodeError, AttributeError):
+            return None
+
+    def _index_item_text(self, item_id: int, media_object_id: Optional[str]) -> None:
+        """Extract and index UTF-8 text from an item's media object."""
+        data = self._media_bytes(media_object_id)
+        text = self._decode_text(data)
+        if text is None:
+            return
+        # Bound the stored extract so a pathological upload cannot bloat the
+        # search index. Binary (undecodable) content is never indexed.
+        text = text[:1_000_000]
+        self._db.upsert(
+            "stash_item_text",
+            ["item_id", "content_text", "updated_at"],
+            (int(item_id), text, int(time.time() * 1000)),
+            ["item_id"],
+            ["content_text", "updated_at"],
+        )
+
+    def diff_versions(
+        self,
+        user_id: int,
+        item_id: int,
+        version_a_id: int,
+        version_b_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        item = self._db.fetch_one(
+            "SELECT * FROM stash_items WHERE id = ? AND deleted = 0", (int(item_id),)
+        )
+        if not item:
+            raise StashNotFoundError("Stash item not found")
+        self._authorize(item, user_id, "download")
+        version_a = self._db.fetch_one(
+            "SELECT * FROM stash_versions WHERE id = ? AND item_id = ?",
+            (int(version_a_id), int(item_id)),
+        )
+        if not version_a:
+            raise StashNotFoundError("Stash version not found")
+        if version_b_id is None:
+            version_b_id = item.get("current_version_id")
+        if version_b_id is None:
+            raise StashNotFoundError("Stash version not found")
+        version_b = self._db.fetch_one(
+            "SELECT * FROM stash_versions WHERE id = ? AND item_id = ?",
+            (int(version_b_id), int(item_id)),
+        )
+        if not version_b:
+            raise StashNotFoundError("Stash version not found")
+
+        data_a = self._media_bytes(version_a.get("media_object_id"))
+        data_b = self._media_bytes(version_b.get("media_object_id"))
+        a_size = len(data_a) if data_a is not None else 0
+        b_size = len(data_b) if data_b is not None else 0
+        text_a = self._decode_text(data_a)
+        text_b = self._decode_text(data_b)
+        if (
+            text_a is None
+            or text_b is None
+            or len(text_a) > 1_000_000
+            or len(text_b) > 1_000_000
+        ):
+            # Binary (or oversized) content: report a byte-level equality
+            # result plus sizes instead of a line diff.
+            a_bytes = data_a if isinstance(data_a, bytes) else b""
+            b_bytes = data_b if isinstance(data_b, bytes) else b""
+            return {
+                "changed": a_bytes != b_bytes,
+                "binary": True,
+                "diff": [],
+                "a_size": a_size,
+                "b_size": b_size,
+            }
+        a_lines = text_a.splitlines(keepends=True)
+        b_lines = text_b.splitlines(keepends=True)
+        matcher = difflib.SequenceMatcher(None, a_lines, b_lines, autojunk=False)
+        op_map = {
+            "equal": "equal",
+            "replace": "replace",
+            "delete": "delete",
+            "insert": "insert",
+        }
+        ops = [
+            {
+                "op": op_map[tag],
+                "a_start": i1,
+                "a_end": i2,
+                "b_start": j1,
+                "b_end": j2,
+            }
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes()
+        ]
+        return {
+            "changed": text_a != text_b,
+            "binary": False,
+            "diff": ops,
+            "a_size": a_size,
+            "b_size": b_size,
+        }

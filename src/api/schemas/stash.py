@@ -132,6 +132,7 @@ class StashDownloadRedeemResponse(BaseModel):
 class StashCollectionCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     server_id: Optional[SnowflakeID] = None
+    parent_id: Optional[SnowflakeID] = None
 
 
 class StashCollectionResponse(BaseModel):
@@ -139,9 +140,86 @@ class StashCollectionResponse(BaseModel):
     owner_id: SnowflakeID
     name: str
     server_id: Optional[SnowflakeID]
+    parent_id: Optional[SnowflakeID] = None
     created_at: int
     updated_at: int
 
 
 class StashCollectionListResponse(BaseModel):
     items: List[StashCollectionResponse] = Field(default_factory=list)
+
+
+class StashCollectionGrantRequest(BaseModel):
+    subject_id: SnowflakeID
+    permissions: List[str] = Field(..., min_length=1, max_length=8)
+    expires_at: Optional[int] = Field(None, ge=0)
+
+
+class StashCollectionGrantResponse(BaseModel):
+    id: SnowflakeID
+    collection_id: SnowflakeID
+    subject_id: SnowflakeID
+    permissions: List[str]
+    expires_at: Optional[int] = None
+
+
+class StashCollectionGrantListResponse(BaseModel):
+    items: List[StashCollectionGrantResponse] = Field(default_factory=list)
+
+
+class StashShareLinkCreateRequest(BaseModel):
+    password: Optional[str] = Field(None, min_length=1, max_length=128)
+    permissions: Optional[List[str]] = Field(None, max_length=4)
+    expires_at: Optional[int] = Field(None, ge=0)
+
+
+class StashShareLinkResponse(BaseModel):
+    id: SnowflakeID
+    item_id: SnowflakeID
+    token: str
+    password_protected: bool
+    permissions: List[str]
+    expires_at: Optional[int] = None
+    created_at: int
+
+
+class StashShareLinkSummary(BaseModel):
+    id: SnowflakeID
+    item_id: SnowflakeID
+    password_protected: bool
+    permissions: List[str]
+    expires_at: Optional[int] = None
+    revoked_at: Optional[int] = None
+    access_count: int
+    created_at: int
+
+
+class StashShareLinkListResponse(BaseModel):
+    items: List[StashShareLinkSummary] = Field(default_factory=list)
+
+
+class StashShareLinkResolveRequest(BaseModel):
+    token: str = Field(..., min_length=1, max_length=256)
+    password: Optional[str] = Field(None, max_length=128)
+
+
+class StashShareLinkResolveResponse(BaseModel):
+    item_id: SnowflakeID
+    media_object_id: Optional[str] = None
+    permissions: List[str]
+    expires_at: Optional[int] = None
+
+
+class StashShareDownloadRequest(BaseModel):
+    token: str = Field(..., min_length=1, max_length=256)
+    password: Optional[str] = Field(None, max_length=128)
+    version_id: Optional[SnowflakeID] = None
+    ttl_seconds: Optional[int] = Field(None, ge=1, le=300)
+
+
+class StashVersionDiffResponse(BaseModel):
+    changed: bool
+    binary: bool
+    diff: List[Dict[str, Any]] = Field(default_factory=list)
+    a_size: int = 0
+    b_size: int = 0

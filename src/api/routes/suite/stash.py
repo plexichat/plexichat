@@ -10,6 +10,9 @@ from src.api.middleware.authentication import TokenInfo, get_current_user
 from src.api.schemas.common import ErrorResponse
 from src.api.schemas.stash import (
     StashCollectionCreateRequest,
+    StashCollectionGrantListResponse,
+    StashCollectionGrantRequest,
+    StashCollectionGrantResponse,
     StashCollectionListResponse,
     StashCollectionResponse,
     StashDownloadRedeemRequest,
@@ -23,7 +26,15 @@ from src.api.schemas.stash import (
     StashItemResponse,
     StashItemUpdateRequest,
     StashPinRequest,
+    StashShareDownloadRequest,
+    StashShareLinkCreateRequest,
+    StashShareLinkListResponse,
+    StashShareLinkResolveRequest,
+    StashShareLinkResolveResponse,
+    StashShareLinkResponse,
+    StashShareLinkSummary,
     StashVersionCreateRequest,
+    StashVersionDiffResponse,
     StashVersionResponse,
 )
 from src.core.suite import stash as stash_domain
@@ -115,6 +126,7 @@ async def list_items(
     search: Optional[str] = Query(None, max_length=200),
     scope: Optional[str] = Query(None, pattern="^(personal|server)$"),
     server_id: Optional[str] = Query(None),
+    collection_id: Optional[int] = Query(None, ge=1),
     pinned: Optional[bool] = Query(None),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> StashItemListResponse:
@@ -129,6 +141,7 @@ async def list_items(
             scope=scope,
             server_id=parsed_server,
             pinned=pinned,
+            collection_id=collection_id,
         )
         return StashItemListResponse(
             items=[_item_response(item) for item in items],
@@ -627,8 +640,272 @@ async def create_collection(
             current_user.user_id,
             body.name,
             int(body.server_id) if body.server_id is not None else None,
+            int(body.parent_id) if body.parent_id is not None else None,
         )
         return StashCollectionResponse.model_validate(collection)
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/collections/{collection_id}/grants",
+    response_model=StashCollectionGrantResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def grant_collection(
+    collection_id: str,
+    body: StashCollectionGrantRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> StashCollectionGrantResponse:
+    """Share a collection; contained items inherit the grant."""
+    try:
+        grant = _manager().grant_collection(
+            current_user.user_id,
+            int(collection_id),
+            int(body.subject_id),
+            body.permissions,
+            body.expires_at,
+        )
+        return StashCollectionGrantResponse.model_validate(grant)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400, detail="Invalid collection id or subject id"
+        ) from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.get(
+    "/collections/{collection_id}/grants",
+    response_model=StashCollectionGrantListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def list_collection_grants(
+    collection_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> StashCollectionGrantListResponse:
+    try:
+        grants = _manager().list_collection_grants(
+            current_user.user_id, int(collection_id)
+        )
+        return StashCollectionGrantListResponse(
+            items=[
+                StashCollectionGrantResponse.model_validate(grant) for grant in grants
+            ]
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid collection id") from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.delete(
+    "/collection-grants/{grant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def revoke_collection_grant(
+    grant_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> None:
+    try:
+        _manager().revoke_collection_grant(current_user.user_id, int(grant_id))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400, detail="Invalid collection grant id"
+        ) from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.get(
+    "/items/{item_id}/versions/diff",
+    response_model=StashVersionDiffResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def diff_versions(
+    item_id: str,
+    a: str = Query(..., description="Base version id"),
+    b: Optional[str] = Query(
+        None, description="Compare version id (defaults to current)"
+    ),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> StashVersionDiffResponse:
+    """Return a structured diff between two stored versions."""
+    try:
+        diff = _manager().diff_versions(
+            current_user.user_id,
+            int(item_id),
+            int(a),
+            int(b) if b is not None else None,
+        )
+        return StashVersionDiffResponse.model_validate(diff)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400, detail="Invalid item or version id"
+        ) from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/items/{item_id}/share-links",
+    response_model=StashShareLinkResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def create_share_link(
+    item_id: str,
+    body: StashShareLinkCreateRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> StashShareLinkResponse:
+    """Create an opaque, optionally password-protected read-only link."""
+    try:
+        link = _manager().create_share_link(
+            current_user.user_id,
+            int(item_id),
+            password=body.password,
+            permissions=body.permissions,
+            expires_at=body.expires_at,
+        )
+        return StashShareLinkResponse.model_validate(link)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid Stash item id") from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.get(
+    "/items/{item_id}/share-links",
+    response_model=StashShareLinkListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def list_share_links(
+    item_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> StashShareLinkListResponse:
+    try:
+        links = _manager().list_share_links(current_user.user_id, int(item_id))
+        return StashShareLinkListResponse(
+            items=[StashShareLinkSummary.model_validate(link) for link in links]
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid Stash item id") from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.delete(
+    "/share-links/{link_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def revoke_share_link(
+    link_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> None:
+    try:
+        _manager().revoke_share_link(current_user.user_id, int(link_id))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid share link id") from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/share-links/resolve",
+    response_model=StashShareLinkResolveResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "PlexiStash is unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def resolve_share_link(
+    body: StashShareLinkResolveRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> StashShareLinkResolveResponse:
+    """Resolve a share link to its target media object (read-only)."""
+    try:
+        resolved = _manager().resolve_share_link(
+            current_user.user_id, body.token, body.password
+        )
+        return StashShareLinkResolveResponse.model_validate(resolved)
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/share-links/download",
+    response_model=StashDownloadTicketResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {
+            "model": ErrorResponse,
+            "description": "Share link does not permit download",
+        },
+    },
+)
+async def share_link_download(
+    body: StashShareDownloadRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> StashDownloadTicketResponse:
+    """Issue a download ticket to a share-link recipient (read-only).
+
+    The share link's token + password are the recipient's authorization. The
+    returned ticket is redeemed through the normal ``/download-ticket/redeem``
+    endpoint, which re-validates the share link before signing a media URL.
+    """
+    try:
+        ticket = _manager().create_share_download_ticket(
+            current_user.user_id,
+            body.token,
+            body.password,
+            int(body.version_id) if body.version_id is not None else None,
+            int(body.ttl_seconds) if body.ttl_seconds is not None else 300,
+        )
+        return StashDownloadTicketResponse.model_validate(ticket)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid version id") from exc
     except Exception as exc:
         raise _error(exc) from exc
 
