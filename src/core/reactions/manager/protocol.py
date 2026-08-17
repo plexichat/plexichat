@@ -82,3 +82,8 @@ class ReactionProtocol:
 
     def _check_emoji_limits(self, server_id: SnowflakeID, animated: bool) -> None:
         cast(ReactionProtocol, super())._check_emoji_limits(server_id, animated)
+
+    def _is_blocked_by_either(
+        self, user_id: SnowflakeID, other_id: SnowflakeID
+    ) -> bool:
+        return cast(ReactionProtocol, super())._is_blocked_by_either(user_id, other_id)

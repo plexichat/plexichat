@@ -14,6 +14,7 @@ from ..exceptions import (
     CustomEmojiNotFoundError,
     ReactionLimitError,
     PermissionDeniedError,
+    UserBlockedError,
 )
 
 
@@ -39,6 +40,11 @@ class ReactionOpsMixin(ReactionProtocol):
                 raise PermissionDeniedError(
                     "Missing permission to add reactions", "messages.add_reactions"
                 )
+
+        if self._relationships and self._is_blocked_by_either(
+            user_id, msg["author_id"]
+        ):
+            raise UserBlockedError("Cannot react to this message")
 
         is_custom, custom_emoji_id, normalized_emoji = self._validate_emoji(emoji)
 
@@ -160,6 +166,11 @@ class ReactionOpsMixin(ReactionProtocol):
 
         if not self._is_participant(msg["conversation_id"], user_id):
             raise MessageNotFoundError("Message not found")
+
+        if self._relationships and self._is_blocked_by_either(
+            user_id, msg["author_id"]
+        ):
+            raise UserBlockedError("Cannot react to this message")
 
         is_custom, custom_emoji_id, normalized_emoji = self._validate_emoji(emoji)
 

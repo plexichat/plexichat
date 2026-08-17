@@ -338,6 +338,23 @@ async def remove_reaction(
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
                 return SuccessResponse(success=True, message=None)
+            elif "Permission" in exc_name:
+                logger.warning(
+                    f"User {current_user.user_id} denied permission to remove reaction on message {mid}"
+                )
+                raise HTTPException(
+                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                )
+            elif "Blocked" in exc_name:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Cannot react to this message",
+                        }
+                    },
+                )
 
             logger.error(
                 f"Failed to remove reaction from message {mid} for user {current_user.user_id}: {e}",
@@ -511,10 +528,16 @@ async def get_reaction_users(
             )
 
         try:
+            # URL decode the emoji to match how it is stored (add/remove
+            # decode on the server side; the client sends it encoded).
+            import urllib.parse
+
+            decoded_emoji = urllib.parse.unquote(emoji)
+
             users = reactions.get_reaction_users(
                 user_id=current_user.user_id,
                 message_id=mid,
-                emoji=emoji,
+                emoji=decoded_emoji,
                 limit=limit,
                 after_user_id=after_id,
             )
