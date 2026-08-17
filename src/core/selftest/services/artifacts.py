@@ -27,7 +27,10 @@ WebSocket gateway, so they run cleanly inside ``main.py self-test``.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
+import secrets
 import time
 from typing import Any, Dict, List, Optional
 
@@ -902,6 +905,94 @@ class ArtifactsTester:
                 count == 0,
                 f"expected 0, got {count}",
             )
+
+            # --- Genuine HTTP exercise of the inbound federation routes ---
+            # Create a real (encrypted) active connection, sign a payload with
+            # its shared key, and POST to the actual /federation/artifact-op
+            # and /artifact-event endpoints. They authenticate via HMAC over the
+            # raw body and must return 200 (local delivery is best-effort and may
+            # be 0 when no WebSocket dispatcher is attached). This proves the
+            # routes are reachable and the signature verification works end to
+            # end, rather than being silently skipped.
+            import utils.encryption as _encryption
+
+            shared_key = secrets.token_hex(16)
+            enc_key = _encryption.encrypt_data(shared_key)
+            remote_id = f"selftest-{secrets.token_hex(6)}"
+            now_ms = int(time.time() * 1000)
+            try:
+                db.execute(
+                    "INSERT INTO plexijoin_connections "
+                    "(remote_instance_id, remote_url, shared_key_encrypted, "
+                    "status, created_at, created_by) VALUES (?, ?, ?, 'active', ?, ?)",
+                    (remote_id, "https://remote.example.invalid", enc_key, now_ms, 0),
+                )
+            except Exception as e:
+                self._record(
+                    "FEDERATION",
+                    "create_connection",
+                    False,
+                    "federation_setup_error",
+                    str(e),
+                )
+                return
+
+            try:
+                session = self.ctx.session
+                base = self.ctx.base_url
+
+                op_payload = json.dumps(
+                    {
+                        "artifact_id": 123456789,
+                        "op": {"op_type": "update", "field": "title", "value": "x"},
+                        "actor_id": 0,
+                    }
+                ).encode("utf-8")
+                op_sig = hmac.new(
+                    shared_key.encode("utf-8"), op_payload, hashlib.sha256
+                ).hexdigest()
+                op_resp = session.post(
+                    f"{base}/api/v1/federation/artifact-op",
+                    data=op_payload,
+                    headers={"x-plexijoin-signature": op_sig},
+                    timeout=10,
+                )
+                self._check(
+                    "federation_http_artifact_op",
+                    "POST /api/v1/federation/artifact-op",
+                    op_resp.status_code == 200,
+                    f"expected 200, got {op_resp.status_code}: {op_resp.text[:200]}",
+                )
+
+                ev_payload = json.dumps(
+                    {
+                        "event_type": "update",
+                        "artifact": {"id": 123456789, "title": "x"},
+                    }
+                ).encode("utf-8")
+                ev_sig = hmac.new(
+                    shared_key.encode("utf-8"), ev_payload, hashlib.sha256
+                ).hexdigest()
+                ev_resp = session.post(
+                    f"{base}/api/v1/federation/artifact-event",
+                    data=ev_payload,
+                    headers={"x-plexijoin-signature": ev_sig},
+                    timeout=10,
+                )
+                self._check(
+                    "federation_http_artifact_event",
+                    "POST /api/v1/federation/artifact-event",
+                    ev_resp.status_code == 200,
+                    f"expected 200, got {ev_resp.status_code}: {ev_resp.text[:200]}",
+                )
+            finally:
+                try:
+                    db.execute(
+                        "DELETE FROM plexijoin_connections WHERE remote_instance_id = ?",
+                        (remote_id,),
+                    )
+                except Exception:
+                    pass
 
         except Exception as e:
             self._record(

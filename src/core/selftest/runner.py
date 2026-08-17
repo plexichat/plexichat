@@ -224,6 +224,15 @@ class SelfTestRunner:
         excluded.add("/api/v1/suite/stash")
         excluded.add("/api/v1/suite/sum")
 
+        # Inbound federation routes authenticate with an HMAC signature over
+        # the raw body (the remote instance's shared key), not a local JWT, so
+        # the generic OpenAPI fuzzer cannot satisfy their auth and would always
+        # get 401. They are exercised end-to-end (real encrypted connection +
+        # signed payload -> 200) by ``_test_federation_bridge`` in the artifacts
+        # self-test service, so skipping them here is not a coverage gap.
+        excluded.add("POST:/api/v1/federation/artifact-op")
+        excluded.add("POST:/api/v1/federation/artifact-event")
+
         # These are exercised during setup (other_user joins via invite,
         # other_user sends friend request) so we avoid double-testing
         # and spurious 409/404 failures in the auto-loop.
