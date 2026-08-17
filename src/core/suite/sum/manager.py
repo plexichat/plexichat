@@ -5761,6 +5761,152 @@ class SumManager(BaseManager):
             for row in rows
         ]
 
+    # ── persisted client features (charts / pivots / sparklines) ─────────────
+
+    SUM_FEATURE_TYPES = ("chart", "pivot", "sparkline")
+    SUM_FEATURE_MAX_DEFINITION_BYTES = 300 * 1024
+
+    def _feature_dict(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": str(row["id"]),
+            "workbook_id": str(row["workbook_id"]),
+            "feature_type": row["feature_type"],
+            "sheet_id": row.get("sheet_id"),
+            "definition": self._decode(row.get("definition_json"), {}),
+            "created_by": str(row["created_by"]),
+            "created_at": int(row["created_at"]),
+            "updated_at": int(row["updated_at"]),
+        }
+
+    def _feature_row(self, workbook_id: int, feature_id: int) -> Dict[str, Any]:
+        row = self._db.fetch_one(
+            "SELECT * FROM sum_features WHERE id = ? AND workbook_id = ?",
+            (int(feature_id), int(workbook_id)),
+        )
+        if not row:
+            raise SumNotFoundError("Workbook feature not found")
+        return row
+
+    def create_feature(
+        self,
+        user_id: int,
+        workbook_id: int,
+        feature_type: str,
+        definition: Dict[str, Any],
+        sheet_id: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        self._workbook(user_id, workbook_id, mutation=True)
+        feature_type = str(feature_type or "").strip().lower()
+        if feature_type not in self.SUM_FEATURE_TYPES:
+            raise SumValidationError("Unknown workbook feature type")
+        if not isinstance(definition, dict):
+            raise SumValidationError("feature definition must be an object")
+        encoded = self._json(definition, {})
+        if len(encoded) > self.SUM_FEATURE_MAX_DEFINITION_BYTES:
+            raise SumValidationError("feature definition is too large")
+        feature_id = self._generate_id()
+        now = int(time.time() * 1000)
+        self._db.execute(
+            "INSERT INTO sum_features (id, workbook_id, feature_type, sheet_id, definition_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                feature_id,
+                int(workbook_id),
+                feature_type,
+                str(sheet_id) if sheet_id is not None else None,
+                encoded,
+                user_id,
+                now,
+                now,
+            ),
+        )
+        self._audit(
+            "create_feature",
+            "workbook",
+            int(workbook_id),
+            user_id,
+            {"feature_type": feature_type, "feature_id": str(feature_id)},
+        )
+        return self._feature_dict(self._feature_row(workbook_id, feature_id))
+
+    def get_feature(
+        self, user_id: int, workbook_id: int, feature_id: int
+    ) -> Dict[str, Any]:
+        self._workbook(user_id, workbook_id)
+        return self._feature_dict(self._feature_row(workbook_id, feature_id))
+
+    def list_features(
+        self,
+        user_id: int,
+        workbook_id: int,
+        feature_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        self._workbook(user_id, workbook_id)
+        if feature_type is not None:
+            feature_type = str(feature_type).strip().lower()
+            if feature_type not in self.SUM_FEATURE_TYPES:
+                raise SumValidationError("Unknown workbook feature type")
+            rows = self._db.fetch_all(
+                "SELECT * FROM sum_features WHERE workbook_id = ? AND feature_type = ? ORDER BY created_at ASC",
+                (int(workbook_id), feature_type),
+            )
+        else:
+            rows = self._db.fetch_all(
+                "SELECT * FROM sum_features WHERE workbook_id = ? ORDER BY created_at ASC",
+                (int(workbook_id),),
+            )
+        return [self._feature_dict(row) for row in rows]
+
+    def update_feature(
+        self,
+        user_id: int,
+        workbook_id: int,
+        feature_id: int,
+        *,
+        definition: Optional[Dict[str, Any]] = None,
+        sheet_id: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        self._workbook(user_id, workbook_id, mutation=True)
+        self._feature_row(workbook_id, feature_id)
+        now = int(time.time() * 1000)
+        if definition is not None:
+            if not isinstance(definition, dict):
+                raise SumValidationError("feature definition must be an object")
+            encoded = self._json(definition, {})
+            if len(encoded) > self.SUM_FEATURE_MAX_DEFINITION_BYTES:
+                raise SumValidationError("feature definition is too large")
+            self._db.execute(
+                "UPDATE sum_features SET definition_json = ?, updated_at = ? WHERE id = ?",
+                (encoded, now, int(feature_id)),
+            )
+        if sheet_id is not None:
+            self._db.execute(
+                "UPDATE sum_features SET sheet_id = ?, updated_at = ? WHERE id = ?",
+                (str(sheet_id), now, int(feature_id)),
+            )
+        self._audit(
+            "update_feature",
+            "workbook",
+            int(workbook_id),
+            user_id,
+            {"feature_id": str(feature_id)},
+        )
+        return self._feature_dict(self._feature_row(workbook_id, feature_id))
+
+    def delete_feature(self, user_id: int, workbook_id: int, feature_id: int) -> None:
+        self._workbook(user_id, workbook_id, mutation=True)
+        self._feature_row(workbook_id, feature_id)
+        self._db.execute(
+            "DELETE FROM sum_features WHERE id = ? AND workbook_id = ?",
+            (int(feature_id), int(workbook_id)),
+        )
+        self._audit(
+            "delete_feature",
+            "workbook",
+            int(workbook_id),
+            user_id,
+            {"feature_id": str(feature_id)},
+        )
+
     # ── range permissions (main-db ACL) ──────────────────────────────────────
 
     def set_range_permission(

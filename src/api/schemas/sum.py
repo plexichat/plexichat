@@ -417,6 +417,32 @@ class SumXlsxImportRequest(BaseModel):
     base_revision: int = Field(..., ge=0)
 
 
+class SumFeatureCreateRequest(BaseModel):
+    feature_type: str = Field(..., pattern="^(chart|pivot|sparkline)$")
+    definition: Dict[str, Any] = Field(default_factory=dict)
+    sheet_id: Optional[str] = None
+
+
+class SumFeatureUpdateRequest(BaseModel):
+    definition: Optional[Dict[str, Any]] = None
+    sheet_id: Optional[str] = None
+
+
+class SumFeatureResponse(BaseModel):
+    id: SnowflakeID
+    workbook_id: SnowflakeID
+    feature_type: str
+    sheet_id: Optional[str] = None
+    definition: Dict[str, Any]
+    created_by: SnowflakeID
+    created_at: int
+    updated_at: int
+
+
+class SumFeatureListResponse(BaseModel):
+    items: List[SumFeatureResponse] = Field(default_factory=list)
+
+
 # Late-bound forward references: ``SumViewportResponse`` and
 # ``SumViewerPermissionsResponse`` reference ``SumRangePermissionResponse``,
 # which is defined later in this module. Rebuild explicitly so the schemas are

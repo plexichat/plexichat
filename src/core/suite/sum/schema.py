@@ -148,6 +148,24 @@ CREATE INDEX IF NOT EXISTS idx_sum_operations_workbook_revision
     ON sum_operations(workbook_id, result_revision);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sum_operations_workbook_operation
     ON sum_operations(workbook_id, operation_id);
+
+-- Client-authored visualization definitions (charts, pivot tables, sparklines)
+-- persisted so they survive reloads and can be shared with collaborators. The
+-- definition is an opaque JSON object authored and consumed by the client; the
+-- server stores it verbatim (bounded) and enforces the feature-type allow-list.
+CREATE TABLE IF NOT EXISTS sum_features (
+    id BIGINT PRIMARY KEY,
+    workbook_id BIGINT NOT NULL,
+    feature_type TEXT NOT NULL,
+    sheet_id TEXT,
+    definition_json TEXT NOT NULL DEFAULT '{}',
+    created_by BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    CHECK (feature_type IN ('chart', 'pivot', 'sparkline')),
+    FOREIGN KEY (workbook_id) REFERENCES sum_workbooks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sum_features_workbook ON sum_features(workbook_id, feature_type);
 """
 
 # Required columns are a compact compatibility contract for existing files.
