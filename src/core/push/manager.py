@@ -297,11 +297,15 @@ class PushManager:
         token = token_record["token"]
         platform = token_record["platform"]
         if platform == "web":
-            return self._send_web_push(token_record, title, body, data, push_config)
+            return self._send_web_push(
+                token_record, title, body, data, push_config, priority
+            )
         elif platform == "android":
-            return self._send_fcm(token, title, body, data, push_config)
+            return self._send_fcm(token, title, body, data, push_config, priority)
         elif platform == "ios":
-            return self._send_apns(token, title, body, data, badge, sound, push_config)
+            return self._send_apns(
+                token, title, body, data, badge, sound, push_config, priority
+            )
         return False
 
     def _send_web_push(
@@ -311,6 +315,7 @@ class PushManager:
         body: str,
         data: Optional[Dict[str, Any]],
         push_config: Dict[str, Any],
+        priority: str = "high",
     ) -> Optional[bool]:
         """Send a Web Push notification using the VAPID protocol.
 
@@ -322,9 +327,11 @@ class PushManager:
         deliver the message directly to the browser push service.
 
         Returns ``True`` on successful delivery, ``False`` when the
-        subscription is rejected by the push service (caller should drop the
-        token), and ``None`` when delivery was skipped because VAPID is not
-        configured or the subscription is incomplete (token left intact).
+        subscription is *permanently* rejected by the push service
+        (e.g. 404/410 — the caller should drop the token), and ``None`` when
+        delivery was skipped because VAPID is not configured, the subscription
+        is incomplete, or a *transient* error occurred (network/DNS/TLS).  A
+        transient failure must NOT delete an otherwise-valid subscription.
         """
         if not self._vapid_available:
             logger.debug(
@@ -369,10 +376,17 @@ class PushManager:
             logger.warning(
                 f"Web Push failed for {endpoint[:16]}... (status={status}, {e})"
             )
-            return False
+            if status in (404, 410):
+                return False
+            # Any other Web Push error (401, 429, 500, etc.) is transient and
+            # must not invalidate an otherwise-valid subscription.
+            return None
         except Exception as e:
-            logger.error(f"Web Push failed for {endpoint[:16]}...: {e}")
-            return False
+            # Transient infrastructure failure (DNS, TLS, connection reset).
+            # The subscription is still valid; skipping (None) leaves the
+            # token intact instead of deleting it.
+            logger.warning(f"Web Push skipped (transient) for {endpoint[:16]}...: {e}")
+            return None
 
     def _send_fcm(
         self,
@@ -382,12 +396,17 @@ class PushManager:
         data: Optional[Dict[str, Any]],
         push_config: Dict[str, Any],
         priority: str = "high",
-    ) -> bool:
-        """Send via Firebase Cloud Messaging."""
+    ) -> Optional[bool]:
+        """Send via Firebase Cloud Messaging.
+
+        Returns ``True`` on success, ``False`` when the token is permanently
+        invalid (caller drops it), and ``None`` when FCM is unconfigured or a
+        transient error occurred (token left intact).
+        """
         if not self._fcm_available:
             # Log that push would have been sent (for debugging)
             logger.debug(f"FCM not configured - would send push to {token[:16]}...")
-            return False
+            return None
 
         try:
             # Try to use firebase-admin SDK
@@ -412,7 +431,7 @@ class PushManager:
             return True
         except ImportError:
             logger.warning("firebase-admin not installed - FCM push unavailable")
-            return False
+            return None
         except Exception as e:
             error_str = str(e).lower()
             if (
@@ -422,8 +441,10 @@ class PushManager:
             ):
                 logger.warning(f"Invalid FCM token: {token[:16]}... - {e}")
                 return False
-            logger.error(f"FCM push failed: {e}")
-            return False
+            # Any other FCM error is transient/auth/config related and must not
+            # invalidate an otherwise-valid token.
+            logger.warning(f"FCM push skipped (transient) for {token[:16]}... - {e}")
+            return None
 
     def _send_apns(
         self,
@@ -434,7 +455,8 @@ class PushManager:
         badge: Optional[int],
         sound: str,
         push_config: Dict[str, Any],
-    ) -> bool:
+        priority: str = "high",
+    ) -> Optional[bool]:
         """Send via Apple Push Notification service over HTTP/2 + JWT.
 
         Replaces the previous ``# TODO: Implement APNs HTTP/2 push`` stub
@@ -540,10 +562,12 @@ class PushManager:
                 if use_sandbox
                 else "https://api.push.apple.com/3/device/"
             ) + token
+            apns_priority = "5" if priority != "high" else "10"
             headers = {
                 "authorization": f"bearer {token_jwt}",
                 "apns-topic": bundle_id,
                 "apns-push-type": "alert",
+                "apns-priority": apns_priority,
                 "apns-expiration": str(now_ts + ttl_seconds),
             }
 
@@ -560,26 +584,44 @@ class PushManager:
                 return True
 
             # APNs 410 == Unregistered token — caller should delete.
-            # ``BadDeviceToken`` / ``Unregistered`` are reasons Apple
-            # returns 400 with a ``reason`` JSON field.
+            # ``BadDeviceToken`` / ``Unregistered`` / ``ExpiredToken`` are
+            # reasons Apple returns 400 with a ``reason`` JSON field and mean
+            # the device token is permanently gone.
             reason = ""
             try:
-                reason = response.json().get("reason", "") or ""
+                reason = (response.json().get("reason", "") or "").lower()
             except Exception:
                 pass
+            permanent_reasons = (
+                "baddevicetoken",
+                "unregistered",
+                "expiredtoken",
+                "devicetokennotforthisuser",
+            )
+            if response.status_code == 410 or reason in permanent_reasons:
+                logger.warning(
+                    f"APNs token permanently invalid for {token[:16]}… "
+                    f"(status={response.status_code}, reason={reason})"
+                )
+                return False
+
+            # Any other status (429 rate-limit, 500/503 transient, 403 auth
+            # config, 400 with an unknown reason) is NOT a token problem, so we
+            # return ``None`` and leave the subscription intact rather than
+            # deleting a valid iOS push token on a transient APNs hiccup.
             logger.warning(
-                f"APNs push failed for {token[:16]}… "
+                f"APNs push skipped (transient) for {token[:16]}… "
                 f"(status={response.status_code}, reason={reason})"
             )
-            return False
+            return None
 
         except ImportError as e:
             # PyJWT or httpx[http2] missing — log actionable detail.
             logger.error(f"APNs push unavailable — install PyJWT + httpx[http2]: {e}")
-            return False
+            return None
         except Exception as e:
-            logger.error(f"APNs push failed for {token[:16]}…: {e}")
-            return False
+            logger.warning(f"APNs push skipped (transient) for {token[:16]}…: {e}")
+            return None
 
     # Token-based JWT cache: ``{ (team_id, key_id): (jwt_string, exp_ts) }``.
     # Populated lazily by ``_send_apns`` so a server restart resets the
