@@ -1,3 +1,4 @@
+import os
 import time
 from typing import List, Optional, Dict, Any
 
@@ -47,11 +48,20 @@ class DSARManager:
         """
         Create a new DSAR export request.
         """
+        allowed_formats = {"json", "zip"}
+        if format not in allowed_formats:
+            raise ValueError(
+                f"Unsupported export format: {format!r}. "
+                f"Allowed formats: {sorted(allowed_formats)}"
+            )
+
         request_id = generate_snowflake_id()
         now = int(time.time())
 
         metadata = {"categories": categories} if categories else None
-        metadata_json = str(metadata) if metadata else None
+        import json as _json
+
+        metadata_json = _json.dumps(metadata) if metadata else None
 
         self._db.execute(
             """
@@ -227,7 +237,7 @@ class DSARManager:
         if not request:
             return None
 
-        if request["status"] != "ready":
+        if request["status"] not in ("ready", "downloaded"):
             return None
 
         now = int(time.time())
@@ -244,11 +254,43 @@ class DSARManager:
             )
             return None
 
-        self._db.execute(
-            "UPDATE dsar_requests SET status = 'downloaded' WHERE id = ?",
-            (request_id,),
-        )
+        # Deliberately do NOT flip the status to 'downloaded' here. The
+        # status is advanced only after the bytes have actually been
+        # streamed to the client (see the API route), so a failed or
+        # partial download leaves the export 'ready' and re-downloadable
+        # instead of becoming a permanently unrecoverable 400.
+        if not request.get("storage_path") or not os.path.exists(
+            request["storage_path"]
+        ):
+            # The file is gone (e.g. cleaned up) even though the row still
+            # says it is available; report unavailable so the client can
+            # request a fresh export. Never raise here.
+            return None
 
+        self._invalidate_cache("dsar_request:*")
+
+        return {
+            "storage_backend": request.get("storage_backend", "local"),
+            "storage_path": request.get("storage_path"),
+            "checksum": request["checksum"],
+            "file_size": request["file_size_bytes"],
+            "format": request["format"],
+            "status": request["status"],
+        }
+
+    def mark_export_downloaded(self, request_id: int, user_id: int) -> None:
+        """Mark an export as downloaded after the bytes have been streamed.
+
+        Called by the API route after a successful download so the
+        one-shot semantics hold without ever blocking a failed download.
+        Idempotent: only flips a 'ready' row, leaving 'downloaded' rows
+        untouched.
+        """
+        self._db.execute(
+            "UPDATE dsar_requests SET status = 'downloaded' WHERE id = ? "
+            "AND user_id = ? AND status = 'ready'",
+            (request_id, user_id),
+        )
         self._invalidate_cache("dsar_request:*")
 
         audit_log = self._get_audit_log()
@@ -258,14 +300,6 @@ class DSARManager:
             f"user:{user_id}",
             {"request_id": request_id},
         )
-
-        return {
-            "storage_backend": request.get("storage_backend", "local"),
-            "storage_path": request.get("storage_path"),
-            "checksum": request["checksum"],
-            "file_size": request["file_size_bytes"],
-            "format": request["format"],
-        }
 
     def get_admin_requests(
         self, status: Optional[str] = None, limit: int = 50, offset: int = 0

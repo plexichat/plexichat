@@ -23,6 +23,7 @@ from src.core.dsar import (
     get_request_status,
     cancel_request as dsar_cancel_request,
     get_export_file,
+    mark_export_downloaded,
 )
 
 
@@ -330,7 +331,7 @@ class DataExportMixin:
 
             generator = ExportFormatGenerator()
             try:
-                stream, size = generator.retrieve_stream(storage_path)
+                raw_stream, size = generator.retrieve_stream(storage_path)
             except Exception as e:
                 logger.error(
                     f"Failed to open export stream for {storage_path}: {e}",
@@ -358,6 +359,22 @@ class DataExportMixin:
                 f"({size} bytes, {export_format}, sha256={checksum[:16]}...)"
             )
 
+            # Mark the export as downloaded only after the bytes have been
+            # fully streamed to the client. If the stream is interrupted
+            # (e.g. client disconnect) the generator stops early and we do
+            # NOT flip the status, leaving the export re-downloadable.
+            def _stream_with_marker():
+                try:
+                    for chunk in raw_stream:
+                        yield chunk
+                finally:
+                    try:
+                        mark_export_downloaded(req_id, user_id)
+                    except Exception as me:
+                        logger.warning(
+                            f"Failed to mark DSAR export {req_id} downloaded: {me}"
+                        )
+
             headers = {
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Length": str(size),
@@ -366,7 +383,7 @@ class DataExportMixin:
             }
 
             return StreamingResponse(
-                stream,
+                _stream_with_marker(),
                 media_type=media_type,
                 headers=headers,
             )

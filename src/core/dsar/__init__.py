@@ -164,6 +164,17 @@ def get_export_file(request_id: int, user_id: int) -> Optional[Dict[str, Any]]:
     return _get_manager().get_export_file(request_id, user_id)
 
 
+def mark_export_downloaded(request_id: int, user_id: int) -> None:
+    """
+    Mark a DSAR export as downloaded.
+
+    Intended to be called by the download route only after the export
+    bytes have been successfully streamed to the client, so a failed or
+    partial download never permanently blocks re-download.
+    """
+    _get_manager().mark_export_downloaded(request_id, user_id)
+
+
 def approve_request(request_id: int, admin_id: int) -> Optional[Dict[str, Any]]:
     """
     Admin approve a pending DSAR request.
@@ -236,6 +247,7 @@ __all__ = [
     "get_request_status",
     "cancel_request",
     "get_export_file",
+    "mark_export_downloaded",
     "approve_request",
     "deny_request",
     "get_admin_requests",

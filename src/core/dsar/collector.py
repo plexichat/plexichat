@@ -156,7 +156,18 @@ class DataCollector:
 
         for table, category in tables:
             try:
-                key_column = "id" if table == "auth_users" else "user_id"
+                # Most tables key the user on ``user_id``; a handful use a
+                # different ownership/actor column and must be mapped
+                # explicitly or the COUNT query fails (and is silently
+                # swallowed), under-reporting the user's data.
+                key_column = {
+                    "auth_users": "id",
+                    "msg_conversations": "owner_id",
+                    "msg_messages": "author_id",
+                    "msg_scheduled": "author_id",
+                    "msg_pinned": "pinned_by",
+                    "msg_forwarded": "original_author_id",
+                }.get(table, "user_id")
                 result = self._db.fetch_one(
                     f"SELECT COUNT(*) as count FROM {table} WHERE {key_column} = ?",
                     (user_id,),
