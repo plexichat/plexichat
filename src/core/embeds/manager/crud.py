@@ -180,7 +180,21 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
         assert result is not None
 
         if message_id:
-            self.attach_embed_to_message(user_id, message_id, embed_id)
+            try:
+                self.attach_embed_to_message(user_id, message_id, embed_id)
+            except Exception:
+                # Attachment failed (e.g. missing permission / authorship).
+                # Roll the embed back so we never leave an orphaned embed row
+                # detached from any message.
+                logger.warning(
+                    f"Rolling back embed {embed_id}: attach to message "
+                    f"{message_id} failed"
+                )
+                self._db.execute(
+                    "DELETE FROM embed_fields WHERE embed_id = ?", (embed_id,)
+                )
+                self._db.execute("DELETE FROM embed_embeds WHERE id = ?", (embed_id,))
+                raise
 
         return result
 

@@ -209,7 +209,14 @@ class EmbedManagerBase(BaseManager):
     ) -> bool:
         """Check if user has embed_links permission in server."""
         if not self._servers:
-            return True
+            # The servers module is required to make an authoritative
+            # permission decision. Failing open here would let any caller
+            # attach link embeds regardless of permissions, so deny instead.
+            logger.warning(
+                "embed_links permission check requested but the servers "
+                "module is unavailable; denying by default"
+            )
+            return False
         return self._servers.has_permission(
             user_id, server_id, "messages.embed_links", channel_id
         )

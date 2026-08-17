@@ -228,8 +228,9 @@ class EmbedURLPreviewMixin(EmbedManagerProtocol):
             parsed = urlparse(validated_url)
             logger.warning(f"Failed to parse URL metadata for {validated_url}: {e}")
             return {
-                "valid": True,
+                "valid": False,
                 "url": validated_url,
+                "error": str(e),
                 "site_name": parsed.netloc,
                 "site_url": f"{parsed.scheme}://{parsed.netloc}",
                 "type": "link",

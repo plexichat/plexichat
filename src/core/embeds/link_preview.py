@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Optional, Dict, Any, List, Tuple
-from urllib.parse import urlparse, urljoin
+from urllib.parse import quote, urlparse, urljoin
 
 import utils.logger as logger
 import utils.config as config
@@ -703,12 +703,32 @@ class LinkPreviewService:
         # Parse metadata
         metadata = self._parse_metadata(html, final_url)
 
-        # Proxy image if enabled
+        # Proxy image if enabled. The media proxy validates the image (SSRF,
+        # content-type and magic-byte checks) and serves it through the
+        # authenticated /media/proxy route. On success the stored/returned
+        # image URL is rewritten to that route so clients only ever receive
+        # content-validated bytes, never the raw external URL (which would
+        # otherwise bypass the proxy's checks). The previously-dead
+        # ``_validate_image_url`` defence-in-depth check is exercised here.
         proxied_image_id = None
         if self._config["proxy_images"] and metadata.image_url:
-            proxied_image_id = self._proxy_image(metadata.image_url)
-            # If proxying succeeded, we could update image_url to internal URL
-            # For now, we keep original URL but track proxied ID
+            try:
+                self._validate_image_url(metadata.image_url)
+            except ValueError as e:
+                logger.warning(f"Dropping preview image {metadata.image_url}: {e}")
+                metadata.image_url = None
+            else:
+                proxied_image_id = self._proxy_image(metadata.image_url)
+                if proxied_image_id is not None:
+                    api_prefix = self._config.get("api_prefix", "/api/v1")
+                    metadata.image_url = (
+                        f"{api_prefix}/media/proxy?url="
+                        f"{quote(metadata.image_url, safe='')}"
+                    )
+                else:
+                    # Proxy refused to serve this image (e.g. SVG or fetch
+                    # failure); do not expose the raw external URL to clients.
+                    metadata.image_url = None
 
         # Cache result
         self._cache_preview(url, metadata, proxied_image_id)
