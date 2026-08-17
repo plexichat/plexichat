@@ -41,6 +41,15 @@ class SecurityHeadersMiddleware:
                     (b"X-XSS-Protection", b"1; mode=block"),
                     (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
                     (b"X-Permitted-Cross-Domain-Policies", b"none"),
+                    # The suite never needs the camera, mic, geolocation,
+                    # payment, or USB browser APIs; disable them so a
+                    # compromised page cannot prompt for or exfiltrate via
+                    # those capabilities. Clipboard stays unrestricted for
+                    # the editors' copy/paste flows.
+                    (
+                        b"Permissions-Policy",
+                        b"camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+                    ),
                 ]
                 if is_api and not is_media and not is_help:
                     # Strict CSP for API responses. They should never
