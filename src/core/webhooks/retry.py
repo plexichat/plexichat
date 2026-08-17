@@ -86,8 +86,18 @@ class WebhookRetryQueue:
             raise ValueError("Webhook payload exceeds maximum size")
 
         # Store signing headers if provided (they're ephemeral per-request,
-        # but we need them for retries since timestamps change)
+        # but we need them for retries since timestamps change). If none
+        # were supplied but a webhook manager is wired in, derive the
+        # Ed25519 signature here so every outbound delivery is signed.
         metadata = {}
+        if not signing_headers and self._webhook_manager is not None:
+            try:
+                signing_headers = self._webhook_manager.sign_payload(
+                    webhook_id, payload
+                )
+            except Exception as e:  # signing is best-effort; never block delivery
+                logger.warning(f"Failed to sign webhook delivery for {webhook_id}: {e}")
+                signing_headers = None
         if signing_headers:
             metadata["original_signing_headers"] = signing_headers
 

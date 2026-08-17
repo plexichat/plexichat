@@ -212,20 +212,20 @@ class WebhookCRUDMixin(WebhookManagerTrait):
                 "Missing permission to manage webhooks", "webhooks.manage"
             )
 
-        updates = []
-        params = []
+        sets: List[str] = []
+        params: List[Any] = []
 
         if name is not None:
             name = self._validate_name(name)
-            updates.append("name = ?")
+            sets.append("name = ?")
             params.append(name)
 
         if avatar_url is not None:
             if avatar_url == "":
-                updates.append("avatar_url = NULL")
+                sets.append("avatar_url = NULL")
             else:
                 avatar_url = self._validate_avatar_url(avatar_url)
-                updates.append("avatar_url = ?")
+                sets.append("avatar_url = ?")
                 params.append(avatar_url)
 
         if channel_id is not None and channel_id != row["channel_id"]:
@@ -253,63 +253,24 @@ class WebhookCRUDMixin(WebhookManagerTrait):
                     channel_count,
                 )
 
-            updates.append("channel_id = ?")
+            sets.append("channel_id = ?")
             params.append(channel_id)
 
-        if not updates:
-            now = self._get_timestamp()
+        now = self._get_timestamp()
+        if not sets:
             self._db.execute(
                 "UPDATE webhook_webhooks SET updated_at = ? WHERE id = ?",
                 (now, webhook_id),
             )
-            row = self._db.fetch_one(
-                "SELECT * FROM webhook_webhooks WHERE id = ?", (webhook_id,)
+        else:
+            sets.append("updated_at = ?")
+            params.append(now)
+            params.append(webhook_id)
+            placeholders = ", ".join(sets)
+            self._db.execute(
+                f"UPDATE webhook_webhooks SET {placeholders} WHERE id = ?",
+                tuple(params),
             )
-            return self._row_to_webhook(row, include_token=False)
-
-        now = self._get_timestamp()
-        updates.append("updated_at = ?")
-        params.append(now)
-        params.append(webhook_id)
-
-        allowed_columns = {
-            "name",
-            "avatar_url",
-            "channel_id",
-        }
-        for update in updates:
-            col_name = update.split(" = ")[0]
-            if col_name == "updated_at":
-                continue
-            if col_name not in allowed_columns:
-                raise ValueError(f"Invalid column name: {col_name}")
-
-        now = self._get_timestamp()
-        # Apply updates with exact column matching. A substring check like
-        # ``"url = ?" in update`` falsely matched ``avatar_url = ?`` and
-        # executed ``SET url = ?`` against a table that has no ``url``
-        # column (and silently skipped the ``avatar_url = NULL`` clear
-        # case). Column names are validated against ``allowed_columns``
-        # above, so building the SET clause from them is safe.
-        for update in updates:
-            if " = " not in update:
-                continue
-            col_name, value_part = update.split(" = ", 1)
-            if col_name == "updated_at":
-                continue
-            idx = updates.index(update)
-            if value_part == "NULL":
-                self._db.execute(
-                    f"UPDATE webhook_webhooks SET {col_name} = NULL, updated_at = ? "
-                    f"WHERE id = ?",
-                    (now, webhook_id),
-                )
-            else:
-                self._db.execute(
-                    f"UPDATE webhook_webhooks SET {col_name} = ?, updated_at = ? "
-                    f"WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
 
         result = self.get_webhook(webhook_id)
         assert result is not None

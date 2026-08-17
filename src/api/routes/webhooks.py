@@ -3,7 +3,7 @@ Webhook routes - Webhook management and execution endpoints.
 """
 
 from typing import Optional, Union
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Header
 
 import utils.logger as logger
 import src.api as api
@@ -553,11 +553,17 @@ async def execute_webhook(
     body: WebhookExecuteRequest,
     thread_id: Optional[str] = None,
     wait: bool = False,
+    x_signature: Optional[str] = Header(None, alias="X-Plexichat-Signature"),
+    x_timestamp: Optional[str] = Header(None, alias="X-Plexichat-Timestamp"),
 ) -> Union[WebhookMessageResponse, SuccessResponse]:
     """
     Execute a webhook.
 
-    Sends a message to the webhook's channel using its token.
+    Sends a message to the webhook's channel using its token. When the
+    caller also supplies an ``X-Plexichat-Signature`` /
+    ``X-Plexichat-Timestamp`` pair, the payload is verified against the
+    webhook's Ed25519 key before execution (rejecting tampered or
+    replayed deliveries).
     """
     webhooks = api.get_webhooks()
     if not webhooks:
@@ -608,6 +614,28 @@ async def execute_webhook(
                 )
 
         try:
+            if x_signature and x_timestamp:
+                payload = {
+                    "content": body.content,
+                    "username": body.username,
+                    "avatar_url": body.avatar_url,
+                    "embeds": body.embeds,
+                    "thread_id": tid or body.thread_id,
+                }
+                if not webhooks.verify_payload(wid, payload, x_signature, x_timestamp):
+                    logger.warning(
+                        f"Invalid Ed25519 signature on webhook {wid} execution"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "error": {
+                                "code": 401,
+                                "message": "Invalid webhook signature",
+                            }
+                        },
+                    )
+
             message = webhooks.execute_webhook(
                 webhook_id=wid,
                 token=token,

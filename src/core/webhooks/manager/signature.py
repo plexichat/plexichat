@@ -30,12 +30,11 @@ WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
 class SignatureMixin(WebhookManagerTrait):
     """Webhook payload signing with Ed25519.
 
-    SECURITY: prior to this revision the module exposed only
-    ``sign_payload`` (outbound). The matching ``verify_payload`` was
-    not implemented, so inbound webhook deliveries accepted any
-    payload. Below adds verification plus replay protection keyed on
-    the signed timestamp, so an attacker who steals a single signed
-    delivery cannot replay it outside the ``WEBHOOK_REPLAY_WINDOW``.
+    Each webhook is provisioned with an Ed25519 keypair at creation time
+    (``signing_key_public`` / ``signing_key_private_encrypted``). ``sign_payload``
+    attaches a signature + timestamp to outbound deliveries; ``verify_payload``
+    validates inbound deliveries and rejects replays outside
+    ``WEBHOOK_REPLAY_WINDOW_SECONDS``.
     """
 
     def sign_payload(
@@ -116,9 +115,6 @@ class SignatureMixin(WebhookManagerTrait):
 
         Returns:
             True if the signature is valid AND not replayed.
-
-        Raises:
-            ValueError: when required inputs are missing or malformed.
         """
         if not signature_header or not timestamp_header:
             return False
