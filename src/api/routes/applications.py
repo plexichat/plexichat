@@ -4,6 +4,7 @@ Application management API routes.
 Handles user application CRUD, bot token management, and interaction responses.
 """
 
+import logging
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, status
 
@@ -22,6 +23,8 @@ from src.core.applications.exceptions import (
     InteractionValidationError,
 )
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/applications", tags=["Applications"])
 
@@ -138,10 +141,11 @@ async def list_applications(
     try:
         apps = applications.get_user_applications(current_user.user_id)
         return [_application_to_response(app) for app in apps]
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -170,10 +174,11 @@ async def create_application(
             bot_require_code_grant=body.bot_require_code_grant,
         )
         return _application_to_response(app)
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -205,10 +210,11 @@ async def get_application(
         return _application_to_response(app)
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -249,10 +255,11 @@ async def update_application(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": {"code": 403, "message": str(e)}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -286,10 +293,11 @@ async def delete_application(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": {"code": 403, "message": str(e)}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -337,10 +345,11 @@ async def create_bot(
                 }
             },
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -375,10 +384,11 @@ async def regenerate_secret(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": {"code": 403, "message": str(e)}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -447,8 +457,9 @@ async def respond_to_interaction(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": str(e)}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
