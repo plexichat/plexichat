@@ -45,19 +45,24 @@ class CustomStatusMixin(PresenceManagerBase):
         self._validate_user(user_id)
         self._ensure_presence_record(user_id)
 
-        # Normalize text: a custom status must be a non-empty, bounded string.
-        # Whitespace-only / missing text is treated as clearing the status.
+        # Normalize inputs. A custom status may be emoji-only: an empty /
+        # whitespace-only ``text`` is only treated as "clear" when there is no
+        # emoji either. With an emoji present we keep an emoji-only status
+        # (storing an empty ``text``), which previously was silently dropped.
         normalized_text = (text or "").strip()
-        if not normalized_text:
+        emoji = (emoji or "").strip() if emoji else None
+        if emoji and len(emoji) > 64:
+            emoji = emoji[:64]
+
+        if not normalized_text and not emoji:
             return self.clear_custom_status(user_id)
+
+        if not normalized_text:
+            normalized_text = ""
 
         max_len = self._config.get("max_custom_status_length", 128)
         if len(normalized_text) > max_len:
             normalized_text = normalized_text[:max_len]
-
-        emoji = (emoji or "").strip() if emoji else None
-        if emoji and len(emoji) > 64:
-            emoji = emoji[:64]
 
         now = self._get_timestamp()
 

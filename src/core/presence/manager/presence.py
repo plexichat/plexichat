@@ -28,14 +28,26 @@ class PresenceMixin(PresenceManagerBase):
         if use_cache:
             cached = get_cached_presence(user_id)
             if cached:
-                try:
-                    return self._dict_to_presence(cached)
-                except Exception:
-                    # CORRECTNESS FIX: a cache entry written with an
-                    # incompatible schema (e.g. by ``cache_presence``) must
-                    # not crash presence lookups. Treat it as a miss and
-                    # purge it so the next call rebuilds a valid entry.
+                cs = cached.get("custom_status") if isinstance(cached, dict) else None
+                if (
+                    isinstance(cs, dict)
+                    and cs.get("expires_at")
+                    and self._get_timestamp() >= int(cs["expires_at"])
+                ):
+                    # The cached custom status has expired. Evict the stale
+                    # entry and fall through to the DB path, which runs
+                    # ``_cleanup_expired_custom_status`` so the expired status
+                    # is purged rather than served to the caller.
                     cache_delete(f"presence:{user_id}")
+                else:
+                    try:
+                        return self._dict_to_presence(cached)
+                    except Exception:
+                        # CORRECTNESS FIX: a cache entry written with an
+                        # incompatible schema (e.g. by ``cache_presence``) must
+                        # not crash presence lookups. Treat it as a miss and
+                        # purge it so the next call rebuilds a valid entry.
+                        cache_delete(f"presence:{user_id}")
 
         # Drop any custom status that has already expired before we read it,
         # so stale statuses never surface through REST reads or
@@ -67,7 +79,7 @@ class PresenceMixin(PresenceManagerBase):
             )
         else:
             custom_status = None
-            if row["cs_text"]:
+            if row["cs_text"] or row["cs_emoji"]:
                 custom_status = CustomStatus(
                     text=row["cs_text"],
                     emoji=row["cs_emoji"],

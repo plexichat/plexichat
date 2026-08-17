@@ -214,14 +214,25 @@ async def update_presence(
                 status_enum = UserStatus(body.status)
                 presence.set_status(current_user.user_id, status_enum)
 
-                if body.custom_status or body.custom_emoji:
-                    presence.set_custom_status(
-                        user_id=current_user.user_id,
-                        text=(body.custom_status or ""),
-                        emoji=body.custom_emoji,
+                # Only touch the custom status when the client explicitly sends
+                # it. A status-only update (the common case from the UI) must NOT
+                # wipe an existing custom status/emoji — see P1. The WebSocket
+                # handler already preserves on omission; this REST path must
+                # match, otherwise the HTTP call clears then the WS call can
+                # only re-read the already-cleared value.
+                if body.custom_status is not None:
+                    text = (body.custom_status or "").strip()
+                    emoji = (
+                        (body.custom_emoji or "").strip() if body.custom_emoji else None
                     )
-                else:
-                    presence.clear_custom_status(current_user.user_id)
+                    if text:
+                        presence.set_custom_status(
+                            user_id=current_user.user_id,
+                            text=text,
+                            emoji=emoji,
+                        )
+                    else:
+                        presence.clear_custom_status(current_user.user_id)
 
                 return presence.get_presence(current_user.user_id)
 
@@ -233,12 +244,16 @@ async def update_presence(
 
             # CORRECTNESS FIX: never leak custom status for an invisible user.
             # The event data must be scrubbed the same way the REST response
-            # and ``get_visible_presence`` are.
+            # and ``get_visible_presence`` are. Broadcast the *actual* persisted
+            # custom status so a status-only update does not hide an existing
+            # one (P1).
+            actual_custom = pres.custom_status.text if pres.custom_status else None
+            actual_emoji = pres.custom_status.emoji if pres.custom_status else None
             presence_data = _build_presence_event_data(
                 current_user.user_id,
                 body.status,
-                body.custom_status,
-                body.custom_emoji,
+                actual_custom,
+                actual_emoji,
             )
 
             if target_user_ids:
@@ -256,6 +271,12 @@ async def update_presence(
             if "Invalid" in exc_name:
                 raise HTTPException(
                     status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                )
+            if "NotFound" in exc_name:
+                # A target user id may have been soft-deleted; surface a clean
+                # 404 instead of a 500 (P2).
+                raise HTTPException(
+                    status_code=404, detail={"error": {"code": 404, "message": str(e)}}
                 )
 
             logger.error(
