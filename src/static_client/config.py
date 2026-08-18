@@ -50,8 +50,8 @@ class SecurityHeadersConfig:
     content_security_policy: str = (
         "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src https://fonts.gstatic.com; "
-        "img-src 'self' data: blob:; media-src 'self' blob:; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "img-src 'self' data: blob:; media-src 'self' blob: data:; "
         "worker-src blob:; connect-src 'self' wss:; "
         "manifest-src 'self'; frame-ancestors 'none';"
     )
