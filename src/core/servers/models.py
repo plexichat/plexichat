@@ -480,6 +480,12 @@ SERVER_PERMISSIONS = {
     "server.automod": "Manage server auto-moderation rules",
     # Transcript export
     "messages.export_transcript": "Export chat transcripts",
+    # Artifact permissions (PlexiScribe / PlexiScript / PlexiBoard documents)
+    "artifact.view": "View artifacts",
+    "artifact.create": "Create artifacts",
+    "artifact.edit": "Edit artifacts",
+    "artifact.delete": "Delete artifacts",
+    "artifact.manage_retention": "Manage artifact retention",
     # Administrator (bypasses all permissions)
     "administrator": "Full administrator access",
 }
@@ -497,4 +503,9 @@ DEFAULT_EVERYONE_PERMISSIONS = {
     "invites.create": True,
     "messages.export_transcript": True,
     "events.view": True,
+    # Every member can use the collaborative suite artifacts in a server.
+    "artifact.view": True,
+    "artifact.create": True,
+    "artifact.edit": True,
+    "artifact.delete": True,
 }
