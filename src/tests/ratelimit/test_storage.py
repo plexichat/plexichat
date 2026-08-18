@@ -324,3 +324,77 @@ class TestStats:
         assert "max_buckets" in stats
         assert stats["bucket_count"] == 2
         assert stats["ttl_count"] == 1
+
+
+class _FakeLockingDb:
+    """Minimal Database stand-in that raises 'database is locked' N times.
+
+    Only the surface used by ``DatabaseStorage.eval_token_bucket`` is
+    implemented, so the retry path can be exercised in isolation.
+    """
+
+    type = "sqlite"
+
+    def __init__(self, lock_failures: int):
+        self.lock_failures = lock_failures
+        self._row = {"tokens": 10.0, "last_update": 0.0}
+        self.rollback_calls = 0
+
+    def insert_or_ignore(self, *_args, **_kwargs):
+        pass
+
+    def begin_transaction(self):
+        pass
+
+    def fetch_one(self, *_args, **_kwargs):
+        return self._row
+
+    def execute(self, *_args, **_kwargs):
+        if self.lock_failures > 0:
+            self.lock_failures -= 1
+            raise RuntimeError("database is locked")
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        self.rollback_calls += 1
+
+
+class TestDatabaseStorageRetry:
+    """DatabaseStorage must retry transient lock errors before failing closed."""
+
+    def test_retries_on_database_locked(self):
+        from src.core.ratelimit.storage.database import (
+            DatabaseStorage,
+            _is_lock_error,
+        )
+
+        assert _is_lock_error(RuntimeError("database is locked")) is True
+        assert _is_lock_error(RuntimeError("other error")) is False
+
+        db = _FakeLockingDb(lock_failures=2)
+        storage = DatabaseStorage.__new__(DatabaseStorage)
+        storage._db = db
+
+        # Two failures then success: the third attempt should be allowed.
+        allowed, remaining, _reset = storage.eval_token_bucket(
+            "key", capacity=10, refill_rate=0.1, cost=1, ttl=60
+        )
+        assert allowed is True
+        assert remaining == 9
+        assert db.rollback_calls >= 2
+
+    def test_fails_closed_after_exhausted_retries(self):
+        from src.core.ratelimit.storage.database import DatabaseStorage
+
+        db = _FakeLockingDb(lock_failures=100)
+        storage = DatabaseStorage.__new__(DatabaseStorage)
+        storage._db = db
+
+        allowed, remaining, reset = storage.eval_token_bucket(
+            "key", capacity=10, refill_rate=0.1, cost=1, ttl=60
+        )
+        assert allowed is False
+        assert remaining == 0
+        assert reset == 60.0

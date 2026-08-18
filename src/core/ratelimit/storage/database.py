@@ -12,6 +12,12 @@ from src.core.database import Database
 from .base import RateLimitStorage
 
 
+def _is_lock_error(exc: Exception) -> bool:
+    """Return True for transient SQLite lock errors worth retrying."""
+    msg = str(exc).lower()
+    return "database is locked" in msg or "database table is locked" in msg
+
+
 class DatabaseStorage(RateLimitStorage):
     """Atomic relational database storage for rate limit buckets."""
 
@@ -176,7 +182,32 @@ class DatabaseStorage(RateLimitStorage):
     def eval_token_bucket(
         self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
     ) -> tuple:
-        """Atomically evaluate token bucket using a transaction."""
+        """Atomically evaluate token bucket using a transaction.
+
+        Transient ``database is locked`` errors (a normal SQLite occurrence
+        when many requests write the bucket table concurrently) are retried a
+        few times before the request is denied. This prevents a busy-but-healthy
+        database from turning into spurious 429 responses.
+        """
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                return self._eval_token_bucket_once(
+                    key, capacity, refill_rate, cost, ttl
+                )
+            except Exception as exc:
+                self._rollback_safely()
+                if attempt + 1 < max_attempts and _is_lock_error(exc):
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                return self._fail_closed(exc, capacity)
+        # Unreachable: the loop returns on every path above.
+        return False, 0, 60.0
+
+    def _eval_token_bucket_once(
+        self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int
+    ) -> tuple:
+        """Perform a single token-bucket evaluation in one transaction."""
         now = time.time()
         expires_at = now + ttl
 
@@ -223,42 +254,48 @@ class DatabaseStorage(RateLimitStorage):
             reset_after = (cost - tokens) / refill_rate if not allowed else 0.0
             return allowed, remaining, max(0.0, reset_after)
 
-        except Exception as exc:
-            try:
-                self._db.rollback()
-            except Exception:
-                pass
-            # SECURITY: the previous ``except Exception: return
-            # (True, capacity, 0.0)`` FAIL-OPENED the bucket on any
-            # DB error. A buggy or under-attack database turned into
-            # an unlimited-rate bypass. We now FAIL-CLOSED: deny the
-            # request and surface the error. Operators can opt-in to
-            # fail-open via configuration for dev/test environments.
-            import os as _os
-            import utils.config as _cfg
+        except Exception:
+            self._rollback_safely()
+            raise
 
-            try:
-                fail_open = bool(
-                    _cfg.get("rate_limiting", {}).get(
-                        "fail_open_on_backend_error", False
-                    )
-                )
-            except Exception:
-                fail_open = False
+    def _rollback_safely(self) -> None:
+        """Roll back any open transaction without masking the original error."""
+        try:
+            self._db.rollback()
+        except Exception:
+            pass
 
-            if fail_open and not _os.environ.get("PLEXICHAT_REQUIRE_FAIL_CLOSED", ""):
-                from utils import logger as _log
+    def _fail_closed(self, exc: Exception, capacity: int) -> tuple:
+        """Deny the request after a non-retryable backend error."""
+        # SECURITY: the previous ``except Exception: return
+        # (True, capacity, 0.0)`` FAIL-OPENED the bucket on any
+        # DB error. A buggy or under-attack database turned into
+        # an unlimited-rate bypass. We now FAIL-CLOSED: deny the
+        # request and surface the error. Operators can opt-in to
+        # fail-open via configuration for dev/test environments.
+        import os as _os
+        import utils.config as _cfg
 
-                _log.error(
-                    "rate-limit DB backend error, FAIL-OPEN (insecure): %s",
-                    exc,
-                )
-                return True, capacity, 0.0
+        try:
+            fail_open = bool(
+                _cfg.get("rate_limiting", {}).get("fail_open_on_backend_error", False)
+            )
+        except Exception:
+            fail_open = False
 
+        if fail_open and not _os.environ.get("PLEXICHAT_REQUIRE_FAIL_CLOSED", ""):
             from utils import logger as _log
 
-            _log.critical(
-                "rate-limit DB backend error, FAIL-CLOSED (denying request): %s",
+            _log.error(
+                "rate-limit DB backend error, FAIL-OPEN (insecure): %s",
                 exc,
             )
-            return False, 0, 60.0
+            return True, capacity, 0.0
+
+        from utils import logger as _log
+
+        _log.critical(
+            "rate-limit DB backend error, FAIL-CLOSED (denying request): %s",
+            exc,
+        )
+        return False, 0, 60.0
