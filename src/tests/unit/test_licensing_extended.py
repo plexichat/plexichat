@@ -386,11 +386,14 @@ def test_to_dict_round_trip():
     assert d["signature"] == data["signature"]
     assert set(d) == {
         "version",
+        "type",
         "instance_id",
         "issued_at",
         "expires_at",
         "features",
         "limits",
+        "allowed_hosts",
+        "provisional",
         "signature",
     }
 
@@ -411,3 +414,111 @@ def test_is_valid_lazy():
     mgr = LicenseManager(public_key_bytes=pub)
     mgr.load_from_dict(data)
     assert mgr.is_valid() is True
+
+
+# ---------------------------------------------------------------------------
+# Provisional / test licenses, "all" meta-feature, base features
+# ---------------------------------------------------------------------------
+
+
+def _test_license_dict(**overrides):
+    base = {
+        "version": "1.0",
+        "type": "test",
+        "instance_id": "plexichat-selftest",
+        "issued_at": int(time.time()),
+        "expires_at": int(time.time()) + 86400,
+        "features": {"all": True},
+        "limits": {},
+        "allowed_hosts": ["127.0.0.1", "localhost", "::1"],
+        "signature": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_test_license_valid_without_signature():
+    mgr = LicenseManager()
+    mgr.load_from_dict(_test_license_dict())
+    result = mgr.validate()
+    assert result.is_valid is True
+    assert result.is_signature_valid is True  # skipped for test type
+    assert mgr.is_provisional() is True
+    assert mgr.get_license_type() == "test"
+
+
+def test_test_license_enables_every_feature():
+    mgr = LicenseManager()
+    mgr.load_from_dict(_test_license_dict())
+    assert mgr.has_feature("bond") is True
+    assert mgr.has_feature("plexiscribe") is True
+    assert mgr.has_feature("nonexistent_feature") is True
+
+
+def test_all_meta_feature_enables_everything():
+    data, pub = _signed_license_data(features={"all": True})
+    mgr = LicenseManager(public_key_bytes=pub)
+    mgr.load_from_dict(data)
+    assert mgr.is_valid() is True
+    assert mgr.has_feature("bond") is True
+    assert mgr.has_feature("plexiscribe") is True
+
+
+def test_base_feature_messaging_always_available():
+    mgr = LicenseManager()
+    mgr.load_from_dict(_test_license_dict())
+    assert mgr.has_feature("messaging") is True
+
+
+def test_test_license_host_restriction():
+    mgr = LicenseManager()
+    mgr.load_from_dict(_test_license_dict())
+    assert mgr.is_valid_for_host("127.0.0.1") is True
+    assert mgr.is_valid_for_host("localhost") is True
+    assert mgr.is_valid_for_host("203.0.113.5") is False
+
+
+def test_unknown_license_type_rejected():
+    with pytest.raises(InvalidLicenseError):
+        License(
+            version="1.0",
+            instance_id="i",
+            issued_at=1,
+            expires_at=None,
+            type="bogus",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Resource-limit helpers
+# ---------------------------------------------------------------------------
+
+
+def test_feature_limits_reported_from_license():
+    data, pub = _signed_license_data(
+        features={"bond": True},
+        limits={"max_users": 10, "max_servers": 3, "max_file_size_mb": 25},
+    )
+    mgr = LicenseManager(public_key_bytes=pub)
+    mgr.load_from_dict(data)
+    assert mgr.get_feature_limit("max_users") == 10
+    assert mgr.get_feature_limit("max_servers") == 3
+    assert mgr.get_feature_limit("max_file_size_mb") == 25
+    assert mgr.get_feature_limit("max_users_that_dont_exist", -1) == -1
+
+
+def test_is_limit_enforced_sentinel_semantics():
+    from utils.licensing import is_limit_enforced
+
+    assert is_limit_enforced(-1) is False
+    assert is_limit_enforced(None) is False
+    assert is_limit_enforced(0) is True
+    assert is_limit_enforced(50) is True
+
+
+def test_all_meta_feature_enables_limit_keys_too():
+    data, pub = _signed_license_data(features={"all": True})
+    mgr = LicenseManager(public_key_bytes=pub)
+    mgr.load_from_dict(data)
+    assert mgr.has_feature("max_users") is True
+    assert mgr.has_feature("max_file_size_mb") is True

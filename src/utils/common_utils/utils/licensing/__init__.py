@@ -40,6 +40,15 @@ Basic Usage:
     automod_config = license.get_feature_config("advanced_automod")
     max_rules = automod_config.get("max_rules", 10)
 
+    # Base platform features (e.g. "messaging") are always available and
+    # never gated behind a license.
+    if license.has_feature("messaging"):
+        handle_message()
+
+    # A license with "all": true (or type "test") enables every feature:
+    if license.has_feature("any_feature_at_all"):
+        ...
+
     # Get resource limits
     max_users = license.get_feature_limit("max_users", default=100)
 
@@ -91,7 +100,7 @@ Cryptography:
 
 import os
 from pathlib import Path
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, List
 
 import utils.logger as logger
 
@@ -104,6 +113,8 @@ from .core import (
     SignatureVerificationError,
     ExpiredLicenseError,
     FeatureNotFoundError,
+    BASE_FEATURES,
+    DEFAULT_TEST_ALLOWED_HOSTS,
     generate_keypair,
     sign_license,
 )
@@ -382,26 +393,23 @@ def has_feature(feature_name: str, default: bool = False) -> bool:
     """
     Check if the current license includes a specific feature.
 
-    In free tier mode, this always returns False for premium features.
-    Base features should use default=True to remain available in free tier.
+    Base platform features (see ``BASE_FEATURES``, e.g. ``messaging``) are
+    always available and never gated behind a license. In free tier mode,
+    every other feature returns ``default`` (premium features off).
+
+    A license carrying ``"all": true`` in its ``features`` map, or of
+    ``type: "test"``, enables every feature.
 
     Args:
         feature_name: Name of the feature to check (e.g., "bond", "sso")
         default: Default value if feature not found or in free tier
 
     Returns:
-        True if feature is enabled in license, False otherwise
-
-    Examples:
-        # Premium feature - disabled in free tier
-        if license.has_feature("bond"):
-            enable_bond()
-
-        # Base feature - always enabled (default=True)
-        if license.has_feature("messaging", default=True):
-            handle_message()
+        True if feature is enabled, False otherwise
     """
     _ensure_setup()
+    if feature_name in BASE_FEATURES:
+        return True
     if _free_tier_mode:
         return default
     return _get_manager().has_feature(feature_name, default)
@@ -495,6 +503,185 @@ def get_license_source() -> Optional[str]:
     if _free_tier_mode:
         return None
     return _get_manager().get_license_source()
+
+
+def get_license_type() -> str:
+    """
+    Return the loaded license's ``type`` ("standard", "test", ...).
+
+    In free tier mode this returns "standard".
+    """
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
+        return "standard"
+    return _license_manager.get_license_type()
+
+
+def is_provisional() -> bool:
+    """
+    Return True when running on a provisional/test license.
+
+    Provisional licenses are used by the CI self-test pipeline: they enable
+    every feature, require no signature, are restricted to localhost, and
+    trigger a prominent client banner. They must never be used in production.
+    """
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
+        return False
+    return _license_manager.is_provisional()
+
+
+def get_allowed_hosts() -> List[str]:
+    """
+    Return the hosts the current license is permitted to serve from.
+
+    Empty list means unrestricted (standard licenses). Provisional/test
+    licenses default to localhost only.
+    """
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
+        return []
+    return _license_manager.get_allowed_hosts()
+
+
+def is_license_valid_for_host(client_ip: str) -> bool:
+    """
+    Return True if the current license permits serving the given client host.
+
+    Standard licenses are unrestricted; provisional/test licenses only allow
+    ``allowed_hosts`` (localhost by default). In free tier mode this returns
+    True (no license = no restriction, but also no premium features).
+    """
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
+        return True
+    return _license_manager.is_valid_for_host(client_ip)
+
+
+# Resource limits enforced at runtime. A value of -1 (or None/"unlimited")
+# means the limit is not enforced. These keys mirror the LIMITS section of
+# the admin-tools features catalog so the two stay in sync.
+LICENSE_LIMIT_KEYS = ("max_users", "max_servers", "max_file_size_mb")
+
+
+def get_license_limit(name: str, default: int = -1) -> int:
+    """
+    Return a license resource limit, or ``default`` if unset / free tier.
+
+    Returns ``-1`` to signal "unlimited" (not enforced). Only call this once
+    licensing.setup() has run.
+    """
+    _ensure_setup()
+    if _free_tier_mode:
+        return default
+    try:
+        return int(_get_manager().get_feature_limit(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def is_limit_enforced(value: Any) -> bool:
+    """Return True if ``value`` is a finite, enforceable cap (not -1/None)."""
+    try:
+        return value is not None and int(value) >= 0
+    except (TypeError, ValueError):
+        return False
+
+
+def generate_test_license_dict(
+    instance_id: str = "plexichat-selftest",
+    days_valid: int = 1,
+    features: Optional[Dict[str, Any]] = None,
+    limits: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Build an in-memory provisional/test license dictionary for CI self-tests.
+
+    The license is of ``type: "test"`` (enables every feature, no signature
+    required) and is restricted to localhost. It is intentionally invalid for
+    production use and triggers the client's provisional-license banner.
+
+    Args:
+        instance_id: Identifier embedded in the license (informational).
+        days_valid: How many days the license is valid for.
+        features: Optional explicit feature map (merged over ``{"all": True}``).
+        limits: Optional resource limits map.
+
+    Returns:
+        A license dictionary ready for :func:`apply_license_from_dict`.
+    """
+    import time
+
+    merged_features: Dict[str, Any] = {"all": True}
+    if features:
+        merged_features.update(features)
+
+    return {
+        "version": LicenseManager.CURRENT_VERSION,
+        "type": "test",
+        "instance_id": instance_id,
+        "issued_at": int(time.time()),
+        "expires_at": int(time.time()) + max(1, days_valid) * 86400,
+        "features": merged_features,
+        "limits": dict(limits or {}),
+        "allowed_hosts": list(DEFAULT_TEST_ALLOWED_HOSTS),
+        "signature": None,
+    }
+
+
+def apply_test_license(
+    instance_id: str = "plexichat-selftest",
+    days_valid: int = 1,
+    features: Optional[Dict[str, Any]] = None,
+    limits: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Apply a provisional/test license in-memory (used by the self-test pipeline).
+
+    This does NOT write to disk. On restart the original license source is
+    re-read. Convenience wrapper around :func:`generate_test_license_dict`
+    and :func:`apply_license_from_dict`.
+    """
+    license_dict = generate_test_license_dict(
+        instance_id=instance_id,
+        days_valid=days_valid,
+        features=features,
+        limits=limits,
+    )
+    return apply_license_from_dict(license_dict)
+
+
+def apply_license_from_dict(license_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Apply a license from a dictionary, in-memory only (no disk write).
+
+    Returns the same shape as :func:`apply_license_from_base64`.
+    """
+    global _free_tier_mode, _license_manager, _setup_called, _public_key_configured
+
+    if _license_manager is None:
+        raise RuntimeError(
+            "Licensing not initialized. Call license.setup() before apply_license_from_dict."
+        )
+
+    try:
+        _license_manager.load_from_dict(license_dict)
+        validation = _license_manager.validate()
+
+        if validation.is_valid:
+            _free_tier_mode = False
+            logger.info(
+                f"License applied and validated for instance: {validation.instance_id}"
+            )
+            return {"success": True}
+        else:
+            _free_tier_mode = True
+            logger.warning(f"License validation failed: {validation.error_message}")
+            return {"success": False, "error": validation.error_message}
+    except Exception as e:
+        _free_tier_mode = True
+        logger.error(f"License apply failed: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def get_validation_result() -> Optional[LicenseValidationResult]:
@@ -681,9 +868,18 @@ __all__ = [
     "FeatureNotFoundError",
     # License management
     "apply_license_from_base64",
+    "apply_license_from_dict",
+    "apply_test_license",
+    "generate_test_license_dict",
     "reload_license",
     "validate_license_payload",
+    # Provisional / test license helpers
+    "get_license_type",
+    "is_provisional",
+    "get_allowed_hosts",
+    "is_license_valid_for_host",
     # Constants
     "DEFAULT_LICENSE_PATH",
     "LICENSE_ENV_VAR",
+    "BASE_FEATURES",
 ]

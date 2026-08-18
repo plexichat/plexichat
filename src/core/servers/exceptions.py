@@ -133,6 +133,14 @@ class InvalidServerNameError(ServerError):
         self.name = name
 
 
+class ServerLimitReachedError(ServerError):
+    """Per-user server creation limit reached (license or configuration)."""
+
+    def __init__(self, message: str, limit: int = 0):
+        super().__init__(message)
+        self.limit = limit
+
+
 class InvalidChannelNameError(ServerError):
     """Channel name is invalid."""
 

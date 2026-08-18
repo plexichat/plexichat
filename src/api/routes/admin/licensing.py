@@ -95,12 +95,18 @@ async def get_license_status(request: Request):
 
         validation_result = licensing_module.get_validation_result()
 
+        provisional = licensing_module.is_provisional()
+        tier = "provisional" if provisional else ("free" if free_tier else "enterprise")
+
         # Merge status_data with extra details
         return {
             **status_data,
             "valid": valid,
             "free_tier": free_tier,
-            "tier": "free" if free_tier else "enterprise",
+            "provisional": provisional,
+            "license_type": licensing_module.get_license_type(),
+            "allowed_hosts": licensing_module.get_allowed_hosts(),
+            "tier": tier,
             "instance_id": instance_id,
             "expiry_timestamp": expiry_ts,
             "expiry_date": expiry_date,
@@ -136,6 +142,14 @@ async def get_license_features(request: Request):
             {"key": "plexijoin", "label": "PlexiJoin Federation"},
             {"key": "audit_export", "label": "Audit Log Export"},
             {"key": "custom_roles", "label": "Custom Roles"},
+            {"key": "artifacts", "label": "PlexiSuite Artifacts"},
+            {"key": "plexiscribe", "label": "PlexiScribe"},
+            {"key": "plexiscript", "label": "PlexiScript"},
+            {"key": "artifacts_whiteboard", "label": "PlexiBoard (Whiteboard)"},
+            {"key": "voice_transcription", "label": "Voice Transcription"},
+            {"key": "plexistash", "label": "PlexiStash"},
+            {"key": "plexisum", "label": "PlexiSum"},
+            {"key": "all", "label": "All Features (meta)"},
         ]
 
         feature_matrix = []

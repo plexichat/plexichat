@@ -159,6 +159,26 @@ class _ValidationMixin:
         limits = self._config.get("size_limits", DEFAULT_SIZE_LIMITS)
         type_key = media_type.value
         max_size = limits.get(type_key, limits.get("other", 10 * 1024 * 1024))
+
+        # A license "max_file_size_mb" limit acts as an absolute upper bound on
+        # top of the per-type configuration limits. Only applied when a license
+        # is present (free tier keeps its configured limits unchanged).
+        try:
+            from utils.licensing import (
+                get_license_limit,
+                is_free_tier,
+                is_limit_enforced,
+            )
+
+            if not is_free_tier():
+                _mb = get_license_limit("max_file_size_mb", default=-1)
+                if is_limit_enforced(_mb):
+                    _lic_bytes = _mb * 1024 * 1024
+                    if _lic_bytes < max_size:
+                        max_size = _lic_bytes
+        except (RuntimeError, ImportError):
+            pass
+
         if size > max_size:
             raise FileSizeError(
                 f"File size {size} exceeds limit {max_size}",

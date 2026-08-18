@@ -291,11 +291,14 @@ def test_to_dict_round_trip():
     assert d["signature"] == sig
     assert set(d) == {
         "version",
+        "type",
         "instance_id",
         "issued_at",
         "expires_at",
         "features",
         "limits",
+        "allowed_hosts",
+        "provisional",
         "signature",
     }
 

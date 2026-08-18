@@ -17,6 +17,28 @@ def check_host_restriction(request: Request) -> None:
     if api.is_self_test_request(request):
         return
 
+    # A provisional/test license is only valid when served from its
+    # allowed hosts (localhost by default). Block admin access from any
+    # other host so a test license can never be used to administer a
+    # real, networked deployment.
+    try:
+        from src.utils import licensing as _licensing
+
+        if _licensing.is_provisional():
+            from src.utils.net import get_client_ip
+
+            _client_ip = get_client_ip(request) or "unknown"
+            if not _licensing.is_license_valid_for_host(_client_ip):
+                logger.warning(
+                    f"Provisional test license rejected admin access from {_client_ip}"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Access denied"}},
+                )
+    except ImportError:
+        pass
+
     admin_config = config.get("admin_ui", {})
     if not admin_config.get("enabled", False):
         raise HTTPException(

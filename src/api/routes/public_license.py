@@ -350,6 +350,9 @@ async def license_info() -> dict:
             "available": True,
             "free_tier": licensing_module.is_free_tier(),
             "valid": licensing_module.is_valid(),
+            "provisional": licensing_module.is_provisional(),
+            "license_type": licensing_module.get_license_type(),
+            "allowed_hosts": licensing_module.get_allowed_hosts(),
             "has_instance_id": licensing_module.get_instance_id() is not None,
             "public_key_fingerprint": _fingerprint(),
         }

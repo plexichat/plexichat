@@ -7,27 +7,46 @@ signature that can be verified using the embedded public key.
 License File Format:
 {
     "version": "1.0",
+    "type": "standard",            # optional: "standard" | "commercial" | "test"
     "instance_id": "plexichat-prod-001",
     "issued_at": 1746292800,
     "expires_at": 1777828800,
     "features": {
         "bond": true,
         "advanced_automod": {"max_rules": 50},
-        "sso": false
+        "sso": false,
+        "all": true                 # meta-feature: enables every feature
     },
     "limits": {
         "max_users": 1000,
         "max_servers": 100
     },
+    "allowed_hosts": ["127.0.0.1", "localhost", "::1"],  # test licenses only
     "signature": "base64_encoded_ed25519_signature"
 }
+
+A license with ``"all": true`` in its ``features`` map enables every feature
+check (``has_feature`` returns True for any name). A license of ``type: "test"``
+is a *provisional* license used by the CI self-test pipeline: it enables every
+feature, requires no Ed25519 signature, and is restricted to ``allowed_hosts``
+(defaulting to localhost). It is never valid for production use.
 """
 
 import json
 import base64
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+# Features that are always available regardless of license (base platform
+# functionality that must never be gated behind a commercial license).
+BASE_FEATURES = frozenset({"messaging"})
+
+# Recognised license types. Anything else is treated as "standard".
+LICENSE_TYPES = frozenset({"standard", "commercial", "enterprise", "test"})
+
+# Default hosts a provisional/test license is permitted to serve from.
+DEFAULT_TEST_ALLOWED_HOSTS = ("127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1")
 
 
 class LicenseError(Exception):
@@ -81,6 +100,8 @@ class License:
     expires_at: Optional[int]
     features: Dict[str, Any] = field(default_factory=dict)
     limits: Dict[str, Any] = field(default_factory=dict)
+    type: str = "standard"
+    allowed_hosts: List[str] = field(default_factory=list)
     signature: Optional[str] = None
 
     def __post_init__(self):
@@ -93,6 +114,11 @@ class License:
             raise InvalidLicenseError("Invalid issued_at timestamp")
         if self.expires_at is not None and self.expires_at <= self.issued_at:
             raise InvalidLicenseError("Expiry must be after issue date")
+        if self.type not in LICENSE_TYPES:
+            raise InvalidLicenseError(
+                f"Unknown license type: {self.type!r} "
+                f"(expected one of {sorted(LICENSE_TYPES)})"
+            )
 
 
 @dataclass
@@ -229,6 +255,8 @@ class LicenseManager:
                 expires_at=data.get("expires_at"),
                 features=data.get("features", {}),
                 limits=data.get("limits", {}),
+                type=data.get("type", "standard"),
+                allowed_hosts=list(data.get("allowed_hosts", []) or []),
                 signature=data.get("signature"),
             )
             self._license = license_obj
@@ -258,19 +286,28 @@ class LicenseManager:
 
         now = int(time.time())
 
+        is_test = self._license.type == "test"
+
         # Check expiration
         is_expired = False
         if self._license.expires_at is not None and now > self._license.expires_at:
             is_expired = True
 
-        # Verify signature if we have a public key
+        # Verify signature if we have a public key.
+        # Provisional/test licenses are intentionally unsigned (the private
+        # key is never embedded in a build) so signature verification is
+        # skipped for them. Their safety comes from the localhost host
+        # restriction and the prominent client banner, not from crypto.
         is_signature_valid = False
         signature_error = None
 
-        try:
-            is_signature_valid = self._verify_signature()
-        except Exception as e:
-            signature_error = str(e)
+        if is_test:
+            is_signature_valid = True
+        else:
+            try:
+                is_signature_valid = self._verify_signature()
+            except Exception as e:
+                signature_error = str(e)
 
         # Determine overall validity
         is_valid = is_signature_valid and not is_expired
@@ -374,6 +411,18 @@ class LicenseManager:
         if self._validation_result and not self._validation_result.is_valid:
             return default
 
+        # Base platform features are always available, independent of license.
+        if feature_name in BASE_FEATURES:
+            return True
+
+        # Provisional/test licenses enable every feature.
+        if self._license.type == "test":
+            return True
+
+        # The "all" meta-feature enables every feature listed in the license.
+        if self._license.features.get("all"):
+            return True
+
         feature_value = self._license.features.get(feature_name)
 
         if feature_value is None:
@@ -446,6 +495,47 @@ class LicenseManager:
             return self._license.instance_id if self._license else None
         return None
 
+    def get_license_type(self) -> str:
+        """Return the license ``type`` ("standard", "test", ...)."""
+        if self._license is None:
+            return "standard"
+        return self._license.type
+
+    def is_provisional(self) -> bool:
+        """Return True for provisional/test licenses (CI self-test only)."""
+        return self.get_license_type() == "test"
+
+    def get_allowed_hosts(self) -> List[str]:
+        """Return the hosts this license is permitted to serve from.
+
+        Provisional/test licenses default to localhost only; standard
+        licenses have no host restriction (empty list = unrestricted).
+        """
+        if self._license is None:
+            return []
+        if self._license.type == "test" and not self._license.allowed_hosts:
+            return list(DEFAULT_TEST_ALLOWED_HOSTS)
+        return list(self._license.allowed_hosts)
+
+    def is_valid_for_host(self, client_ip: str) -> bool:
+        """Check whether the license permits serving the given client host.
+
+        Standard/commercial licenses are unrestricted. Provisional/test
+        licenses are only valid when ``client_ip`` is in ``allowed_hosts``
+        (defaulting to localhost).
+        """
+        allowed = self.get_allowed_hosts()
+        if not allowed:
+            return True
+        localhost_variants = ("127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1")
+        client = (client_ip or "").strip()
+        for host in allowed:
+            if client == host:
+                return True
+            if host in localhost_variants and client in localhost_variants:
+                return True
+        return False
+
     def get_license_source(self) -> Optional[str]:
         """
         Get the source of the loaded license.
@@ -489,11 +579,14 @@ class LicenseManager:
 
         return {
             "version": self._license.version,
+            "type": self._license.type,
             "instance_id": self._license.instance_id,
             "issued_at": self._license.issued_at,
             "expires_at": self._license.expires_at,
             "features": self._license.features,
             "limits": self._license.limits,
+            "allowed_hosts": self.get_allowed_hosts(),
+            "provisional": self.is_provisional(),
             "signature": self._license.signature,
         }
 

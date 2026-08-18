@@ -108,6 +108,24 @@ class RegistrationMixin(AuthManagerProtocol):
         ):
             raise UserExistsError("Registration failed", "email")
 
+        # Enforce the license "max_users" limit (only when a finite cap is set).
+        try:
+            from utils.licensing import get_license_limit, is_limit_enforced
+
+            _user_cap = get_license_limit("max_users", default=-1)
+            if is_limit_enforced(_user_cap):
+                _row = self._db.fetch_one("SELECT COUNT(*) AS c FROM auth_users")
+                _count = int(_row["c"]) if _row else 0
+                if _count >= _user_cap:
+                    raise AuthError(
+                        f"Registration limit reached: this instance permits a "
+                        f"maximum of {_user_cap} users.",
+                        "user_limit",
+                    )
+        except (RuntimeError, ImportError):
+            # Licensing is not configured; do not enforce.
+            pass
+
         now = self._get_timestamp()
         email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
         password_hash = self.crypto.hash_password(password)

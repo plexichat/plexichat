@@ -17,6 +17,7 @@ from ..exceptions import (
     ChannelNotFoundError,
     InvalidServerNameError,
     MemberNotFoundError,
+    ServerLimitReachedError,
 )
 from src.core.database.cache import cached
 from .converters import _row_to_server, _server_to_dict, _dict_to_server
@@ -48,8 +49,38 @@ class ServerOpsMixin(ServerProtocol):
             )
         if len(name) > max_len:
             raise InvalidServerNameError(
-                f"Server name cannot exceed {max_len} characters", name
+                f"Server name too long (max {max_len} characters)", name
             )
+
+        # Enforce the per-user server limit. A finite license "max_servers"
+        # value overrides the configured "max_servers_per_user"; free tier is
+        # not restricted (preserves prior behaviour).
+        try:
+            from utils.licensing import (
+                get_license_limit,
+                is_free_tier,
+                is_limit_enforced,
+            )
+
+            _server_cap = -1
+            if not is_free_tier():
+                _server_cap = get_license_limit("max_servers", default=-1)
+                if not is_limit_enforced(_server_cap):
+                    _server_cap = int(self._config.get("max_servers_per_user", 100))
+            if is_limit_enforced(_server_cap):
+                _row = self._db.fetch_one(
+                    "SELECT COUNT(*) AS c FROM srv_servers WHERE owner_id = ?",
+                    (owner_id,),
+                )
+                _owned = int(_row["c"]) if _row else 0
+                if _owned >= _server_cap:
+                    raise ServerLimitReachedError(
+                        f"Server limit reached: you may create at most "
+                        f"{_server_cap} servers.",
+                        _server_cap,
+                    )
+        except (RuntimeError, ImportError):
+            pass
 
         now = self._get_timestamp()
         server_id = self._generate_id()
