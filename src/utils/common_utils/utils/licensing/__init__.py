@@ -848,6 +848,9 @@ __all__ = [
     "has_feature",
     "get_feature_config",
     "get_feature_limit",
+    "get_license_limit",
+    "is_limit_enforced",
+    "LICENSE_LIMIT_KEYS",
     # License info
     "get_instance_id",
     "get_license_source",
