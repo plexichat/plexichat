@@ -109,7 +109,11 @@ def verify_manifest(install_dir: Path, signing_key: bytes) -> bool:
         manifest = json.loads(manifest_bytes)
         files: Dict[str, str] = manifest.get("files", {})
         for rel_path, expected_hash in files.items():
-            file_path = install_dir / rel_path.replace("/", "\\")
+            # Forward-slash relative paths resolve correctly on every platform
+            # via pathlib. The previous ``rel_path.replace("/", "\\")`` turned
+            # the separator into a literal backslash on POSIX, so nested files
+            # (assets/*, js/*, .vite/*) could never verify.
+            file_path = install_dir / rel_path
             if not file_path.is_file():
                 logger.warning("static_client: manifest file missing: %s", rel_path)
                 return False

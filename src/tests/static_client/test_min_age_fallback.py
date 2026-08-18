@@ -223,6 +223,9 @@ def test_security_headers_csp_defaults_are_consistent():
     script_src = fallback.split("script-src", 1)[1].split(";", 1)[0]
     assert "'unsafe-inline'" not in script_src
     assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in fallback
+    # Self-hosted fonts (Phosphor.woff2) and data: media must be allowed.
+    assert "font-src 'self' https://fonts.gstatic.com data:" in fallback
+    assert "media-src 'self' blob: data:" in fallback
 
 
 def test_request_origin_prefers_origin_then_host():
@@ -252,3 +255,34 @@ def test_request_origin_prefers_origin_then_host():
     assert (
         StaticClientMiddleware._request_origin({"scheme": "http", "headers": []}) == ""
     )
+
+
+def test_render_config_js_escapes_host_header_injection():
+    """A malicious Host/Origin header must not break out of the JS string."""
+    from src.static_client.manager import _render_config_js
+
+    template = (
+        'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", version: "{version}" }};'
+    )
+    out = _render_config_js(template, 'http://x";alert(1)//', "a.1.0-60")
+    # The quote is escaped, so the breakout sequence never appears literally.
+    assert '";alert(1)' not in out
+    assert '\\"' in out
+    # The payload survives as inert string content, not executable JS.
+    assert "alert(1)" in out
+
+
+def test_render_config_js_escapes_backslashes_and_newlines():
+    from src.static_client.manager import _render_config_js
+
+    template = 'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}" }};'
+    out = _render_config_js(template, "http://x\n\"'", "v")
+    assert "\n" not in out
+    assert "\\n" in out
+
+
+def test_js_escape_leaves_plain_origin_unchanged():
+    from src.static_client.manager import _js_escape
+
+    assert _js_escape("https://chat.example.com") == "https://chat.example.com"
+    assert _js_escape("") == ""
