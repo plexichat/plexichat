@@ -115,18 +115,11 @@ class ChannelCRUDMixin(ChannelBase):
                                     },
                                 )
                             return ch
-                        # TODO(404-vs-403 parity): messaging_mod exposes
-                        # only the membership-aware ``get_conversation``,
-                        # so a non-participant who happens to know a
-                        # real conversation id here sees 404 instead of
-                        # 403. This mirrors the original code's
-                        # behaviour and is left for a follow-up that
-                        # adds a membership-agnostic
-                        # ``messaging_mod.conversation_exists`` probe
-                        # (the parallel of ``servers_mod.channel_exists``
-                        # used above). Tracked but not fixed in this
-                        # pass to keep the bounded change scoped to
-                        # server-channel routes per the selftest intent.
+                        # 404-vs-403 parity for conversations: a
+                        # non-participant who knows a real conversation id
+                        # must receive 403, not 404. Use the
+                        # membership-agnostic ``conversation_exists`` probe
+                        # (the parallel of ``servers_mod.channel_exists``).
                         messaging_mod = api_module.get_messaging()
                         if messaging_mod:
                             ch = messaging_mod.get_conversation(
@@ -134,6 +127,16 @@ class ChannelCRUDMixin(ChannelBase):
                             )
                             if ch:
                                 return ch
+                            if messaging_mod.conversation_exists(cid):
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail={
+                                        "error": {
+                                            "code": 403,
+                                            "message": "Channel access denied",
+                                        }
+                                    },
+                                )
                         return None
                     finally:
                         if db:

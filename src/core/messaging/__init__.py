@@ -187,6 +187,11 @@ def get_conversation(conversation_id: int, user_id: int) -> Optional[Conversatio
     return _get_manager().get_conversation(conversation_id, user_id)
 
 
+def conversation_exists(conversation_id: int) -> bool:
+    """Membership-agnostic existence probe for a conversation ID."""
+    return _get_manager().conversation_exists(conversation_id)
+
+
 def get_conversations(
     user_id: int,
     limit: int = 50,

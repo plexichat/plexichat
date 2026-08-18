@@ -306,6 +306,10 @@ class ConversationService(BaseService):
 
         return self._repo.row_to_model(row)
 
+    def conversation_exists(self, conversation_id: SnowflakeID) -> bool:
+        """Membership-agnostic existence probe (mirrors servers channel_exists)."""
+        return self._repo.get_by_id(conversation_id) is not None
+
     def get_conversations(
         self,
         user_id: SnowflakeID,

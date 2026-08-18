@@ -193,6 +193,10 @@ class MessagingManager(BaseManager):
         """Get a conversation by ID if user has access."""
         return self._conversation_svc.get_conversation(conversation_id, user_id)
 
+    def conversation_exists(self, conversation_id: SnowflakeID) -> bool:
+        """Membership-agnostic existence probe."""
+        return self._conversation_svc.conversation_exists(conversation_id)
+
     def get_conversations(
         self,
         user_id: SnowflakeID,
