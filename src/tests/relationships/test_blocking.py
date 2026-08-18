@@ -261,3 +261,23 @@ class TestBlockEffects:
 
         assert rel_manager.is_blocked(user1.id, user2.id) is False
         assert rel_manager.is_blocked(user2.id, user1.id) is True
+
+
+class TestGetAllBlockedIds:
+    """Tests for the ``get_all_blocked_ids`` union helper."""
+
+    def test_returns_both_directions(self, rel_manager, two_users):
+        """Both blocked-by and blocking IDs are returned."""
+        user1, user2 = two_users
+        rel_manager.block_user(user1.id, user2.id)
+
+        # user2 is blocked-by user1; user1 is blocking user2
+        assert user1.id in rel_manager.get_all_blocked_ids(user2.id)
+        assert user2.id in rel_manager.get_all_blocked_ids(user1.id)
+
+    def test_module_exposes_helper(self):
+        """The zero-friction module must export ``get_all_blocked_ids``."""
+        from src.core import relationships
+
+        assert hasattr(relationships, "get_all_blocked_ids")
+        assert callable(relationships.get_all_blocked_ids)
