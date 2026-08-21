@@ -412,12 +412,14 @@ class SuiteMixin(EndpointTesterBase):
             current = workbook.get("content", "")
             if current:
                 # Re-import the exported CSV as a fresh revision to exercise
-                # the bounded import path end to end.
+                # the bounded import path end to end. A null base revision
+                # targets the workbook's current revision (the workbook has
+                # advanced past 0 by the operations above).
                 imported = self._request_suite(
                     "POST",
                     f"{workbook_path}/{workbook_id}/sheets/{sheet_id}/csv",
                     "sum_import_csv",
-                    json={"content": current, "base_revision": 0},
+                    json={"content": current, "base_revision": None},
                 )
                 if imported is not None and 200 <= imported.status_code < 300:
                     self.ctx.test_sum_operation_id = self._json_body(imported).get(

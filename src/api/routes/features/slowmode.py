@@ -15,6 +15,9 @@ from .common import (
 
 router = APIRouter()
 
+# Matches ThreadSlowmode.MAX_INTERVAL_MS (6 hours).
+MAX_SLOWMODE_SECONDS = 21600
+
 
 class ThreadSlowmodeRequest(BaseModel):
     interval_ms: int = Field(
@@ -38,15 +41,41 @@ async def set_channel_slowmode(
 ):
     cid = parse_id(channel_id, "channel ID")
 
-    servers_mod = api.get_servers()
-    if not servers_mod:
-        raise_internal("Servers module not available")
-
     interval_seconds = max(0, body.interval_ms // 1000)
+    if interval_seconds > MAX_SLOWMODE_SECONDS:
+        raise_bad_request(
+            f"Slowmode interval cannot exceed {MAX_SLOWMODE_SECONDS} seconds"
+        )
 
     db = api.get_db()
     if not db:
         raise_internal("Database not available")
+
+    channel_row = db.fetch_one(
+        "SELECT server_id FROM srv_channels WHERE id = ?",
+        (cid,),
+    )
+    if not channel_row or not channel_row["server_id"]:
+        raise_not_found("Channel not found")
+    server_id = int(channel_row["server_id"])
+
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise_internal("Servers module not available")
+
+    can_manage = False
+    for permission in ("channels.manage", "administrator"):
+        try:
+            if servers_mod.has_permission(
+                current_user.user_id, server_id, permission, cid
+            ):
+                can_manage = True
+                break
+        except Exception:
+            continue
+    if not can_manage:
+        raise_forbidden("Missing permission to manage this channel")
+
     try:
         db.execute(
             "UPDATE srv_channels SET slowmode_seconds = ? WHERE id = ?",

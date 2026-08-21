@@ -4629,12 +4629,16 @@ class SumManager(BaseManager):
         workbook_id: int,
         sheet_id: int,
         content: str,
-        base_revision: int,
+        base_revision: Optional[int] = None,
     ) -> Dict[str, Any]:
         import csv as csv_module
         import io as io_module
 
-        self._workbook(user_id, workbook_id, mutation=True)
+        workbook_row = self._workbook(user_id, workbook_id, mutation=True)
+        if base_revision is None:
+            # Match upload_file semantics: a null base revision targets the
+            # current revision instead of failing the CAS check.
+            base_revision = int(workbook_row["current_revision"])
         if not isinstance(content, str) or len(content) > 2_000_000:
             raise SumValidationError("CSV payload is too large")
         reader = csv_module.reader(io_module.StringIO(content))
@@ -5991,6 +5995,7 @@ class SumManager(BaseManager):
             "column_start": column_start,
             "column_end": column_end,
             "permission": permission,
+            "created_at": now,
         }
 
     def list_range_permissions(

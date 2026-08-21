@@ -235,7 +235,7 @@ class SumCsvExportResponse(BaseModel):
 
 class SumCsvImportRequest(BaseModel):
     content: str = Field(..., max_length=2_000_000)
-    base_revision: int = Field(..., ge=0)
+    base_revision: Optional[int] = Field(None, ge=0)
 
 
 class SumCsvImportResponse(BaseModel):
