@@ -417,3 +417,411 @@ async def delete_thread(
     else:
         emit_thread_delete(tid)
     return SuccessResponse(success=True, message=None)
+
+
+@router.post(
+    "/threads/{thread_id}/join",
+    summary="Join a thread",
+    tags=["Threads"],
+)
+async def join_thread(
+    thread_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+        )
+    try:
+        member = threads_mod.join_thread(current_user.user_id, tid)
+        return {
+            "success": True,
+            "member": {
+                "thread_id": str(member.thread_id),
+                "user_id": str(member.user_id),
+            },
+        }
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post(
+    "/threads/{thread_id}/leave",
+    summary="Leave a thread",
+    tags=["Threads"],
+)
+async def leave_thread(
+    thread_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+        )
+    try:
+        threads_mod.leave_thread(current_user.user_id, tid)
+        return {"success": True}
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.get(
+    "/threads/{thread_id}/members",
+    summary="List thread members",
+    tags=["Threads"],
+)
+async def list_thread_members(
+    thread_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+        )
+    try:
+        members = threads_mod.get_thread_members(current_user.user_id, tid)
+        return [
+            {
+                "thread_id": str(m.thread_id),
+                "user_id": str(m.user_id),
+                "joined_at": m.joined_at,
+            }
+            for m in (members or [])
+        ]
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post(
+    "/threads/{thread_id}/members/{user_id}",
+    summary="Add member to thread",
+    tags=["Threads"],
+)
+async def add_thread_member(
+    thread_id: str,
+    user_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+        uid = int(user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}}
+        )
+    try:
+        member = threads_mod.add_member(current_user.user_id, tid, uid)
+        return {
+            "success": True,
+            "member": {
+                "thread_id": str(member.thread_id),
+                "user_id": str(member.user_id),
+            },
+        }
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.delete(
+    "/threads/{thread_id}/members/{user_id}",
+    summary="Remove member from thread",
+    tags=["Threads"],
+)
+async def remove_thread_member(
+    thread_id: str,
+    user_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+        uid = int(user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}}
+        )
+    try:
+        threads_mod.remove_member(current_user.user_id, tid, uid)
+        return {"success": True}
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post(
+    "/threads/{thread_id}/archive",
+    summary="Archive thread",
+    tags=["Threads"],
+)
+async def archive_thread_ep(
+    thread_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+        )
+    try:
+        thread = threads_mod.archive_thread(current_user.user_id, tid)
+        emit_thread_update(_thread_to_dict(thread))
+        return _thread_to_response(thread)
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post(
+    "/threads/{thread_id}/unarchive",
+    summary="Unarchive thread",
+    tags=["Threads"],
+)
+async def unarchive_thread_ep(
+    thread_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+        )
+    try:
+        thread = threads_mod.unarchive_thread(current_user.user_id, tid)
+        emit_thread_update(_thread_to_dict(thread))
+        return _thread_to_response(thread)
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post(
+    "/threads/{thread_id}/lock",
+    summary="Lock thread",
+    tags=["Threads"],
+)
+async def lock_thread_ep(
+    thread_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+        )
+    try:
+        thread = threads_mod.lock_thread(current_user.user_id, tid)
+        emit_thread_update(_thread_to_dict(thread))
+        return _thread_to_response(thread)
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post(
+    "/threads/{thread_id}/unlock",
+    summary="Unlock thread",
+    tags=["Threads"],
+)
+async def unlock_thread_ep(
+    thread_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+        )
+    try:
+        thread = threads_mod.unlock_thread(current_user.user_id, tid)
+        emit_thread_update(_thread_to_dict(thread))
+        return _thread_to_response(thread)
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.get(
+    "/channels/{channel_id}/threads/archived",
+    summary="List archived threads",
+    tags=["Threads"],
+)
+async def list_archived_threads(
+    channel_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        cid = int(channel_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid channel ID"}},
+        )
+    try:
+        threads = threads_mod.get_archived_threads(current_user.user_id, cid)
+        return [_thread_to_response(t) for t in (threads or [])]
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.get(
+    "/users/@me/threads",
+    summary="List my threads",
+    tags=["Threads"],
+)
+async def list_my_threads(
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        threads = threads_mod.get_user_threads(current_user.user_id)
+        return [_thread_to_response(t) for t in (threads or [])]
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.get(
+    "/threads/{thread_id}/messages",
+    summary="Get thread messages",
+    tags=["Threads"],
+)
+async def get_thread_messages(
+    thread_id: str,
+    limit: int = 50,
+    before_id: Optional[str] = None,
+    after_id: Optional[str] = None,
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+        )
+    try:
+        before = int(before_id) if before_id else None
+        after = int(after_id) if after_id else None
+        msgs = threads_mod.get_messages(
+            current_user.user_id, tid, limit=limit, before_id=before, after_id=after
+        )
+        return msgs or []
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post(
+    "/threads/{thread_id}/messages",
+    summary="Send message to thread",
+    tags=["Threads"],
+)
+async def send_thread_message(
+    thread_id: str,
+    body: dict = Body(...),
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    threads_mod = _get_threads()
+    try:
+        tid = int(thread_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+        )
+    content = (body or {}).get("content", "")
+    if not content or not str(content).strip():
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Content required"}},
+        )
+    try:
+        msg = threads_mod.send_message(current_user.user_id, tid, str(content))
+        return msg
+    except Exception as e:
+        mapped = _map_thread_exception(e)
+        if mapped:
+            raise mapped
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
