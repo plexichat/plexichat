@@ -110,11 +110,10 @@ class FeatureSetupMixin(SetupServiceBase):
         if not _r_db:
             return
         try:
-            existing_report = _r_db.fetch_one(
-                "SELECT id FROM user_reports WHERE reporter_id = ?",
-                (self.ctx.test_user_id,),
-            )
-            if not existing_report and self.ctx.test_other_user_id:
+            # Always seed fresh reports for this run: reusing rows from a
+            # previous run would leave the context ids unset (or point at
+            # already-reviewed reports), making the review endpoints fail.
+            if self.ctx.test_other_user_id:
                 report_id = self.ctx.data.generate_snowflake()
                 _r_db.execute(
                     "INSERT INTO user_reports (id, reporter_id, reported_user_id, reason, category, status, reported_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

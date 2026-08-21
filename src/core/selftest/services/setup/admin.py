@@ -219,9 +219,15 @@ class AdminSetupMixin(SetupServiceBase):
             logger.warning(f"Failed to seed admin roles: {e}")
 
         try:
+            # Reuse an existing approval only when it is still actionable:
+            # the approve/reject endpoint tests require a 'pending' request,
+            # and a stale approved/rejected row from a previous run would
+            # fail them (or 500 on older rows with integer approved_by).
             existing_approval = db.fetch_one(
-                "SELECT id FROM admin_approvals WHERE requested_by = ?",
-                (user_id,),
+                "SELECT id FROM admin_approvals "
+                "WHERE requested_by = ? AND status = 'pending' "
+                "AND (expires_at IS NULL OR expires_at > ?)",
+                (user_id, int(time.time())),
             )
             if not existing_approval:
                 approval_id = self.ctx.data.generate_snowflake()

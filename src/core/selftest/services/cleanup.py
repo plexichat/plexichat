@@ -38,10 +38,7 @@ class CleanupService:
             )
             for row in rows:
                 uid = row["id"] if isinstance(row, dict) else row[0]
-                try:
-                    self._purge_sum_for_user(db, uid)
-                except Exception:
-                    raise
+                self._purge_sum_for_user(db, uid)
 
             db.begin_transaction()
 
@@ -132,21 +129,20 @@ class CleanupService:
                 db.execute("PRAGMA foreign_keys=ON")
 
     def _purge_sum_for_user(self, db: Any, uid: int) -> None:
-        """Purge Sum blobs before entering a caller-owned SQL transaction."""
+        """Best-effort Sum blob purge before entering a caller-owned SQL transaction.
+
+        Never raises. A leftover workbook whose blob is unreadable (for
+        example storage from a previous run lived in an ephemeral temp dir)
+        must not abort the whole self-test cleanup: the SQL fallback in
+        ``delete_all_for_user`` removes the metadata rows instead, so the
+        next run starts clean.
+        """
         try:
             from src.core.suite import sum as sum_domain
 
             sum_domain.get_manager().purge_user_data(uid)
-        except RuntimeError:
-            try:
-                has_sum_tables = db.table_exists("sum_workbooks")
-            except AttributeError as exc:
-                raise RuntimeError(
-                    "Cannot verify Sum metadata tables during self-test cleanup"
-                ) from exc
-            if has_sum_tables:
-                logger.warning("Sum cleanup skipped: manager unavailable")
-                raise
+        except Exception as e:
+            logger.warning(f"Sum blob purge skipped for user {uid}: {e}")
 
     def delete_all_for_user(self, db: Any, uid: int, purge_sum: bool = True) -> None:
         # PlexiSuite resources are user-owned metadata. Sum workbooks must be
@@ -165,6 +161,34 @@ class CleanupService:
             (
                 "DELETE FROM sum_grants WHERE workbook_id IN "
                 "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (uid,),
+            ),
+            # Metadata fallback for workbooks whose blobs could not be purged
+            # (see _purge_sum_for_user): without this, rows pointing at
+            # missing .plexisum files would make every future purge retry and
+            # fail the same way.
+            (
+                "DELETE FROM sum_snapshots WHERE workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (uid,),
+            ),
+            (
+                "DELETE FROM sum_revision_blobs WHERE workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (uid,),
+            ),
+            (
+                "DELETE FROM sum_operations WHERE workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (uid,),
+            ),
+            (
+                "DELETE FROM sum_features WHERE workbook_id IN "
+                "(SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (uid,),
+            ),
+            (
+                "DELETE FROM sum_workbooks WHERE owner_id = ?",
                 (uid,),
             ),
             ("DELETE FROM suite_audit_log WHERE actor_id = ?", (uid,)),

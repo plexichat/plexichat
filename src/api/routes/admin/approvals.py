@@ -387,13 +387,16 @@ async def approve_request(request: Request, approval_id: int):
         current_approvals = approval["current_approvals"]
         required_approvals = approval["required_approvals"]
         requested_by = approval["requested_by"]
-        approved_by_str = approval["approved_by"] or ""
+        # ``approved_by`` may hold a single integer admin id (older rows /
+        # SQLite dynamic typing); normalize so the membership check below
+        # never raises on a non-string container.
+        approved_by_str = str(approval["approved_by"] or "")
     else:
         status = approval[2]
         current_approvals = approval[3]
         required_approvals = approval[4]
         requested_by = approval[1]
-        approved_by_str = approval[5] or ""
+        approved_by_str = str(approval[5] or "")
 
     # Check if already approved by this admin
     if str(admin_id) in approved_by_str:
