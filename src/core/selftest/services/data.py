@@ -98,6 +98,17 @@ class DataGenerator:
                     if self.ctx.test_other_user_id
                     else self.generate_snowflake()
                 )
+            elif "/threads/" in path and "/members/" in path:
+                # Threads add-member should target a valid existing user not yet in thread.
+                # Use other_user (already member, idempotent 200) or a fresh test user.
+                if self.ctx.test_other_user_id:
+                    # Prefer a third user if available, else other_user (idempotent)
+                    val = str(
+                        getattr(self.ctx, "test_third_user_id", None)
+                        or self.ctx.test_other_user_id
+                    )
+                else:
+                    val = _gen_snowflake()
             elif "/invites/" in path or "reports/users" in path:
                 val = (
                     str(self.ctx.test_other_user_id)
@@ -354,6 +365,13 @@ class DataGenerator:
 
             if "auth/register" in path:
                 body["username"] = f"user_{random.randint(10000, 99999)}"
+
+            # Thread message posts require non-empty content; schema-driven
+            # generation can omit it (optional in the model), so supply it
+            # explicitly to exercise the real send path.
+            if "/threads/" in path and path.endswith("/messages") and method == "POST":
+                if not body.get("content"):
+                    body["content"] = "Self-test thread message"
 
             # Artifact CRUD must use the real setup scope. Schema-driven
             # generation otherwise invents a conversation id, which the route

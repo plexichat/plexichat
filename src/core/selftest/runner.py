@@ -115,6 +115,25 @@ class SelfTestRunner:
             return None
         return test_path
 
+    def _stabilize_thread(self, test_path: str) -> None:
+        """Best-effort reset of archive/lock state before membership probes.
+
+        Extracts the thread id from a resolved ``/api/v1/threads/{id}/...``
+        path and calls unarchive + unlock with the main (owner) session so
+        the upcoming probe exercises the intended code path instead of
+        failing on state an earlier alphabetical probe left behind.
+        Never raises: a failed stabilizer leaves the probe as-is.
+        """
+        match = re.search(r"/api/v1/threads/(\d+)", test_path)
+        if not match:
+            return
+        base = f"{self.ctx.base_url}/api/v1/threads/{match.group(1)}"
+        for action in ("unarchive", "unlock"):
+            try:
+                self.ctx.session.post(f"{base}/{action}", timeout=5)
+            except Exception as e:
+                logger.debug(f"Thread stabilize {action} note: {e}")
+
     def _prepare_leave_other_user(self) -> bool:
         """Make other_user a re-joinable member so POST .../servers/{id}/leave
         can be exercised with other_session (the main admin cannot leave).
@@ -441,6 +460,19 @@ class SelfTestRunner:
             test_path = self._resolve_test_path(path)
             if test_path is None:
                 continue
+            # Thread membership/message probes are order-sensitive: the
+            # alphabetically earlier archive/lock probes flip thread state,
+            # which turns join/leave/members/messages into 403/409. Restore a
+            # known-active state before probing them.
+            if (
+                "/threads/" in test_path
+                and method == "POST"
+                and any(
+                    seg in test_path
+                    for seg in ("/join", "/leave", "/members", "/messages")
+                )
+            ):
+                self._stabilize_thread(test_path)
             self.endpoints.test_endpoint(method, test_path, route, use_other)
 
         parallel_gets = [item for item in work_items if item[0] == "GET"]
@@ -516,6 +548,13 @@ class SelfTestRunner:
             self.endpoints.test_interaction_callback()
             self.endpoints.test_suite_domains()
             self.endpoints.test_bulk_delete_messages()
+            # Extended coverage: negative, pagination, concurrency, lifecycle, WS, OAuth
+            self.endpoints.test_negative_permissions()
+            self.endpoints.test_pagination_walks()
+            self.endpoints.test_concurrency_threads()
+            self.endpoints.test_entity_lifecycle()
+            self.endpoints.test_websocket_thread_dispatch()
+            self.endpoints.test_oauth_passkeys_federation_stubs()
         else:
             logger.info(
                 "Skipping standalone-specific endpoint tests (not in standalone mode)"

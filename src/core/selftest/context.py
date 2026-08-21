@@ -35,6 +35,7 @@ class SelfTestContext:
         self.other_token: Optional[str] = None
         self.test_user_id: Optional[int] = None
         self.test_other_user_id: Optional[int] = None
+        self.test_third_user_id: Optional[int] = None
         self.test_server_id: Optional[int] = None
         self.test_channel_id: Optional[int] = None
         self.test_conversation_id: Optional[int] = None

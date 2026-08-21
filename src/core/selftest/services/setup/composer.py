@@ -55,6 +55,8 @@ class SetupService(
             if self.ctx.test_other_user_id:
                 self.setup_other_admin_user()
             logger.debug(f"Test other user ID: {self.ctx.test_other_user_id}")
+            self.create_third_user()
+            logger.debug(f"Test third user ID: {self.ctx.test_third_user_id}")
 
             if not self.login_main_user():
                 return False

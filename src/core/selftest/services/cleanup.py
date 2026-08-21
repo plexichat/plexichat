@@ -64,6 +64,7 @@ class CleanupService:
                 "poll_votes",
                 "poll_voters",
                 "thread_threads",
+                "thread_members",
                 "sticker_stickers",
                 "sticker_packs",
                 "admin_role_assignments",
@@ -189,6 +190,24 @@ class CleanupService:
             ),
             (
                 "DELETE FROM sum_workbooks WHERE owner_id = ?",
+                (uid,),
+            ),
+            # Threads outlive their channel otherwise: remove memberships,
+            # messages, and threads the user owns (fuzzer-created threads
+            # would otherwise dangle after the user row is deleted).
+            ("DELETE FROM thread_members WHERE user_id = ?", (uid,)),
+            (
+                "DELETE FROM thread_messages WHERE thread_id IN "
+                "(SELECT id FROM thread_threads WHERE owner_id = ?)",
+                (uid,),
+            ),
+            (
+                "DELETE FROM thread_members WHERE thread_id IN "
+                "(SELECT id FROM thread_threads WHERE owner_id = ?)",
+                (uid,),
+            ),
+            (
+                "DELETE FROM thread_threads WHERE owner_id = ?",
                 (uid,),
             ),
             ("DELETE FROM suite_audit_log WHERE actor_id = ?", (uid,)),

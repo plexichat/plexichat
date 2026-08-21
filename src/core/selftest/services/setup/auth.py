@@ -254,6 +254,53 @@ class AuthSetupMixin(SetupServiceBase):
         except Exception as e:
             logger.warning(f"Failed to login other user: {e}")
 
+    def create_third_user(self) -> bool:
+        password = self.ctx._test_password
+        for _attempt in range(2):
+            rand_suffix = secrets.token_hex(4)
+            third_username = f"selftest_third_{rand_suffix}"
+            third_email = f"third_{rand_suffix}@selftest.plexichat.com"
+            try:
+                register_resp = self.ctx.session.post(
+                    f"{self.ctx.base_url}/api/v1/auth/register",
+                    json={
+                        "username": third_username,
+                        "email": third_email,
+                        "password": password,
+                    },
+                    timeout=10,
+                )
+                if register_resp.status_code in (200, 201):
+                    register_data = register_resp.json()
+                    user_obj = register_data.get("user")
+                    third_user_id = (user_obj or {}).get("id") if user_obj else None
+                    if third_user_id is not None:
+                        third_user_id = int(third_user_id)
+                        auth_db = api.get_db()
+                        if auth_db:
+                            try:
+                                auth_db.execute(
+                                    "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
+                                    (third_user_id,),
+                                )
+                            except Exception:
+                                pass
+                        self.ctx.test_third_user_id = third_user_id
+                        logger.debug(
+                            f"Registered third user via API: {third_username} (id={third_user_id})"
+                        )
+                        return True
+                else:
+                    logger.debug(
+                        f"Register third user attempt {_attempt + 1} failed: {register_resp.status_code}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Register third user attempt {_attempt + 1} exception: {e}"
+                )
+        logger.warning("Failed to register third user after 2 attempts")
+        return False
+
     def block_selftest_username_prefix(self) -> None:
         try:
             _bl_db = api.get_db()
