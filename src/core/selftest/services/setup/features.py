@@ -574,5 +574,23 @@ class FeatureSetupMixin(SetupServiceBase):
                 )
                 self.ctx.test_thread_id = thread.id
                 logger.debug(f"Created test thread ID: {self.ctx.test_thread_id}")
+                # Add other_user as member so leave/join auto_loop can succeed
+                # without owner-leave 403: other_user can join (already) and leave
+                if self.ctx.test_other_user_id:
+                    try:
+                        # Ensure other_user can view the thread (public thread)
+                        # Join is idempotent if already member
+                        try:
+                            threads_mod.join_thread(
+                                self.ctx.test_other_user_id, thread.id
+                            )
+                            logger.debug(
+                                f"Added other_user {self.ctx.test_other_user_id} to test thread"
+                            )
+                        except Exception as je:
+                            if "MemberExists" not in type(je).__name__:
+                                logger.debug(f"Other user join thread note: {je}")
+                    except Exception as e2:
+                        logger.debug(f"Failed to add other_user to thread: {e2}")
         except Exception as e:
             logger.warning(f"Failed to create test thread: {e}")
