@@ -41,6 +41,22 @@ class ServerProtocol:
     def _cache_invalidate(self, prefix: str, key: Optional[Any] = None) -> None:
         cast(ServerProtocol, super())._cache_invalidate(prefix, key)
 
+    def _invalidate_permission_caches(
+        self, server_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        cast(ServerProtocol, super())._invalidate_permission_caches(server_id, user_id)
+
+    def _invalidate_server_permission_caches(self, server_id: SnowflakeID) -> None:
+        cast(ServerProtocol, super())._invalidate_server_permission_caches(server_id)
+
+    def _invalidate_owner_cache(self, server_id: SnowflakeID) -> None:
+        cast(ServerProtocol, super())._invalidate_owner_cache(server_id)
+
+    def _invalidate_member_caches(
+        self, server_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        cast(ServerProtocol, super())._invalidate_member_caches(server_id, user_id)
+
     def _log_audit(
         self,
         server_id: SnowflakeID,

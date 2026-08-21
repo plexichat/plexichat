@@ -26,8 +26,7 @@ import re
 from dataclasses import dataclass
 from email.utils import formatdate
 from pathlib import Path
-from typing import List, Optional, Tuple, cast
-from urllib.parse import unquote
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -181,23 +180,29 @@ class _ResolvedFile:
 
 
 def _scope_client_ip(scope: Scope) -> Optional[str]:
-    """Best-effort extraction of the client IP from an ASGI scope."""
+    """Extract the client IP from an ASGI scope.
+
+    Delegates to :func:`src.utils.net.get_client_ip`, the consolidated
+    trusted-proxy-aware extractor used by the API rate limiter. This means
+    ``X-Forwarded-For`` is only honoured when the direct peer is a configured
+    trusted proxy, so a client cannot spoof its IP to bypass the static-client
+    rate limit. Falls back to the raw socket address if extraction fails.
+    """
+    try:
+        from src.utils.net import get_client_ip
+
+        # ASGI ``Scope`` is a ``MutableMapping``; ``get_client_ip`` accepts a
+        # plain ``Dict`` at runtime, so this is a safe, zero-cost widening cast.
+        ip = get_client_ip(cast(Dict[str, Any], scope))
+        if ip:
+            return ip
+    except Exception:
+        pass
     client = scope.get("client")
     if isinstance(client, (tuple, list)) and client:
         host = client[0]
         if host:
             return str(host)
-    for name, value in scope.get("headers") or []:
-        if isinstance(name, (bytes, bytearray)) and name.lower() == b"x-forwarded-for":
-            try:
-                raw = (
-                    value.decode("latin-1") if isinstance(value, bytes) else str(value)
-                )
-            except Exception:
-                continue
-            ip = raw.split(",")[0].strip()
-            if ip:
-                return ip
     return None
 
 
@@ -317,6 +322,37 @@ def _check_static_client_rate_limit(
         return _RateLimitOutcome(False, retry_after, retry_header)
 
     return _RateLimitOutcome(True, None, tuple(info_headers))
+
+
+def _parse_range(spec: str, size: int) -> Tuple[int, int, bool, bool]:
+    """Parse a single ``bytes=`` range spec (RFC 7233).
+
+    Returns ``(start, end, is_partial, unsatisfiable)`` where ``end`` is
+    inclusive. ``unsatisfiable=True`` means the caller must answer ``416``
+    with ``Content-Range: bytes */<size>``. Multi-range specs are unsupported
+    and return a full-body (200) tuple instead.
+    """
+    # Multi-range requests are unsupported: fall back to the full body.
+    if "," in spec:
+        return 0, size - 1, False, False
+    try:
+        if spec.startswith("-"):
+            # Suffix range: the final ``n`` bytes (``bytes=-n``).
+            n = int(spec[1:])
+            if n <= 0:
+                return 0, size - 1, False, True
+            if size <= 0:
+                return 0, size - 1, False, False
+            return max(0, size - n), size - 1, True, False
+        first, _, last = spec.partition("-")
+        start = int(first) if first else 0
+        end = int(last) if last else size - 1
+        end = min(end, size - 1)
+        if start > end or start >= size:
+            return 0, size - 1, False, True
+        return start, end, True, False
+    except ValueError:
+        return 0, size - 1, False, True
 
 
 class StaticClientMiddleware:
@@ -451,17 +487,19 @@ class StaticClientMiddleware:
         ]
         scope = {**scope, "headers": headers}
 
-        decoded = unquote(path) or "/"
+        # ``scope["path"]`` is already percent-decoded by the ASGI server
+        # (uvicorn), so it is used directly. A second ``unquote`` would
+        # double-decode literal ``%XX`` sequences in real file names.
 
         # Invite redirect: /invite/CODE -> 302 to /app.html?invite=CODE
         if self._cfg.invite_redirect:
-            m = self._invite_redirect_re.match(decoded)
+            m = self._invite_redirect_re.match(path)
             if m:
                 target = f"/app.html?invite={m.group(1)}"
                 await self._send_redirect(send, target)
                 return
 
-        route_key = _ROUTE_HTML if self._is_html_request(decoded) else _ROUTE_ASSETS
+        route_key = _ROUTE_HTML if self._is_html_request(path) else _ROUTE_ASSETS
         outcome = _check_static_client_rate_limit(
             scope, route_key, self._rate_limit_enabled
         )
@@ -477,11 +515,11 @@ class StaticClientMiddleware:
         # /config.js is generated per-request so serverUrl reflects the
         # request's actual origin (Host / Origin header) rather than the
         # value baked into the on-disk file at install time.
-        if Path(decoded).name == self._cfg.config_injection.filename:
+        if Path(path).name == self._cfg.config_injection.filename:
             await self._send_runtime_config(send, scope, outcome)
             return
 
-        resolved = self._resolve(install_path, decoded)
+        resolved = self._resolve(install_path, path)
         if resolved is None:
             await self._send_not_found(send)
             return
@@ -733,23 +771,12 @@ class StaticClientMiddleware:
             and range_header.startswith("bytes=")
             and (not if_range or if_range == etag)
         ):
-            try:
-                range_val = range_header[len("bytes=") :]
-                if "-" in range_val:
-                    s, e = range_val.split("-", 1)
-                    if s:
-                        start = int(s)
-                    if e:
-                        end = int(e)
-                    end = min(end, size - 1)
-                    if start <= end and 0 <= start < size:
-                        is_partial = True
-                    else:
-                        start = 0
-                        end = size - 1
-            except ValueError:
-                start = 0
-                end = size - 1
+            start, end, is_partial, unsatisfiable = _parse_range(
+                range_header[len("bytes=") :], size
+            )
+            if unsatisfiable:
+                await self._send_range_not_satisfiable(send, size)
+                return
 
         content_length = end - start + 1
         rl_headers = (
@@ -820,6 +847,22 @@ class StaticClientMiddleware:
                 "headers": [
                     (b"content-type", b"text/plain; charset=utf-8"),
                     (b"content-length", str(len(body)).encode()),
+                    (b"x-content-type-options", b"nosniff"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body, "more_body": False})
+
+    async def _send_range_not_satisfiable(self, send: Send, size: int) -> None:
+        body = b""
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 416,
+                "headers": [
+                    (b"content-range", f"bytes */{size}".encode()),
+                    (b"content-length", b"0"),
+                    (b"cache-control", b"no-store"),
                     (b"x-content-type-options", b"nosniff"),
                 ],
             }

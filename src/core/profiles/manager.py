@@ -5,13 +5,12 @@ Handles creating, updating, and reading user profiles with
 custom status, bio, banner images, social links, and more.
 """
 
-import time
 import json
 from enum import Enum
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import timestamp_ms, generate_id
 
 
 class _Unset(Enum):
@@ -56,10 +55,10 @@ class ProfileManager:
         self._auth = auth_module
 
     def _get_timestamp(self) -> int:
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _generate_id(self) -> int:
-        return generate_snowflake_id()
+        return generate_id()
 
     def _validate_social_links(
         self, links: List[Dict[str, str]]

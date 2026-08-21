@@ -603,6 +603,15 @@ class ServerOpsMixin(ServerProtocol):
             (new_owner_id, self._get_timestamp(), server_id),
         )
 
+        # Ownership feeds several caches; clear them all so the transfer takes
+        # effect immediately rather than after the relevant TTL. In particular
+        # the old owner must not keep ``is_owner=True`` administrator access.
+        self._invalidate_owner_cache(server_id)
+        # ``server:{id}`` embeds owner_id in the serialized Server row.
+        cache_delete(f"server:{server_id}")
+        self._invalidate_permission_caches(server_id, user_id)
+        self._invalidate_permission_caches(server_id, new_owner_id)
+
         self._log_audit(
             server_id,
             user_id,

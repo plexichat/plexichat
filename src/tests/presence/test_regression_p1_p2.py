@@ -7,15 +7,14 @@ P2: an unknown/invalid user must return 404, not 500.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
 
 import pytest
-
-pytestmark = pytest.mark.integration
 
 from src.api.schemas.presence import PresenceUpdate
 from src.core.auth.models import AccountType, TokenInfo
 from src.core.presence.exceptions import UserNotFoundError
+
+pytestmark = pytest.mark.integration
 
 
 def _token_for(user):

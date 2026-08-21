@@ -9,13 +9,12 @@ Provides reliable webhook delivery with:
 - Automatic cleanup of expired retry records
 """
 
-import time
 import json
 import random
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import timestamp_ms, generate_id
 
 
 class WebhookRetryQueue:
@@ -36,10 +35,10 @@ class WebhookRetryQueue:
         self._last_cleanup = 0
 
     def _get_timestamp(self) -> int:
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _generate_id(self) -> int:
-        return generate_snowflake_id()
+        return generate_id()
 
     def _calculate_delay(self, attempt: int) -> int:
         """

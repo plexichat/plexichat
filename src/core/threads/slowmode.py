@@ -9,10 +9,10 @@ Slowmode is enforced by checking the time elapsed since a user's last
 message in the thread against the configured interval.
 """
 
-import time
 from typing import Dict, Any
 
 import utils.logger as logger
+from src.core.base import timestamp_ms
 from src.core.database import cache_get, cache_set
 
 
@@ -31,7 +31,7 @@ class ThreadSlowmode:
         self._db = db
 
     def _get_timestamp(self) -> int:
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def set_slowmode(
         self,

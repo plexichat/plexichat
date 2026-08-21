@@ -576,6 +576,37 @@ class TestSnowflakeIDs:
         snowflake_id = gen.generate()
         assert snowflake_id > 0
 
+    def test_snowflake_clock_moved_backwards_raises(self, monkeypatch):
+        """A backwards clock must raise rather than emit duplicate IDs."""
+        gen = SnowflakeGenerator(worker_id=1, datacenter_id=1)
+        gen.generate()
+        past = gen.last_timestamp - 1000
+        monkeypatch.setattr(gen, "_get_timestamp", lambda: past)
+        with pytest.raises(RuntimeError, match="Clock moved backwards"):
+            gen.generate()
+
+    def test_snowflake_sequence_wraps_and_waits_for_next_ms(self, monkeypatch):
+        """Sequence exhaustion must wait for the next millisecond."""
+        gen = SnowflakeGenerator(worker_id=1, datacenter_id=1)
+        base = int(time.time() * 1000)
+        calls = {"n": 0}
+
+        def fake_timestamp():
+            calls["n"] += 1
+            return base if calls["n"] == 1 else base + 1
+
+        monkeypatch.setattr(gen, "_get_timestamp", fake_timestamp)
+        gen.last_timestamp = base
+        gen.sequence = 0xFFF
+
+        sid = gen.generate()
+
+        assert gen.sequence == 0
+        assert gen.last_timestamp == base + 1
+        parsed = gen.parse(sid)
+        assert parsed["sequence"] == 0
+        assert parsed["timestamp"] == base + 1
+
 
 class TestKeyRotation:
     """Test encryption key rotation functionality."""

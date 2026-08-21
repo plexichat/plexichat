@@ -16,9 +16,25 @@ from fastapi import FastAPI, HTTPException
 
 # Create a minimal app for testing
 @pytest.fixture
-def test_app():
+def test_app(db):
     """Create a test FastAPI app with migration routes."""
+    from src.api import setup as setup_api
+
+    # Import the canonical licensing module directly (see conftest note).
+    import src.utils.common_utils.utils.licensing as licensing
     from src.api.routes.admin.migrations import router
+
+    # The migration routes depend on api.get_db() (via get_migration_manager)
+    # and on licensing (via check_host_restriction -> is_provisional). The real
+    # app initializes both during bootstrap; mirror that here so this
+    # standalone app is self-contained instead of relying on other test files'
+    # global state.
+    setup_api(db=db)
+    licensing.setup()
+    # Pin free-tier state so a developer's on-disk license can't leak
+    # premium features into this standalone app.
+    licensing._free_tier_mode = True
+    licensing._license_manager = None
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v1/admin")

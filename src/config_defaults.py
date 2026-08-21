@@ -586,6 +586,9 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "aes_gcm": {"key_length": 32, "nonce_length": 12, "tag_length": 16},
             "snowflake": {
                 "epoch": "2024-01-01T00:00:00Z",
+                # Worker/datacenter IDs are 5-bit (0-31). ``None`` auto-derives
+                # from the environment/machine (PLEXICHAT_WORKER_ID /
+                # PLEXICHAT_DATACENTER_ID) instead.
                 "worker_id": None,
                 "datacenter_id": None,
             },

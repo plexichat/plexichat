@@ -60,8 +60,8 @@ def setup(
     Setup the encryption utilities. Optional - uses defaults if not called.
 
     Args:
-        worker_id (int): Worker ID for Snowflake generation (0-1023).
-        datacenter_id (int): Datacenter ID for Snowflake generation (0-1023).
+        worker_id (int): Worker ID for Snowflake generation (0-31, 5-bit).
+        datacenter_id (int): Datacenter ID for Snowflake generation (0-31, 5-bit).
         epoch_timestamp (int): Custom epoch timestamp in milliseconds.
         argon2_time_cost (int): Time cost for Argon2 (iterations).
         argon2_memory_cost (int): Memory cost for Argon2 in KiB.

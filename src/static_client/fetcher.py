@@ -40,6 +40,11 @@ _RELEASE_PATH = "/projects/{project_id}/releases"
 _PER_PAGE = 100
 _MAX_PAGES = 20  # 20 * 100 = 2000 releases is plenty for any sane setup
 _CHUNK = 64 * 1024
+# Safety factor converting the compressed download cap into an uncompressed
+# extraction budget. At the default 100MB zip cap this allows ~2GB unpacked,
+# which is far larger than any real client dist while still bounding a
+# decompression bomb.
+_UNCOMPRESSED_FACTOR = 20
 
 
 class FetchError(RuntimeError):
@@ -80,13 +85,20 @@ def _parse_iso8601(value: str) -> float:
         return 0.0
 
 
-def _safe_extract_zip(zf: zipfile.ZipFile, target: Path) -> None:
+def _safe_extract_zip(
+    zf: zipfile.ZipFile,
+    target: Path,
+    max_uncompressed_bytes: Optional[int] = None,
+) -> None:
     """Extract *zf* into *target* safely, defending against zip-slip.
 
     All entries with absolute paths, drive letters, parent references, or
-    symlinks are rejected.
+    symlinks are rejected. When *max_uncompressed_bytes* is set, the total
+    number of decompressed bytes written is bounded so a crafted archive
+    (zip bomb) cannot exhaust disk space.
     """
     target_resolved = target.resolve()
+    total_written = 0
     for info in zf.infolist():
         name = info.filename
         if not name or name.endswith("/"):
@@ -109,7 +121,20 @@ def _safe_extract_zip(zf: zipfile.ZipFile, target: Path) -> None:
             ) from exc
         dest.parent.mkdir(parents=True, exist_ok=True)
         with zf.open(info, "r") as src, open(dest, "wb") as out:
-            shutil.copyfileobj(src, out, length=_CHUNK)
+            while True:
+                chunk = src.read(_CHUNK)
+                if not chunk:
+                    break
+                total_written += len(chunk)
+                if (
+                    max_uncompressed_bytes is not None
+                    and total_written > max_uncompressed_bytes
+                ):
+                    raise FetchError(
+                        "Extraction exceeded max_uncompressed_bytes="
+                        f"{max_uncompressed_bytes}"
+                    )
+                out.write(chunk)
 
 
 def _download_to_stream(
@@ -360,7 +385,9 @@ def download_and_verify_release(
         raise
 
 
-def install_zip_at(zip_path: Path, target: Path) -> None:
+def install_zip_at(
+    zip_path: Path, target: Path, max_uncompressed_bytes: Optional[int] = None
+) -> None:
     """Safely extract *zip_path* into *target*."""
     target.mkdir(parents=True, exist_ok=True)
     logger.info(f"static_client: extracting {zip_path.name} -> {target}")
@@ -371,7 +398,7 @@ def install_zip_at(zip_path: Path, target: Path) -> None:
         else:
             entry.unlink()
     with zipfile.ZipFile(zip_path) as zf:
-        _safe_extract_zip(zf, target)
+        _safe_extract_zip(zf, target, max_uncompressed_bytes=max_uncompressed_bytes)
 
 
 def list_installed_versions(install_dir: Path) -> List[InstalledVersion]:
@@ -414,35 +441,34 @@ def write_current_version(install_dir: Path, version: str) -> None:
 def prune_old_versions(
     install_dir: Path, keep: Iterable[str], max_total: int = 5
 ) -> List[str]:
-    """Delete installed versions not in *keep*, retaining at most *max_total*.
+    """Delete installed versions, retaining at most ``max_total``.
 
-    Returns the list of removed version strings.
+    Versions in *keep* (the active version) are never deleted. Beyond those,
+    the most recent installed versions are retained so older releases remain
+    available for rollback, up to the ``max_total`` cap. Returns the removed
+    version strings.
     """
     keep_set = set(keep)
     installed = list_installed_versions(install_dir)
-    survivors = [iv for iv in installed if iv.version in keep_set]
-    extras = [iv for iv in installed if iv.version not in keep_set]
-    # Always keep the active version + the most recent survivors
-    survivors_sorted = sorted(survivors, key=lambda iv: iv.version, reverse=True)
-    final_keep: List[str] = []
-    if survivors_sorted:
-        final_keep.append(survivors_sorted[0].version)
-    for iv in survivors_sorted[1:]:
-        if len(final_keep) < max_total:
-            final_keep.append(iv.version)
+    # Newest-first; string sort matches ``list_installed_versions`` ordering.
+    by_newest = sorted(installed, key=lambda iv: iv.version, reverse=True)
+
+    retained: List[str] = list(keep_set)
+    for iv in by_newest:
+        if len(retained) >= max_total:
+            break
+        if iv.version not in retained:
+            retained.append(iv.version)
+
     removed: List[str] = []
     for iv in installed:
-        if iv.version in final_keep:
+        if iv.version in retained:
             continue
         try:
             shutil.rmtree(iv.install_path)
             removed.append(iv.version)
         except OSError as exc:
             logger.warning(f"static_client: failed to prune {iv.version}: {exc}")
-    # Also drop any directories that were *not* in the installed list (e.g. junk)
-    for iv in extras:
-        if iv.version in removed:
-            continue
     return removed
 
 

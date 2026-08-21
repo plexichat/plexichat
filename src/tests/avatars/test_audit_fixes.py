@@ -156,11 +156,8 @@ class TestAvatarAuditFixes:
         assert 7 not in avatar_routes._icon_checksum_cache
         assert any("server_icon_checksum:7" in c for c in calls)
 
-    def test_route_etag_check_is_exact_not_substring(self, monkeypatch):
+    def test_route_etag_check_is_exact_not_substring(self):
         """AV-2: a client ETag that merely *contains* the checksum must NOT 304."""
-        from src.api.routes import avatars as avatar_routes
-        from starlette.datastructures import Headers
-
         real_checksum = "abcdef123456"
         # Malicious client ETag that the OLD substring check would have matched.
         etag_client = "prefix-abcdef123456-SUFFIX"

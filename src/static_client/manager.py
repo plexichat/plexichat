@@ -8,6 +8,7 @@ runtime config.js, and exposes the on-disk install path to the router.
 
 from __future__ import annotations
 
+import json as _json
 import re as _re
 import time
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from src.utils.common_utils.utils.version.core import (
 
 from .config import StaticClientConfig, get_static_client_config
 from .fetcher import (
+    _UNCOMPRESSED_FACTOR,
     FetchError,
     GitLabReleaseClient,
     InstalledVersion,
@@ -49,15 +51,33 @@ from .manifest import (
 from . import fetcher as _fetcher  # noqa: F401  (kept for back-compat)
 
 
+def _js_escape(value: str) -> str:
+    """Escape *value* for safe interpolation into a double-quoted JS string.
+
+    ``origin`` and ``version`` are derived from request headers (``Host`` /
+    ``Origin``) and on-disk markers, so they must be treated as untrusted.
+    ``json.dumps`` emits a valid JS string literal (JSON strings are a subset
+    of JS string literals); stripping the surrounding quotes yields the inner
+    content safe to drop between the template's own double quotes.
+    """
+    if not value:
+        return ""
+    return _json.dumps(value)[1:-1]
+
+
 def _render_config_js(template: str, origin: str, version: str) -> str:
     """Render the config.js template into a clean JS statement.
 
     Uses ``str.format`` so the canonical ``{{origin}}`` / ``{{version}}``
     placeholders expand to ``{origin}`` / ``{version}`` in the output
-    JS object literal. After formatting, any trailing literal backslash
-    artifacts (``\\n``, ``\\t``, trailing ``\\``) that would produce
-    "invalid escape sequence" in the browser are stripped.
+    JS object literal. Both values are JS-escaped first so a malicious
+    ``Host`` header can't break out of the string literal (XSS). After
+    formatting, any trailing literal backslash artifacts (``\\n``, ``\\t``,
+    trailing ``\\``) that would produce "invalid escape sequence" in the
+    browser are stripped.
     """
+    origin = _js_escape(origin)
+    version = _js_escape(version)
     try:
         rendered = template.format(origin=origin, version=version)
     except (KeyError, IndexError):
@@ -295,7 +315,13 @@ class StaticClientManager:
             zip_path, _sha = download_and_verify_release(
                 asset, self._cfg.git_lab, self._cfg.max_zip_size_bytes
             )
-            install_zip_at(zip_path, target_dir)
+            install_zip_at(
+                zip_path,
+                target_dir,
+                max_uncompressed_bytes=(
+                    self._cfg.max_zip_size_bytes * _UNCOMPRESSED_FACTOR
+                ),
+            )
 
             # Generate and sign integrity manifest
             from .manifest import generate_manifest, write_manifest

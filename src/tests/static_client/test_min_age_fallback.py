@@ -265,10 +265,11 @@ def test_render_config_js_escapes_host_header_injection():
         'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", version: "{version}" }};'
     )
     out = _render_config_js(template, 'http://x";alert(1)//', "a.1.0-60")
-    # The quote is escaped, so the breakout sequence never appears literally.
-    assert '";alert(1)' not in out
+    # The raw unescaped breakout never appears verbatim...
+    assert 'http://x";alert(1)' not in out
+    # ...the quote is escaped, so the string literal never closes...
     assert '\\"' in out
-    # The payload survives as inert string content, not executable JS.
+    # ...and the payload survives only as inert string content.
     assert "alert(1)" in out
 
 

@@ -20,13 +20,13 @@ Configuration (in oauth section of config.yaml):
     max_states_per_ip: 10        # Max pending states per IP (0 = unlimited)
 """
 
-import time
 import secrets
 import hashlib
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, Tuple
 
 import utils.logger as logger
+from src.core.base import timestamp_ms, generate_id
 
 
 # Default configuration values
@@ -146,13 +146,11 @@ class OAuthStateManager:
 
     def _generate_id(self) -> int:
         """Generate a snowflake ID."""
-        from src.utils.encryption import generate_snowflake_id
-
-        return generate_snowflake_id()
+        return generate_id()
 
     def _current_time(self) -> int:
         """Get current Unix timestamp in milliseconds."""
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _hash_token(self, token: str) -> str:
         """Hash a token for storage using SHA-256."""

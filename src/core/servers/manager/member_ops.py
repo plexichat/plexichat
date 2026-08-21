@@ -1,7 +1,6 @@
 from typing import Optional, List
 
 from src.core.base import SnowflakeID
-from src.core.database import cache_delete, invalidate_pattern
 from src.core.database.cache import cached
 
 from ..models import Member, AuditLogAction
@@ -153,21 +152,10 @@ class MemberOpsMixin(ServerProtocol):
                     f"Error removing member {user_id} from server conversations: {e}"
                 )
 
-        self._cache_invalidate(self._member_cache_prefix, f"{server_id}:{user_id}")
-        self._cache_invalidate(
-            self._member_cache_prefix, f"is_member:{server_id}:{user_id}"
-        )
         self._cache_invalidate(
             self._member_roles_cache_prefix, f"{server_id}:{user_id}"
         )
-        self._cache_invalidate(self._permission_cache_prefix, f"{user_id}:{server_id}:")
-
-        cache_delete(f"is_member:{server_id}:{user_id}")
-        invalidate_pattern(f"perms:{user_id}:{server_id}:*")
-        invalidate_pattern(f"member_data:*{user_id}*")
-        cache_delete(f"user_servers:{user_id}")
-
-        invalidate_pattern(f"srv_permission:{user_id}:{server_id}:*")
+        self._invalidate_member_caches(server_id, user_id)
 
         self._log_audit(
             server_id, user_id, AuditLogAction.MEMBER_LEAVE, "member", user_id

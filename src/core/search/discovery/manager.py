@@ -2,13 +2,12 @@
 Discovery manager - Handle server discovery operations.
 """
 
-import time
 import json
 from typing import List, Optional, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import timestamp_ms, generate_id
 
 from ..models import ServerListing, ServerCategory, VerificationLevel
 from ..exceptions import (
@@ -44,11 +43,11 @@ class DiscoveryManager:
 
     def _get_timestamp(self) -> int:
         """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _generate_id(self) -> int:
         """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
+        return generate_id()
 
     def list_server(
         self,

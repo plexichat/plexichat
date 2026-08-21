@@ -23,7 +23,6 @@ from ..exceptions import (
     PermissionDeniedError,
 )
 from ..permission_utils import can_manage_member
-from src.core.database import cache_delete
 from src.core.database.cache import cached, invalidate_pattern
 from ..manager.converters import _row_to_member, _row_to_ban, _row_to_invite
 import utils.logger as logger
@@ -205,15 +204,7 @@ class MemberHandler:
                     f"Error adding member {user_id} to server conversations: {e}"
                 )
 
-        self.manager._cache_invalidate(
-            self.manager._member_cache_prefix, (server_id, user_id)
-        )
-
-        # Invalidate Valkey
-        from src.core.database import cache_delete, invalidate_pattern
-
-        cache_delete(f"is_member:{server_id}:{user_id}")
-        invalidate_pattern(f"perms:{user_id}:{server_id}:*")
+        self.manager._invalidate_member_caches(server_id, user_id)
         self.manager.get_servers.invalidate(user_id)
 
         result = self.get_member(server_id, user_id)
@@ -329,8 +320,9 @@ class MemberHandler:
                 )
 
         invalidate_pattern(f"member_data:*{member_user_id}*")
-        # Invalidate permissions cache
-        invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+        # Timeout (and other member state) feeds permission computation, so the
+        # user's cached permission snapshots must be dropped across all tiers.
+        self.manager._invalidate_permission_caches(server_id, member_user_id)
         result = self.get_member(server_id, member_user_id)
         assert result is not None
         return result
@@ -392,23 +384,7 @@ class MemberHandler:
                     f"Error removing kicked member {member_user_id} from server conversations: {e}"
                 )
 
-        self.manager._cache_invalidate(
-            self.manager._member_cache_prefix, (server_id, member_user_id)
-        )
-        self.manager._cache_invalidate(
-            self.manager._member_cache_prefix, f"is_member:{server_id}:{member_user_id}"
-        )
-        self.manager._cache_invalidate(
-            self.manager._permission_cache_prefix, (member_user_id, server_id, None)
-        )
-
-        # Invalidate Valkey
-        from src.core.database import cache_delete, invalidate_pattern
-
-        cache_delete(f"is_member:{server_id}:{member_user_id}")
-        invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
-
-        invalidate_pattern(f"member_data:*{member_user_id}*")
+        self.manager._invalidate_member_caches(server_id, member_user_id)
         self.manager._log_audit(
             server_id,
             user_id,
@@ -608,14 +584,7 @@ class MemberHandler:
                 "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                 (server_id, member_user_id),
             )
-            self.manager._cache_invalidate(
-                self.manager._member_cache_prefix, (server_id, member_user_id)
-            )
-
-            cache_delete(f"is_member:{server_id}:{member_user_id}")
-            invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
-
-        invalidate_pattern(f"member_data:*{member_user_id}*")
+        self.manager._invalidate_member_caches(server_id, member_user_id)
 
         now = self.manager._get_timestamp()
         ban_id = self.manager._generate_id()

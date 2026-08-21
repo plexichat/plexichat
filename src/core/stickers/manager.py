@@ -2,14 +2,13 @@
 Sticker manager - Core business logic for sticker operations.
 """
 
-import time
 import json
 import re
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import timestamp_ms, generate_id
 
 from .models import (
     StickerPack,
@@ -78,10 +77,10 @@ class StickerManager:
         return None
 
     def _get_timestamp(self) -> int:
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _generate_id(self) -> int:
-        return generate_snowflake_id()
+        return generate_id()
 
     def _validate_pack_name(self, name: str) -> str:
         if not name or not name.strip():

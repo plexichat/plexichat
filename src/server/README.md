@@ -8,7 +8,7 @@ This package is the entry point for all server-side orchestration. It provides t
 
 - **`__init__.py`** — Re-exports `PlexichatServer`.
 - **`lifecycle.py`** — `PlexichatServer` class with `__init__`, `run()`, `cleanup()`, `notify_clients_shutdown()`, `notify_clients_restart()`, `validate_config()`, `get_default_config()`. Also defines `VERSION`.
-- **`config_loader.py`** — `setup_config()` and `_apply_env_overrides()` standalone functions for configuration loading and environment variable overrides.
+- **`config_loader.py`** — `setup_config()` and `_apply_env_overrides()` standalone functions for configuration loading and environment variable overrides. Env-var coercion is deduplicated through shared helpers (`_as_bool`, `_apply_int`, `_apply_float`, `_apply_bool`) so int/float/bool parsing stays consistent across every override.
 - **`initializer.py`** — `initialize_modules()` standalone function that bootstraps all core modules (database, auth, messaging, servers, etc.) in dependency order.
 - **`security_checks.py`** — `_check_security_keys()` standalone function that warns about default/placeholder credentials.
 

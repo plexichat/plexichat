@@ -10,13 +10,13 @@ import base64
 import json
 import os
 import secrets
-import time
 from dataclasses import dataclass
 
 import utils.config as config
 import utils.logger as logger
 
 from src.utils.encryption import EncryptionManager
+from src.core.base import timestamp_ms, generate_id
 
 from ._lazy import _get_auth_manager
 
@@ -195,13 +195,11 @@ class PasskeyManager:
 
     def _get_timestamp(self) -> int:
         """Get current Unix timestamp in milliseconds."""
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _generate_id(self) -> int:
         """Generate a snowflake ID."""
-        from src.utils.encryption import generate_snowflake_id
-
-        return generate_snowflake_id()
+        return generate_id()
 
     def _base64url_encode(self, data: bytes) -> str:
         """Base64url encode bytes without padding."""

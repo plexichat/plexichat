@@ -210,6 +210,11 @@ class RoleHandler:
                 changes,
             )
 
+            # Role permission changes affect every member holding the role, so
+            # the cached permission snapshots for the whole server must be
+            # dropped or revocations would not take effect until the TTL.
+            self.manager._invalidate_server_permission_caches(role.server_id)
+
         updated_role = self.get_role(role_id, user_id)
         assert updated_role is not None
         return updated_role
@@ -236,6 +241,10 @@ class RoleHandler:
 
         self.db.execute("UPDATE srv_roles SET deleted = 1 WHERE id = ?", (role_id,))
         self.db.execute("DELETE FROM srv_member_roles WHERE role_id = ?", (role_id,))
+
+        # Members who held the deleted role lose its permissions immediately;
+        # drop the server's cached permission snapshots so they are recomputed.
+        self.manager._invalidate_server_permission_caches(role.server_id)
 
         self.manager._log_audit(
             role.server_id, user_id, AuditLogAction.ROLE_DELETE, "role", role_id

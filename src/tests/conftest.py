@@ -1501,6 +1501,22 @@ def test_client(
     )
     from src.core.ratelimit.storage import MemoryStorage
 
+    # Import the canonical licensing module directly: ``from src.utils import
+    # licensing`` can resolve to the proxy shim (src/utils/licensing.py) once
+    # another test has imported it, and mutating the shim's copied
+    # ``_free_tier_mode`` attribute would not touch the real module.
+    import src.utils.common_utils.utils.licensing as licensing
+
+    # Admin routes gate on licensing (check_host_restriction -> is_provisional)
+    # and the messaging service gates v3 ratchet encryption on it, so the real
+    # app calls licensing.setup() during setup_utilities(). Mirror that here,
+    # but pin the deterministic free-tier state: licensing.setup() would
+    # otherwise load a developer's on-disk license (~/.plexichat/config/license)
+    # and flip premium features on, breaking unrelated order-dependent tests.
+    licensing.setup()
+    licensing._free_tier_mode = True
+    licensing._license_manager = None
+
     # Setup rate limiting with memory storage
     storage = MemoryStorage(cleanup_interval=1.0, max_buckets=1000)
     ratelimit.setup(
@@ -1596,6 +1612,22 @@ def rate_limit_client(
         events,
     )
     from src.core.ratelimit.storage import MemoryStorage
+
+    # Import the canonical licensing module directly: ``from src.utils import
+    # licensing`` can resolve to the proxy shim (src/utils/licensing.py) once
+    # another test has imported it, and mutating the shim's copied
+    # ``_free_tier_mode`` attribute would not touch the real module.
+    import src.utils.common_utils.utils.licensing as licensing
+
+    # Admin routes gate on licensing (check_host_restriction -> is_provisional)
+    # and the messaging service gates v3 ratchet encryption on it, so the real
+    # app calls licensing.setup() during setup_utilities(). Mirror that here,
+    # but pin the deterministic free-tier state: licensing.setup() would
+    # otherwise load a developer's on-disk license (~/.plexichat/config/license)
+    # and flip premium features on, breaking unrelated order-dependent tests.
+    licensing.setup()
+    licensing._free_tier_mode = True
+    licensing._license_manager = None
 
     # Setup rate limiting with memory storage
     storage = MemoryStorage(cleanup_interval=1.0, max_buckets=1000)

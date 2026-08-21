@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from collections import defaultdict
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import timestamp_ms, generate_id
 from src.core.database import cache_get, cache_set
 
 
@@ -41,10 +41,10 @@ class DMSpamDetector:
         self._last_prune_s: int = 0
 
     def _get_timestamp(self) -> int:
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _generate_id(self) -> int:
-        return generate_snowflake_id()
+        return generate_id()
 
     def _rate_key(self, sender_id: int, recipient_id: int) -> str:
         return f"dm_rate:{sender_id}:{recipient_id}"

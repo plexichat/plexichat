@@ -23,7 +23,8 @@ class CacheOpsMixin(ServerProtocol):
         cache_key = f"{prefix}{key}"
         from src.core.database import cache_get
 
-        return cache_get(cache_key) or default
+        value = cache_get(cache_key)
+        return value if value is not None else default
 
     def _cache_set(self, prefix: str, key: Any, value: Any) -> None:
         cache_key = f"{prefix}{key}"
@@ -39,6 +40,80 @@ class CacheOpsMixin(ServerProtocol):
         else:
             cache_key = f"{prefix}{key}"
             cache_delete(cache_key)
+
+    def _invalidate_permission_caches(
+        self, server_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        """Drop every permission result cached for *user_id* in *server_id*.
+
+        Permission decisions are cached in three independent tiers, so all
+        three must be cleared or a role/override/ownership change keeps serving
+        stale RBAC results for up to the cache TTL:
+
+        * ``perms:{user}:{server}:{channel}`` — the bare Valkey tier written by
+          ``RoleHandler.get_permissions``.
+        * ``srv_permission:perms:{user}:{server}:{channel}`` — the prefixed
+          (memory + Valkey) tier written through ``_cache_set``.
+        * ``has_perm:*`` — the ``@cached`` tier behind ``has_permission``.
+        """
+        from src.core.database import invalidate_pattern
+
+        server_id = int(server_id)
+        user_id = int(user_id)
+        invalidate_pattern(f"perms:{user_id}:{server_id}:*")
+        invalidate_pattern(f"srv_permission:perms:{user_id}:{server_id}:*")
+        invalidate_pattern("has_perm:*")
+
+    def _invalidate_server_permission_caches(self, server_id: SnowflakeID) -> None:
+        """Drop every permission result cached for *server_id*.
+
+        Role permission changes and role deletion affect every member who held
+        the role, so the caches cannot be keyed to a single user. Clears both
+        the bare ``perms:`` tier and the prefixed ``srv_permission:`` tier for
+        the whole server, plus the ``has_perm`` decorator tier.
+        """
+        from src.core.database import invalidate_pattern
+
+        server_id = int(server_id)
+        invalidate_pattern(f"perms:*:{server_id}:*")
+        invalidate_pattern(f"srv_permission:perms:*:{server_id}:*")
+        invalidate_pattern("has_perm:*")
+
+    def _invalidate_owner_cache(self, server_id: SnowflakeID) -> None:
+        """Drop cached ownership so an ownership transfer takes effect now.
+
+        Ownership is read from two key names (``srv_owner:`` via the prefixed
+        tier and ``server_owner:`` via a bare Valkey key), so both are cleared.
+        Without this, the previous owner keeps ``is_owner=True`` in
+        ``get_permissions`` and therefore retains full administrator access for
+        up to the owner-cache TTL after the transfer.
+        """
+        from src.core.database import cache_delete
+
+        server_id = int(server_id)
+        cache_delete(f"srv_owner:{server_id}")
+        cache_delete(f"server_owner:{server_id}")
+
+    def _invalidate_member_caches(
+        self, server_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        """Drop every cache entry that depends on *user_id*'s membership.
+
+        ``is_member`` stores under two key names (``is_member:...`` and the
+        prefixed ``srv_member:is_member:...`` tier), and ``get_member`` /
+        ``get_servers`` keep their own caches. Membership changes (join, kick,
+        ban, leave) must clear all of them so a removed user is not still
+        treated as a member — or a new member denied — for the cache TTL.
+        """
+        from src.core.database import cache_delete, invalidate_pattern
+
+        server_id = int(server_id)
+        user_id = int(user_id)
+        cache_delete(f"is_member:{server_id}:{user_id}")
+        cache_delete(f"srv_member:is_member:{server_id}:{user_id}")
+        invalidate_pattern(f"member_data:*{user_id}*")
+        cache_delete(f"user_servers:{user_id}")
+        self._invalidate_permission_caches(server_id, user_id)
 
     def _validate_server_name(self, name: str) -> str:
         if not name or not name.strip():
