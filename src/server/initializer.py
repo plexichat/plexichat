@@ -271,8 +271,20 @@ def initialize_modules(
 
     init_independent()
 
-    timed_init("search", lambda: search.setup(db, auth, messaging, servers))
-    modules_store["search"] = search
+    try:
+        timed_init("search", lambda: search.setup(db, auth, messaging, servers))
+        modules_store["search"] = search
+    except Exception as e:
+        import utils.logger as _log
+
+        _log.warning(
+            f"Search module failed to initialize ({e}); continuing with low-resource blind-index fallback"
+        )
+        try:
+            # still expose a minimal search module so API returns degraded responses instead of 500
+            modules_store["search"] = search
+        except Exception:
+            pass
 
     def init_dependent():
         threads_list = []

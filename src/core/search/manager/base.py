@@ -66,7 +66,23 @@ class SearchManagerBase(BaseManager):
         self._config = self._load_config()
 
         self._indexer = self._create_indexer()
-        self._indexer.initialize()
+        try:
+            self._indexer.initialize()
+        except Exception as e:
+            logger.warning(
+                f"Search indexer initialize failed for {type(self._indexer).__name__}: {e}; falling back to low-resource indexer"
+            )
+            fallback = self._create_fallback_indexer()
+            if fallback is not None and type(fallback) is not type(self._indexer):
+                try:
+                    fallback.initialize()
+                    self._indexer = fallback
+                    logger.info(f"Fell back to {type(self._indexer).__name__}")
+                except Exception as e2:
+                    logger.error(f"Fallback indexer also failed: {e2}")
+                    raise
+            else:
+                raise
 
         self._query_parser = QueryParser()
         self._filter_processor = FilterProcessor(db, auth_module, servers_module)
@@ -77,7 +93,9 @@ class SearchManagerBase(BaseManager):
         self._search_rate_window_started_ms: Dict[int, float] = {}
         self._search_rate_count: Dict[int, int] = {}
 
-        logger.info("Search module initialized")
+        logger.info(
+            f"Search module initialized (backend={self._config.get('backend')} indexer={type(self._indexer).__name__})"
+        )
 
     def _load_config(self) -> Dict[str, Any]:
         defaults = {
@@ -117,26 +135,56 @@ class SearchManagerBase(BaseManager):
         db_type = getattr(self._db, "type", "sqlite")
 
         if db_type == "postgres" and backend == "sqlite_fts5":
-            logger.info("Postgres database detected, using Postgres search indexer")
+            logger.info(
+                "Postgres database detected, using Postgres search indexer (low-resource)"
+            )
             return PostgresIndexer(self._db, indexer_config)
 
         if backend == "elasticsearch":
             es_config = self._config.get("elasticsearch", {})
-            return ElasticsearchIndexer(
-                hosts=es_config.get("hosts", ["http://localhost:9200"]),
-                index_prefix=es_config.get("index_prefix", "plexichat"),
-                config=indexer_config,
-            )
+            try:
+                return ElasticsearchIndexer(
+                    hosts=es_config.get("hosts", ["http://localhost:9200"]),
+                    index_prefix=es_config.get("index_prefix", "plexichat"),
+                    config=indexer_config,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Elasticsearch indexer construction failed: {e}; will fallback"
+                )
+                raise
 
         if backend == "meilisearch":
             ms_config = self._config.get("meilisearch", {})
-            return MeilisearchIndexer(
-                host=ms_config.get("host", "http://localhost:7700"),
-                api_key=ms_config.get("api_key"),
-                index_prefix=ms_config.get("index_prefix", "plexichat"),
-                config=indexer_config,
-            )
+            try:
+                return MeilisearchIndexer(
+                    host=ms_config.get("host", "http://localhost:7700"),
+                    api_key=ms_config.get("api_key"),
+                    index_prefix=ms_config.get("index_prefix", "plexichat"),
+                    config=indexer_config,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Meilisearch indexer construction failed: {e}; will fallback"
+                )
+                raise
 
+        # low-resource fallback: postgres FTS if DB is postgres else sqlite FTS5
+        if db_type == "postgres":
+            return PostgresIndexer(self._db, indexer_config)
+        return SQLiteFTS5Indexer(self._db, indexer_config)
+
+    def _create_fallback_indexer(self):
+        db_type = getattr(self._db, "type", "sqlite")
+        indexer_config = IndexerConfig(
+            batch_size=self._config.get("batch_size", 100),
+            write_time_indexing=self._config.get("write_time_indexing", True),
+            result_limit=self._config.get("result_limit", 100),
+        )
+        if db_type == "postgres":
+            logger.info("Fallback: using PostgresIndexer (low-resource)")
+            return PostgresIndexer(self._db, indexer_config)
+        logger.info("Fallback: using SQLiteFTS5Indexer (low-resource)")
         return SQLiteFTS5Indexer(self._db, indexer_config)
 
     def clear_cache(self):

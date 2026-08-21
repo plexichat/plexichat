@@ -165,6 +165,10 @@ services:
       SCANNER_HOST: clamav
       SCANNER_PORT: "3310"
       BACKEND_REPLICAS: ${BACKEND_REPLICAS:-1}
+      SEARCH_BACKEND: ${SEARCH_BACKEND:-sqlite_fts5}
+      SEARCH_MEILISEARCH_HOST: ${SEARCH_MEILISEARCH_HOST:-http://meilisearch:7700}
+      MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY:-}
+      SEARCH_ELASTICSEARCH_HOSTS: ${SEARCH_ELASTICSEARCH_HOSTS:-http://elasticsearch:9200}
     volumes:
       - ./config/docker-config.yaml:/app/config/docker-config.yaml:ro
       - plexichat_home:/root/.plexichat
@@ -292,6 +296,68 @@ services:
         limits:
           memory: ${SHIELDSTRAL_MEM_LIMIT:-6G}
 
+
+  # --- Search backends — optional, profile-gated ---
+  # Default (no profile) is LOW-RESOURCE: Postgres tsvector / SQLite FTS5
+  # embedded in the backend container, zero extra memory.  Use --profile
+  # search-meilisearch for typo-tolerant ~150 MB, or --profile search-elastic
+  # for heavy ~1 GB Elasticsearch when you need it.
+  meilisearch:
+    profiles: ["search", "search-meilisearch"]
+    restart: unless-stopped
+    image: getmeili/meilisearch:v1.12
+    env_file:
+      - .env
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY:-}
+      MEILI_DB_PATH: /meili_data/data.ms
+      MEILI_ENV: production
+      MEILI_HTTP_ADDR: 0.0.0.0:7700
+    volumes:
+      - meilisearch_data:/meili_data
+    expose:
+      - "7700"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7700/health | grep -q ok || curl -sf http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: ${MEILISEARCH_MEM_LIMIT:-512M}
+        reservations:
+          memory: 128M
+
+  elasticsearch:
+    profiles: ["search-elastic"]
+    restart: unless-stopped
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    env_file:
+      - .env
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+      cluster.name: plexichat
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    expose:
+      - "9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q green || curl -sf http://localhost:9200/ | grep -q plexichat || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${ES_MEM_LIMIT:-2G}
+        reservations:
+          memory: 512M
+
 volumes:
   postgres_data:
   valkey_data:
@@ -300,3 +366,5 @@ volumes:
   certs:
   backup_repo:
   clamav_db:
+  meilisearch_data:
+  elasticsearch_data:

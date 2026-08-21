@@ -15,6 +15,7 @@ from src.api.schemas.search import (
 from src.api.schemas.common import ErrorResponse
 from src.core.search.exceptions import SearchError
 
+
 import utils.logger as logger
 
 router = APIRouter(prefix="/search", tags=["Search"])
@@ -66,8 +67,6 @@ async def search_messages(
             cursor=cursor,
         )
 
-        # Return results directly from search manager
-        # MessageSearchPageResponse expects results to be a list of MessageSearchResult objects
         return MessageSearchPageResponse(
             results=page.results, next_cursor=page.next_cursor
         )
@@ -151,4 +150,167 @@ async def search_servers(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Search servers failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal search error")
+
+
+@router.get(
+    "/health",
+    summary="Search health",
+)
+async def search_health(
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Search backend health + stats for Docker/client diagnostics."""
+    search_mod = api.get_search()
+    if not search_mod:
+        return {"enabled": False, "backend": None, "indexer": None, "healthy": False}
+    try:
+        stats = {}
+        backend = None
+        indexer_name = None
+        healthy = False
+        try:
+            backend = (
+                search_mod._config.get("backend")
+                if hasattr(search_mod, "_config")
+                else None
+            )
+        except Exception:
+            backend = None
+        try:
+            indexer_name = (
+                type(search_mod._manager._indexer).__name__
+                if hasattr(search_mod, "_manager")
+                and hasattr(search_mod._manager, "_indexer")
+                else type(search_mod._indexer).__name__
+                if hasattr(search_mod, "_indexer")
+                else None
+            )
+            # fallback: directly on module
+            if not indexer_name and hasattr(search_mod, "get_manager"):
+                try:
+                    mgr = search_mod.get_manager()
+                    indexer_name = type(mgr._indexer).__name__
+                    backend = mgr._config.get("backend", backend)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            # try to get stats via manager
+            mgr = (
+                search_mod.get_manager() if hasattr(search_mod, "get_manager") else None
+            )
+            if mgr and hasattr(mgr, "_indexer") and hasattr(mgr._indexer, "get_stats"):
+                stats = mgr._indexer.get_stats() or {}
+            elif hasattr(search_mod, "_indexer") and hasattr(
+                search_mod._indexer, "get_stats"
+            ):
+                stats = search_mod._indexer.get_stats() or {}
+        except Exception:
+            stats = {}
+        try:
+            # health_check
+            mgr = (
+                search_mod.get_manager() if hasattr(search_mod, "get_manager") else None
+            )
+            if (
+                mgr
+                and hasattr(mgr, "_indexer")
+                and hasattr(mgr._indexer, "health_check")
+            ):
+                healthy = bool(mgr._indexer.health_check())
+            elif hasattr(search_mod, "_indexer") and hasattr(
+                search_mod._indexer, "health_check"
+            ):
+                healthy = bool(search_mod._indexer.health_check())
+            else:
+                healthy = True
+        except Exception:
+            healthy = False
+        return {
+            "enabled": True,
+            "backend": backend,
+            "indexer": indexer_name,
+            "healthy": healthy,
+            "stats": stats,
+        }
+    except Exception as e:
+        import utils.logger as logger
+
+        logger.error(f"Search health failed: {e}", exc_info=True)
+        return {"enabled": True, "healthy": False, "error": str(e)}
+
+
+@router.get(
+    "/suggestions",
+    summary="Get search suggestions",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_search_suggestions(
+    q: str = Query(..., description="Partial query for suggestions"),
+    limit: int = Query(default=10, ge=1, le=20),
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Get search suggestions for autocomplete (filter names + history)."""
+    search_mod = api.get_search()
+    if not search_mod:
+        raise HTTPException(status_code=500, detail="Search module not available")
+    try:
+        suggestions = search_mod.get_search_suggestions(
+            user_id=current_user.user_id,
+            partial_query=q,
+            limit=limit,
+        )
+        return {"suggestions": suggestions}
+    except Exception as e:
+        logger.error(f"Search suggestions failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal search error")
+
+
+@router.get(
+    "/discovery/servers",
+    summary="List public servers (discovery)",
+)
+async def list_public_servers(
+    category: Optional[str] = Query(None, description="Filter by category"),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """List public servers for discovery."""
+    search_mod = api.get_search()
+    if not search_mod:
+        raise HTTPException(status_code=500, detail="Search module not available")
+    try:
+        results = search_mod.list_public_servers(
+            category=category,
+            limit=limit,
+            offset=offset,
+        )
+        return {"results": results, "next_cursor": None}
+    except Exception as e:
+        logger.error(f"List public servers failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal search error")
+
+
+@router.get(
+    "/discovery/categories",
+    summary="Get server discovery categories",
+)
+async def get_server_categories(
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    """Get available server categories for discovery."""
+    search_mod = api.get_search()
+    if not search_mod:
+        raise HTTPException(status_code=500, detail="Search module not available")
+    try:
+        categories = search_mod.get_server_categories()
+        return {"categories": categories}
+    except Exception as e:
+        logger.error(f"Get categories failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal search error")

@@ -328,6 +328,82 @@ def _apply_env_overrides() -> None:
     # Only persist when an override was actually applied: the write is
     # atomic and thread-safe now, but an unconditional rewrite of the
     # home config on every boot is wasteful and churns the file.
+
+    # --- Search backend overrides (low-resource default: postgres/sqlite, optional meilisearch/elastic) ---
+    search_config = config.get("search", {}) or {}
+    search_changed = False
+    backend_env = os.getenv("SEARCH_BACKEND")
+    if backend_env:
+        be = backend_env.strip().lower()
+        if be in (
+            "sqlite_fts5",
+            "sqlite",
+            "postgres",
+            "meilisearch",
+            "elasticsearch",
+            "es",
+        ):
+            # normalize
+            if be == "sqlite":
+                be = "sqlite_fts5"
+            if be == "es":
+                be = "elasticsearch"
+            search_config["backend"] = be
+            search_changed = True
+        else:
+            import utils.logger as _slog
+
+            _slog.warning(f"Invalid SEARCH_BACKEND value: {backend_env}")
+    enabled = os.getenv("SEARCH_ENABLED")
+    if enabled is not None:
+        search_config["enabled"] = _as_bool(enabled)
+        search_changed = True
+    search_changed |= _apply_int(
+        search_config,
+        "result_limit",
+        os.getenv("SEARCH_RESULT_LIMIT"),
+        "SEARCH_RESULT_LIMIT",
+        min_value=1,
+        max_value=1000,
+    )
+    search_changed |= _apply_int(
+        search_config,
+        "batch_size",
+        os.getenv("SEARCH_BATCH_SIZE"),
+        "SEARCH_BATCH_SIZE",
+        min_value=1,
+        max_value=1000,
+    )
+    wti_raw = os.getenv("SEARCH_WRITE_TIME_INDEXING")
+    if wti_raw is not None:
+        search_config["write_time_indexing"] = _as_bool(wti_raw)
+        search_changed = True
+    # Per-backend envs
+    meili_host = os.getenv("SEARCH_MEILISEARCH_HOST") or os.getenv("MEILISEARCH_HOST")
+    meili_key = os.getenv("SEARCH_MEILISEARCH_API_KEY") or os.getenv(
+        "MEILISEARCH_API_KEY"
+    )
+    if meili_host or meili_key is not None:
+        ms = search_config.setdefault("meilisearch", {})
+        if meili_host:
+            ms["host"] = meili_host
+            search_changed = True
+        if meili_key is not None:
+            ms["api_key"] = meili_key or None
+            search_changed = True
+    es_hosts = os.getenv("SEARCH_ELASTICSEARCH_HOSTS") or os.getenv(
+        "ELASTICSEARCH_HOSTS"
+    )
+    if es_hosts:
+        es = search_config.setdefault("elasticsearch", {})
+        # comma separated list
+        hosts = [h.strip() for h in es_hosts.split(",") if h.strip()]
+        if hosts:
+            es["hosts"] = hosts
+            search_changed = True
+    if search_changed:
+        config.set("search", search_config)
+
     if valkey_changed:
         config.set("valkey", valkey_config)
 
