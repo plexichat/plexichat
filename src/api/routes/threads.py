@@ -7,9 +7,12 @@ clients update their thread lists live without a refresh.
 """
 
 from typing import List, Optional
+
 from fastapi import APIRouter, HTTPException, Depends, Body
+from pydantic import BaseModel, Field
 
 import src.api as api
+import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.api.schemas.threads import (
@@ -23,7 +26,12 @@ from src.core.events.gateway_emit import (
     emit_thread_delete,
 )
 
-import utils.logger as logger
+
+class ThreadMessageRequest(BaseModel):
+    content: str = Field(
+        ..., min_length=1, max_length=2000, description="Message content"
+    )
+
 
 router = APIRouter()
 
@@ -812,7 +820,7 @@ async def get_thread_messages(
 )
 async def send_thread_message(
     thread_id: str,
-    body: dict = Body(...),
+    body: ThreadMessageRequest = Body(...),
     current_user: TokenInfo = Depends(get_current_user),
 ):
     threads_mod = _get_threads()
@@ -823,7 +831,7 @@ async def send_thread_message(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid thread ID"}},
         )
-    content = (body or {}).get("content", "")
+    content = body.content
     if not content or not str(content).strip():
         raise HTTPException(
             status_code=400,

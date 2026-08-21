@@ -563,8 +563,33 @@ class FeatureSetupMixin(SetupServiceBase):
             return
         try:
             threads_mod = api.get_threads()
+            servers_mod = api.get_servers()
             if threads_mod:
                 from src.core.threads import AutoArchiveDuration
+
+                # Ensure other_user is member of the test server/channel so they can view/join the thread
+                if (
+                    self.ctx.test_other_user_id
+                    and self.ctx.test_server_id
+                    and servers_mod
+                ):
+                    try:
+                        # Add other_user to server if not already member
+                        try:
+                            servers_mod.add_member(
+                                self.ctx.test_server_id, self.ctx.test_other_user_id
+                            )
+                            logger.debug(
+                                "Added other_user to test server for thread access"
+                            )
+                        except Exception as se:
+                            if (
+                                "already" not in str(se).lower()
+                                and "exists" not in type(se).__name__.lower()
+                            ):
+                                logger.debug(f"Add other_user to server note: {se}")
+                    except Exception as se2:
+                        logger.debug(f"Server add member note: {se2}")
 
                 thread = threads_mod.create_thread_from_message(
                     user_id=self.ctx.test_user_id,
@@ -578,8 +603,6 @@ class FeatureSetupMixin(SetupServiceBase):
                 # without owner-leave 403: other_user can join (already) and leave
                 if self.ctx.test_other_user_id:
                     try:
-                        # Ensure other_user can view the thread (public thread)
-                        # Join is idempotent if already member
                         try:
                             threads_mod.join_thread(
                                 self.ctx.test_other_user_id, thread.id

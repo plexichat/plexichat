@@ -391,12 +391,13 @@ class SelfTestRunner:
                 use_other = True
 
             # Threads: owner cannot leave own thread (403). Use other_user (member)
-            # for join/leave/member mutations so the auto_loop tests a valid permission path
+            # for leave so the auto_loop tests a valid permission path.
+            # Join stays on main session (owner already member, idempotent 200).
             if (
                 self.ctx.other_token
                 and "/threads/" in path
                 and method == "POST"
-                and ("/leave" in path or "/join" in path or "/members/" in path)
+                and "/leave" in path
             ):
                 use_other = True
 
