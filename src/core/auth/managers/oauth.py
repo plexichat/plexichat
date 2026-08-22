@@ -159,8 +159,31 @@ class OAuthMixin(AuthManagerProtocol):
         if not user_obj:
             return AuthResult(status=AuthStatus.FAILED, message="User creation failed")
 
+        row = self._db.fetch_one(
+            "SELECT totp_enabled, deletion_status FROM auth_users WHERE id = ?",
+            (user_id,),
+        )
+        if row and row.get("deletion_status") == "frozen":
+            return AuthResult(
+                status=AuthStatus.FAILED,
+                message="Account is scheduled for deletion",
+            )
+
         if user_obj.account_locked:
             return AuthResult(status=AuthStatus.FAILED, message="Account locked")
+
+        # OAuth login must respect 2FA exactly like password login; otherwise a
+        # compromised linked account bypasses the second factor entirely.
+        if row and row.get("totp_enabled"):
+            challenge = self._create_2fa_challenge(
+                user_id, None, ip_address, user_agent
+            )
+            return AuthResult(
+                status=AuthStatus.TWO_FACTOR_REQUIRED,
+                challenge_token=challenge.token,
+                methods=["totp", "backup_code"],
+                expires_in=300,
+            )
 
         session = self._create_session(user_id, None, ip_address, user_agent)
 

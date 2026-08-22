@@ -36,7 +36,11 @@ class TestBroadcastRatchetUpdate:
         return GatewayDispatcher(session_manager=session_manager)
 
     @pytest.mark.asyncio
-    async def test_broadcast_sends_to_all_authenticated(self, dispatcher):
+    async def test_broadcast_sends_only_to_conversation_participants(self, dispatcher):
+        """SECURITY regression guard: RATCHET_UPDATE must be scoped to
+        conversation participants. Broadcasting rotations (conversation id,
+        message anchor, timing) to every connected user leaks private
+        conversation metadata."""
         conn1 = MagicMock()
         conn1.is_authenticated = True
         conn1.connection_id = "c1"
@@ -51,24 +55,47 @@ class TestBroadcastRatchetUpdate:
         conn2.intents = 0
         type(conn2).user_id = PropertyMock(return_value=2)
 
-        conn3 = MagicMock()
-        conn3.is_authenticated = False
+        # A connected user who is NOT a participant of the conversation.
+        outsider = MagicMock()
+        outsider.is_authenticated = True
+        outsider.send_json = AsyncMock(return_value=True)
+
+        conn1.send_json = AsyncMock(return_value=True)
+        conn2.send_json = AsyncMock(return_value=True)
 
         dispatcher._session_manager.get_all_connections.return_value = [
             conn1,
             conn2,
-            conn3,
+            outsider,
         ]
-        conn1.send_json = AsyncMock(return_value=True)
-        conn2.send_json = AsyncMock(return_value=True)
+        dispatcher._session_manager.get_connections_for_users.return_value = [
+            conn1,
+            conn2,
+        ]
 
-        result = await dispatcher.broadcast_ratchet_update(
-            conversation_id=42,
-            update_data={"reason": "rotation", "new_interval_id": 99},
-        )
+        with patch(
+            "src.core.messaging.get_participant_ids",
+            return_value=[1, 2],
+        ) as mock_participants:
+            result = await dispatcher.broadcast_ratchet_update(
+                conversation_id=42,
+                update_data={"reason": "rotation", "new_interval_id": 99},
+            )
+
+        # Participants were resolved and used to fetch target connections.
+        mock_participants.assert_called_once_with(42)
+        dispatcher._session_manager.get_connections_for_users.assert_called_once()
+        called_ids = dispatcher._session_manager.get_connections_for_users.call_args[0][
+            0
+        ]
+        assert set(called_ids) == {1, 2}
 
         assert result == 2
         conn1.send_json.assert_called_once()
+        conn2.send_json.assert_called_once()
+        # Non-participants must never receive the update.
+        outsider.send_json.assert_not_called()
+
         payload = conn1.send_json.call_args[0][0]
         assert payload["op"] == int(GatewayOpcode.RATCHET_UPDATE)
         assert payload["t"] == "RATCHET_UPDATE"

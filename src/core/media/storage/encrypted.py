@@ -200,24 +200,26 @@ class EncryptedStorage(StorageBackendBase):
         # Try encrypted path first
         enc_path = path + ".enc"
 
-        try:
-            if self._backend.exists(enc_path):
-                if not self._enabled or not self._encryptor:
-                    raise StorageReadError(
-                        "File is encrypted but encryption is disabled", "encrypted"
-                    )
+        if self._backend.exists(enc_path):
+            if not self._enabled or not self._encryptor:
+                raise StorageReadError(
+                    "File is encrypted but encryption is disabled", "encrypted"
+                )
 
-                encrypted_blob = self._backend.retrieve(enc_path)
-                aad = self._get_aad(path)
+            # Decryption failures must propagate (not be masked as a missing
+            # file); only the absent-.enc case falls through to legacy data.
+            encrypted_blob = self._backend.retrieve(enc_path)
+            aad = self._get_aad(path)
 
+            try:
                 data = self._encryptor.decrypt_from_blob(encrypted_blob, aad)
-                logger.debug(f"Retrieved and decrypted: {path}")
-                return data
-        except StorageReadError:
-            pass  # File doesn't exist with .enc, try unencrypted
-        except Exception as e:
-            logger.error(f"Decryption failed for {path}: {e}")
-            raise StorageReadError(f"Decryption failed: {e}", "encrypted")
+            except StorageReadError:
+                raise
+            except Exception as e:
+                logger.error(f"Decryption failed for {path}: {e}")
+                raise StorageReadError(f"Decryption failed: {e}", "encrypted")
+            logger.debug(f"Retrieved and decrypted: {path}")
+            return data
 
         # Fall back to unencrypted path (for legacy files)
         return self._backend.retrieve(path)

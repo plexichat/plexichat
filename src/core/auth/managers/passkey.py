@@ -112,8 +112,34 @@ class PasskeyMixin(AuthManagerProtocol):
         if not user_row:
             raise UserNotFoundError("User not found")
 
+        if user_row.get("deletion_status") == "frozen":
+            raise AccountLockedError(
+                "Account is scheduled for deletion. Contact an administrator to cancel."
+            )
+
         if user_row["account_locked"]:
             raise AccountLockedError("Account locked")
+
+        accounts_config = self._config.get("accounts", {})
+        if accounts_config.get("require_email_verification", False) and not bool(
+            user_row.get("email_verified", 0)
+        ):
+            from ..exceptions import EmailNotVerifiedError
+
+            raise EmailNotVerifiedError("Email not verified")
+
+        # A passkey is a first factor only; users with TOTP enabled must still
+        # complete the second-factor challenge, mirroring password login.
+        if user_row.get("totp_enabled"):
+            challenge = self._create_2fa_challenge(
+                user_id, None, ip_address, user_agent
+            )
+            return AuthResult(
+                status=AuthStatus.TWO_FACTOR_REQUIRED,
+                challenge_token=challenge.token,
+                methods=["totp", "backup_code"],
+                expires_in=300,
+            )
 
         device_id = (
             self._track_device(user_id, {"type": "passkey"}) if user_id else None

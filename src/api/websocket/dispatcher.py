@@ -460,8 +460,24 @@ class GatewayDispatcher:
         tasks = []
 
         if connections is None:
-            with self._lock:
-                connections = self._session_manager.get_all_connections()
+            # SECURITY: scope the broadcast to conversation participants only.
+            # Sending ratchet rotations (conversation ID, message anchor,
+            # timing) to every connected user would leak private-conversation
+            # metadata, unlike every other event which is routed via
+            # EventRouter.get_recipients.
+            try:
+                from src.core.messaging import get_participant_ids
+
+                participant_ids = set(get_participant_ids(conversation_id))
+                connections = self._session_manager.get_connections_for_users(
+                    list(participant_ids)
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to resolve participants for RATCHET_UPDATE "
+                    f"(conversation {conversation_id}): {e}"
+                )
+                connections = []
 
         payload = {
             "op": int(GatewayOpcode.RATCHET_UPDATE),

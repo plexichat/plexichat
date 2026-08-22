@@ -327,9 +327,17 @@ class TestDenialOfService:
         assert len(messages) == 20
 
     def test_login_attempt_rate_limiting(self, auth_manager):
-        """Test that repeated failed logins eventually lock the account."""
+        """Test that repeated failed logins eventually lock the account.
+
+        NOTE: lockout is asserted via a CORRECT password being refused.
+        Wrong-password attempts must keep returning InvalidCredentialsError
+        (uniformly) so attackers cannot use the lockout state to enumerate
+        accounts; the counter still accumulates on every failure.
+        """
         import uuid
         from unittest.mock import patch
+
+        import pytest as _pytest
 
         from src.core.auth.exceptions import AccountLockedError, InvalidCredentialsError
         from src.utils import encryption
@@ -337,17 +345,28 @@ class TestDenialOfService:
         username = f"lockout_{uuid.uuid4().hex[:8]}"
         auth_manager.register(username, f"{username}@example.com", "TestPass123!")
 
-        locked = False
+        # Simulate repeated wrong passwords; each must fail uniformly.
         with patch.object(encryption, "verify_password", return_value=False):
-            for _ in range(10):
+            for _ in range(20):
                 try:
                     auth_manager.login(username, "WrongPassword!")
                 except AccountLockedError:
-                    locked = True
-                    break
+                    _pytest.fail(
+                        "AccountLockedError leaked for a wrong password "
+                        "(account enumeration oracle)"
+                    )
                 except InvalidCredentialsError:
                     continue
-        assert locked is True
+
+        # The failed attempts must have tripped the lockout: even the
+        # correct credential is now refused until the lock expires.
+        with patch.object(encryption, "verify_password", return_value=True):
+            try:
+                auth_manager.login(username, "TestPass123!")
+            except AccountLockedError:
+                pass
+            else:
+                _pytest.fail("Account was not locked after repeated failures")
 
     def test_resource_exhaustion_prevention(self, auth_manager, test_user):
         """Test prevention of resource exhaustion: repeated lookups must not fail."""

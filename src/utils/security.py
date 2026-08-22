@@ -20,6 +20,7 @@ from urllib.parse import urlparse, urlunparse
 # ipaddress.is_private on some Python releases, but it is a non-global
 # carrier-grade NAT range that must never be reachable via SSRF.
 _CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+_NAT64_NETWORK = ipaddress.ip_network("64:ff9b::/96")
 
 
 def generate_csp_nonce() -> str:
@@ -182,6 +183,16 @@ class URLValidator:
         # False for the embedded address on some Python releases).
         if addr.version == 4:
             return addr in _CGNAT_NETWORK
-        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-            return addr.ipv4_mapped in _CGNAT_NETWORK
+        if isinstance(addr, ipaddress.IPv6Address):
+            # NAT64 transition range (64:ff9b::/96) embeds an IPv4 address in
+            # the low 32 bits; on NAT64-capable hosts it routes to that IPv4
+            # address, so private targets must be rejected.
+            if addr in _NAT64_NETWORK:
+                embedded = ipaddress.ip_address(int.from_bytes(addr.packed[12:], "big"))
+                if self.is_private_ip(str(embedded)):
+                    return True
+            if addr.ipv4_mapped is not None:
+                if self.is_private_ip(str(addr.ipv4_mapped)):
+                    return True
+                return addr.ipv4_mapped in _CGNAT_NETWORK
         return False

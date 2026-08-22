@@ -434,8 +434,37 @@ async def oauth_callback(
                 )
         elif provider == "microsoft":
             external_id = user_info.get("id")
-            email = user_info.get("mail") or user_info.get("userPrincipalName")
             username_hint = user_info.get("displayName")
+            # SECURITY: Microsoft's /me endpoint returns mail/userPrincipalName
+            # without any verification signal. Because oauth_login silently
+            # links external identities to existing local accounts by verified
+            # email, an attacker-controlled tenant could set a UPN equal to a
+            # victim's address and take over their account. Require Microsoft's
+            # OIDC email_verified claim before accepting the address.
+            raw_email = user_info.get("mail") or user_info.get("userPrincipalName")
+            if raw_email:
+                try:
+                    oidc_resp = await client.get(
+                        "https://graph.microsoft.com/oidc/userinfo",
+                        headers=user_info_headers,
+                    )
+                    email_verified = False
+                    if oidc_resp.status_code == 200:
+                        oidc_info = oidc_resp.json()
+                        email_verified = bool(oidc_info.get("email_verified"))
+                        if (
+                            oidc_info.get("email")
+                            and oidc_info["email"].lower() == raw_email.lower()
+                            and email_verified
+                        ):
+                            email = raw_email
+                    if not email:
+                        logger.warning(
+                            "Microsoft OAuth login presented unverified email; "
+                            "refusing to link by address"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to verify Microsoft email claim: {e}")
 
         if not external_id:
             logger.error(f"Could not identify user from {provider} response")

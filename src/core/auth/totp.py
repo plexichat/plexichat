@@ -8,6 +8,7 @@ Includes replay attack prevention and DoS mitigation for backup codes.
 import os
 import time
 import hashlib
+import hmac
 import threading
 import importlib
 from typing import List, Tuple, Optional, Dict, Any, Union
@@ -309,7 +310,7 @@ def verify_backup_code(
 
         hashed_str = str(hashed) if not isinstance(hashed, str) else hashed
 
-        if candidate == hashed_str:
+        if hmac.compare_digest(candidate, hashed_str):
             return True, i
 
     return False, -1

@@ -135,6 +135,9 @@ class ChunkedUploadManager:
             "chunk_size": chunked_config.get("chunk_size", 5 * 1024 * 1024),  # 5MB
             "max_chunks": chunked_config.get("max_chunks", 200),
             "session_timeout": chunked_config.get("session_timeout", 3600),  # 1 hour
+            "max_active_sessions_per_user": chunked_config.get(
+                "max_active_sessions_per_user", 5
+            ),
             "cleanup_interval": chunked_config.get(
                 "cleanup_interval", 300
             ),  # 5 minutes
@@ -151,6 +154,45 @@ class ChunkedUploadManager:
         upload_temp = os.path.join(temp_dir, "chunked_uploads")
         os.makedirs(upload_temp, exist_ok=True)
         return upload_temp
+
+    def _validate_total_size(self, content_type: str, total_size: int) -> bool:
+        """Validate declared total size against per-type upload limits."""
+        from ._config import DEFAULT_SIZE_LIMITS
+        from .models import MediaType
+
+        ct = (content_type or "").lower()
+        if ct.startswith("image/"):
+            type_key = MediaType.IMAGE.value
+        elif ct.startswith("video/"):
+            type_key = MediaType.VIDEO.value
+        elif ct.startswith("audio/"):
+            type_key = MediaType.AUDIO.value
+        elif ct in ("application/pdf", "text/plain", "application/msword"):
+            type_key = MediaType.DOCUMENT.value
+        else:
+            type_key = MediaType.OTHER.value
+
+        media_config = config.get("media", {})
+        limits = media_config.get("size_limits", DEFAULT_SIZE_LIMITS)
+        max_size = limits.get(type_key, limits.get("other", 10 * 1024 * 1024))
+
+        try:
+            from utils.licensing import (
+                get_license_limit,
+                is_free_tier,
+                is_limit_enforced,
+            )
+
+            if not is_free_tier():
+                _mb = get_license_limit("max_file_size_mb", default=-1)
+                if is_limit_enforced(_mb):
+                    _lic_bytes = _mb * 1024 * 1024
+                    if _lic_bytes < max_size:
+                        max_size = _lic_bytes
+        except (RuntimeError, ImportError):
+            pass
+
+        return total_size <= max_size
 
     def is_enabled(self) -> bool:
         """Check if chunked uploads are enabled."""
@@ -172,6 +214,31 @@ class ChunkedUploadManager:
             UploadSession or None if failed
         """
         if not self.is_enabled():
+            return None
+
+        if total_size is None or total_size <= 0:
+            logger.warning(f"Invalid total_size for chunked upload: {total_size}")
+            return None
+
+        # Enforce the same per-type size limits as the direct upload path so
+        # chunked uploads cannot bypass them.
+        if not self._validate_total_size(content_type, total_size):
+            logger.warning(
+                f"Chunked upload rejected: {total_size} bytes exceeds limit for {content_type}"
+            )
+            return None
+
+        # Cap concurrent active sessions per user to stop temp-file hoarding.
+        active = self._db.fetch_one(
+            """SELECT COUNT(*) AS cnt FROM media_upload_sessions
+               WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired')""",
+            (user_id, int(time.time() * 1000)),
+        )
+        max_active_sessions = int(self._config.get("max_active_sessions_per_user", 5))
+        if active and active["cnt"] >= max_active_sessions:
+            logger.warning(
+                f"User {user_id} has too many active chunked upload sessions"
+            )
             return None
 
         chunk_size = self._config["chunk_size"]
@@ -296,6 +363,82 @@ class ChunkedUploadManager:
                 received_chunks=row[15],
             )
 
+    def _record_chunk_progress(
+        self,
+        session_id: str,
+        chunk_index: int,
+        chunk_len: int,
+        now: int,
+        max_retries: int = 5,
+    ) -> Optional[tuple]:
+        """Atomically record a received chunk.
+
+        Re-reads the session row, merges the chunk index into
+        ``received_chunks``, and writes it back guarded by the previously read
+        ``updated_at`` (optimistic concurrency). Returns
+        ``(uploaded_chunks, uploaded_bytes, is_complete)`` or ``None`` if the
+        update could not be applied without conflicts.
+        """
+        for _ in range(max_retries):
+            current = self._db.fetch_one(
+                """SELECT uploaded_chunks, uploaded_bytes, received_chunks, updated_at
+                   FROM media_upload_sessions WHERE id = ?""",
+                (session_id,),
+            )
+            if not current:
+                return None
+
+            try:
+                received: Set[int] = set(
+                    int(x) for x in json.loads(current["received_chunks"] or "[]")
+                )
+            except Exception:
+                received = set()
+
+            is_new_chunk = chunk_index not in received
+            received.add(chunk_index)
+
+            uploaded_chunks = len(received)
+            if is_new_chunk:
+                uploaded_bytes = current["uploaded_bytes"] + chunk_len
+            else:
+                uploaded_bytes = current["uploaded_bytes"]
+
+            total_chunks_row = self._db.fetch_one(
+                "SELECT total_chunks FROM media_upload_sessions WHERE id = ?",
+                (session_id,),
+            )
+            total_chunks = (
+                total_chunks_row["total_chunks"]
+                if total_chunks_row
+                else uploaded_chunks
+            )
+            is_complete = uploaded_chunks >= total_chunks
+            status = "completed" if is_complete else "in_progress"
+
+            cursor = self._db.execute(
+                """UPDATE media_upload_sessions
+                   SET uploaded_chunks = ?, uploaded_bytes = ?, status = ?,
+                       received_chunks = ?, updated_at = ?
+                   WHERE id = ? AND updated_at = ?""",
+                (
+                    uploaded_chunks,
+                    uploaded_bytes,
+                    status,
+                    json.dumps(sorted(received)),
+                    now,
+                    session_id,
+                    current["updated_at"],
+                ),
+            )
+            if getattr(cursor, "rowcount", 1) > 0:
+                return uploaded_chunks, uploaded_bytes, is_complete
+
+        logger.warning(
+            f"Failed to record chunk progress for {session_id} after {max_retries} retries"
+        )
+        return None
+
     def upload_chunk(
         self,
         session_id: str,
@@ -387,12 +530,25 @@ class ChunkedUploadManager:
             except Exception:
                 received = set()
 
-        is_new_chunk = chunk_index not in received
-        received.add(chunk_index)
+        # SECURITY: enforce the per-chunk size cap so a malicious client cannot
+        # declare a small total_size but stream unbounded data into the temp
+        # file, bypassing upload limits entirely.
+        offset = chunk_index * session.chunk_size
+        max_len = min(session.chunk_size, session.total_size - offset)
+        if len(chunk_data) > max_len:
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                is_complete=False,
+                error=f"Chunk size {len(chunk_data)} exceeds maximum of {max_len} bytes",
+            )
 
         # Write chunk to temp file
         try:
-            offset = chunk_index * session.chunk_size
             if session.temp_path is None:
                 raise RuntimeError("Upload session temp file missing")
             with open(session.temp_path, "r+b") as f:
@@ -411,30 +567,22 @@ class ChunkedUploadManager:
                 error=f"Write failed: {e}",
             )
 
-        # Update session. Only distinct chunks count toward completion.
-        uploaded_chunks = len(received)
-        if is_new_chunk:
-            uploaded_bytes = session.uploaded_bytes + len(chunk_data)
-        else:
-            uploaded_bytes = session.uploaded_bytes
-
-        is_complete = uploaded_chunks >= session.total_chunks
-        status = "completed" if is_complete else "in_progress"
-
-        self._db.execute(
-            """UPDATE media_upload_sessions 
-               SET uploaded_chunks = ?, uploaded_bytes = ?, status = ?, 
-                   received_chunks = ?, updated_at = ?
-               WHERE id = ?""",
-            (
-                uploaded_chunks,
-                uploaded_bytes,
-                status,
-                json.dumps(sorted(received)),
-                now,
-                session_id,
-            ),
+        result = self._record_chunk_progress(
+            session_id, chunk_index, len(chunk_data), now
         )
+        if result is None:
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                is_complete=False,
+                error="Concurrent update conflict; retry the chunk",
+            )
+
+        uploaded_chunks, uploaded_bytes, is_complete = result
 
         progress = (uploaded_chunks / session.total_chunks) * 100
 
@@ -503,8 +651,14 @@ class ChunkedUploadManager:
         checksum = hashlib.sha256()
         bytes_written = 0
 
+        # SECURITY: cap this chunk at its allowed length (chunk size, bounded
+        # by the remaining bytes of the declared total) so oversized streams
+        # cannot bypass per-file size limits.
+        offset = chunk_index * session.chunk_size
+        max_len = min(session.chunk_size, session.total_size - offset)
+        exceeded = False
+
         try:
-            offset = chunk_index * session.chunk_size
             if session.temp_path is None:
                 raise RuntimeError("Upload session temp file missing")
             with open(session.temp_path, "r+b") as f:
@@ -513,9 +667,12 @@ class ChunkedUploadManager:
                     chunk = chunk_stream.read(65536)
                     if not chunk:
                         break
+                    bytes_written += len(chunk)
+                    if bytes_written > max_len:
+                        exceeded = True
+                        break
                     f.write(chunk)
                     checksum.update(chunk)
-                    bytes_written += len(chunk)
         except Exception as e:
             logger.error(f"Failed to write chunk stream: {e}")
             return ChunkUploadResult(
@@ -527,6 +684,18 @@ class ChunkedUploadManager:
                 progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
                 is_complete=False,
                 error=f"Write failed: {e}",
+            )
+
+        if exceeded or bytes_written > max_len:
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                is_complete=False,
+                error=f"Chunk exceeds maximum of {max_len} bytes",
             )
 
         if chunk_checksum:
@@ -545,40 +714,24 @@ class ChunkedUploadManager:
                     error="Checksum mismatch",
                 )
 
-        # Track distinct received chunk indices (see M7 fix in upload_chunk).
-        received: Set[int] = set()
-        if session.received_chunks:
-            try:
-                received = set(int(x) for x in json.loads(session.received_chunks))
-            except Exception:
-                received = set()
-
-        is_new_chunk = chunk_index not in received
-        received.add(chunk_index)
-
-        uploaded_chunks = len(received)
-        if is_new_chunk:
-            uploaded_bytes = session.uploaded_bytes + bytes_written
-        else:
-            uploaded_bytes = session.uploaded_bytes
-
-        is_complete = uploaded_chunks >= session.total_chunks
-        status = "completed" if is_complete else "in_progress"
-
-        self._db.execute(
-            """UPDATE media_upload_sessions 
-               SET uploaded_chunks = ?, uploaded_bytes = ?, status = ?, 
-                   received_chunks = ?, updated_at = ?
-               WHERE id = ?""",
-            (
-                uploaded_chunks,
-                uploaded_bytes,
-                status,
-                json.dumps(sorted(received)),
-                now,
-                session_id,
-            ),
+        # Track distinct received chunk indices (see M7 fix in upload_chunk) and
+        # persist progress atomically via optimistic concurrency.
+        result = self._record_chunk_progress(
+            session_id, chunk_index, bytes_written, now
         )
+        if result is None:
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                is_complete=False,
+                error="Concurrent update conflict; retry the chunk",
+            )
+
+        uploaded_chunks, uploaded_bytes, is_complete = result
 
         progress = (uploaded_chunks / session.total_chunks) * 100
 

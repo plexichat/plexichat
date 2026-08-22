@@ -25,7 +25,11 @@ from .exceptions import (
     FileTypeError,
     ImageProcessingError,
 )
-from .security.validation import BLOCKED_EXTENSIONS, BLOCKED_MIME_TYPES
+from .security.validation import (
+    BLOCKED_EXTENSIONS,
+    BLOCKED_MIME_TYPES,
+    get_validator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +39,14 @@ class _UploadMixin:
 
     # ── stream I/O helpers ────────────────────────────────────────────────────
 
-    def _read_stream_to_temp(self, stream: BinaryIO) -> Tuple[str, int, str, bytes]:
+    def _read_stream_to_temp(
+        self, stream: BinaryIO, max_bytes: Optional[int] = None
+    ) -> Tuple[str, int, str, bytes]:
+        """Spool a stream to a temp file.
+
+        ``max_bytes`` bounds the total bytes written so an unknown/untrusted
+        stream length cannot exhaust disk before size validation runs.
+        """
         temp_file = tempfile.NamedTemporaryFile(delete=False)
         try:
             bytes_read = 0
@@ -47,9 +58,15 @@ class _UploadMixin:
                     break
                 if not header:
                     header = chunk[:64]
+                bytes_read += len(chunk)
+                if max_bytes is not None and bytes_read > max_bytes:
+                    raise FileSizeError(
+                        f"Stream exceeds maximum of {max_bytes} bytes",
+                        max_bytes,
+                        bytes_read,
+                    )
                 temp_file.write(chunk)
                 hasher.update(chunk)
-                bytes_read += len(chunk)
             temp_file.flush()
             temp_file.close()
             return temp_file.name, bytes_read, hasher.hexdigest(), header
@@ -91,6 +108,44 @@ class _UploadMixin:
             chunks.append(chunk)
         file_data = b"".join(chunks)
         return file_data, bytes_read, hasher.hexdigest(), header
+
+    # ── security validation helper ────────────────────────────────────────────
+
+    def _run_security_validation(
+        self, file_data: bytes, filename: str, content_type: str
+    ) -> None:
+        """Run the FileValidator pipeline (executable/MIME checks, magic bytes,
+        SVG/XML sanitization) on an in-memory payload.
+
+        SECURITY: this wiring is mandatory — the SVG allow-list sanitizer was
+        previously dead code, so enabling ``image/svg+xml`` in config would
+        have allowed stored XSS.
+        """
+        valid, error, _ = get_validator().validate_file(
+            file_data, filename, content_type
+        )
+        if not valid:
+            raise FileTypeError(
+                error or "File failed security validation",
+                content_type,
+                ["File content rejected by the media security scanner"],
+            )
+
+    def _validate_svg_preview(self, temp_path: str) -> None:
+        """Sanitize a streamed XML/SVG payload using its leading bytes."""
+        try:
+            with open(temp_path, "rb") as f:
+                preview = f.read(4 * 1024 * 1024)
+            ok, reason = get_validator()._sanitize_svg(preview)
+        except Exception as e:
+            logger.warning(f"SVG preview validation failed: {e}")
+            ok, reason = False, "sanitize_error"
+        if not ok:
+            raise FileTypeError(
+                "Unsafe content detected in SVG file",
+                "image/svg+xml",
+                [f"Rejected by sanitizer: {reason}"],
+            )
 
     # ── upload_file (bytes) ───────────────────────────────────────────────────
 
@@ -176,6 +231,11 @@ class _UploadMixin:
                 content_type,
                 ["File signature mismatch - content does not match declared MIME type"],
             )
+
+        # Full security validation (executable/MIME checks + SVG/XML sanitizer)
+        self._run_security_validation(
+            file_data, filename, content_type or "application/octet-stream"
+        )
 
         # Compute checksum early for fast dedup
         checksum_raw = self._compute_checksum(file_data)
@@ -364,6 +424,14 @@ class _UploadMixin:
         if size and size > 0:
             self._validate_file_size(size, media_type)
 
+        # Bound the temp-file spool by the largest configured per-type limit so
+        # an unknown/untrusted stream length cannot exhaust disk before the
+        # post-read size validation runs.
+        from ._config import DEFAULT_SIZE_LIMITS
+
+        _limits = self._config.get("size_limits", DEFAULT_SIZE_LIMITS)
+        max_stream_bytes = max(_limits.values()) if _limits else 100 * 1024 * 1024
+
         max_in_memory = self._config.get("stream_processing_max_bytes", 8 * 1024 * 1024)
         use_memory = size is not None and size > 0 and size <= max_in_memory
         temp_path = None
@@ -376,7 +444,7 @@ class _UploadMixin:
                 )
             else:
                 temp_path, bytes_read, checksum_raw, header = self._read_stream_to_temp(
-                    stream
+                    stream, max_bytes=max_stream_bytes
                 )
             file_size = size if size and size > 0 else bytes_read
             if not size or size <= 0:
@@ -417,6 +485,20 @@ class _UploadMixin:
                         "content does not match declared MIME type"
                     ],
                 )
+
+            # Security validation: run the full validator on in-memory data;
+            # for streamed XML/SVG payloads sanitize the leading bytes.
+            if file_data is not None:
+                self._run_security_validation(file_data, filename, content_type)
+            elif content_type.lower() in (
+                "image/svg+xml",
+                "application/xml",
+                "text/xml",
+                "text/html",
+                "application/xhtml+xml",
+            ):
+                assert temp_path is not None
+                self._validate_svg_preview(temp_path)
 
             self._check_rate_limit(user_id, file_size)
 

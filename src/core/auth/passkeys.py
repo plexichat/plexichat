@@ -395,11 +395,6 @@ class PasskeyManager:
         challenge = challenge_row["challenge"]
         device_name = challenge_row.get("device_name")
 
-        self._db.execute(
-            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ?",
-            (challenge_row["id"],),
-        )
-
         try:
             verification = verify_registration_response(
                 credential=credential_response,
@@ -410,6 +405,16 @@ class PasskeyManager:
         except Exception as e:
             logger.error(f"Passkey registration verification failed: {e}")
             raise ValueError(f"Registration verification failed: {e}")
+
+        # Atomically consume the challenge only AFTER verification succeeds so
+        # transient failures do not burn the challenge; the conditional update
+        # also makes single-use semantics race-free.
+        cursor = self._db.execute(
+            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ? AND used = 0",
+            (challenge_row["id"],),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Challenge already used")
 
         credential_id = self._base64url_encode(verification.credential_id)
         credential_public_key = verification.credential_public_key
@@ -574,11 +579,6 @@ class PasskeyManager:
 
         challenge = challenge_row["challenge"]
 
-        self._db.execute(
-            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ?",
-            (challenge_row["id"],),
-        )
-
         credential_id_b64 = credential_response.get("id", "")
 
         cred_row = self._db.fetch_one(
@@ -603,6 +603,14 @@ class PasskeyManager:
         except Exception as e:
             logger.error(f"Passkey authentication verification failed: {e}")
             raise ValueError(f"Authentication verification failed: {e}")
+
+        # Consume the challenge atomically only after successful verification.
+        cursor = self._db.execute(
+            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ? AND used = 0",
+            (challenge_row["id"],),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Challenge already used")
 
         new_sign_count = verification.new_sign_count
         now = self._get_timestamp()
@@ -666,10 +674,12 @@ class PasskeyManager:
         if not WEBAUTHN_AVAILABLE:
             return False
 
-        self._db.execute(
-            "UPDATE auth_passkeys SET revoked = 1 WHERE id = ? AND user_id = ?",
+        cursor = self._db.execute(
+            "UPDATE auth_passkeys SET revoked = 1 WHERE id = ? AND user_id = ? AND revoked = 0",
             (passkey_id, user_id),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            return False
 
         remaining = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM auth_passkeys WHERE user_id = ? AND revoked = 0",
@@ -690,12 +700,12 @@ class PasskeyManager:
         if not WEBAUTHN_AVAILABLE:
             return False
 
-        self._db.execute(
-            "UPDATE auth_passkeys SET device_name = ? WHERE id = ? AND user_id = ?",
+        cursor = self._db.execute(
+            "UPDATE auth_passkeys SET device_name = ? WHERE id = ? AND user_id = ? AND revoked = 0",
             (new_name, passkey_id, user_id),
         )
 
-        return True
+        return getattr(cursor, "rowcount", 0) > 0
 
     def cleanup_expired_challenges(self) -> int:
         """Clean up expired challenges."""

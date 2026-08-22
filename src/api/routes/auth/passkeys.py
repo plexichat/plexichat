@@ -274,6 +274,16 @@ async def passkey_authenticate(
             user_agent=user_agent,
         )
 
+        if result.status.value == "two_factor_required":
+            return LoginResponse(
+                status="two_factor_required",
+                token=None,
+                user=None,
+                challenge_token=result.challenge_token,
+                methods=result.methods,
+                expires_in=result.expires_in,
+            )
+
         return LoginResponse(
             status="success",
             token=result.token,
@@ -384,6 +394,8 @@ async def revoke_passkey(
             )
 
         return SuccessResponse(success=True, message=None)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Revoke passkey failed: {e}", exc_info=True)
         raise HTTPException(
@@ -429,6 +441,8 @@ async def rename_passkey(
             )
 
         return SuccessResponse(success=True, message=None)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Rename passkey failed: {e}", exc_info=True)
         raise HTTPException(

@@ -14,6 +14,22 @@ from .protocol import AuthManagerProtocol
 
 
 class PasswordMixin(AuthManagerProtocol):
+    def verify_user_password(self, user_id: int, password: str) -> bool:
+        """Verify a user's password without creating a session.
+
+        Unlike ``login()``, this performs no device/IP tracking, audit login
+        events, or session issuance, so callers that only need to re-confirm
+        the password do not leave orphaned sessions behind.
+        """
+        row = self._db.fetch_one(
+            "SELECT password_hash FROM auth_users WHERE id = ?", (user_id,)
+        )
+        if not row or not row["password_hash"]:
+            # Equalize timing with the found-user path.
+            self.crypto.verify_password(password, self._dummy_password_hash)
+            return False
+        return bool(self.crypto.verify_password(password, row["password_hash"]))
+
     def change_password(self, user_id: int, old: str, new: str) -> bool:
         user = self._db.fetch_one(
             "SELECT password_hash FROM auth_users WHERE id = ?", (user_id,)
@@ -54,6 +70,14 @@ class PasswordMixin(AuthManagerProtocol):
             # Equalize timing with the found-user path to prevent account enumeration.
             self.crypto.verify_password("x", self._dummy_password_hash)
             return True
+        # Per-email throttle: cap reset emails so a single address cannot be
+        # mail-bombed by repeatedly hitting the endpoint.
+        recent = self._db.fetch_one(
+            "SELECT COUNT(*) as cnt FROM auth_email_tokens WHERE user_id = ? AND token_type = 'reset_password' AND created_at > ?",
+            (user["id"], self._get_timestamp() - 3600 * 1000),
+        )
+        if recent and recent["cnt"] >= 3:
+            return True
         tid = self._generate_id()
         token, token_hash = create_email_token(tid)
         self._db.execute(
@@ -93,9 +117,14 @@ class PasswordMixin(AuthManagerProtocol):
             "UPDATE auth_users SET password_hash = ? WHERE id = ?",
             (self.crypto.hash_password(new_password), rec["user_id"]),
         )
-        self._db.execute(
-            "UPDATE auth_email_tokens SET used = 1 WHERE id = ?", (rec["id"],)
+        # Atomic single-use consumption prevents concurrent requests from
+        # both resetting the password with the same token.
+        cursor = self._db.execute(
+            "UPDATE auth_email_tokens SET used = 1 WHERE id = ? AND used = 0",
+            (rec["id"],),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise TokenInvalidError("Invalid token")
         # Revoke all existing sessions so a compromised/reset credential cannot persist.
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (rec["user_id"],)

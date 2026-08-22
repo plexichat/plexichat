@@ -108,11 +108,14 @@ class TestChunkedSessions:
         # M7 fix: resending the same chunk index repeatedly must NOT mark the
         # session complete (that would leave the rest of the file as
         # pre-allocated zero bytes).
+        # NOTE: chunked sessions are now validated against the same per-type
+        # size limits as direct uploads (video: 100MB default), so use a type
+        # whose limit accommodates a multi-chunk payload.
         chunk_size = chunked._config["chunk_size"]
         session = chunked.create_session(
             user_id=test_user.id,
             filename="dup.bin",
-            content_type="application/octet-stream",
+            content_type="video/mp4",
             total_size=3 * chunk_size,
         )
         last = None
@@ -129,7 +132,7 @@ class TestChunkedSessions:
         session = chunked.create_session(
             user_id=test_user.id,
             filename="all.bin",
-            content_type="application/octet-stream",
+            content_type="video/mp4",
             total_size=n * chunk_size,
         )
         last = None

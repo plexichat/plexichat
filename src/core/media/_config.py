@@ -18,6 +18,15 @@ DEFAULT_ALLOWED_TYPES = {
     "video": ["video/mp4", "video/webm", "video/quicktime"],
     "audio": ["audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"],
     "document": ["application/pdf", "text/plain", "application/zip"],
+    # SECURITY: the "other" category is an explicit allow-list (fail closed).
+    # It contains only inert, non-browser-renderable types: the neutral
+    # binary fallback used by clients for unknown MIME types and first-party
+    # container formats stored via the media pipeline. Renderable types such
+    # as text/html must NEVER be added here.
+    "other": [
+        "application/octet-stream",
+        "application/x-plexisum",
+    ],
 }
 
 DEFAULT_THUMBNAIL_SIZES = [64, 128, 256, 512]

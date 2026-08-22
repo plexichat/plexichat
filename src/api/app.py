@@ -72,6 +72,10 @@ class _LRUCache:
         with self._lock:
             return key in self._cache
 
+    def pop(self, key, default=None):
+        with self._lock:
+            return self._cache.pop(key, default)
+
 
 _media_metadata_cache = _LRUCache(maxsize=1024)
 
@@ -677,11 +681,20 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     detail={"error": {"code": 404, "message": "File not found"}},
                 )
 
-            # Security: block access until malware scan completes or confirms clean
+            # Security: block access until malware scan completes or confirms clean.
+            # The deleted flag is re-checked here on every request so a cached
+            # metadata row can never keep serving a file after deletion (the
+            # metadata LRU is not invalidated by the delete path).
             scan_row = db.fetch_one(
-                "SELECT scan_status FROM media_files WHERE id = ?",
+                "SELECT scan_status, deleted FROM media_files WHERE id = ?",
                 (row["id"],),
             )
+            if not scan_row or scan_row.get("deleted"):
+                _media_metadata_cache.pop(filename, None)
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "File not found"}},
+                )
             scan_status = scan_row["scan_status"] if scan_row else ""
             if scan_status in ("pending", "infected"):
                 raise HTTPException(
@@ -781,10 +794,22 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 elif "*" in allowed_origins:
                     cors_headers["Access-Control-Allow-Origin"] = "*"
 
+                # Only serve browser-renderable media types inline; everything
+                # else (documents, unknown/other, text/*) is forced to
+                # attachment so a mis-declared HTML/SVG payload cannot render
+                # under our origin.
+                ct_lower = (ct or "").lower()
+                inline_safe = ct_lower.startswith(
+                    ("image/", "video/", "audio/")
+                ) and not ct_lower.startswith("image/svg")
+                disposition = (
+                    f'attachment; filename="{safe_name}"'
+                    if (download or not inline_safe)
+                    else "inline"
+                )
+
                 headers = {
-                    "Content-Disposition": f'attachment; filename="{safe_name}"'
-                    if download
-                    else "inline",
+                    "Content-Disposition": disposition,
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
                     "Accept-Ranges": "bytes",

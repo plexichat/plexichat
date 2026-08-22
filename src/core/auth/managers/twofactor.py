@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Optional, List
 
 from ..exceptions import (
@@ -29,6 +30,26 @@ from .protocol import AuthManagerProtocol
 
 
 class TwoFactorMixin(AuthManagerProtocol):
+    # In-memory sliding-window attempt tracker for sensitive 2FA operations
+    # (confirm/disable) that are not covered by the challenge-based counter.
+    _2fa_verify_attempts: dict = {}
+
+    def _check_and_record_2fa_attempt(
+        self, user_id: int, max_attempts: int = 5, window_seconds: int = 300
+    ) -> None:
+        """Rate-limit TOTP code guessing for non-challenge 2FA endpoints.
+
+        Raises TwoFactorInvalidError once ``max_attempts`` codes have been
+        tried within ``window_seconds`` for the same user.
+        """
+        now = time.monotonic()
+        attempts = TwoFactorMixin._2fa_verify_attempts.get(user_id, [])
+        attempts = [t for t in attempts if now - t < window_seconds]
+        if len(attempts) >= max_attempts:
+            raise TwoFactorInvalidError("Too many attempts; try again later")
+        attempts.append(now)
+        TwoFactorMixin._2fa_verify_attempts[user_id] = attempts
+
     def _create_2fa_challenge(
         self,
         user_id: int,
@@ -130,10 +151,14 @@ class TwoFactorMixin(AuthManagerProtocol):
                 (json.dumps(backup_hashes), user_id),
             )
 
-        self._db.execute(
-            "UPDATE auth_2fa_challenges SET used = 1, attempts = 0 WHERE id = ?",
+        # Atomic single-use consumption: the conditional update prevents two
+        # concurrent requests from both completing with the same code.
+        cursor = self._db.execute(
+            "UPDATE auth_2fa_challenges SET used = 1, attempts = 0 WHERE id = ? AND used = 0",
             (row["id"],),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise TokenInvalidError("Expired/Used")
 
         ip_address = None
         try:
@@ -213,6 +238,7 @@ class TwoFactorMixin(AuthManagerProtocol):
         if not user.get("totp_secret_encrypted"):
             raise AuthError("2FA not initiated")
         secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
+        self._check_and_record_2fa_attempt(user_id)
         try:
             ok = totp_module.verify_totp_code(secret, code, user_id=f"setup:{user_id}")
         except TypeError:
@@ -245,6 +271,7 @@ class TwoFactorMixin(AuthManagerProtocol):
         if not self.crypto.verify_password(password, user["password_hash"]):
             raise InvalidCredentialsError("Invalid password")
         secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
+        self._check_and_record_2fa_attempt(user_id)
         try:
             ok = totp_module.verify_totp_code(
                 secret, code, user_id=f"disable:{user_id}"

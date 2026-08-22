@@ -192,6 +192,27 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.ROUTE,
     ),
+    "POST /auth/2fa/confirm": RateLimitConfig(
+        requests=5,
+        window_seconds=60.0,
+        burst=0,
+        algorithm=RateLimitAlgorithm.FIXED_WINDOW,
+        scope=BucketType.ROUTE,
+    ),
+    "POST /auth/2fa/disable": RateLimitConfig(
+        requests=5,
+        window_seconds=60.0,
+        burst=0,
+        algorithm=RateLimitAlgorithm.FIXED_WINDOW,
+        scope=BucketType.ROUTE,
+    ),
+    "POST /auth/password-reset/request": RateLimitConfig(
+        requests=3,
+        window_seconds=3600.0,
+        burst=0,
+        algorithm=RateLimitAlgorithm.FIXED_WINDOW,
+        scope=BucketType.ROUTE,
+    ),
     "POST /channels/{id}/messages": RateLimitConfig(
         requests=app_config.get("rate_limiting.routes.send_message.requests", 10),
         window_seconds=app_config.get("rate_limiting.routes.send_message.window", 5.0),

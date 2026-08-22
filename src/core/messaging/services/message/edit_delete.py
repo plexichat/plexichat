@@ -71,13 +71,49 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                 and msg_row.get("conversation_id")
             ):
                 try:
+                    conversation_id_int = int(msg_row["conversation_id"])
+                    previous_interval = None
+                    try:
+                        previous_interval = self._ratchet_manager.get_active_interval(
+                            conversation_id_int
+                        )
+                    except Exception:
+                        previous_interval = None
+
                     ratchet_result = self._ratchet_manager.encrypt(
-                        conversation_id=msg_row["conversation_id"],
+                        conversation_id=conversation_id_int,
                         message_id=message_id,
                         plaintext=final_content.encode("utf-8"),
                         now=now,
                     )
                     final_content = ratchet_result.envelope
+
+                    # Editing an out-of-interval message silently opens a new
+                    # interval (closing the previously active one). Clients
+                    # caching the active key MUST be told, exactly like the
+                    # send/delete paths, or their next decryption fails.
+                    if previous_interval is not None and int(
+                        ratchet_result.interval_id
+                    ) != int(previous_interval.interval_id):
+                        try:
+                            from src.utils.encryption.channel_ratchet import (
+                                notify_ratchet_update,
+                            )
+
+                            notify_ratchet_update(
+                                conversation_id=conversation_id_int,
+                                update_data={
+                                    "reason": "rotation",
+                                    "new_interval_id": int(ratchet_result.interval_id),
+                                    "at_message_id": int(message_id),
+                                    "edited_message_id": int(message_id),
+                                    "at": int(now),
+                                },
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                f"Ratchet rotation broadcast scheduling failed: {e}"
+                            )
                 except Exception:
                     final_content = encrypt_message(final_content, message_id)
             else:

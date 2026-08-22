@@ -22,7 +22,6 @@ from src.core.auth.exceptions import (
     TokenExpiredError,
     TokenInvalidError,
     TwoFactorInvalidError,
-    TwoFactorRequiredError,
     TwoFactorSetupError,
     UserNotFoundError,
 )
@@ -182,17 +181,18 @@ async def enable_2fa(
             )
 
         try:
-            auth.login(user.username, password)
-        except InvalidCredentialsError:
-            logger.warning(
-                f"2FA enable failed for user {current_user.user_id}: Invalid password"
-            )
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Invalid password"}},
-            )
-        except TwoFactorRequiredError:
-            pass
+            # Re-confirm the password without minting a throwaway session;
+            # auth.login() would create an orphaned session row here.
+            if not auth.verify_user_password(current_user.user_id, password):
+                logger.warning(
+                    f"2FA enable failed for user {current_user.user_id}: Invalid password"
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={"error": {"code": 401, "message": "Invalid password"}},
+                )
+        except HTTPException:
+            raise
         except (AccountLockedError, AccountDisabledError) as e:
             raise HTTPException(
                 status_code=403,

@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 from typing import Optional, List, Dict
 
 import utils.logger as logger
@@ -106,6 +107,14 @@ class SessionMixin(AuthManagerProtocol):
 
         user_id = row["id"]
 
+        # Verify the password BEFORE any account-state checks so that locked or
+        # frozen accounts are indistinguishable (in timing and response shape)
+        # from valid accounts with wrong passwords, preventing enumeration.
+        if not self.crypto.verify_password(password, row["password_hash"]):
+            self._log_audit(AuditEventType.LOGIN_FAILED, user_id, False, ip_address)
+            self._handle_failed_login(user_id, ip_address)
+            raise InvalidCredentialsError("Invalid credentials")
+
         deletion_status = row.get("deletion_status", "active")
         if deletion_status == "frozen":
             deletion_at = row.get("deletion_at")
@@ -131,11 +140,6 @@ class SessionMixin(AuthManagerProtocol):
                 "UPDATE auth_users SET account_locked = 0, failed_login_attempts = 0 WHERE id = ?",
                 (user_id,),
             )
-
-        if not self.crypto.verify_password(password, row["password_hash"]):
-            self._log_audit(AuditEventType.LOGIN_FAILED, user_id, False, ip_address)
-            self._handle_failed_login(user_id, ip_address)
-            raise InvalidCredentialsError("Invalid credentials")
 
         accounts_config = self._config.get("accounts", {})
         if accounts_config.get("require_email_verification", False) and not bool(
@@ -270,6 +274,8 @@ class SessionMixin(AuthManagerProtocol):
                     "UPDATE auth_sessions SET revoked = 1 WHERE id = ?",
                     (sessions[i].id,),
                 )
+            # Evicted sessions must not remain verifiable via the verify cache.
+            invalidate_pattern("token_verify:*")
 
         self._db.execute(
             "INSERT INTO auth_sessions (id, user_id, token_hash, device_id, ip_index, ip_encrypted, ua_index, ua_encrypted, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -302,6 +308,11 @@ class SessionMixin(AuthManagerProtocol):
     @cached(
         ttl=10,
         prefix="token_verify",
+        # Never embed the raw bearer token in the cache key: hash it so that
+        # anyone with cache visibility cannot recover live session tokens.
+        key_builder=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
+            f"token_verify:str:{hashlib.sha256(token.encode()).hexdigest()}"
+        ),
         skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
             bool(
                 self._config.get("security", {}).get("token_binding", False)
@@ -460,7 +471,13 @@ class SessionMixin(AuthManagerProtocol):
         row = self._db.fetch_one(
             "SELECT * FROM auth_sessions WHERE id = ?", (parsed["id"],)
         )
-        if not row or row["revoked"]:
+        # The session secret must be verified, not just the (enumerable) ID,
+        # otherwise anyone who learns a session ID can extend it forever.
+        if (
+            not row
+            or row["revoked"]
+            or not verify_token_hash(parsed["secret"], row["token_hash"])
+        ):
             return None
         if row["expires_at"] < self._get_timestamp():
             return None
@@ -481,10 +498,12 @@ class SessionMixin(AuthManagerProtocol):
                 "SELECT user_id FROM auth_sessions WHERE id = ?", (parsed["id"],)
             )
             if row:
-                invalidate_pattern("token_verify:*")
                 self._db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
                 )
+                # Invalidate after the write so a concurrent verify_token cannot
+                # re-cache the still-valid row in between.
+                invalidate_pattern("token_verify:*")
                 self._log_audit(AuditEventType.LOGOUT, row["user_id"], True)
                 return True
         return False
@@ -571,11 +590,13 @@ class SessionMixin(AuthManagerProtocol):
         return sessions
 
     def revoke_session(self, user_id: int, session_id: int) -> bool:
-        invalidate_pattern("token_verify:*")
         cursor = self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE id = ? AND user_id = ?",
             (session_id, user_id),
         )
+        # Invalidate after the write so a concurrent verify_token cannot
+        # re-cache the still-valid row in between.
+        invalidate_pattern("token_verify:*")
         if cursor.rowcount > 0:
             self._log_audit(AuditEventType.SESSION_REVOKED, user_id, True)
             try:
