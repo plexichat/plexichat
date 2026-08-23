@@ -107,6 +107,10 @@ class StashGrantResponse(BaseModel):
     subject_id: SnowflakeID
     permissions: List[str]
     expires_at: Optional[int]
+    # Grantee identity resolved server-side so clients never render raw ids.
+    # Best-effort: omitted (null) when the profile cannot be resolved.
+    username: Optional[str] = None
+    avatar_url: Optional[str] = None
 
 
 class StashDownloadTicketResponse(BaseModel):
@@ -161,6 +165,10 @@ class StashCollectionGrantResponse(BaseModel):
     subject_id: SnowflakeID
     permissions: List[str]
     expires_at: Optional[int] = None
+    # Grantee identity resolved server-side so clients never render raw ids.
+    # Best-effort: omitted (null) when the profile cannot be resolved.
+    username: Optional[str] = None
+    avatar_url: Optional[str] = None
 
 
 class StashCollectionGrantListResponse(BaseModel):

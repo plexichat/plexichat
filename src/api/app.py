@@ -214,6 +214,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     sum_upload_prefix = f"{config.api_prefix}/suite/sum/"
     sum_upload_max_bytes = max(max_body_size, 96 * 1024 * 1024)
 
+    # PlexiStash JSON uploads are the same pattern: base64 file bytes inside
+    # a JSON body, bounded by the route's own MAX_UPLOAD_ENCODED_LEN (70MB)
+    # plus request envelope, so they get an explicit larger cap too. Without
+    # this, a large upload dies at the generic 10MB middleware boundary with
+    # a generic "Request body too large" before the route can explain itself.
+    stash_upload_prefix = f"{config.api_prefix}/suite/stash/"
+    stash_upload_max_bytes = max(max_body_size, 96 * 1024 * 1024)
+
     class MaxBodySizeMiddleware(BaseHTTPMiddleware):
         """Reject requests whose body exceeds the configured maximum.
 
@@ -241,15 +249,20 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         """
 
         async def dispatch(self, request: Request, call_next):
-            effective_cap = (
-                sum_upload_max_bytes
-                if request.url.path.startswith(sum_upload_prefix)
-                else max_body_size
-            )
+            path = request.url.path
+            if path.startswith(sum_upload_prefix):
+                effective_cap = sum_upload_max_bytes
+            elif path.startswith(stash_upload_prefix):
+                effective_cap = stash_upload_max_bytes
+            else:
+                effective_cap = max_body_size
             content_length = request.headers.get("content-length")
             if content_length and int(content_length) > effective_cap:
                 return Response(
-                    content='{"error":{"code":413,"message":"Request body too large"}}',
+                    content=(
+                        '{"error":{"code":413,"message":"Request body too large",'
+                        f'"max_bytes":{effective_cap}}}'
+                    ),
                     status_code=413,
                     media_type="application/json",
                 )
@@ -283,7 +296,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 return await call_next(request)
             except _BodyTooLarge:
                 return Response(
-                    content='{"error":{"code":413,"message":"Request body too large"}}',
+                    content=(
+                        '{"error":{"code":413,"message":"Request body too large",'
+                        f'"max_bytes":{effective_cap}}}'
+                    ),
                     status_code=413,
                     media_type="application/json",
                 )

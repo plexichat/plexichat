@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from .base import SearchManagerBase
 from ..exceptions import SearchLimitError
@@ -6,6 +6,92 @@ from ..models import IndexedUser, UserSearchResult, UserSearchResultPage
 
 
 class UserSearchMixin(SearchManagerBase):
+    def _supplemental_user_results(
+        self,
+        query: str,
+        exclude_ids: Set[int],
+        limit: int,
+    ) -> List[UserSearchResult]:
+        """Directory fallback for matches the FTS user index missed.
+
+        The FTS index only contains users that were explicitly indexed and can
+        lag registrations or username changes. This fallback:
+          - matches *partial* usernames case-insensitively against auth_users
+          - resolves exact email addresses through the blind index (emails are
+            encrypted at rest, so only exact-match lookup is possible)
+        """
+        results: List[UserSearchResult] = []
+        q = (query or "").strip()
+        if not q or limit <= 0:
+            return results
+
+        seen = set(exclude_ids)
+
+        if "@" in q:
+            email_index = None
+            try:
+                from src.utils.encryption import blind_index
+
+                email_index = blind_index(q, "user_email")
+            except Exception as e:
+                import utils.logger as logger
+
+                logger.debug(f"User search email index failed: {e}")
+            if email_index:
+                row = self._db.fetch_one(
+                    "SELECT id, username FROM auth_users "
+                    "WHERE email_index = ? AND deletion_status = 'active'",
+                    (email_index,),
+                )
+                if row:
+                    uid = int(row["id"])
+                    if uid not in seen:
+                        seen.add(uid)
+                        results.append(
+                            UserSearchResult(
+                                id=uid,
+                                user_id=uid,
+                                username=row["username"] or "",
+                            )
+                        )
+
+        remaining = limit - len(results)
+        if remaining <= 0:
+            return results
+
+        escaped = (
+            q.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        rows = self._db.fetch_all(
+            "SELECT id, username FROM auth_users "
+            "WHERE deletion_status = 'active' AND LOWER(username) LIKE ? ESCAPE '\\' "
+            "ORDER BY username LIMIT ?",
+            (f"%{escaped}%", remaining),
+        )
+        for row in rows or []:
+            uid = int(row["id"])
+            if uid in seen:
+                continue
+            seen.add(uid)
+            results.append(
+                UserSearchResult(id=uid, user_id=uid, username=row["username"] or "")
+            )
+        return results[:limit]
+
+    def _merge_supplemental_users(
+        self,
+        query: str,
+        results: List[UserSearchResult],
+        limit: int,
+    ) -> List[UserSearchResult]:
+        """Append directory matches for users the indexer missed."""
+        if len(results) >= limit:
+            return results
+        supplemental = self._supplemental_user_results(
+            query, {r.user_id for r in results}, limit - len(results)
+        )
+        return list(results) + supplemental
+
     def search_users(
         self,
         user_id: int,
@@ -30,6 +116,7 @@ class UserSearchMixin(SearchManagerBase):
             server_members = self._get_server_member_ids(server_id)
             results = [r for r in results if r.user_id in server_members]
 
+        results = self._merge_supplemental_users(query, results, limit)
         results = self._enrich_user_results(results, user_id)
 
         results = self._ranking_engine.rank_user_results(results, query, user_id)
@@ -60,6 +147,7 @@ class UserSearchMixin(SearchManagerBase):
             server_members = self._get_server_member_ids(server_id)
             results = [r for r in results if r.user_id in server_members]
 
+        results = self._merge_supplemental_users(query, results, limit)
         results = self._enrich_user_results(results, user_id)
         results = self._ranking_engine.rank_user_results(results, query, user_id)
 

@@ -10,6 +10,7 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.search import (
     MessageSearchPageResponse,
     UserSearchPageResponse,
+    UserSearchResultResponse,
     ServerSearchPageResponse,
 )
 from src.api.schemas.common import ErrorResponse
@@ -107,8 +108,37 @@ async def search_users(
             cursor=cursor,
         )
 
+        # Bulk-resolve profiles once per request so each result carries a
+        # fresh username and avatar URL (no N+1 lookups).
+        profiles: dict = {}
+        auth = api.get_auth()
+        if auth is not None and page.results:
+            try:
+                profiles = (
+                    auth.get_user_profiles_bulk([r.user_id for r in page.results]) or {}
+                )
+            except Exception as profile_error:
+                logger.debug(f"User search profile resolution failed: {profile_error}")
+
+        items = []
+        for r in page.results:
+            profile = profiles.get(str(r.user_id), {})
+            items.append(
+                UserSearchResultResponse(
+                    id=r.user_id,
+                    user_id=r.user_id,
+                    # Prefer the live directory username over a stale index entry.
+                    username=profile.get("username") or r.username or "",
+                    display_name=r.display_name,
+                    avatar_url=r.avatar_url or profile.get("avatar_url"),
+                    score=r.score,
+                )
+            )
         return UserSearchPageResponse(
-            results=page.results, next_cursor=page.next_cursor
+            items=items,
+            total=len(items),
+            results=items,
+            next_cursor=page.next_cursor,
         )
     except SearchError as e:
         raise HTTPException(status_code=400, detail=str(e))
