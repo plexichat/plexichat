@@ -5,7 +5,7 @@ Thread-safe implementation for single-instance deployments.
 
 import threading
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from .base import RateLimitStorage
 
 
@@ -130,7 +130,13 @@ class MemoryStorage(RateLimitStorage):
                         self._buckets.pop(key, None)
                         self._ttls.pop(key, None)
                 return None
-            return self._buckets.get(key)
+            # SECURITY: return a COPY of the bucket state, never the live
+            # internal dict. Callers (e.g. RateLimitManager legacy
+            # read-modify-write paths) treat the result as a private
+            # snapshot; handing out the live reference let them mutate
+            # shared state entirely outside the per-key lock.
+            bucket = self._buckets.get(key)
+            return dict(bucket) if bucket is not None else None
 
     def set_bucket(
         self, key: str, state: Dict[str, Any], ttl: Optional[float] = None
@@ -253,7 +259,7 @@ class MemoryStorage(RateLimitStorage):
             return original_len - len(lst)
 
     def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
-        """Acquire a lock for atomic operations."""
+        """Acquire a lock for external atomic operations."""
         lock = self._get_lock(f"lock:{key}")
         if lock.acquire(timeout=timeout):
             return "locked"
@@ -266,6 +272,40 @@ class MemoryStorage(RateLimitStorage):
             lock.release()
         except RuntimeError:
             pass
+
+    def update_bucket(
+        self,
+        key: str,
+        mutate_fn: Callable[[Dict[str, Any]], None],
+        ttl: Optional[float] = None,
+    ) -> None:
+        """Read-modify-write a bucket atomically under the per-key lock.
+
+        SECURITY: legacy rate-limit algorithms perform
+        get_bucket()->mutate->set_bucket(). Doing that with separate
+        public calls lets two concurrent requests both read the same
+        snapshot and the later write clobber the earlier one (effective
+        limit bypass). This method holds the SAME per-key lock used by
+        ``eval_token_bucket`` / ``increment`` across the whole
+        read-modify-write and installs a fresh (copy-on-write) state
+        dict atomically, so concurrent mutations of one bucket are
+        serialised and no field is lost.
+        """
+        lock = self._get_lock(key)
+        with lock:
+            now = time.monotonic()
+            with self._global_lock:
+                existing = self._buckets.get(key)
+            state: Dict[str, Any] = dict(existing) if existing is not None else {}
+
+            mutate_fn(state)
+
+            with self._global_lock:
+                self._buckets[key] = state
+                if ttl is not None:
+                    self._ttls[key] = now + ttl
+                elif key in self._ttls:
+                    del self._ttls[key]
 
     def eval_token_bucket(
         self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400

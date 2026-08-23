@@ -213,16 +213,24 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         async def redoc_html(request: Request) -> HTMLResponse:
             return render_redoc_page(request, config.title, openapi_url)
 
-    app.add_middleware(AuthenticationMiddleware)
-    app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(DatabaseMiddleware)
-
+    # SECURITY: rate limiting must run AFTER authentication so per-user
+    # buckets / admin bypass / bot multipliers work. In Starlette the LAST
+    # add_middleware call is OUTERMOST and executes FIRST, therefore the
+    # limiter is registered BEFORE AuthenticationMiddleware here.
     if enable_rate_limiting:
         from src.core import ratelimit
 
         if ratelimit.is_setup():
             RateLimitMiddleware = create_rate_limit_middleware()
             app.add_middleware(RateLimitMiddleware)
+
+    app.add_middleware(AuthenticationMiddleware)
+
+    # SECURITY: SecurityHeaders + Database are registered further down,
+    # AFTER MaxBodySizeMiddleware, so the locally-generated 413 responses
+    # pass back OUT through the security headers middleware (last added
+    # = outermost). Registering them here left every 413 without those
+    # headers.
 
     # CORS handles OPTIONS preflight - MUST be outermost
     # (In ASGI, last added is outermost)
@@ -327,6 +335,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 )
 
     app.add_middleware(MaxBodySizeMiddleware)
+
+    # Registered AFTER MaxBodySize (=> outer than it) so 413 responses
+    # still gain security headers; Database stays outside SecurityHeaders.
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(DatabaseMiddleware)
 
     try:
         from src.static_client import install_static_client_middleware

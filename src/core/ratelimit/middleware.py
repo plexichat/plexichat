@@ -18,6 +18,18 @@ COMMON_ROUTES = {
     "/api/v1/auth/login": "POST /auth/login",
     "/api/v1/auth/register": "POST /auth/register",
     "/api/v1/auth/2fa": "POST /auth/2fa",
+    # SECURITY: strict brute-force protections for token/code confirmation
+    # endpoints. Without these mappings the requests fall through to the
+    # generic per-IP default instead of their intended strict caps.
+    "/api/v1/auth/2fa/enable": "POST /auth/2fa/enable",
+    "/api/v1/auth/2fa/confirm": "POST /auth/2fa/confirm",
+    "/api/v1/auth/2fa/disable": "POST /auth/2fa/disable",
+    "/api/v1/auth/password-reset/request": "POST /auth/password-reset/request",
+    "/api/v1/auth/password-reset/confirm": "POST /auth/password-reset/confirm",
+    "/api/v1/auth/refresh": "POST /auth/refresh",
+    "/api/v1/auth/ws-ticket": "POST /auth/ws-ticket",
+    "/api/v1/auth/verify-email": "{method} /auth/verify-email",
+    "/api/v1/auth/resend-verification": "POST /auth/resend-verification",
     "/api/v1/auth/logout": "POST /auth/logout",
     "/api/v1/users/@me": "{method} /users/@me",
     "/api/v1/relationships/@me": "GET /relationships/@me",
@@ -112,6 +124,15 @@ ROUTE_PATTERNS = [
     ),
     (re.compile(r"^/api/v\d+/suite/sum/workbooks$"), "{method} /suite/sum/workbooks"),
     (re.compile(r"^/api/v\d+/telemetry/response-times$"), "POST /telemetry"),
+    # OAuth provider routes (provider is a path segment, not an ID)
+    (
+        re.compile(r"^/api/v\d+/auth/oauth/([^/]+)/login$"),
+        "{method} /auth/oauth/login",
+    ),
+    (
+        re.compile(r"^/api/v\d+/auth/oauth/([^/]+)/callback$"),
+        "{method} /auth/oauth/callback",
+    ),
 ]
 
 
@@ -233,10 +254,17 @@ class RateLimitMiddlewareASGI:
 
             import hmac
 
+            # SECURITY: hmac.compare_digest raises TypeError on non-ASCII
+            # str inputs (Starlette decodes headers as latin-1, so a client
+            # can send arbitrary bytes). Compare UTF-8 encodings so a
+            # malformed header is simply treated as "no bypass" instead of
+            # raising a 500 inside the ASGI middleware.
             if (
                 bypass_secret
                 and bypass_header
-                and hmac.compare_digest(bypass_header, bypass_secret)
+                and hmac.compare_digest(
+                    bypass_header.encode("utf-8"), str(bypass_secret).encode("utf-8")
+                )
             ):
                 user_info["is_internal"] = True
             elif getattr(request.state, "is_internal", False):

@@ -24,8 +24,26 @@ from .config import (
     get_global_limit,
     get_user_limit,
     get_ip_limit,
+    should_bypass_admin,
+    should_bypass_internal,
 )
 from .storage import MemoryStorage, RateLimitStorage
+
+
+def _admin_bypass_enabled() -> bool:
+    """Config-gated admin bypass (defaults to enabled)."""
+    try:
+        return bool(should_bypass_admin())
+    except Exception:
+        return True
+
+
+def _internal_bypass_enabled() -> bool:
+    """Config-gated internal-request bypass (defaults to enabled)."""
+    try:
+        return bool(should_bypass_internal())
+    except Exception:
+        return True
 
 
 class RateLimitManager:
@@ -126,12 +144,23 @@ class RateLimitManager:
         is_admin: bool,
         is_internal: bool,
     ) -> bool:
-        """Check if request should bypass rate limiting."""
-        if is_internal:
+        """Check if request should bypass rate limiting.
+
+        SECURITY: bypass behaviour is config-gated. ``rate_limiting
+        .admin_bypass`` (via :func:`should_bypass_admin`) and
+        ``rate_limiting.internal_bypass`` (via
+        :func:`should_bypass_internal`) must both be honoured — a
+        hardcoded unconditional admin exemption meant setting the flag
+        to false had no runtime effect. A custom ``bypass_check``
+        still takes precedence over the default admin decision.
+        """
+        if is_internal and _internal_bypass_enabled():
             return True
         if self._bypass_check:
             return self._bypass_check(user_id, is_admin, is_internal)
-        return is_admin
+        if is_admin and _admin_bypass_enabled():
+            return True
+        return False
 
     def _check_atomic(
         self,
@@ -150,32 +179,50 @@ class RateLimitManager:
                 key, rl_config.effective_limit, refill_rate, cost
             )
 
-            # If primary allowed, check secondary limits (hourly/daily)
-            # Note: This is slightly non-atomic across primary/secondary,
-            # but secondary limits are usually high-level safeguards.
+            # If primary allowed, check secondary limits (hourly/daily).
+            # SECURITY: the read-modify-write of the hourly/daily counters
+            # runs atomically on the storage backend (per-key lock held
+            # across get->mutate->set) so concurrent requests on the same
+            # bucket cannot lose counter updates. When a secondary limit
+            # denies the request we ROLL BACK the already-consumed primary
+            # token: near-cap traffic must not burn primary quota without
+            # any successful request.
             if allowed and (rl_config.hourly_limit or rl_config.daily_limit):
-                state = self._storage.get_bucket(key) or {}
+                outcome: Dict[str, Any] = {}
 
-                if rl_config.hourly_limit:
-                    h_allowed, _, h_reset = self._check_hourly_limit(
-                        state, rl_config, cost, unix_now
-                    )
-                    if not h_allowed:
-                        allowed = False
-                        reset_after = h_reset
-                        # We don't rollback the token consumption here for simplicity,
-                        # as hourly/daily are hard caps.
+                def _apply_secondary(state: Dict[str, Any]) -> None:
+                    secondary_reset_after: Optional[float] = None
 
-                if allowed and rl_config.daily_limit:
-                    d_allowed, _, d_reset = self._check_daily_limit(
-                        state, rl_config, cost, unix_now
-                    )
-                    if not d_allowed:
-                        allowed = False
-                        reset_after = d_reset
+                    if rl_config.hourly_limit:
+                        h_allowed, _, h_reset = self._check_hourly_limit(
+                            state, rl_config, cost, unix_now
+                        )
+                        if not h_allowed:
+                            secondary_reset_after = h_reset
 
-                # Save updated hourly/daily counts
-                self._storage.set_bucket(key, state, ttl=86400)
+                    if secondary_reset_after is None and rl_config.daily_limit:
+                        d_allowed, _, d_reset = self._check_daily_limit(
+                            state, rl_config, cost, unix_now
+                        )
+                        if not d_allowed:
+                            secondary_reset_after = d_reset
+
+                    if secondary_reset_after is not None:
+                        # Roll back the consumed primary token (best
+                        # effort, capped at the bucket capacity).
+                        tokens = float(state.get("tokens", 0.0))
+                        state["tokens"] = min(
+                            float(rl_config.effective_limit), tokens + cost
+                        )
+
+                    outcome["denied"] = secondary_reset_after
+
+                self._storage.update_bucket(key, _apply_secondary, ttl=86400)
+
+                denied_reset = outcome.get("denied")
+                if denied_reset is not None:
+                    allowed = False
+                    reset_after = denied_reset
 
             return RateLimitResult(
                 allowed=allowed,
@@ -199,46 +246,59 @@ class RateLimitManager:
                 cost=cost,
             )
 
-        # Fallback to legacy non-atomic check for other algorithms
-        # (This is less efficient but preserves support)
-        state = self._storage.get_bucket(key) or {}
+        # Legacy check for non-token-bucket algorithms.
+        # SECURITY: the get_bucket()->mutate->set_bucket sequence is a
+        # read-modify-write that MUST be atomic. Previously two concurrent
+        # requests could both read the same state and the second write
+        # clobbered the first, effectively doubling (or worse) the
+        # configured limit under concurrency. ``update_bucket`` holds the
+        # per-key storage lock across the whole check+update.
+        outcome: Dict[str, Any] = {}
 
-        # Manually apply algorithm
-        if rl_config.algorithm == RateLimitAlgorithm.FIXED_WINDOW:
-            allowed, remaining, reset_after = self._legacy_fixed_window(
-                state, rl_config, cost, unix_now
-            )
-        elif rl_config.algorithm == RateLimitAlgorithm.LEAKY_BUCKET:
-            allowed, remaining, reset_after = self._legacy_leaky_bucket(
-                state, rl_config, cost, unix_now
-            )
-        else:
-            # Default to sliding window logic if not specified
-            allowed, remaining, reset_after = self._legacy_sliding_window(
-                state, rl_config, cost, unix_now
-            )
-
-        # Check secondary limits for legacy path too
-        if allowed and (rl_config.hourly_limit or rl_config.daily_limit):
-            if rl_config.hourly_limit:
-                h_allowed, _, h_reset = self._check_hourly_limit(
+        def _legacy_check(state: Dict[str, Any]) -> None:
+            # Manually apply algorithm
+            if rl_config.algorithm == RateLimitAlgorithm.FIXED_WINDOW:
+                l_allowed, l_remaining, l_reset = self._legacy_fixed_window(
                     state, rl_config, cost, unix_now
                 )
-                if not h_allowed:
-                    allowed = False
-                    reset_after = h_reset
-            if allowed and rl_config.daily_limit:
-                d_allowed, _, d_reset = self._check_daily_limit(
+            elif rl_config.algorithm == RateLimitAlgorithm.LEAKY_BUCKET:
+                l_allowed, l_remaining, l_reset = self._legacy_leaky_bucket(
                     state, rl_config, cost, unix_now
                 )
-                if not d_allowed:
-                    allowed = False
-                    reset_after = d_reset
+            else:
+                # Default to sliding window logic if not specified
+                l_allowed, l_remaining, l_reset = self._legacy_sliding_window(
+                    state, rl_config, cost, unix_now
+                )
 
-        # Update storage
-        self._storage.set_bucket(
-            key, state, ttl=max(rl_config.window_seconds * 2, 86400)
+            # Check secondary limits for legacy path too
+            if l_allowed and (rl_config.hourly_limit or rl_config.daily_limit):
+                if rl_config.hourly_limit:
+                    h_allowed, _, h_reset = self._check_hourly_limit(
+                        state, rl_config, cost, unix_now
+                    )
+                    if not h_allowed:
+                        l_allowed = False
+                        l_reset = h_reset
+                if l_allowed and rl_config.daily_limit:
+                    d_allowed, _, d_reset = self._check_daily_limit(
+                        state, rl_config, cost, unix_now
+                    )
+                    if not d_allowed:
+                        l_allowed = False
+                        l_reset = d_reset
+
+            outcome.update(
+                allowed=l_allowed, remaining=l_remaining, reset_after=l_reset
+            )
+
+        self._storage.update_bucket(
+            key, _legacy_check, ttl=max(rl_config.window_seconds * 2, 86400)
         )
+
+        allowed = outcome["allowed"]
+        remaining = outcome["remaining"]
+        reset_after = outcome["reset_after"]
 
         return RateLimitResult(
             allowed=allowed,
@@ -616,11 +676,18 @@ class RateLimitManager:
         self._storage.delete_bucket(bucket_key)
 
     def reset_user(self, user_id: int) -> None:
-        """Reset all buckets for a user."""
-        prefix = f"u:{user_id}"
+        """Reset all buckets for a user.
+
+        SECURITY: matching must be an EXACT segment match on the
+        ``u:{id}`` key component. The previous ``prefix in key``
+        substring check deleted buckets of unrelated users (user 1
+        also matched users 10..19, 100..199, and any resource-scoped
+        key merely containing ``u:1``).
+        """
+        pattern = re.compile(rf"(?:^|:)u:{re.escape(str(user_id))}(?=$|:)")
         keys = self._storage.get_keys_by_prefix("")
         for key in keys:
-            if prefix in key:
+            if pattern.search(key):
                 self._storage.delete_bucket(key)
 
     def reset_all(self) -> None:

@@ -330,10 +330,16 @@ class _FakeLockingDb:
     """Minimal Database stand-in that raises 'database is locked' N times.
 
     Only the surface used by ``DatabaseStorage.eval_token_bucket`` is
-    implemented, so the retry path can be exercised in isolation.
+    implemented, so the retry path can be exercised in isolation. The
+    token-bucket evaluation relies on conditional UPDATE ... WHERE
+    tokens >= cost with ``cursor.rowcount`` check, so ``execute``
+    returns a minimal cursor.
     """
 
     type = "sqlite"
+
+    class _Cursor:
+        rowcount = 1
 
     def __init__(self, lock_failures: int):
         self.lock_failures = lock_failures
@@ -353,6 +359,7 @@ class _FakeLockingDb:
         if self.lock_failures > 0:
             self.lock_failures -= 1
             raise RuntimeError("database is locked")
+        return self._Cursor()
 
     def commit(self):
         pass

@@ -207,7 +207,18 @@ class DatabaseStorage(RateLimitStorage):
     def _eval_token_bucket_once(
         self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int
     ) -> tuple:
-        """Perform a single token-bucket evaluation in one transaction."""
+        """Perform a single token-bucket evaluation.
+
+        SECURITY: the previous SELECT-then-UPDATE inside one transaction
+        lost updates under PostgreSQL READ COMMITTED with multiple
+        workers — two transactions read the same ``tokens`` value, both
+        deducted, and the last writer won (limit bypass scaling with
+        worker count). We now use a conditional compare-and-set loop:
+        the deduction only lands via
+        ``UPDATE ... WHERE key = ? AND tokens >= ?`` so two workers can
+        never both spend the same token; on rowcount 0 we re-read and
+        retry.
+        """
         now = time.time()
         expires_at = now + ttl
 
@@ -218,45 +229,118 @@ class DatabaseStorage(RateLimitStorage):
             (key, float(capacity), float(now), float(expires_at)),
         )
 
-        self._db.begin_transaction()
-        try:
+        # Persist the computed refill MONOTONICALLY before the CAS loop.
+        # SECURITY: the CAS predicate (``WHERE tokens >= cost``) compares
+        # the RAW STORED balance, while ``allowed`` is decided on REFILLED
+        # tokens. Without this pre-persist, a drained bucket whose stored
+        # balance sat below ``cost`` but whose refilled balance was above
+        # it evaluated as allowed yet could never land its deduction —
+        # rowcount 0 on every retry -> RuntimeError -> fail-closed denial
+        # until the row TTL lapsed (~24h of spurious 429s).
+        initial_row = self._db.fetch_one(
+            "SELECT tokens, last_update FROM ratelimit_buckets WHERE key = ?",
+            (key,),
+        )
+        if initial_row:
+            refilled = min(
+                float(capacity),
+                float(initial_row["tokens"])
+                + max(0.0, now - float(initial_row["last_update"])) * refill_rate,
+            )
+            if refilled > float(initial_row["tokens"]):
+                self._db.execute(
+                    """
+                    UPDATE ratelimit_buckets
+                    SET tokens = ?, last_update = ?, expires_at = ?
+                    WHERE key = ? AND tokens < ?
+                """,
+                    (
+                        refilled,
+                        now,
+                        expires_at,
+                        key,
+                        refilled,
+                    ),
+                )
+
+        max_cas_attempts = 5
+        for attempt in range(max_cas_attempts):
             row = self._db.fetch_one(
                 "SELECT tokens, last_update FROM ratelimit_buckets WHERE key = ?",
                 (key,),
             )
             if not row:
-                self._db.rollback()
+                # Row vanished between insert and select (cleanup race):
+                # treat as a fresh full bucket without spending tokens.
                 return True, capacity, 0.0
 
-            tokens = float(row["tokens"])
-            last_update = float(row["last_update"])
+            stored_tokens = float(row["tokens"])
+            tokens = min(
+                float(capacity),
+                stored_tokens + max(0.0, now - float(row["last_update"])) * refill_rate,
+            )
 
-            elapsed = max(0.0, now - last_update)
-            tokens = min(float(capacity), tokens + (elapsed * refill_rate))
+            if tokens > stored_tokens:
+                # Refill accumulated since our last read: persist it
+                # monotonically BEFORE the CAS so the conditional
+                # deduction below compares against refill-aware state
+                # (see the pre-loop comment). The guard keeps this from
+                # clobbering a concurrent worker's higher balance or
+                # resetting its last_update.
+                self._db.execute(
+                    """
+                    UPDATE ratelimit_buckets
+                    SET tokens = ?, last_update = ?, expires_at = ?
+                    WHERE key = ? AND tokens < ?
+                """,
+                    (tokens, now, expires_at, key, tokens),
+                )
+                row = self._db.fetch_one(
+                    "SELECT tokens FROM ratelimit_buckets WHERE key = ?",
+                    (key,),
+                )
+                if not row:
+                    return True, capacity, 0.0
+                stored_tokens = min(float(capacity), float(row["tokens"]))
+                tokens = stored_tokens
 
-            allowed = False
-            if tokens >= cost:
-                tokens -= cost
-                allowed = True
+            allowed = stored_tokens >= cost
+            if allowed:
+                tokens = stored_tokens - cost
 
+            if allowed:
+                cursor = self._db.execute(
+                    """
+                    UPDATE ratelimit_buckets
+                    SET tokens = ?, last_update = ?, expires_at = ?
+                    WHERE key = ? AND tokens >= ?
+                """,
+                    (tokens, now, expires_at, key, float(cost)),
+                )
+                if cursor.rowcount > 0:
+                    remaining = int(tokens)
+                    reset_after = 0.0
+                    return allowed, remaining, max(0.0, reset_after)
+                # Another worker spent the token first: re-read and retry.
+                continue
+
+            # Denied: persist refilled state unconditionally (no CAS
+            # needed — writing a higher/refilled value is monotonic and
+            # cannot double-spend).
             self._db.execute(
                 """
-                UPDATE ratelimit_buckets 
-                SET tokens = ?, last_update = ?, expires_at = ? 
+                UPDATE ratelimit_buckets
+                SET tokens = ?, last_update = ?, expires_at = ?
                 WHERE key = ?
             """,
                 (tokens, now, expires_at, key),
             )
-
-            self._db.commit()
-
             remaining = int(tokens)
-            reset_after = (cost - tokens) / refill_rate if not allowed else 0.0
+            reset_after = (cost - tokens) / refill_rate
             return allowed, remaining, max(0.0, reset_after)
 
-        except Exception:
-            self._rollback_safely()
-            raise
+        # CAS contention did not settle after retries: fail closed.
+        raise RuntimeError(f"token bucket CAS did not converge for key {key!r}")
 
     def _rollback_safely(self) -> None:
         """Roll back any open transaction without masking the original error."""

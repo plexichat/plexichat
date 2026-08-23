@@ -194,6 +194,10 @@ class AuthenticationMiddleware:
                     if access_required:
                         access_token = request.headers.get("X-API-Access-Token")
                         if not access_token:
+                            limited = await self._ip_fallback_rate_limit(request)
+                            if limited is not None:
+                                await limited(scope, receive, send)
+                                return
                             response = JSONResponse(
                                 status_code=401,
                                 content={
@@ -233,6 +237,10 @@ class AuthenticationMiddleware:
                             _verify_access_with_cleanup, access_token
                         )
                         if not is_valid:
+                            limited = await self._ip_fallback_rate_limit(request)
+                            if limited is not None:
+                                await limited(scope, receive, send)
+                                return
                             response = JSONResponse(
                                 status_code=401,
                                 content={
@@ -438,6 +446,37 @@ class AuthenticationMiddleware:
         match = re.fullmatch(r"(Bearer|Bot) ([A-Za-z0-9._-]+)", auth_header)
         if match:
             return match.group(2)
+        return None
+
+    async def _ip_fallback_rate_limit(self, request: Request):
+        """IP-keyed rate-limit accounting for requests this middleware rejects.
+
+        SECURITY: the rate limiter runs INSIDE this middleware, so a request
+        short-circuited here (missing/invalid ``X-API-Access-Token``) never
+        reaches the limiter and bad-token floods consumed zero bucket budget.
+        Charge an IP-keyed bucket before rejecting; returns a 429 response
+        when that IP is over budget, otherwise None.
+        """
+        try:
+            from src.core import ratelimit
+            from src.utils.net import get_client_ip
+
+            if not ratelimit.is_setup():
+                return None
+            result = ratelimit.check_rate_limit(
+                user_id=None,
+                ip_address=get_client_ip(request) or "unknown",
+                route=f"{request.method} {request.url.path}",
+            )
+            if not result.allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content=result.response_body,
+                    headers=ratelimit.get_headers(result),
+                )
+        except Exception as e:
+            # Never let limiter failures turn an auth decision into a 500.
+            logger.debug(f"Auth-path fallback rate limit check failed: {e}")
         return None
 
 

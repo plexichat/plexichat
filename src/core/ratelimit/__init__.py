@@ -38,6 +38,7 @@ from .config import (
 from .manager import RateLimitManager
 from .decorators import rate_limit, custom_rate_limit
 from .middleware import RateLimitMiddlewareASGI
+from .storage import MemoryStorage
 
 # Alias for backward compatibility with tests
 RateLimitMiddleware = RateLimitMiddlewareASGI
@@ -85,7 +86,7 @@ def setup(
     webhook_multiplier: float = 1.0,
     bypass_check: Optional[Callable[..., bool]] = None,
     enable_global_limit: bool = True,
-) -> None:
+) -> bool:
     """
     Initialize the rate limiting module.
 
@@ -99,8 +100,39 @@ def setup(
         webhook_multiplier: Multiplier for webhook rate limits.
         bypass_check: Callable(user_id, is_admin, is_internal) -> bool for bypass logic.
         enable_global_limit: Whether to enforce global rate limits.
+
+    Returns:
+        True if the module was set up (or already configured), False if the
+        call was REFUSED because it would have downgraded the limiter.
+
+    SECURITY: a lazy fallback such as ``setup(MemoryStorage(), ...)`` must
+    never silently replace an already-configured distributed backend
+    (Valkey / Database). That downgrade turns the shared limiter into
+    per-process memory with counters that diverge across workers — exactly
+    the multi-worker bypass condition server initialization warns about.
+    Requests that would downgrade are refused and logged instead.
     """
     global _manager, _setup_complete
+
+    if _setup_complete and _manager is not None:
+        requested_is_memory = storage_backend is None or isinstance(
+            storage_backend, MemoryStorage
+        )
+        existing_is_memory = isinstance(_manager._storage, MemoryStorage)
+        if requested_is_memory and not existing_is_memory:
+            try:
+                from utils import logger as _logger
+
+                _logger.warning(
+                    "ratelimit.setup() refused: refusing to DOWNGRADE the "
+                    "already-configured %s backend to per-process "
+                    "MemoryStorage. The existing distributed rate limiter "
+                    "stays active.",
+                    type(_manager._storage).__name__,
+                )
+            except Exception:
+                pass  # Logging must never break the refusal itself.
+            return False
 
     _manager = RateLimitManager(
         storage_backend=storage_backend,
@@ -114,6 +146,7 @@ def setup(
         enable_global_limit=enable_global_limit,
     )
     _setup_complete = True
+    return True
 
 
 def _ensure_setup() -> None:

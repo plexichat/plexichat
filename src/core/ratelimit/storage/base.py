@@ -3,7 +3,7 @@ Abstract base class for rate limit storage backends.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any
+from typing import Callable, Optional, List, Dict, Any
 
 
 class RateLimitStorage(ABC):
@@ -187,6 +187,42 @@ class RateLimitStorage(ABC):
             Tuple of (allowed: bool, remaining: int, reset_after: float).
         """
         pass
+
+    def update_bucket(
+        self,
+        key: str,
+        mutate_fn: Callable[[Dict[str, Any]], None],
+        ttl: Optional[float] = None,
+    ) -> None:
+        """Read-modify-write a bucket atomically.
+
+        Default implementation holds the backend's distributed lock
+        (``acquire_lock``/``release_lock``) across the
+        get_bucket()->mutate->set_bucket() sequence so concurrent
+        requests cannot lose each other's updates. Backends with a
+        cheaper native mechanism (e.g. MemoryStorage's per-key lock)
+        override this method.
+
+        Args:
+            key: Bucket key.
+            mutate_fn: Callable that mutates the state dict in place.
+            ttl: Optional TTL to apply when writing back.
+        """
+        token: Optional[str] = None
+        try:
+            token = self.acquire_lock(key, timeout=5.0)
+        except Exception:
+            token = None
+        try:
+            state = self.get_bucket(key) or {}
+            mutate_fn(state)
+            self.set_bucket(key, state, ttl=ttl)
+        finally:
+            if token:
+                try:
+                    self.release_lock(key, token)
+                except Exception:
+                    pass
 
     def close(self) -> None:
         """Close storage connection (optional override)."""
