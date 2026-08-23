@@ -130,13 +130,23 @@ class ArtifactHandler:
         # Never register a subscription for an unknown artifact. Otherwise a
         # later artifact with the same id could inherit an unauthorized stale
         # subscription.
+        #
+        # A missing or forbidden artifact must NOT close the gateway: closing
+        # with NOT_AUTHENTICATED (4003) makes clients believe their session
+        # died and re-authenticate in a loop (fresh ticket → identify →
+        # resubscribe → closed again). Auth already succeeded above; deny the
+        # subscription only and keep the connection alive.
         if artifact is None:
-            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            logger.warning(
+                f"User {connection.user_id} subscribed to unknown artifact {artifact_id}; ignoring"
+            )
+            return None, None, None
         if not self._has_artifact_access(connection, artifact):
             logger.debug(
-                f"User {connection.user_id} denied access to artifact {artifact_id}"
+                f"User {connection.user_id} denied access to artifact {artifact_id}; "
+                "ignoring subscribe"
             )
-            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            return None, None, None
 
         self._registry.subscribe(
             connection.user_id, artifact_id, connection.connection_id
@@ -246,13 +256,20 @@ class ArtifactHandler:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         # The artifact must exist and the caller must have edit access. Do not
-        # relay operations against placeholder ids.
+        # relay operations against placeholder ids. A missing or forbidden
+        # artifact must not close the gateway with NOT_AUTHENTICATED — that
+        # would trap clients in an auth reconnect loop for a resource-level
+        # denial. Drop the op instead; the connection stays alive.
         db = api.get_db()
         artifact = get_artifact(db, artifact_id) if db else None
         if artifact is None or not self._has_artifact_access(
             connection, artifact, "artifact.edit"
         ):
-            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            logger.debug(
+                f"User {connection.user_id} op on artifact {artifact_id} denied or "
+                "artifact unknown; dropping op"
+            )
+            return None, None, None
 
         # Persist the op to the ordered ops log so it survives the relay and
         # can be replayed to late joiners. Persistence is best-effort: a

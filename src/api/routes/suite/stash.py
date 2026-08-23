@@ -103,6 +103,11 @@ def _error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=403, detail=str(exc))
     if isinstance(exc, StashValidationError):
         return HTTPException(status_code=400, detail=str(exc))
+    # Unknown failures must never vanish silently: log the full traceback so
+    # a bare 500 is always diagnosable from latest.log.
+    import utils.logger as logger
+
+    logger.error(f"PlexiStash operation failed: {exc}", exc_info=True)
     return HTTPException(status_code=500, detail="PlexiStash operation failed")
 
 

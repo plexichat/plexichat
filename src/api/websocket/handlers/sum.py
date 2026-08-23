@@ -92,9 +92,18 @@ class SumHandler:
             logger.debug(
                 f"User {connection.user_id} denied sum subscribe to workbook {workbook_id}"
             )
-            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            # Resource-level denial: do NOT close the gateway with
+            # NOT_AUTHENTICATED. The connection itself is authenticated;
+            # killing it here traps clients in a ticket/identify/reconnect
+            # loop when they merely reference a missing or forbidden workbook.
+            return None, None, None
         except Exception:
-            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            logger.error(
+                f"Sum subscribe failed for user {connection.user_id}, "
+                f"workbook {workbook_id}",
+                exc_info=True,
+            )
+            return None, None, None
 
         self._registry.subscribe(
             connection.user_id, workbook_id, connection.connection_id
@@ -254,9 +263,19 @@ class SumHandler:
                 }
                 return int(GatewayOpcode.SUM_SYNC), sync_payload, None
             except Exception:
-                return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+                logger.error(
+                    f"Sum conflict sync failed for workbook {workbook_id}",
+                    exc_info=True,
+                )
+                return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
         except (SumPermissionError, SumNotFoundError):
-            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            # Resource-level denial on op apply: drop the op without closing
+            # the gateway (NOT_AUTHENTICATED here causes an auth reconnect
+            # loop for what is only a permission problem).
+            logger.debug(
+                f"User {connection.user_id} denied sum op on workbook {workbook_id}; dropping"
+            )
+            return None, None, None
         except SumValidationError:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
         except Exception as e:

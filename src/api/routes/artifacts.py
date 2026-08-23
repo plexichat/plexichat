@@ -357,10 +357,63 @@ def _my_permissions(user_id: int, artifact: Any) -> Dict[str, Any]:
     }
 
 
-def _artifact_response(user_id: int, artifact: Any) -> ArtifactResponse:
-    """Build an artifact response with server-computed permissions attached."""
+def _author_profile_cache(artifacts: Any) -> Dict[str, Dict[str, Any]]:
+    """Bulk-resolve author profiles for a batch of artifacts.
+
+    Returns ``{str(author_id): {"username": ..., "avatar_url": ...}}`` so list
+    endpoints avoid an N+1 user lookup. Best-effort: on any failure an empty
+    cache is returned and responses simply omit the author fields (the client
+    falls back to its own id-based rendering).
+    """
+    author_ids = sorted(
+        {
+            int(a_id)
+            for a_id in (getattr(a, "author_id", None) for a in artifacts)
+            if a_id is not None
+        }
+    )
+    if not author_ids:
+        return {}
+    auth = api.get_auth()
+    if auth is None:
+        return {}
+    try:
+        profiles = auth.get_user_profiles_bulk(author_ids)
+    except Exception as e:
+        logger.debug(f"Failed to bulk-resolve artifact authors: {e}")
+        return {}
+    return {
+        str(uid): {
+            "username": profile.get("username"),
+            "avatar_url": profile.get("avatar_url"),
+        }
+        for uid, profile in (profiles or {}).items()
+    }
+
+
+def _artifact_response(
+    user_id: int,
+    artifact: Any,
+    author_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> ArtifactResponse:
+    """Build an artifact response with server-computed permissions attached.
+
+    When ``author_cache`` is not supplied the author profile is resolved for
+    this single artifact; batch callers should pass a cache from
+    ``_author_profile_cache`` to avoid N+1 lookups.
+    """
     response = ArtifactResponse.model_validate(artifact)
     response.my_permissions = _my_permissions(user_id, artifact)
+
+    raw_author_id = getattr(artifact, "author_id", None)
+    if raw_author_id is not None:
+        if author_cache is None:
+            author_cache = _author_profile_cache([artifact])
+        profile = author_cache.get(str(raw_author_id)) or {}
+        if profile.get("username"):
+            response.author_username = profile["username"]
+        if profile.get("avatar_url"):
+            response.author_avatar_url = profile["avatar_url"]
     return response
 
 
@@ -821,7 +874,10 @@ async def list_artifacts(
         )
         total = manager.count(filters)
 
-        items = [_artifact_response(current_user.user_id, a) for a in artifacts]
+        author_cache = _author_profile_cache(artifacts)
+        items = [
+            _artifact_response(current_user.user_id, a, author_cache) for a in artifacts
+        ]
         if not include_payload:
             for item in items:
                 item.payload = {}

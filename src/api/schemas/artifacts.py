@@ -24,6 +24,12 @@ class ArtifactResponse(BaseModel):
     channel_id: Optional[SnowflakeID] = Field(None, description="Owning channel ID")
     server_id: Optional[SnowflakeID] = Field(None, description="Owning server ID")
     author_id: SnowflakeID = Field(..., description="User who created the artifact")
+    author_username: Optional[str] = Field(
+        None, description="Username of the artifact author (server-resolved)"
+    )
+    author_avatar_url: Optional[str] = Field(
+        None, description="Avatar URL of the artifact author (server-resolved)"
+    )
     artifact_type: str = Field(..., description="Artifact type")
     title: str = Field(..., description="Display title")
     summary: Optional[str] = Field(None, description="Short summary")
