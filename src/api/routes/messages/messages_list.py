@@ -75,8 +75,20 @@ async def get_channel_messages(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
-        before_id = int(before) if before else None
-        after_id = int(after) if after else None
+        try:
+            before_id = int(before) if before else None
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid before ID"}},
+            )
+        try:
+            after_id = int(after) if after else None
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid after ID"}},
+            )
 
         messages = None
 
@@ -351,6 +363,7 @@ async def get_pinned_messages(
             )
 
         messages = []
+        resolved_server_channel = False
 
         if servers_mod:
 
@@ -368,23 +381,29 @@ async def get_pinned_messages(
             conversation_id = (
                 getattr(channel, "conversation_id", None) if channel else None
             )
-            if conversation_id and messaging:
+            if channel:
+                # This is a server channel: pins come exclusively from its
+                # linked conversation. An EMPTY pin list must stay empty —
+                # never re-query with the server channel id as a conversation
+                # id (that pseudo-conversation lookup raises and 500s).
+                resolved_server_channel = True
+                if conversation_id and messaging:
 
-                def _get_pins_sync():
-                    import src.api as api_module
+                    def _get_pins_sync():
+                        import src.api as api_module
 
-                    db = api_module.get_db()
-                    try:
-                        return messaging.get_pinned_messages(
-                            current_user.user_id, conversation_id
-                        )
-                    finally:
-                        if db:
-                            db.close()
+                        db = api_module.get_db()
+                        try:
+                            return messaging.get_pinned_messages(
+                                current_user.user_id, conversation_id
+                            )
+                        finally:
+                            if db:
+                                db.close()
 
-                messages = await run_in_threadpool(_get_pins_sync) or []
+                    messages = await run_in_threadpool(_get_pins_sync) or []
 
-        if not messages and messaging:
+        if not messages and not resolved_server_channel and messaging:
 
             def _get_pins_sync():
                 import src.api as api_module

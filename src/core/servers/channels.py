@@ -1,6 +1,6 @@
 """Channel operations - create, get, update, delete, and move channels."""
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.core.base import SnowflakeID
 
@@ -56,6 +56,21 @@ def create_category(
 def get_channel(channel_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Channel]:
     """Get a channel by ID if user has access."""
     return _get_manager().get_channel(channel_id, user_id)
+
+
+def get_channel_conversation_id(channel_id: SnowflakeID) -> Optional[SnowflakeID]:
+    """Membership-agnostic lookup of the conversation linked to a channel."""
+    return _get_manager().get_channel_conversation_id(channel_id)
+
+
+def get_channel_by_conversation(
+    conversation_id: SnowflakeID,
+) -> Optional[Dict[str, Any]]:
+    """Membership-agnostic reverse lookup: server channel for a conversation.
+
+    Returns ``{"id": <channel_id>, "server_id": <server_id>}`` or ``None``.
+    """
+    return _get_manager().get_channel_by_conversation(conversation_id)
 
 
 def channel_exists(channel_id: SnowflakeID) -> bool:

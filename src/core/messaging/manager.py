@@ -528,16 +528,21 @@ class MessagingManager(BaseManager):
     ) -> List[int]:
         """Bulk-delete messages from a channel.
 
-        Only messages the caller is permitted to delete (author or channel
-        moderator) are removed. Returns the list of message IDs that were
-        actually deleted so the caller can broadcast a precise event.
+        Only messages the caller is permitted to delete (author, conversation
+        OWNER/ADMIN, or server ``messages.manage`` moderator) AND that belong
+        to the requested channel (its linked conversation) are removed.
+        Returns the list of message IDs that were actually deleted so the
+        caller can broadcast a precise event.
 
-        Delegates to the message service's bulk-delete (which skips messages
-        the caller may not delete and missing messages) rather than looping
-        the single-delete path that raises on the first failure.
+        Delegates to the message service's bulk-delete (which scopes every
+        candidate to the requested channel and skips messages the caller may
+        not delete or missing messages) rather than looping the single-delete
+        path that raises on the first failure.
         """
         requested = [int(m) for m in message_ids]
-        result = self._message_svc.delete_messages_bulk(user_id, requested)
+        result = self._message_svc.delete_messages_bulk(
+            user_id, requested, conversation_id=int(channel_id)
+        )
         return result.get("deleted_ids", [])
 
     def get_message(

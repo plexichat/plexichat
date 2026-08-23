@@ -400,8 +400,9 @@ def delete_messages_bulk(
     """
     Bulk-delete messages from a channel.
 
-    Delegates to the manager, which only removes messages the caller is
-    permitted to delete. Returns the list of message IDs actually deleted.
+    Delegates to the manager, which scopes every candidate message to the
+    requested channel and only removes messages the caller is permitted to
+    delete. Returns the list of message IDs actually deleted.
     """
     return _get_manager().delete_messages_bulk(user_id, channel_id, message_ids)
 

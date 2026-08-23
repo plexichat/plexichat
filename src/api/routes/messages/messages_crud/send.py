@@ -84,7 +84,13 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     },
                 )
 
-            reply_to = int(body.reply_to_id) if body.reply_to_id else None
+            try:
+                reply_to = int(body.reply_to_id) if body.reply_to_id else None
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid reply_to ID"}},
+                )
 
             attachments = None
             if body.attachments:
@@ -242,16 +248,20 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     ):
                         raise HTTPException(
                             status_code=404,
-                            detail={"error": {"code": 404, "message": str(e)}},
+                            detail={
+                                "error": {"code": 404, "message": "Message not found"}
+                            },
                         )
                     if isinstance(e, (PermissionDeniedError, ChannelAccessDeniedError)):
                         raise HTTPException(
                             status_code=403,
-                            detail={"error": {"code": 403, "message": str(e)}},
+                            detail={"error": {"code": 403, "message": "Access denied"}},
                         )
                     raise HTTPException(
                         status_code=400,
-                        detail={"error": {"code": 400, "message": str(e)}},
+                        detail={
+                            "error": {"code": 400, "message": "Invalid poll request"}
+                        },
                     )
                 except Exception as e:
                     if messaging:
@@ -292,7 +302,13 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             )
 
             await self._broadcast_message_create(
-                response, server_id, cid, servers_mod, messaging, current_user
+                response,
+                server_id,
+                cid,
+                servers_mod,
+                messaging,
+                current_user,
+                conversation_id=int(getattr(msg, "conversation_id", cid) or cid),
             )
 
             # Phase 2 (asynchronous): AI moderation runs in the background
@@ -325,13 +341,11 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             raise
         except EmbedError as e:
             issues = getattr(e, "issues", [])
+            logger.warning(f"Embed validation failed: {issues or e}")
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": {
-                        "code": 400,
-                        "message": "; ".join(issues) if issues else str(e),
-                    }
+                    "error": {"code": 400, "message": "Invalid embeds"},
                 },
             )
         except Exception as e:

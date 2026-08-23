@@ -341,6 +341,43 @@ class ServerManager(
         except KeyError:
             return False
 
+    def get_channel_conversation_id(
+        self, channel_id: SnowflakeID
+    ) -> Optional[SnowflakeID]:
+        """Membership-agnostic lookup of the conversation linked to a channel.
+
+        Returns the ``conversation_id`` of the server channel, or ``None``
+        when the channel does not exist (or has no linked conversation).
+        No membership or permission filtering: callers use this to map a
+        URL channel id onto the underlying conversation id.
+        """
+        row = self._db.fetch_one(
+            "SELECT conversation_id FROM srv_channels WHERE id = ? AND deleted = 0",
+            (channel_id,),
+        )
+        if row is None:
+            return None
+        return row["conversation_id"]
+
+    def get_channel_by_conversation(
+        self, conversation_id: SnowflakeID
+    ) -> Optional[Dict[str, Any]]:
+        """Membership-agnostic reverse lookup: server channel for a conversation.
+
+        Returns ``{"id": <channel_id>, "server_id": <server_id>}`` for the
+        (first, undeleted) server channel linked to ``conversation_id``, or
+        ``None`` when the conversation is not backed by a server channel.
+        Used by messaging to resolve server-side moderation permissions.
+        """
+        row = self._db.fetch_one(
+            "SELECT id, server_id FROM srv_channels "
+            "WHERE conversation_id = ? AND deleted = 0 LIMIT 1",
+            (conversation_id,),
+        )
+        if row is None:
+            return None
+        return {"id": row["id"], "server_id": row["server_id"]}
+
     def get_channels(
         self,
         user_id: SnowflakeID,

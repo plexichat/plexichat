@@ -270,18 +270,48 @@ class MessageRepository(BaseRepository[Message]):
         updated_at: int,
         content_index: Optional[str] = None,
         auto_commit: bool = True,
-    ) -> None:
-        """Update message content (edit)."""
+        mark_edited: bool = True,
+    ) -> bool:
+        """Update message content (edit).
+
+        Returns ``True`` when the stored content actually changed.
+
+        Concurrency semantics remain last-write-wins (no version token is
+        enforced), but the write is no longer destructive for no-op edits:
+        when the new content equals the stored content the legacy
+        ``content_encrypted`` ciphertext is PRESERVED and the ``edited``
+        flag is not raised. Callers can additionally suppress the edited
+        flag entirely (system operations such as AutoMod tombstoning pass
+        ``mark_edited=False``) so system rewrites never masquerade as user
+        edits.
+        """
         cid = self._get_conv_id(msg_id)
+        existing = self._fetch_one(
+            "SELECT content FROM msg_messages WHERE id = ?",
+            (msg_id,),
+        )
+        content_changed = existing is None or existing["content"] != content
         self._execute(
-            """UPDATE msg_messages 
-               SET content = ?, content_encrypted = NULL, content_index = ?, updated_at = ?, edited = 1
+            """UPDATE msg_messages
+               SET content = ?,
+                   content_encrypted = CASE WHEN ? THEN NULL ELSE content_encrypted END,
+                   content_index = ?,
+                   updated_at = ?,
+                   edited = CASE WHEN ? THEN 1 ELSE edited END
                WHERE id = ?""",
-            (content, content_index, updated_at, msg_id),
+            (
+                content,
+                1 if (content_changed and mark_edited) else 0,
+                content_index,
+                updated_at,
+                1 if (content_changed and mark_edited) else 0,
+                msg_id,
+            ),
             auto_commit=auto_commit,
         )
         if cid:
             self.invalidate_conversation_cache(cid)
+        return content_changed
 
     def update_metadata(
         self,

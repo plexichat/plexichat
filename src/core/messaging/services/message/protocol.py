@@ -83,6 +83,7 @@ class MessageServiceProtocol(Protocol):
         user_id: SnowflakeID,
         message_ids: List[SnowflakeID],
         hard_delete: bool = False,
+        conversation_id: Optional[SnowflakeID] = None,
     ) -> Dict[str, Any]: ...
 
     def archive_messages_bulk(

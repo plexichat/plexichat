@@ -13,7 +13,12 @@ import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import SuccessResponse
 from src.api.schemas.messages import BulkDeleteRequest
-from src.core.messaging.exceptions import MessageNotFoundError
+from src.core.messaging.exceptions import (
+    MessageNotFoundError,
+    MessageAccessDeniedError,
+    InvalidContentError,
+    ContentTooLongError,
+)
 from src.core.servers.exceptions import (
     ServerNotFoundError,
     ChannelNotFoundError,
@@ -22,10 +27,11 @@ from src.core.servers.exceptions import (
 )
 
 
+from .base import MessagesCRUDBase
 from .broadcast import BroadcastMixin
 
 
-class DeleteMixin(BroadcastMixin):
+class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
     async def delete_message(
         self,
         channel_id: str,
@@ -35,7 +41,10 @@ class DeleteMixin(BroadcastMixin):
         """
         Delete a message.
 
-        Deletes the message. Author or moderators can delete.
+        Deletes the message. The author, a conversation OWNER/ADMIN, or a
+        server moderator (``messages.manage``) can delete. The URL channel
+        must be the message's actual channel: a mismatch returns the same
+        404 a nonexistent message produces.
         """
         messaging = api.get_messaging()
         if not messaging:
@@ -48,6 +57,7 @@ class DeleteMixin(BroadcastMixin):
 
         try:
             try:
+                url_cid = int(channel_id)
                 mid = int(message_id)
             except ValueError:
                 raise HTTPException(
@@ -61,8 +71,14 @@ class DeleteMixin(BroadcastMixin):
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Message not found"}},
                 )
+            self._ensure_message_in_channel(
+                msg,
+                self._resolve_channel_scope(
+                    url_cid, current_user.user_id, api.get_servers()
+                ),
+            )
 
-            cid = msg.conversation_id
+            cid = int(getattr(msg, "conversation_id"))
 
             messaging.delete_message(current_user.user_id, mid)
 
@@ -86,7 +102,12 @@ class DeleteMixin(BroadcastMixin):
             servers_mod = api.get_servers()
 
             await self._broadcast_message_delete(
-                mid, channel_id, cid, servers_mod, messaging, current_user
+                mid,
+                url_cid,
+                cid,
+                servers_mod,
+                messaging,
+                current_user,
             )
 
             return SuccessResponse(success=True, message=None)
@@ -100,10 +121,23 @@ class DeleteMixin(BroadcastMixin):
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Message not found"}},
                 )
-            elif isinstance(e, (ChannelAccessDeniedError, PermissionDeniedError)):
+            elif isinstance(e, MessageAccessDeniedError):
+                logger.warning(f"Delete denied for message {message_id}")
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": str(e)}},
+                    detail={"error": {"code": 403, "message": "Access denied"}},
+                )
+            elif isinstance(e, (InvalidContentError, ContentTooLongError)):
+                logger.warning(f"Delete rejected for message {message_id}")
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid request"}},
+                )
+            elif isinstance(e, (ChannelAccessDeniedError, PermissionDeniedError)):
+                logger.warning(f"Delete denied for message {message_id}")
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Access denied"}},
                 )
             logger.error(
                 f"Error deleting message {message_id} in channel {channel_id}: {e}",
@@ -123,8 +157,11 @@ class DeleteMixin(BroadcastMixin):
         """
         Bulk-delete messages from a channel.
 
-        Emits MESSAGE_DELETE_BULK so connected clients remove the messages
-        from the view without a refresh.
+        Only messages that belong to the addressed channel AND that the
+        caller may delete (author, conversation OWNER/ADMIN, or server
+        ``messages.manage`` moderator) are removed. Emits MESSAGE_DELETE_BULK
+        so connected clients remove the messages from the view without a
+        refresh.
         """
         messaging = api.get_messaging()
         if not messaging:
@@ -144,7 +181,24 @@ class DeleteMixin(BroadcastMixin):
                     detail={"error": {"code": 400, "message": "Invalid channel ID"}},
                 )
 
-            message_ids = [int(m) for m in (body.message_ids or [])]
+            raw_ids = list(body.message_ids or [])
+            if len(raw_ids) > 100:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Cannot bulk-delete more than 100 messages",
+                        }
+                    },
+                )
+            try:
+                message_ids = [int(m) for m in raw_ids]
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid message ID"}},
+                )
             if not message_ids:
                 return SuccessResponse(success=True, message=None)
 
@@ -170,14 +224,50 @@ class DeleteMixin(BroadcastMixin):
                     actor_id=current_user.user_id,
                 )
 
+            if not deleted:
+                return SuccessResponse(
+                    success=False,
+                    message="No eligible messages were deleted",
+                )
+            if len(deleted) < len(message_ids):
+                return SuccessResponse(
+                    success=False,
+                    message=(
+                        f"Deleted {len(deleted)} of {len(message_ids)} messages; "
+                        "the rest were not eligible"
+                    ),
+                )
             return SuccessResponse(success=True, message=None)
         except HTTPException:
             raise
         except Exception as e:
-            if isinstance(e, (ChannelAccessDeniedError, PermissionDeniedError)):
+            if isinstance(e, MessageNotFoundError):
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "Message not found"}},
+                )
+            if isinstance(e, MessageAccessDeniedError):
+                logger.warning("Bulk delete denied")
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": str(e)}},
+                    detail={"error": {"code": 403, "message": "Access denied"}},
+                )
+            if isinstance(e, (InvalidContentError, ContentTooLongError)):
+                logger.warning("Bulk delete rejected: batch limit exceeded")
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Cannot bulk-delete more than 100 messages",
+                        }
+                    },
+                )
+            if isinstance(e, (ChannelAccessDeniedError, PermissionDeniedError)):
+                logger.warning("Bulk delete denied")
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Access denied"}},
                 )
             logger.error(
                 f"Error bulk-deleting messages in channel {channel_id}: {e}",

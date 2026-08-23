@@ -22,6 +22,95 @@ from ..base import BaseService
 from .protocol import MessageServiceProtocol
 from .search_helpers import search_index_message, search_remove_from_index
 
+BULK_DELETE_MAX_IDS = 100
+
+
+def _get_servers_module():
+    """Return the servers module without importing the whole API app.
+
+    Mirrors the lazy-resolution strategy in services/message_status.py:
+    prefer the already-configured ``src.api`` provider, fall back to the
+    light ``src.core.servers`` import.
+    """
+    import sys
+
+    api_mod = sys.modules.get("src.api")
+    if api_mod is not None:
+        get_servers = getattr(api_mod, "get_servers", None)
+        if get_servers is not None:
+            try:
+                servers = get_servers()
+                if servers:
+                    return servers
+            except Exception:
+                pass
+    try:
+        from src.core import servers
+
+        return servers
+    except ImportError:
+        return None
+
+
+def _resolve_channel_conversation_scope(channel_id) -> set:
+    """Resolve a URL channel id to the set of conversation ids it may map to.
+
+    A channel id in this codebase is either a conversation id itself
+    (DM/group conversations) or a server channel id whose messages live in
+    the linked ``conversation_id``. Returns both candidates so callers can
+    scope operations to the requested channel.
+    """
+    scope = {int(channel_id)}
+    servers = _get_servers_module()
+    if servers is None:
+        return scope
+    getter = getattr(servers, "get_channel_conversation_id", None)
+    if getter is None:
+        return scope
+    try:
+        linked = getter(int(channel_id))
+        if linked:
+            scope.add(int(linked))
+    except Exception as e:
+        logger.debug(f"Failed to resolve conversation for channel {channel_id}: {e}")
+    return scope
+
+
+def _is_server_message_moderator(user_id, conversation_id) -> bool:
+    """True when user holds server ``messages.manage`` on the channel that
+    backs ``conversation_id`` (server-channel moderator path).
+    """
+    servers = _get_servers_module()
+    if servers is None:
+        return False
+    lookup = getattr(servers, "get_channel_by_conversation", None)
+    if lookup is None:
+        return False
+    try:
+        info = lookup(int(conversation_id))
+    except Exception as e:
+        logger.debug(
+            f"Failed to resolve server channel for conversation {conversation_id}: {e}"
+        )
+        return False
+    if not info:
+        return False
+    has_permission = getattr(servers, "has_permission", None)
+    if has_permission is None:
+        return False
+    try:
+        return bool(
+            has_permission(
+                int(user_id),
+                int(info["server_id"]),
+                "messages.manage",
+                int(info["id"]),
+            )
+        )
+    except Exception as e:
+        logger.debug(f"Server moderator permission check failed: {e}")
+        return False
+
 
 class EditDeleteMixin(BaseService, MessageServiceProtocol):
     """Mixin providing edit and delete operations."""
@@ -59,6 +148,20 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         now = self._get_timestamp()
         final_content = content_result.sanitized_content
         content_idx = blind_index(final_content, "message_content")
+
+        # No-op detection MUST happen on plaintext: AES-GCM uses a random
+        # nonce per encryption, so resubmitting identical text yields a
+        # different ciphertext and would falsely register as an edit (raising
+        # ``edited`` and rotating the cipher). The deterministic blind index
+        # of the sanitized plaintext is compared instead — it is stored for
+        # every message by both the send path (send.py) and this edit path,
+        # so identical content is detected regardless of encryption mode.
+        existing_index = msg_row.get("content_index") if msg_row else None
+        if existing_index is not None and str(existing_index) == content_idx:
+            msg = self.get_message(user_id, message_id)
+            if msg is None:
+                raise MessageNotFoundError("Failed to retrieve message")
+            return msg
 
         if self._get_config("encrypt_messages", True):
             from src.utils.encryption.channel_ratchet import (
@@ -232,11 +335,14 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
             }
         )
 
+        # mark_edited=False: a system removal is NOT a user edit and must
+        # never surface an "edited" indicator to clients.
         self._repo.update_content(
             message_id,
             "",
             now,
             content_index="",
+            mark_edited=False,
         )
         self._repo.update_metadata(message_id, existing_metadata, now)
 
@@ -271,7 +377,12 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
     def delete_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
     ) -> bool:
-        """Delete a message."""
+        """Delete a message.
+
+        Authorization: the message author, a conversation OWNER/ADMIN, or —
+        when the conversation is backed by a server channel — a user holding
+        the server ``messages.manage`` permission on that channel.
+        """
         msg_row = self._repo.get_by_id(message_id)
         if not msg_row:
             raise MessageNotFoundError("Message not found")
@@ -286,6 +397,10 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                 ParticipantRole.ADMIN,
             ]:
                 can_delete = True
+        if not can_delete and _is_server_message_moderator(
+            user_id, msg_row["conversation_id"]
+        ):
+            can_delete = True
 
         if not can_delete:
             raise MessageAccessDeniedError("Cannot delete this message")
@@ -354,8 +469,32 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         user_id: SnowflakeID,
         message_ids: List[SnowflakeID],
         hard_delete: bool = False,
+        conversation_id: Optional[SnowflakeID] = None,
     ) -> Dict[str, Any]:
-        """Delete multiple messages in bulk."""
+        """Delete multiple messages in bulk.
+
+        When ``conversation_id`` (the requested channel) is provided every
+        candidate message is scoped to that channel: only messages whose
+        ``conversation_id`` matches the requested conversation — or the
+        conversation linked to the requested server channel — are eligible.
+        Messages belonging to any other conversation are reported as failed
+        even if the caller could otherwise delete them.
+
+        Authorization per message: author match, conversation OWNER/ADMIN,
+        or server ``messages.manage`` on the backing server channel.
+
+        Request size is capped at ``BULK_DELETE_MAX_IDS`` (100), matching
+        the BulkDeleteRequest schema limit.
+        """
+        if len(message_ids) > BULK_DELETE_MAX_IDS:
+            raise InvalidContentError(
+                f"Cannot bulk-delete more than {BULK_DELETE_MAX_IDS} messages"
+            )
+
+        scope: Optional[set] = None
+        if conversation_id is not None:
+            scope = _resolve_channel_conversation_scope(int(conversation_id))
+
         success_count = 0
         deleted_ids: List[SnowflakeID] = []
         failed_ids: List[SnowflakeID] = []
@@ -365,6 +504,10 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
             try:
                 msg_row = self._repo.get_by_id(message_id)
                 if not msg_row:
+                    failed_ids.append(message_id)
+                    continue
+
+                if scope is not None and int(msg_row["conversation_id"]) not in scope:
                     failed_ids.append(message_id)
                     continue
 
@@ -378,23 +521,41 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                         ParticipantRole.ADMIN,
                     ]:
                         can_delete = True
+                if not can_delete and _is_server_message_moderator(
+                    user_id, msg_row["conversation_id"]
+                ):
+                    can_delete = True
 
                 if not can_delete:
                     failed_ids.append(message_id)
                     continue
 
                 if hard_delete:
-                    try:
-                        from src.core import search as search_module
-
-                        search_module.remove_from_index(int(message_id))
-                    except Exception:
-                        pass
                     self._repo.hard_delete(message_id)
                 else:
                     self._repo.soft_delete(message_id, now)
 
+                # Cleanup parity with single delete_message: soft-deleted
+                # messages must leave the search index and the per-conversation
+                # recent-messages cache too, or they stay searchable and can
+                # be resurrected from cache until TTL.
+                try:
+                    search_remove_from_index(message_id)
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to remove message {message_id} from search index: {e}"
+                    )
+
                 cache_delete(f"msg:obj:{message_id}")
+
+                try:
+                    from src.core.database import get_valkey_client as get_client
+
+                    client = get_client()
+                    if client:
+                        client.delete(f"recent_messages:{msg_row['conversation_id']}")
+                except Exception:
+                    pass
 
                 success_count += 1
                 deleted_ids.append(message_id)

@@ -10,7 +10,12 @@ import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.messages import MessageUpdateRequest, MessageResponse
-from src.core.messaging.exceptions import MessageNotFoundError
+from src.core.messaging.exceptions import (
+    MessageNotFoundError,
+    MessageAccessDeniedError,
+    InvalidContentError,
+    ContentTooLongError,
+)
 from src.core.servers.exceptions import (
     ServerNotFoundError,
     ChannelNotFoundError,
@@ -35,7 +40,9 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
         """
         Edit a message.
 
-        Updates the message content. Only the author can edit.
+        Updates the message content. Only the author can edit. The URL
+        channel must be the message's actual channel: a mismatch is
+        indistinguishable from a nonexistent message (404).
         """
         messaging = api.get_messaging()
         servers_mod = api.get_servers()
@@ -62,6 +69,21 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                         }
                     },
                 )
+
+            # Resolve the message FIRST and reconcile it against the URL
+            # channel before any moderation or mutation runs, so automod and
+            # broadcasts always operate on the message's REAL conversation.
+            msg = messaging.get_message(current_user.user_id, message_id)
+            if not msg:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "Message not found"}},
+                )
+            self._ensure_message_in_channel(
+                msg, self._resolve_channel_scope(cid, current_user.user_id, servers_mod)
+            )
+
+            real_cid = int(getattr(msg, "conversation_id"))
 
             server_id = None
             if servers_mod:
@@ -134,14 +156,16 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                 except Exception as e:
                     logger.warning(f"Automod fast check failed for message edit: {e}")
 
-            msg = messaging.edit_message(current_user.user_id, message_id, body.content)
+            edited_msg = messaging.edit_message(
+                current_user.user_id, message_id, body.content
+            )
 
             author_username, author_avatar_url, author_badges = (
                 self._resolve_author_info(current_user, auth)
             )
 
             response = _message_to_response(
-                msg,
+                edited_msg,
                 author_username,
                 author_avatar_url,
                 author_badges=author_badges,
@@ -151,7 +175,12 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
             )
 
             await self._broadcast_message_update(
-                response, cid, servers_mod, messaging, current_user
+                response,
+                cid,
+                servers_mod,
+                messaging,
+                current_user,
+                conversation_id=real_cid,
             )
 
             # Phase 2 (asynchronous): AI moderation on the edited content.
@@ -159,7 +188,7 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                 try:
                     from src.core import automod
 
-                    msg_id = get_msg_id(msg)
+                    msg_id = get_msg_id(edited_msg)
                     if msg_id is None:
                         logger.warning(
                             f"Automod AI check skipped for edited message {message_id}: no id"
@@ -187,10 +216,25 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Message not found"}},
                 )
-            elif isinstance(e, (ChannelAccessDeniedError, PermissionDeniedError)):
+            elif isinstance(e, MessageAccessDeniedError):
+                logger.warning(f"Edit denied for message {message_id}")
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": str(e)}},
+                    detail={"error": {"code": 403, "message": "Access denied"}},
+                )
+            elif isinstance(e, (InvalidContentError, ContentTooLongError)):
+                logger.warning(f"Edited content rejected for message {message_id}")
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {"code": 400, "message": "Invalid message content"}
+                    },
+                )
+            elif isinstance(e, (ChannelAccessDeniedError, PermissionDeniedError)):
+                logger.warning(f"Edit denied for message {message_id}")
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Access denied"}},
                 )
             logger.error(
                 f"Error editing message {message_id} in channel {channel_id}: {e}",

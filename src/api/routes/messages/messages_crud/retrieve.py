@@ -19,9 +19,10 @@ from src.core.servers.exceptions import (
     PermissionDeniedError,
 )
 from src.api.routes.messages.helpers import _message_to_response
+from .base import MessagesCRUDBase
 
 
-class RetrieveMixin:
+class RetrieveMixin(MessagesCRUDBase):
     async def get_message(
         self,
         channel_id: str,
@@ -56,6 +57,16 @@ class RetrieveMixin:
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Message not found"}},
                 )
+
+            # The URL channel must be the message's actual channel: a
+            # mismatch returns the same 404 a nonexistent message produces
+            # (no existence oracle for foreign conversations).
+            self._ensure_message_in_channel(
+                message,
+                self._resolve_channel_scope(
+                    cid, current_user.user_id, api.get_servers()
+                ),
+            )
 
             author_info = {"username": None, "avatar_url": None, "badges": []}
             auth = api.get_auth()
