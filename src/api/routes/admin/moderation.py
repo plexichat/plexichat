@@ -28,12 +28,45 @@ from src.api.schemas.admin import (
     AutomodConfigUpdateRequest,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 import src.api as api
 import utils.logger as logger
 import utils.config as config
 
 router = APIRouter()
+
+
+def _ensure_can_target_admin(admin_id: int, target_user_id: int) -> None:
+    """Platform-wide bans must not bypass the admin hierarchy.
+
+    If ``target_user_id`` is an admin account, the acting admin may only
+    proceed when they can manage that admin per the role-position hierarchy.
+    """
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    row = db.fetch_one("SELECT id FROM admin_users WHERE id = ?", (target_user_id,))
+    if not row:
+        return
+    from src.core.admin.permissions import can_manage_admin
+
+    if not can_manage_admin(db, int(admin_id), int(target_user_id)):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Insufficient role position to moderate this admin",
+                }
+            },
+        )
 
 
 def _get_reports_module():
@@ -184,7 +217,7 @@ async def review_hash_report(
     Updates the report status and optionally takes action against the reported content.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "reports.action")
     from src.core import admin
 
     if not admin.review_hash_report(report_id, admin_id, review.action, review.notes):
@@ -343,7 +376,7 @@ async def review_message_report(
 ):
     """Review a specific message report."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "reports.action")
     reports = _get_reports_module()
 
     if not reports.review_message_report(
@@ -423,7 +456,7 @@ async def review_user_report(
 ):
     """Review a specific user report."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "reports.action")
     reports = _get_reports_module()
 
     if not reports.review_user_report(report_id, admin_id, review.action, review.notes):
@@ -481,7 +514,7 @@ async def block_hash_manually(block_request: ManualBlockHashRequest, request: Re
     Manually add a content hash to the blocklist.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.hashes")
     from src.core import admin
 
     hash_type = "phash" if len(block_request.hash_value) <= 32 else "sha256"
@@ -517,7 +550,7 @@ async def unblock_hash(hash_value: str, request: Request):
     Remove a content hash from the blocklist.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.moderation.hashes")
     from src.core import admin
 
     if not admin.unblock_hash(hash_value):
@@ -574,11 +607,13 @@ async def block_user(block_request: BlockUserRequest, request: Request):
     Block or ban a specific user from the platform.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.bans")
     from src.core import admin
 
+    target_id = int(block_request.user_id)
+    _ensure_can_target_admin(admin_id, target_id)
     if not admin.block_user(
-        int(block_request.user_id),
+        target_id,
         block_request.reason,
         admin_id,
         block_request.duration_hours,
@@ -605,10 +640,12 @@ async def unblock_user(user_id: str, request: Request):
     Lift a block or ban from a specific user.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.bans")
     from src.core import admin
 
-    if not admin.unblock_user(int(user_id)):
+    target_id = int(user_id)
+    _ensure_can_target_admin(admin_id, target_id)
+    if not admin.unblock_user(target_id):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Failed to unblock user"}},
@@ -691,7 +728,7 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
     Create a new AutoMod rule for a server.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.rules")
     from src.core import automod
     from src.core.automod.models import RuleType
 
@@ -744,7 +781,7 @@ async def update_automod_rule(
     Update an existing AutoMod rule.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.rules")
     from src.core import automod
 
     try:
@@ -799,7 +836,7 @@ async def delete_automod_rule(rule_id: int, request: Request):
     Permanently delete an AutoMod rule.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.rules")
     from src.core import automod
 
     try:
@@ -854,7 +891,7 @@ async def update_automod_config(body: AutomodConfigUpdateRequest, request: Reque
     Update the global AutoMod configuration settings.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.moderation.config")
     current = config.get("automod", {}) or {}
     if body.enabled is not None:
         current["enabled"] = body.enabled

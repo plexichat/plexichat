@@ -5,7 +5,11 @@ Admin PlexiJoin federation routes for managing inter-instance connections.
 from fastapi import APIRouter, Request, HTTPException, Query
 from typing import Optional
 
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 
@@ -194,7 +198,7 @@ async def get_connection(request: Request, connection_id: int):
 async def create_connection(request: Request):
     """Create a new outbound federation connection."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         body = await request.json()
@@ -256,7 +260,7 @@ async def create_connection(request: Request):
 async def delete_connection(request: Request, connection_id: int):
     """Disconnect and delete an outbound connection."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)
@@ -298,7 +302,7 @@ async def delete_connection(request: Request, connection_id: int):
 async def test_connection(request: Request, connection_id: int):
     """Test connectivity to a remote instance."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)
@@ -388,7 +392,7 @@ async def list_requests(
 async def approve_request(request: Request, request_id: int):
     """Approve an inbound federation request."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)
@@ -430,7 +434,7 @@ async def approve_request(request: Request, request_id: int):
 async def deny_request(request: Request, request_id: int):
     """Deny an inbound federation request."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)

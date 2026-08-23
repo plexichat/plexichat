@@ -66,12 +66,14 @@ class TestAuthentication:
         response = client.post(
             "/api/v1/admin/migrations/001/run", json={"dry_run": True}
         )
-        assert response.status_code in (401, 403)
+        # 401/403 when reachable; 404 hides the route entirely when the
+        # admin UI is disabled (host restriction fires first).
+        assert response.status_code in (401, 403, 404)
 
     def test_rollback_migration_requires_auth(self, client):
         """Test that rollback requires authentication."""
         response = client.post("/api/v1/admin/migrations/001/rollback")
-        assert response.status_code in (401, 403)
+        assert response.status_code in (401, 403, 404)
 
     def test_emergency_override_requires_auth(self, client):
         """Test that generating emergency override requires authentication."""
@@ -79,7 +81,7 @@ class TestAuthentication:
             "/api/v1/admin/migrations/emergency-override",
             json={"reason": "Test", "expires_minutes": 30},
         )
-        assert response.status_code in (401, 403)
+        assert response.status_code in (401, 403, 404)
 
 
 class TestPathTraversalPrevention:
@@ -154,9 +156,11 @@ class TestConfirmationRequirement:
     """Test that irreversible migrations require confirmation."""
 
     @patch("src.api.routes.admin.migrations.MigrationManager")
+    @patch("src.api.routes.admin.migrations.require_approved_request")
+    @patch("src.api.routes.admin.migrations.require_admin_permission", return_value=1)
     @patch("src.api.routes.admin.migrations.get_admin_from_token", return_value=1)
     def test_irreversible_migration_requires_confirmation(
-        self, mock_auth, mock_manager_class, client
+        self, mock_gate, mock_perm, mock_auth, mock_manager_class, client
     ):
         """Test that irreversible migrations require confirmation text."""
         # Setup mock
@@ -180,9 +184,11 @@ class TestConfirmationRequirement:
             assert "THE DATABASE IS BACKED UP" in response.json()["detail"]
 
     @patch("src.api.routes.admin.migrations.MigrationManager")
+    @patch("src.api.routes.admin.migrations.require_approved_request")
+    @patch("src.api.routes.admin.migrations.require_admin_permission", return_value=1)
     @patch("src.api.routes.admin.migrations.get_admin_from_token", return_value=1)
     def test_irreversible_migration_wrong_confirmation_rejected(
-        self, mock_auth, mock_manager_class, client
+        self, mock_gate, mock_perm, mock_auth, mock_manager_class, client
     ):
         """Test that wrong confirmation text is rejected."""
         mock_manager = MagicMock()
@@ -203,9 +209,11 @@ class TestConfirmationRequirement:
             assert "THE DATABASE IS BACKED UP" in response.json()["detail"]
 
     @patch("src.api.routes.admin.migrations.MigrationManager")
+    @patch("src.api.routes.admin.migrations.require_approved_request")
+    @patch("src.api.routes.admin.migrations.require_admin_permission", return_value=1)
     @patch("src.api.routes.admin.migrations.get_admin_from_token", return_value=1)
     def test_irreversible_migration_correct_confirmation_accepted(
-        self, mock_auth, mock_manager_class, client
+        self, mock_gate, mock_perm, mock_auth, mock_manager_class, client
     ):
         """Test that correct confirmation text is accepted."""
         mock_manager = MagicMock()
@@ -234,9 +242,11 @@ class TestConfirmationRequirement:
         )
 
     @patch("src.api.routes.admin.migrations.MigrationManager")
+    @patch("src.api.routes.admin.migrations.require_approved_request")
+    @patch("src.api.routes.admin.migrations.require_admin_permission", return_value=1)
     @patch("src.api.routes.admin.migrations.get_admin_from_token", return_value=1)
     def test_irreversible_migration_dry_run_no_confirmation_needed(
-        self, mock_auth, mock_manager_class, client
+        self, mock_gate, mock_perm, mock_auth, mock_manager_class, client
     ):
         """Test that dry-run doesn't require confirmation."""
         mock_manager = MagicMock()
@@ -268,9 +278,11 @@ class TestRollbackIrreversible:
     """Test that irreversible migrations cannot be rolled back."""
 
     @patch("src.api.routes.admin.migrations.MigrationManager")
+    @patch("src.api.routes.admin.migrations.require_approved_request")
+    @patch("src.api.routes.admin.migrations.require_admin_permission", return_value=1)
     @patch("src.api.routes.admin.migrations.get_admin_from_token", return_value=1)
     def test_rollback_irreversible_migration_blocked(
-        self, mock_auth, mock_manager_class, client
+        self, mock_gate, mock_perm, mock_auth, mock_manager_class, client
     ):
         """Test that rollback of irreversible migration is blocked."""
         mock_manager = MagicMock()
@@ -288,9 +300,11 @@ class TestRollbackIrreversible:
             assert "Cannot rollback irreversible" in response.json()["detail"]
 
     @patch("src.api.routes.admin.migrations.MigrationManager")
+    @patch("src.api.routes.admin.migrations.require_approved_request")
+    @patch("src.api.routes.admin.migrations.require_admin_permission", return_value=1)
     @patch("src.api.routes.admin.migrations.get_admin_from_token", return_value=1)
     def test_rollback_reversible_migration_allowed(
-        self, mock_auth, mock_manager_class, client
+        self, mock_gate, mock_perm, mock_auth, mock_manager_class, client
     ):
         """Test that rollback of reversible migration is allowed."""
         mock_manager = MagicMock()

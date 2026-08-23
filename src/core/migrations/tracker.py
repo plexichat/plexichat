@@ -13,6 +13,7 @@ import json
 import re
 import secrets
 import os
+import uuid
 from . import schema
 
 logger = logging.getLogger(__name__)
@@ -230,28 +231,50 @@ class MigrationTracker:
 
     def _validate_emergency_override(self, token: str) -> bool:
         """
-        Validate an emergency override token.
+        Validate an emergency override token, consuming it on first use.
+
+        Tokens are strictly single-use: the first successful validation
+        atomically marks the row as used so a leaked token can never be
+        replayed.
 
         Args:
             token: Token to validate
 
         Returns:
-            True if token is valid and not expired
+            True if the token was valid, unexpired and successfully claimed
         """
         try:
-            result = self.db.fetch_one(
+            claim = f"validation:{uuid.uuid4().hex}"
+            cursor = self.db.execute(
                 """
-                SELECT id, used_at, expires_at
-                FROM emergency_override_tokens
+                UPDATE emergency_override_tokens
+                SET used_at = ?, used_by = ?
                 WHERE token = ? AND used_at IS NULL AND expires_at > ?
                 """,
-                (token, _utcnow()),
+                (_utcnow(), claim, token, _utcnow()),
             )
 
-            if not result:
+            rowcount = getattr(cursor, "rowcount", None)
+            if isinstance(rowcount, int) and rowcount >= 0:
+                if rowcount > 0:
+                    logger.warning(
+                        "Emergency override token validated (single-use consumed)"
+                    )
+                    return True
                 return False
 
-            return True
+            # Fallback for drivers without cursor.rowcount: verify our unique
+            # claim marker won the update.
+            row = self.db.fetch_one(
+                "SELECT used_by FROM emergency_override_tokens WHERE token = ?",
+                (token,),
+            )
+            claimed_by_us = bool(row) and row.get("used_by") == claim
+            if claimed_by_us:
+                logger.warning(
+                    "Emergency override token validated (single-use consumed)"
+                )
+            return claimed_by_us
         except Exception as e:
             logger.error(f"Failed to validate emergency override: {e}")
             return False

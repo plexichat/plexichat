@@ -294,8 +294,12 @@ async def test_sum_handler_subscribe_denied_for_unauthorized(
     result = await handler.handle_sum_subscribe(
         conn, {"workbook_id": workbook_id}, dispatcher
     )
-    assert result[2] is not None  # connection must be closed
+    # Resource-level denial must NOT close the gateway connection (that would
+    # trap authenticated clients in a reconnect loop); the subscribe is just
+    # silently refused with no sync payload.
+    assert result == (None, None, None)
     assert conn.sent == []
+    assert other.id not in get_sum_subscription_registry().get_subscribers(workbook_id)
 
 
 # === Handler: op ===========================================================

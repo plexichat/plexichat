@@ -88,6 +88,31 @@ PERMISSION_SCOPES = {
     # Data export (DSAR)
     "data_export.read": "View and manage data export requests",
     "data_export.process": "Approve, deny, and generate data exports",
+    # Admin audit trail
+    "admin.audit.read": "View and export the admin audit log",
+    # Database migrations
+    "admin.migrations.execute": "Run, apply, and roll back database migrations",
+    # Admin security operations
+    "admin.security.ipblock": "Block and unblock IP addresses platform-wide",
+    "admin.security.tokens": "Create, rotate, and revoke permanent API access tokens",
+    "admin.security.sessions": "Force logout and lock/unlock user accounts",
+    "admin.security.logout_all": "Invalidate every user session platform-wide",
+    "admin.security.usernames": "Manage banned username patterns",
+    # Platform-wide moderation
+    "admin.moderation.bans": "Ban and unban users platform-wide",
+    "admin.moderation.hashes": "Write and remove blocked content hashes",
+    "admin.moderation.rules": "Create, update, and delete AutoMod rules on any server",
+    "admin.moderation.config": "Modify the global AutoMod configuration",
+    # Bulk data operations
+    "admin.data.reindex": "Rebuild the search index (bulk message decryption)",
+    # Artifacts
+    "admin.artifacts.manage": "Force-delete artifacts and manage retention policies",
+    # Dashboard runtime tuning
+    "admin.dashboard.tuning": "Hot-reload cross-worker poll-loop tuning constants",
+    # Licensing / federation / telemetry
+    "admin.license.manage": "Apply and force-revalidate licenses",
+    "admin.plexijoin.manage": "Establish and sever cross-instance federation links",
+    "admin.telemetry.reset": "Reset collected telemetry statistics",
     # Wildcard permissions
     "*": "Full system access (super admin only)",
 }
@@ -100,6 +125,14 @@ APPROVAL_REQUIRED_ACTIONS = {
     "servers.delete": "Deleting servers",
     "config.security": "Modifying security configuration",
     "admin.roles": "Modifying admin roles",
+    # Destructive migration execution
+    "migrations.run": "Running a database migration",
+    "migrations.rollback": "Rolling back a database migration",
+    "migrations.apply_all": "Applying all pending database migrations",
+    "migrations.emergency_override": "Minting an emergency migration delay-bypass token",
+    # Bulk data exposure / destruction
+    "search.reindex": "Full search reindex (mass message decryption)",
+    "artifacts.force_delete": "Force-deleting artifacts across every server",
 }
 
 

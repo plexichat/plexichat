@@ -6,7 +6,11 @@ from fastapi import APIRouter, Request, HTTPException, status
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 import utils.licensing as licensing_module
@@ -237,7 +241,7 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     stays idempotent for the self-test pipeline.
     """
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    _admin_id = require_admin_permission(request, "admin.license.manage")
 
     # Capture current state before applying
     before_instance = licensing_module.get_instance_id()
@@ -371,7 +375,7 @@ async def force_validate_license(request: Request):
     current state; only a real, broken license triggers a 400.
     """
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    _admin_id = require_admin_permission(request, "admin.license.manage")
 
     if licensing_module.is_free_tier():
         _audit_license_action(

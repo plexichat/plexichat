@@ -4,6 +4,8 @@ Admin security routes.
 
 from fastapi import APIRouter, Request, HTTPException
 from typing import List
+import secrets
+
 from src.api.schemas.admin import (
     BlockedIPResponse,
     IPBlockRequest,
@@ -24,7 +26,11 @@ from src.api.schemas.admin import (
     AccessTokenUsagePathResponse,
 )
 from src.api.schemas.common import SuccessResponse, ErrorResponse
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 import utils.logger as logger
 
 router = APIRouter()
@@ -98,7 +104,7 @@ async def block_ip(request: Request, body: IPBlockRequest):
     Block a specific IP address from accessing the platform.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.ipblock")
     from src.core import auth
 
     auth.block_ip(body.ip_address, body.reason, admin_id, body.duration_hours)
@@ -139,16 +145,29 @@ async def list_access_tokens(request: Request, include_revoked: bool = True):
 async def create_access_token(request: Request, body: AccessTokenCreateRequest):
     """
     Create a new permanent API access token for administrative use.
+
+    The token value is always generated server-side; caller-supplied token
+    values are rejected to prevent weak or pre-known credentials.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
+    if body.token:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": "Token values are generated server-side and cannot be supplied by clients",
+                }
+            },
+        )
     from src.core import auth
 
     try:
         token = auth.create_api_access_token(
             body.name,
             admin_id,
-            body.token,
+            secrets.token_urlsafe(32),
             description=body.description,
             expires_at=body.expires_at,
             scope_mode=body.scope_mode,
@@ -235,7 +254,7 @@ async def update_access_token(
 ):
     """Update metadata, expiry, or scope mode for a specific API access token."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     try:
@@ -276,13 +295,29 @@ async def rotate_access_token(
     token_id: int,
     body: AccessTokenRotateRequest,
 ):
-    """Rotate an API access token, cloning policy and scopes into a replacement."""
+    """Rotate an API access token, cloning policy and scopes into a replacement.
+
+    The new token value is always generated server-side; caller-supplied
+    values are rejected.
+    """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
+    if body.token:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": "Token values are generated server-side and cannot be supplied by clients",
+                }
+            },
+        )
     from src.core import auth
 
     try:
-        token = auth.rotate_api_access_token(token_id, admin_id, body.token)
+        token = auth.rotate_api_access_token(
+            token_id, admin_id, secrets.token_urlsafe(32)
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
@@ -327,7 +362,7 @@ async def add_access_token_scope(
 ):
     """Add an IP or CIDR scope rule to an API access token."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     try:
@@ -363,7 +398,7 @@ async def add_access_token_scope(
 async def remove_access_token_scope(request: Request, token_id: int, scope_id: int):
     """Remove an IP or CIDR scope rule from an API access token."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     success = auth.remove_api_access_token_scope(token_id, scope_id)
@@ -390,7 +425,7 @@ async def revoke_access_token(request: Request, token_id: int):
     Revoke a specific API access token.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     success = auth.revoke_api_access_token(token_id, admin_id)
@@ -434,7 +469,7 @@ async def unrevoke_access_token(request: Request, token_id: int):
     Unrevoke a previously revoked API access token.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     success = auth.unrevoke_api_access_token(token_id, admin_id)
@@ -478,7 +513,7 @@ async def unblock_ip(request: Request, ip_address: str):
     Remove an IP address from the blocklist.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.ipblock")
     from src.core import auth
 
     auth.unblock_ip(ip_address)
@@ -522,7 +557,7 @@ async def add_banned_username(request: Request, body: BannedUsernameCreate):
     Add a new pattern to the list of banned usernames.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.usernames")
     from src.core import admin
 
     admin.add_banned_username(body.pattern, body.reason or "", admin_id, body.is_regex)
@@ -543,7 +578,7 @@ async def remove_banned_username(request: Request, pattern_id: int):
     Remove a pattern from the list of banned usernames.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.usernames")
     from src.core import admin
 
     admin.remove_banned_username(pattern_id)
@@ -564,7 +599,7 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
     Immediately invalidate all active sessions for a specific user.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.sessions")
     try:
         uid = int(body.user_id)
         from src.core import auth
@@ -622,7 +657,7 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
     Lock a user account, preventing all access for a specified duration.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.sessions")
     try:
         uid = int(body.user_id)
         from src.core import admin
@@ -684,7 +719,7 @@ async def admin_unlock_user(request: Request, body: ForceLogoutRequest):
     Unlock a previously locked user account.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.sessions")
     try:
         uid = int(body.user_id)
         from src.core import admin
@@ -711,7 +746,7 @@ async def logout_all_users(request: Request):
     Invalidate all active sessions for every user on the platform.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.logout_all")
     from src.core import auth
 
     auth.logout_all_users()

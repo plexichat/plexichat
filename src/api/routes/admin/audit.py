@@ -10,7 +10,7 @@ import io
 
 from pydantic import BeforeValidator
 
-from .utils import check_host_restriction
+from .utils import check_host_restriction, require_admin_permission
 from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 
@@ -57,6 +57,7 @@ async def get_audit_logs(
     Retrieve paginated audit log entries with optional filters.
     """
     check_host_restriction(request)
+    require_admin_permission(request, "admin.audit.read")
 
     try:
         import src.api as api
@@ -149,6 +150,7 @@ async def get_audit_stats(request: Request):
     Retrieve summary statistics for audit logs (today's totals by action family).
     """
     check_host_restriction(request)
+    require_admin_permission(request, "admin.audit.read")
 
     try:
         import src.api as api
@@ -233,6 +235,7 @@ async def export_audit_logs(
     Export audit logs as CSV or JSON.
     """
     check_host_restriction(request)
+    require_admin_permission(request, "admin.audit.read")
 
     try:
         import src.api as api

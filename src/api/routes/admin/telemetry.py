@@ -16,7 +16,11 @@ from src.api.schemas.admin import (
     TelemetryResetResponse,
     TelemetryExportResponse,
 )
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 
@@ -149,7 +153,7 @@ async def reset_telemetry_stats(request: Request):
     Clear all collected telemetry data from the system.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.telemetry.reset")
     try:
         from src.core import telemetry
 

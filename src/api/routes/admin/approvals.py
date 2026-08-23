@@ -6,14 +6,45 @@ from fastapi import APIRouter, Request, HTTPException
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
     require_admin_permission,
 )
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field
+import json
 import time
 
 router = APIRouter()
+
+
+def _parse_approved_by(raw) -> List[int]:
+    """Normalize the stored ``approved_by`` value into a list of admin ids.
+
+    Rows written before the JSON-list migration may hold a CSV string
+    (``"12,45"``), a bare integer (SQLite dynamic typing on the INTEGER
+    column), or NULL. New rows store a JSON array of ints.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        values = list(raw)
+    else:
+        text = str(raw).strip()
+        if not text or text == "[]":
+            return []
+        if text.startswith("["):
+            try:
+                values = json.loads(text)
+            except ValueError:
+                values = [p.strip("[] \"'") for p in text.split(",")]
+        else:
+            values = text.split(",")
+    ids: List[int] = []
+    for value in values:
+        try:
+            ids.append(int(str(value).strip()))
+        except (TypeError, ValueError):
+            continue
+    return ids
 
 
 class ApprovalRequest(BaseModel):
@@ -226,20 +257,24 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
     Create a new approval request for a sensitive action.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.approvals")
 
     # Check if action requires approval
     import utils.config as config
 
+    from src.core.admin.permissions import APPROVAL_REQUIRED_ACTIONS
+
     admin_config = config.get("admin_ui", {})
     approval_config = admin_config.get("approval_workflows", {})
 
-    if not approval_config.get("enabled", False):
-        # If approval workflows are disabled, action can proceed directly
+    canonical_action = approval_data.action_type in APPROVAL_REQUIRED_ACTIONS
+
+    if not approval_config.get("enabled", False) and not canonical_action:
+        # If approval workflows are disabled, action can proceed directly.
         return SuccessResponse(success=True, message="Approval workflows disabled")
 
     require_approval_for = approval_config.get("require_approval_for", [])
-    if approval_data.action_type not in require_approval_for:
+    if approval_data.action_type not in require_approval_for and not canonical_action:
         # Action doesn't require approval
         return SuccessResponse(success=True, message="Action does not require approval")
 
@@ -366,89 +401,132 @@ async def approve_request(request: Request, approval_id: int):
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    # Get approval request
-    approval = db.fetch_one(
-        """
-        SELECT id, requested_by, status, current_approvals, required_approvals, approved_by
-        FROM admin_approvals
-        WHERE id = ?
-    """,
-        (approval_id,),
-    )
-
-    if not approval:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": {"code": 404, "message": "Approval request not found"}},
+    max_vote_attempts = 5
+    new_status = "pending"
+    new_current_approvals = 0
+    for _ in range(max_vote_attempts):
+        # Get approval request
+        approval = db.fetch_one(
+            """
+            SELECT id, requested_by, status, current_approvals, required_approvals, approved_by
+            FROM admin_approvals
+            WHERE id = ?
+        """,
+            (approval_id,),
         )
 
-    if isinstance(approval, dict):
-        status = approval["status"]
-        current_approvals = approval["current_approvals"]
-        required_approvals = approval["required_approvals"]
-        requested_by = approval["requested_by"]
-        # ``approved_by`` may hold a single integer admin id (older rows /
-        # SQLite dynamic typing); normalize so the membership check below
-        # never raises on a non-string container.
-        approved_by_str = str(approval["approved_by"] or "")
+        if not approval:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": {"code": 404, "message": "Approval request not found"}
+                },
+            )
+
+        if isinstance(approval, dict):
+            status = approval["status"]
+            required_approvals = approval["required_approvals"]
+            requested_by = approval["requested_by"]
+            raw_approved_by = approval["approved_by"]
+        else:
+            status = approval[2]
+            required_approvals = approval[4]
+            requested_by = approval[1]
+            raw_approved_by = approval[5]
+
+        # Check if admin is the requester (self-approval not allowed)
+        if admin_id == requested_by:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {"code": 403, "message": "Cannot approve your own request"}
+                },
+            )
+
+        # Check if approval is still pending
+        if status != "pending":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": f"Approval request is {status}, cannot approve",
+                    }
+                },
+            )
+
+        approved_by_list = _parse_approved_by(raw_approved_by)
+
+        # SECURITY: exact-membership duplicate check. The previous substring
+        # test (``str(admin_id) in approved_by_str``) told admin 12 they had
+        # already voted whenever admin 112 had.
+        if admin_id in approved_by_list:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Already approved by this admin",
+                    }
+                },
+            )
+
+        now = int(time.time() * 1000)
+
+        # Record the vote as a JSON list of admin ids.
+        approved_by_list.append(admin_id)
+        new_approved_by = json.dumps(approved_by_list)
+
+        # SECURITY: single conditional UPDATE makes the increment atomic.
+        # The CAS guard on ``approved_by`` detects a concurrent voter that
+        # read the same snapshot; on rowcount 0 we re-read and retry rather
+        # than clobbering their vote or over-counting consensus.
+        cursor = db.execute(
+            """
+            UPDATE admin_approvals
+            SET current_approvals = current_approvals + 1,
+                approved_by = ?,
+                status = CASE
+                    WHEN current_approvals + 1 >= required_approvals THEN 'approved'
+                    ELSE 'pending'
+                END,
+                updated_at = ?
+            WHERE id = ?
+              AND status = 'pending'
+              AND (approved_by = ? OR (approved_by IS NULL AND ? IS NULL))
+        """,
+            (new_approved_by, now, approval_id, raw_approved_by, raw_approved_by),
+        )
+
+        if getattr(cursor, "rowcount", 0) > 0:
+            break
+
+        # Lost the race: another vote or a status transition landed first.
+        continue
     else:
-        status = approval[2]
-        current_approvals = approval[3]
-        required_approvals = approval[4]
-        requested_by = approval[1]
-        approved_by_str = str(approval[5] or "")
-
-    # Check if already approved by this admin
-    if str(admin_id) in approved_by_str:
         raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {"code": 400, "message": "Already approved by this admin"}
-            },
-        )
-
-    # Check if approval is still pending
-    if status != "pending":
-        raise HTTPException(
-            status_code=400,
+            status_code=409,
             detail={
                 "error": {
-                    "code": 400,
-                    "message": f"Approval request is {status}, cannot approve",
+                    "code": 409,
+                    "message": "Approval request changed concurrently, retry",
                 }
             },
         )
 
-    # Check if admin is the requester (self-approval not allowed)
-    if admin_id == requested_by:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": {"code": 403, "message": "Cannot approve your own request"}
-            },
-        )
-
-    now = int(time.time() * 1000)
-
-    # Add admin to approved_by list
-    approved_by_list = approved_by_str.split(",") if approved_by_str else []
-    approved_by_list.append(str(admin_id))
-    new_approved_by = ",".join(approved_by_list)
-    new_current_approvals = current_approvals + 1
-
-    # Check if required approvals reached
-    new_status = (
-        "approved" if new_current_approvals >= required_approvals else "pending"
+    updated = db.fetch_one(
+        "SELECT status, current_approvals, required_approvals FROM admin_approvals"
+        " WHERE id = ?",
+        (approval_id,),
     )
-
-    db.execute(
-        """
-        UPDATE admin_approvals
-        SET current_approvals = ?, approved_by = ?, status = ?, updated_at = ?
-        WHERE id = ?
-    """,
-        (new_current_approvals, new_approved_by, new_status, now, approval_id),
-    )
+    if isinstance(updated, dict):
+        new_status = updated["status"]
+        new_current_approvals = updated["current_approvals"]
+        required_approvals = updated["required_approvals"]
+    elif updated:
+        new_status = updated[0]
+        new_current_approvals = updated[1]
+        required_approvals = updated[2]
 
     from src.core.admin.permissions import log_admin_action
 

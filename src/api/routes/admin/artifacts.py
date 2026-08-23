@@ -11,7 +11,12 @@ import utils.logger as logger
 import utils.config as config
 from fastapi import APIRouter, Request, HTTPException, status
 
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+    require_approved_request,
+)
 from src.api.schemas.artifacts import (
     ArtifactResponse,
     RetentionPurgeResponse,
@@ -90,9 +95,14 @@ async def admin_list_artifacts(request: Request) -> Dict[str, Any]:
 
 @router.delete("/{artifact_id}")
 async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str, Any]:
-    """Admin force-delete of any artifact."""
+    """Admin force-delete of any artifact.
+
+    Requires ``admin.artifacts.manage`` plus an approved approval request:
+    this destroys user data across every server.
+    """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.artifacts.manage")
+    require_approved_request("artifacts.force_delete")
     if admin_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -134,7 +144,7 @@ async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str,
 async def admin_purge_expired(request: Request) -> RetentionPurgeResponse:
     """Trigger a retention purge of expired artifacts."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.artifacts.manage")
     if admin_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -261,7 +271,7 @@ async def admin_set_feature_settings(
     Pass null to clear a setting back to default.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.artifacts.manage")
     if feature not in ALLOWED_FEATURES:
         raise HTTPException(status_code=400, detail=f"Unknown feature: {feature}")
 

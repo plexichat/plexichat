@@ -11,7 +11,7 @@ from src.api.schemas.admin import (
     InternalNoteCreate,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import check_host_restriction, require_admin_permission
 import utils.logger as logger
 
 router = APIRouter()
@@ -38,7 +38,7 @@ async def get_tickets(
     Allows filtering by status and supports pagination.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "tickets.read")
     from src.core import admin
 
     try:
@@ -78,7 +78,7 @@ async def get_ticket(ticket_id: int, request: Request):
     Retrieve detailed information for a specific feedback ticket.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "tickets.read")
     from src.core import admin
 
     ticket = admin.get_ticket(ticket_id)
@@ -117,7 +117,7 @@ async def update_ticket_status(
     Update the processing status of a feedback ticket.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "tickets.close")
     from src.core import admin
 
     if not admin.get_ticket(ticket_id):
@@ -143,7 +143,7 @@ async def get_ticket_notes(ticket_id: int, request: Request):
     Retrieve all internal administrator notes associated with a ticket.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "tickets.read")
     from src.core import admin
 
     if not admin.get_ticket(ticket_id):
@@ -180,7 +180,7 @@ async def add_ticket_note(ticket_id: int, note: InternalNoteCreate, request: Req
     Add a new internal administrator note to a ticket.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "tickets.respond")
     from src.core import admin
 
     if not admin.get_ticket(ticket_id):

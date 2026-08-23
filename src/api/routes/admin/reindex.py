@@ -1,7 +1,12 @@
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+    require_approved_request,
+)
 from src.api.schemas.common import ErrorResponse
 import src.core.search as search_module
 import utils.logger as logger
@@ -10,7 +15,8 @@ import time
 
 router = APIRouter()
 
-# Track reindex status for monitoring
+# Track reindex status for monitoring. The in-progress flag is guarded by a
+# lock so the check-and-set is atomic across concurrent requests.
 _reindex_status = {
     "in_progress": False,
     "last_run": None,
@@ -19,6 +25,7 @@ _reindex_status = {
     "last_incremental": True,
     "last_error": None,
 }
+_reindex_lock = threading.Lock()
 
 
 class ReindexRequest(BaseModel):
@@ -85,7 +92,10 @@ async def reindex_standalone(request: Request, body: ReindexRequest | None = Non
     global _reindex_status
 
     check_host_restriction(request)
-    get_admin_from_token(request)
+    # Mass-decrypts every message into the search index: elevated permission
+    # plus an approved approval request are required.
+    require_admin_permission(request, "admin.data.reindex")
+    require_approved_request("search.reindex")
 
     if not search_module._setup_complete or search_module._manager is None:
         raise HTTPException(
@@ -93,21 +103,25 @@ async def reindex_standalone(request: Request, body: ReindexRequest | None = Non
             detail={"error": {"code": 500, "message": "Search module not initialized"}},
         )
 
-    if _reindex_status["in_progress"]:
-        raise HTTPException(
-            status_code=409,
-            detail={"error": {"code": 409, "message": "Reindex already in progress"}},
-        )
+    # Atomically claim the in-progress flag so two simultaneous requests can
+    # never both start background reindex threads.
+    with _reindex_lock:
+        if _reindex_status["in_progress"]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": {"code": 409, "message": "Reindex already in progress"}
+                },
+            )
+        _reindex_status["in_progress"] = True
 
     force = bool(body.force) if body else False
+    _reindex_status["last_error"] = None
+    _reindex_status["last_incremental"] = not force
 
     def _do_reindex():
         global _reindex_status
-        _reindex_status["in_progress"] = True
-        _reindex_status["last_error"] = None
-        _reindex_status["last_incremental"] = not force
         started = time.perf_counter()
-
         try:
             from src.utils.encryption import (
                 decrypt_message,
@@ -197,7 +211,8 @@ async def reindex_standalone(request: Request, body: ReindexRequest | None = Non
             _reindex_status["last_error"] = str(e)
             logger.error(f"Standalone reindex failed: {e}", exc_info=True)
         finally:
-            _reindex_status["in_progress"] = False
+            with _reindex_lock:
+                _reindex_status["in_progress"] = False
 
     thread = threading.Thread(target=_do_reindex)
     thread.start()
