@@ -310,19 +310,21 @@ async def _message_loop(
         ConnectionState.DISCONNECTING,
         ConnectionState.DISCONNECTED,
     ):
+        # NOTE: no wait_for() around receive(). Cancelling a pending
+        # ASGI receive on timeout can discard a message that was
+        # already dequeued (IDENTIFY/HEARTBEAT frames racing the
+        # deadline were silently lost, feeding spurious
+        # SESSION_TIMED_OUT closes). Liveness is enforced by
+        # _heartbeat_monitor instead, which closes dead connections
+        # with SESSION_TIMED_OUT after missed heartbeats; that close
+        # surfaces here as a disconnect message/exception.
         try:
-            message = await asyncio.wait_for(
-                connection.websocket.receive(),
-                timeout=connection.heartbeat_interval_ms / 1000 * 2,
-            )
-        except asyncio.TimeoutError:
-            if not connection.is_alive:
-                await _close_connection(
-                    connection,
-                    GatewayCloseCode.SESSION_TIMED_OUT,
-                )
-                return
-            continue
+            message = await connection.websocket.receive()
+        except WebSocketDisconnect:
+            return
+        except Exception as e:
+            logger.debug(f"Connection {connection.connection_id}: receive failed: {e}")
+            return
 
         if message["type"] == "websocket.disconnect":
             return

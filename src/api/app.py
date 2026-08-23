@@ -143,9 +143,31 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         except Exception as e:
             logger.warning(f"Cross-worker listener not started: {e}")
 
+        # Start the event dispatch-queue consumer so events queued by
+        # ``events.dispatch`` are fanned out to regular subscribers.
+        # Without this consumer the deferred queue is write-only and
+        # non-critical subscribers never receive any event.
+        try:
+            from src.core import events as events_module
+
+            if events_module.is_setup():
+                await events_module.start_consumer()
+        except Exception as e:
+            logger.warning(f"Event queue consumer not started: {e}")
+
         try:
             yield
         finally:
+            # Stop the queue consumer and drain any queued events so
+            # shutdown does not silently drop them.
+            try:
+                from src.core import events as events_module
+
+                if events_module.is_setup():
+                    await events_module.stop_consumer()
+            except Exception as e:
+                logger.debug(f"Event queue consumer stop error: {e}")
+
             # Shut down the cross-worker listener before the event
             # loop stops, ensuring clean unsubscribe + thread join.
             try:

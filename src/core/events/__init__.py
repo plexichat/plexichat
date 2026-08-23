@@ -238,3 +238,22 @@ def set_worker_id(worker_id: str) -> None:
     can skip their own echoes.
     """
     _get_manager().set_worker_id(worker_id)
+
+
+async def start_consumer() -> None:
+    """Start the dispatch-queue consumer on the current event loop.
+
+    Call from the application lifespan so events queued by
+    :func:`dispatch` are actually fanned out to regular subscribers.
+    Idempotent; raises if the module is not set up.
+    """
+    await _get_manager().start_consumer()
+
+
+async def stop_consumer() -> None:
+    """Stop the dispatch-queue consumer and drain the queue.
+
+    Call during lifespan shutdown so queued events are delivered
+    before the event loop closes. Safe when no consumer is running.
+    """
+    await _get_manager().stop_consumer()

@@ -8,7 +8,7 @@ import utils.logger as logger
 from starlette.concurrency import run_in_threadpool
 
 from src.api.websocket.connection import Connection
-from src.api.websocket.opcodes import GatewayCloseCode
+from src.api.websocket.opcodes import GatewayCloseCode, GatewayOpcode
 
 if TYPE_CHECKING:
     from src.core.servers.manager import ServerManager
@@ -189,9 +189,27 @@ class VoiceHandler:
             if not connection.user_id:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
-            answer = signaling.handle_sdp_offer(connection.user_id, channel_id, offer)
+            # SECURITY/correctness: the sync wrapper raises RuntimeError
+            # whenever an event loop is already running (always the case in
+            # this async handler), which silently dropped the answer frame.
+            answer = await signaling.handle_sdp_offer_async(
+                connection.user_id, channel_id, offer
+            )
 
-            return int(0), {"sdp": answer}, None
+            # Respond with the dedicated VOICE_SDP_ANSWER opcode (23) and
+            # the payload shape the client expects ({from_user_id, sdp}).
+            # The answer is an SDPMessage dataclass holding an SDPType enum,
+            # which plain json.dumps cannot serialize — build the payload
+            # explicitly with the SDP as a plain string.
+            return (
+                int(GatewayOpcode.VOICE_SDP_ANSWER),
+                {
+                    "from_user_id": connection.user_id,
+                    "sdp": answer.sdp,
+                    "type": getattr(answer.sdp_type, "value", "answer"),
+                },
+                None,
+            )
         except Exception as e:
             logger.warning(f"Voice SDP offer failed: {e}")
 

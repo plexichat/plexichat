@@ -41,10 +41,28 @@ class GatewayDispatcher:
         self._rate_limit_per_minute = rate_limit_per_minute
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = threading.Lock()
+        # Observable back-pressure signal (C2): events dropped because a
+        # connection exceeded its per-minute send budget. Exposed via
+        # :meth:`get_rate_limit_metrics` instead of being silently
+        # debug-dropped.
+        self._rate_limited_events = 0
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the event loop for async dispatch."""
         self._loop = loop
+
+    def get_rate_limit_metrics(self) -> Dict[str, int]:
+        """Expose outbound back-pressure metrics for observability (C2).
+
+        Returns the cumulative number of events dropped because a
+        connection exceeded its per-minute rate budget, plus the
+        configured budget itself.
+        """
+        with self._lock:
+            return {
+                "rate_limited_events": self._rate_limited_events,
+                "rate_limit_per_minute": self._rate_limit_per_minute,
+            }
 
     def on_event(self, event: Event, user_ids: List[int]) -> None:
         """
@@ -112,8 +130,18 @@ class GatewayDispatcher:
             if not getattr(
                 connection, "is_selftest", False
             ) and not connection.check_rate_limit(self._rate_limit_per_minute):
-                logger.debug(
-                    f"Rate limited connection {getattr(connection, 'id', None)}"
+                # BACK-PRESSURE (C2): rate-limited sends are counted and
+                # logged at WARNING (not silently debug-dropped) so
+                # saturation is observable. The counter is exposed via
+                # get_rate_limit_metrics() for /health-style dashboards.
+                with self._lock:
+                    self._rate_limited_events += 1
+                    total_limited = self._rate_limited_events
+                logger.warning(
+                    f"Rate limited connection {connection.connection_id} "
+                    f"(user={connection.user_id}); dropped "
+                    f"{event.event_type.value} "
+                    f"(total rate-limited drops: {total_limited})"
                 )
                 continue
 

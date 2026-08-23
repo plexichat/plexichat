@@ -408,8 +408,57 @@ class SessionManager:
 
         connection.set_identified(session.user_id, session_id, session.intents)
         connection.sequence = session.sequence
+
+        # Valkey I/O outside the lock. The NEW connection id must be
+        # registered immediately: without this, get_user_connection_count
+        # undercounts after every resume and the global 5-connection cap
+        # could be bypassed via repeated resume churn.
+        self._valkey_register_connection(session.user_id, connection.connection_id)
+        if old_conn_id and old_conn_id != connection.connection_id:
+            # Drop the OLD member from the user's global set right away so
+            # the count stays accurate even before the old socket's cleanup
+            # runs. Deliberately srem-only (no decr): stats:total_connections
+            # stays balanced because the old socket's eventual
+            # remove_connection() performs the matching decr for the incr
+            # this resume just issued for the new connection id.
+            self._valkey_drop_connection_member(session.user_id, old_conn_id)
+
         self._persist_session(session)
         return session
+
+    def _valkey_drop_connection_member(self, user_id: int, connection_id: str) -> None:
+        """Remove a connection from the user's global set WITHOUT decr.
+
+        Used when resuming: the old connection id must stop counting
+        toward the per-user cap immediately, but its
+        ``stats:total_connections`` decrement still belongs to the old
+        socket's own cleanup path.
+        """
+        if not valkey_available():
+            return
+        client = get_valkey_client()
+        if not client:
+            return
+        try:
+            # CROSS-WORKER RESUME: the set member was registered by the
+            # worker that owned the OLD connection as
+            # ``<that worker's id>:<conn_id>`` — not ours. Read the owner
+            # from conn:{id}:info (written at registration time) and srem
+            # under THAT prefix; otherwise the stale member survives until
+            # the 24h TTL and inflates get_user_connection_count past the
+            # per-user connection cap. Fall back to our own worker id when
+            # the info hash has already expired (same-worker case).
+            owner_worker = client.hget(f"conn:{connection_id}:info", "worker")
+            if isinstance(owner_worker, bytes):
+                owner_worker = owner_worker.decode("utf-8", "replace")
+            if not owner_worker:
+                owner_worker = self._worker_id
+            client.srem(
+                f"user:{user_id}:connections",
+                f"{owner_worker}:{connection_id}",
+            )
+        except Exception as e:
+            logger.debug(f"Valkey connection member drop failed: {e}")
 
     def record_event(self, session_id: str, event: Dict[str, Any]) -> None:
         """

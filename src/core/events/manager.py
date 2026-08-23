@@ -30,6 +30,11 @@ class EventManager:
     _MAX_SUBSCRIBERS = 1024
     _SUBSCRIBER_IDLE_TTL_SEC = 300  # 5 minutes
     _DISPATCH_QUEUE_MAX = 4096
+    # Consumer poll interval (seconds). The queue consumer batches all
+    # currently-queued events, then sleeps. Regular subscribers are
+    # non-critical extras (the WebSocket dispatcher is a critical,
+    # synchronous subscriber), so this latency budget is fine.
+    _CONSUMER_POLL_INTERVAL_SEC = 0.05
 
     def __init__(
         self,
@@ -69,6 +74,14 @@ class EventManager:
         # Lazy-loaded Valkey client reference for cross-worker pub/sub.
         # Set via ``set_worker_id`` when the worker identity is known.
         self._cross_worker_drops: int = 0
+        # Background queue consumer (A1): without a running consumer the
+        # deferred-fan-out queue is write-only and regular subscribers
+        # never receive events. Started/stopped from the app lifespan so
+        # the consumer shares the server's event loop.
+        self._consumer_task: Optional[asyncio.Task] = None
+        # Stop flag for the consumer; guarded by ``self._lock`` because
+        # ``dispatch`` may run on other threads concurrently.
+        self._consumer_stop = False
 
         logger.info("Events module initialized")
 
@@ -160,13 +173,16 @@ class EventManager:
            critical callback × N concurrent requests steals worker
            capacity proportionally.
 
-        2. Non-reentrant w.r.t. ``dispatch`` -- ``threading.Lock``
-           is NOT reentrant. Critical callbacks that synchronously
-           call ``self.dispatch(event, ...)`` will DEADLOCK the
-           dispatcher. Edge-trigger handlers that emit downstream
-           events must schedule the inner dispatch via
-           ``asyncio.call_soon`` / ``loop.run_in_executor`` / a
-           thread worker instead of running inline. (See rule 5.)
+        2. Non-reentrant w.r.t. ``dispatch`` -- a critical callback that
+           synchronously calls ``self.dispatch(event, ...)`` does NOT
+           deadlock (the dispatcher lock is released BEFORE callbacks
+           run), but it recurses WITHOUT BOUND: each nested dispatch
+           fans out to every subscriber again, so an accidental
+           feedback loop (A emits -> B -> A) exhausts the stack /
+           steals the dispatching thread. Edge-trigger handlers that
+           emit downstream events must schedule the inner dispatch via
+           ``asyncio.call_soon`` / ``loop.run_in_executor`` / a thread
+           worker instead of running inline. (See rule 5.)
 
         3. Exception semantics -- ``try/except Exception`` in
            ``dispatch``'s sync-fanout loop SWALLOWS raises inside
@@ -191,9 +207,10 @@ class EventManager:
            released it (since the outer lock is released BEFORE the
            sync-fanout loop runs). So deferred re-entry via
            ``asyncio.call_soon`` / ``run_in_executor`` / thread
-           worker does NOT deadlock. The ONLY unsafe re-entry
+           worker does NOT deadlock. The ONLY hazardous re-entry
            path is a synchronous, in-line call to
-           ``self.dispatch(event, ...)`` (rule 2).
+           ``self.dispatch(event, ...)`` — not a deadlock (the lock
+           is already released) but unbounded recursion (rule 2).
 
         6. Insertion-order preserved --
            ``list(self._critical_subscribers.keys())`` iterates in
@@ -208,18 +225,25 @@ class EventManager:
                 return
             total = len(self._subscribers) + len(self._critical_subscribers)
             if total >= self._MAX_SUBSCRIBERS:
-                # Drop oldest idle subscriber across BOTH pools so a
-                # runaway producer can't leak the subscriber list
-                # indefinitely. Pool-tracking is merged for the cap
-                # so critical subscribers don't starve regular ones.
-                victim = min(self._last_used, key=lambda k: self._last_used[k])
-                self._subscribers.pop(victim, None)
-                self._critical_subscribers.pop(victim, None)
-                self._last_used.pop(victim, None)
-                logger.warning(
-                    f"Subscriber list at cap "
-                    f"({self._MAX_SUBSCRIBERS}); evicted {victim}"
-                )
+                # Drop the oldest idle REGULAR subscriber so a runaway
+                # producer can't leak the subscriber list indefinitely.
+                # SECURITY/reliability: critical subscribers are exempt
+                # from cap eviction — they carry non-lossy delivery
+                # (e.g. real-time gateway fan-out) and evicting one to
+                # make room for an ordinary subscription silently
+                # breaks that guarantee.
+                regular_keys = list(self._subscribers.keys())
+                if regular_keys:
+                    victim = min(regular_keys, key=lambda k: self._last_used.get(k, 0))
+                    self._subscribers.pop(victim, None)
+                    self._last_used.pop(victim, None)
+                    logger.warning(
+                        f"Subscriber list at cap "
+                        f"({self._MAX_SUBSCRIBERS}); evicted regular {victim}"
+                    )
+                # No regular subscriber available to evict: allow the cap
+                # to be exceeded rather than dropping a critical (or the
+                # incoming) subscriber. TTL pruning still bounds growth.
             target = self._critical_subscribers if critical else self._subscribers
             target[callback] = True
             self._last_used[callback] = time.monotonic()
@@ -266,10 +290,16 @@ class EventManager:
         )
 
     def _maybe_prune_locked(self) -> None:
-        """Prune subscribers that haven't been touched in TTL_SEC.
+        """Prune idle REGULAR subscribers after TTL_SEC.
 
         Caller MUST hold ``self._lock`` so the prune is consistent
         with concurrent subscribe / unsubscribe.
+
+        Critical subscribers are deliberately IMMUNE to idle-TTL
+        eviction: they are long-lived, non-lossy consumers (e.g. the
+        websocket dispatcher) whose absence would silently break
+        delivery guarantees. Their lifetime is bounded by explicit
+        ``unsubscribe()`` calls, not by idleness.
         """
         now = time.monotonic()
         if now - self._last_prune < max(1, self._SUBSCRIBER_IDLE_TTL_SEC // 4):
@@ -388,14 +418,24 @@ class EventManager:
                     # local async queue is saturated — sibling
                     # workers may still have capacity.
                     self._publish_cross_worker(event, recipients)
-                    return len(
-                        recipients
-                    )  # critical already fan-out-ed; queue drop ends dispatch
+                    # ACCURATE RETURN (B1): the recipients were NOT
+                    # delivered to by the deferred lane — report 0 so
+                    # callers can detect the drop instead of mistaking
+                    # it for a successful fan-out. Critical callbacks
+                    # did run, but they are an implementation detail,
+                    # not recipient delivery.
+                    return 0
                 # Cross-worker publish after successful async enqueue.
                 self._publish_cross_worker(event, recipients)
-                return len(
-                    recipients
-                )  # sync CTX: regular subscribers will drain via lifespan
+                # The consumer task started by the app lifespan owns
+                # this queue; returning ``len(recipients)`` here is now
+                # accurate because queued events are guaranteed to be
+                # fanned out (and drained on shutdown).
+                logger.debug(
+                    f"Dispatched {event.event_type.value} to "
+                    f"{len(recipients)} users (queued)"
+                )
+                return len(recipients)
         except RuntimeError:
             # No running loop in this thread (Celery worker / sync
             # CLI / unit test scaffolding); eager fan-out.
@@ -433,6 +473,75 @@ class EventManager:
         while not self._queue.empty():
             event, recipients, subscribers = await self._queue.get()
             self._fan_out(event, recipients, subscribers)
+
+    async def start_consumer(self) -> None:
+        """Start the background queue consumer (idempotent).
+
+        Must be awaited from a running event loop (the app lifespan).
+        The consumer owns the dispatch queue for this loop: events
+        enqueued by ``dispatch`` are fanned out to regular
+        subscribers shortly after enqueue. Without a consumer the
+        queue is write-only and regular subscribers starve.
+        """
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            if self._consumer_task is not None and not self._consumer_task.done():
+                return
+            # Bind (or re-bind) the queue to THIS loop so ``dispatch``
+            # calls running on it find a compatible queue immediately,
+            # instead of lazily recreating one on first use.
+            if self._needs_queue_recreate_locked(loop):
+                self._queue = asyncio.Queue(maxsize=self._DISPATCH_QUEUE_MAX)
+                self._queue_loop = loop
+            self._consumer_stop = False
+            self._consumer_task = loop.create_task(self._consume_loop())
+        logger.info("Event dispatch queue consumer started")
+
+    async def _consume_loop(self) -> None:
+        """Consume the dispatch queue until stopped.
+
+        Batches all currently-queued events each tick, then sleeps.
+        The stop flag is checked under ``self._lock`` so a concurrent
+        ``stop_consumer`` is observed promptly; graceful shutdown then
+        drains any remainder via :meth:`stop_consumer`.
+        """
+        while True:
+            with self._lock:
+                stop_requested = self._consumer_stop
+                queue = self._queue
+            if stop_requested:
+                break
+            if queue is None:
+                await asyncio.sleep(self._CONSUMER_POLL_INTERVAL_SEC)
+                continue
+            while True:
+                try:
+                    item = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                event, recipients, subscribers = item
+                self._fan_out(event, recipients, subscribers)
+            await asyncio.sleep(self._CONSUMER_POLL_INTERVAL_SEC)
+
+    async def stop_consumer(self) -> None:
+        """Stop the background consumer and drain the remaining queue.
+
+        Safe to call when no consumer was started. After signalling
+        the loop to exit and awaiting its completion, any events still
+        sitting in the queue are fanned out synchronously so shutdown
+        does not silently drop queued events.
+        """
+        with self._lock:
+            task = self._consumer_task
+            self._consumer_task = None
+            self._consumer_stop = True
+        if task is not None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        await self.drain()
+        logger.info("Event dispatch queue consumer stopped")
 
     def get_loss_metrics(self) -> dict:
         """Expose dispatch saturation metrics for observability.
