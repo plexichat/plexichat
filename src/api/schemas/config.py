@@ -3,7 +3,7 @@ Configuration schemas for API responses.
 """
 
 from pydantic import BaseModel, Field
-from typing import List
+from typing import Dict, List, Optional
 
 
 class AvatarConfigResponse(BaseModel):
@@ -28,6 +28,18 @@ class ServerCapabilitiesResponse(BaseModel):
     access_token_required: bool = Field(
         False, description="Whether API access tokens are required"
     )
-    # Future expansion:
-    # messaging: Optional[MessagingConfigResponse]
-    # voice: Optional[VoiceConfigResponse]
+    server_version: Optional[str] = Field(
+        None, description="Current server version string"
+    )
+    passkey_enabled: bool = Field(
+        False, description="Whether WebAuthn passkey authentication is enabled"
+    )
+    oauth_providers: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="Map of OAuth provider name to whether it is configured/enabled",
+    )
+    age_gate_mode: str = Field(
+        "none",
+        description="Age gate mode: 'none', 'checkbox' (boolean attestation) "
+        "or 'dob' (date-of-birth verification)",
+    )

@@ -11,6 +11,7 @@ import src.api as api
 import utils.logger as logger
 from src.api.schemas.auth import OAuthLoginResponse, OAuthCallbackRequest, LoginResponse
 from src.api.schemas.common import ErrorResponse
+from src.core.auth.models import AuthStatus
 from .helpers import _user_to_response
 from .cookies import set_session_cookie, session_cookie_secure
 from .oauth_config import OAUTH_PROVIDERS
@@ -277,7 +278,9 @@ async def oauth_login_init(
     logger.info(f"OAuth login initiated for {provider} from {ip_address}")
 
     response_model = OAuthLoginResponse(
-        url=auth_url, state=oauth_state.state_token or ""
+        url=auth_url,
+        auth_url=auth_url,
+        state=oauth_state.state_token or "",
     )
 
     # Bind the state token to this browser via a short-lived HttpOnly cookie
@@ -548,6 +551,45 @@ async def oauth_callback(
                         }
                     },
                 )
+        elif provider == "gitlab":
+            # SECURITY: link by verified email only. GitLab signals email
+            # verification through its OIDC userinfo endpoint (the ``openid``
+            # scope is requested during authorization); fall back to the REST
+            # /user endpoint where ``confirmed_at`` marks a confirmed address.
+            try:
+                oidc_resp = await client.get(
+                    "https://gitlab.com/oauth/userinfo", headers=user_info_headers
+                )
+                if oidc_resp.status_code == 200:
+                    oidc_info = oidc_resp.json()
+                    if oidc_info.get("sub"):
+                        external_id = str(oidc_info["sub"])
+                    username_hint = oidc_info.get("nickname") or oidc_info.get("name")
+                    if oidc_info.get("email_verified") and oidc_info.get("email"):
+                        email = oidc_info["email"]
+            except Exception as e:
+                logger.warning(f"Failed to verify GitLab email via OIDC userinfo: {e}")
+
+            if not external_id and user_info.get("id"):
+                external_id = str(user_info["id"])
+                username_hint = username_hint or user_info.get("username")
+                if (
+                    not email
+                    and user_info.get("email")
+                    and user_info.get("confirmed_at")
+                ):
+                    email = user_info["email"]
+
+            if not email:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "GitLab account must have a verified email",
+                        }
+                    },
+                )
         elif provider == "microsoft":
             external_id = user_info.get("id")
             username_hint = user_info.get("displayName")
@@ -613,14 +655,14 @@ async def oauth_callback(
                 status_code=401, detail={"error": {"code": 401, "message": str(e)}}
             )
 
-        if result.status.value == "failed":
+        if result.status == AuthStatus.FAILED:
             error_code = 400 if "Age" in str(result.message) else 401
             raise HTTPException(
                 status_code=error_code,
                 detail={"error": {"code": error_code, "message": result.message}},
             )
 
-        if result.status.value == "two_factor_required":
+        if result.status == AuthStatus.TWO_FACTOR_REQUIRED:
             return LoginResponse(
                 status="two_factor_required",
                 token=None,

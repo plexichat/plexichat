@@ -73,12 +73,37 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
     except Exception:
         trusted_proxies = []
 
-    # Only trust X-Forwarded-For if the direct peer is a trusted proxy.
+    # Only consider X-Forwarded-For if the direct peer is a trusted proxy.
     if direct_ip and _ip_matches_trusted(direct_ip, trusted_proxies):
         forwarded = get_header("X-Forwarded-For")
         if forwarded:
             parts = [p.strip() for p in forwarded.split(",") if p.strip()]
             if parts:
-                return parts[0]
+                # SECURITY: rightmost-untrusted-hop selection. The LEFTMOST
+                # XFF entry is fully attacker-controlled (any downstream
+                # client may inject "X-Forwarded-For: <fake>" and every hop
+                # appends to the RIGHT). Walking from the right and skipping
+                # entries that match configured trusted proxy CIDRs yields
+                # the first address we did NOT receive from a trusted proxy
+                # — i.e. the address our own infrastructure observed. If
+                # every entry is a trusted proxy (or parsing fails) we fail
+                # safe to the direct peer address.
+                for candidate in reversed(parts):
+                    host = candidate
+                    # Strip an optional port or bracketed IPv6 suffix form.
+                    if host.startswith("[") and "]" in host:
+                        host = host[1 : host.index("]")]
+                    elif host.count(":") == 1:
+                        host = host.rsplit(":", 1)[0]
+                    try:
+                        ipaddress.ip_address(host)
+                    except ValueError:
+                        # Malformed entry: attacker-controlled garbage —
+                        # ignore it and keep walking left.
+                        continue
+                    if not _ip_matches_trusted(host, trusted_proxies):
+                        return host
+                # All reported hops were trusted proxies: fall back to peer.
+                return direct_ip
 
     return direct_ip

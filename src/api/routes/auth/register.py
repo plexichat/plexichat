@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, Response, HTTPException
 
 import src.api as api
 import utils.logger as logger
@@ -6,6 +6,7 @@ from utils.logger import mask_email, mask_string
 from src.api.schemas.auth import RegisterRequest, LoginResponse
 from src.api.schemas.common import ErrorResponse
 from .helpers import _user_to_response
+from .cookies import set_session_cookie
 from src.core.auth.exceptions import (
     AuthError,
     UserExistsError,
@@ -13,6 +14,7 @@ from src.core.auth.exceptions import (
     InvalidEmailError,
     WeakPasswordError,
 )
+from src.utils.net import get_client_ip
 
 try:
     import utils.config as config_util
@@ -36,7 +38,9 @@ router = APIRouter()
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def register(request: Request, body: RegisterRequest) -> LoginResponse:
+async def register(
+    request: Request, response: Response, body: RegisterRequest
+) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -45,7 +49,7 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
     device_info = {"user_agent": request.headers.get("User-Agent", "unknown")}
 
     age = body.age
@@ -141,6 +145,11 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
             },
         )
 
+    # SECURITY: auto-login after registration delivers the session the
+    # same way login/oauth/passkeys do — as an HttpOnly cookie so the
+    # browser holds an XSS-resistant credential path. (This route never
+    # returns two_factor_required: a fresh registration has no 2FA yet.)
+    set_session_cookie(response, result.token)
     return LoginResponse(
         status="success", token=result.token, user=_user_to_response(user)
     )

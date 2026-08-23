@@ -187,9 +187,14 @@ class RegistrationMixin(AuthManagerProtocol):
         if not verify_token_hash(parsed["secret"], rec["token_hash"]):
             return False
 
-        self._db.execute(
-            "UPDATE auth_email_tokens SET used = 1 WHERE id = ?", (rec["id"],)
+        # Atomic single-use consumption prevents concurrent requests from
+        # both consuming the same verification token (mirrors password.py).
+        cursor = self._db.execute(
+            "UPDATE auth_email_tokens SET used = 1 WHERE id = ? AND used = 0",
+            (rec["id"],),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            return False
         self._db.execute(
             "UPDATE auth_users SET email_verified = 1 WHERE id = ?", (rec["user_id"],)
         )
@@ -211,10 +216,13 @@ class RegistrationMixin(AuthManagerProtocol):
             return False
         tid = self._generate_id()
         token, token_hash = create_email_token(tid)
+        # ``_get_timestamp()`` is MILLISECONDS; expires_at must therefore be
+        # now + 24h * 3600 s/h * 1000 ms/s. (86-seconds bug when the day was
+        # encoded as 86400 raw.)
         now = self._get_timestamp()
         self._db.execute(
             "INSERT INTO auth_email_tokens (id, user_id, token_hash, token_type, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (tid, user_id, token_hash, "verify_email", now, now + 86400),
+            (tid, user_id, token_hash, "verify_email", now, now + 86400 * 1000),
         )
         try:
             self.email_sender.send(

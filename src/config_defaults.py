@@ -221,9 +221,10 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "token_cache_ttl": 30,
                 "token_verify_rate_limit": 100,
                 "token_binding": False,
-                # HttpOnly session cookie Secure flag. Enable in production
-                # behind TLS; keep false for plain-HTTP self-hosting.
-                "session_cookie_secure": False,
+                # HttpOnly session cookie Secure flag. SECURE BY DEFAULT;
+                # explicitly set false ONLY for plain-HTTP localhost/dev
+                # deployments (production behind TLS needs no override).
+                "session_cookie_secure": True,
             },
             "totp": {
                 "issuer": "Plexichat",

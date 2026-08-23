@@ -48,6 +48,9 @@ DEFAULT_TEST_CONFIG = {
         "security": {
             "max_failed_attempts": 3,
             "lockout_duration_minutes": 1,
+            # Dev/localhost override: the TestClient speaks plain HTTP, and
+            # Secure cookies would never be sent back over http://testserver.
+            "session_cookie_secure": False,
         },
         "password": {
             "min_length": 12,

@@ -101,10 +101,13 @@ class AccountReaper:
                         f"Reaper: Detected 'zombie' account {user_id} (active in DB but scheduled in log). Re-freezing..."
                     )
 
-                    # Re-apply the freeze
+                    # Re-apply the freeze. The audit-log entry timestamp is
+                    # in SECONDS while the deletion_at column is stored in
+                    # MILLISECONDS, so convert before adding the grace
+                    # period (also expressed in ms).
                     scheduled_at = entry["timestamp"]
                     grace_days = self._config.get("grace_period_days", 30)
-                    deletion_at = scheduled_at + (grace_days * 86400)
+                    deletion_at = (scheduled_at * 1000) + (grace_days * 86400 * 1000)
 
                     self._db.execute(
                         "UPDATE auth_users SET deletion_status = 'frozen', deletion_at = ? WHERE id = ?",
@@ -161,7 +164,9 @@ class AccountReaper:
                 "Reaper: ``harvest()`` called while audit chain is halted; refusing to run."
             )
             return
-        now = int(time.time())
+        # deletion_at is stored in MILLISECONDS (matching
+        # DeletionMixin.schedule_account_deletion); compare in the same unit.
+        now = int(time.time() * 1000)
         batch_size = self._reaper_config.get("batch_size", 50)
 
         # Clean up expired passkey challenges and Suite download tickets.

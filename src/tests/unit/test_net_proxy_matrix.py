@@ -70,9 +70,18 @@ def _scope(client, xff=None):
         # Trusted via CIDR
         (("10.1.2.3", 1234), "8.8.8.8", ["10.0.0.0/8"], "8.8.8.8"),
         (("172.16.0.1", 1234), "8.8.8.8", ["172.16.0.0/12"], "8.8.8.8"),
-        # Multi-hop XFF: first entry is the original client
-        (("10.0.0.5", 1234), "9.9.9.9, 8.8.8.8, 7.7.7.7", ["10.0.0.5"], "9.9.9.9"),
+        # Multi-hop XFF: RIGHTMOST-UNTRUSTED-HOP wins — only the direct
+        # peer is trusted, so the rightmost non-proxy entry is the client.
+        # Leftmost entries are attacker-controllable and must be ignored.
+        (("10.0.0.5", 1234), "9.9.9.9, 8.8.8.8, 7.7.7.7", ["10.0.0.5"], "7.7.7.7"),
         (("10.0.0.5", 1234), "9.9.9.9, ", ["10.0.0.5"], "9.9.9.9"),
+        # All reported hops trusted -> fail safe to the direct peer.
+        (
+            ("10.0.0.5", 1234),
+            "10.0.0.9, 10.0.0.8",
+            ["10.0.0.0/8"],
+            "10.0.0.5",
+        ),
         # Blank XFF -> parts empty -> direct peer used
         (("10.0.0.5", 1234), "   ", ["10.0.0.5"], "10.0.0.5"),
         # Header case-insensitive

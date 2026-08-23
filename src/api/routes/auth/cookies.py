@@ -48,11 +48,17 @@ def session_cookie_max_age() -> int:
 def session_cookie_secure() -> bool:
     """Whether cookies carry the Secure flag.
 
-    Defaults to False so plain-HTTP self-hosted deployments keep working;
-    production deployments behind TLS should set
-    ``authentication.security.session_cookie_secure: true``.
+    Secure-by-default: the long-lived HttpOnly session credential must not
+    travel over plain HTTP unless an operator explicitly opts out with
+    ``authentication.security.session_cookie_secure: false`` (intended for
+    localhost / plain-HTTP dev deployments only).
     """
-    return bool(_auth_config().get("security", {}).get("session_cookie_secure", False))
+    try:
+        return bool(
+            _auth_config().get("security", {}).get("session_cookie_secure", True)
+        )
+    except Exception:
+        return True
 
 
 def set_session_cookie(response: Response, token: str) -> None:

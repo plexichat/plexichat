@@ -20,6 +20,7 @@ from src.core.auth.exceptions import (
     TokenInvalidError,
     UserNotFoundError,
 )
+from src.utils.net import get_client_ip
 
 router = APIRouter()
 
@@ -152,7 +153,7 @@ async def refresh_session(request: Request) -> LoginResponse:
             detail={"error": {"code": 401, "message": "Missing authentication token"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
     user_agent = request.headers.get("User-Agent")
 
     try:

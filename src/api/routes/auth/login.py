@@ -14,6 +14,8 @@ from src.core.auth.exceptions import (
     AccountDisabledError,
     EmailNotVerifiedError,
 )
+from src.core.auth.models import AuthStatus
+from src.utils.net import get_client_ip
 
 router = APIRouter()
 
@@ -42,7 +44,7 @@ async def login(
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
     user_agent = request.headers.get("User-Agent")
 
     try:
@@ -84,7 +86,7 @@ async def login(
             },
         )
 
-    if result.status.value == "two_factor_required":
+    if result.status == AuthStatus.TWO_FACTOR_REQUIRED:
         masked_username = mask_string(body.username)
         logger.info(f"2FA challenge issued for user '{masked_username}'")
         return LoginResponse(

@@ -44,7 +44,10 @@ class DeletionMixin(AuthManagerProtocol):
             "grace_period_days", 30
         )
         now = self._get_timestamp()
-        deletion_at = now + (grace_days * 86400)
+        # ``_get_timestamp()`` is milliseconds; the grace period is days, so
+        # convert days -> ms (86400 s/day * 1000 ms/s). Mixing units here
+        # previously made 30-day grace periods expire in ~43 minutes.
+        deletion_at = now + (grace_days * 86400 * 1000)
 
         self._db.execute(
             "UPDATE auth_users SET deletion_status = 'frozen', deletion_at = ? WHERE id = ?",
@@ -163,12 +166,17 @@ class DeletionMixin(AuthManagerProtocol):
 
         from src.core.auth.reaper import AccountReaper
 
-        reaper = AccountReaper(self._db, self._config.get("account_deletion", {}))
+        # ``self`` IS the auth manager here (DeletionMixin is mixed into it);
+        # the reaper's optional auth hook (e.g. logout_all during rollback
+        # protection) expects that module, not a config dict.
+        reaper = AccountReaper(self._db, self)
         reaper.purge_user(user_id, row["username"])
 
         self._db.execute(
             "UPDATE auth_users SET deletion_status = 'purged', deletion_at = ? WHERE id = ?",
-            (int(time.time()), user_id),
+            # deletion_at is stored in milliseconds everywhere (see
+            # schedule_account_deletion / AccountReaper.harvest).
+            (int(time.time() * 1000), user_id),
         )
 
         self._db.execute(

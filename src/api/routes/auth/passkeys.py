@@ -21,6 +21,8 @@ from src.core.auth.exceptions import (
     InvalidCredentialsError,
     AccountLockedError,
 )
+from src.core.auth.models import AuthStatus
+from src.utils.net import get_client_ip
 
 try:
     from src.core.ratelimit.decorators import rate_limit
@@ -157,7 +159,7 @@ async def passkey_register(
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
 
     try:
         result = auth.verify_passkey_registration(
@@ -263,7 +265,7 @@ async def passkey_authenticate(
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
     user_agent = request.headers.get("User-Agent")
 
     try:
@@ -274,7 +276,7 @@ async def passkey_authenticate(
             user_agent=user_agent,
         )
 
-        if result.status.value == "two_factor_required":
+        if result.status == AuthStatus.TWO_FACTOR_REQUIRED:
             return LoginResponse(
                 status="two_factor_required",
                 token=None,
@@ -378,7 +380,7 @@ async def revoke_passkey(
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
 
     try:
         result = auth.revoke_passkey(

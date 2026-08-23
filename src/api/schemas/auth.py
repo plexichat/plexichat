@@ -213,6 +213,11 @@ class OAuthLoginResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     url: str = Field(..., description="OAuth authorization URL")
+    auth_url: str = Field(
+        ...,
+        description="OAuth authorization URL (alias of ``url``; the canonical "
+        "field web clients consume)",
+    )
     state: str = Field(
         ...,
         description="CSRF state token (bound to an HttpOnly cookie set alongside)",

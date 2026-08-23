@@ -106,12 +106,41 @@ def test_forwarded_ignored_without_trusted_proxy():
     ],
 )
 def test_forwarded_used_when_peer_is_trusted(forwarded):
+    # RIGHTMOST-UNTRUSTED-HOP selection: walk XFF from the right, skipping
+    # entries inside the trusted proxy CIDR; the first untrusted address is
+    # the client as observed by our own infrastructure.
     config.set("api", {"trusted_proxies": ["10.0.0.0/8"]})
     scope = _scope(
         client=("10.0.0.1", 4000),
         headers=[_h("x-forwarded-for", forwarded)],
     )
-    assert get_client_ip(scope) == "10.0.0.5"
+    parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+    untrusted = [
+        p for p in reversed(parts) if not _ip_matches_trusted(p, ["10.0.0.0/8"])
+    ]
+    expected = untrusted[0] if untrusted else "10.0.0.1"
+    assert get_client_ip(scope) == expected
+
+
+def test_forwarded_all_hops_trusted_falls_back_to_peer():
+    # Every reported hop is itself a trusted proxy -> fail safe to peer.
+    config.set("api", {"trusted_proxies": ["10.0.0.0/8"]})
+    scope = _scope(
+        client=("10.0.0.1", 4000),
+        headers=[_h("x-forwarded-for", "10.0.0.5, 10.0.0.9")],
+    )
+    assert get_client_ip(scope) == "10.0.0.1"
+
+
+def test_forwarded_attacker_injected_left_entries_ignored():
+    # SECURITY: an attacker-controlled LEFTMOST entry must never win —
+    # each request could otherwise land in a fresh IP bucket.
+    config.set("api", {"trusted_proxies": ["10.0.0.0/8"]})
+    scope = _scope(
+        client=("10.0.0.1", 4000),
+        headers=[_h("x-forwarded-for", "6.6.6.6, 7.7.7.7")],
+    )
+    assert get_client_ip(scope) == "7.7.7.7"
 
 
 def test_forwarded_used_with_exact_trusted_ip():
