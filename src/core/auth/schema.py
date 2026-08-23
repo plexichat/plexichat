@@ -240,6 +240,10 @@ CREATE TABLE IF NOT EXISTS auth_api_access_token_events (
     FOREIGN KEY (token_id) REFERENCES auth_api_access_tokens(id) ON DELETE CASCADE
 );
 
+-- Failed login tracking per (user, IP) for distributed-lockout gating.
+-- DDL lives in ensure_failed_logins_table() below (single source of truth);
+-- create_tables() invokes it alongside the inline statements.
+
 -- Audit log with integrity
 CREATE TABLE IF NOT EXISTS auth_audit_log (
     id INTEGER PRIMARY KEY,
@@ -347,6 +351,58 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_users_username_lower
 """
 
 
+# Single source of truth for the failed-login tracking DDL. Called from
+# create_tables() for fresh installs/migrations and lazily from the session
+# manager so databases created before this table existed are covered too.
+_FAILED_LOGINS_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS auth_failed_logins (
+        user_id INTEGER NOT NULL,
+        ip_index TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, ip_index)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_auth_failed_logins_user_time
+        ON auth_failed_logins(user_id, last_attempt_at)
+    """,
+)
+
+
+def ensure_failed_logins_table(db) -> None:
+    for sql in _FAILED_LOGINS_DDL:
+        converted = db.convert_schema(sql) if hasattr(db, "convert_schema") else sql
+        db.execute(converted)
+
+
+_WS_TICKETS_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS auth_ws_tickets (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        session_id INTEGER,
+        ticket_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used INTEGER DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_auth_ws_tickets_expires
+        ON auth_ws_tickets(expires_at)
+    """,
+)
+
+
+def ensure_ws_tickets_table(db) -> None:
+    for sql in _WS_TICKETS_DDL:
+        converted = db.convert_schema(sql) if hasattr(db, "convert_schema") else sql
+        db.execute(converted)
+
+
 def create_tables(db) -> None:
     statements = split_sql_statements(SCHEMA_SQLITE)
     for statement in statements:
@@ -355,3 +411,5 @@ def create_tables(db) -> None:
             db.convert_schema(statement) if hasattr(db, "convert_schema") else statement
         )
         db.execute(converted)
+    ensure_failed_logins_table(db)
+    ensure_ws_tickets_table(db)

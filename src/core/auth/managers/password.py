@@ -88,7 +88,9 @@ class PasswordMixin(AuthManagerProtocol):
                 token_hash,
                 "reset_password",
                 self._get_timestamp(),
-                self._get_timestamp() + 3600,
+                # Timestamps are milliseconds (see ``_get_timestamp``); a bare
+                # ``+ 3600`` here would expire tokens ~3.6 seconds after issue.
+                self._get_timestamp() + 3600 * 1000,
             ),
         )
         self.email_sender.send(email, "Reset Password", f"Token: {token}")

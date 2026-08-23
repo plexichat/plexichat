@@ -2,6 +2,8 @@ import json
 import time
 from typing import Optional, List
 
+import utils.logger as logger
+
 from ..exceptions import (
     AuthError,
     UserNotFoundError,
@@ -30,25 +32,50 @@ from .protocol import AuthManagerProtocol
 
 
 class TwoFactorMixin(AuthManagerProtocol):
-    # In-memory sliding-window attempt tracker for sensitive 2FA operations
-    # (confirm/disable) that are not covered by the challenge-based counter.
-    _2fa_verify_attempts: dict = {}
+    # In-process sliding-window fallback used only when no Valkey backend is
+    # configured (single-worker deployments and tests).
+    _2fa_verify_attempts_local: dict = {}
 
     def _check_and_record_2fa_attempt(
         self, user_id: int, max_attempts: int = 5, window_seconds: int = 300
     ) -> None:
         """Rate-limit TOTP code guessing for non-challenge 2FA endpoints.
 
-        Raises TwoFactorInvalidError once ``max_attempts`` codes have been
-        tried within ``window_seconds`` for the same user.
+        Backed by the shared cache (Valkey primary) so the limit holds across
+        all workers in a horizontally scaled deployment. SECURITY: this limiter
+        fails CLOSED — if the cache backend errors while it is supposed to be
+        available, attempts are refused rather than waved through.
         """
+        from src.core.database.valkey_client import (
+            get_client,
+            is_available,
+            ValkeyOperationError,
+        )
+
+        client = get_client()
+        if client and is_available():
+            full_key = f"ratelimit:auth_2fa_attempts:{user_id}"
+            try:
+                current = client.incr(full_key)
+                if current == 1:
+                    client.expire(full_key, window_seconds)
+                if current > max_attempts:
+                    raise TwoFactorInvalidError("Too many attempts; try again later")
+                return
+            except ValkeyOperationError:
+                logger.error(
+                    "2FA attempt limiter: cache backend error — failing closed"
+                )
+                raise TwoFactorInvalidError("Too many attempts; try again later")
+
+        # No cache backend configured: in-process sliding window.
         now = time.monotonic()
-        attempts = TwoFactorMixin._2fa_verify_attempts.get(user_id, [])
+        attempts = TwoFactorMixin._2fa_verify_attempts_local.get(user_id, [])
         attempts = [t for t in attempts if now - t < window_seconds]
         if len(attempts) >= max_attempts:
             raise TwoFactorInvalidError("Too many attempts; try again later")
         attempts.append(now)
-        TwoFactorMixin._2fa_verify_attempts[user_id] = attempts
+        TwoFactorMixin._2fa_verify_attempts_local[user_id] = attempts
 
     def _create_2fa_challenge(
         self,
@@ -145,11 +172,25 @@ class TwoFactorMixin(AuthManagerProtocol):
                     (row["id"],),
                 )
                 raise TwoFactorInvalidError("Invalid code")
-            backup_hashes.pop(index)
-            self._db.execute(
-                "UPDATE auth_users SET backup_codes_hash = ? WHERE id = ?",
-                (json.dumps(backup_hashes), user_id),
+            # Atomic compare-and-set consumption: two concurrent requests
+            # cannot both burn the same backup code, because the update only
+            # succeeds when the stored list still matches what we verified.
+            remaining_hashes = backup_hashes[:index] + backup_hashes[index + 1 :]
+            cursor = self._db.execute(
+                "UPDATE auth_users SET backup_codes_hash = ? WHERE id = ? AND backup_codes_hash = ?",
+                (
+                    json.dumps(remaining_hashes),
+                    user_id,
+                    user_row["backup_codes_hash"],
+                ),
             )
+            if getattr(cursor, "rowcount", 0) == 0:
+                # The same code was consumed concurrently; treat as a failure.
+                self._db.execute(
+                    "UPDATE auth_2fa_challenges SET attempts = attempts + 1 WHERE id = ?",
+                    (row["id"],),
+                )
+                raise TwoFactorInvalidError("Invalid code")
 
         # Atomic single-use consumption: the conditional update prevents two
         # concurrent requests from both completing with the same code.

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import Response
 
 import src.api as api
 import utils.logger as logger
@@ -6,6 +7,7 @@ from utils.logger import mask_string
 from src.api.schemas.auth import LoginRequest, LoginResponse
 from src.api.schemas.common import ErrorResponse
 from .helpers import _user_to_response
+from .cookies import set_session_cookie
 from src.core.auth.exceptions import (
     InvalidCredentialsError,
     AccountLockedError,
@@ -29,7 +31,9 @@ router = APIRouter()
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def login(request: Request, body: LoginRequest) -> LoginResponse:
+async def login(
+    request: Request, response: Response, body: LoginRequest
+) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -96,6 +100,9 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
     logger.info(
         f"User '{masked_username}' logged in successfully (ID: {getattr(result.user, 'id', 'unknown')})"
     )
+    # SECURITY: also deliver the session as an HttpOnly cookie so the
+    # browser holds a credential that XSS payloads cannot exfiltrate.
+    set_session_cookie(response, result.token)
     return LoginResponse(
         status="success",
         token=result.token,

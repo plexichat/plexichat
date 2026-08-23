@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 import utils.logger as logger
 from src.core.database import cached, invalidate_pattern
@@ -23,7 +23,12 @@ from ..models import (
     AuthStatus,
 )
 from ..permissions import permissions_from_json
-from ..tokens import create_session_token, parse_token, verify_token_hash
+from ..tokens import (
+    create_session_token,
+    create_ws_ticket,
+    parse_token,
+    verify_token_hash,
+)
 
 
 from .protocol import AuthManagerProtocol
@@ -76,6 +81,7 @@ class SessionMixin(AuthManagerProtocol):
             "UPDATE auth_users SET failed_login_attempts = 0, last_login_at = ? WHERE id = ?",
             (self._get_timestamp(), user_id),
         )
+        self._clear_failed_login_state(user_id)
 
         user = self.get_user(user_id)
         self._log_audit(
@@ -106,6 +112,20 @@ class SessionMixin(AuthManagerProtocol):
             raise InvalidCredentialsError("Invalid credentials")
 
         user_id = row["id"]
+
+        # Per-(user, IP) throttle: this source has burned its failure budget,
+        # so refuse further attempts (uniformly, to avoid enumeration) even
+        # before touching the password. The account itself stays usable from
+        # other IPs — only a distributed pattern triggers the account lock.
+        self._ensure_failed_logins_table()
+        if ip_address:
+            ip_index = self.crypto.blind_index(ip_address, "ip_address")
+            if self._ip_throttle_active(user_id, ip_index):
+                self.crypto.verify_password(password, self._dummy_password_hash)
+                logger.warning(
+                    f"Login throttled for user {user_id} from blinded source IP"
+                )
+                raise InvalidCredentialsError("Invalid credentials")
 
         # Verify the password BEFORE any account-state checks so that locked or
         # frozen accounts are indistinguishable (in timing and response shape)
@@ -167,6 +187,9 @@ class SessionMixin(AuthManagerProtocol):
             "UPDATE auth_users SET failed_login_attempts = 0, last_login_at = ? WHERE id = ?",
             (self._get_timestamp(), user_id),
         )
+        # Successful authentication clears the failure bookkeeping so stale
+        # (user, IP) counters cannot throttle or lock later on.
+        self._clear_failed_login_state(user_id)
 
         email = None
         if row["email_encrypted"]:
@@ -211,33 +234,134 @@ class SessionMixin(AuthManagerProtocol):
             status=AuthStatus.SUCCESS, token=session.token, user=user, session=session
         )
 
+    # DDL bookkeeping for the failed-login tracking table (DDL itself lives in
+    # schema.py — single source of truth). The lazy guard covers databases
+    # created before that schema entry existed without paying the cost on
+    # every failure.
+    _failed_logins_table_ready: bool = False
+    _failed_logins_last_cleanup: int = 0
+
+    def _ensure_failed_logins_table(self) -> None:
+        if SessionMixin._failed_logins_table_ready:
+            return
+        from ..schema import ensure_failed_logins_table
+
+        ensure_failed_logins_table(self._db)
+        SessionMixin._failed_logins_table_ready = True
+
+    def _ip_throttle_active(self, user_id: int, ip_index: str) -> bool:
+        """True when this (user, IP) pair has exhausted its failure budget.
+
+        A single source hammering one account gets throttled for itself while
+        the account stays usable from everywhere else — targeted lockout DoS
+        requires the distributed pattern handled in ``_handle_failed_login``.
+        """
+        security_config = self._config.get("security", {})
+        threshold = security_config.get("max_failed_attempts", 5)
+        window_minutes = int(security_config.get("failed_login_window_minutes", 15))
+        # Budget before this IP is throttled: double the lockout threshold.
+        throttle_limit = max(1, int(threshold)) * 2 if threshold else 0
+        if not throttle_limit:
+            return False
+        row = self._db.fetch_one(
+            "SELECT attempts, last_attempt_at FROM auth_failed_logins WHERE user_id = ? AND ip_index = ?",
+            (user_id, ip_index),
+        )
+        if not row:
+            return False
+        cutoff = self._get_timestamp() - window_minutes * 60 * 1000
+        if row.get("last_attempt_at", 0) <= cutoff:
+            return False
+        return bool(row.get("attempts", 0) >= throttle_limit)
+
+    def _clear_failed_login_state(self, user_id: int) -> None:
+        """Reset failure bookkeeping after a successful authentication."""
+        self._ensure_failed_logins_table()
+        self._db.execute("DELETE FROM auth_failed_logins WHERE user_id = ?", (user_id,))
+
     def _handle_failed_login(self, user_id: int, ip_address: Optional[str]):
+        security_config = self._config.get("security", {})
+        threshold = security_config.get("max_failed_attempts", 5)
+        # A single source IP must not be able to deny service to a known
+        # username by brute-forcing it: account lockout additionally requires
+        # failures from several distinct IPs within the window (or an absent
+        # IP, which falls back to the legacy behavior).
+        min_distinct_ips = int(security_config.get("lockout_min_distinct_ips", 2))
+        window_minutes = int(security_config.get("failed_login_window_minutes", 15))
+        window_ms = window_minutes * 60 * 1000
+
+        self._ensure_failed_logins_table()
+
+        # Atomic increment: no read-modify-write race between concurrent
+        # requests can lose or double-count a failure.
         self._db.execute(
             "UPDATE auth_users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
             (user_id,),
         )
 
-        security_config = self._config.get("security", {})
-        threshold = security_config.get("max_failed_attempts", 5)
+        distinct_ips = 0
+        now = self._get_timestamp()
+        if ip_address:
+            ip_index = self.crypto.blind_index(ip_address, "ip_address")
+            row = self._db.fetch_one(
+                "SELECT attempts FROM auth_failed_logins WHERE user_id = ? AND ip_index = ?",
+                (user_id, ip_index),
+            )
+            if row:
+                self._db.execute(
+                    "UPDATE auth_failed_logins SET attempts = attempts + 1, last_attempt_at = ? WHERE user_id = ? AND ip_index = ?",
+                    (now, user_id, ip_index),
+                )
+            else:
+                try:
+                    self._db.execute(
+                        "INSERT INTO auth_failed_logins (user_id, ip_index, attempts, last_attempt_at) VALUES (?, ?, 1, ?)",
+                        (user_id, ip_index, now),
+                    )
+                except Exception:
+                    # Concurrent insert for the same (user, IP); count it.
+                    self._db.execute(
+                        "UPDATE auth_failed_logins SET attempts = attempts + 1, last_attempt_at = ? WHERE user_id = ? AND ip_index = ?",
+                        (now, user_id, ip_index),
+                    )
 
-        row = self._db.fetch_one(
-            "SELECT failed_login_attempts FROM auth_users WHERE id = ?", (user_id,)
+            count_row = self._db.fetch_one(
+                "SELECT COUNT(DISTINCT ip_index) AS c FROM auth_failed_logins WHERE user_id = ? AND last_attempt_at > ?",
+                (user_id, now - window_ms),
+            )
+            distinct_ips = count_row["c"] if count_row else 0
+
+            # Opportunistic cleanup of stale rows (at most once per hour).
+            if now - SessionMixin._failed_logins_last_cleanup > 3600 * 1000:
+                SessionMixin._failed_logins_last_cleanup = now
+                self._db.execute(
+                    "DELETE FROM auth_failed_logins WHERE last_attempt_at < ?",
+                    (now - 24 * 3600 * 1000,),
+                )
+
+        should_lock = threshold is not None and (
+            (distinct_ips >= min_distinct_ips) or not ip_address
         )
-
-        if row and row["failed_login_attempts"] >= threshold:
+        if should_lock:
             lock_duration_min = security_config.get("lockout_duration_minutes", 15)
             lock_until = self._get_timestamp() + (lock_duration_min * 60 * 1000)
-            self._db.execute(
-                "UPDATE auth_users SET account_locked = 1, locked_until = ? WHERE id = ?",
-                (lock_until, user_id),
+            # Atomic lock transition: the conditional update guarantees only
+            # one request flips the lock and sends the alert, even under
+            # concurrency.
+            cursor = self._db.execute(
+                "UPDATE auth_users SET account_locked = 1, locked_until = ? WHERE id = ? AND account_locked = 0 AND failed_login_attempts >= ?",
+                (lock_until, user_id, threshold),
             )
-            self._log_audit(AuditEventType.ACCOUNT_LOCKED, user_id, True, ip_address)
-            try:
-                from src.core.events.gateway_emit import emit_security_alert
+            if getattr(cursor, "rowcount", 0) > 0:
+                self._log_audit(
+                    AuditEventType.ACCOUNT_LOCKED, user_id, True, ip_address
+                )
+                try:
+                    from src.core.events.gateway_emit import emit_security_alert
 
-                emit_security_alert(user_id, "account_locked")
-            except Exception:
-                pass
+                    emit_security_alert(user_id, "account_locked")
+                except Exception:
+                    pass
 
         invalidate_pattern("user_data:*")
 
@@ -314,7 +438,12 @@ class SessionMixin(AuthManagerProtocol):
             f"token_verify:str:{hashlib.sha256(token.encode()).hexdigest()}"
         ),
         skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
-            bool(
+            (
+                # Single-use WS tickets must NEVER be served from cache: a replay
+                # within the TTL would bypass the atomic consumption below.
+                isinstance(token, str) and token.startswith("wst.")
+            )
+            or bool(
                 self._config.get("security", {}).get("token_binding", False)
                 or self._config.get("security", {}).get("token_verify_rate_limit")
             )
@@ -347,6 +476,8 @@ class SessionMixin(AuthManagerProtocol):
             return self._verify_session_token(parsed, ip_address, user_agent=user_agent)
         elif parsed["token_type"] == "bot":
             return self._verify_bot_token(parsed, ip_address)
+        elif parsed["token_type"] == "wst":
+            return self._verify_ws_ticket(parsed, ip_address, user_agent=user_agent)
         raise TokenInvalidError("Unknown type")
 
     def _verify_session_token(
@@ -462,6 +593,113 @@ class SessionMixin(AuthManagerProtocol):
             account_type=AccountType.BOT,
             rate_limit_tier="bot",
             expires_at=None,
+        )
+
+    # ------------------------------------------------------------------
+    # WebSocket gateway tickets
+    #
+    # Short-lived, single-use credentials (``wst.{id}.{secret}``) minted for
+    # an authenticated session so the long-lived bearer token never has to be
+    # handed to the gateway handshake.
+    # ------------------------------------------------------------------
+
+    WS_TICKET_TTL_MS = 60 * 1000
+
+    def create_ws_ticket_for_session(
+        self,
+        user_id: int,
+        session_id: Optional[int],
+    ) -> Tuple[str, int]:
+        """Mint a single-use gateway ticket bound to ``session_id``.
+
+        Returns ``(ticket_token, expires_in_seconds)``.
+        """
+        self._ensure_ws_tickets_table()
+        tid = self._generate_id()
+        now = self._get_timestamp()
+        ttl_seconds = int(self.WS_TICKET_TTL_MS // 1000)
+        token, token_hash = create_ws_ticket(tid)
+        self._db.execute(
+            "INSERT INTO auth_ws_tickets (id, user_id, session_id, ticket_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                tid,
+                user_id,
+                session_id,
+                token_hash,
+                now,
+                now + self.WS_TICKET_TTL_MS,
+            ),
+        )
+        return token, ttl_seconds
+
+    _ws_tickets_table_ready: bool = False
+
+    def _ensure_ws_tickets_table(self) -> None:
+        if SessionMixin._ws_tickets_table_ready:
+            return
+        from ..schema import ensure_ws_tickets_table
+
+        ensure_ws_tickets_table(self._db)
+        SessionMixin._ws_tickets_table_ready = True
+
+    def _verify_ws_ticket(
+        self,
+        parsed: Dict,
+        ip_address: Optional[str],
+        user_agent: Optional[str] = None,
+    ) -> TokenInfo:
+        row = self._db.fetch_one(
+            "SELECT * FROM auth_ws_tickets WHERE id = ?", (parsed["id"],)
+        )
+        if not row or not verify_token_hash(parsed["secret"], row["ticket_hash"]):
+            raise TokenInvalidError("Invalid ticket")
+        if row["used"]:
+            raise TokenInvalidError("Ticket already used")
+        if row["expires_at"] < self._get_timestamp():
+            raise TokenExpiredError("Ticket expired")
+
+        # Atomic single-use consumption: concurrent replays of the same
+        # ticket cannot both pass this gate.
+        cursor = self._db.execute(
+            "UPDATE auth_ws_tickets SET used = 1 WHERE id = ? AND used = 0",
+            (row["id"],),
+        )
+        if getattr(cursor, "rowcount", 0) == 0:
+            logger.warning(f"WS ticket replay detected (id={row['id']})")
+            raise TokenInvalidError("Ticket already used")
+
+        srow = (
+            self._db.fetch_one(
+                "SELECT s.*, u.username, u.permissions, u.account_type, u.account_locked, "
+                "u.force_username_change, u.deletion_status "
+                "FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?",
+                (row["session_id"],),
+            )
+            if row["session_id"]
+            else None
+        )
+        if (
+            not srow
+            or srow["revoked"]
+            or srow["expires_at"] < self._get_timestamp()
+            or srow.get("deletion_status") == "frozen"
+        ):
+            raise TokenInvalidError("Ticket session no longer valid")
+
+        return TokenInfo(
+            valid=True,
+            token_type="user",
+            account_id=srow["user_id"],
+            user_id=srow["user_id"],
+            session_id=srow["id"],
+            username=srow["username"],
+            permissions=permissions_from_json(srow["permissions"]),
+            account_type=AccountType(srow["account_type"]),
+            rate_limit_tier=srow.get("rate_limit_tier", "standard"),
+            expires_at=srow["expires_at"],
+            account_locked=bool(srow.get("account_locked", 0)),
+            force_username_change=bool(srow.get("force_username_change", 0)),
+            deletion_status=srow.get("deletion_status", "active"),
         )
 
     def refresh_session(self, token: str) -> Optional[str]:

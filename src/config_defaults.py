@@ -213,9 +213,17 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "security": {
                 "max_failed_attempts": 5,
                 "lockout_duration_minutes": 15,
+                # Account lockout requires failures from at least this many
+                # distinct source IPs within failed_login_window_minutes, so a
+                # single host cannot deny service to a known username.
+                "lockout_min_distinct_ips": 2,
+                "failed_login_window_minutes": 15,
                 "token_cache_ttl": 30,
                 "token_verify_rate_limit": 100,
                 "token_binding": False,
+                # HttpOnly session cookie Secure flag. Enable in production
+                # behind TLS; keep false for plain-HTTP self-hosting.
+                "session_cookie_secure": False,
             },
             "totp": {
                 "issuer": "Plexichat",
@@ -565,6 +573,11 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "nonce_token_bytes": 32,
             "cleanup_on_verify": True,
             "max_states_per_ip": 10,
+            # Login-CSRF defense: bind the OAuth state to the browser via an
+            # HttpOnly cookie and require it at the callback. Split-origin
+            # deployments (static client on a different site than the API)
+            # may set this to false, at the cost of the binding.
+            "state_cookie_required": True,
             "pkce_enabled": True,
             "pkce": {
                 "verifier_length": 64,

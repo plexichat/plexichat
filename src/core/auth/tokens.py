@@ -6,6 +6,7 @@ This module handles API access token CRUD operations, verification, scopes, and 
 
 import base64
 import hashlib
+import hmac
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -58,6 +59,14 @@ def create_2fa_challenge_token(
     return full_token, secret_hash
 
 
+def create_ws_ticket(ticket_id: int, secret_length: int = 32) -> Tuple[str, str]:
+    """Create a short-lived single-use gateway (WebSocket) ticket."""
+    secret = generate_token_secret(secret_length)
+    full_token = f"wst.{ticket_id}.{secret}"
+    secret_hash = hash_token(secret)
+    return full_token, secret_hash
+
+
 def parse_token(token: str) -> Optional[dict]:
     """Parse a token into its components."""
     if not token or not isinstance(token, str):
@@ -86,6 +95,13 @@ def parse_token(token: str) -> Optional[dict]:
         except ValueError:
             return None
 
+    if len(parts) == 3 and parts[0] == "wst":
+        try:
+            ticket_id = int(parts[1])
+            return {"token_type": "wst", "id": ticket_id, "secret": parts[2]}
+        except ValueError:
+            return None
+
     if len(parts) == 2:
         try:
             session_id = int(parts[0])
@@ -104,12 +120,9 @@ def verify_token_hash(token_secret: str, stored_hash: str) -> bool:
 
 def _constant_time_compare(a: str, b: str) -> bool:
     """Constant-time string comparison to prevent timing attacks."""
-    if len(a) != len(b):
+    if not isinstance(a, str) or not isinstance(b, str):
         return False
-    result = 0
-    for x, y in zip(a, b):
-        result |= ord(x) ^ ord(y)
-    return result == 0
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
 
 
 def create_api_access_token(
@@ -259,6 +272,7 @@ __all__ = [
     "create_bot_token",
     "create_email_token",
     "create_2fa_challenge_token",
+    "create_ws_ticket",
     "parse_token",
     "verify_token_hash",
     "create_api_access_token",

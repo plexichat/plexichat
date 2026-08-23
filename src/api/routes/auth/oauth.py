@@ -1,18 +1,22 @@
-import httpx
-from typing import List
+import hmac as hmac_module
+import re
+from typing import List, Optional
 from urllib.parse import urlencode
+
+import httpx
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import Response
 
 import src.api as api
 import utils.logger as logger
 from src.api.schemas.auth import OAuthLoginResponse, OAuthCallbackRequest, LoginResponse
 from src.api.schemas.common import ErrorResponse
 from .helpers import _user_to_response
+from .cookies import set_session_cookie, session_cookie_secure
 from .oauth_config import OAUTH_PROVIDERS
 from src.core.auth.oauth import (
     create_oauth_state,
     verify_oauth_state,
-    generate_pkce_pair,
     verify_pkce,
 )
 
@@ -75,6 +79,33 @@ def _redirect_uri_is_allowed(provider: str, redirect_uri: str) -> bool:
     return False
 
 
+# RFC 7636 code_challenge grammar: 43-128 unreserved characters.
+_PKCE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
+
+# Short-lived HttpOnly cookie binding the OAuth state to the browser that
+# started the flow (mitigates login CSRF: an attacker page can supply a
+# state value in the callback POST, but cannot plant the matching cookie
+# on our origin). Scoped tightly to the OAuth endpoints.
+OAUTH_STATE_COOKIE = "plexichat_oauth_state"
+
+
+def _oauth_cookie_params(max_age: int) -> dict:
+    from src.api.config import get_api_config
+
+    try:
+        api_prefix = get_api_config().api_prefix.rstrip("/") or "/api/v1"
+    except Exception:
+        api_prefix = "/api/v1"
+    return {
+        "max_age": max_age,
+        "httponly": True,
+        "secure": session_cookie_secure(),
+        "samesite": "lax",
+        # Covers both /auth/oauth/{provider}/login and .../callback.
+        "path": f"{api_prefix}/auth/oauth",
+    }
+
+
 @router.get(
     "/oauth/{provider}/login",
     response_model=OAuthLoginResponse,
@@ -87,7 +118,12 @@ def _redirect_uri_is_allowed(provider: str, redirect_uri: str) -> bool:
     },
 )
 async def oauth_login_init(
-    request: Request, provider: str, redirect_uri: str
+    request: Request,
+    response: Response,
+    provider: str,
+    redirect_uri: str,
+    code_challenge: Optional[str] = None,
+    code_challenge_method: Optional[str] = None,
 ) -> OAuthLoginResponse:
     if provider not in OAUTH_PROVIDERS:
         raise HTTPException(
@@ -150,20 +186,58 @@ async def oauth_login_init(
     )
 
     pkce_challenge = None
-    code_verifier = None
     if pkce_enabled:
-        pkce_config = oauth_config.get("pkce", {})
-        pkce = generate_pkce_pair(config=pkce_config)
-        pkce_challenge = pkce.code_challenge
-        code_verifier = pkce.code_verifier
+        # SECURITY: the public client (SPA) must generate its own PKCE pair —
+        # the verifier is a secret only the browser should ever hold, so the
+        # server accepts only the S256 challenge and never mints verifiers.
+        client_challenge = (code_challenge or "").strip()
+        if code_challenge_method not in (None, "S256"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Only the S256 code_challenge_method is supported",
+                    }
+                },
+            )
+        if not client_challenge:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "code_challenge is required for PKCE OAuth flows",
+                    }
+                },
+            )
+        if not _PKCE_CHALLENGE_RE.fullmatch(client_challenge):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {"code": 400, "message": "Invalid code_challenge format"}
+                },
+            )
+        pkce_challenge = client_challenge
+
+    state_cookie_required = True
+    if config_util:
+        try:
+            state_cookie_required = bool(
+                (config_util.get("oauth", {}) or {}).get("state_cookie_required", True)
+            )
+        except Exception:
+            pass
 
     include_nonce = provider_info.get("supports_nonce", False)
+    issue_state_cookie = state_cookie_required
     oauth_state = create_oauth_state(
         provider=provider,
         redirect_uri=redirect_uri,
         include_nonce=include_nonce,
         pkce_challenge=pkce_challenge,
         ip_address=ip_address,
+        cookie_issued=issue_state_cookie,
     )
 
     if not oauth_state:
@@ -202,12 +276,25 @@ async def oauth_login_init(
 
     logger.info(f"OAuth login initiated for {provider} from {ip_address}")
 
-    response = OAuthLoginResponse(url=auth_url, state=oauth_state.state_token or "")
+    response_model = OAuthLoginResponse(
+        url=auth_url, state=oauth_state.state_token or ""
+    )
 
-    if code_verifier:
-        response.code_verifier = code_verifier
+    # Bind the state token to this browser via a short-lived HttpOnly cookie
+    # scoped to the OAuth endpoints; the callback requires it to match.
+    if issue_state_cookie and oauth_state.state_token:
+        ttl = 600
+        try:
+            oauth_cfg = (config_util.get("oauth", {}) or {}) if config_util else {}
+            ttl = int(oauth_cfg.get("state_ttl_seconds", 600))
+        except Exception:
+            pass
+        params_cookie = _oauth_cookie_params(max_age=max(60, ttl))
+        response.set_cookie(
+            OAUTH_STATE_COOKIE, oauth_state.state_token, **params_cookie
+        )
 
-    return response
+    return response_model
 
 
 @router.post(
@@ -223,6 +310,7 @@ async def oauth_login_init(
 )
 async def oauth_callback(
     request: Request,
+    response: Response,
     provider: str,
     callback_data: OAuthCallbackRequest,
 ) -> LoginResponse:
@@ -267,6 +355,9 @@ async def oauth_callback(
 
     if not valid:
         logger.warning(f"OAuth state verification failed for {provider}: {error_msg}")
+        response.delete_cookie(
+            OAUTH_STATE_COOKIE, path=_oauth_cookie_params(60)["path"]
+        )
         raise HTTPException(
             status_code=400,
             detail={
@@ -276,6 +367,31 @@ async def oauth_callback(
                 }
             },
         )
+
+    # Login-CSRF defense (enforced): when this flow started in a browser it
+    # carries a state-binding HttpOnly cookie that MUST match. A mismatching
+    # or missing cookie means some other party supplied the state value.
+    if state_record and state_record.cookie_issued:
+        state_cookie = request.cookies.get(OAUTH_STATE_COOKIE)
+        if not state_cookie or not hmac_module.compare_digest(
+            state_cookie, callback_data.state or ""
+        ):
+            logger.warning(
+                f"OAuth callback rejected for {provider}: state cookie "
+                f"{'mismatch' if state_cookie else 'missing'}"
+            )
+            response.delete_cookie(
+                OAUTH_STATE_COOKIE, path=_oauth_cookie_params(60)["path"]
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Security verification failed: state cookie mismatch",
+                    }
+                },
+            )
 
     if state_record and state_record.pkce_challenge:
         if not callback_data.code_verifier:
@@ -515,6 +631,13 @@ async def oauth_callback(
             )
 
         logger.info(f"OAuth login successful for {provider}:{external_id}")
+
+        # Consume the state cookie and hand out the HttpOnly session cookie.
+        response.delete_cookie(
+            OAUTH_STATE_COOKIE, path=_oauth_cookie_params(60)["path"]
+        )
+        if result.token:
+            set_session_cookie(response, result.token)
         return LoginResponse(
             status="success",
             token=result.token,

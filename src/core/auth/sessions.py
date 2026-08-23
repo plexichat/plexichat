@@ -83,6 +83,17 @@ def revoke_session(user_id: int, session_id: int) -> bool:
     return _get_auth_manager().get_instance().revoke_session(user_id, session_id)
 
 
+def create_ws_ticket_for_session(
+    user_id: int, session_id: Optional[int]
+) -> "tuple[str, int]":
+    """Mint a short-lived single-use gateway ticket bound to a session."""
+    return (
+        _get_auth_manager()
+        .get_instance()
+        .create_ws_ticket_for_session(user_id, session_id)
+    )
+
+
 def schedule_account_deletion(
     user_id: int, password: str, totp_code: Optional[str] = None
 ) -> bool:
@@ -124,6 +135,7 @@ __all__ = [
     "logout_all_users",
     "get_sessions",
     "revoke_session",
+    "create_ws_ticket_for_session",
     "schedule_account_deletion",
     "cancel_account_deletion",
     "delay_account_deletion",

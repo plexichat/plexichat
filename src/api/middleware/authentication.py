@@ -7,6 +7,7 @@ import re
 from fastapi import Request, HTTPException
 from fastapi.security import HTTPBearer
 from starlette.responses import JSONResponse
+from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Receive, Send, Scope
 
 import src.api as api
@@ -25,6 +26,7 @@ class AuthenticationMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        cookie_token: Optional[str] = None
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
@@ -261,6 +263,7 @@ class AuthenticationMiddleware:
                 for k, _ in scope.get("headers", [])
                 if isinstance(k, (bytes, bytearray)) and k.lower() == b"authorization"
             )
+            cookie_token = None
             if auth_header_count > 1:
                 scope["state"]["auth_error"] = "Multiple Authorization headers"
                 auth_header = None
@@ -332,8 +335,104 @@ class AuthenticationMiddleware:
                     logger.debug(
                         f"Auth: Failed to extract token from header '{masked_header}' for path {path}"
                     )
+            elif (
+                not auth_header
+                and not is_admin_path
+                and not is_public_endpoint
+                and scope.get("method") != "OPTIONS"
+                and path.startswith(api_prefix)
+                and not path.startswith(f"{api_prefix}/avatars/")
+            ):
+                # Cookie-based session fallback. Cookies are attached
+                # automatically by the browser, so state-changing requests
+                # authenticated this way must present the custom
+                # ``X-Plexichat-Request`` marker header (a cross-origin
+                # attacker cannot add it without passing CORS preflight).
+                csrf_ok = request.headers.get("X-Plexichat-Request") == "1"
+                cookie_token = request.cookies.get("plexichat_token")
+                if cookie_token:
+                    mutating = scope.get("method") in ("POST", "PUT", "PATCH", "DELETE")
+                    if mutating and not csrf_ok:
+                        scope["state"]["auth_error"] = "CSRF validation failed"
+                        logger.warning(
+                            f"Auth: Cookie-authenticated mutating request missing X-Plexichat-Request header at {path}"
+                        )
+                    else:
+                        auth = api.get_auth()
+                        if auth:
+                            try:
+                                from src.utils.net import get_client_ip
+                                from fastapi.concurrency import run_in_threadpool
+
+                                ip = get_client_ip(request)
+                                ua = request.headers.get("User-Agent")
+
+                                def _verify_cookie(token_str, client_ip, user_agent):
+                                    return auth.verify_token(
+                                        token_str,
+                                        ip_address=client_ip,
+                                        user_agent=user_agent,
+                                    )
+
+                                token_info = await run_in_threadpool(
+                                    _verify_cookie, cookie_token, ip, ua
+                                )
+                                if token_info:
+                                    scope["state"]["user"] = token_info
+                                    scope["state"]["cookie_auth"] = True
+                                    logger.debug(
+                                        f"Auth: Cookie-authenticated user {token_info.user_id} for path {path}"
+                                    )
+                            except AuthError as e:
+                                logger.debug(f"Cookie auth failed for {path}: {e}")
+                                scope["state"]["auth_error"] = str(e)
+                            except Exception as e:
+                                logger.error(
+                                    f"System error during cookie authentication for path {path}: {e}",
+                                    exc_info=True,
+                                )
+                                scope["state"]["system_error"] = str(e)
+
+        # Rolling cookie: re-issue the session cookie on successful
+        # cookie-authenticated responses so its Max-Age tracks the (possibly
+        # extended) DB session instead of silently expiring mid-session.
+        if (
+            scope["type"] == "http"
+            and scope.get("state", {}).get("cookie_auth")
+            and cookie_token
+        ):
+            send = self._rolling_cookie_send_wrapper(send, cookie_token)
 
         await self.app(scope, receive, send)
+
+    @staticmethod
+    def _rolling_cookie_send_wrapper(send: Send, token_value: str) -> Send:
+        from src.api.routes.auth.cookies import (
+            SESSION_COOKIE_NAME,
+            session_cookie_max_age,
+            session_cookie_secure,
+        )
+
+        parts = [
+            f"{SESSION_COOKIE_NAME}={token_value}",
+            f"Max-Age={session_cookie_max_age()}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+        ]
+        if session_cookie_secure():
+            parts.append("Secure")
+        cookie_header = "; ".join(parts)
+
+        async def wrapped_send(message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                status = message.get("status", 500)
+                if 200 <= status < 400:
+                    headers.append("set-cookie", cookie_header)
+            await send(message)
+
+        return wrapped_send
 
     def _extract_token(self, auth_header: str) -> Optional[str]:
         match = re.fullmatch(r"(Bearer|Bot) ([A-Za-z0-9._-]+)", auth_header)

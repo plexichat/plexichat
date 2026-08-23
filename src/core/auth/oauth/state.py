@@ -71,6 +71,12 @@ class OAuthState:
     ip_address: Optional[str] = None
     """IP address that initiated the OAuth flow (for audit)."""
 
+    cookie_issued: bool = False
+    """Whether a state-binding HttpOnly cookie was handed to the browser.
+
+    When true, the callback MUST see the matching cookie or the flow is
+    rejected (login-CSRF defense)."""
+
     # Not stored in DB, only set on creation
     state_token: Optional[str] = field(default=None, repr=False)
     """The actual state token (only available on creation)."""
@@ -124,13 +130,30 @@ class OAuthStateManager:
             used INTEGER DEFAULT 0,
             nonce_hash TEXT,
             pkce_challenge TEXT,
-            ip_address TEXT
+            ip_address TEXT,
+            cookie_issued INTEGER DEFAULT 0
         )
         """
         # Convert for PostgreSQL if needed
         if hasattr(self._db, "convert_schema"):
             schema = self._db.convert_schema(schema)
         self._db.execute(schema)
+
+        # Lazy column addition for databases created before cookie binding.
+        try:
+            self._db.fetch_one("SELECT cookie_issued FROM auth_oauth_states LIMIT 1")
+        except Exception:
+            try:
+                col = (
+                    self._db.convert_schema(
+                        "ALTER TABLE auth_oauth_states ADD COLUMN cookie_issued INTEGER DEFAULT 0"
+                    )
+                    if hasattr(self._db, "convert_schema")
+                    else "ALTER TABLE auth_oauth_states ADD COLUMN cookie_issued INTEGER DEFAULT 0"
+                )
+                self._db.execute(col)
+            except Exception:
+                pass  # Column added concurrently.
 
         # Index for cleanup queries
         self._db.execute(
@@ -191,6 +214,7 @@ class OAuthStateManager:
         pkce_challenge: Optional[str] = None,
         ip_address: Optional[str] = None,
         ttl_seconds: Optional[int] = None,
+        cookie_issued: bool = False,
     ) -> Optional[OAuthState]:
         """
         Create a new OAuth state for CSRF protection.
@@ -199,9 +223,11 @@ class OAuthStateManager:
             provider: OAuth provider name.
             redirect_uri: The redirect URI for this request.
             include_nonce: Whether to generate a nonce (for OIDC).
-            pkce_challenge: Optional PKCE code_challenge.
+            pkce_challenge: Optional PKCE challenge for public clients.
             ip_address: Client IP address for audit.
             ttl_seconds: Custom TTL (default from config or 600s).
+            cookie_issued: Whether a state-binding HttpOnly cookie accompanies
+                this state; if so the callback requires it to match.
 
         Returns:
             OAuthState with state_token set (only available on creation),
@@ -248,8 +274,8 @@ class OAuthStateManager:
         self._db.execute(
             """INSERT INTO auth_oauth_states
                (id, state_hash, provider, redirect_uri, created_at, expires_at,
-                nonce_hash, pkce_challenge, ip_address)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                nonce_hash, pkce_challenge, ip_address, cookie_issued)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 state_id,
                 state_hash,
@@ -260,6 +286,7 @@ class OAuthStateManager:
                 nonce_hash,
                 pkce_challenge,
                 ip_address,
+                1 if cookie_issued else 0,
             ),
         )
 
@@ -278,6 +305,7 @@ class OAuthStateManager:
             nonce=nonce_hash,
             pkce_challenge=pkce_challenge,
             ip_address=ip_address,
+            cookie_issued=cookie_issued,
             state_token=state_token,
             nonce_value=nonce_value,
         )
@@ -315,7 +343,8 @@ class OAuthStateManager:
         # Look up state by hash
         row = self._db.fetch_one(
             """SELECT id, state_hash, provider, redirect_uri, created_at, expires_at,
-                      used, nonce_hash, pkce_challenge, ip_address
+                      used, nonce_hash, pkce_challenge, ip_address,
+                      COALESCE(cookie_issued, 0) AS cookie_issued
                FROM auth_oauth_states WHERE state_hash = ?""",
             (state_hash,),
         )
@@ -370,6 +399,7 @@ class OAuthStateManager:
             nonce=row["nonce_hash"],
             pkce_challenge=row["pkce_challenge"],
             ip_address=row["ip_address"],
+            cookie_issued=bool(row.get("cookie_issued", 0)),
         )
 
         return True, state, None
@@ -425,6 +455,7 @@ def create_oauth_state(
     include_nonce: bool = False,
     pkce_challenge: Optional[str] = None,
     ip_address: Optional[str] = None,
+    cookie_issued: bool = False,
 ) -> Optional[OAuthState]:
     """
     Create a new OAuth state (convenience function).
@@ -435,6 +466,7 @@ def create_oauth_state(
         include_nonce: Whether to include a nonce.
         pkce_challenge: Optional PKCE challenge.
         ip_address: Client IP address.
+        cookie_issued: Whether the caller set a state-binding cookie.
 
     Returns:
         OAuthState or None if manager not initialized or rate limited.
@@ -448,6 +480,7 @@ def create_oauth_state(
         include_nonce=include_nonce,
         pkce_challenge=pkce_challenge,
         ip_address=ip_address,
+        cookie_issued=cookie_issued,
     )
 
 

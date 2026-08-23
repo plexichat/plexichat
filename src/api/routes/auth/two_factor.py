@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import Response
 
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.auth import (
-    TwoFactorRequest,
     LoginResponse,
+    TwoFactorRequest,
     TwoFactorStatusResponse,
     TwoFactorSetupRequest,
     TwoFactorSetupResponse,
@@ -14,6 +15,7 @@ from src.api.schemas.auth import (
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 from .helpers import _user_to_response
+from .cookies import set_session_cookie
 from src.core.auth.exceptions import (
     AuthError,
     InvalidCredentialsError,
@@ -38,7 +40,7 @@ router = APIRouter()
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
+async def complete_2fa(response: Response, body: TwoFactorRequest) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -75,6 +77,8 @@ async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
     logger.info(
         f"2FA completed successfully for user ID: {getattr(result.user, 'id', 'unknown')}"
     )
+    # SECURITY: full session established — hand out the HttpOnly cookie too.
+    set_session_cookie(response, result.token)
     return LoginResponse(
         status="success",
         token=result.token,

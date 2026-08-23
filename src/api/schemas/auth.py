@@ -213,10 +213,9 @@ class OAuthLoginResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     url: str = Field(..., description="OAuth authorization URL")
-    state: str = Field(..., description="CSRF state token")
-    code_verifier: Optional[str] = Field(
-        default=None,
-        description="PKCE code verifier (client must store and return in callback)",
+    state: str = Field(
+        ...,
+        description="CSRF state token (bound to an HttpOnly cookie set alongside)",
     )
 
 
@@ -248,6 +247,15 @@ class OAuthCallbackRequest(BaseModel):
     code_verifier: Optional[str] = Field(
         None, description="PKCE code verifier (required if PKCE was used)"
     )
+
+
+class WsTicketResponse(BaseModel):
+    """Short-lived single-use WebSocket gateway ticket."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ticket: str = Field(..., description="Gateway ticket (wst.* format)")
+    expires_in: int = Field(..., description="Ticket lifetime in seconds")
 
 
 # === Passkey (WebAuthn/FIDO2) Schemas ===
