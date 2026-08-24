@@ -114,6 +114,14 @@ class VoiceCallManager(BaseManager):
         now = self._get_timestamp()
         call_id = self._generate_id()
 
+        # Distinct identity roster observed at call start (initiator always
+        # included even when the live lookup fails). Persisted on the linked
+        # artifact payload so post-call consent checks can require every
+        # DISTINCT participant to have consented, immune to member churn.
+        initial_roster = sorted(
+            self._current_participant_ids(channel_id) | {int(initiator_id)}
+        )
+
         artifact_id: Optional[SnowflakeID] = None
         artifacts_capability = get_capability(
             "artifacts", self._artifacts_config or config.get("artifacts", {}) or {}
@@ -140,6 +148,7 @@ class VoiceCallManager(BaseManager):
                         "voice_call_id": call_id,
                         "channel_id": channel_id,
                         "participant_count": 1,
+                        "participant_ids": initial_roster,
                     },
                 )
                 artifact_id = artifact.id
@@ -202,6 +211,11 @@ class VoiceCallManager(BaseManager):
         participant_count = (
             len(participant_ids) if participant_ids else call.participant_count
         )
+
+        # Persist any caller-supplied final roster onto the artifact payload
+        # BEFORE completion so the merged completion payload keeps it.
+        if participant_ids:
+            self._merge_participant_roster(call, set(int(p) for p in participant_ids))
 
         updated = update_voice_call(
             self._db,
@@ -288,6 +302,45 @@ class VoiceCallManager(BaseManager):
             )
             return set()
 
+    def _merge_participant_roster(self, call: VoiceCall, ids: set) -> None:
+        """Persist the union of ``ids`` into the call artifact's roster.
+
+        The distinct participant ID roster lives on the linked artifact
+        payload under ``participant_ids``. Transcription consent checks
+        require this roster (every DISTINCT member ever seen) to be a subset
+        of the consented set, so churn (join/leave cycling) cannot dilute
+        unanimity the way a max-concurrent COUNT can.
+        """
+        artifact_id: Optional[SnowflakeID] = getattr(call, "artifact_id", None)
+        if self._artifact_manager is None or artifact_id is None:
+            return
+        if not ids:
+            return
+        try:
+            existing = self._artifact_manager.get(artifact_id)
+            payload: Dict[str, Any] = {}
+            if existing is not None and isinstance(existing.payload, dict):
+                payload = dict(existing.payload)
+            roster: set = set()
+            for value in payload.get("participant_ids", []) or []:
+                try:
+                    roster.add(int(value))
+                except (TypeError, ValueError):
+                    continue
+            roster |= {int(i) for i in ids}
+            payload["participant_ids"] = sorted(roster)
+            try:
+                payload["participant_count"] = max(
+                    int(payload.get("participant_count", 0) or 0), len(roster)
+                )
+            except (TypeError, ValueError):
+                pass
+            self._artifact_manager.update(artifact_id, payload=payload)
+        except Exception as exc:
+            logger.warning(
+                f"voice_call participant roster persist failed (call {call.id}): {exc}"
+            )
+
     def add_participant(self, call_id: SnowflakeID, user_id: SnowflakeID) -> VoiceCall:
         """Record that another participant joined an active call.
 
@@ -335,6 +388,10 @@ class VoiceCallManager(BaseManager):
         if updated is None:
             raise ValueError(f"Failed to update voice call {call_id}")
 
+        # Every distinct identity observed on the call joins the persisted
+        # roster; a later consent check must cover ALL of them.
+        self._merge_participant_roster(updated, current_ids)
+
         # A newly joined participant has not consented yet.  End the current
         # recording segment immediately; a later consent event may start a new
         # segment once every currently known participant has agreed.
@@ -350,7 +407,12 @@ class VoiceCallManager(BaseManager):
         return updated
 
     def add_consent(self, call_id: SnowflakeID, user_id: SnowflakeID) -> VoiceCall:
-        """Append consent and start a pending recording once all consent."""
+        """Append consent and start a pending recording once all consent.
+
+        The consent append is ATOMIC: the fresh read + append + write run
+        inside a retried transaction so two participants consenting
+        simultaneously cannot lose a consent to a lost-update race.
+        """
         call = get_voice_call_uncached(self._db, call_id)
         if call is None:
             raise ValueError(f"Voice call {call_id} not found")
@@ -362,19 +424,49 @@ class VoiceCallManager(BaseManager):
                 f"User {normalized_user_id} is not currently in voice channel {call.channel_id}"
             )
 
-        consented = list(call.consented_participants)
-        before_consented_ids = {int(value) for value in consented}
-        if normalized_user_id not in before_consented_ids:
-            consented.append(normalized_user_id)
-
-        updated = update_voice_call(
-            self._db,
-            call_id,
-            consented_participants=consented,
-            updated_at=self._get_timestamp(),
-        )
+        updated: Optional[VoiceCall] = None
+        before_consented_ids: set[int] = set()
+        last_error: Optional[Exception] = None
+        for _ in range(5):
+            caller_transaction = getattr(self._db, "in_transaction", False)
+            if not caller_transaction:
+                self._db.begin_transaction()
+            try:
+                # Re-read INSIDE the transaction so the append applies to the
+                # latest persisted roster, never to a snapshot taken before a
+                # competing writer's commit.
+                fresh = get_voice_call_uncached(self._db, call_id)
+                if fresh is None:
+                    raise ValueError(f"Voice call {call_id} not found")
+                consented = list(fresh.consented_participants)
+                before_consented_ids = {int(value) for value in consented}
+                if normalized_user_id not in before_consented_ids:
+                    consented.append(normalized_user_id)
+                candidate = update_voice_call(
+                    self._db,
+                    call_id,
+                    consented_participants=consented,
+                    updated_at=self._get_timestamp(),
+                )
+                if candidate is None:
+                    raise ValueError(f"Failed to update voice call {call_id}")
+                if not caller_transaction:
+                    self._db.commit()
+                updated = candidate
+                break
+            except Exception as exc:
+                last_error = exc
+                if not caller_transaction:
+                    try:
+                        self._db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
         if updated is None:
-            raise ValueError(f"Failed to update voice call {call_id}")
+            if isinstance(last_error, ValueError):
+                raise last_error
+            raise ValueError(
+                f"Failed to record consent for call {call_id}: {last_error}"
+            )
 
         # Start when consent transitions from incomplete to complete. A
         # duplicate consent must be idempotent and must not restart a live

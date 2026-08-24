@@ -120,3 +120,62 @@ def test_list_artifacts_filters_by_server_id_list(db, artifact_builder):
 
     # An empty list matches nothing.
     assert list_artifacts(db, {"server_id": []}) == []
+
+
+def test_search_escapes_like_wildcards(db, artifact_builder):
+    """A bare "%" or "_" in user search must be literal, not a wildcard."""
+    from src.core.artifacts.repository import list_artifacts
+
+    match = _seed_artifact(db, artifact_builder, title="Quarterly report")
+    percent = _seed_artifact(db, artifact_builder, title="100% done")
+    underscore = _seed_artifact(db, artifact_builder, title="snake_case doc")
+
+    # Wildcards are treated as literals: "%" matches only titles containing
+    # an actual percent sign (previously it matched EVERY row).
+    assert [int(a.id) for a in list_artifacts(db, {"search": "%"})] == [int(percent.id)]
+    assert [int(a.id) for a in list_artifacts(db, {"search": "_"})] == [
+        int(underscore.id)
+    ]
+    assert [int(a.id) for a in list_artifacts(db, {"search": "100%"})] == [
+        int(percent.id)
+    ]
+    assert [int(a.id) for a in list_artifacts(db, {"search": "snake_"})] == [
+        int(underscore.id)
+    ]
+    assert [int(a.id) for a in list_artifacts(db, {"search": "report"})] == [
+        int(match.id)
+    ]
+
+
+def test_set_server_retention_days_upsert_is_idempotent(db):
+    from src.core.artifacts.repository import (
+        get_server_retention_days,
+        set_server_retention_days,
+    )
+
+    set_server_retention_days(db, 501, 30)
+    assert get_server_retention_days(db, 501) == 30
+    # Repeated writes (the former SELECT/INSERT race window) stay consistent.
+    set_server_retention_days(db, 501, 45)
+    assert get_server_retention_days(db, 501) == 45
+    set_server_retention_days(db, 501, None)
+    assert get_server_retention_days(db, 501) is None
+
+
+def test_set_feature_setting_upsert_is_idempotent(db):
+    from src.core.artifacts.repository import (
+        get_feature_settings,
+        set_feature_setting,
+    )
+
+    set_feature_setting(db, 502, "whiteboard", "max_users", "10")
+    set_feature_setting(db, 502, "whiteboard", "max_users", "25")
+    assert get_feature_settings(db, 502, "whiteboard") == {"max_users": "25"}
+    # A second key must not collide with the UNIQUE(server_id, feature, key).
+    set_feature_setting(db, 502, "whiteboard", "theme", "dark")
+    assert get_feature_settings(db, 502, "whiteboard") == {
+        "max_users": "25",
+        "theme": "dark",
+    }
+    set_feature_setting(db, 502, "whiteboard", "theme", None)
+    assert get_feature_settings(db, 502, "whiteboard") == {"max_users": "25"}

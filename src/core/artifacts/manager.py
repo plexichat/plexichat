@@ -268,8 +268,10 @@ class ArtifactManager(BaseManager):
         Removes the metadata row, the ordered operations log (``artifact_ops``),
         and linked ``voice_calls`` rows. When ``purge_media`` is set, any media
         files referenced by the artifact payload (e.g. voice-call recordings)
-        are soft-deleted through the media module as a best-effort cleanup —
-        media errors never fail the delete.
+        are soft-deleted through the media module as a best-effort cleanup AFTER
+        the row deletion has succeeded — a failed delete must never strand
+        broken playback references on a still-live artifact. Media errors never
+        fail the delete.
 
         Returns ``True`` when the metadata row was removed.
         """
@@ -278,8 +280,6 @@ class ArtifactManager(BaseManager):
             artifact = get_artifact(self._db, artifact_id)
         except Exception:  # pragma: no cover - defensive
             artifact = None
-        if artifact is not None and purge_media:
-            self._purge_artifact_media(artifact)
         sum_purged = False
         if artifact is not None and artifact.artifact_type == ArtifactType.SUM:
             sum_purged = self._purge_sum_workbook(artifact)
@@ -287,8 +287,11 @@ class ArtifactManager(BaseManager):
         # single metadata transaction. Otherwise the repository owns the
         # standalone artifact-row deletion.
         deleted = True if sum_purged else delete_artifact(self._db, artifact_id)
-        if deleted and artifact is not None and emit_event:
-            self._emit_lifecycle_event("delete", artifact)
+        if deleted and artifact is not None:
+            if purge_media:
+                self._purge_artifact_media(artifact)
+            if emit_event:
+                self._emit_lifecycle_event("delete", artifact)
         return deleted
 
     def _emit_lifecycle_event(self, action: str, artifact: Artifact) -> None:

@@ -278,19 +278,53 @@ def _resolve_recording_ref(
         return None, None
 
 
-def _consent_allows(call: Any) -> bool:
+def _consent_allows(call: Any, participant_ids: Optional[List[Any]] = None) -> bool:
     """Decide whether consent permits transcription of this call.
 
-    Consent is required unless the server config opts out (``consent_required``
-    is explicitly ``False``). When required, at least one consented participant
-    must be recorded.
+    Policy (aligned with RecordingManager's all-consenting rule): EVERY
+    distinct participant of the call must have consented — never merely one.
+    Consent is required unless the server config opts out
+    (``consent_required`` is explicitly ``False``), mirroring the recording
+    gate.
+
+    When a persisted participant ID roster is supplied (the DISTINCT identity
+    roster kept on the linked artifact payload by ``VoiceCallManager``), it is
+    authoritative: every roster member must appear in ``consented_participants``
+    (roster ⊆ consented). This is immune to member-churn attacks that defeat a
+    max-concurrent COUNT. An empty/malformed roster fails closed.
+
+    Without any roster (e.g. calls created before roster persistence existed),
+    unanimity falls back to the count comparison against the call's persisted
+    ``participant_count``; a consent roster covering fewer participants than
+    joined fails closed there too.
     """
     transcription_cfg = _transcription_config()
     consent_required = transcription_cfg.get("consent_required", True)
     if consent_required is False:
         return True
     consented = getattr(call, "consented_participants", None) or []
-    return len(consented) > 0
+    if not isinstance(consented, (list, tuple, set)):
+        return False
+    try:
+        distinct_consented = {int(value) for value in consented}
+    except (TypeError, ValueError):
+        return False
+
+    if participant_ids is not None:
+        try:
+            roster = {int(value) for value in participant_ids}
+        except (TypeError, ValueError):
+            return False
+        if not roster:
+            # No verifiable roster: fail closed rather than transcribing on a
+            # single stray consent.
+            return False
+        return roster.issubset(distinct_consented)
+
+    participant_count = int(getattr(call, "participant_count", 0) or 0)
+    if participant_count <= 0:
+        return False
+    return len(distinct_consented) >= participant_count
 
 
 def _emit_artifact_update(
@@ -371,13 +405,23 @@ async def transcribe_call(
             logger.info(f"transcription: call {call_id} was not recorded; skip.")
             return None
 
-        if not _consent_allows(call):
-            logger.info(f"transcription: call {call_id} lacks consent; skip (GDPR).")
-            return None
-
+        # Load the linked artifact BEFORE the consent gate: its persisted
+        # participant ID roster (distinct identities observed on the call)
+        # makes the unanimity check churn-proof.
         artifact = None
         if call.artifact_id is not None:
             artifact = get_artifact(db, call.artifact_id)
+
+        participant_roster: Optional[List[Any]] = None
+        if artifact is not None and isinstance(artifact.payload, dict):
+            raw_roster = artifact.payload.get("participant_ids")
+            if isinstance(raw_roster, (list, tuple)):
+                participant_roster = list(raw_roster)
+
+        if not _consent_allows(call, participant_roster):
+            logger.info(f"transcription: call {call_id} lacks consent; skip (GDPR).")
+            return None
+
         call_payload: Dict[str, Any] = {}
         if artifact is not None and isinstance(artifact.payload, dict):
             call_payload = artifact.payload

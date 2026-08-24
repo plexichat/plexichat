@@ -278,11 +278,15 @@ def _build_where(filters: Dict[str, Any]) -> tuple[str, List[Any]]:
         clauses.append("a.has_transcript = ?")
         params.append(1 if filters["has_transcript"] else 0)
 
-    # Free-text search across title/summary.
+    # Free-text search across title/summary. LIKE wildcards in user input are
+    # escaped so a bare "%" cannot match every row (filter evasion / DoS on
+    # listing); the escape char is declared explicitly in the clause.
     search = filters.get("search")
     if search:
-        clauses.append("(a.title LIKE ? OR a.summary LIKE ?)")
-        like = f"%{search}%"
+        clauses.append("(a.title LIKE ? ESCAPE '\\' OR a.summary LIKE ? ESCAPE '\\')")
+        like = "%{}%".format(
+            str(search).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
         params.extend((like, like))
 
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
@@ -613,22 +617,31 @@ def set_server_retention_days(
     if days <= 0:
         raise ValueError("retention_days must be a positive integer or None")
 
-    existing = db.fetch_one(
-        "SELECT id FROM server_artifact_settings WHERE server_id = ?",
-        (server_id,),
+    # Conditional upsert: UPDATE first (a no-op when the row is missing), then
+    # INSERT only when nothing was updated. A concurrent insert can still hit
+    # the UNIQUE(server_id) constraint; that means the other writer won the
+    # race, so re-apply the UPDATE instead of surfacing a 500.
+    cursor = db.execute(
+        "UPDATE server_artifact_settings "
+        "SET retention_days = ?, updated_at = ? WHERE server_id = ?",
+        (days, now, server_id),
     )
-    if existing:
-        db.execute(
-            "UPDATE server_artifact_settings "
-            "SET retention_days = ?, updated_at = ? WHERE server_id = ?",
-            (days, now, server_id),
-        )
-    else:
+    if getattr(cursor, "rowcount", 0) > 0:
+        return
+    try:
         db.execute(
             "INSERT INTO server_artifact_settings "
             "(server_id, retention_days, created_at, updated_at) "
             "VALUES (?, ?, ?, ?)",
             (server_id, days, now, now),
+        )
+    except Exception as e:
+        if not ("unique" in str(e).lower() or "integrity" in str(e).lower()):
+            raise
+        db.execute(
+            "UPDATE server_artifact_settings "
+            "SET retention_days = ?, updated_at = ? WHERE server_id = ?",
+            (days, now, server_id),
         )
 
 
@@ -686,23 +699,30 @@ def set_feature_setting(
         )
         return
 
-    existing = db.fetch_one(
-        "SELECT id FROM server_artifact_feature_settings "
+    # Conditional upsert (see set_server_retention_days): avoids the
+    # SELECT-then-INSERT race where two concurrent writers both miss the
+    # SELECT and one INSERT dies on UNIQUE(server_id, feature, setting_key).
+    cursor = db.execute(
+        "UPDATE server_artifact_feature_settings SET setting_value = ?, updated_at = ? "
         "WHERE server_id = ? AND feature = ? AND setting_key = ?",
-        (server_id, feature, key),
+        (value, now, server_id, feature, key),
     )
-    if existing:
-        db.execute(
-            "UPDATE server_artifact_feature_settings SET setting_value = ?, updated_at = ? "
-            "WHERE server_id = ? AND feature = ? AND setting_key = ?",
-            (value, now, server_id, feature, key),
-        )
-    else:
+    if getattr(cursor, "rowcount", 0) > 0:
+        return
+    try:
         db.execute(
             "INSERT INTO server_artifact_feature_settings "
             "(server_id, feature, setting_key, setting_value, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (server_id, feature, key, value, now, now),
+        )
+    except Exception as e:
+        if not ("unique" in str(e).lower() or "integrity" in str(e).lower()):
+            raise
+        db.execute(
+            "UPDATE server_artifact_feature_settings SET setting_value = ?, updated_at = ? "
+            "WHERE server_id = ? AND feature = ? AND setting_key = ?",
+            (value, now, server_id, feature, key),
         )
 
 

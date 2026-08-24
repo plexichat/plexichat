@@ -7,6 +7,7 @@ import pytest
 from src.core.artifacts.transcription.provider import (
     AzureSpeechProvider,
     TranscriptionResult,
+    azure_timespan_to_ms,
 )
 from src.core.artifacts.transcription import worker as transcription_worker
 from src.core.artifacts.transcription.worker import _resolve_recording_ref
@@ -144,3 +145,107 @@ async def test_azure_uses_rest_for_remote_references_even_with_sdk():
     assert result is expected
     rest.assert_called_once()
     sdk.assert_not_called()
+
+
+def test_azure_timespan_parses_iso8601_durations():
+    assert azure_timespan_to_ms("PT0.05S") == 50
+    assert azure_timespan_to_ms("PT1S") == 1000
+    assert azure_timespan_to_ms("PT1.5M") == 90000
+    assert azure_timespan_to_ms("PT1H2M3S") == 3723000
+    assert azure_timespan_to_ms("P1DT0.5S") == 86400500
+
+
+def test_azure_timespan_parses_tick_strings_and_numbers():
+    # Legacy tick strings: 10,000,000 ticks == 1 second.
+    assert azure_timespan_to_ms("10000000") == 1000
+    assert azure_timespan_to_ms("5000000") == 500
+    assert azure_timespan_to_ms(20000000) == 2000
+    assert azure_timespan_to_ms(2500000.0) == 250
+
+
+def test_azure_timespan_tolerates_suffixes_and_garbage():
+    assert azure_timespan_to_ms(None) == 0
+    assert azure_timespan_to_ms("") == 0
+    assert azure_timespan_to_ms("10000000Z") == 1000
+    assert azure_timespan_to_ms("not-a-duration") == 0
+    assert azure_timespan_to_ms(True) == 0
+
+
+def test_azure_segment_builder_handles_v31_iso_offsets():
+    provider = AzureSpeechProvider({"azure_key": "test-key"})
+    result = provider._build_segments_from_results(
+        [
+            {
+                "Offset": "PT0.05S",
+                "Duration": "PT0.20S",
+                "DisplayText": "Hello world.",
+            }
+        ]
+    )
+    assert result.segments[0]["start"] == 0.05
+    assert result.segments[0]["end"] == 0.25
+    assert result.text == "Hello world."
+
+
+def test_transcription_consent_requires_unanimous_participants():
+    """Transcription follows recording's all-participants consent policy."""
+    from types import SimpleNamespace
+
+    from src.core.artifacts.transcription.worker import _consent_allows
+
+    assert (
+        _consent_allows(SimpleNamespace(consented_participants=[], participant_count=0))
+        is False
+    )
+    assert (
+        _consent_allows(
+            SimpleNamespace(consented_participants=[33], participant_count=1)
+        )
+        is True
+    )
+    # Two joined, only one consented: must NOT transcribe (was >=1 before).
+    assert (
+        _consent_allows(
+            SimpleNamespace(consented_participants=[33], participant_count=2)
+        )
+        is False
+    )
+    assert (
+        _consent_allows(
+            SimpleNamespace(consented_participants=[33, 44], participant_count=2)
+        )
+        is True
+    )
+    # Malformed rosters fail closed.
+    assert (
+        _consent_allows(
+            SimpleNamespace(consented_participants="nope", participant_count=1)
+        )
+        is False
+    )
+
+
+def test_transcription_consent_roster_blocks_member_churn():
+    """The persisted distinct-ID roster defeats count-based churn attacks."""
+    from types import SimpleNamespace
+
+    from src.core.artifacts.transcription.worker import _consent_allows
+
+    # Churn: A/B/C joined (count 3); A+B consented then left; C consented.
+    call = SimpleNamespace(consented_participants=[11, 22, 33], participant_count=3)
+    # Legacy count check PASSES here...
+    assert len(set(call.consented_participants)) >= call.participant_count
+    # ...but the persisted roster contains the never-consenting joiner 44.
+    assert _consent_allows(call, [11, 22, 33, 44]) is False
+    # Full coverage transcribes; empty/malformed rosters fail closed.
+    assert _consent_allows(call, [11, 22, 33]) is True
+    assert _consent_allows(call, []) is False
+    assert _consent_allows(call, ["bad"]) is False
+    # Stale consents from departed users do not cover a missing member.
+    assert (
+        _consent_allows(
+            SimpleNamespace(consented_participants=[11, 22, 99], participant_count=3),
+            [11, 22, 33],
+        )
+        is False
+    )

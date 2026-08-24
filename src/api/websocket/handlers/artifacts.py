@@ -238,6 +238,14 @@ class ArtifactHandler:
         op_type = op.get("op_type")
         if not isinstance(op_type, str) or not op_type or len(op_type) > 64:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
+        # Preserve (and sanitize) the sender's ``client_id`` so the relay AND
+        # the ack echo both carry it back. Clients use it to recognise their
+        # own ops; without it every echo re-applies as a remote edit.
+        raw_client_id = op.get("client_id")
+        if raw_client_id is not None:
+            normalized_client_id = str(raw_client_id)[:128]
+            if normalized_client_id:
+                op["client_id"] = normalized_client_id
         try:
             import json
 

@@ -60,8 +60,14 @@ Transcription only runs when **all** of the following hold:
    and shared by the worker and the admin panel.
 4. The call was `recorded`.
 5. Participant consent is satisfied: if `consent_required` is `True` (default),
-   the `consented_participants` list must be non-empty. GDPR-safe — a call with
-   no consent is skipped with a log line and no transcript is produced.
+   EVERY distinct participant must have consented (unanimous consent). The
+   check runs against the distinct participant ID roster persisted on the
+   linked artifact payload (`participant_ids`): every roster member must appear
+   in `consented_participants` (roster ⊆ consented), so join/leave churn cannot
+   dilute unanimity. Calls without a persisted roster fall back to comparing
+   the distinct consent count against `participant_count`. GDPR-safe — a call
+   lacking full consent is skipped with a log line and no transcript is
+   produced.
 
 When the capability is not `AVAILABLE`, the worker no-ops with a log line rather
 than attempting transcription.

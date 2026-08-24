@@ -21,6 +21,7 @@ from src.api.routes.artifacts import (
     _artifact_script_text,
     _latin1_safe,
     _strip_html_markup,
+    sanitize_rich_html,
 )
 
 
@@ -117,3 +118,89 @@ def test_pdf_export_is_unicode_safe():
 
 def test_strip_html_markup_decodes_entities():
     assert _strip_html_markup("<p>a &amp; b</p>") == "a & b"
+
+
+# --- Stored-XSS regression coverage (H-24) ---------------------------------
+
+
+def test_export_html_sanitizes_scribe_script_payload():
+    payload = {
+        "document": {
+            "content_html": (
+                "<p>Safe text</p><script>alert('xss')</script>"
+                "<img src=x onerror=alert(1)>"
+                "<a href=\"javascript:alert('xss')\">link</a>"
+            )
+        }
+    }
+    html = _artifact_export_html(_Artifact(), "plexiscribe", payload)
+    assert "Safe text" in html
+    assert "<script" not in html.lower()
+    assert "alert(" not in html
+    assert "onerror" not in html.lower()
+    assert "javascript:" not in html.lower()
+
+
+def test_sanitize_rich_html_keeps_allowlisted_formatting():
+    dirty = (
+        '<div style="color:red"><b>Bold</b> &amp; <i>italic</i>'
+        '<a href="https://example.test/x" onclick="evil()">ok</a></div>'
+    )
+    clean = sanitize_rich_html(dirty)
+    assert "<b>Bold</b>" in clean
+    assert "&amp;" in clean or "&" in clean
+    assert 'href="https://example.test/x"' in clean
+    assert "onclick" not in clean
+    assert "style=" not in clean
+
+
+def test_sanitize_rich_html_drops_script_body_and_escapes_loose_text():
+    clean = sanitize_rich_html("<script>document.cookie</script>plain <b>text</b>")
+    assert "document.cookie" not in clean
+    assert "plain" in clean
+    assert "<b>text</b>" in clean
+
+
+def test_sanitize_rich_html_never_raises_on_hostile_input():
+    for hostile in ("<p", "<<>", "<a href='", "\x00<script>", ""):
+        result = sanitize_rich_html(hostile)
+        assert isinstance(result, str)
+        assert "<script" not in result.lower()
+
+
+# --- URL scheme-check control-character stripping (W3 tab/formfeed) --------
+
+
+def test_safe_url_rejects_tab_and_formfeed_obfuscated_schemes():
+    from src.api.routes.artifacts_export import _safe_url
+
+    # Browsers strip ASCII tabs/newlines/controls inside URLs, so these all
+    # execute as javascript: in an exported document unless stripped before
+    # the scheme check.
+    assert _safe_url("java\tscript:alert(1)") is None
+    assert _safe_url("java\x0cscript:alert(1)") is None
+    assert _safe_url("java\nscript:alert(1)") is None
+    assert _safe_url("java\rscript:alert(1)") is None
+    assert _safe_url("jav\x00ascript:alert(1)") is None
+    assert _safe_url("jav\x7fascript:alert(1)") is None
+    assert _safe_url("\x01javascript:alert(1)") is None
+    assert _safe_url("vbs\x0bcript:alert(1)") is None
+
+
+def test_safe_url_still_accepts_benign_urls():
+    from src.api.routes.artifacts_export import _safe_url
+
+    assert _safe_url("https://example.test/a?b=c") == "https://example.test/a?b=c"
+    assert _safe_url("mailto:user@example.test") == "mailto:user@example.test"
+    assert _safe_url("relative/path.html") == "relative/path.html"
+    assert _safe_url("file:///etc/passwd") is None
+    assert _safe_url("data:text/html;base64,PHNjcmlwdD4=") is None
+
+
+def test_sanitizer_drops_control_obfuscated_href_entirely():
+    dirty = '<a href="java\tscript:alert(1)">click</a>'
+    clean = sanitize_rich_html(dirty)
+    lowered = clean.lower()
+    assert "alert(" not in lowered
+    # The dangerous href must not survive in any form.
+    assert "script:alert" not in lowered.replace("&#x27;", "").replace("&quot;", "")
