@@ -115,12 +115,17 @@ class MessagesCollector(BaseCollector):
             return []
 
     def _collect_edit_history(self, user_id: int) -> List[Dict[str, Any]]:
-        """Collect msg_edit_history where user is editor."""
+        """Collect msg_edit_history where user is editor.
+
+        ``old_content_encrypted`` is raw ciphertext with no decryptable
+        context in an export; per the DSAR redaction policy it is
+        replaced by an "(encrypted)" placeholder.
+        """
         try:
             rows = self._db.fetch_all(
                 "SELECT * FROM msg_edit_history WHERE editor_id = ?", (user_id,)
             )
-            return [dict(row) for row in rows]
+            return self.serialize_rows(rows, redact_fields=["old_content_encrypted"])
         except Exception as e:
             import utils.logger as logger
 

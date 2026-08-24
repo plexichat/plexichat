@@ -13,7 +13,7 @@ The DSAR module enables users to request and receive a complete export of all th
 - **Admin Approval Workflow**: Optional review before data is exported
 - **Background Processing**: Automatic handling via DSARHarvester worker
 - **Audit Trail**: Hash-chained append-only log for compliance verification
-- **Envelope Encryption**: Files are encrypted with randomly generated keys
+- **Storage-Layer Encryption (Optional)**: DSAR does NOT add its own envelope encryption; export files are encrypted at rest only if the optional `media.encrypt_at_rest` wrapper is enabled
 - **Automatic Expiration**: Downloads expire after configurable retention period
 
 ## Data Categories
@@ -43,7 +43,7 @@ The exported data includes all personal information organized by category:
 | Stickers | sticker_usage |
 | Soundboard | soundboard_usage |
 | Media | media_files (metadata only) |
-| Avatars | user_avatars (URL reference, not blob data) |
+| Avatars | user_avatars (metadata only; the avatar_data BLOB is NOT exported) |
 | API Tokens | auth_api_access_tokens (without secret values) |
 
 ## Usage
@@ -158,8 +158,8 @@ dsar/
 **ExportFormatGenerator** (export_formats.py)
 - Generates JSON exports (single file with all data)
 - Generates ZIP exports (separate file per category)
-- Uses envelope encryption with random AES-256 keys
-- Stores encrypted file to ~/.plexichat/data/exports/dsar/
+- Performs NO envelope encryption; relies on the optional `media.encrypt_at_rest` storage wrapper
+- Stores files via the configured media storage backend (default ~/.plexichat/data/exports/dsar/)
 
 **DSARLog** (audit_log.py)
 - Append-only hash-chained audit log
@@ -185,7 +185,7 @@ pending → approved → generating → ready → downloaded/expired
 
 ## Security Considerations
 
-1. **Encrypted Exports**: Files are encrypted with AES-256-GCM
+1. **Export Encryption**: No built-in envelope encryption; enable `media.encrypt_at_rest` for at-rest encryption of export files
 2. **No Passwords Exported**: Password hashes and secrets are excluded
 3. **Token Protection**: API tokens and OAuth tokens are exported without secret values
 4. **Encrypted Field Handling**: Encrypted fields are noted as "(encrypted)" rather than exposing ciphertext

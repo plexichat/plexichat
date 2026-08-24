@@ -9,7 +9,7 @@ Features:
 - Admin approval workflow for sensitive data
 - Background worker for automatic processing
 - Hash-chained audit log for compliance
-- Envelope encryption for exported files
+- Optional at-rest encryption via the media storage layer
 - Automatic expiration and cleanup
 
 Usage:

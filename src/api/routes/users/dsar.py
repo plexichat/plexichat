@@ -232,13 +232,18 @@ class DataExportMixin:
                     detail={"error": {"code": 404, "message": "Request not found"}},
                 )
 
-            if request_data["status"] not in ("pending", "approved"):
+            # M2 parity: the client offers "Cancel request" while a
+            # request is generating and DSARManager.cancel_request
+            # permits it; the route must not hard-reject 'generating'.
+            # The generation worker's conditional status updates ensure
+            # an in-flight generation cannot resurrect a cancelled row.
+            if request_data["status"] not in ("pending", "approved", "generating"):
                 raise HTTPException(
                     status_code=400,
                     detail={
                         "error": {
                             "code": 400,
-                            "message": "Only pending or approved requests can be cancelled",
+                            "message": "Only pending, approved or generating requests can be cancelled",
                         }
                     },
                 )
@@ -283,13 +288,18 @@ class DataExportMixin:
                     detail={"error": {"code": 404, "message": "Request not found"}},
                 )
 
-            if request_data["status"] != "ready":
+            # M2 parity: allow re-download while the export is still
+            # within its retention window. The manager deliberately
+            # accepts 'downloaded' rows so "Download again" works; only
+            # statuses that genuinely have no downloadable artifact are
+            # rejected.
+            if request_data["status"] not in ("ready", "downloaded"):
                 raise HTTPException(
                     status_code=400,
                     detail={
                         "error": {
                             "code": 400,
-                            "message": "Export is not ready for download",
+                            "message": "Export is not available for download",
                         }
                     },
                 )
@@ -329,7 +339,11 @@ class DataExportMixin:
 
             from src.core.dsar.export_formats import ExportFormatGenerator
 
-            generator = ExportFormatGenerator()
+            # M5: pass the database handle so the database storage
+            # backend (DB-blob deployments) can be constructed; without
+            # it ExportFormatGenerator raises in __init__ and EVERY
+            # download 500s even though generation succeeded.
+            generator = ExportFormatGenerator(db=api.get_db())
             try:
                 raw_stream, size = generator.retrieve_stream(storage_path)
             except Exception as e:
@@ -359,21 +373,30 @@ class DataExportMixin:
                 f"({size} bytes, {export_format}, sha256={checksum[:16]}...)"
             )
 
-            # Mark the export as downloaded only after the bytes have been
-            # fully streamed to the client. If the stream is interrupted
-            # (e.g. client disconnect) the generator stops early and we do
-            # NOT flip the status, leaving the export re-downloadable.
+            # M1: the one-shot download marker fires ONLY after the
+            # bytes have been fully streamed. The marker is NOT in a
+            # finally block: when the client disconnects mid-stream the
+            # generator is closed with GeneratorExit, which propagates
+            # out of the for-loop and SKIPS the status flip, leaving
+            # the export re-downloadable.
             def _stream_with_marker():
                 try:
                     for chunk in raw_stream:
                         yield chunk
                 finally:
                     try:
-                        mark_export_downloaded(req_id, user_id)
-                    except Exception as me:
-                        logger.warning(
-                            f"Failed to mark DSAR export {req_id} downloaded: {me}"
-                        )
+                        raw_stream.close()
+                    except Exception:
+                        pass
+
+                # Reached only when the loop above completed without
+                # GeneratorExit/cancellation (i.e. all bytes sent).
+                try:
+                    mark_export_downloaded(req_id, user_id)
+                except Exception as me:
+                    logger.warning(
+                        f"Failed to mark DSAR export {req_id} downloaded: {me}"
+                    )
 
             headers = {
                 "Content-Disposition": f'attachment; filename="{filename}"',

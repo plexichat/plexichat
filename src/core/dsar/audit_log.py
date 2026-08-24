@@ -283,27 +283,39 @@ class DSARLog:
                     "rotate_on_broken_chain", False
                 )
             )
-            if rotate:
-                valid, count, err = self._verify_chain_impl()
-                if not valid:
-                    ts = int(time.time())
-                    sidecar = f"{self.file_path}.broken-{ts}"
-                    try:
-                        os.rename(self.file_path, sidecar)
-                        logger.critical(
-                            f"DSAR chain verification failed "
-                            f"({err}); rotated broken log file to "
-                            f"{sidecar}. Future writes start a new "
-                            "chain with prev_hash='0'*64."
-                        )
-                        return True, 0, None
-                    except Exception as e:
-                        logger.error(
-                            f"DSAR: failed to rotate broken log to {sidecar}: {e}"
-                        )
-                return valid, count, err
         except Exception:
-            pass
+            rotate = False
+
+        if rotate:
+            valid, count, err = self._verify_chain_impl()
+            if not valid:
+                ts = int(time.time())
+                sidecar = f"{self.file_path}.broken-{ts}"
+                try:
+                    os.rename(self.file_path, sidecar)
+                    logger.critical(
+                        f"DSAR chain verification failed "
+                        f"({err}); rotated broken log file to "
+                        f"{sidecar}. Future writes start a new "
+                        "chain with prev_hash='0'*64."
+                    )
+                    # SECURITY: a detected chain break is a tamper
+                    # event (or severe data loss). It must FAIL
+                    # LOUDLY - silently returning a clean bill of
+                    # health after a reset would defeat the entire
+                    # purpose of the tamper-evident log. The broken
+                    # file is preserved as a sidecar for forensics,
+                    # but every caller is alerted via exception.
+                    raise RuntimeError(
+                        f"DSAR audit log chain verification FAILED "
+                        f"({err}); broken log rotated to {sidecar} "
+                        f"and chain reset. Operator review REQUIRED."
+                    )
+                except RuntimeError:
+                    raise
+                except Exception as e:
+                    logger.error(f"DSAR: failed to rotate broken log to {sidecar}: {e}")
+            return valid, count, err
 
         return self._verify_chain_impl()
 

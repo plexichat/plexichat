@@ -2,6 +2,7 @@ import os
 import time
 from typing import List, Optional, Dict, Any
 
+import utils.config as config
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
@@ -259,9 +260,14 @@ class DSARManager:
         # streamed to the client (see the API route), so a failed or
         # partial download leaves the export 'ready' and re-downloadable
         # instead of becoming a permanently unrecoverable 400.
-        if not request.get("storage_path") or not os.path.exists(
-            request["storage_path"]
-        ):
+        if not request.get("storage_path"):
+            return None
+        backend = request.get("storage_backend", "local")
+        # Local-path existence can only be checked for the local
+        # backend; database/S3 backends store objects keyed by a
+        # relative path that will never exist on this filesystem
+        # (checking it broke downloads for DB-blob deployments).
+        if backend == "local" and not os.path.exists(request["storage_path"]):
             # The file is gone (e.g. cleaned up) even though the row still
             # says it is available; report unavailable so the client can
             # request a fresh export. Never raise here.
@@ -341,10 +347,18 @@ class DSARManager:
                 f"Cannot generate for request in status: {request['status']}"
             )
 
-        self._db.execute(
-            "UPDATE dsar_requests SET status = 'approved', admin_id = ? WHERE id = ?",
+        # SECURITY (M3): transitions are guarded so a concurrent cancel
+        # cannot be overwritten. If the row is no longer pending/approved
+        # the request was cancelled or denied - refuse to resurrect it.
+        cursor = self._db.execute(
+            "UPDATE dsar_requests SET status = 'approved', admin_id = ? "
+            "WHERE id = ? AND status IN ('pending', 'approved')",
             (admin_id, request_id),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise ValueError(
+                f"Request {request_id} changed state concurrently; refusing to generate"
+            )
 
         from .collector import DataCollector
         from .export_formats import ExportFormatGenerator
@@ -352,10 +366,15 @@ class DSARManager:
         user_id = request["user_id"]
         export_format = request.get("format", "json")
 
-        self._db.execute(
-            "UPDATE dsar_requests SET status = 'generating' WHERE id = ?",
+        cursor = self._db.execute(
+            "UPDATE dsar_requests SET status = 'generating' "
+            "WHERE id = ? AND status = 'approved'",
             (request_id,),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise ValueError(
+                f"Request {request_id} was cancelled before generation started"
+            )
 
         try:
             collector = DataCollector(self._db)
@@ -363,7 +382,9 @@ class DSARManager:
 
             generator = ExportFormatGenerator(db=self._db)
 
-            retention_days = 7
+            retention_days = (
+                config.get("dsar", {}).get("harvester", {}).get("retention_days", 7)
+            )
             expires_at = int(time.time()) + (retention_days * 86400)
 
             if export_format == "zip":
@@ -375,7 +396,10 @@ class DSARManager:
                     data, request_id, user_id
                 )
 
-            self._db.execute(
+            # SECURITY (M3): conditional completion update. If the user
+            # cancelled while generation ran (rowcount == 0) delete the
+            # artifact instead of resurrecting a revoked export.
+            cursor = self._db.execute(
                 """
                 UPDATE dsar_requests
                 SET status = 'ready',
@@ -385,7 +409,7 @@ class DSARManager:
                     storage_path = ?,
                     checksum = ?,
                     file_size_bytes = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'generating'
                 """,
                 (
                     int(time.time()),
@@ -397,6 +421,15 @@ class DSARManager:
                     request_id,
                 ),
             )
+            if getattr(cursor, "rowcount", 0) == 0:
+                logger.warning(
+                    f"DSAR: request {request_id} cancelled during manual "
+                    f"generation; deleting generated artifact"
+                )
+                generator.delete(storage_path)
+                raise ValueError(
+                    f"Request {request_id} was cancelled during generation"
+                )
 
             audit_log = self._get_audit_log()
             audit_log.log_event(
@@ -421,7 +454,7 @@ class DSARManager:
                 """
                 UPDATE dsar_requests
                 SET status = 'failed', error_message = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'generating'
                 """,
                 (str(e), request_id),
             )
@@ -452,117 +485,78 @@ class DSARManager:
         storage_path = request.get("storage_path")
         if not storage_path:
             return
-        try:
-            import src.api as api_module
 
-            media = api_module.get_media()
-            storage = None
-            if media is not None and hasattr(media, "_backend"):
-                # media manager exposes the active backend lazily.
-                try:
-                    storage = media._backend
-                except Exception:
-                    storage = None
-
-            if storage is not None and hasattr(storage, "delete"):
-                try:
-                    storage.delete(str(storage_path))
-                    logger.info(
-                        f"DSAR: scrubbed export file for request "
-                        f"{request.get('id')} at {storage_path}"
-                    )
-                    return
-                except Exception as e:
-                    logger.warning(
-                        f"DSAR: storage backend delete failed for "
-                        f"request {request.get('id')}: {e}"
-                    )
-            # Fall back to a best-effort local removal. Note: when
-            # ``storage_backend`` indicates S3 / RustFS neither the
-            # media backend nor ``os.remove`` will reach the object -
-            # we attempt a remote delete via the configured S3 /
-            # RustFS client first, and only log if neither succeeds.
-            import os
-
+        # Remote-object deletion attempt (S3/RustFS) is independent of
+        # the local fallback below: a failure importing the media/api
+        # module must never skip the local file removal.
+        if storage_backend in {"s3", "rustfs"}:
             try:
-                if os.path.exists(str(storage_path)):
-                    os.remove(str(storage_path))
+                import src.api as _dsar_api
+
+                media_mod = _dsar_api.get_media()
+                s3_client = None
+                if media_mod is not None and hasattr(media_mod, "get_s3_client"):
+                    s3_client = media_mod.get_s3_client()
+                elif media_mod is not None and hasattr(media_mod, "_s3_client"):
+                    s3_client = media_mod._s3_client
+                if s3_client is not None and hasattr(s3_client, "delete_object"):
+                    _bucket = None
+                    for _attr in (
+                        "bucket_name",
+                        "_s3_bucket",
+                        "_bucket",
+                    ):
+                        _candidate = getattr(media_mod, _attr, None)
+                        if _candidate:
+                            _bucket = _candidate
+                            break
+                    if (
+                        not _bucket
+                        and media_mod is not None
+                        and hasattr(media_mod, "get_bucket")
+                    ):
+                        try:
+                            _bucket = media_mod.get_bucket()
+                        except Exception:
+                            _bucket = None
+                    if _bucket:
+                        s3_client.delete_object(Bucket=_bucket, Key=storage_path)
+                    else:
+                        logger.warning(
+                            "DSAR: cannot scrub S3 export for "
+                            f"request {request.get('id')}: no "
+                            "bucket getter on media module"
+                        )
                     logger.info(
-                        f"DSAR: scrubbed export file (local fallback) "
-                        f"for request {request.get('id')} at "
-                        f"{storage_path}"
-                    )
-                elif request.get("storage_backend") in {"s3", "rustfs", "remote"}:
-                    logger.warning(
-                        "DSAR: remote storage_backend delete not "
-                        "yet implemented; object remains in remote "
-                        "store for request "
-                        f"{request.get('id')}"
+                        "DSAR: scrubbed remote export object for "
+                        f"request {request.get('id')} at {storage_path}"
                     )
             except Exception as e:
                 logger.warning(
-                    f"DSAR: local fallback delete failed for "
-                    f"request {request.get('id')} at "
-                    f"{storage_path}: {e}"
+                    "DSAR: failed to scrub remote export object "
+                    f"for request {request.get('id')}: {e}"
                 )
 
-            # Remote-object deletion: if configured storage is S3
-            # or RustFS, attempt a direct delete via the configured
-            # client. Plexichat's media module ships an S3 client
-            # wrapper; reach for it lazily and only on the relevant
-            # backends.
-            if storage_backend in {"s3", "rustfs"}:
-                try:
-                    import src.api as _dsar_api
-
-                    media_mod = _dsar_api.get_media()
-                    s3_client = None
-                    if media_mod is not None and hasattr(media_mod, "get_s3_client"):
-                        s3_client = media_mod.get_s3_client()
-                    elif media_mod is not None and hasattr(media_mod, "_s3_client"):
-                        s3_client = media_mod._s3_client
-                    if s3_client is not None and hasattr(s3_client, "delete_object"):
-                        # Resolve the bucket at runtime; fall back
-                        # to logging without delete if no public bucket
-                        # getter is available.
-                        _bucket = None
-                        for _attr in (
-                            "bucket_name",
-                            "_s3_bucket",
-                            "_bucket",
-                        ):
-                            _candidate = getattr(media_mod, _attr, None)
-                            if _candidate:
-                                _bucket = _candidate
-                                break
-                        if (
-                            not _bucket
-                            and media_mod is not None
-                            and hasattr(media_mod, "get_bucket")
-                        ):
-                            try:
-                                _bucket = media_mod.get_bucket()
-                            except Exception:
-                                _bucket = None
-                        if _bucket:
-                            s3_client.delete_object(Bucket=_bucket, Key=storage_path)
-                        else:
-                            logger.warning(
-                                "DSAR: cannot scrub S3 export for "
-                                f"request {request.get('id')}: no "
-                                "bucket getter on media module"
-                            )
-                        logger.info(
-                            "DSAR: scrubbed remote export object for "
-                            f"request {request.get('id')} at {storage_path}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        "DSAR: failed to scrub remote export object "
-                        f"for request {request.get('id')}: {e}"
-                    )
+        # Local-fallback removal: always attempted regardless of the
+        # configured backend or the health of the api/media modules.
+        try:
+            if os.path.exists(str(storage_path)):
+                os.remove(str(storage_path))
+                logger.info(
+                    f"DSAR: scrubbed export file (local fallback) "
+                    f"for request {request.get('id')} at "
+                    f"{storage_path}"
+                )
+            elif storage_backend in {"s3", "rustfs", "remote"}:
+                logger.warning(
+                    "DSAR: remote storage_backend delete not "
+                    "yet implemented; object remains in remote "
+                    "store for request "
+                    f"{request.get('id')}"
+                )
         except Exception as e:
-            logger.error(
-                f"DSAR: failed to scrub export files for request "
-                f"{request.get('id')}: {e}"
+            logger.warning(
+                f"DSAR: local fallback delete failed for "
+                f"request {request.get('id')} at "
+                f"{storage_path}: {e}"
             )

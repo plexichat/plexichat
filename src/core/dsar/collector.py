@@ -9,6 +9,8 @@ import json
 import time
 from typing import Any, Dict
 
+import utils.logger as logger
+
 from .collectors import (
     ApplicationsCollector,
     AutomodCollector,
@@ -85,8 +87,26 @@ class DataCollector:
         }
 
         # Delegate to each collector
+        warnings: list = []
         for category, collector in self._collectors.items():
             result[category] = collector.collect(user_id)
+            if getattr(collector, "collection_errors", None):
+                for err in collector.collection_errors:
+                    warnings.append(f"{category}: {err}")
+                collector.collection_errors.clear()
+
+        # Surface incomplete-export warnings in the export metadata so a
+        # compliance artifact with missing categories is never presented
+        # as complete.
+        if warnings:
+            logger.error(
+                f"DSAR export for user {user_id} is INCOMPLETE: "
+                f"{len(warnings)} category collection error(s)"
+            )
+            result["export_metadata"] = {
+                "complete": False,
+                "warnings": warnings,
+            }
 
         return result
 

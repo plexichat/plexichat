@@ -57,67 +57,135 @@ async def request_transcript_export(
 
     conv_id = cid
 
-    # Check permissions
+    # SECURITY: authorization is enforced UNCONDITIONALLY. The previous
+    # implementation ran all permission checks only when the servers
+    # module resolved the channel; if get_channel returned falsy (or
+    # servers_mod was None) every check was skipped and any authenticated
+    # user could dump a conversation they were not part of.
+    channel = None
     if servers_mod:
         try:
             channel = servers_mod.get_channel(cid, current_user.user_id)
-            if channel:
-                # DM/Group DM channels - export disabled
-                channel_type = getattr(channel, "channel_type", None)
-                channel_type_str = (
-                    channel_type.value
-                    if channel_type and hasattr(channel_type, "value")
-                    else str(channel_type)
-                )
-                if channel_type_str in ("dm", "group_dm"):
-                    raise HTTPException(
-                        status_code=403,
-                        detail={
-                            "error": {
-                                "code": 403,
-                                "message": "Transcript export is not available in direct messages",
-                            }
-                        },
-                    )
-
-                # Check channel-level export setting
-                if not getattr(channel, "transcript_export_enabled", True):
-                    raise HTTPException(
-                        status_code=403,
-                        detail={
-                            "error": {
-                                "code": 403,
-                                "message": "Transcript export is disabled for this channel",
-                            }
-                        },
-                    )
-
-                # Check user permission
-                permissions = servers_mod.get_permissions(
-                    current_user.user_id, channel.server_id, cid
-                )
-                if not permissions.get(
-                    "messages.export_transcript"
-                ) and not permissions.get("administrator"):
-                    raise HTTPException(
-                        status_code=403,
-                        detail={
-                            "error": {
-                                "code": 403,
-                                "message": "You do not have permission to export transcripts",
-                            }
-                        },
-                    )
-
-                if hasattr(channel, "conversation_id") and channel.conversation_id:
-                    conv_id = channel.conversation_id
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(
-                status_code=404,
-                detail={"error": {"code": 404, "message": "Channel not found"}},
+            logger.warning(
+                f"Transcript export: get_channel({cid}) failed for user "
+                f"{current_user.user_id}; falling back to direct "
+                f"conversation authorization"
             )
+            channel = None
+
+    if channel is not None:
+        # DM/Group DM channels - export disabled
+        channel_type = getattr(channel, "channel_type", None)
+        channel_type_str = (
+            channel_type.value
+            if channel_type and hasattr(channel_type, "value")
+            else str(channel_type)
+        )
+        if channel_type_str in ("dm", "group_dm"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Transcript export is not available in direct messages",
+                    }
+                },
+            )
+
+        # Check channel-level export setting
+        if not getattr(channel, "transcript_export_enabled", True):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Transcript export is disabled for this channel",
+                    }
+                },
+            )
+
+        # Check user permission (fail closed: no permissions means deny)
+        if not servers_mod:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "You do not have permission to export transcripts",
+                    }
+                },
+            )
+        permissions = (
+            servers_mod.get_permissions(current_user.user_id, channel.server_id, cid)
+            or {}
+        )
+        if not permissions.get("messages.export_transcript") and not permissions.get(
+            "administrator"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "You do not have permission to export transcripts",
+                    }
+                },
+            )
+
+        if hasattr(channel, "conversation_id") and channel.conversation_id:
+            conv_id = channel.conversation_id
+    else:
+        # Channel not resolvable through the servers module: authorize
+        # directly against messaging data. DM/group conversations are
+        # never exportable, and the requester MUST be a participant of
+        # the target conversation.
+        db = api.get_db()
+        try:
+            conv = (
+                db.fetch_one(
+                    "SELECT conversation_type FROM msg_conversations WHERE id = ?",
+                    (cid,),
+                )
+                if db
+                else None
+            )
+            if not conv:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "Channel not found"}},
+                )
+            ctype = conv["conversation_type"] if isinstance(conv, dict) else conv[0]
+            if ctype in ("dm", "group_dm"):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Transcript export is not available in direct messages",
+                        }
+                    },
+                )
+            from src.core.messaging.repositories.participant import (
+                ParticipantRepository,
+            )
+
+            participants = ParticipantRepository(db)
+            if not participants.exists(cid, current_user.user_id):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "You do not have permission to export transcripts",
+                        }
+                    },
+                )
+        finally:
+            if db:
+                db.close()
 
     # Check export is enabled
     import utils.config as config

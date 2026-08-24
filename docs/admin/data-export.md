@@ -280,7 +280,7 @@ Failed requests are marked with status `failed` and the error message stored. Th
 
 1. **Time-Limited Links**: Download links expire after `retention_days` (default: 7 days).
 
-2. **File Path Encryption**: Export file paths are stored encrypted in the database.
+2. **File Path Storage**: Export file paths are stored as PLAINTEXT in the database (`storage_path` column). They are never encrypted; access to the database and download endpoints is what protects them. At-rest encryption of export files is available only if the optional `media.encrypt_at_rest` storage wrapper is enabled.
 
 3. **Checksum Verification**: Each export includes a SHA-256 checksum for integrity verification.
 
@@ -300,7 +300,7 @@ The DSAR system maintains a hash-chained audit log for compliance:
    - `DOWNLOADED`: User downloaded the export
    - `EXPIRED`: Download link expired
 
-3. **S3 Backup**: Audit logs can be automatically backed up to S3 for redundancy.
+3. **No Automated Backup**: There is currently NO automated S3 backup of audit logs. Operators must arrange their own backup of `~/.plexichat/data/dsar_audit_log.jsonl` if redundancy is required.
 
 4. **Integrity Halt**: If hash chain verification fails at startup and `halt_on_invalid_audit` is true, the harvester will not start.
 
@@ -322,7 +322,7 @@ The DSAR system maintains a hash-chained audit log for compliance:
 
 4. **Set Appropriate Retention**: Balance user convenience with storage costs when setting `retention_days`.
 
-5. **Backup Audit Logs**: Ensure `backup_to_s3` is enabled for compliance and disaster recovery.
+5. **Audit Log Backups**: No `backup_to_s3` feature exists; back up the audit log file yourself (see "No Automated Backup" above).
 
 6. **Configure Alerting**: Set up monitoring for the harvester to detect processing failures or shutdowns.
 
