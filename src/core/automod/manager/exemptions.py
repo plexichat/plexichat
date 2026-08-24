@@ -114,6 +114,8 @@ class ExemptionMixin(AutoModProtocol):
         if target_type not in ["role", "channel"]:
             raise ExemptionError("target_type must be 'role' or 'channel'")
 
+        self._authorize_automod_mutation(server_id, user_id)
+
         existing = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
                WHERE server_id = ? AND target_type = ? AND target_id = ? AND rule_id IS ?""",
@@ -145,11 +147,16 @@ class ExemptionMixin(AutoModProtocol):
 
     def remove_exemption(self, user_id: SnowflakeID, exemption_id: SnowflakeID) -> bool:
         existing = self._db.fetch_one(
-            "SELECT id FROM automod_exemptions WHERE id = ?", (exemption_id,)
+            "SELECT id, server_id FROM automod_exemptions WHERE id = ?",
+            (exemption_id,),
         )
 
         if not existing:
             raise ExemptionError("Exemption not found")
+
+        # Server-scope the removal so a caller cannot delete exemptions from
+        # servers they do not hold server.automod permission in.
+        self._authorize_automod_mutation(existing["server_id"], user_id)
 
         self._db.execute("DELETE FROM automod_exemptions WHERE id = ?", (exemption_id,))
         return True

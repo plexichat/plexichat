@@ -90,23 +90,31 @@ class AlertModeratorsAction(BaseAction):
         return list(mod_ids)
 
     def _get_alert_channel(self, server_id: int) -> Optional[int]:
-        """Get the configured alert channel for a server."""
-        automod_config = config.get("automod", {})
+        """Get the configured alert channel for a server.
 
-        server_config = self._db.fetch_one(
-            "SELECT config FROM automod_rules WHERE server_id = ? LIMIT 1", (server_id,)
+        Resolution order:
+          1. Server scope: the server's ``system_channel_id``.
+          2. Global scope: the ``automod.default_alert_channel_id`` config key.
+
+        The previous implementation scraped an arbitrary automod_rules row for
+        an ``alert_channel_id`` key that nothing ever set; that dead lookup
+        path has been removed.
+        """
+        server_row = self._db.fetch_one(
+            "SELECT system_channel_id FROM srv_servers WHERE id = ?", (server_id,)
         )
+        if server_row and server_row["system_channel_id"]:
+            return server_row["system_channel_id"]
 
-        if server_config:
+        automod_config = config.get("automod", {}) or {}
+        default_channel = automod_config.get("default_alert_channel_id")
+        if default_channel:
             try:
-                raw = server_config["config"]
-                cfg = raw if isinstance(raw, dict) else json.loads(raw)
-                if "alert_channel_id" in cfg:
-                    return cfg["alert_channel_id"]
-            except (json.JSONDecodeError, KeyError, TypeError):
-                pass
+                return int(default_channel)
+            except (TypeError, ValueError):
+                return None
 
-        return automod_config.get("default_alert_channel_id")
+        return None
 
     def _send_channel_alert(
         self, channel_id: int, violation: Violation, context: Optional[Dict[str, Any]]

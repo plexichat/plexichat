@@ -47,7 +47,9 @@ class MentionSpamRule(BaseRule):
         user_count = len(user_mentions)
         role_count = len(role_mentions)
         everyone_count = len(everyone_mentions)
-        total_count = user_count + role_count
+        # @everyone/@here always count toward the total-mention limit;
+        # block_everyone is a separate policy that forbids them outright.
+        total_count = user_count + role_count + everyone_count
 
         violations = []
         highest_severity = ViolationSeverity.LOW

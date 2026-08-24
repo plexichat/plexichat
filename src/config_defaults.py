@@ -776,6 +776,13 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "enabled": True,
             "exempt_owners": True,
             "exempt_admins": True,
+            # Fail closed on internal automod errors: block/quarantine the
+            # message instead of silently delivering it when a rule phase
+            # raises unexpectedly.
+            "fail_closed": True,
+            # Global fallback alert channel (server scope uses the server's
+            # system_channel_id) for automod moderator alerts.
+            "default_alert_channel_id": None,
             "rules": {
                 "caps": {
                     "enabled": True,

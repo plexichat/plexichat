@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from src.core.base import SnowflakeID
 from ..models import Rule, ActionType, RuleType, ViolationSeverity, UserReputation
@@ -67,3 +67,34 @@ class AutoModProtocol:
         severity: ViolationSeverity,
     ) -> None:
         cast(AutoModProtocol, super())._update_reputation(user_id, server_id, severity)
+
+    def _authorize_automod_mutation(
+        self, server_id: SnowflakeID, user_id: Optional[SnowflakeID]
+    ) -> None:
+        """Defense-in-depth server-scope authorization for rule mutations.
+
+        Route handlers already enforce ``server.automod``; this guard protects
+        any caller that reaches the manager layer directly. Skipped when no
+        caller identity or no servers module is available.
+        """
+        if user_id is None or server_id is None or self._servers is None:
+            return
+
+        require = getattr(self._servers, "require_permission", None)
+        if require is None:
+            return
+
+        try:
+            require(user_id, server_id, "server.automod")
+        except Exception as exc:
+            from src.core.servers.exceptions import (
+                PermissionDeniedError as _SrvPermError,
+            )
+
+            if isinstance(exc, _SrvPermError):
+                from ..exceptions import PermissionDeniedError
+
+                raise PermissionDeniedError(
+                    f"Caller {user_id} lacks 'server.automod' permission in server {server_id}"
+                ) from exc
+            raise

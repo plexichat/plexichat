@@ -11,7 +11,16 @@ Usage:
     # In any other file (use directly)
     from src.core import automod
     result = automod.check_message(server_id, channel_id, user_id, content)
+
+Failure policy:
+    Internal automod errors FAIL CLOSED by default (config key
+    ``automod.fail_closed``, default true): callers must refuse delivery
+    instead of silently letting the message through. Use
+    :func:`is_fail_closed` and :func:`record_internal_error` in the send /
+    edit paths.
 """
+
+import json
 
 from typing import Optional, List, Dict, Any
 
@@ -89,6 +98,9 @@ __all__ = [
     # Setup
     "setup",
     "reload_config",
+    # Failure policy
+    "is_fail_closed",
+    "record_internal_error",
     # Core operations
     "check_message",
     "check_message_fast",
@@ -159,6 +171,74 @@ def _get_manager():
 def reload_config() -> None:
     """Reload the automod configuration from the source."""
     _get_manager().reload_config()
+
+
+def is_fail_closed() -> bool:
+    """Whether internal automod errors must block delivery (fail closed).
+
+    Controlled by ``automod.fail_closed`` (default true). When true, send /
+    edit paths apply a conservative action (block / quarantine) when a
+    moderation phase errors internally instead of silently delivering.
+    """
+    try:
+        import utils.config as config
+
+        cfg = config.get("automod", {}) or {}
+    except Exception:
+        cfg = {}
+    return bool(cfg.get("fail_closed", True))
+
+
+def record_internal_error(
+    source: str,
+    server_id: int,
+    channel_id: int,
+    user_id: int,
+    message_id: Optional[int],
+    error: Exception,
+) -> Optional[int]:
+    """Record an auditable violation for an internal automod failure.
+
+    Best-effort: writes a ``internal_error`` row into automod_violations so
+    moderators can review moderation outages; never raises.
+    Returns the violation id, or None when recording failed.
+    """
+    try:
+        manager = _get_manager()
+        now = manager._get_timestamp()
+        violation_id = manager._generate_id()
+        manager._db.execute(
+            """INSERT INTO automod_violations
+               (id, server_id, channel_id, user_id, message_id, rule_id, rule_type,
+                matched_content, actions_taken, severity, metadata, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                violation_id,
+                server_id,
+                channel_id,
+                user_id,
+                message_id,
+                None,
+                "internal_error",
+                f"automod {source} phase failed internally",
+                json.dumps([]),
+                ViolationSeverity.HIGH.value,
+                json.dumps(
+                    {
+                        "source": source,
+                        "error": str(error)[:500],
+                        "fail_closed": is_fail_closed(),
+                    }
+                ),
+                now,
+            ),
+        )
+        return violation_id
+    except Exception as exc:
+        import utils.logger as logger
+
+        logger.error(f"Failed to record automod internal error: {exc}")
+        return None
 
 
 def check_message(
@@ -314,6 +394,7 @@ def create_rule(
     exempt_channels: Optional[List[SnowflakeID]] = None,
     priority: int = 0,
     check_all: bool = False,
+    _skip_authz: bool = False,
 ) -> Rule:
     """Create a new automod rule."""
     return _get_manager().create_rule(
@@ -328,6 +409,8 @@ def create_rule(
         exempt_channels,
         priority,
         check_all,
+        False,
+        _skip_authz,
     )
 
 
@@ -347,6 +430,7 @@ def update_rule(
     exempt_channels: Optional[List[SnowflakeID]] = None,
     priority: Optional[int] = None,
     check_all: Optional[bool] = None,
+    _skip_authz: bool = False,
 ) -> Rule:
     """Update an existing rule."""
     return _get_manager().update_rule(
@@ -360,12 +444,13 @@ def update_rule(
         exempt_channels,
         priority,
         check_all,
+        _skip_authz,
     )
 
 
-def delete_rule(user_id: int, rule_id: int) -> bool:
+def delete_rule(user_id: int, rule_id: int, _skip_authz: bool = False) -> bool:
     """Delete a rule."""
-    return _get_manager().delete_rule(user_id, rule_id)
+    return _get_manager().delete_rule(user_id, rule_id, _skip_authz)
 
 
 def get_server_rules(server_id: int) -> List[Rule]:
@@ -373,9 +458,11 @@ def get_server_rules(server_id: int) -> List[Rule]:
     return _get_manager().get_server_rules(server_id)
 
 
-def set_rule_enabled(user_id: int, rule_id: int, enabled: bool) -> Rule:
+def set_rule_enabled(
+    user_id: int, rule_id: int, enabled: bool, _skip_authz: bool = False
+) -> Rule:
     """Enable or disable a rule."""
-    return _get_manager().set_rule_enabled(user_id, rule_id, enabled)
+    return _get_manager().set_rule_enabled(user_id, rule_id, enabled, _skip_authz)
 
 
 def add_exemption(

@@ -751,9 +751,12 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
             exempt_channels=body.exempt_channels,
             priority=body.priority or 0,
             check_all=bool(body.check_all),
+            # Platform admins are authorized via admin.moderation.rules above,
+            # not server.automod membership; skip the manager-layer guard.
+            _skip_authz=True,
         )
         if body.enabled is False:
-            automod.set_rule_enabled(int(admin_id), rule.id, False)
+            automod.set_rule_enabled(int(admin_id), rule.id, False, _skip_authz=True)
             rule = automod.get_rule(rule.id)
         return _rule_to_response(rule)
     except Exception as e:
@@ -801,9 +804,17 @@ async def update_automod_rule(
         if body.check_all is not None:
             update_kwargs["check_all"] = body.check_all
         if update_kwargs:
-            automod.update_rule(user_id=int(admin_id), rule_id=rule_id, **update_kwargs)
+            automod.update_rule(
+                user_id=int(admin_id),
+                rule_id=rule_id,
+                # Authorized via admin.moderation.rules above.
+                _skip_authz=True,
+                **update_kwargs,
+            )
         if body.enabled is not None:
-            automod.set_rule_enabled(int(admin_id), rule_id, body.enabled)
+            automod.set_rule_enabled(
+                int(admin_id), rule_id, body.enabled, _skip_authz=True
+            )
         rule = automod.get_rule(rule_id)
         if not rule:
             raise HTTPException(
@@ -840,7 +851,9 @@ async def delete_automod_rule(rule_id: int, request: Request):
     from src.core import automod
 
     try:
-        if not automod.delete_rule(user_id=int(admin_id), rule_id=rule_id):
+        if not automod.delete_rule(
+            user_id=int(admin_id), rule_id=rule_id, _skip_authz=True
+        ):
             raise HTTPException(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Rule not found"}},

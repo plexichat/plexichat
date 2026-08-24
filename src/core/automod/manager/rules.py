@@ -4,7 +4,10 @@ from typing import Optional, List, Dict, Any
 import utils.logger as logger
 from src.core.base import SnowflakeID
 from ..models import Rule, RuleType, RuleAction, ActionType
-from ..exceptions import RuleNotFoundError, RuleValidationError
+from ..exceptions import (
+    RuleNotFoundError,
+    RuleValidationError,
+)
 from .converters import row_to_rule
 from .protocol import AutoModProtocol
 
@@ -24,12 +27,16 @@ class RuleOpsMixin(AutoModProtocol):
         priority: int = 0,
         check_all: bool = False,
         _silent: bool = False,
+        _skip_authz: bool = False,
     ) -> Rule:
         if not name or not name.strip():
             raise RuleValidationError("Rule name is required")
 
         if not actions:
             raise RuleValidationError("At least one action is required")
+
+        if not _skip_authz:
+            self._authorize_automod_mutation(server_id, user_id)
 
         rule_class = self.RULE_CLASSES.get(rule_type)
         if rule_class:
@@ -99,7 +106,8 @@ class RuleOpsMixin(AutoModProtocol):
             logger.debug(f"Created automod rule {rule_id} for server {server_id}")
 
         result = self.get_rule(rule_id)
-        assert result is not None
+        if result is None:
+            raise RuleNotFoundError("Rule not found after create")
         return result
 
     def get_rule(self, rule_id: SnowflakeID) -> Optional[Rule]:
@@ -122,10 +130,14 @@ class RuleOpsMixin(AutoModProtocol):
         exempt_channels: Optional[List[SnowflakeID]] = None,
         priority: Optional[int] = None,
         check_all: Optional[bool] = None,
+        _skip_authz: bool = False,
     ) -> Rule:
         rule = self.get_rule(rule_id)
         if not rule:
             raise RuleNotFoundError("Rule not found")
+
+        if not _skip_authz:
+            self._authorize_automod_mutation(rule.server_id, user_id)
 
         updates = []
         params = []
@@ -196,13 +208,19 @@ class RuleOpsMixin(AutoModProtocol):
             )
 
         result = self.get_rule(rule_id)
-        assert result is not None
+        if result is None:
+            raise RuleNotFoundError("Rule not found after update")
         return result
 
-    def delete_rule(self, user_id: SnowflakeID, rule_id: SnowflakeID) -> bool:
+    def delete_rule(
+        self, user_id: SnowflakeID, rule_id: SnowflakeID, _skip_authz: bool = False
+    ) -> bool:
         rule = self.get_rule(rule_id)
         if not rule:
             raise RuleNotFoundError("Rule not found")
+
+        if not _skip_authz:
+            self._authorize_automod_mutation(rule.server_id, user_id)
 
         self._db.execute("DELETE FROM automod_rules WHERE id = ?", (rule_id,))
         self._db.execute("DELETE FROM automod_exemptions WHERE rule_id = ?", (rule_id,))
@@ -229,11 +247,18 @@ class RuleOpsMixin(AutoModProtocol):
         return [row_to_rule(row) for row in rows]
 
     def set_rule_enabled(
-        self, user_id: SnowflakeID, rule_id: SnowflakeID, enabled: bool
+        self,
+        user_id: SnowflakeID,
+        rule_id: SnowflakeID,
+        enabled: bool,
+        _skip_authz: bool = False,
     ) -> Rule:
         rule = self.get_rule(rule_id)
         if not rule:
             raise RuleNotFoundError("Rule not found")
+
+        if not _skip_authz:
+            self._authorize_automod_mutation(rule.server_id, user_id)
 
         self._db.execute(
             "UPDATE automod_rules SET enabled = CAST(? AS INTEGER), updated_at = CAST(? AS BIGINT) WHERE id = ?",
@@ -241,7 +266,8 @@ class RuleOpsMixin(AutoModProtocol):
         )
 
         result = self.get_rule(rule_id)
-        assert result is not None
+        if result is None:
+            raise RuleNotFoundError("Rule not found after enable-state update")
         return result
 
     def ensure_default_rules(
