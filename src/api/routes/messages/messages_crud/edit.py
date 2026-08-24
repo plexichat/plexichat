@@ -115,17 +115,25 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
             # Phase 1 (synchronous): cheap rules run BEFORE the edit is
             # applied, so a match blocks the edit entirely. AI moderation is
             # excluded here and runs async (phase 2).
+            from src.core import automod
+
             if server_id:
                 try:
-                    from src.core import automod
-
+                    automod_context = self._build_automod_context(
+                        cid,
+                        current_user.user_id,
+                        body.content or "",
+                        servers_mod,
+                        messaging,
+                        "message_edit",
+                    )
                     fast_result = automod.check_message_fast(
                         server_id=server_id,
                         channel_id=cid,
                         user_id=current_user.user_id,
                         content=body.content or "",
                         message_id=None,
-                        context={"source": "message_edit"},
+                        context=automod_context,
                     )
                     if not fast_result.passed:
                         for match in fast_result.violations:
@@ -136,7 +144,7 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                                 message_id=None,
                                 match=match,
                                 actions=fast_result.actions_to_take,
-                                context={"source": "message_edit"},
+                                context=automod_context,
                             )
                         raise HTTPException(
                             status_code=400,
@@ -154,7 +162,29 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                 except HTTPException:
                     raise
                 except Exception as e:
-                    logger.warning(f"Automod fast check failed for message edit: {e}")
+                    logger.error(f"Automod fast check failed for message edit: {e}")
+                    automod.record_internal_error(
+                        "fast_check:message_edit",
+                        server_id,
+                        cid,
+                        current_user.user_id,
+                        message_id,
+                        e,
+                    )
+                    if automod.is_fail_closed():
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": "MESSAGE_BLOCKED",
+                                    "message": (
+                                        "Edit blocked: auto-moderation is "
+                                        "temporarily unavailable"
+                                    ),
+                                    "violations": ["internal_error"],
+                                }
+                            },
+                        )
 
             edited_msg = messaging.edit_message(
                 current_user.user_id, message_id, body.content
@@ -186,8 +216,6 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
             # Phase 2 (asynchronous): AI moderation on the edited content.
             if server_id:
                 try:
-                    from src.core import automod
-
                     msg_id = get_msg_id(edited_msg)
                     if msg_id is None:
                         logger.warning(
@@ -203,7 +231,21 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                             context={"source": "message_edit"},
                         )
                 except Exception as e:
-                    logger.warning(f"Automod AI check scheduling failed: {e}")
+                    # Scheduling stays async, but the failure is recorded so
+                    # the moderation gap is auditable rather than silent.
+                    logger.error(f"Automod AI check scheduling failed: {e}")
+                    try:
+                        _failed_mid = get_msg_id(edited_msg)
+                    except Exception:
+                        _failed_mid = message_id
+                    automod.record_internal_error(
+                        "ai_schedule:message_edit",
+                        server_id,
+                        cid,
+                        current_user.user_id,
+                        _failed_mid,
+                        e,
+                    )
 
             return response
         except HTTPException:

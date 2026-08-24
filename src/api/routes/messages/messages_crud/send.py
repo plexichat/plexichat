@@ -112,6 +112,25 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             ):
                 content_value = "\u200b"
 
+            # Aggregate ALL user-controlled text surfaces (message content,
+            # attachment filenames/URLs, poll question/options) so keyword /
+            # regex filters cannot be evaded via attachments or polls.
+            automod_content = content_value
+            _extra_parts = []
+            for _attachment in attachments or []:
+                if _attachment.get("filename"):
+                    _extra_parts.append(_attachment["filename"])
+                if _attachment.get("url"):
+                    _extra_parts.append(_attachment["url"])
+            if body.poll:
+                if body.poll.question:
+                    _extra_parts.append(body.poll.question)
+                _extra_parts.extend(option for option in body.poll.options if option)
+            if _extra_parts:
+                automod_content = "\n".join([automod_content] + _extra_parts)
+
+            from src.core import automod
+
             # Phase 1 (synchronous): cheap rules (keyword/regex/spam/etc.) run
             # BEFORE the message is created or broadcast. A match blocks the
             # send entirely, so other clients never see the message. AI
@@ -119,15 +138,21 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             server_id = self._resolve_server_id(cid, current_user.user_id, servers_mod)
             if server_id:
                 try:
-                    from src.core import automod
-
+                    automod_context = self._build_automod_context(
+                        cid,
+                        current_user.user_id,
+                        automod_content,
+                        servers_mod,
+                        messaging,
+                        "message_create",
+                    )
                     fast_result = automod.check_message_fast(
                         server_id=server_id,
                         channel_id=cid,
                         user_id=current_user.user_id,
-                        content=content_value,
+                        content=automod_content,
                         message_id=None,
-                        context={"source": "message_create"},
+                        context=automod_context,
                     )
                     if not fast_result.passed:
                         for match in fast_result.violations:
@@ -138,7 +163,7 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                                 message_id=None,
                                 match=match,
                                 actions=fast_result.actions_to_take,
-                                context={"source": "message_create"},
+                                context=automod_context,
                             )
                         raise HTTPException(
                             status_code=400,
@@ -156,7 +181,36 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                 except HTTPException:
                     raise
                 except Exception as e:
-                    logger.warning(f"Automod fast check failed for message create: {e}")
+                    logger.error(f"Automod fast check failed for message create: {e}")
+                    automod.record_internal_error(
+                        "fast_check:message_create",
+                        server_id,
+                        cid,
+                        current_user.user_id,
+                        None,
+                        e,
+                    )
+                    if automod.is_fail_closed():
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": "MESSAGE_BLOCKED",
+                                    "message": (
+                                        "Message blocked: auto-moderation is "
+                                        "temporarily unavailable"
+                                    ),
+                                    "violations": ["internal_error"],
+                                }
+                            },
+                        )
+
+            else:
+                # DM/group conversation: server automod does not apply, but
+                # DM spam protection MUST (rate/duplicate/pattern checks).
+                self._enforce_dm_spam_protection(
+                    cid, current_user.user_id, content_value, messaging
+                )
 
             msg, server_id = await self._send_message_with_fallback(
                 cid,
@@ -317,8 +371,6 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             # pushes a MESSAGE_UPDATE so clients re-render it.
             if server_id:
                 try:
-                    from src.core import automod
-
                     msg_id = get_msg_id(msg)
                     if msg_id is None:
                         logger.warning(
@@ -330,11 +382,25 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                             channel_id=cid,
                             user_id=current_user.user_id,
                             message_id=msg_id,
-                            content=content_value,
+                            content=automod_content,
                             context={"source": "message_create"},
                         )
                 except Exception as e:
-                    logger.warning(f"Automod AI check scheduling failed: {e}")
+                    # Scheduling stays async, but the failure is recorded so
+                    # the moderation gap is auditable rather than silent.
+                    logger.error(f"Automod AI check scheduling failed: {e}")
+                    try:
+                        _failed_mid = get_msg_id(msg)
+                    except Exception:
+                        _failed_mid = None
+                    automod.record_internal_error(
+                        "ai_schedule:message_create",
+                        server_id,
+                        cid,
+                        current_user.user_id,
+                        _failed_mid,
+                        e,
+                    )
 
             return response
         except HTTPException:

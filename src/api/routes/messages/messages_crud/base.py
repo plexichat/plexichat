@@ -5,13 +5,15 @@ Provides message validation, channel fallback logic, and utility methods
 used across multiple mixins.
 """
 
-from typing import Optional, Any
+import re
+from typing import Optional, Any, Dict, List
 
 from fastapi import HTTPException
 from starlette.concurrency import run_in_threadpool
 
 import src.api as api
 import utils.logger as logger
+from src.core.database import cache_get, cache_set
 from src.core.messaging.exceptions import (
     AttachmentLimitError,
     ConversationAccessDeniedError,
@@ -28,6 +30,15 @@ from src.core.servers.exceptions import (
 
 
 class MessagesCRUDBase:
+    # Bounded automod context: how many recent messages feed MessageSpamRule
+    # and how many invite codes are resolved per message (fast-path budget).
+    AUTOMOD_RECENT_MESSAGE_LIMIT = 25
+    AUTOMOD_MAX_INVITE_CODES = 10
+
+    INVITE_CODE_PATTERN = re.compile(
+        r"(?:discord\.gg/|discord\.com/invite/)([A-Za-z0-9_-]+)", re.IGNORECASE
+    )
+
     def _resolve_channel_scope(self, cid: int, user_id: int, servers_mod: Any) -> set:
         """Resolve a URL channel id to the conversation ids it can map to.
 
@@ -275,6 +286,190 @@ class MessagesCRUDBase:
                 return getattr(channel, "server_id", None)
         except Exception:
             return None
+        return None
+
+    def _build_automod_context(
+        self,
+        channel_id: int,
+        user_id: int,
+        content: str,
+        servers_mod: Any,
+        messaging: Any,
+        source: str,
+    ) -> Dict[str, Any]:
+        """Populate automod fast-path context for the live message pipeline.
+
+        Supplies ``recent_messages`` (bounded, for MessageSpamRule) and
+        ``known_invite_codes`` (resolved from content, for InviteLinkRule).
+        All lookups are best-effort: failures leave the context empty rather
+        than delaying or failing the send.
+        """
+        context: Dict[str, Any] = {"source": source}
+
+        recent = self._recent_messages_for_automod(
+            channel_id, user_id, servers_mod, messaging
+        )
+        if recent:
+            context["recent_messages"] = recent
+
+        codes = self._resolve_invite_codes(content, servers_mod)
+        if codes:
+            context["known_invite_codes"] = codes
+        return context
+
+    def _recent_messages_for_automod(
+        self,
+        channel_id: int,
+        user_id: int,
+        servers_mod: Any,
+        messaging: Any,
+    ) -> List[Dict[str, Any]]:
+        """Fetch the last N messages of the target conversation (bounded)."""
+        if not messaging:
+            return []
+        getter = getattr(messaging, "get_messages", None)
+        if getter is None:
+            return []
+
+        conversation_id = self._conversation_for_channel(channel_id, servers_mod)
+        try:
+            messages = getter(user_id, int(conversation_id), limit=25) or []
+        except Exception as e:
+            logger.debug(f"Automod recent-message lookup failed for {channel_id}: {e}")
+            return []
+
+        recent = []
+        for m in messages[: self.AUTOMOD_RECENT_MESSAGE_LIMIT]:
+            author_id = getattr(m, "author_id", None)
+            if author_id is None:
+                continue
+            recent.append(
+                {
+                    "user_id": author_id,
+                    "created_at": getattr(m, "created_at", 0),
+                    "content": getattr(m, "content", "") or "",
+                }
+            )
+        return recent
+
+    def _conversation_for_channel(self, channel_id: int, servers_mod: Any) -> int:
+        """Map a URL channel id onto its conversation (server channels link to
+        one; DM/group conversations ARE their own channel id)."""
+        if servers_mod:
+            getter = getattr(servers_mod, "get_channel_conversation_id", None)
+            if getter is not None:
+                try:
+                    linked = getter(int(channel_id))
+                    if linked:
+                        return int(linked)
+                except Exception as e:
+                    logger.debug(
+                        f"Conversation lookup failed for channel {channel_id}: {e}"
+                    )
+        return int(channel_id)
+
+    def _resolve_invite_codes(self, content: str, servers_mod: Any) -> List[str]:
+        """Resolve invite codes found in content against real invites.
+
+        Results are cached briefly so repeated sends stay on the fast path.
+        """
+        getter = getattr(servers_mod, "get_invite", None) if servers_mod else None
+        if getter is None or not content:
+            return []
+
+        candidates = list(
+            dict.fromkeys(
+                m.group(1) for m in self.INVITE_CODE_PATTERN.finditer(content)
+            )
+        )[: self.AUTOMOD_MAX_INVITE_CODES]
+
+        known_codes = []
+        for code in candidates:
+            cache_key = f"automod_invite:{code.lower()}"
+            exists = cache_get(cache_key)
+            if exists is None:
+                try:
+                    exists = getter(code) is not None
+                except Exception as e:
+                    logger.debug(f"Invite resolution failed for '{code}': {e}")
+                    continue
+                cache_set(cache_key, bool(exists), ttl=300)
+            if exists:
+                known_codes.append(code)
+        return known_codes
+
+    def _enforce_dm_spam_protection(
+        self, channel_id: int, sender_id: int, content: str, messaging: Any
+    ) -> None:
+        """Run the DM spam detector when the target channel is a DM.
+
+        Raises a 403 HTTPException when the detector blocks the message;
+        any infrastructure failure fails open with a warning.
+        """
+        if not messaging:
+            return
+        conversation_getter = getattr(messaging, "get_conversation", None)
+        if conversation_getter is None:
+            return
+        try:
+            conversation = conversation_getter(channel_id, sender_id)
+        except Exception as e:
+            logger.debug(f"DM conversation lookup failed for {channel_id}: {e}")
+            return
+        if conversation is None:
+            return
+        conv_type = getattr(conversation, "conversation_type", None)
+        if getattr(conv_type, "value", conv_type) != "dm":
+            return
+
+        recipient_id = self._dm_recipient(channel_id, sender_id, messaging)
+        if recipient_id is None:
+            return
+
+        try:
+            from src.core import antispam
+
+            detector = antispam.get_dm_spam_detector()
+        except Exception as e:
+            logger.warning(f"DM spam detector unavailable (failing open): {e}")
+            return
+        if detector is None:
+            return
+
+        allowed, reason = detector.check_message(sender_id, recipient_id, content)
+        if not allowed:
+            logger.warning(
+                f"DM spam blocked message from {sender_id} to {recipient_id}: {reason}"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Message blocked by spam protection",
+                    }
+                },
+            )
+
+    def _dm_recipient(
+        self, conversation_id: int, sender_id: int, messaging: Any
+    ) -> Optional[int]:
+        """Return the other participant of a DM conversation, if any."""
+        getter = getattr(messaging, "get_participant_ids", None)
+        if getter is None:
+            return None
+        try:
+            participant_ids = getter(conversation_id) or []
+        except Exception as e:
+            logger.debug(f"DM participant lookup failed for {conversation_id}: {e}")
+            return None
+        for pid in participant_ids:
+            try:
+                pid_int = int(pid)
+            except (TypeError, ValueError):
+                continue
+            if pid_int != int(sender_id):
+                return pid_int
         return None
 
     def _resolve_author_info(self, current_user, auth=None):

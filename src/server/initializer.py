@@ -31,6 +31,7 @@ def initialize_modules(
         media,
         events,
         automod,
+        antispam,
         search,
     )
     from src.core import voice, notifications, threads
@@ -422,6 +423,12 @@ def initialize_modules(
         ),
     )
     modules_store["automod"] = automod
+
+    timed_init(
+        "antispam",
+        lambda: antispam.setup(db),
+    )
+    modules_store["antispam"] = antispam
 
     try:
         all_servers = cast(_ServerQueryDatabase, db).fetch_all(
