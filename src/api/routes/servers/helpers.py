@@ -27,6 +27,7 @@ def _server_to_response(server) -> ServerResponse:
         default_message_notifications=getattr(
             server, "default_message_notifications", 0
         ),
+        max_reactions_per_message=getattr(server, "max_reactions_per_message", 20),
         created_at=server.created_at,
     )
 

@@ -3,7 +3,13 @@ from typing import Optional, List
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
-from src.core.database import cache_get, cache_set, cache_delete, valkey_available
+from src.core.database import (
+    cache_get,
+    cache_set,
+    cache_delete,
+    invalidate_pattern,
+    valkey_available,
+)
 
 from ..models import (
     Server,
@@ -294,6 +300,9 @@ class ServerOpsMixin(ServerProtocol):
         description: Optional[str] = None,
         icon_url: Optional[str] = None,
         default_channel_id: Optional[SnowflakeID] = None,
+        verification_level: Optional[int] = None,
+        default_message_notifications: Optional[int] = None,
+        max_reactions_per_message: Optional[int] = None,
     ) -> Server:
         """Update server settings."""
         server = self.get_server(server_id, user_id)
@@ -345,6 +354,38 @@ class ServerOpsMixin(ServerProtocol):
                 "new": default_channel_id,
             }
 
+        if verification_level is not None:
+            if not 0 <= int(verification_level) <= 4:
+                raise ValueError("verification_level must be between 0 and 4")
+            updates.append("verification_level = ?")
+            params.append(int(verification_level))
+            changes["verification_level"] = {
+                "old": server.verification_level,
+                "new": verification_level,
+            }
+
+        if default_message_notifications is not None:
+            if not 0 <= int(default_message_notifications) <= 1:
+                raise ValueError(
+                    "default_message_notifications must be between 0 and 1"
+                )
+            updates.append("default_message_notifications = ?")
+            params.append(int(default_message_notifications))
+            changes["default_message_notifications"] = {
+                "old": server.default_message_notifications,
+                "new": default_message_notifications,
+            }
+
+        if max_reactions_per_message is not None:
+            if not 1 <= int(max_reactions_per_message) <= 200:
+                raise ValueError("max_reactions_per_message must be between 1 and 200")
+            updates.append("max_reactions_per_message = ?")
+            params.append(int(max_reactions_per_message))
+            changes["max_reactions_per_message"] = {
+                "old": server.max_reactions_per_message,
+                "new": max_reactions_per_message,
+            }
+
         if updates:
             updates.append("updated_at = ?")
             params.append(self._get_timestamp())
@@ -378,6 +419,7 @@ class ServerOpsMixin(ServerProtocol):
                 "widget_channel_id",
                 "widget_enabled",
                 "default_channel_id",
+                "max_reactions_per_message",
             }
             for update in updates:
                 col_name = update.split(" = ")[0]
@@ -544,6 +586,18 @@ class ServerOpsMixin(ServerProtocol):
                         "UPDATE srv_servers SET widget_enabled = ?, updated_at = ? WHERE id = ?",
                         (params[idx], now, server_id),
                     )
+                elif "default_channel_id = ?" in update:
+                    idx = updates.index(update)
+                    self._db.execute(
+                        "UPDATE srv_servers SET default_channel_id = ?, updated_at = ? WHERE id = ?",
+                        (params[idx], now, server_id),
+                    )
+                elif "max_reactions_per_message = ?" in update:
+                    idx = updates.index(update)
+                    self._db.execute(
+                        "UPDATE srv_servers SET max_reactions_per_message = ?, updated_at = ? WHERE id = ?",
+                        (params[idx], now, server_id),
+                    )
 
             self._log_audit(
                 server_id,
@@ -556,6 +610,12 @@ class ServerOpsMixin(ServerProtocol):
 
             if valkey_available():
                 cache_delete(f"server:{server_id}")
+                # Server rows embed in the per-user server-list tiers
+                # (@cached get_servers -> "user_servers:*", and the API-layer
+                # GET /servers cache "user_servers_api:*"); drop them too so
+                # PATCHes reflect promptly instead of after their TTLs.
+                invalidate_pattern("user_servers:*")
+                invalidate_pattern("user_servers_api:*")
 
         result = self.get_server(server_id, user_id)
         assert result is not None

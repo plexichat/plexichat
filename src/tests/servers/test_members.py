@@ -412,3 +412,145 @@ class TestGetMemberRoles:
         roles = servers.get_member_roles(server.id, outsider.id)
 
         assert roles == []
+
+
+class TestModerationHierarchy:
+    """Timeout/mute/deafen must respect the kick/ban hierarchy rules."""
+
+    def _make_moderator(self, servers, server, owner, permissions):
+        """Create a member with a moderation role parked below position 5."""
+        import uuid
+
+        auth = servers._auth
+        unique_id = uuid.uuid4().hex[:8]
+        mod_user = auth.register(
+            f"modhier_{unique_id}",
+            f"modhier_{unique_id}@example.com",
+            "TestPass123!",
+        )
+        servers.add_member(server.id, mod_user.id)
+
+        mod_role = servers.create_role(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Mod Hier",
+            permissions=permissions,
+        )
+        servers.move_role(owner.id, mod_role.id, position=5)
+        servers.assign_role(owner.id, server.id, mod_user.id, mod_role.id)
+        return mod_user, mod_role
+
+    def test_moderator_cannot_timeout_owner(self, fresh_server):
+        """Test that the owner cannot be timed out."""
+        server, owner, servers = fresh_server
+        mod_user, _ = self._make_moderator(
+            servers, server, owner, {"members.manage_roles": True}
+        )
+
+        with pytest.raises(servers.CannotModifyOwnerError):
+            servers.update_member(
+                user_id=mod_user.id,
+                server_id=server.id,
+                member_user_id=owner.id,
+                timeout_until=9999999999999,
+                timeout_reason="nope",
+            )
+
+    def test_moderator_cannot_timeout_higher_member(self, fresh_server):
+        """Test that equal/higher-position members cannot be timed out."""
+        server, owner, servers = fresh_server
+        mod_user, _ = self._make_moderator(
+            servers, server, owner, {"members.manage_roles": True}
+        )
+        import uuid
+
+        admin_user = servers._auth.register(
+            f"modhier_admin_{uuid.uuid4().hex[:8]}",
+            f"modhier_admin_{uuid.uuid4().hex[:8]}@example.com",
+            "TestPass123!",
+        )
+        servers.add_member(server.id, admin_user.id)
+        admin_role = servers.create_role(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Mod Hier Admin",
+            permissions={"members.kick": True},
+        )
+        servers.move_role(owner.id, admin_role.id, position=7)
+        servers.assign_role(owner.id, server.id, admin_user.id, admin_role.id)
+
+        with pytest.raises(servers.RoleHierarchyError):
+            servers.update_member(
+                user_id=mod_user.id,
+                server_id=server.id,
+                member_user_id=admin_user.id,
+                muted=True,
+            )
+
+    def test_moderator_can_timeout_lower_member(self, fresh_server):
+        """Test that moderating a lower member still works."""
+        import uuid
+
+        server, owner, servers = fresh_server
+        mod_user, _ = self._make_moderator(
+            servers, server, owner, {"members.manage_roles": True}
+        )
+
+        target = servers._auth.register(
+            f"modhier_target_{uuid.uuid4().hex[:8]}",
+            f"modhier_target_{uuid.uuid4().hex[:8]}@example.com",
+            "TestPass123!",
+        )
+        servers.add_member(server.id, target.id)
+
+        updated = servers.update_member(
+            user_id=mod_user.id,
+            server_id=server.id,
+            member_user_id=target.id,
+            timeout_until=9999999999999,
+            timeout_reason="cooling off",
+        )
+        assert updated.timeout_reason == "cooling off"
+
+    def test_kick_by_non_member_fails_cleanly(self, fresh_server, base_users):
+        """Test that an actor who is not a member gets 403-style error, not a crash."""
+        server, owner, servers = fresh_server
+        _, _, _, outsider, _, _, _ = base_users
+
+        with pytest.raises(
+            (servers.PermissionDeniedError, servers.ServerAccessDeniedError)
+        ):
+            servers.kick_member(outsider.id, server.id, owner.id)
+
+    def test_ban_by_non_member_fails_cleanly(self, fresh_server, base_users):
+        """Test that ban by a non-member actor raises a permission error."""
+        server, owner, servers = fresh_server
+        _, _, _, outsider, _, _, _ = base_users
+
+        with pytest.raises(
+            (servers.PermissionDeniedError, servers.ServerAccessDeniedError)
+        ):
+            servers.ban_member(outsider.id, server.id, owner.id)
+
+
+class TestBanMessagePurge:
+    """delete_message_days is honoured honestly (purge unsupported -> error)."""
+
+    def test_ban_with_purge_rejected(self, server_with_members):
+        """Test that delete_message_days > 0 is rejected, not silently dropped."""
+        server, owner, _, member_user, _, _, servers = server_with_members
+
+        with pytest.raises(servers.BanPurgeNotSupportedError):
+            servers.ban_member(
+                owner.id, server.id, member_user.id, delete_message_days=1
+            )
+
+    def test_ban_without_purge_ok(self, server_with_members):
+        """Test that delete_message_days=0 bans normally."""
+        server, owner, _, member_user, _, _, servers = server_with_members
+
+        ban = servers.ban_member(
+            owner.id, server.id, member_user.id, delete_message_days=0
+        )
+        assert ban is not None
+        assert ban.created_at > 0

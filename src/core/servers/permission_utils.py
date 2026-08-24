@@ -8,6 +8,53 @@ import json
 from typing import Any, Dict, List, Optional
 
 from .models import SERVER_PERMISSIONS
+from .exceptions import InvalidPermissionKeyError, PermissionDeniedError
+
+
+def validate_permission_dict(permissions: Optional[Dict[str, Any]]) -> None:
+    """
+    Validate a role permission dict against the SERVER_PERMISSIONS vocabulary.
+
+    Rejects wildcard keys ("*" and "namespace.*") and any key that is not a
+    defined server permission. Wildcards must never reach stored role
+    permissions because has_permission() expands them into full grants.
+
+    Raises:
+        InvalidPermissionKeyError: On wildcard or unknown permission keys.
+    """
+    if not permissions:
+        return
+    for key in permissions:
+        if key == "*" or key.endswith(".*"):
+            raise InvalidPermissionKeyError(
+                f"Wildcard permissions are not allowed: {key}", key
+            )
+        if key not in SERVER_PERMISSIONS:
+            raise InvalidPermissionKeyError(f"Unknown permission: {key}", key)
+
+
+def check_permissions_grantable(
+    editor_permissions: Dict[str, bool],
+    requested: Optional[Dict[str, Any]],
+) -> None:
+    """
+    Ensure the editor only grants permissions they themselves possess.
+
+    Args:
+        editor_permissions: The editor's resolved permission set in the server.
+        requested: The permission dict being granted to the role.
+
+    Raises:
+        PermissionDeniedError: If a truthy requested permission is not held
+            by the editor.
+    """
+    if not requested:
+        return
+    for perm, value in requested.items():
+        if value and not editor_permissions.get(perm):
+            raise PermissionDeniedError(
+                f"Cannot grant a permission you do not possess: {perm}", perm
+            )
 
 
 def calculate_base_permissions(

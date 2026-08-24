@@ -51,10 +51,21 @@ class ServerMixin:
         description: Optional[str] = None,
         icon_url: Optional[str] = None,
         default_channel_id: Optional[SnowflakeID] = None,
+        verification_level: Optional[int] = None,
+        default_message_notifications: Optional[int] = None,
+        max_reactions_per_message: Optional[int] = None,
     ) -> Server:
         """Update server settings."""
         return self._manager.update_server(
-            user_id, server_id, name, description, icon_url, default_channel_id
+            user_id,
+            server_id,
+            name,
+            description,
+            icon_url,
+            default_channel_id,
+            verification_level,
+            default_message_notifications,
+            max_reactions_per_message,
         )
 
     def delete_server(self, user_id: SnowflakeID, server_id: SnowflakeID) -> bool:

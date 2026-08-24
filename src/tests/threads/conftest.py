@@ -29,14 +29,12 @@ def _wired_thread_manager(modules):
 _MEMBER_PERMS = {
     "channels.view": True,
     "messages.send": True,
-    "messages.read_history": True,
     "threads.create_public": True,
 }
 
 _MODERATOR_PERMS = {
     "channels.view": True,
     "messages.send": True,
-    "messages.read_history": True,
     "messages.bypass_slowmode": True,
     "threads.create_public": True,
     "threads.create_private": True,
@@ -181,7 +179,6 @@ def server_with_moderator(modules):
         permissions={
             "channels.view": True,
             "messages.send": True,
-            "messages.read_history": True,
             "threads.create_public": True,
             "threads.create_private": True,
         },

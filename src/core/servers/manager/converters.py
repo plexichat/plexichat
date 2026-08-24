@@ -42,6 +42,24 @@ def _row_to_server(row: Dict[str, Any], encrypt_descriptions: bool = False) -> S
     except (KeyError, IndexError):
         pass
 
+    verification_level = 0
+    try:
+        verification_level = row["verification_level"]
+    except (KeyError, IndexError):
+        pass
+
+    default_message_notifications = 0
+    try:
+        default_message_notifications = row["default_message_notifications"]
+    except (KeyError, IndexError):
+        pass
+
+    max_reactions_per_message = 20
+    try:
+        max_reactions_per_message = row["max_reactions_per_message"]
+    except (KeyError, IndexError):
+        pass
+
     description = None
     if row.get("description_encrypted"):
         if encrypt_descriptions:
@@ -68,7 +86,9 @@ def _row_to_server(row: Dict[str, Any], encrypt_descriptions: bool = False) -> S
         default_role_id=row["default_role_id"],
         default_channel_id=default_channel_id,
         system_channel_id=row["system_channel_id"],
-        verification_level=row["verification_level"],
+        verification_level=verification_level,
+        default_message_notifications=default_message_notifications,
+        max_reactions_per_message=max_reactions_per_message,
         deleted=bool(row["deleted"]),
         deleted_at=row["deleted_at"],
         metadata=json.loads(row["metadata"]) if row["metadata"] else None,
@@ -93,6 +113,8 @@ def _server_to_dict(server: Server) -> Dict[str, Any]:
         "default_channel_id": server.default_channel_id,
         "system_channel_id": server.system_channel_id,
         "verification_level": server.verification_level,
+        "default_message_notifications": server.default_message_notifications,
+        "max_reactions_per_message": server.max_reactions_per_message,
         "deleted": server.deleted,
         "deleted_at": server.deleted_at,
         "metadata": server.metadata,
@@ -117,6 +139,8 @@ def _dict_to_server(data: Dict[str, Any]) -> Server:
         default_channel_id=data.get("default_channel_id"),
         system_channel_id=data.get("system_channel_id"),
         verification_level=data.get("verification_level", 0),
+        default_message_notifications=data.get("default_message_notifications", 0),
+        max_reactions_per_message=data.get("max_reactions_per_message", 20),
         deleted=data.get("deleted", False),
         deleted_at=data.get("deleted_at"),
         metadata=data.get("metadata"),

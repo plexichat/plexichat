@@ -165,3 +165,76 @@ class TestServersAsync:
             server_manager.get_server, server.id, owner.id
         )
         assert fetched_server.member_count == 11  # members + owner
+
+
+@pytest.mark.asyncio
+class TestUpdateServerSettings:
+    """Overview settings and default channel must actually persist."""
+
+    async def _create(self, server_manager, owner, name):
+        return await asyncio.to_thread(server_manager.create_server, owner.id, name)
+
+    async def test_default_channel_id_persists(self, server_manager, two_users):
+        """H5 regression: default_channel_id must be written, not just validated."""
+        owner, _ = two_users
+        server = await self._create(server_manager, owner, "Default Chan Server")
+
+        channels = await asyncio.to_thread(
+            server_manager.get_channels, owner.id, server.id
+        )
+        general = [c for c in channels if c.name == "general"][0]
+
+        await asyncio.to_thread(
+            server_manager.update_server,
+            owner.id,
+            server.id,
+            default_channel_id=general.id,
+        )
+
+        updated = await asyncio.to_thread(
+            server_manager.get_server, server.id, owner.id
+        )
+        assert updated.default_channel_id == general.id
+
+    async def test_overview_settings_persist(self, server_manager, two_users):
+        """M6 regression: verification/notification/reaction caps persist."""
+        owner, _ = two_users
+        server = await self._create(server_manager, owner, "Overview Server")
+
+        await asyncio.to_thread(
+            server_manager.update_server,
+            owner.id,
+            server.id,
+            verification_level=3,
+            default_message_notifications=1,
+            max_reactions_per_message=50,
+        )
+
+        updated = await asyncio.to_thread(
+            server_manager.get_server, server.id, owner.id
+        )
+        assert updated.verification_level == 3
+        assert updated.default_message_notifications == 1
+        assert updated.max_reactions_per_message == 50
+
+    async def test_overview_settings_range_validation(self, server_manager, two_users):
+        """Out-of-range internal values are rejected."""
+        owner, _ = two_users
+        server = await self._create(server_manager, owner, "Range Server")
+
+        import pytest
+
+        with pytest.raises(ValueError):
+            await asyncio.to_thread(
+                server_manager.update_server,
+                owner.id,
+                server.id,
+                verification_level=9,
+            )
+        with pytest.raises(ValueError):
+            await asyncio.to_thread(
+                server_manager.update_server,
+                owner.id,
+                server.id,
+                max_reactions_per_message=500,
+            )

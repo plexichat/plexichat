@@ -21,6 +21,7 @@ from ..exceptions import (
     InviteExpiredError,
     InviteMaxUsesError,
     PermissionDeniedError,
+    BanPurgeNotSupportedError,
 )
 from ..permission_utils import can_manage_member
 from src.core.database.cache import cached, invalidate_pattern
@@ -245,6 +246,34 @@ class MemberHandler:
         if not member:
             raise MemberNotFoundError("Member not found")
 
+        # Moderation actions (mute/deafen/timeout) applied to ANOTHER member
+        # must respect the same hierarchy rules as kick/ban: the actor must be
+        # able to manage the target and the owner can never be targeted. The
+        # system actor (user_id == 0, e.g. AutoMod) is exempt.
+        moderating_other = (
+            user_id != member_user_id
+            and user_id != 0
+            and any(
+                v is not None for v in (muted, deafened, timeout_until, timeout_reason)
+            )
+        )
+        if moderating_other:
+            server = self.manager.get_server(server_id, user_id)
+            if not server:
+                raise PermissionDeniedError(
+                    "Not a member of this server", "members.manage_roles"
+                )
+            if server.owner_id == member_user_id:
+                raise CannotModifyOwnerError("Cannot moderate the server owner")
+            user_roles = self.manager._get_member_role_rows(server_id, user_id)
+            target_roles = self.manager._get_member_role_rows(server_id, member_user_id)
+            if not can_manage_member(
+                user_roles, target_roles, server.owner_id == user_id, False
+            ):
+                raise RoleHierarchyError(
+                    "Cannot moderate a member with equal or higher role"
+                )
+
         updates = []
         params: List[Any] = []
         changes = {}
@@ -336,6 +365,10 @@ class MemberHandler:
     ) -> bool:
         """Kick a member from a server."""
         server = self.manager.get_server(server_id, user_id)
+        if not server:
+            # Actor is not a member of this server (or server missing) -
+            # fail with a permission error instead of dereferencing None.
+            raise PermissionDeniedError("Not a member of this server", "members.kick")
         if server.owner_id == member_user_id:
             raise CannotModifyOwnerError("Cannot kick the server owner")
 
@@ -551,9 +584,18 @@ class MemberHandler:
         server_id: SnowflakeID,
         member_user_id: SnowflakeID,
         reason: Optional[str] = None,
+        delete_message_days: int = 0,
     ) -> Ban:
         """Ban a user from a server."""
         server = self.manager.get_server(server_id, user_id)
+        if not server:
+            # Actor is not a member of this server (or server missing) -
+            # fail with a permission error instead of dereferencing None.
+            raise PermissionDeniedError("Not a member of this server", "members.ban")
+        if delete_message_days:
+            raise BanPurgeNotSupportedError(
+                "delete_message_days (message purge on ban) is not supported; pass 0"
+            )
         if server.owner_id == member_user_id:
             raise CannotModifyOwnerError("Cannot ban the server owner")
 

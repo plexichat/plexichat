@@ -53,6 +53,8 @@ from ..exceptions import (
     WelcomeScreenNotFoundError,
     OnboardingStepNotFoundError,
     OnboardingError,
+    InvalidPermissionKeyError,
+    BanPurgeNotSupportedError,
 )
 from .converters import (
     _row_to_channel,
@@ -127,6 +129,8 @@ class ServerManager(
     WelcomeScreenNotFoundError = WelcomeScreenNotFoundError
     OnboardingStepNotFoundError = OnboardingStepNotFoundError
     OnboardingError = OnboardingError
+    InvalidPermissionKeyError = InvalidPermissionKeyError
+    BanPurgeNotSupportedError = BanPurgeNotSupportedError
 
     def _get_manager(self):
         """Compatibility helper for older tests and call sites."""
@@ -454,10 +458,11 @@ class ServerManager(
         color: Optional[str] = None,
         hoist: Optional[bool] = None,
         mentionable: Optional[bool] = None,
+        position: Optional[int] = None,
     ) -> Role:
         """Update role settings."""
         return self.role_handler.update_role(
-            user_id, role_id, name, permissions, color, hoist, mentionable
+            user_id, role_id, name, permissions, color, hoist, mentionable, position
         )
 
     def delete_role(self, user_id: SnowflakeID, role_id: SnowflakeID) -> bool:
@@ -532,7 +537,7 @@ class ServerManager(
     ) -> Ban:
         """Ban a user from a server."""
         return self.member_handler.ban_member(
-            user_id, server_id, member_user_id, reason
+            user_id, server_id, member_user_id, reason, delete_message_days
         )
 
     def unban_member(

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS srv_servers (
     default_channel_id INTEGER,
     system_channel_id INTEGER,
     verification_level INTEGER DEFAULT 0,
+    default_message_notifications INTEGER DEFAULT 0,
     max_reactions_per_message INTEGER DEFAULT 20,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,

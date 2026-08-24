@@ -20,6 +20,9 @@ from ..permission_utils import (
     apply_channel_overrides,
     has_permission as check_permission,
     can_manage_role,
+    get_highest_role_position,
+    validate_permission_dict,
+    check_permissions_grantable,
 )
 
 
@@ -55,11 +58,30 @@ class RoleHandler:
         self.manager.require_permission(user_id, server_id, "roles.manage")
         name = self.validate_role_name(name)
 
+        # Permission dicts are validated against the SERVER_PERMISSIONS
+        # vocabulary; wildcards ("*", "namespace.*") must never be persisted.
+        validate_permission_dict(permissions)
+        # A role editor may only grant permissions they possess themselves,
+        # otherwise any roles.manage holder could self-escalate to
+        # administrator.
+        editor_perms = self.get_permissions(user_id, server_id)
+        check_permissions_grantable(editor_perms, permissions)
+
         pos_row = self.db.fetch_one(
             "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM srv_roles WHERE server_id = ? AND deleted = 0",
             (server_id,),
         )
         position = pos_row["next_pos"] if pos_row else 1
+
+        # Hierarchy on creation: a non-owner cannot create a role at or above
+        # their own highest role, so clamp the new role below it.
+        server_row = self.manager.get_server(server_id, user_id)
+        is_owner = server_row is not None and server_row.owner_id == user_id
+        if not is_owner:
+            user_roles = self.manager._get_member_role_rows(server_id, user_id)
+            user_highest = get_highest_role_position(user_roles)
+            if user_highest > 0 and position >= user_highest:
+                position = user_highest - 1
 
         now = self.manager._get_timestamp()
         role_id = self.manager._generate_id()
@@ -119,6 +141,7 @@ class RoleHandler:
         color: Optional[str] = None,
         hoist: Optional[bool] = None,
         mentionable: Optional[bool] = None,
+        position: Optional[int] = None,
     ) -> Role:
         """Update role settings."""
         role = self.get_role(role_id, user_id)
@@ -135,6 +158,20 @@ class RoleHandler:
             raise RoleHierarchyError(
                 "Cannot modify a role at or above your highest role"
             )
+
+        if permissions is not None:
+            validate_permission_dict(permissions)
+            editor_perms = self.get_permissions(user_id, role.server_id)
+            check_permissions_grantable(editor_perms, permissions)
+
+        if position is not None and position != role.position:
+            if role.is_default:
+                raise DefaultRoleError("Cannot move the default role")
+            user_highest = get_highest_role_position(user_roles)
+            if not is_owner and position >= user_highest:
+                raise RoleHierarchyError(
+                    "Cannot move a role to or above your highest role"
+                )
 
         updates = []
         params = []
@@ -167,6 +204,11 @@ class RoleHandler:
             updates.append("mentionable = ?")
             params.append(1 if mentionable else 0)
             changes["mentionable"] = {"old": role.mentionable, "new": mentionable}
+
+        if position is not None and position != role.position:
+            updates.append("position = ?")
+            params.append(position)
+            changes["position"] = {"old": role.position, "new": position}
 
         if updates:
             updates.append("updated_at = ?")
@@ -599,10 +641,16 @@ class RoleHandler:
         # 4. Check for timeout. Channel overrides (if any) were already applied
         #    above; here we only revoke the interaction permissions of a timed-out
         #    member on top of the resolved permission set.
+        # get_member() is @cached and may hand back a plain dict on cache hits,
+        # so normalize before touching attributes.
         member = self.manager.get_member(server_id, user_id)
-        if member and member.timeout_until:
+        if isinstance(member, dict):
+            timeout_until = member.get("timeout_until")
+        else:
+            timeout_until = getattr(member, "timeout_until", None)
+        if timeout_until:
             now = self.manager._get_timestamp()
-            if member.timeout_until > now:
+            if timeout_until > now:
                 # User is timed out, revoke interaction permissions
                 restricted_perms = [
                     "messages.send",
@@ -678,6 +726,13 @@ class RoleHandler:
             raise RoleHierarchyError(
                 "Cannot assign a role at or above your highest role"
             )
+
+        # Attaching a role grants its permissions to the target, so the editor
+        # must possess every permission the role carries (incl. administrator).
+        role_permissions = role.permissions or {}
+        validate_permission_dict(role_permissions)
+        editor_perms = self.get_permissions(user_id, server_id)
+        check_permissions_grantable(editor_perms, role_permissions)
 
         existing = self.db.fetch_one(
             "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",

@@ -472,6 +472,10 @@ SERVER_PERMISSIONS = {
     # Event permissions
     "events.manage": "Create, edit, delete scheduled events",
     "events.view": "View scheduled events",
+    # Thread permissions (enforced by src/core/threads via has_permission)
+    "threads.manage": "Manage, archive, lock and delete threads",
+    "threads.create_public": "Create public threads",
+    "threads.create_private": "Create private threads",
     # Template permissions
     "templates.manage": "Create and manage server templates",
     # Onboarding permissions
@@ -503,6 +507,8 @@ DEFAULT_EVERYONE_PERMISSIONS = {
     "invites.create": True,
     "messages.export_transcript": True,
     "events.view": True,
+    # Every member can start public threads (private ones stay mod-granted).
+    "threads.create_public": True,
     # Every member can use the collaborative suite artifacts in a server.
     "artifact.view": True,
     "artifact.create": True,

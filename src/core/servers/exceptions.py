@@ -234,3 +234,17 @@ class OnboardingError(ServerError):
     """Error with onboarding operation."""
 
     pass
+
+
+class InvalidPermissionKeyError(ValueError, ServerError):
+    """A role permission dict contains an unknown key or a wildcard."""
+
+    def __init__(self, message: str, permission: str = ""):
+        super().__init__(message)
+        self.permission = permission
+
+
+class BanPurgeNotSupportedError(ServerError):
+    """Message purging on ban (delete_message_days > 0) is not supported."""
+
+    pass

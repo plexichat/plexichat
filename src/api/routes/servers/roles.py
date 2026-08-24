@@ -9,7 +9,7 @@ from src.api.schemas.servers import (
     RoleUpdateRequest,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
-from src.core.database import cached
+from src.core.database import cached, invalidate_pattern
 
 import utils.logger as logger
 from src.core.events.gateway_emit import (
@@ -19,6 +19,14 @@ from src.core.events.gateway_emit import (
 )
 
 router = APIRouter()
+
+# Cache prefix shared by the roles listing and its invalidation on mutations.
+_ROLES_CACHE_PREFIX = "server_roles_api"
+
+
+def _invalidate_roles_listing_cache() -> None:
+    """Drop cached role listings so mutations are visible immediately."""
+    invalidate_pattern(f"{_ROLES_CACHE_PREFIX}:*")
 
 
 def role_to_dict(role, server_id: int) -> dict:
@@ -48,7 +56,7 @@ def role_to_dict(role, server_id: int) -> dict:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=300)
+@cached(ttl=300, prefix=_ROLES_CACHE_PREFIX)
 async def get_server_roles(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[RoleResponse]:
@@ -90,7 +98,7 @@ async def get_server_roles(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Server not found"}},
             )
-        elif "Access" in exc_name:
+        elif "Access" in exc_name or "Permission" in exc_name:
             raise HTTPException(
                 status_code=403,
                 detail={"error": {"code": 403, "message": "Access denied"}},
@@ -144,6 +152,7 @@ async def create_role(
             mentionable=body.mentionable,
         )
         emit_guild_role_create(sid, role_to_dict(role, sid))
+        _invalidate_roles_listing_cache()
         return RoleResponse(
             id=SnowflakeID(role.id),
             server_id=SnowflakeID(sid),
@@ -163,9 +172,13 @@ async def create_role(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Server not found"}},
             )
-        elif "Permission" in exc_name:
+        elif "Permission" in exc_name or "Hierarchy" in exc_name:
             raise HTTPException(
                 status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            )
+        elif "InvalidPermissionKey" in exc_name:
+            raise HTTPException(
+                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
             )
 
         logger.error(f"Failed to create role in server {server_id}: {e}", exc_info=True)
@@ -213,6 +226,7 @@ async def update_role(
         update_data = body.model_dump(exclude_unset=True)
         role = servers_mod.update_role(current_user.user_id, rid, **update_data)
         emit_guild_role_update(sid, role_to_dict(role, sid))
+        _invalidate_roles_listing_cache()
         return RoleResponse(
             id=SnowflakeID(role.id),
             server_id=SnowflakeID(sid),
@@ -233,9 +247,15 @@ async def update_role(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Role not found"}},
             )
-        elif "Permission" in exc_name or "Default" in exc_name:
+        elif (
+            "Permission" in exc_name or "Hierarchy" in exc_name or "Default" in exc_name
+        ):
             raise HTTPException(
                 status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            )
+        elif "InvalidPermissionKey" in exc_name:
+            raise HTTPException(
+                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
             )
 
         logger.error(
@@ -281,6 +301,7 @@ async def delete_role(
         servers_mod.require_permission(current_user.user_id, sid, "roles.manage")
         servers_mod.delete_role(current_user.user_id, rid)
         emit_guild_role_delete(sid, rid)
+        _invalidate_roles_listing_cache()
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
@@ -291,7 +312,9 @@ async def delete_role(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Role not found"}},
             )
-        elif "Permission" in exc_name or "Default" in exc_name:
+        elif (
+            "Permission" in exc_name or "Hierarchy" in exc_name or "Default" in exc_name
+        ):
             raise HTTPException(
                 status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )

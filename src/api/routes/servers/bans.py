@@ -52,7 +52,7 @@ async def get_server_bans(
                 user_id=SnowflakeID(b.user_id),
                 reason=getattr(b, "reason", None),
                 banned_by=SnowflakeID(b.banned_by) if hasattr(b, "banned_by") else None,
-                banned_at=getattr(b, "banned_at", None),
+                banned_at=getattr(b, "created_at", None),
             )
             for b in (bans or [])
         ]
@@ -135,6 +135,11 @@ async def ban_member(
         elif "Permission" in exc_name:
             raise HTTPException(
                 status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            )
+        elif "NotSupported" in exc_name:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": str(e)}},
             )
 
         logger.error(

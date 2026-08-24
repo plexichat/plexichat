@@ -36,6 +36,15 @@ class ServerUpdateRequest(BaseModel):
     default_channel_id: Optional[SnowflakeID] = Field(
         None, description="Default channel ID to select when joining"
     )
+    verification_level: Optional[int] = Field(
+        None, ge=0, le=4, description="Verification level required to join"
+    )
+    default_message_notifications: Optional[int] = Field(
+        None, ge=0, le=1, description="Default notification level"
+    )
+    max_reactions_per_message: Optional[int] = Field(
+        None, ge=1, le=200, description="Maximum reactions per message"
+    )
 
 
 class ServerResponse(BaseModel):
@@ -57,6 +66,9 @@ class ServerResponse(BaseModel):
     )
     default_message_notifications: int = Field(
         0, description="Default notification level"
+    )
+    max_reactions_per_message: int = Field(
+        20, description="Maximum reactions per message"
     )
     created_at: int = Field(..., description="Creation timestamp")
 
@@ -158,6 +170,15 @@ class MemberResponse(BaseModel):
         None, description="Timestamp until user is timed out"
     )
     timeout_reason: Optional[str] = Field(None, description="Reason for timeout")
+
+
+class MemberListResponse(BaseModel):
+    """Paginated server member list response."""
+
+    items: List[MemberResponse] = Field(default_factory=list, description="Member page")
+    has_more: bool = Field(
+        False, description="Whether more members exist after this page"
+    )
 
 
 class MemberUpdateRequest(BaseModel):
