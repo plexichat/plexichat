@@ -86,9 +86,10 @@ class TestUserMentionNotifications:
     """Tests for creating notifications from @user mentions."""
 
     def test_create_notification_for_user_mention(
-        self, auth_manager, messaging_manager, notification_manager
+        self, auth_manager, messaging_manager, wired_send_path
     ):
         """Test notification is created for mentioned user."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user1 = auth_manager.register(
                 username="user1", email="user1@example.com", password="TestPass123!"
@@ -100,14 +101,10 @@ class TestUserMentionNotifications:
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"Hey <@{user2.id}> check this out"
-        msg = messaging_manager.send_message(user1.id, dm.id, content)
+        messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notification_manager.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
+        # The send path performs the (single) fan-out; assert through the feed.
+        notifs = notification_manager.get_notifications(user2.id)
 
         assert len(notifs) == 1
         assert notifs[0].user_id == user2.id
@@ -141,9 +138,10 @@ class TestUserMentionNotifications:
         assert len(notifs) == 0
 
     def test_notification_content_preview(
-        self, auth_manager, messaging_manager, notification_manager
+        self, auth_manager, messaging_manager, wired_send_path
     ):
         """Test notification includes content preview."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user1 = auth_manager.register(
                 username="user1", email="user1@example.com", password="TestPass123!"
@@ -155,22 +153,18 @@ class TestUserMentionNotifications:
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"Hey <@{user2.id}> this is a test message"
-        msg = messaging_manager.send_message(user1.id, dm.id, content)
+        messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notification_manager.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
+        notifs = notification_manager.get_notifications(user2.id)
 
         assert len(notifs) == 1
         assert "test message" in notifs[0].content_preview
 
     def test_multiple_mentions_same_user(
-        self, auth_manager, messaging_manager, notification_manager
+        self, auth_manager, messaging_manager, wired_send_path
     ):
         """Test only one notification for multiple mentions of same user."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user1 = auth_manager.register(
                 username="user1", email="user1@example.com", password="TestPass123!"
@@ -182,22 +176,18 @@ class TestUserMentionNotifications:
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}> hey <@{user2.id}> hello <@{user2.id}>"
-        msg = messaging_manager.send_message(user1.id, dm.id, content)
+        messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notification_manager.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
+        notifs = notification_manager.get_notifications(user2.id)
 
         assert len(notifs) == 1
         assert notifs[0].user_id == user2.id
 
     def test_mention_multiple_users(
-        self, auth_manager, messaging_manager, notification_manager
+        self, auth_manager, messaging_manager, wired_send_path
     ):
         """Test notifications for multiple mentioned users."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             owner = auth_manager.register(
                 username="groupowner",
@@ -216,16 +206,8 @@ class TestUserMentionNotifications:
         )
 
         content = f"Hey <@{member1.id}> and <@{member2.id}>"
-        msg = messaging_manager.send_message(owner.id, group.id, content)
+        messaging_manager.send_message(owner.id, group.id, content)
 
-        notifs = notification_manager.create_notifications_for_message(
-            author_id=owner.id,
-            message_id=msg.id,
-            conversation_id=group.id,
-            content=content,
-        )
-
-        assert len(notifs) == 2
-        notified_users = {n.user_id for n in notifs}
-        assert member1.id in notified_users
-        assert member2.id in notified_users
+        assert len(notification_manager.get_notifications(member1.id)) == 1
+        assert len(notification_manager.get_notifications(member2.id)) == 1
+        assert len(notification_manager.get_notifications(owner.id)) == 0

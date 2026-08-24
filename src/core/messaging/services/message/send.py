@@ -294,6 +294,13 @@ class SendMixin(BaseService, MessageServiceProtocol):
         except Exception as e:
             logger.debug(f"Failed to index message for search: {e}")
 
+        self._dispatch_message_notifications(
+            msg_id=msg_id,
+            conversation_id=conversation_id,
+            author_id=user_id,
+            content=content_result.sanitized_content,
+        )
+
         cache_set(f"msg:obj:{msg_id}", msg, ttl=3600)
 
         try:
@@ -309,6 +316,87 @@ class SendMixin(BaseService, MessageServiceProtocol):
             logger.debug(f"Failed to update recent messages cache: {e}")
 
         return msg
+
+    def _dispatch_message_notifications(
+        self,
+        msg_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        author_id: SnowflakeID,
+        content: str,
+    ) -> None:
+        """Best-effort server-side mention notifications for a sent message.
+
+        NEVER raises and NEVER blocks delivery: the whole fan-out (channel
+        resolution, per-user permission checks, inserts) runs on the
+        notifications module's bounded background consumer instead of the
+        caller's thread, so a 10k-recipient mention cannot stall sends.
+        If the notifications module is not initialized (embedded
+        deployments, some test setups) or any step fails, we log at debug
+        and return. Recipient collection inside the notifications module
+        enforces per-user channel view permissions so previews never leak
+        to users who cannot see the channel; device push delivery is
+        queued onto the same consumer by the creator itself.
+        """
+        try:
+            from src.core import notifications as notifications_module
+
+            if not (
+                getattr(notifications_module, "_setup_complete", False)
+                and getattr(notifications_module, "_manager", None) is not None
+            ):
+                return
+
+            from src.core.notifications.background import (
+                get_notification_dispatcher,
+                is_sync_notification_dispatch,
+            )
+
+            def _fanout_job():
+                try:
+                    # Resolve the server channel backing this conversation
+                    # (DMs have none — server_id/channel_id stay unset).
+                    server_id = None
+                    channel_id = None
+                    try:
+                        channel_row = self._db.fetch_one(
+                            """SELECT id, server_id FROM srv_channels
+                               WHERE conversation_id = ? AND deleted = 0 LIMIT 1""",
+                            (conversation_id,),
+                        )
+                        if channel_row:
+                            channel_id = channel_row["id"]
+                            server_id = channel_row["server_id"]
+                    except Exception as e:
+                        logger.debug(f"Channel lookup for notifications failed: {e}")
+
+                    created = notifications_module.create_notifications_for_message(
+                        message_id=msg_id,
+                        author_id=author_id,
+                        conversation_id=conversation_id,
+                        content=content,
+                        server_id=server_id,
+                        channel_id=channel_id,
+                    )
+                    if created:
+                        logger.debug(
+                            f"Created {len(created)} notification(s) for "
+                            f"message {msg_id}"
+                        )
+                except Exception as e:
+                    logger.debug(
+                        f"Notification creation skipped for message {msg_id}: {e}"
+                    )
+
+            if is_sync_notification_dispatch():
+                _fanout_job()
+                return
+
+            if not get_notification_dispatcher().submit(_fanout_job):
+                logger.debug(
+                    f"Notification dispatch queue full; skipped for message {msg_id}"
+                )
+        except Exception as e:
+            logger.debug(f"Notification scheduling failed for message {msg_id}: {e}")
 
     def _enforce_dm_block_rules(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID

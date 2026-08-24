@@ -73,9 +73,13 @@ class TestWebPushRegistration:
             user_id=user1.id, token="https://push.example/ep", platform="web"
         )
         assert record["platform"] == "web"
-        assert record["p256dh"] is None
+        # Credentials are never echoed back in API/return payloads.
+        assert "p256dh" not in record
+        assert "auth" not in record
 
-    def test_p4_web_stores_keys(self, push_manager_setup, auth_manager, pii_gen):
+    def test_p4_web_stores_keys_encrypted_at_rest(
+        self, push_manager_setup, auth_manager, pii_gen
+    ):
         user1 = _register_user(auth_manager, pii_gen, "webwithkeys")
         record = push_manager_setup.register_token(
             user_id=user1.id,
@@ -84,8 +88,31 @@ class TestWebPushRegistration:
             p256dh="BPublicKey",
             auth="authsecret",
         )
-        assert record["p256dh"] == "BPublicKey"
-        assert record["auth"] == "authsecret"
+        # Raw credentials must NOT appear in the returned record.
+        assert "token" not in record
+        assert "p256dh" not in record
+        assert "auth" not in record
+
+        # At rest the row holds ENC envelopes — never plaintext.
+        row = push_manager_setup._db.fetch_one(
+            "SELECT token, token_index, p256dh, auth FROM push_tokens WHERE id = ?",
+            (record["id"],),
+        )
+        assert row["token"].startswith(("ENC:", "enc:"))
+        assert row["p256dh"].startswith(("ENC:", "enc:"))
+        assert row["auth"].startswith(("ENC:", "enc:"))
+        assert "BPublicKey" not in row["p256dh"]
+        assert "authsecret" not in row["auth"]
+        assert row["token_index"]
+
+        # Decrypted-on-read semantics for internal delivery use only.
+        tokens = push_manager_setup.get_user_tokens(user_id=user1.id)
+        assert any(
+            t["token"] == "https://push.example/ep2"
+            and t["p256dh"] == "BPublicKey"
+            and t["auth"] == "authsecret"
+            for t in tokens
+        )
 
     def test_p4_reuse_does_not_exceed_max_tokens(
         self, push_manager_setup, auth_manager, pii_gen

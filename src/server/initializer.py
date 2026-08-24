@@ -413,6 +413,23 @@ def initialize_modules(
 
     init_dependent()
 
+    # Push module depends on notifications (user push preferences); it must
+    # be initialized BEFORE any notification creation runs so device
+    # delivery has a manager. Failure to init push is non-fatal — chat
+    # keeps working without mobile delivery.
+    try:
+        from src.core import push
+
+        timed_init(
+            "push",
+            lambda: push.setup(
+                db, notifications_module=modules_store.get("notifications")
+            ),
+        )
+        modules_store["push"] = push
+    except Exception as e:
+        logger.warning(f"Failed to initialize push module: {e}")
+
     timed_init(
         "automod",
         lambda: automod.setup(

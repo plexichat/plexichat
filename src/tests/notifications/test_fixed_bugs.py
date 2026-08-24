@@ -273,6 +273,10 @@ class TestMarkChannelReadUpdatesUnreadCounts:
             users_with_server
         )
 
+        # Channel-scoped fan-out is permission-checked (fail-closed without a
+        # servers module), so wire the real servers module into the manager.
+        notification_manager._servers = servers
+
         # member1 sends messages mentioning member2 in the channel
         channel_id = channel.id
         server_id = server.id if hasattr(server, "id") else server
@@ -321,6 +325,10 @@ class TestMarkServerReadUpdatesUnreadCounts:
 
         server_id = server.id if hasattr(server, "id") else server
         channel_id = channel.id
+
+        # Channel-scoped fan-out is permission-checked (fail-closed without a
+        # servers module), so wire the real servers module into the manager.
+        notification_manager._servers = servers
 
         # Create real conversation + messages to satisfy FK constraints
         dm = messaging_manager.create_dm(member1.id, member2.id)

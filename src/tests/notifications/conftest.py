@@ -23,6 +23,27 @@ def db_and_modules(modules):
 
 
 @pytest.fixture
+def wired_send_path(notification_manager):
+    """Register the bare manager as the module-level notifications API.
+
+    The production message-send path consults ``notifications._manager`` /
+    ``_setup_complete`` before creating mention notifications; tests that
+    assert through ``get_notifications`` after ``send_message`` use this
+    fixture so the send path performs the (single) fan-out. Previous global
+    state is restored on teardown so other suites are never affected.
+    """
+    from src.core import notifications as nm
+
+    saved_manager = getattr(nm, "_manager", None)
+    saved_complete = getattr(nm, "_setup_complete", False)
+    nm._manager = notification_manager
+    nm._setup_complete = True
+    yield notification_manager
+    nm._manager = saved_manager
+    nm._setup_complete = saved_complete
+
+
+@pytest.fixture
 def users_with_dm(modules, user_pool):
     """Create users with a DM conversation."""
     user1 = user_pool.get_user()

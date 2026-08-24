@@ -113,3 +113,14 @@ class NotificationProtocol:
         cast(NotificationProtocol, super())._decrement_unread_count(
             user_id, conversation_id, amount
         )
+
+    def _get_push_manager(self):
+        return cast(NotificationProtocol, super())._get_push_manager()
+
+    def deliver_push_notifications(self, notifications) -> int:
+        return cast(NotificationProtocol, super()).deliver_push_notifications(
+            notifications
+        )
+
+    def _queue_push_delivery(self, notifications) -> None:
+        cast(NotificationProtocol, super())._queue_push_delivery(notifications)

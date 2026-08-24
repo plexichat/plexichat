@@ -12,8 +12,15 @@ import time
 from typing import Optional, List, Dict, Any, cast
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.utils.encryption import blind_index, generate_snowflake_id
+from src.core.notifications.manager.push import (
+    decrypt_push_token,
+    encrypt_push_token,
+)
 from src.core.push.exceptions import PermissionDeniedError
+
+# Blind-index scope used for constant-time-ish lookup of encrypted tokens.
+PUSH_TOKEN_BLIND_INDEX_SCOPE = "push_token"
 
 
 class PushManager:
@@ -30,6 +37,7 @@ class PushManager:
         self._vapid_available = False
         self._check_push_services()
         self._ensure_push_token_columns()
+        self._migrate_legacy_token_rows()
 
     def _check_push_services(self) -> None:
         """Check if FCM/APNs/VAPID credentials are available."""
@@ -51,7 +59,8 @@ class PushManager:
             pass
 
     def _ensure_push_token_columns(self) -> None:
-        """Add p256dh/auth columns for Web Push if a pre-existing DB lacks them."""
+        """Add p256dh/auth/token_index columns for Web Push / encryption
+        at rest if a pre-existing DB lacks them."""
         try:
             existing = {
                 row["name"]
@@ -59,7 +68,7 @@ class PushManager:
             }
         except Exception:
             return
-        for column in ("p256dh", "auth"):
+        for column in ("p256dh", "auth", "token_index"):
             if column in existing:
                 continue
             try:
@@ -68,6 +77,74 @@ class PushManager:
                 # Another process may have added it concurrently, or the
                 # table does not exist yet — either way it is safe to ignore.
                 pass
+
+    def _migrate_legacy_token_rows(self) -> None:
+        """Re-envelope legacy plaintext token rows (H3 hardening).
+
+        Rows written before encryption-at-rest landed store the raw FCM /
+        APNs / Web-Push credential verbatim and have no ``token_index``.
+        On startup we re-encrypt them (token + p256dh + auth) and backfill
+        the blind index so lookups keep working. Failures are logged and
+        skipped — a row we cannot read must never break registration.
+        """
+        try:
+            rows = self._db.fetch_all(
+                """SELECT id, token, p256dh, auth FROM push_tokens
+                   WHERE token_index IS NULL OR token_index = ''"""
+            )
+        except Exception:
+            return
+        for row in rows:
+            try:
+                plain_token = decrypt_push_token(row["token"])
+                if not plain_token:
+                    continue
+                # Legacy rows store p256dh/auth raw; decrypt_push_token
+                # passes them through (with a loud warning) unchanged.
+                plain_p256dh = (
+                    decrypt_push_token(row["p256dh"]) if row["p256dh"] else None
+                )
+                plain_auth = decrypt_push_token(row["auth"]) if row["auth"] else None
+                self._db.execute(
+                    """UPDATE push_tokens
+                       SET token = ?, token_index = ?, p256dh = ?, auth = ?
+                       WHERE id = ?""",
+                    (
+                        encrypt_push_token(plain_token),
+                        self._token_blind_index(plain_token),
+                        encrypt_push_token(plain_p256dh) if plain_p256dh else None,
+                        encrypt_push_token(plain_auth) if plain_auth else None,
+                        row["id"],
+                    ),
+                )
+                logger.debug(f"Re-encrypted legacy push token row {row['id']} at rest")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to migrate legacy push token row {row.get('id')}: {e}"
+                )
+
+    @staticmethod
+    def _token_blind_index(plain_token: str) -> str:
+        return blind_index(plain_token, PUSH_TOKEN_BLIND_INDEX_SCOPE)
+
+    @staticmethod
+    def _sanitize_token_record(record: Dict[str, Any]) -> Dict[str, Any]:
+        """Strip raw credentials from a token record for API responses.
+
+        The stored ``token``, ``p256dh`` and ``auth`` values are device
+        credentials; they are never echoed back to clients. A short,
+        non-reversible ``token_hint`` (last 4 chars) is exposed instead so
+        users can tell devices apart.
+        """
+        sanitized = {
+            k: v
+            for k, v in dict(record or {}).items()
+            if k not in ("token", "p256dh", "auth", "token_index")
+        }
+        raw_token = record.get("token") if record else None
+        if raw_token:
+            sanitized["token_hint"] = f"…{str(raw_token)[-4:]}"
+        return sanitized
 
     def _get_timestamp(self) -> int:
         return int(time.time() * 1000)
@@ -98,7 +175,8 @@ class PushManager:
             auth: Web Push subscription auth secret (web only)
 
         Returns:
-            Token record dict
+            Sanitized token record dict (raw token/p256dh/auth credentials
+            are never included — see :meth:`_sanitize_token_record`).
         """
         platform = platform.lower()
         if platform not in self.SUPPORTED_PLATFORMS:
@@ -107,11 +185,17 @@ class PushManager:
             )
 
         now = self._get_timestamp()
+        # SECURITY: credentials are encrypted at rest (ENC:v1 envelope);
+        # lookups go through a keyed blind index over the plaintext.
+        stored_token = encrypt_push_token(token)
+        token_idx = self._token_blind_index(token)
+        stored_p256dh = encrypt_push_token(p256dh) if p256dh else None
+        stored_auth = encrypt_push_token(auth) if auth else None
 
         # Check if this token already exists (for any user - re-registration)
         existing = self._db.fetch_one(
-            "SELECT id, user_id FROM push_tokens WHERE token = ?",
-            (token,),
+            "SELECT id, user_id FROM push_tokens WHERE token_index = ?",
+            (token_idx,),
         )
         if existing:
             # A push token is a credential bound to the device that generated
@@ -125,15 +209,25 @@ class PushManager:
             # Same user re-registering (e.g. refreshed subscription) — update.
             self._db.execute(
                 """UPDATE push_tokens SET platform = ?, device_id = ?,
-                   app_version = ?, p256dh = ?, auth = ?, updated_at = ?,
-                   last_used_at = ?
-                   WHERE token = ?""",
-                (platform, device_id, app_version, p256dh, auth, now, now, token),
+                   app_version = ?, token = ?, p256dh = ?, auth = ?,
+                   updated_at = ?, last_used_at = ?
+                   WHERE id = ?""",
+                (
+                    platform,
+                    device_id,
+                    app_version,
+                    stored_token,
+                    stored_p256dh,
+                    stored_auth,
+                    now,
+                    now,
+                    existing["id"],
+                ),
             )
             row = self._db.fetch_one(
-                "SELECT * FROM push_tokens WHERE token = ?", (token,)
+                "SELECT * FROM push_tokens WHERE id = ?", (existing["id"],)
             )
-            return dict(row) if row else {}
+            return self._sanitize_token_record(dict(row)) if row else {}
 
         # Check token limit per user (only enforced when a brand new token row
         # is created — re-registering an existing token never adds a row).
@@ -155,17 +249,19 @@ class PushManager:
         token_id = self._generate_id()
         self._db.execute(
             """INSERT INTO push_tokens
-               (id, user_id, token, platform, device_id, app_version, p256dh, auth, created_at, updated_at, last_used_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, user_id, token, token_index, platform, device_id, app_version,
+                p256dh, auth, created_at, updated_at, last_used_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 token_id,
                 user_id,
-                token,
+                stored_token,
+                token_idx,
                 platform,
                 device_id,
                 app_version,
-                p256dh,
-                auth,
+                stored_p256dh,
+                stored_auth,
                 now,
                 now,
                 now,
@@ -174,20 +270,38 @@ class PushManager:
 
         logger.debug(f"Push token registered for user {user_id} on {platform}")
         row = self._db.fetch_one("SELECT * FROM push_tokens WHERE id = ?", (token_id,))
-        return dict(row) if row else {}
+        return self._sanitize_token_record(dict(row)) if row else {}
 
     def unregister_token(self, user_id: int, token: str) -> bool:
         """Remove a push notification token."""
         self._db.execute(
-            "DELETE FROM push_tokens WHERE user_id = ? AND token = ?",
-            (user_id, token),
+            "DELETE FROM push_tokens WHERE user_id = ? AND token_index = ?",
+            (user_id, self._token_blind_index(token)),
+        )
+        return True
+
+    def unregister_token_by_id(self, user_id: int, token_id: int) -> bool:
+        """Remove a push token row by its id (must belong to ``user_id``).
+
+        List responses only expose the row id plus a non-reversible
+        ``token_hint`` — clients unregister devices by id because the raw
+        token value is never sent back to them.
+        """
+        self._db.execute(
+            "DELETE FROM push_tokens WHERE user_id = ? AND id = ?",
+            (user_id, token_id),
         )
         return True
 
     def get_user_tokens(
         self, user_id: int, platform: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Get all push tokens for a user."""
+        """Get all push tokens for a user, decrypted for internal delivery.
+
+        The returned records contain the plaintext credentials required by
+        FCM/APNs/Web-Push senders — they must NEVER be serialised into an
+        API response (use :meth:`_sanitize_token_record` first).
+        """
         if platform:
             rows = self._db.fetch_all(
                 "SELECT * FROM push_tokens WHERE user_id = ? AND platform = ?",
@@ -198,7 +312,22 @@ class PushManager:
                 "SELECT * FROM push_tokens WHERE user_id = ?",
                 (user_id,),
             )
-        return [dict(row) for row in rows]
+        results = []
+        for row in rows:
+            record = dict(row)
+            try:
+                record["token"] = decrypt_push_token(record.get("token") or "")
+                if record.get("p256dh"):
+                    record["p256dh"] = decrypt_push_token(record["p256dh"])
+                if record.get("auth"):
+                    record["auth"] = decrypt_push_token(record["auth"])
+            except Exception as e:
+                logger.warning(
+                    f"Failed to decrypt push token row {record.get('id')}: {e}"
+                )
+                continue
+            results.append(record)
+        return results
 
     def send_push(
         self,
@@ -252,8 +381,8 @@ class PushManager:
                 # Update last used
                 now = self._get_timestamp()
                 self._db.execute(
-                    "UPDATE push_tokens SET last_used_at = ? WHERE token = ?",
-                    (now, token),
+                    "UPDATE push_tokens SET last_used_at = ? WHERE token_index = ?",
+                    (now, self._token_blind_index(token)),
                 )
             elif success is False:
                 # Token is genuinely invalid (e.g. subscription expired) -
@@ -265,7 +394,10 @@ class PushManager:
 
         # Clean up invalid tokens
         for token in invalid_tokens:
-            self._db.execute("DELETE FROM push_tokens WHERE token = ?", (token,))
+            self._db.execute(
+                "DELETE FROM push_tokens WHERE token_index = ?",
+                (self._token_blind_index(token),),
+            )
             logger.debug(f"Removed invalid push token for user {user_id}")
 
         return sent_count
@@ -475,12 +607,17 @@ class PushManager:
           its 1-hour validity — we cache per-(team_id, key_id) inside
           ``self._apns_jwt_cache``.
 
-        Returns ``True`` on a 200 from APNs, ``False`` on any
-        non-fatal error (token unregistered / invalid topic / etc).
+        Returns ``True`` on a 200 from APNs, ``False`` ONLY when APNs
+        itself permanently rejected the token (410 Unregistered /
+        BadDeviceToken / etc. — the caller deletes the token), and
+        ``None`` when delivery was skipped because APNs is unconfigured,
+        misconfigured, or a transient error occurred (the token is left
+        intact — an operator-side config problem must never destroy
+        valid iOS device registrations).
         """
         if not self._apns_available:
             logger.debug(f"APNs not configured - would send push to {token[:16]}...")
-            return False
+            return None
 
         try:
             import httpx  # already a project dep
@@ -509,7 +646,9 @@ class PushManager:
                 logger.error(
                     f"APNs push skipped — missing config: {', '.join(missing)}"
                 )
-                return False
+                # Misconfigured, not an invalid token: skip (None) so the
+                # caller does NOT delete the otherwise-valid iOS token.
+                return None
 
             # The user-supplied P8 may have either literal newlines or
             # ``\n`` escape sequences (YAML supports both). Normalise.

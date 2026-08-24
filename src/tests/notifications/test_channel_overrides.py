@@ -191,7 +191,7 @@ class TestChannelOverrideEffect:
         assert member1.id not in notified_users
 
     def test_expired_mute_allows_notifications(
-        self, auth_manager, messaging_manager, notification_manager
+        self, auth_manager, messaging_manager, notification_manager, server_manager
     ):
         """Test expired mute allows notifications."""
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
@@ -220,20 +220,27 @@ class TestChannelOverrideEffect:
             muted_until=past_time,
         )
 
-        group = messaging_manager.create_group(
-            owner.id, "Server Group", [member1.id, member2.id]
+        # Channel-scoped fan-out is permission-checked (fail-closed without a
+        # servers module), so exercise it against a real server channel.
+        notification_manager._servers = server_manager
+        server = server_manager.create_server(owner.id, "Mute Server")
+        server_manager.add_member(server.id, member1.id)
+        server_manager.add_member(server.id, member2.id)
+        channel = server_manager.create_channel(
+            owner.id, server.id, "general", channel_type=server_manager.ChannelType.TEXT
         )
+        conv_id = server_manager.get_channel_conversation_id(channel.id)
 
         content = f"<@{member1.id}>"
-        msg = messaging_manager.send_message(owner.id, group.id, content)
+        msg = messaging_manager.send_message(owner.id, conv_id, content)
 
         notifs = notification_manager.create_notifications_for_message(
             author_id=owner.id,
             message_id=msg.id,
-            conversation_id=group.id,
+            conversation_id=conv_id,
             content=content,
-            server_id=123,
-            channel_id=999,
+            server_id=server.id,
+            channel_id=channel.id,
         )
 
         notified_users = {n.user_id for n in notifs}

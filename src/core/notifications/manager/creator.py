@@ -140,6 +140,13 @@ class NotificationCreatorMixin(NotificationProtocol):
                                 users_to_notify.add(member_id)
                                 mention_types[member_id] = MentionType.HERE
 
+        # SECURITY: never notify (or leak content_preview to) users who
+        # cannot view the channel the message was posted in. This filters
+        # every fan-out type (user/role/channel/@everyone/@here).
+        users_to_notify = self._filter_recipients_by_channel_view(
+            users_to_notify, server_id, channel_id
+        )
+
         now = self._get_timestamp()
         preview = truncate_content(content, self._config)
 
@@ -184,6 +191,69 @@ class NotificationCreatorMixin(NotificationProtocol):
             )
 
         return []
+
+    def _existing_notification_users(self, message_id: SnowflakeID) -> set:
+        """Users who already have a notification row for ``message_id``.
+
+        The table carries UNIQUE(user_id, message_id); checking upfront keeps
+        repeat fan-outs (send-path hook plus explicit caller) idempotent
+        instead of dying on an IntegrityError.
+        """
+        try:
+            rows = self._db.fetch_all(
+                "SELECT user_id FROM notif_notifications WHERE message_id = ?",
+                (message_id,),
+            )
+            return {row["user_id"] for row in rows or []}
+        except Exception as e:
+            logger.debug(f"Existing-notification lookup failed: {e}")
+            return set()
+
+    def _filter_recipients_by_channel_view(
+        self,
+        user_ids: set,
+        server_id: Optional[SnowflakeID],
+        channel_id: Optional[SnowflakeID],
+    ) -> set:
+        """Keep only recipients who may view ``channel_id``.
+
+        Uses the servers module's cached permission lookup (per-user result
+        is memoised there), so fan-out cost stays bounded. DM contexts
+        (``channel_id`` unset) skip the check because participants are
+        already scoped by conversation membership; any per-user check error
+        excludes that user (fail-closed) so a broken checker can never leak
+        content previews. A channel-scoped fan-out with NO permission system
+        available also fails closed: an unverifiable channel audience must
+        never receive previews.
+        """
+        recipients = set(user_ids)
+        if not recipients:
+            return recipients
+
+        if not channel_id:
+            # DM / group-DM context — no channel to gate on.
+            return recipients
+
+        servers = getattr(self, "_servers", None)
+        has_permission = getattr(servers, "has_permission", None)
+        if not callable(has_permission):
+            logger.warning(
+                "Notification fan-out skipped: channel-scoped recipients "
+                f"cannot be permission-checked (message channel {channel_id})"
+            )
+            return set()
+
+        allowed = set()
+        for user_id in recipients:
+            try:
+                if has_permission(user_id, server_id, "channels.view", channel_id):
+                    allowed.add(user_id)
+            except Exception as e:
+                logger.debug(
+                    f"Channel view check failed for user {user_id}; "
+                    f"excluding from notification fan-out: {e}"
+                )
+        return allowed
 
     def _should_notify_user_optimized(
         self,
@@ -253,8 +323,10 @@ class NotificationCreatorMixin(NotificationProtocol):
             content_preview_to_store = content_preview
             content_preview_encrypted = None
 
+        # Idempotent on UNIQUE(user_id, message_id): a duplicate insert is a
+        # no-op rather than an IntegrityError.
         self._db.execute(
-            """INSERT INTO notif_notifications
+            """INSERT OR IGNORE INTO notif_notifications
                (id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id,
                 mention_type, content_preview, content_preview_encrypted, read, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
@@ -293,6 +365,7 @@ class NotificationCreatorMixin(NotificationProtocol):
                     "sender_id": str(notification.author_id),
                 },
             )
+            self._queue_push_delivery([notification])
 
         return notification
 
@@ -332,6 +405,10 @@ class NotificationCreatorMixin(NotificationProtocol):
         content_preview: str,
         created_at: int,
     ) -> List[Notification]:
+        # Defense-in-depth: UNIQUE(user_id, message_id) makes repeat fan-outs
+        # for the same message no-ops instead of IntegrityErrors.
+        already_notified = self._existing_notification_users(message_id)
+        user_ids = [uid for uid in user_ids if uid not in already_notified]
         if not user_ids:
             return []
 
@@ -373,7 +450,7 @@ class NotificationCreatorMixin(NotificationProtocol):
         self._db.begin_transaction()
         try:
             self._db.execute_many(
-                """INSERT INTO notif_notifications
+                """INSERT OR IGNORE INTO notif_notifications
                    (id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id,
                     mention_type, content_preview, content_preview_encrypted, read, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -439,5 +516,7 @@ class NotificationCreatorMixin(NotificationProtocol):
                     "sender_id": str(notif.author_id),
                 },
             )
+
+        self._queue_push_delivery(results)
 
         return results

@@ -46,7 +46,11 @@ async def register_push_token(
             p256dh=body.p256dh,
             auth=body.auth,
         )
-        return {"success": True, "token_record": result}
+        # SECURITY: never echo the raw token / Web Push keys back.
+        return {
+            "success": True,
+            "token_record": PushManager._sanitize_token_record(result),
+        }
     except ValueError as e:
         raise_bad_request(str(e))
     except PermissionDeniedError as e:
@@ -66,7 +70,32 @@ async def list_push_tokens(
 
     svc = PushManager(db)
     tokens = svc.get_user_tokens(current_user.user_id)
-    return {"tokens": tokens}
+    # SECURITY: get_user_tokens returns decrypted credentials for delivery
+    # use only; strip them before serialising to the client.
+    return {"tokens": [PushManager._sanitize_token_record(t) for t in tokens]}
+
+
+@router.delete(
+    "/push/tokens/id/{token_id}",
+    summary="Unregister push token by id",
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+)
+async def unregister_push_token_by_id(
+    token_id: str, current_user: TokenInfo = Depends(get_current_user)
+):
+    # Preferred removal flow: list responses expose only the row id plus a
+    # token_hint (raw tokens are sanitized out), so clients unregister by id.
+    try:
+        parsed_token_id = int(token_id)
+    except (TypeError, ValueError):
+        raise_bad_request("Invalid token id")
+
+    db = api.get_db()
+    from src.core.push.manager import PushManager
+
+    svc = PushManager(db)
+    svc.unregister_token_by_id(current_user.user_id, parsed_token_id)
+    return {"success": True}
 
 
 @router.delete(

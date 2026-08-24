@@ -18,9 +18,10 @@ class TestGetNotificationFeed:
         assert feed.has_more is False
 
     def test_feed_with_notifications(
-        self, auth_manager, messaging_manager, notification_manager
+        self, auth_manager, messaging_manager, wired_send_path
     ):
         """Test feed with notifications."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user1 = auth_manager.register(
                 username="user1", email="user1@example.com", password="TestPass123!"
@@ -32,15 +33,9 @@ class TestGetNotificationFeed:
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}> check this"
-        msg = messaging_manager.send_message(user1.id, dm.id, content)
+        messaging_manager.send_message(user1.id, dm.id, content)
 
-        notification_manager.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
-
+        # The send path performs the (single) fan-out; assert through the feed.
         feed = notification_manager.get_notification_feed(user2.id)
 
         # Exactly one mention notification was created
@@ -48,8 +43,9 @@ class TestGetNotificationFeed:
         assert feed.total_count == 1
         assert feed.unread_count == 1
 
-    def test_feed_order(self, auth_manager, messaging_manager, notification_manager):
+    def test_feed_order(self, auth_manager, messaging_manager, wired_send_path):
         """Test feed is ordered by most recent first."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             owner = auth_manager.register(
                 username="groupowner",
@@ -69,13 +65,7 @@ class TestGetNotificationFeed:
 
         for i in range(3):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging_manager.send_message(owner.id, group.id, content)
-            notification_manager.create_notifications_for_message(
-                author_id=owner.id,
-                message_id=msg.id,
-                conversation_id=group.id,
-                content=content,
-            )
+            messaging_manager.send_message(owner.id, group.id, content)
 
         feed = notification_manager.get_notification_feed(member1.id)
 
@@ -86,10 +76,9 @@ class TestGetNotificationFeed:
                 feed.notifications[i].created_at >= feed.notifications[i + 1].created_at
             )
 
-    def test_feed_pagination(
-        self, auth_manager, messaging_manager, notification_manager
-    ):
+    def test_feed_pagination(self, auth_manager, messaging_manager, wired_send_path):
         """Test feed pagination with before_id."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             owner = auth_manager.register(
                 username="groupowner",
@@ -109,13 +98,7 @@ class TestGetNotificationFeed:
 
         for i in range(5):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging_manager.send_message(owner.id, group.id, content)
-            notification_manager.create_notifications_for_message(
-                author_id=owner.id,
-                message_id=msg.id,
-                conversation_id=group.id,
-                content=content,
-            )
+            messaging_manager.send_message(owner.id, group.id, content)
 
         feed1 = notification_manager.get_notification_feed(member1.id, limit=2)
 
@@ -130,8 +113,9 @@ class TestGetNotificationFeed:
             for notif in feed2.notifications:
                 assert notif.id < last_id
 
-    def test_feed_has_more(self, auth_manager, messaging_manager, notification_manager):
+    def test_feed_has_more(self, auth_manager, messaging_manager, wired_send_path):
         """Test feed has_more flag."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             owner = auth_manager.register(
                 username="groupowner",
@@ -151,13 +135,7 @@ class TestGetNotificationFeed:
 
         for i in range(5):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging_manager.send_message(owner.id, group.id, content)
-            notification_manager.create_notifications_for_message(
-                author_id=owner.id,
-                message_id=msg.id,
-                conversation_id=group.id,
-                content=content,
-            )
+            messaging_manager.send_message(owner.id, group.id, content)
 
         feed = notification_manager.get_notification_feed(member1.id, limit=2)
 
@@ -167,10 +145,9 @@ class TestGetNotificationFeed:
 class TestGetNotifications:
     """Tests for getting notifications list."""
 
-    def test_get_notifications(
-        self, auth_manager, messaging_manager, notification_manager
-    ):
+    def test_get_notifications(self, auth_manager, messaging_manager, wired_send_path):
         """Test getting notifications list."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user1 = auth_manager.register(
                 username="user1", email="user1@example.com", password="TestPass123!"
@@ -182,25 +159,17 @@ class TestGetNotifications:
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}>"
-        msg = messaging_manager.send_message(user1.id, dm.id, content)
-
-        notification_manager.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
+        messaging_manager.send_message(user1.id, dm.id, content)
 
         notifs = notification_manager.get_notifications(user2.id)
 
-        # Exactly one mention notification was created
+        # Exactly one mention notification was created by the send path
         assert len(notifs) == 1
         assert notifs[0].user_id == user2.id
 
-    def test_get_unread_only(
-        self, auth_manager, messaging_manager, notification_manager
-    ):
+    def test_get_unread_only(self, auth_manager, messaging_manager, wired_send_path):
         """Test getting only unread notifications."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             owner = auth_manager.register(
                 username="groupowner",
@@ -220,13 +189,7 @@ class TestGetNotifications:
 
         for i in range(3):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging_manager.send_message(owner.id, group.id, content)
-            notification_manager.create_notifications_for_message(
-                author_id=owner.id,
-                message_id=msg.id,
-                conversation_id=group.id,
-                content=content,
-            )
+            messaging_manager.send_message(owner.id, group.id, content)
 
         all_notifs = notification_manager.get_notifications(member1.id)
         if len(all_notifs) > 0:
@@ -239,9 +202,10 @@ class TestGetNotifications:
         assert len(unread_notifs) < len(all_notifs)
 
     def test_get_notifications_pagination(
-        self, auth_manager, messaging_manager, notification_manager
+        self, auth_manager, messaging_manager, wired_send_path
     ):
         """Test notifications pagination."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             owner = auth_manager.register(
                 username="groupowner",
@@ -261,13 +225,7 @@ class TestGetNotifications:
 
         for i in range(5):
             content = f"<@{member1.id}> message {i}"
-            msg = messaging_manager.send_message(owner.id, group.id, content)
-            notification_manager.create_notifications_for_message(
-                author_id=owner.id,
-                message_id=msg.id,
-                conversation_id=group.id,
-                content=content,
-            )
+            messaging_manager.send_message(owner.id, group.id, content)
 
         page1 = notification_manager.get_notifications(member1.id, limit=2)
 
@@ -286,9 +244,10 @@ class TestDeleteNotification:
     """Tests for deleting notifications."""
 
     def test_delete_notification(
-        self, auth_manager, messaging_manager, notification_manager
+        self, auth_manager, messaging_manager, wired_send_path
     ):
         """Test deleting a notification."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user1 = auth_manager.register(
                 username="user1", email="user1@example.com", password="TestPass123!"
@@ -300,15 +259,9 @@ class TestDeleteNotification:
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}>"
-        msg = messaging_manager.send_message(user1.id, dm.id, content)
+        messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notification_manager.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
-
+        notifs = notification_manager.get_notifications(user2.id)
         assert len(notifs) == 1
 
         result = notification_manager.delete_notification(user2.id, notifs[0].id)
@@ -326,9 +279,10 @@ class TestDeleteNotification:
             notification_manager.delete_notification(1, 999999999)
 
     def test_delete_other_users_notification(
-        self, auth_manager, messaging_manager, notification_manager
+        self, auth_manager, messaging_manager, wired_send_path
     ):
         """Test cannot delete another user's notification."""
+        notification_manager = wired_send_path
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user1 = auth_manager.register(
                 username="user1", email="user1@example.com", password="TestPass123!"
@@ -340,14 +294,10 @@ class TestDeleteNotification:
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
         content = f"<@{user2.id}>"
-        msg = messaging_manager.send_message(user1.id, dm.id, content)
+        messaging_manager.send_message(user1.id, dm.id, content)
 
-        notifs = notification_manager.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
+        notifs = notification_manager.get_notifications(user2.id)
+        assert len(notifs) == 1
 
         from src.core.notifications import NotificationNotFoundError
 

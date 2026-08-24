@@ -1,6 +1,10 @@
 from ..models import Notification, PushPayload, MentionType
 
 
+from typing import Optional
+
+import utils.logger as logger
+
 from .protocol import NotificationProtocol
 
 
@@ -86,7 +90,7 @@ def decrypt_push_token(stored: str) -> str:
             raise RuntimeError(
                 "push-token decryption unavailable; refusing to handle encrypted token."
             )
-        return _push_decrypt_data(stored)
+        return _push_decrypt_data(stored, context="push_token")
     if stored.startswith("PLAIN:"):
         import utils.logger as _push_logger
 
@@ -109,6 +113,118 @@ def decrypt_push_token(stored: str) -> str:
 
 
 class PushMixin(NotificationProtocol):
+    # Upper bound on devices fanned out per notification batch so a single
+    # @everyone mention in a huge server cannot stall the delivery worker.
+    PUSH_DELIVERY_BATCH_LIMIT = 100
+
+    def _get_push_manager(self):
+        """Return the initialized push module manager, or None.
+
+        Fail-open: when the push module was never set up (tests, embedded
+        deployments, push disabled) notification creation proceeds without
+        device delivery.
+        """
+        try:
+            from src.core import push as push_module
+
+            if (
+                getattr(push_module, "_setup_complete", False)
+                and push_module._manager is not None
+            ):
+                return push_module._manager
+        except Exception as e:
+            logger.debug(f"Push module unavailable for delivery: {e}")
+        return None
+
+    def deliver_push_notifications(self, notifications) -> int:
+        """Best-effort mobile/web push delivery for created notifications.
+
+        Builds each payload via :meth:`prepare_push_payload` and feeds it
+        into ``PushManager.send_push``. Every failure is logged, never
+        raised — push must not affect the message-send path.
+        """
+        manager = self._get_push_manager()
+        if manager is None:
+            return 0
+
+        sent = 0
+        for notification in notifications[: self.PUSH_DELIVERY_BATCH_LIMIT]:
+            try:
+                if notification is None:
+                    continue
+                payload = self.prepare_push_payload(notification)
+                if payload is None:
+                    continue
+                sent += manager.send_push(
+                    user_id=payload.user_id,
+                    title=payload.title,
+                    body=payload.body,
+                    data=dict(payload.data or {}),
+                    badge=payload.badge_count,
+                    sound=payload.sound,
+                    priority=payload.priority,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Push delivery failed for notification "
+                    f"{getattr(notification, 'id', '?')}: {e}"
+                )
+        return sent
+
+    def _deliver_push_safely(self, notifications) -> None:
+        try:
+            self.deliver_push_notifications(notifications)
+        except Exception as e:
+            logger.warning(f"Push delivery worker failed: {e}")
+
+    def _queue_push_delivery(self, notifications) -> None:
+        """Schedule push delivery onto the shared bounded background queue.
+
+        A single long-lived consumer thread drains pending batches (see
+        ``notifications.background``), so bursts of notifications can never
+        spawn unbounded threads. No-op unless the push module is
+        initialized, so tests and deployments without push never enqueue.
+        """
+        if not notifications:
+            return
+        if self._get_push_manager() is None:
+            return
+        try:
+            from ..background import (
+                get_notification_dispatcher,
+                is_sync_notification_dispatch,
+            )
+
+            batch = list(notifications)[: self.PUSH_DELIVERY_BATCH_LIMIT]
+
+            def _deliver_batch():
+                self._deliver_push_safely(batch)
+
+            if is_sync_notification_dispatch():
+                _deliver_batch()
+                return
+            if not get_notification_dispatcher().submit(_deliver_batch):
+                logger.debug(
+                    "Notification dispatch queue full; dropped push batch "
+                    f"of {len(batch)} notification(s)"
+                )
+        except Exception as e:
+            logger.debug(f"Failed to schedule push delivery: {e}")
+
+    def shutdown_push_delivery(self, timeout: Optional[float] = None) -> None:
+        """Flush queued push batches and join the consumer thread."""
+        try:
+            from ..background import (
+                SHUTDOWN_DRAIN_TIMEOUT,
+                get_notification_dispatcher,
+            )
+
+            get_notification_dispatcher().drain(
+                SHUTDOWN_DRAIN_TIMEOUT if timeout is None else timeout
+            )
+        except Exception as e:
+            logger.debug(f"Push delivery shutdown drain failed: {e}")
+
     def prepare_push_payload(self, notification: Notification) -> PushPayload:
         sender_name = "Someone"
         row = self._db.fetch_one(
