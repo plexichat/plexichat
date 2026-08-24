@@ -11,6 +11,7 @@ class UserSearchMixin(SearchManagerBase):
         query: str,
         exclude_ids: Set[int],
         limit: int,
+        offset: int = 0,
     ) -> List[UserSearchResult]:
         """Directory fallback for matches the FTS user index missed.
 
@@ -19,6 +20,10 @@ class UserSearchMixin(SearchManagerBase):
           - matches *partial* usernames case-insensitively against auth_users
           - resolves exact email addresses through the blind index (emails are
             encrypted at rest, so only exact-match lookup is possible)
+
+        ``offset`` pages into the directory results so this fallback never
+        re-adds users a previous page already skipped (offset pagination
+        correctness).
         """
         results: List[UserSearchResult] = []
         q = (query or "").strip()
@@ -27,7 +32,7 @@ class UserSearchMixin(SearchManagerBase):
 
         seen = set(exclude_ids)
 
-        if "@" in q:
+        if "@" in q and offset <= 0:
             email_index = None
             try:
                 from src.utils.encryption import blind_index
@@ -65,8 +70,8 @@ class UserSearchMixin(SearchManagerBase):
         rows = self._db.fetch_all(
             "SELECT id, username FROM auth_users "
             "WHERE deletion_status = 'active' AND LOWER(username) LIKE ? ESCAPE '\\' "
-            "ORDER BY username LIMIT ?",
-            (f"%{escaped}%", remaining),
+            "ORDER BY username LIMIT ? OFFSET ?",
+            (f"%{escaped}%", remaining, max(offset - len(results), 0)),
         )
         for row in rows or []:
             uid = int(row["id"])
@@ -83,12 +88,18 @@ class UserSearchMixin(SearchManagerBase):
         query: str,
         results: List[UserSearchResult],
         limit: int,
+        offset: int = 0,
     ) -> List[UserSearchResult]:
-        """Append directory matches for users the indexer missed."""
+        """Append directory matches for users the indexer missed.
+
+        ``offset`` is forwarded so the directory fallback skips the entries a
+        previous page already consumed; without it, offset pagination would
+        resurrect skipped users on every page.
+        """
         if len(results) >= limit:
             return results
         supplemental = self._supplemental_user_results(
-            query, {r.user_id for r in results}, limit - len(results)
+            query, {r.user_id for r in results}, limit - len(results), offset=offset
         )
         return list(results) + supplemental
 
@@ -116,7 +127,7 @@ class UserSearchMixin(SearchManagerBase):
             server_members = self._get_server_member_ids(server_id)
             results = [r for r in results if r.user_id in server_members]
 
-        results = self._merge_supplemental_users(query, results, limit)
+        results = self._merge_supplemental_users(query, results, limit, offset=offset)
         results = self._enrich_user_results(results, user_id)
 
         results = self._ranking_engine.rank_user_results(results, query, user_id)
