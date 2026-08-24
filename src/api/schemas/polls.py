@@ -2,10 +2,12 @@
 Poll schemas - Request/response models for poll endpoints.
 """
 
-from typing import Optional, List
+from typing import Literal, Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
+
+ResultsVisibility = Literal["always", "after_vote", "after_end"]
 
 
 class PollInlineCreateRequest(BaseModel):
@@ -25,7 +27,7 @@ class PollInlineCreateRequest(BaseModel):
     allow_multiple_choice: bool = Field(
         False, description="Whether multiple options can be selected"
     )
-    results_visibility: str = Field(
+    results_visibility: ResultsVisibility = Field(
         "always", description="When results are visible (always, after_vote, after_end)"
     )
 

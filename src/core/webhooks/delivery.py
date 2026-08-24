@@ -13,9 +13,9 @@ state:
 * transport errors   -> ``mark_failure`` with no status (same backoff)
 
 ``process_due_retries`` is the scheduler entry point; it is safe to run
-periodically from any worker (records are claimed by due-time, and
-concurrent runs are naturally de-duplicated by the queue's status
-transitions).
+periodically from any worker (each due record is atomically claimed via
+a conditional ``UPDATE ... SET status='delivering'`` guarded by rowcount,
+so concurrent workers can never double-deliver the same record).
 """
 
 import threading
@@ -201,10 +201,21 @@ class WebhookDeliveryJob:
 
         retry_queue = WebhookRetryQueue(self._db)
         stats = process_due_retries(retry_queue, WebhookDeliverer())
+        # Expired-record cleanup piggybacks on the delivery cycle (the
+        # queue self-throttles via CLEANUP_INTERVAL_MS) so delivered/
+        # dead-letter rows and stale 'delivering' claims are reaped
+        # without a dedicated scheduler entry point.
+        try:
+            cleaned = retry_queue.cleanup_expired()
+            if cleaned:
+                stats["cleaned"] = cleaned
+        except Exception as exc:  # cleanup must never break delivery
+            logger.debug(f"Webhook retry cleanup failed: {exc}")
         if stats["processed"]:
             logger.info(
                 f"Webhook delivery cycle: {stats['processed']} due, "
-                f"{stats['delivered']} delivered, {stats['failed']} failed"
+                f"{stats['delivered']} delivered, "
+                f"{stats['failed']} failed"
             )
         return stats
 

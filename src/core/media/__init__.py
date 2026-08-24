@@ -140,6 +140,7 @@ __all__ = [
     "complete_upload_session",
     "complete_upload_session_stream",
     "cancel_upload_session",
+    "cleanup_expired_upload_sessions",
     # Server-authored blobs (Suite workbook files, etc.)
     "store_blob",
     "retrieve_blob",
@@ -414,7 +415,11 @@ def check_file_access(filename: str, user_id: int) -> bool:
 
 
 def sign_url(
-    file_id: int, expires_in: Optional[int] = None, params: Optional[dict] = None
+    file_id: int,
+    expires_in: Optional[int] = None,
+    params: Optional[dict] = None,
+    user_id: Optional[int] = None,
+    url: Optional[str] = None,
 ) -> SignedUrl:
     """
     Generate signed URL for file.
@@ -423,11 +428,17 @@ def sign_url(
         file_id: File ID
         expires_in: Expiration time in seconds
         params: Optional storage-specific parameters
+        user_id: User authorized to use this URL (embedded in the
+            signature and enforced at verification time). Omit only
+            for intentionally public assets.
+        url: Explicit URL to sign instead of the storage-derived one.
 
     Returns:
         SignedUrl object
     """
-    return _get_manager().sign_url(file_id, expires_in, params)
+    return _get_manager().sign_url(
+        file_id, expires_in, params, user_id=user_id, url=url
+    )
 
 
 def verify_signed_url(
@@ -717,7 +728,7 @@ def upload_chunk(
         user_id: User ID
         chunk_index: Zero-based chunk index
         chunk_data: Chunk bytes
-        chunk_checksum: Optional MD5 checksum
+        chunk_checksum: Optional SHA-256 checksum (lowercase hex)
 
     Returns:
         ChunkUploadResult
@@ -762,3 +773,14 @@ def complete_upload_session_stream(
 def cancel_upload_session(session_id: str, user_id: int) -> bool:
     """Cancel an upload session."""
     return _get_chunked_manager().cancel_session(session_id, user_id)
+
+
+def cleanup_expired_upload_sessions() -> int:
+    """
+    Delete expired chunked-upload sessions and their temp files.
+
+    Intended to be called from a periodic background sweep so sessions
+    abandoned mid-upload are reaped even when no request ever touches
+    them again.
+    """
+    return _get_chunked_manager().cleanup_expired()

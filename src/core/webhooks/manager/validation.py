@@ -65,11 +65,22 @@ class ValidationMixin(WebhookManagerTrait):
 
         try:
             from src.utils.security import URLValidator
+        except ImportError:
+            # SECURITY: fail CLOSED. The URLValidator is the layer that
+            # blocks private/loopback/link-local targets (SSRF). Without
+            # it we cannot prove this URL is safe, so refuse the avatar
+            # instead of silently accepting it.
+            logger.error(
+                "URLValidator unavailable; refusing webhook avatar URL "
+                "(SSF validation could not run)."
+            )
+            raise WebhookAvatarError(
+                "Avatar URL rejected: security validation unavailable"
+            )
 
+        try:
             validator = URLValidator()
             validator.validate_url_for_request(url)
-        except ImportError:
-            logger.warning("URLValidator not available for SSRF protection")
         except ValueError as e:
             logger.warning(f"Blocked unsafe webhook avatar URL: {url} - {e}")
             raise WebhookAvatarError(f"Unsafe avatar URL: {str(e)}")

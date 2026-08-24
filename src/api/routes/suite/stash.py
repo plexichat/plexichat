@@ -659,7 +659,9 @@ async def redeem_download_ticket(
                     1,
                     min(3600, (int(remaining_ms) - now_ms) // 1000),
                 )
-            signed = media.sign_url(int(media_file.id), expires_in=expires_in)
+            signed = media.sign_url(
+                int(media_file.id), expires_in=expires_in, user_id=current_user.user_id
+            )
             media_url = signed.url
 
         result = _manager().redeem_download_ticket(current_user.user_id, body.ticket)

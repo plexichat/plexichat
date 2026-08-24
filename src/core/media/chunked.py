@@ -117,7 +117,11 @@ def create_tables(db) -> None:
 class ChunkedUploadManager:
     """Manages chunked file uploads."""
 
-    _MAX_COMPLETE_SESSION_BYTES = 2 * 1024 * 1024  # 2 MiB safety cap
+    # In-memory completion cap. Sessions larger than this MUST go through
+    # complete_session_stream(); the buffered path refuses them explicitly
+    # (never silently truncates). Configurable via
+    # media.chunked_upload.max_buffered_completion_bytes.
+    _MAX_COMPLETE_SESSION_BYTES = 25 * 1024 * 1024  # 25 MiB
 
     def __init__(self, db):
         """Initialize chunked upload manager."""
@@ -141,6 +145,10 @@ class ChunkedUploadManager:
             "cleanup_interval": chunked_config.get(
                 "cleanup_interval", 300
             ),  # 5 minutes
+            "max_buffered_completion_bytes": chunked_config.get(
+                "max_buffered_completion_bytes",
+                self._MAX_COMPLETE_SESSION_BYTES,
+            ),
         }
 
     def _create_tables(self):
@@ -158,19 +166,12 @@ class ChunkedUploadManager:
     def _validate_total_size(self, content_type: str, total_size: int) -> bool:
         """Validate declared total size against per-type upload limits."""
         from ._config import DEFAULT_SIZE_LIMITS
-        from .models import MediaType
+        from ._validation import detect_media_type
 
-        ct = (content_type or "").lower()
-        if ct.startswith("image/"):
-            type_key = MediaType.IMAGE.value
-        elif ct.startswith("video/"):
-            type_key = MediaType.VIDEO.value
-        elif ct.startswith("audio/"):
-            type_key = MediaType.AUDIO.value
-        elif ct in ("application/pdf", "text/plain", "application/msword"):
-            type_key = MediaType.DOCUMENT.value
-        else:
-            type_key = MediaType.OTHER.value
+        # Shared classification with the direct upload pipeline so the
+        # chunked path applies identical per-type buckets (docx/zip/etc.
+        # count as documents, not "other").
+        type_key = detect_media_type(content_type).value
 
         media_config = config.get("media", {})
         limits = media_config.get("size_limits", DEFAULT_SIZE_LIMITS)
@@ -455,7 +456,8 @@ class ChunkedUploadManager:
             user_id: User ID
             chunk_index: Zero-based chunk index
             chunk_data: Chunk bytes
-            chunk_checksum: Optional MD5 checksum for verification
+            chunk_checksum: Optional SHA-256 checksum (lowercase hex) for
+                verification
 
         Returns:
             ChunkUploadResult
@@ -770,10 +772,19 @@ class ChunkedUploadManager:
             return None
 
         try:
-            if session.total_size > self._MAX_COMPLETE_SESSION_BYTES:
+            cap = int(
+                self._config.get(
+                    "max_buffered_completion_bytes",
+                    self._MAX_COMPLETE_SESSION_BYTES,
+                )
+            )
+            if session.total_size > cap:
                 logger.warning(
-                    f"Refusing in-memory completion for session {session_id} ({session.total_size} bytes). "
-                    "Use complete_session_stream() for large uploads."
+                    f"Refusing in-memory completion for session {session_id} "
+                    f"({session.total_size} bytes exceeds buffered cap {cap}). "
+                    "Large sessions MUST use complete_session_stream() / the "
+                    "streaming completion route; the buffered path never "
+                    "truncates silently."
                 )
                 return None
 

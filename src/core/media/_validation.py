@@ -38,6 +38,44 @@ _ALWAYS_BLOCKED_CONTENT_TYPES = frozenset(
 # as a fallback even when the "other" category is unconfigured.
 _FALLBACK_CONTENT_TYPE = "application/octet-stream"
 
+# Content types classified as documents for size-limit bucketing. Shared by
+# the direct upload path and the chunked-upload session path so both apply
+# the same "document" size limit (e.g. .docx/.xlsx/.pptx/.zip land in the
+# document bucket, not the narrower 10MB "other" bucket).
+_DOCUMENT_CONTENT_TYPES = frozenset(
+    {
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/json",
+        "application/rtf",
+        "application/msword",
+        "application/vnd.ms-excel",
+        "application/vnd.ms-powerpoint",
+        "application/zip",
+        "application/x-7z-compressed",
+        "application/gzip",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+)
+
+
+def detect_media_type(content_type: str) -> MediaType:
+    """Map a content-type string to its :class:`MediaType` bucket."""
+    ct = (content_type or "").lower()
+    if ct.startswith("image/"):
+        return MediaType.IMAGE
+    elif ct.startswith("video/"):
+        return MediaType.VIDEO
+    elif ct.startswith("audio/"):
+        return MediaType.AUDIO
+    elif ct in _DOCUMENT_CONTENT_TYPES:
+        return MediaType.DOCUMENT
+    return MediaType.OTHER
+
 
 class _ValidationMixin:
     """Validation helpers mixed into MediaManager."""
@@ -77,16 +115,7 @@ class _ValidationMixin:
 
     def _detect_media_type(self, content_type: str) -> MediaType:
         """Map content-type string to MediaType enum."""
-        ct = content_type.lower()
-        if ct.startswith("image/"):
-            return MediaType.IMAGE
-        elif ct.startswith("video/"):
-            return MediaType.VIDEO
-        elif ct.startswith("audio/"):
-            return MediaType.AUDIO
-        elif ct in ("application/pdf", "text/plain", "application/msword"):
-            return MediaType.DOCUMENT
-        return MediaType.OTHER
+        return detect_media_type(content_type)
 
     # -- magic-byte validation ---------------------------------------------------
 

@@ -13,6 +13,7 @@ from src.core.database import cached
 import utils.logger as logger
 
 from .base import ChannelBase
+from ..exception_mapping import raise_mapped
 
 
 class ChannelCRUDMixin(ChannelBase):
@@ -153,27 +154,11 @@ class ChannelCRUDMixin(ChannelBase):
             except HTTPException:
                 raise
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Channel not found"}},
-                    )
-                elif "Access" in exc_name or "Permission" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied access to channel {cid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": "Access denied"}},
-                    )
-
-                logger.error(
-                    f"Failed to get channel {cid} for user {current_user.user_id}: {e}",
-                    exc_info=True,
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Channel not found",
+                    permission_message="Access denied",
+                    invalid_message="Invalid request",
                 )
         except HTTPException:
             raise
@@ -303,27 +288,11 @@ class ChannelCRUDMixin(ChannelBase):
             except HTTPException:
                 raise
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Channel not found"}},
-                    )
-                elif "Permission" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied permission to update channel {cid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": str(e)}},
-                    )
-
-                logger.error(
-                    f"Failed to update channel {cid} for user {current_user.user_id}: {e}",
-                    exc_info=True,
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Channel not found",
+                    permission_message="Channel access denied",
+                    invalid_message="Invalid channel data",
                 )
         except HTTPException:
             raise
@@ -417,27 +386,11 @@ class ChannelCRUDMixin(ChannelBase):
             except HTTPException:
                 raise
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Channel not found"}},
-                    )
-                elif "Permission" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied permission to delete channel {cid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": str(e)}},
-                    )
-
-                logger.error(
-                    f"Failed to delete channel {cid} for user {current_user.user_id}: {e}",
-                    exc_info=True,
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Channel not found",
+                    permission_message="Channel access denied",
+                    invalid_message="Invalid request",
                 )
         except HTTPException:
             raise

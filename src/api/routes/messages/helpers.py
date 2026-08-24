@@ -89,45 +89,57 @@ def _message_to_response(
 
             url = att_url if isinstance(att_url, str) else ""
             if media_mod and url and url.startswith("/api/v1/media/attachments/"):
-                try:
-                    file_id = get_attr(att, "file_id")
-                    stored_name = ""
-                    if not file_id:
-                        metadata = get_attr(att, "metadata")
-                        if metadata:
-                            if isinstance(metadata, dict):
-                                file_id = metadata.get("file_id")
-                            elif isinstance(metadata, str):
-                                import json
+                file_id = get_attr(att, "file_id")
+                stored_name = ""
+                if not file_id:
+                    metadata = get_attr(att, "metadata")
+                    if metadata:
+                        if isinstance(metadata, dict):
+                            file_id = metadata.get("file_id")
+                        elif isinstance(metadata, str):
+                            import json
 
-                                try:
-                                    meta = json.loads(metadata)
-                                    file_id = meta.get("file_id")
-                                except Exception:
-                                    pass
+                            try:
+                                meta = json.loads(metadata)
+                                file_id = meta.get("file_id")
+                            except Exception:
+                                pass
 
-                    if not file_id and att_url:
-                        stored_name = att_url.split("/")[-1]
-                        if stored_name:
-                            media_file = media_mod.get_file_by_filename(stored_name)
-                            if media_file:
-                                file_id = media_file.id
+                if not file_id and att_url:
+                    stored_name = att_url.split("/")[-1]
+                    if stored_name:
+                        media_file = media_mod.get_file_by_filename(stored_name)
+                        if media_file:
+                            file_id = media_file.id
 
-                    if file_id:
-                        stored_tail = stored_name
-                        if not stored_tail and att_url:
-                            parts = att_url.split("/")
-                            stored_tail = parts[-1] if parts else ""
-                        if not stored_tail:
-                            stored_tail = str(att_filename or "")
-                        signed = media_mod.sign_url(
-                            url=f"/api/v1/media/attachments/{stored_tail}",
-                            file_id=int(file_id),
-                            user_id=viewer_user_id,
-                        )
-                        url = signed.url
-                except Exception as e:
-                    logger.debug(f"Failed to sign attachment URL: {e}")
+                if file_id:
+                    stored_tail = stored_name
+                    if not stored_tail and att_url:
+                        parts = att_url.split("/")
+                        stored_tail = parts[-1] if parts else ""
+                    if not stored_tail:
+                        stored_tail = str(att_filename or "")
+                    # SECURITY: signed URLs are bound to the viewing
+                    # user (uid embedded in the HMAC and enforced at
+                    # verification time), so a leaked URL is useless
+                    # to anyone else. Only serialize-time viewers get
+                    # a signature; anonymous/broadcast serialization
+                    # keeps the raw URL, which stays protected by the
+                    # standard auth + per-file access checks.
+                    if viewer_user_id is not None:
+                        try:
+                            signed = media_mod.sign_url(
+                                int(file_id),
+                                user_id=viewer_user_id,
+                                url=f"/api/v1/media/attachments/{stored_tail}",
+                            )
+                            url = signed.url
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to sign attachment URL for file {file_id} "
+                                f"(viewer {viewer_user_id}): {e}; "
+                                "falling back to unsigned URL"
+                            )
 
             attachments.append(
                 AttachmentResponse(

@@ -227,7 +227,7 @@ async def upload_chunk(
     Args:
         session_id: The upload session ID
         chunk_index: Zero-based index of this chunk
-        chunk_checksum: Optional MD5 checksum for verification
+        chunk_checksum: Optional SHA-256 checksum (lowercase hex) for verification
         file: The chunk data
     """
     from src.core import media

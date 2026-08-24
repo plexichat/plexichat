@@ -11,6 +11,7 @@ from src.api.schemas.common import ErrorResponse, SnowflakeID
 import utils.logger as logger
 
 from .base import ChannelBase
+from ..exception_mapping import raise_mapped
 
 
 class ChannelWebhooksMixin(ChannelBase):
@@ -72,26 +73,11 @@ class ChannelWebhooksMixin(ChannelBase):
                     for w in (webhooks or [])
                 ]
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Channel not found"}},
-                    )
-                elif "Permission" in exc_name or "Access" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied access to webhooks for channel {cid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": str(e)}},
-                    )
-
-                logger.error(
-                    f"Failed to get webhooks for channel {cid}: {e}", exc_info=True
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Channel not found",
+                    permission_message="Access denied",
+                    invalid_message="Invalid request",
                 )
         except HTTPException:
             raise

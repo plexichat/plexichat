@@ -219,9 +219,16 @@ class WebhookRetryQueue:
 
     def get_pending_retries(self, limit: int = 100) -> List[Dict[str, Any]]:
         """
-        Get all webhook deliveries that are due for retry.
+        Get and ATOMICALLY CLAIM all webhook deliveries that are due.
 
-        Called by the scheduler to process pending retries.
+        Each returned row is transitioned ``pending``/``retrying`` ->
+        ``delivering`` via a conditional ``UPDATE ... WHERE status IN
+        ('pending', 'retrying')`` guarded by rowcount, so concurrent
+        workers can never pick up (and double-deliver) the same record.
+        Callers must resolve every claimed record through
+        ``mark_success`` / ``mark_failure``; records whose worker dies
+        mid-delivery are re-claimed by :meth:`cleanup_expired` once the
+        24h window lapses.
         """
         now = self._get_timestamp()
         rows = self._db.fetch_all(
@@ -235,6 +242,17 @@ class WebhookRetryQueue:
         results = []
         for row in rows:
             data = dict(row)
+            # Atomic claim: only THIS worker flips the row to
+            # 'delivering'; a racing worker's UPDATE matches zero rows.
+            cursor = self._db.execute(
+                """UPDATE webhook_retry_queue
+                   SET status = 'delivering', updated_at = ?
+                   WHERE id = ? AND status IN ('pending', 'retrying')""",
+                (now, data["id"]),
+            )
+            if int(getattr(cursor, "rowcount", 0) or 0) != 1:
+                continue
+
             if data.get("payload") and isinstance(data["payload"], str):
                 try:
                     data["payload"] = json.loads(data["payload"])
@@ -322,8 +340,22 @@ class WebhookRetryQueue:
         )
         abandoned = int(getattr(abandon_cursor, "rowcount", 0) or 0)
 
+        # Re-claim records whose worker died mid-delivery: anything still
+        # 'delivering' past the retry window goes back to 'pending' so a
+        # live worker can retry it instead of leaking the row forever.
+        reclaim_cursor = self._db.execute(
+            """UPDATE webhook_retry_queue
+               SET status = 'pending', updated_at = ?
+               WHERE status = 'delivering'
+                 AND updated_at < ?""",
+            (now, cutoff),
+        )
+        reclaimed = int(getattr(reclaim_cursor, "rowcount", 0) or 0)
+        if reclaimed:
+            logger.info(f"Reclaimed {reclaimed} stale delivering webhook retries")
+
         logger.debug("Cleaned up expired webhook retry records")
-        return deleted + abandoned
+        return deleted + abandoned + reclaimed
 
     def get_stats(self, webhook_id: Optional[int] = None) -> Dict[str, int]:
         """Get retry queue statistics."""
@@ -338,6 +370,7 @@ class WebhookRetryQueue:
         stats = {
             "pending": 0,
             "retrying": 0,
+            "delivering": 0,
             "delivered": 0,
             "dead_letter": 0,
             "total": 0,

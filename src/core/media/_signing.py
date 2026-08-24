@@ -51,7 +51,28 @@ class _SigningMixin:
         file_id: int,
         expires_in: Optional[int] = None,
         params: Optional[dict] = None,
+        user_id: Optional[int] = None,
+        url: Optional[str] = None,
     ) -> SignedUrl:
+        """
+        Sign a URL for ``file_id``.
+
+        Args:
+            file_id: Media file ID
+            expires_in: Signature lifetime in seconds
+            params: Optional storage-specific parameters
+            user_id: User authorized to use this URL. When provided the
+                uid is embedded in the signature and enforced during
+                verification so a leaked URL is useless to other users.
+                Leave ``None`` only for intentionally public assets.
+            url: Explicit URL to sign (e.g. the attachment proxy path).
+                When omitted the URL is derived from the storage backend.
+        """
+        if url:
+            return self._url_signer.sign_url(
+                url, file_id, expires_in=expires_in, user_id=user_id
+            )
+
         file = self.get_file(file_id)
         if not file:
             raise MediaError("File not found")
@@ -60,13 +81,19 @@ class _SigningMixin:
 
         if is_encrypted:
             proxy_url = f"/api/v1/media/attachments/{file.filename}"
-            return self._url_signer.sign_url(proxy_url, file_id, expires_in=expires_in)
+            return self._url_signer.sign_url(
+                proxy_url, file_id, expires_in=expires_in, user_id=user_id
+            )
 
         if file.storage_backend == StorageBackend.S3:
             if hasattr(storage, "generate_presigned_url"):
                 url = storage.generate_presigned_url(
                     file.storage_path, expires_in or 3600, params=params
                 )
+                if not url:
+                    raise RuntimeError(
+                        f"S3 presign returned no URL for {file.filename}"
+                    )
                 return SignedUrl(
                     url=url,
                     expires_at=int(time.time() * 1000) + ((expires_in or 3600) * 1000),
@@ -78,10 +105,14 @@ class _SigningMixin:
                 f"falling back to proxy"
             )
             proxy_url = f"/api/v1/media/attachments/{file.filename}"
-            return self._url_signer.sign_url(proxy_url, file_id, expires_in=expires_in)
+            return self._url_signer.sign_url(
+                proxy_url, file_id, expires_in=expires_in, user_id=user_id
+            )
 
         url = storage.get_url(file.storage_path)
-        return self._url_signer.sign_url(url, file_id, expires_in=expires_in)
+        return self._url_signer.sign_url(
+            url, file_id, expires_in=expires_in, user_id=user_id
+        )
 
     def verify_signed_url(
         self, url: str, current_user_id: Optional[int] = None

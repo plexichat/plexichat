@@ -18,6 +18,7 @@ from src.api.schemas.common import ErrorResponse, SnowflakeID
 import utils.logger as logger
 
 from .base import ChannelBase
+from ..exception_mapping import raise_mapped, map_invite_join_error
 
 
 class ChannelInvitesMixin(ChannelBase):
@@ -145,19 +146,13 @@ class ChannelInvitesMixin(ChannelBase):
                         max_uses=body.max_uses,
                         temporary=body.temporary,
                     )
-                except Exception as exc:  # noqa: BLE001
-                    exc_name = type(exc).__name__
-                    if "Permission" in exc_name or "Access" in exc_name:
-                        raise HTTPException(
-                            status_code=403,
-                            detail={
-                                "error": {
-                                    "code": 403,
-                                    "message": str(exc),
-                                }
-                            },
-                        )
-                    raise
+                except Exception as exc:
+                    raise_mapped(
+                        exc,
+                        not_found_message="Channel not found",
+                        permission_message="Channel access denied",
+                        invalid_message="Invalid invite parameters",
+                    )
                 try:
                     from src.core.events.gateway_emit import emit_invite_create
 
@@ -188,34 +183,18 @@ class ChannelInvitesMixin(ChannelBase):
                 # Re-raise HTTPException FIRST so the dual-probe's
                 # 404/403 status codes survive the outer ``except
                 # Exception`` block that follows. The outer handler
-                # categorises non-HTTPException errors by class-name
-                # substring (NotFound / Permission / Access / etc.),
-                # but HTTPException's class name doesn't match any of
-                # those substrings -- so without this re-raise the
+                # maps typed core exceptions (NotFound / Permission /
+                # Invalid) to status codes, but HTTPException is not
+                # one of those types -- so without this re-raise the
                 # dual-probe's status code gets degraded to a generic
                 # 500. SELFTEST FIX.
                 raise
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Channel not found"}},
-                    )
-                elif "Permission" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied permission to create invite for channel {cid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": str(e)}},
-                    )
-
-                logger.error(
-                    f"Failed to create invite for channel {cid}: {e}", exc_info=True
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Channel not found",
+                    permission_message="Channel access denied",
+                    invalid_message="Invalid invite parameters",
                 )
         except HTTPException:
             raise
@@ -285,26 +264,12 @@ class ChannelInvitesMixin(ChannelBase):
             except HTTPException:
                 raise
             except Exception as e:
-                exc_name = type(e).__name__
-                if any(
-                    keyword in exc_name.lower()
-                    for keyword in ["notfound", "expired", "invalid", "missing"]
-                ):
-                    raise HTTPException(
-                        status_code=404,
-                        detail={
-                            "error": {
-                                "code": 404,
-                                "message": "Invite not found or expired",
-                            }
-                        },
-                    )
-
-                logger.error(
-                    f"Failed to get info for invite {invite_code}: {e}", exc_info=True
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                # Typed mapping: NotFound/Expired family -> 404.
+                raise_mapped(
+                    e,
+                    not_found_message="Invite not found or expired",
+                    permission_message="Access denied",
+                    invalid_message="Invite not found or expired",
                 )
         except HTTPException:
             raise
@@ -441,48 +406,7 @@ class ChannelInvitesMixin(ChannelBase):
                     server_id=SnowflakeID(sid) if sid else None,
                 )
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name or "Expired" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={
-                            "error": {
-                                "code": 404,
-                                "message": "Invite not found or expired",
-                            }
-                        },
-                    )
-                elif "Already" in exc_name or "Member" in exc_name:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "error": {
-                                "code": 409,
-                                "message": "Already a member of this server",
-                            }
-                        },
-                    )
-                elif "Banned" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} attempted to join server via {invite_code} but is banned"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={
-                            "error": {
-                                "code": 403,
-                                "message": "You are banned from this server",
-                            }
-                        },
-                    )
-
-                logger.error(
-                    f"Failed to join server via invite {invite_code}: {e}",
-                    exc_info=True,
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
-                )
+                map_invite_join_error(e)
         except HTTPException:
             raise
         except Exception as e:
@@ -526,26 +450,11 @@ class ChannelInvitesMixin(ChannelBase):
                     logger.debug(f"emit_invite_delete failed: {ge}")
                 return {"success": True}
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Invite not found"}},
-                    )
-                elif "Permission" in exc_name or "Access" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied permission to delete invite {invite_code}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": str(e)}},
-                    )
-
-                logger.error(
-                    f"Failed to delete invite {invite_code}: {e}", exc_info=True
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Invite not found",
+                    permission_message="Access denied",
+                    invalid_message="Invalid invite",
                 )
         except HTTPException:
             raise
