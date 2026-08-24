@@ -49,8 +49,12 @@ class LockMixin(ValkeyClientBase):
         """
 
         try:
-            self._prefixed_key(f"lock:{self._sanitize_key(key)}")
-            result = self.eval_lua(script, [f"lock:{key}"], [token])
+            # ``eval_lua`` applies the key prefix itself, so pass the SAME
+            # sanitized-but-unprefixed name acquire_lock used. The previous
+            # code passed the raw (unsanitized) f"lock:{key}" here, so any
+            # key needing sanitization was acquired under one name and
+            # released under another — the lock was never actually freed.
+            result = self.eval_lua(script, [f"lock:{self._sanitize_key(key)}"], [token])
             return bool(result)
         except Exception as e:
             logger.error(f"Failed to release lock for {key}: {e}")

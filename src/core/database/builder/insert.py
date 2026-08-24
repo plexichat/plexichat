@@ -56,6 +56,34 @@ class InsertQuery(TableQuery):
 
         return self
 
+    def _mark_pool_in_flight(self, conn: Any, in_flight: bool) -> None:
+        """Mirror Database.execute()'s pool in-flight marker.
+
+        The idle reaper must never close a connection that has a cursor
+        mid-statement. The builder runs on a raw connection and has no
+        facade-bound pool reference, so this is best-effort via
+        ``self.database._pool`` (absent in standalone usage).
+        """
+        pool = getattr(self.database, "_pool", None)
+        marker = getattr(pool, "mark_in_flight", None)
+        if not callable(marker):
+            return
+        try:
+            marker(conn, in_flight)
+        except Exception as e:
+            logger.debug(f"Failed to mark connection in-flight: {e}")
+
+    def _capture_lastrowid(self, lastrowid: Any) -> None:
+        """Store the INSERT's rowid on the owning Database's thread-local
+        slot so fetch_last_insert_id() observes THIS insert even if other
+        statements interleave on the same thread-local connection."""
+        local = getattr(self.database, "_local", None)
+        if local is not None and lastrowid is not None:
+            try:
+                local.last_insert_rowid = lastrowid
+            except Exception as e:
+                logger.debug(f"Failed to capture lastrowid: {e}")
+
     def execute(self) -> int:
         """Execute the INSERT query and return the last inserted row ID.
 
@@ -73,10 +101,17 @@ class InsertQuery(TableQuery):
                 param_values = [
                     p.value if isinstance(p, Parameter) else p for p in params
                 ]
-                cursor.execute(sql, param_values)
+                self._mark_pool_in_flight(self.connection, True)
+                try:
+                    cursor.execute(sql, param_values)
+                finally:
+                    self._mark_pool_in_flight(self.connection, False)
+                # Capture the rowid at INSERT time (before commit/cleanup).
+                lastrowid = int(getattr(cursor, "lastrowid", 0) or 0)
+                self._capture_lastrowid(lastrowid)
                 self.connection.commit()
-                lastrowid = cursor.lastrowid
                 cursor.close()
+                self._invalidate_database_query_cache()
                 logger.debug(f"INSERT returned lastrowid: {lastrowid}")
                 return lastrowid
             else:  # postgres
@@ -88,10 +123,15 @@ class InsertQuery(TableQuery):
                     from .. import dialect
 
                     pg_sql = dialect.convert_placeholders(sql, self.db_type)
-                    cursor.execute(pg_sql, param_values)
+                    self._mark_pool_in_flight(self.connection, True)
+                    try:
+                        cursor.execute(pg_sql, param_values)
+                    finally:
+                        self._mark_pool_in_flight(self.connection, False)
                     self.connection.commit()
                     row_count = cursor.rowcount
                     cursor.close()
+                    self._invalidate_database_query_cache()
                     logger.debug(f"INSERT affected {row_count} rows")
                     return row_count
                 finally:

@@ -33,6 +33,15 @@ from ..tokens import (
 
 from .protocol import AuthManagerProtocol
 
+# CORRECTNESS FIX: verify_token is wrapped in @cached, so a cache hit
+# reconstructs its return value from JSON. Without registering TokenInfo on
+# the reconstruction allowlist, a hit returns a PLAIN DICT and every consumer
+# that touches token_info.user_id / account_locked crashes (e.g. the second
+# authenticated request within the 10s verify TTL failing with a 500).
+from src.core.database.cache.serialization import register_reconstructable_type
+
+register_reconstructable_type(TokenInfo)
+
 
 class SessionMixin(AuthManagerProtocol):
     def create_session_for_user(

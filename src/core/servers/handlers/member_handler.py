@@ -29,6 +29,14 @@ from ..manager.converters import _row_to_member, _row_to_ban, _row_to_invite
 import utils.logger as logger
 from src.utils.encryption import encrypt_data
 
+# CORRECTNESS FIX: get_member is wrapped in @cached; with allowlist-only cache
+# reconstruction an unregistered dataclass comes back from a cache hit as a
+# plain dict, crashing attribute-style consumers (e.g. role_handler's
+# member.timeout_until). Register the type so hits reconstruct properly.
+from src.core.database.cache.serialization import register_reconstructable_type
+
+register_reconstructable_type(Member)
+
 
 class MemberHandler:
     def __init__(self, manager):

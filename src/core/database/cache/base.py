@@ -6,7 +6,7 @@ used as fallback when Valkey is unavailable.
 """
 
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import utils.config as config
 
@@ -75,10 +75,15 @@ def mem_cache_delete(key: str) -> bool:
 
 def mem_cache_clear_pattern(pattern: str) -> int:
     """Clear in-memory cache entries matching a pattern."""
-    import fnmatch
-
     global _mem_cache
-    keys = [k for k in list(_mem_cache.keys()) if fnmatch.fnmatch(str(k), pattern)]
+    keys = mem_cache_matching_keys(pattern)
     for k in keys:
         del _mem_cache[k]
     return len(keys)
+
+
+def mem_cache_matching_keys(pattern: str) -> List[str]:
+    """Return in-memory cache keys matching a glob ``pattern``."""
+    import fnmatch
+
+    return [k for k in list(_mem_cache.keys()) if fnmatch.fnmatch(str(k), pattern)]

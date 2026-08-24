@@ -374,6 +374,8 @@ class DatabaseConnectionMixin:
         self._local.transaction_depth = 0
         self._local.in_transaction = False
         self._local.correlation_id = None
+        # A stale captured rowid must not leak across connections.
+        self._local.last_insert_rowid = None
 
         self.transaction_depth = 0
         self.in_transaction = False

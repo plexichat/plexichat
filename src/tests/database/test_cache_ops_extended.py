@@ -18,6 +18,7 @@ from src.core.database.cache.base import (
 from src.core.database.cache.serialization import (
     ensure_serializable,
     reconstruct_object,
+    register_reconstructable_type,
     generate_cache_key,
 )
 from src.core.database.valkey_client import ValkeyOperationError
@@ -295,6 +296,12 @@ class _OldStyle:
 
     def dict(self):
         return {"n": self.n}
+
+
+# Reconstruction is allowlist-only (untrusted cache payloads must never be
+# able to instantiate arbitrary classes), so the local round-trip fixtures
+# must be registered explicitly.
+register_reconstructable_type(_Color, _Point, _Duck, _OldStyle)
 
 
 @pytest.mark.parametrize(

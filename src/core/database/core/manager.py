@@ -198,6 +198,7 @@ class Database(
                 local.connection = None
                 local.transaction_depth = 0
                 local.in_transaction = False
+                local.last_insert_rowid = None
             monitor = getattr(inst, "monitor", None)
             if monitor is not None:
                 try:
@@ -226,8 +227,19 @@ class Database(
         """Get the last insert ID (compatibility shim for migration tracker).
 
         Returns the rowid of the last successful INSERT.
-        For SQLite, uses last_insert_rowid(). For PostgreSQL, uses LASTVAL().
+        For SQLite, the rowid captured on the cursor at INSERT time inside
+        ``execute()`` is preferred: SQLite's ``last_insert_rowid()`` is
+        PER-CONNECTION, and thread-local connections are kept alive across
+        requests, so any interleaved INSERT between this caller's INSERT and
+        this lookup would previously return the WRONG rowid. Falls back to
+        the SQL lookup only when no captured value exists. For PostgreSQL,
+        uses LASTVAL().
         """
+        if self.type != "postgres":
+            stored = getattr(self._local, "last_insert_rowid", None)
+            if stored is not None:
+                return stored
+
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
@@ -252,7 +264,7 @@ class Database(
             TableQuery instance for method chaining (insert, select, update, delete)
         """
         conn = self._get_conn()
-        qb = QueryBuilder(conn, self.type)
+        qb = QueryBuilder(conn, self.type, database=self)
         return qb.table(table_name)
 
     @property

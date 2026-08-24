@@ -15,7 +15,7 @@ from ..valkey_client import (
     ValkeyOperationError,
 )
 from .operations import cache_get, cache_delete, cache_set, invalidate_pattern
-from .base import default_ttl
+from .base import default_ttl, mem_cache_delete, mem_cache_get, mem_cache_matching_keys
 
 
 def cache_session(
@@ -66,24 +66,62 @@ def invalidate_session(session_id: str, user_id: Optional[int] = None) -> bool:
 
 
 def invalidate_user_sessions(user_id: int) -> int:
-    """Invalidate all sessions for a user."""
-    client = get_client()
-    if not client or not is_available():
-        return 0
+    """Invalidate all sessions for a user.
 
-    try:
-        session_ids = client.smembers(f"user_sessions:{user_id}")
-        if session_ids:
-            keys_to_delete = [f"session:{sid}" for sid in session_ids]
-            keys_to_delete.append(f"user_sessions:{user_id}")
-            for key in keys_to_delete:
-                cache_delete(key)
-            logger.debug(f"Invalidated {len(session_ids)} sessions for user {user_id}")
-            return len(session_ids)
-        return 0
-    except ValkeyOperationError as e:
-        logger.warning(f"Failed to invalidate sessions for user {user_id}: {e}")
-        return 0
+    Clears BOTH cache tiers: the Valkey ``user_sessions`` set (when Valkey is
+    available) AND the in-memory fallback entries. Previously this was a
+    silent no-op whenever Valkey was down, even though ``cache_session``
+    keeps serving sessions from the in-memory tier — "logout everywhere"
+    deleted nothing and stale sessions stayed valid until TTL expiry.
+    """
+    client = get_client()
+    invalidated = 0
+
+    if client and is_available():
+        try:
+            session_ids = list(client.smembers(f"user_sessions:{user_id}"))
+            if session_ids:
+                keys_to_delete = [f"session:{sid}" for sid in session_ids]
+                keys_to_delete.append(f"user_sessions:{user_id}")
+                for key in keys_to_delete:
+                    cache_delete(key)
+                invalidated += len(session_ids)
+                logger.debug(
+                    f"Invalidated {len(session_ids)} Valkey-cached sessions "
+                    f"for user {user_id}"
+                )
+        except ValkeyOperationError as e:
+            logger.warning(f"Failed to invalidate sessions for user {user_id}: {e}")
+
+    invalidated += _invalidate_mem_user_sessions(user_id)
+
+    if invalidated == 0:
+        logger.debug(f"No cached sessions found for user {user_id}")
+    return invalidated
+
+
+def _invalidate_mem_user_sessions(user_id: int) -> int:
+    """Clear the user's session entries from the in-memory fallback tier.
+
+    Returns the number of memory-tier sessions invalidated.
+    """
+    count = 0
+    for key in mem_cache_matching_keys("session:*"):
+        entry = mem_cache_get(key)
+        if not isinstance(entry, dict) or entry.get("user_id") != user_id:
+            continue
+        if mem_cache_delete(key):
+            count += 1
+            # Best-effort: drop the membership record from Valkey too, in
+            # case this session was tracked there while its payload only
+            # ever lived in memory.
+            client = get_client()
+            if client and is_available():
+                try:
+                    client.srem(f"user_sessions:{user_id}", str(key)[len("session:") :])
+                except ValkeyOperationError:
+                    pass
+    return count
 
 
 def invalidate_user_servers(user_id: int) -> int:

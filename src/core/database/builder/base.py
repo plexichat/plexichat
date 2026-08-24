@@ -68,9 +68,24 @@ class Query(ABC, QueryBuilderProtocol):
         """
         self.connection = connection
         self.db_type = db_type
+        # Optional back-reference to the owning Database facade so write
+        # queries can invalidate its internal query-result cache exactly
+        # like ``Database.execute()`` does. Set by ``QueryBuilder``.
+        self.database: Any = None
         self._validation_model: Optional[Type[BaseModel]] = None
         self._sql = ""
         self._params: List[Parameter] = []
+
+    def _invalidate_database_query_cache(self) -> None:
+        """Clear the Database facade's query-result cache after a write.
+
+        Builder writes run on the raw thread-local connection and would
+        otherwise leave stale fetch_one/fetch_all results cached for up to
+        ``_query_cache_ttl`` (read-your-write violation).
+        """
+        invalidator = getattr(self.database, "_invalidate_query_cache", None)
+        if callable(invalidator):
+            invalidator()
 
     @abstractmethod
     def build(self) -> tuple[str, list]:
@@ -134,6 +149,7 @@ class Query(ABC, QueryBuilderProtocol):
                     row_count = cursor.rowcount
                     logger.debug(f"Query affected {row_count} rows")
                     cursor.close()
+                    self._invalidate_database_query_cache()
                     return row_count
             else:  # postgres
                 cursor = self.connection.cursor()
@@ -154,6 +170,7 @@ class Query(ABC, QueryBuilderProtocol):
                         row_count = cursor.rowcount
                         self.connection.commit()
                         logger.debug(f"Query affected {row_count} rows")
+                        self._invalidate_database_query_cache()
                         return row_count
                 finally:
                     cursor.close()
@@ -189,21 +206,25 @@ class TableQuery(Query):
         if not data:
             raise ValueError("Insert data cannot be empty")
 
-        return InsertQuery(
+        query = InsertQuery(
             self.connection, self.table_name, data, self.db_type, self.schema_registry
         )
+        query.database = self.database
+        return query
 
     def select(self, columns: Optional[List[str]] = None) -> "SelectQuery":
         """Start building a SELECT query."""
         from .select import SelectQuery
 
-        return SelectQuery(
+        query = SelectQuery(
             self.connection,
             self.table_name,
             columns,
             self.db_type,
             self.schema_registry,
         )
+        query.database = self.database
+        return query
 
     def update(self, data: Dict[str, Any]) -> "UpdateQuery":
         """Start building an UPDATE query."""
@@ -214,17 +235,21 @@ class TableQuery(Query):
         if not data:
             raise ValueError("Update data cannot be empty")
 
-        return UpdateQuery(
+        query = UpdateQuery(
             self.connection, self.table_name, data, self.db_type, self.schema_registry
         )
+        query.database = self.database
+        return query
 
     def delete(self) -> "DeleteQuery":
         """Start building a DELETE query."""
         from .delete import DeleteQuery
 
-        return DeleteQuery(
+        query = DeleteQuery(
             self.connection, self.table_name, self.db_type, self.schema_registry
         )
+        query.database = self.database
+        return query
 
     def build(self) -> tuple[str, list]:
         """Not implemented for TableQuery."""

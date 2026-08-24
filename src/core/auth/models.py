@@ -9,6 +9,8 @@ from typing import Optional, Dict, List, Any
 from enum import Enum
 from src.core.base import SnowflakeID
 
+from src.core.database.cache.serialization import register_reconstructable_type
+
 
 class AccountType(Enum):
     """Type of account."""
@@ -96,6 +98,11 @@ class User:
     password_hash: Optional[str] = field(default=None, repr=False)
     totp_secret_encrypted: Optional[str] = field(default=None, repr=False)
     backup_codes_hash: Optional[str] = field(default=None, repr=False)
+
+
+# User objects flow through cached lookups (profile tiers); they must
+# reconstruct as real User instances (with an AccountType enum), not dicts.
+register_reconstructable_type(User)
 
 
 @dataclass

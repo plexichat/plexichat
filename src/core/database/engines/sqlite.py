@@ -54,8 +54,9 @@ class SqlitePool:
         self._available: List[Any] = []
         self._in_use: set = set()
         self._by_id: Dict[int, Any] = {}
-        # id(conn) -> (monotonic last-usage, owner thread ident, in-transaction flag)
-        self._checked_out: Dict[int, Tuple[float, Optional[int], bool]] = {}
+        # id(conn) -> (monotonic last-usage, owner thread ident,
+        # in-transaction flag, cursor-in-flight flag)
+        self._checked_out: Dict[int, Tuple[float, Optional[int], bool, bool]] = {}
         self._total_created = 0
 
         for _ in range(min_size):
@@ -91,6 +92,7 @@ class SqlitePool:
                 time.monotonic(),
                 threading.current_thread().ident,
                 False,
+                False,
             )
             return conn
 
@@ -110,6 +112,26 @@ class SqlitePool:
                     time.monotonic(),
                     usage[1],
                     bool(in_transaction),
+                    usage[3],
+                )
+
+    def mark_in_flight(self, conn: Any, in_flight: bool = True) -> None:
+        """Mark ``conn`` as having a cursor mid-statement.
+
+        While the flag is set the idle reaper NEVER closes the connection,
+        so a long-running statement (> ``idle_reclaim_seconds``) cannot be
+        closed underneath its executing thread. The Database layer sets this
+        for the duration of every cursor.execute() call.
+        """
+        conn_id = id(conn)
+        with self._condition:
+            usage = self._checked_out.get(conn_id)
+            if usage is not None:
+                self._checked_out[conn_id] = (
+                    usage[0],
+                    usage[1],
+                    usage[2],
+                    bool(in_flight),
                 )
 
     def _reap_idle_unlocked(self, max_idle_seconds: Optional[float] = None) -> int:
@@ -120,11 +142,10 @@ class SqlitePool:
         was reclaimed transparently reconnects on its next use (``_get_conn``
         detects the closed connection and rebuilds it).
 
-        A connection whose owner is mid-query for longer than the threshold
-        could be closed underneath it; SQLite statements are atomic in
-        autocommit mode and the execution layer retries "closed database"
-        errors on a fresh connection (outside transactions), so this surfaces
-        as a transparent reconnect rather than data loss.
+        A connection whose owner is mid-query (cursor in flight, marked via
+        ``mark_in_flight``) is NEVER reclaimed regardless of idle time: the
+        executing thread would observe a sudden "closed database" failure
+        and non-idempotent statements (INSERT) could not be safely retried.
 
         Connections inside an open transaction whose owner thread is still
         alive are NEVER reclaimed (reclaiming would abort the transaction).
@@ -137,9 +158,12 @@ class SqlitePool:
         now = time.monotonic()
         current_ident = threading.current_thread().ident
         reaped = 0
-        for conn_id, (last_used, owner_ident, in_transaction) in list(
+        for conn_id, (last_used, owner_ident, in_transaction, in_flight) in list(
             self._checked_out.items()
         ):
+            if in_flight:
+                # Statement currently executing on this connection.
+                continue
             if owner_ident == current_ident:
                 continue
             if now - last_used < threshold:

@@ -7,6 +7,8 @@ from enum import Enum
 from typing import Optional, List, Dict, Any
 from src.core.base import SnowflakeID
 
+from src.core.database.cache.serialization import register_reconstructable_type
+
 
 class ChannelType(Enum):
     """Types of channels."""
@@ -160,6 +162,11 @@ class Server:
         }
 
 
+# Cached Server rows (GET /servers, server:{id} tier) must come back as
+# Server instances, not plain dicts — consumers access dataclass attributes.
+register_reconstructable_type(Server)
+
+
 @dataclass
 class Channel:
     """Represents a channel within a server."""
@@ -188,6 +195,11 @@ class Channel:
     deleted: bool = False
     deleted_at: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+# Channel rows are cached via @cached get_channels (server_channels tier) and
+# must reconstruct as Channel instances with a real ChannelType enum member.
+register_reconstructable_type(Channel)
 
 
 @dataclass

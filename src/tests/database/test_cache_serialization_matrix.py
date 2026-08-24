@@ -9,6 +9,7 @@ import pytest
 from src.core.database.cache.serialization import (
     ensure_serializable,
     reconstruct_object,
+    register_reconstructable_type,
     generate_cache_key,
 )
 
@@ -59,6 +60,20 @@ class _StrictNegative:
 class _WithInitVar:
     label: str
     secret: dataclasses.InitVar[str] = ""
+
+
+# Reconstruction is allowlist-only (untrusted cache payloads must never be
+# able to instantiate arbitrary classes), so the local round-trip fixtures
+# must be registered explicitly.
+register_reconstructable_type(
+    _State,
+    _Inner,
+    _Outer,
+    _PydanticLike,
+    _OldStyle,
+    _StrictNegative,
+    _WithInitVar,
+)
 
 
 # ---------------------------------------------------------------------------

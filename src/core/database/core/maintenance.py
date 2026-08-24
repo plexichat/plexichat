@@ -88,6 +88,7 @@ class DatabaseMaintenanceMixin:
         error_type = type(e).__name__
         logger.error(f"Query execution failed ({error_type}): {str(e)[:100]}")
 
+        fatal_cleanup_error: Optional[RuntimeError] = None
         try:
             if self.type == "postgres":
                 if conn and getattr(conn, "closed", 0) > 0:
@@ -99,10 +100,31 @@ class DatabaseMaintenanceMixin:
                             cursor.execute(
                                 f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}"
                             )
-                    except Exception:
-                        conn.rollback()
-                        self.transaction_depth = 0
-                        self.in_transaction = False
+                    except Exception as rb_e:
+                        # The savepoint could not be rolled back, so the only
+                        # safe recovery is a FULL rollback. That aborts the
+                        # caller's entire outer transaction — silently reset-
+                        # ting depth here previously let the caller believe it
+                        # was still inside a live transaction and later
+                        # commits became silent no-ops (partial-commit data
+                        # loss). Surface it loudly instead.
+                        logger.error(
+                            "Savepoint rollback failed during error cleanup; "
+                            f"rolling back ENTIRE transaction: {rb_e}"
+                        )
+                        try:
+                            conn.rollback()
+                        except Exception as full_rb_e:
+                            logger.error(
+                                f"Full rollback also failed during cleanup: {full_rb_e}"
+                            )
+                        finally:
+                            self.transaction_depth = 0
+                            self.in_transaction = False
+                        fatal_cleanup_error = RuntimeError(
+                            "Savepoint rollback failed; the outer transaction "
+                            f"was fully rolled back: {rb_e}"
+                        )
                 elif conn:
                     conn.rollback()
                     self.in_transaction = False
@@ -112,7 +134,12 @@ class DatabaseMaintenanceMixin:
             logger.error(f"Error during error cleanup: {cleanup_e}")
         finally:
             if cursor is not None:
-                cursor.close()
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+        if fatal_cleanup_error is not None:
+            raise fatal_cleanup_error from e
 
     def convert_schema(self: _DatabaseMaintenanceProtocol, schema: str) -> str:
         """Convert a SQLite-authored schema into a PostgreSQL-compatible one.

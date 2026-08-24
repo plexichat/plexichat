@@ -5,6 +5,7 @@ Tests use a FakeGlideClient to mock Valkey GLIDE (no real server needed).
 
 import time
 import threading
+import hashlib
 from typing import Any, Dict, List, Optional, Set, Union
 
 import pytest
@@ -369,6 +370,27 @@ class FakeGlideClient:
 
     # -- Script support ----------------------------------------------------
 
+    # GLIDE identifies scripts by SHA1 of their source; str(Script) is only
+    # a repr, so map the known client-side scripts back via their hash.
+    _LOCK_SCRIPT_SHA1 = hashlib.sha1(
+        b"""
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        """,
+    ).hexdigest()
+    _INCR_EXPIRE_SCRIPT_SHA1 = hashlib.sha1(
+        b"""
+local current = redis.call("INCR", KEYS[1])
+if current == 1 then
+    redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+return current
+""",
+    ).hexdigest()
+
     def invoke_script(
         self,
         script: Any,
@@ -376,12 +398,29 @@ class FakeGlideClient:
         args: Optional[List[_TEncodable]] = None,
     ) -> Any:
         code = str(script)
+        script_hash = script.get_hash() if hasattr(script, "get_hash") else None
         ks = [self._key(k) for k in (keys or [])]
         av = [
             a.decode("utf-8") if isinstance(a, bytes) else str(a) for a in (args or [])
         ]
 
-        if "get KEYS[1]" in code and "del KEYS[1]" in code:
+        if script_hash == self._INCR_EXPIRE_SCRIPT_SHA1 or (
+            "INCR" in code and "EXPIRE" in code
+        ):
+            # Atomic rate-limit script: INCR KEYS[1]; EXPIRE on first hit.
+            k = ks[0] if ks else None
+            if k is None:
+                return 0
+            window = int(av[0]) if av else 60
+            current = int(self._data.get(k, b"0") or b"0") + 1
+            self._data[k] = str(current)
+            if current == 1:
+                self._expiry[k] = time.time() + window
+            return current
+
+        if script_hash == self._LOCK_SCRIPT_SHA1 or (
+            "get KEYS[1]" in code and "del KEYS[1]" in code
+        ):
             k = ks[0] if ks else None
             if k and k in self._data:
                 val = self._data[k]

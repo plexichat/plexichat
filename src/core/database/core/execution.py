@@ -11,19 +11,17 @@ from .types import DbConnection, DbCursor
 
 _QUERY_CACHE_MAX = 100
 
+_DDL_STATEMENT_PREFIXES = ("CREATE", "ALTER")
 
-def apply_pg_type_fixes(query: str) -> str:
-    """Auto-fix INTEGER→BIGINT and other PG16 type issues in DDL statements.
+# Splits a SQL string into alternating code / single-quoted-literal segments
+# ('' inside a literal is an escaped quote). Substitutions are applied ONLY to
+# the code segments so string-literal data is never rewritten.
+_SQL_LITERAL_SPLIT_RE = re.compile(r"('(?:[^']|'')*')")
 
-    Migration files run raw SQL through ``db.execute()`` which bypasses the
-    ``convert_schema`` pipeline used by schema files.  This function ensures
-    INTEGER columns that may hold 64-bit snowflake IDs are upgraded to BIGINT,
-    and fixes other PostgreSQL‑16 strict‑typing incompatibilities.
-    """
-    # Match word-boundary INTEGER only in DDL context
-    converted = re.sub(r"\bINTEGER\b", "BIGINT", query, flags=re.IGNORECASE)
 
-    # BOOLEAN DEFAULT 0/1 → FALSE/TRUE
+def _convert_ddl_fragment(fragment: str) -> str:
+    """Apply the PostgreSQL type rewrites to one literal-free SQL fragment."""
+    converted = re.sub(r"\bINTEGER\b", "BIGINT", fragment, flags=re.IGNORECASE)
     converted = re.sub(
         r"\bBOOLEAN\s+DEFAULT\s+0\b",
         "BOOLEAN DEFAULT FALSE",
@@ -36,8 +34,36 @@ def apply_pg_type_fixes(query: str) -> str:
         converted,
         flags=re.IGNORECASE,
     )
-
     return converted
+
+
+def _is_ddl_statement(query: str) -> bool:
+    """True only for CREATE/ALTER statements (the DDL migration surface)."""
+    stripped = query.lstrip()
+    upper = stripped[:7].upper()
+    return upper.startswith(_DDL_STATEMENT_PREFIXES)
+
+
+def apply_pg_type_fixes(query: str) -> str:
+    """Auto-fix INTEGER→BIGINT and other PG16 type issues in DDL statements.
+
+    Migration files run raw SQL through ``db.execute()`` which bypasses the
+    ``convert_schema`` pipeline used by schema files.  This function ensures
+    INTEGER columns that may hold 64-bit snowflake IDs are upgraded to BIGINT,
+    and fixes other PostgreSQL‑16 strict‑typing incompatibilities.
+
+    The rewrite is restricted to DDL statements (CREATE/ALTER) AND to text
+    outside single-quoted string literals, so generic DML and any literal
+    data containing e.g. the word "INTEGER" are passed through untouched.
+    """
+    if not _is_ddl_statement(query):
+        return query
+
+    segments = _SQL_LITERAL_SPLIT_RE.split(query)
+    return "".join(
+        segment if index % 2 == 1 else _convert_ddl_fragment(segment)
+        for index, segment in enumerate(segments)
+    )
 
 
 class _DatabaseExecutionProtocol(Protocol):
@@ -70,6 +96,10 @@ class _DatabaseExecutionProtocol(Protocol):
     def _handle_execution_error(
         self, conn: Any, cursor: Any, e: BaseException, query: str
     ) -> None: ...
+
+    def _commit_strict(self, conn: Any, context: str) -> None: ...
+
+    def _mark_pool_in_flight(self, conn: Any, in_flight: bool) -> None: ...
 
     def execute(
         self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True
@@ -145,6 +175,50 @@ class DatabaseExecutionMixin:
 
         return "\n".join(cleaned_lines)
 
+    def _commit_strict(
+        self: _DatabaseExecutionProtocol, conn: Any, context: str
+    ) -> None:
+        """Commit and NEVER swallow failure.
+
+        A failed commit means the write was not persisted (classic case:
+        PostgreSQL connection drop between statement success and COMMIT).
+        Silently discarding that error makes callers believe lost writes
+        succeeded. Retry once on the same connection (safe: a failed commit
+        persisted nothing), then log ERROR and re-raise.
+        """
+        try:
+            conn.commit()
+            return
+        except Exception as first_error:
+            logger.error(
+                f"Commit failed ({type(first_error).__name__}) during {context}: "
+                f"{first_error}; retrying once"
+            )
+
+        try:
+            time.sleep(0.05)
+            conn.commit()
+            logger.warning(f"Commit succeeded on retry during {context}")
+        except Exception as e:
+            logger.error(
+                f"Commit FAILED permanently during {context}: {e} — "
+                "the write was NOT persisted"
+            )
+            self.monitor.record_error(type(e).__name__)
+            raise
+
+    def _mark_pool_in_flight(
+        self: _DatabaseExecutionProtocol, conn: Any, in_flight: bool
+    ) -> None:
+        """Tell the connection pool (SQLite) whether ``conn`` has a cursor
+        mid-statement so the idle reaper never closes it underneath us."""
+        marker = getattr(self._pool, "mark_in_flight", None)
+        if callable(marker):
+            try:
+                marker(conn, in_flight)
+            except Exception:
+                pass
+
     def execute(
         self: _DatabaseExecutionProtocol,
         query: str,
@@ -176,16 +250,24 @@ class DatabaseExecutionMixin:
         if self.type == "postgres":
             query_conv = apply_pg_type_fixes(query_conv)
 
+        conn: Any = None
+        cursor: Any = None
         for attempt in range(3):
+            conn = None
+            cursor = None
             try:
                 conn = self._get_conn()
                 cursor = conn.cursor()
                 start_time = time.time()
 
-                if params:
-                    cursor.execute(query_conv, params)
-                else:
-                    cursor.execute(query_conv)
+                self._mark_pool_in_flight(conn, True)
+                try:
+                    if params:
+                        cursor.execute(query_conv, params)
+                    else:
+                        cursor.execute(query_conv)
+                finally:
+                    self._mark_pool_in_flight(conn, False)
 
                 duration_ms = (time.time() - start_time) * 1000
                 self.monitor.record_query_execution(duration_ms)
@@ -200,13 +282,24 @@ class DatabaseExecutionMixin:
                         f"Slow query detected ({duration_ms:.2f}ms): {query[:100]}"
                     )
 
-                if auto_commit and not self.in_transaction:
-                    try:
-                        conn.commit()
-                    except Exception:
-                        pass
+                # Capture the rowid at INSERT time on THIS connection so a
+                # later fetch_last_insert_id() cannot observe a rowid written
+                # by an interleaved statement on the same thread-local conn.
+                lastrowid = getattr(cursor, "lastrowid", None)
+                if (
+                    self.type != "postgres"
+                    and upper_query.startswith(("INSERT", "REPLACE"))
+                    and lastrowid is not None
+                ):
+                    self._local.last_insert_rowid = lastrowid
 
-                return cursor
+                # Statement succeeded — leave the retry loop. The commit is
+                # performed AFTER this loop (outside the retry error domain):
+                # a failed commit must propagate immediately and must NEVER
+                # trigger a re-execution of the statement above (the statement
+                # already ran and committing it again would duplicate writes).
+                # _commit_strict retries the COMMIT itself once internally.
+                break
             except Exception as e:
                 is_conn_error = self._is_connection_error(e)
 
@@ -240,6 +333,19 @@ class DatabaseExecutionMixin:
                 )
                 raise
 
+        if conn is None or cursor is None:
+            raise RuntimeError(
+                f"execute() exhausted retries without a live connection: {query[:100]}"
+            )
+
+        if auto_commit and not self.in_transaction:
+            # Own error domain: failures here are raised as-is (after
+            # _commit_strict's single internal retry) and are NOT caught by
+            # the statement-retry handler above.
+            self._commit_strict(conn, f"execute: {query[:100]}")
+
+        return cursor
+
     def execute_many(
         self: _DatabaseExecutionProtocol,
         query: str,
@@ -252,25 +358,30 @@ class DatabaseExecutionMixin:
         query_sanitized = self._sanitize_sqlite_query(query)
         query_conv = dialect.convert_placeholders(query_sanitized, self.type)
 
+        conn: Any = None
+        cursor: Any = None
         for attempt in range(3):
+            conn = None
+            cursor = None
             try:
                 conn = self._get_conn()
                 cursor = conn.cursor()
                 start_time = time.time()
 
-                cursor.executemany(query_conv, params_list)
+                self._mark_pool_in_flight(conn, True)
+                try:
+                    cursor.executemany(query_conv, params_list)
+                finally:
+                    self._mark_pool_in_flight(conn, False)
                 exec_time = (time.time() - start_time) * 1000
                 self.monitor.record_query_execution(exec_time)
 
                 _query_count.set(_query_count.get() + 1)
                 _query_time_ms.set(_query_time_ms.get() + exec_time)
 
-                if auto_commit and not self.in_transaction:
-                    try:
-                        conn.commit()
-                    except Exception:
-                        pass
-                return cursor
+                # See execute(): leave the retry loop on statement success so
+                # the commit below can never cause a re-execution.
+                break
             except Exception as e:
                 is_conn_error = self._is_connection_error(e)
 
@@ -303,6 +414,18 @@ class DatabaseExecutionMixin:
                     temp_conn, locals().get("cursor"), e, query
                 )
                 raise
+
+        if conn is None or cursor is None:
+            raise RuntimeError(
+                f"execute_many() exhausted retries without a live connection: "
+                f"{query[:100]}"
+            )
+
+        if auto_commit and not self.in_transaction:
+            # Own error domain: commit failures propagate and must never be
+            # silently discarded or retried by re-running the statement.
+            self._commit_strict(conn, f"execute_many: {query[:100]}")
+        return cursor
 
     def _is_connection_error(
         self: _DatabaseExecutionProtocol, e: BaseException

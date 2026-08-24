@@ -19,6 +19,18 @@ from .operations import cache_delete
 # Global dictionary for in-memory rate limiting when Valkey is unavailable
 _mem_rate_limits: Dict[str, List[float]] = {}
 
+# Atomic INCR + first-hit EXPIRE. Doing this in Lua closes the race where a
+# process died (or EXPIRE failed) between INCR and EXPIRE: previously the
+# counter then persisted with NO TTL and the user/IP was rate-limited
+# permanently.
+_INCR_EXPIRE_SCRIPT = """
+local current = redis.call("INCR", KEYS[1])
+if current == 1 then
+    redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+return current
+"""
+
 
 def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, int]:
     """Check if a rate limit has been exceeded.
@@ -57,9 +69,9 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, i
     full_key = f"ratelimit:{key}"
 
     try:
-        current = client.incr(full_key)
-        if current == 1:
-            client.expire(full_key, window_seconds)
+        current = int(
+            client.eval_lua(_INCR_EXPIRE_SCRIPT, [full_key], [window_seconds])
+        )
         remaining = max(0, limit - current)
         allowed = current <= limit
         return allowed, remaining
