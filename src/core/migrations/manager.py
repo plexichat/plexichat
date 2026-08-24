@@ -13,16 +13,12 @@ from typing import List, Dict, Any, Optional
 from src.core.database import cached
 
 from . import validator
+from .validator import RETIRED_MIGRATIONS  # noqa: F401 (re-exported for compat)
 from .tracker import MigrationTracker
 from .runner import MigrationRunner
 from .progress import ProgressBar
 
 logger = logging.getLogger(__name__)
-
-# These versions were consolidated into migration 000. Their history records
-# remain valid evidence of an older installation and must not make integrity
-# checks fail merely because the retired source files are intentionally gone.
-RETIRED_MIGRATIONS = {"002", "003", "004"}
 
 
 class Migration:
@@ -210,22 +206,34 @@ class MigrationManager:
         applied = self.tracker.get_applied_migrations()
         self.validate_dependencies(migration, applied)
 
-        # Check if irreversible migration can be run (skip for dry-run)
+        # Serialize single-migration runs with batch runs (same lock path).
+        # Without this, an admin API apply_migration races apply_all_pending.
         if not dry_run:
-            import utils.config as config
+            if not self.tracker.acquire_lock():
+                raise Exception(
+                    "Could not acquire migration lock - another migration may be in progress"
+                )
 
-            delay_days = config.get(
-                "database.migrations.irreversible_migration_delay_days", 7
-            )
-            delay_hours = delay_days * 24
+        try:
+            # Check if irreversible migration can be run (skip for dry-run)
+            if not dry_run:
+                import utils.config as config
 
-            can_run, reason = self.tracker.can_run_irreversible_migration(
-                version, delay_hours
-            )
-            if not can_run:
-                raise ValueError(f"Cannot run migration {version}: {reason}")
+                delay_days = config.get(
+                    "database.migrations.irreversible_migration_delay_days", 7
+                )
+                delay_hours = delay_days * 24
 
-        return self._execute_migration(migration, dry_run)
+                can_run, reason = self.tracker.can_run_irreversible_migration(
+                    version, delay_hours
+                )
+                if not can_run:
+                    raise ValueError(f"Cannot run migration {version}: {reason}")
+
+            return self._execute_migration(migration, dry_run)
+        finally:
+            if not dry_run:
+                self.tracker.release_lock()
 
     def apply_all_pending(self, dry_run: bool = False) -> Dict[str, Any]:
         """
@@ -519,11 +527,32 @@ class MigrationManager:
                             actual_checksum = validator.calculate_checksum(content)
 
                         if actual_checksum != existing_status["checksum"]:
-                            logger.warning(
-                                f"Migration checksum mismatch for {migration.version}: "
-                                f"recorded={existing_status['checksum']}, actual={actual_checksum}. "
-                                "Proceeding anyway."
+                            # TAMPERING GUARD: a migration file that differs from
+                            # the recorded checksum must never silently re-execute
+                            # against production data. Block unless the operator
+                            # explicitly consumes a valid single-use emergency
+                            # override token.
+                            logger.error(
+                                f"BLOCKED migration {migration.version}: checksum "
+                                f"mismatch (recorded={existing_status['checksum']}, "
+                                f"actual={actual_checksum}). The migration file was "
+                                "modified after being recorded. Execution is blocked; "
+                                "set a valid single-use EMERGENCY_MIGRATION_OVERRIDE "
+                                "token to proceed."
                             )
+                            if not self.tracker.try_consume_emergency_override_from_env():
+                                raise ValueError(
+                                    f"Migration {migration.version} is BLOCKED: "
+                                    "checksum mismatch with recorded history and no "
+                                    "valid EMERGENCY_MIGRATION_OVERRIDE token was "
+                                    "provided."
+                                )
+                            logger.error(
+                                f"Emergency override consumed for tampered "
+                                f"migration {migration.version}; proceeding once"
+                            )
+                    except ValueError:
+                        raise
                     except Exception as e:
                         logger.warning(
                             f"Could not verify checksum for migration {migration.version}: {e}"

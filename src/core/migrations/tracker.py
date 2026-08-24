@@ -7,6 +7,9 @@ recording their status, and managing the migrations_history table.
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
+import hashlib
+import hmac
+import threading
 import time
 import logging
 import json
@@ -15,6 +18,7 @@ import secrets
 import os
 import uuid
 from . import schema
+from .locking import MigrationLockingMixin
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +32,15 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-class MigrationTracker:
+class MigrationTracker(MigrationLockingMixin):
     """Tracks applied migrations and their status in the database."""
+
+    # Process-wide registry: db identity -> uptime session id. ensure_table_exists()
+    # is invoked by nearly every tracker/manager operation; without this guard each
+    # call used to INSERT a fresh near-zero-length migration_uptime row (unbounded
+    # row spam that permanently skewed the irreversible-migration uptime gate).
+    _session_registry: Dict[str, int] = {}
+    _session_registry_lock = threading.Lock()
 
     def __init__(self, db):
         """
@@ -41,6 +52,8 @@ class MigrationTracker:
         self.db = db
         self._start_time = time.time()
         self._current_uptime_session_id = None
+        self._lock_owner: Optional[str] = None
+        self._pg_advisory_conn = None
 
     def ensure_table_exists(self):
         """
@@ -55,19 +68,40 @@ class MigrationTracker:
         self.ensure_lock_table_exists()
         self._start_uptime_session()
 
+    def _db_identity(self) -> str:
+        """Return a stable identity string for the tracked database."""
+        cfg = getattr(self.db, "config", None) or {}
+        db_type = getattr(self.db, "type", None) or str(cfg.get("type", "unknown"))
+        if db_type == "sqlite":
+            path = os.path.abspath(os.path.expanduser(str(cfg.get("path", ""))))
+            return f"sqlite:{path}"
+        pg = cfg.get("postgres", {}) or {}
+        return (
+            f"postgres:{pg.get('host', '')}:{pg.get('port', '')}:{pg.get('dbname', '')}"
+        )
+
     def _start_uptime_session(self):
-        """Start a new uptime tracking session."""
-        try:
-            self.db.execute(
-                "INSERT INTO migration_uptime (start_time, uptime_seconds) VALUES (?, 0)",
-                (_utcnow(),),
-            )
-            self._current_uptime_session_id = self.db.fetch_last_insert_id()
-            logger.info(
-                f"Started uptime tracking session: {self._current_uptime_session_id}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to start uptime session: {e}")
+        """Start a new uptime tracking session (once per process per database)."""
+        key = self._db_identity()
+        with self._session_registry_lock:
+            existing = self._session_registry.get(key)
+            if existing is not None:
+                # Already started for this process/database: reuse the same
+                # session row instead of inserting a duplicate.
+                self._current_uptime_session_id = existing
+                return
+            try:
+                self.db.execute(
+                    "INSERT INTO migration_uptime (start_time, uptime_seconds) VALUES (?, 0)",
+                    (_utcnow(),),
+                )
+                self._current_uptime_session_id = self.db.fetch_last_insert_id()
+                self._session_registry[key] = self._current_uptime_session_id
+                logger.info(
+                    f"Started uptime tracking session: {self._current_uptime_session_id}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to start uptime session: {e}")
 
     def update_uptime(self):
         """Update the current uptime session with elapsed time."""
@@ -83,9 +117,59 @@ class MigrationTracker:
         except Exception as e:
             logger.warning(f"Failed to update uptime: {e}")
 
+    @staticmethod
+    def _coerce_datetime(value) -> Optional[datetime]:
+        """Best-effort coercion of a stored timestamp to a naive datetime."""
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None) if value.tzinfo else value
+        if isinstance(value, str):
+            text = value.strip()
+            for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    return datetime.strptime(text, fmt)
+                except ValueError:
+                    continue
+        return None
+
+    def _current_session_contribution(self, applied_at: datetime) -> int:
+        """Extra seconds the still-open session has accrued beyond its stored
+        uptime_seconds. This keeps the gate correct even when update_uptime()
+        has not been called recently (it is only invoked from the admin status
+        endpoint)."""
+        if self._current_uptime_session_id is None:
+            return 0
+        try:
+            row = self.db.fetch_one(
+                "SELECT start_time, uptime_seconds FROM migration_uptime WHERE id = ?",
+                (self._current_uptime_session_id,),
+            )
+            if not row:
+                return 0
+            start_raw = (
+                row[0] if isinstance(row, (list, tuple)) else row.get("start_time")
+            )
+            stored_raw = (
+                row[1] if isinstance(row, (list, tuple)) else row.get("uptime_seconds")
+            )
+            start = self._coerce_datetime(start_raw)
+            if start is None or start < applied_at:
+                return 0
+            stored = int(stored_raw or 0)
+            live = max(0, int((_utcnow() - start).total_seconds()))
+            # The SUM already counted `stored`; only add the unrecorded excess.
+            return max(0, max(stored, live) - stored)
+        except Exception as e:
+            logger.debug(f"Could not compute live session uptime contribution: {e}")
+            return 0
+
     def get_total_uptime_since(self, since_version: str) -> int:
         """
         Get total server uptime in seconds since a specific migration was applied.
+
+        Sums every uptime session that started at/after the migration's
+        applied_at timestamp, plus the live elapsed time of the current
+        still-open session so the total does not depend on update_uptime()
+        having been polled.
 
         Args:
             since_version: Migration version to calculate uptime from
@@ -94,7 +178,6 @@ class MigrationTracker:
             Total uptime in seconds
         """
         try:
-            # Get the applied_at timestamp for the migration
             result = self.db.fetch_one(
                 "SELECT applied_at FROM migrations_history WHERE version = ? AND status = ?",
                 (since_version, "completed"),
@@ -102,11 +185,17 @@ class MigrationTracker:
             if not result:
                 return 0
 
-            applied_at = (
+            applied_raw = (
                 result[0]
                 if isinstance(result, (list, tuple))
                 else result.get("applied_at")
             )
+            applied_at = self._coerce_datetime(applied_raw)
+            if applied_at is None:
+                logger.error(
+                    f"Unparseable applied_at for migration {since_version}: {applied_raw!r}"
+                )
+                return 0
 
             # Sum uptime from all sessions that started after the migration
             result = self.db.fetch_one(
@@ -123,7 +212,9 @@ class MigrationTracker:
                 if isinstance(result, (list, tuple))
                 else result.get("total_uptime", 0)
             )
-            return int(total) if total else 0
+            total = int(total) if total else 0
+            total += self._current_session_contribution(applied_at)
+            return total
         except Exception as e:
             logger.error(f"Failed to calculate uptime: {e}")
             return 0
@@ -180,11 +271,30 @@ class MigrationTracker:
             logger.warning(f"Failed to parse metadata for migration {version}: {e}")
             return {}
 
+    def _latest_completed_applied_at(self) -> Optional[datetime]:
+        """Return the applied_at of the most recently completed migration."""
+        result = self.db.fetch_one(
+            "SELECT applied_at FROM migrations_history WHERE status = ? "
+            "ORDER BY id DESC LIMIT 1",
+            ("completed",),
+        )
+        if not result:
+            return None
+        raw = (
+            result[0] if isinstance(result, (list, tuple)) else result.get("applied_at")
+        )
+        return self._coerce_datetime(raw)
+
     def can_run_irreversible_migration(
         self, version: str, delay_hours: int = 168
     ) -> tuple[bool, str]:
         """
         Check if an irreversible migration can be run based on uptime delay.
+
+        The uptime gate is ALWAYS enforced for irreversible migrations. If the
+        migration declares depends_on, uptime is measured since its last
+        dependency; otherwise it is measured since the most recent completed
+        migration (a missing depends_on must not bypass the delay).
 
         Args:
             version: Migration version to check
@@ -197,7 +307,7 @@ class MigrationTracker:
         if not metadata.get("irreversible"):
             return True, "Migration is reversible"
 
-        # Check for emergency override
+        # Check for emergency override (single-use; consumed on success)
         override_token = os.environ.get("EMERGENCY_MIGRATION_OVERRIDE")
         if override_token:
             if self._validate_emergency_override(override_token):
@@ -205,29 +315,71 @@ class MigrationTracker:
             else:
                 return False, "Invalid emergency override token"
 
-        # Check dependencies
-        depends_on = metadata.get("depends_on", [])
+        # Check dependencies (ordering only - never a substitute for the gate)
+        depends_on = metadata.get("depends_on", []) or []
+        for dep in depends_on:
+            dep_status = self.get_migration_status(dep)
+            if not dep_status or dep_status.get("status") != "completed":
+                return False, f"Dependency {dep} not completed"
+
+        # Uptime-delay gate: unconditional for irreversible migrations.
         if depends_on:
-            for dep in depends_on:
-                dep_status = self.get_migration_status(dep)
-                if not dep_status or dep_status.get("status") != "completed":
-                    return False, f"Dependency {dep} not completed"
-
-            # Calculate uptime since the last dependency
-            last_dep = depends_on[-1]
-            uptime_seconds = self.get_total_uptime_since(last_dep)
-            required_seconds = delay_hours * 3600
-
-            if uptime_seconds < required_seconds:
-                remaining_hours = (required_seconds - uptime_seconds) / 3600
+            uptime_seconds = self.get_total_uptime_since(depends_on[-1])
+        else:
+            reference = self._latest_completed_applied_at()
+            if reference is None:
                 return (
                     False,
-                    f"Insufficient uptime. Required: {delay_hours}h, "
-                    f"Current: {uptime_seconds / 3600:.1f}h, "
-                    f"Remaining: {remaining_hours:.1f}h",
+                    "Irreversible migration requires completed migrations and "
+                    "recorded uptime; no completed migrations found",
                 )
+            try:
+                result = self.db.fetch_one(
+                    """
+                    SELECT COALESCE(SUM(uptime_seconds), 0) as total_uptime
+                    FROM migration_uptime
+                    WHERE start_time >= ?
+                    """,
+                    (reference,),
+                )
+                total = (
+                    result[0]
+                    if isinstance(result, (list, tuple))
+                    else result.get("total_uptime", 0)
+                )
+                uptime_seconds = int(total or 0)
+                uptime_seconds += self._current_session_contribution(reference)
+            except Exception as e:
+                logger.error(f"Failed to calculate uptime gate: {e}")
+                return False, "Could not evaluate uptime gate"
+
+        required_seconds = delay_hours * 3600
+        if uptime_seconds < required_seconds:
+            remaining_hours = (required_seconds - uptime_seconds) / 3600
+            return (
+                False,
+                f"Insufficient uptime. Required: {delay_hours}h, "
+                f"Current: {uptime_seconds / 3600:.1f}h, "
+                f"Remaining: {remaining_hours:.1f}h",
+            )
 
         return True, "All checks passed"
+
+    @staticmethod
+    def _hash_token(token: str) -> str:
+        """Hash an emergency override token for storage/lookup (SHA-256 hex)."""
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def try_consume_emergency_override_from_env(self) -> bool:
+        """Consume the EMERGENCY_MIGRATION_OVERRIDE env token, if present.
+
+        Returns True only when a valid, previously-unused token was present in
+        the environment AND successfully claimed (strictly single-use).
+        """
+        token = os.environ.get("EMERGENCY_MIGRATION_OVERRIDE")
+        if not token:
+            return False
+        return self._validate_emergency_override(token)
 
     def _validate_emergency_override(self, token: str) -> bool:
         """
@@ -235,45 +387,68 @@ class MigrationTracker:
 
         Tokens are strictly single-use: the first successful validation
         atomically marks the row as used so a leaked token can never be
-        replayed.
+        replayed. Tokens are persisted only as SHA-256 digests, so the claim
+        UPDATE matches on the digest - plaintext secrets are never compared,
+        and the fallback ownership check uses ``hmac.compare_digest``
+        (constant-time).
 
         Args:
             token: Token to validate
 
         Returns:
-            True if the token was valid, unexpired and successfully claimed
+            True if the token was valid and successfully claimed
         """
         try:
+            candidate = self._hash_token(token)
+            now = _utcnow()
             claim = f"validation:{uuid.uuid4().hex}"
+            # Atomic single-use claim: exactly one caller's UPDATE matches an
+            # unconsumed, unexpired token row (verified via rowcount).
             cursor = self.db.execute(
                 """
                 UPDATE emergency_override_tokens
                 SET used_at = ?, used_by = ?
                 WHERE token = ? AND used_at IS NULL AND expires_at > ?
                 """,
-                (_utcnow(), claim, token, _utcnow()),
+                (now, claim, candidate, now),
             )
 
             rowcount = getattr(cursor, "rowcount", None)
             if isinstance(rowcount, int) and rowcount >= 0:
                 if rowcount > 0:
                     logger.warning(
-                        "Emergency override token validated (single-use consumed)"
+                        "Emergency override token validated "
+                        "(single-use consumed; tokens stored hashed)"
                     )
                     return True
+                logger.warning("Emergency override token rejected (invalid/expired)")
                 return False
 
-            # Fallback for drivers without cursor.rowcount: verify our unique
-            # claim marker won the update.
+            # Fallback for drivers without cursor.rowcount: confirm our unique
+            # claim marker won the update (constant-time comparison).
             row = self.db.fetch_one(
                 "SELECT used_by FROM emergency_override_tokens WHERE token = ?",
-                (token,),
+                (candidate,),
             )
-            claimed_by_us = bool(row) and row.get("used_by") == claim
+            stored_claim = None
+            if row is not None:
+                stored_claim = (
+                    row.get("used_by")
+                    if hasattr(row, "get")
+                    else row[0]
+                    if isinstance(row, (list, tuple)) and row
+                    else None
+                )
+            claimed_by_us = isinstance(stored_claim, str) and hmac.compare_digest(
+                claim, stored_claim
+            )
             if claimed_by_us:
                 logger.warning(
-                    "Emergency override token validated (single-use consumed)"
+                    "Emergency override token validated "
+                    "(single-use consumed; tokens stored hashed)"
                 )
+            else:
+                logger.warning("Emergency override token rejected (invalid/expired)")
             return claimed_by_us
         except Exception as e:
             logger.error(f"Failed to validate emergency override: {e}")
@@ -285,6 +460,9 @@ class MigrationTracker:
         """
         Generate an emergency override token.
 
+        Only the SHA-256 hash of the token is persisted; the plaintext value is
+        returned exactly once to the caller.
+
         Args:
             reason: Reason for the override
             expires_minutes: Token expiration time in minutes
@@ -293,6 +471,7 @@ class MigrationTracker:
             Generated token
         """
         token = secrets.token_hex(32)
+        token_hash = self._hash_token(token)
         expires_at = _utcnow() + timedelta(minutes=expires_minutes)
 
         try:
@@ -301,7 +480,7 @@ class MigrationTracker:
                 INSERT INTO emergency_override_tokens (token, created_at, expires_at, reason)
                 VALUES (?, ?, ?, ?)
                 """,
-                (token, _utcnow(), expires_at, reason),
+                (token_hash, _utcnow(), expires_at, reason),
             )
             logger.info(f"Generated emergency override token (expires: {expires_at})")
             return token
@@ -314,19 +493,26 @@ class MigrationTracker:
         Mark an emergency override token as used.
 
         Args:
-            token: Token to mark as used
+            token: Token to mark as used (plaintext; matched against stored hash)
             used_by: User/admin who used the token
         """
         try:
-            self.db.execute(
+            cursor = self.db.execute(
                 """
                 UPDATE emergency_override_tokens
                 SET used_at = ?, used_by = ?
-                WHERE token = ?
+                WHERE token = ? AND used_at IS NULL
                 """,
-                (_utcnow(), used_by, token),
+                (_utcnow(), used_by, self._hash_token(token)),
             )
-            logger.warning(f"Emergency override token used by {used_by}")
+            rowcount = getattr(cursor, "rowcount", 0)
+            if rowcount == 0:
+                logger.warning(
+                    f"Emergency override use by {used_by} had no effect "
+                    "(unknown or already-consumed token)"
+                )
+            else:
+                logger.warning(f"Emergency override token used by {used_by}")
         except Exception as e:
             logger.error(f"Failed to mark emergency override as used: {e}")
 
@@ -626,113 +812,13 @@ class MigrationTracker:
         )
 
     def acquire_lock(self, timeout: int = 300) -> bool:
-        """
-        Acquire a migration lock to prevent concurrent migration runs.
-
-        Uses a database-level advisory lock (PostgreSQL) or a lock table (SQLite).
-
-        Args:
-            timeout: Maximum time to wait for lock in seconds
-
-        Returns:
-            True if lock was acquired, False otherwise
-
-        Raises:
-            Exception: If lock acquisition fails
-        """
-        self.ensure_table_exists()
-
-        lock_key = 12345  # Arbitrary but consistent key for migration lock
-        start_time = time.time()
-
-        while time.time() - start_time < timeout:
-            if self.db.type == "postgres":
-                # PostgreSQL advisory lock
-                result = self.db.fetch_one(
-                    "SELECT pg_try_advisory_lock(?)", (lock_key,)
-                )
-                if result and (
-                    result[0]
-                    if isinstance(result, (list, tuple))
-                    else result.get("pg_try_advisory_lock")
-                ):
-                    logger.info("Migration lock acquired (PostgreSQL advisory lock)")
-                    return True
-            else:
-                # SQLite: Use a lock table approach
-                try:
-                    self.db.execute(
-                        "INSERT INTO migration_lock (lock_key, locked_at, locked_by) VALUES (?, ?, ?)",
-                        (lock_key, _utcnow(), "system"),
-                    )
-                    logger.info("Migration lock acquired (SQLite lock table)")
-                    return True
-                except Exception:
-                    # Lock already held, check if it's stale
-                    lock_info = self.db.fetch_one(
-                        "SELECT locked_at FROM migration_lock WHERE lock_key = ?",
-                        (lock_key,),
-                    )
-                    if lock_info:
-                        locked_at = (
-                            lock_info[0]
-                            if isinstance(lock_info, (list, tuple))
-                            else lock_info.get("locked_at")
-                        )
-                        # If lock is older than 10 minutes, consider it stale and acquire it
-                        if isinstance(locked_at, datetime):
-                            age = (_utcnow() - locked_at).total_seconds()
-                        else:
-                            age = 0
-                        if age > 600:  # 10 minutes
-                            logger.warning(
-                                f"Found stale migration lock (age: {age}s), acquiring it"
-                            )
-                            self.db.execute(
-                                "UPDATE migration_lock SET locked_at = ?, locked_by = ? WHERE lock_key = ?",
-                                (_utcnow(), "system", lock_key),
-                            )
-                            return True
-
-            # Wait a bit before retrying
-            time.sleep(0.5)
-
-        logger.error(f"Failed to acquire migration lock after {timeout} seconds")
-        return False
+        """Acquire the migration lock. See ``locking.MigrationLockingMixin``."""
+        return super().acquire_lock(timeout)
 
     def release_lock(self):
-        """
-        Release the migration lock.
-
-        Raises:
-            Exception: If lock release fails
-        """
-        self.ensure_table_exists()
-
-        lock_key = 12345
-
-        if self.db.type == "postgres":
-            # PostgreSQL advisory lock
-            self.db.execute("SELECT pg_advisory_unlock(?)", (lock_key,))
-            logger.info("Migration lock released (PostgreSQL advisory lock)")
-        else:
-            # SQLite: Delete from lock table
-            self.db.execute(
-                "DELETE FROM migration_lock WHERE lock_key = ?", (lock_key,)
-            )
-            logger.info("Migration lock released (SQLite lock table)")
+        """Release the migration lock. See ``locking.MigrationLockingMixin``."""
+        return super().release_lock()
 
     def ensure_lock_table_exists(self):
-        """
-        Ensure the migration_lock table exists for SQLite.
-
-        This table is used for cross-process locking on SQLite.
-        """
-        if self.db.type == "sqlite":
-            self.db.execute("""
-                CREATE TABLE IF NOT EXISTS migration_lock (
-                    lock_key INTEGER PRIMARY KEY,
-                    locked_at TIMESTAMP NOT NULL,
-                    locked_by TEXT NOT NULL
-                )
-            """)
+        """Ensure the SQLite lock table exists."""
+        return super().ensure_lock_table_exists()

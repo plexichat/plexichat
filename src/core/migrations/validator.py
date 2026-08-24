@@ -13,6 +13,71 @@ from typing import List, Tuple, Optional, Iterable
 
 logger = logging.getLogger(__name__)
 
+# These versions were consolidated into migration 000. Their history records
+# remain valid evidence of an older installation and must not make integrity
+# checks fail merely because the retired source files are intentionally gone.
+# Canonical home is validator.py; manager.py re-exports the name.
+RETIRED_MIGRATIONS = {"002", "003", "004"}
+
+_METADATA_RE = re.compile(r"MIGRATION_METADATA:\s*\n(\{.*?\})", re.DOTALL)
+
+
+def migration_metadata_from_docstring(docstring: Optional[str]) -> dict:
+    """Parse the MIGRATION_METADATA JSON block from a migration docstring."""
+    if not docstring:
+        return {}
+    match = _METADATA_RE.search(docstring)
+    if not match:
+        return {}
+    try:
+        import json
+
+        metadata = json.loads(match.group(1))
+        return metadata if isinstance(metadata, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def migration_is_irreversible(module) -> bool:
+    """True when a loaded migration module declares itself irreversible."""
+    return bool(
+        migration_metadata_from_docstring(getattr(module, "__doc__", None)).get(
+            "irreversible"
+        )
+    )
+
+
+def warn_stale_pycache(migrations_dir: str) -> None:
+    """Warn about compiled artifacts of retired migrations.
+
+    Deleted migration sources can leave stale ``__pycache__`` entries behind;
+    they are never loaded by this loader (only explicit ``.py`` paths are),
+    but on upgraded databases their history rows still exist. Operators
+    should remove them to avoid confusion:
+    ``rm -rf src/core/migrations/migrations/__pycache__``
+    """
+    try:
+        cache_dir = os.path.join(migrations_dir, "__pycache__")
+        if not os.path.isdir(cache_dir):
+            return
+        stale = [
+            name
+            for name in os.listdir(cache_dir)
+            if name.endswith(".pyc")
+            and name.split("_", 1)[0][:3] in RETIRED_MIGRATIONS
+            and any(name.startswith(v + "_") for v in RETIRED_MIGRATIONS)
+        ]
+        if stale:
+            logger.warning(
+                "Stale compiled artifacts for retired migrations found in %s (%s). "
+                "They are ignored by the migration loader but should be cleaned "
+                "up: delete the __pycache__ directory.",
+                cache_dir,
+                ", ".join(sorted(stale)),
+            )
+    except Exception as e:  # pragma: no cover - diagnostics only
+        logger.debug(f"pycache staleness check failed: {e}")
+
 
 def validate_migration_order(
     pending_versions: List[str], applied_versions: List[str]
@@ -142,6 +207,8 @@ def get_migration_files(migrations_dir: str) -> List[Tuple[str, str]]:
         logger.error(f"Migrations directory not found: {migrations_dir}")
         raise NotADirectoryError(f"Migrations directory not found: {migrations_dir}")
 
+    warn_stale_pycache(migrations_dir)
+
     migrations = []
 
     for filename in os.listdir(migrations_dir):
@@ -212,7 +279,20 @@ def validate_migration_file(file_path: str) -> bool:
         raise ValueError(f"Migration file {file_path} missing required up function")
 
     if not hasattr(module, "down"):
-        raise ValueError(f"Migration file {file_path} missing required down function")
+        # Irreversible migrations are documented as down-less: they must NOT
+        # ship a fake/destructive no-op rollback. Requiring down() here would
+        # contradict that contract, so the documented metadata is validated
+        # instead.
+        if migration_is_irreversible(module):
+            logger.info(
+                f"Migration file {file_path} has no down() - allowed because "
+                "metadata marks it irreversible"
+            )
+        else:
+            raise ValueError(
+                f"Migration file {file_path} missing required down function "
+                "(declare MIGRATION_METADATA with irreversible=true to opt out)"
+            )
 
     return True
 

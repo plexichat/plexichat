@@ -7,11 +7,28 @@ while maintaining integrity, handling sequences, and coordinating with the
 migration system.
 """
 
+import os
 import time
 from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
 from src.core.database import Database
+
+
+def _db_identity(db: Database) -> tuple:
+    """Return a comparable identity tuple for a database instance."""
+    cfg = getattr(db, "config", None) or {}
+    db_type = getattr(db, "type", None) or str(cfg.get("type", "unknown"))
+    if db_type == "sqlite":
+        path = os.path.abspath(os.path.expanduser(str(cfg.get("path", ""))))
+        return ("sqlite", path)
+    pg = cfg.get("postgres", {}) or {}
+    return (
+        "postgres",
+        str(pg.get("host", "")),
+        str(pg.get("port", "")),
+        str(pg.get("dbname", "")),
+    )
 
 
 class DataCloner:
@@ -24,7 +41,19 @@ class DataCloner:
         Args:
             source_db: The database instance to copy data FROM
             target_db: The database instance to copy data TO
+
+        Raises:
+            ValueError: If target resolves to the SAME database as the source.
+                clone_table deletes target rows before copying; running that
+                against the live source would destroy production data.
         """
+        if _db_identity(source_db) == _db_identity(target_db):
+            raise ValueError(
+                "DataCloner refused: target_db resolves to the same database "
+                f"as source_db ({_db_identity(source_db)}). Check your config/"
+                "environment - cloning with an identical target would destroy "
+                "the source data."
+            )
         self.source = source_db
         self.target = target_db
         self.batch_size = 1000
@@ -128,42 +157,66 @@ class DataCloner:
             logger.info(f"Table {table_name} is empty, skipping data copy.")
             return {"rows": 0, "status": "empty"}
 
-        # 3. Truncate target table
-        # We use DELETE FROM instead of TRUNCATE for better cross-DB compatibility
-        # and to handle FK constraints if they exist (though we'll disable triggers)
-        self.target.execute(f"DELETE FROM {table_name}")
+        # 3. Truncate target table and copy data inside ONE transaction.
+        # Previously the DELETE ran uncommitted/unwound: a failure mid-copy
+        # left the target empty or partial with the old data already gone.
+        # We use DELETE FROM instead of TRUNCATE for better cross-DB
+        # compatibility and to handle FK constraints if they exist (though
+        # we'll disable triggers). The transaction is only committed after
+        # the copied row count is verified against the source count.
+        self.target.begin_transaction()
+        try:
+            self.target.execute(f"DELETE FROM {table_name}")
 
-        # 4. Copy data in batches
-        rows_copied = 0
-        placeholders = ", ".join(["?"] * len(column_names))
-        cols_str = ", ".join(
-            [
-                f'"{c}"' if self.target.type == "postgres" else f"`{c}`"
-                for c in column_names
-            ]
-        )
-        insert_sql = f"INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders})"
-
-        # Use a generator/offset approach for batching
-        offset = 0
-        while offset < total_rows:
-            batch = self.source.fetch_all(
-                f"SELECT * FROM {table_name} LIMIT ? OFFSET ?",
-                (self.batch_size, offset),
+            rows_copied = 0
+            placeholders = ", ".join(["?"] * len(column_names))
+            cols_str = ", ".join(
+                [
+                    f'"{c}"' if self.target.type == "postgres" else f"`{c}`"
+                    for c in column_names
+                ]
+            )
+            insert_sql = (
+                f"INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders})"
             )
 
-            if not batch:
-                break
+            # Use a generator/offset approach for batching
+            offset = 0
+            while offset < total_rows:
+                batch = self.source.fetch_all(
+                    f"SELECT * FROM {table_name} LIMIT ? OFFSET ?",
+                    (self.batch_size, offset),
+                )
 
-            # Convert rows to tuples in correct column order
-            values = []
-            for row in batch:
-                values.append(tuple(row[col] for col in column_names))
+                if not batch:
+                    break
 
-            self.target.execute_many(insert_sql, values)
-            rows_copied += len(batch)
-            offset += self.batch_size
-            logger.debug(f"  Progress: {rows_copied}/{total_rows}")
+                # Convert rows to tuples in correct column order
+                values = []
+                for row in batch:
+                    values.append(tuple(row[col] for col in column_names))
+
+                self.target.execute_many(insert_sql, values)
+                rows_copied += len(batch)
+                offset += self.batch_size
+                logger.debug(f"  Progress: {rows_copied}/{total_rows}")
+
+            # Verify BEFORE commit: never leave a partially-copied table
+            # committed while its prior contents are already deleted.
+            target_count_row = self.target.fetch_one(
+                f"SELECT COUNT(*) as count FROM {table_name}"
+            )
+            target_count = target_count_row["count"] if target_count_row else 0
+            if target_count != total_rows:
+                raise RuntimeError(
+                    f"Clone verification failed for {table_name}: source has "
+                    f"{total_rows} rows, target received {target_count}; "
+                    "transaction rolled back"
+                )
+        except Exception:
+            self.target.rollback()
+            logger.error(f"Cloning table {table_name} failed; target rolled back")
+            raise
 
         duration = time.time() - start_time
         logger.info(
