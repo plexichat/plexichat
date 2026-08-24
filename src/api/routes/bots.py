@@ -6,6 +6,7 @@ bot directory browsing, and OAuth authorized application management.
 """
 
 from typing import Optional, List, Annotated
+import logging
 from fastapi import APIRouter, HTTPException, Depends, status, Query
 
 from pydantic import BaseModel, BeforeValidator
@@ -25,6 +26,8 @@ from src.core.applications.exceptions import (
     PermissionDeniedError,
 )
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/bots", tags=["Bots"])
 
@@ -220,10 +223,11 @@ async def list_approved_bots(
             server_id=int(server_id), status="approved"
         )
         return [_approved_bot_to_response(bot) for bot in bots]
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to list approved bots")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -265,10 +269,11 @@ async def request_bot(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": str(e)}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to request bot")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -301,10 +306,11 @@ async def remove_approved_bot(
         )
     except InstallationNotFoundError:
         pass
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to remove approved bot")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -330,10 +336,11 @@ async def disable_bot(
 
     try:
         auth.disable_bot(owner_id=current_user.user_id, bot_id=int(bot_id))
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to disable bot")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Bot not found"}},
         )
 
 
@@ -356,10 +363,11 @@ async def enable_bot(
 
     try:
         auth.enable_bot(owner_id=current_user.user_id, bot_id=int(bot_id))
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to enable bot")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Bot not found"}},
         )
 
 
@@ -387,10 +395,11 @@ async def list_bot_requests(
             status=status_filter,
         )
         return [_bot_request_to_response(req) for req in requests]
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to list bot requests")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -456,10 +465,11 @@ async def approve_bot(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": 404, "message": str(e)}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to approve bot")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -500,10 +510,11 @@ async def review_bot_request(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": 404, "message": str(e)}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to review bot request")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -544,10 +555,11 @@ async def get_bot_profile(application_id: int):
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to get bot profile")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -605,10 +617,11 @@ async def update_bot_profile(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": {"code": 403, "message": str(e)}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to update bot profile")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -663,10 +676,11 @@ async def list_bot_directory(
             limit=limit,
             offset=offset,
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to list bot directory")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -700,10 +714,11 @@ async def list_authorized_apps(
             )
             for app in apps
         ]
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to list authorized apps")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -713,6 +728,7 @@ async def list_authorized_apps(
     summary="Revoke an authorized application",
     responses={
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Authorized app not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -726,8 +742,14 @@ async def revoke_authorized_app(
             token_id=token_id,
             user_id=current_user.user_id,
         )
-    except Exception as e:
+    except ApplicationNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": 404, "message": str(e)}},
+        )
+    except Exception:
+        logger.exception("Failed to revoke authorized app")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

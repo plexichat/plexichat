@@ -85,7 +85,9 @@ class TestOAuthFlows:
         )
 
         # Revoking a real token returns True and marks it revoked.
-        assert app_manager.revoke_token(token.access_token) is True
+        assert (
+            app_manager.revoke_token(token.access_token, user_id=test_user.id) is True
+        )
         row = app_manager._db.fetch_one(
             "SELECT revoked FROM app_oauth_tokens WHERE id = ?", (token.id,)
         )
@@ -94,6 +96,34 @@ class TestOAuthFlows:
 
         # Revoking garbage (unparseable token) returns False.
         assert app_manager.revoke_token("not-a-token") is False
+
+        # SECURITY: wrong secret or non-owner must NOT revoke.
+        other_user = app_manager.create_application(
+            owner_id=test_user.id, name="Revoke Other App"
+        )
+        code_b = flow.create_authorization_code(
+            application_id=other_user.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
+        secret_b, hash_b = generate_client_secret()
+        app_manager._db.execute(
+            "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
+            (hash_b, other_user.id),
+        )
+        token_b = flow.exchange_code(
+            other_user.id, secret_b, code_b.code, "https://example.com/callback"
+        )
+        assert (
+            app_manager.revoke_token(token_b.access_token + "x", user_id=test_user.id)
+            is False
+        )
+        assert app_manager.revoke_token(token_b.access_token, user_id=999999) is False
+        row_b = app_manager._db.fetch_one(
+            "SELECT revoked FROM app_oauth_tokens WHERE id = ?", (token_b.id,)
+        )
+        assert row_b["revoked"] == 0
 
     def test_invalid_client_error(self):
         """Test InvalidClientError has correct error field."""

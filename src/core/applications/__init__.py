@@ -421,9 +421,9 @@ def refresh_token(
     )
 
 
-def revoke_token(token: str) -> bool:
-    """Revoke an OAuth2 token."""
-    return _get_manager().revoke_token(token)
+def revoke_token(token: str, user_id: Optional[int] = None) -> bool:
+    """Revoke an OAuth2 token (secret hash + optional ownership verified)."""
+    return _get_manager().revoke_token(token, user_id)
 
 
 # === Command Operations ===

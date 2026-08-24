@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
@@ -443,21 +444,23 @@ class BotManagementMixin(ApplicationManagerProtocol):
         logger.info(f"Bot profile updated for application {application_id}")
 
         result = self.get_bot_profile(application_id)
-        assert result is not None
+        if result is None:
+            raise ApplicationNotFoundError("Bot profile not found after save")
         return result
 
     def get_user_authorized_apps(
         self, user_id: SnowflakeID
     ) -> List[UserAuthorizedApplication]:
+        now_ms = int(time.time() * 1000)
         rows = self._db.fetch_all(
             """SELECT t.id, t.application_id, t.scopes, t.created_at, t.expires_at,
                       t.last_used_at,
                       a.name as app_name, a.icon_url as app_icon
                FROM app_oauth_tokens t
                JOIN app_applications a ON t.application_id = a.id
-               WHERE t.user_id = ? AND t.revoked = 0
+               WHERE t.user_id = ? AND t.revoked = 0 AND t.expires_at > ?
                ORDER BY t.created_at DESC""",
-            (user_id,),
+            (user_id, now_ms),
         )
 
         return [

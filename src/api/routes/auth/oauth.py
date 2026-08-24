@@ -45,14 +45,15 @@ router = APIRouter()
 #   1. ``oauth.<provider>.allowed_redirect_uris`` config list.
 #   2. The default localhost dev origin (127.0.0.1:8000 / [::1]:8000)
 #      which is only accepted when ``oauth.allow_localhost_redirects``
-#      is true (default: true for dev builds).
+#      is explicitly enabled (opt-in; disabled by default so production
+#      deployments do not silently accept dev loopback redirects).
 def _provider_allowed_redirects(provider: str) -> List[str]:
     if not config_util:
         return []
     oauth_cfg = config_util.get("oauth", {}) or {}
     provider_cfg = oauth_cfg.get(provider, {}) or {}
     out = list(provider_cfg.get("allowed_redirect_uris", []) or [])
-    if oauth_cfg.get("allow_localhost_redirects", True):
+    if oauth_cfg.get("allow_localhost_redirects", False):
         out.extend(
             [
                 "http://127.0.0.1:8000",

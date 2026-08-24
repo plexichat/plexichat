@@ -24,6 +24,11 @@ class WebhookMixin(ApplicationManagerProtocol):
             raise WebhookSignatureError("Timestamp outside allowed window")
 
         secret = self._config.get("webhook_signature_secret", "")
+        # SECURITY: fail closed. Without a configured signing secret we
+        # cannot prove authenticity, so verification must fail.
+        if not secret:
+            raise WebhookSignatureError("Webhook signing secret is not configured")
+
         message = timestamp.encode() + body
 
         expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()

@@ -91,3 +91,31 @@ class TestWebhooks:
 
         with pytest.raises(WebhookSignatureError, match="Invalid webhook timestamp"):
             app_manager.verify_webhook_signature(body, "sig", "not_a_number")
+
+
+class TestWebhookSecretPersistence:
+    def test_unpersistable_secret_hard_fails_startup(self, monkeypatch):
+        """Persistence failure retries then HARD-FAILS instead of warn-continue.
+
+        Warn-and-continue would leave each process with a different in-memory
+        signing secret (divergent webhook verification per worker).
+        """
+        import utils.config as config
+
+        calls = {"n": 0}
+
+        def boom(key, value):
+            calls["n"] += 1
+            raise OSError("disk on fire")
+
+        monkeypatch.setattr(config, "get", lambda key, default=None: {})
+        monkeypatch.setattr(config, "set", boom)
+        monkeypatch.setattr(
+            "src.core.applications.manager.base.time.sleep", lambda s: None
+        )
+
+        from src.core.applications.manager.base import ApplicationManager
+
+        with pytest.raises(RuntimeError, match="webhook signing secret"):
+            ApplicationManager._resolve_webhook_secret({})
+        assert calls["n"] == 3

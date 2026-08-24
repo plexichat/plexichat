@@ -210,6 +210,16 @@ async def get_application(
         return _application_to_response(app)
     except HTTPException:
         raise
+    except ApplicationAccessDeniedError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "You do not own this application",
+                }
+            },
+        )
     except Exception:
         logger.exception("Unhandled error in applications API")
         raise HTTPException(

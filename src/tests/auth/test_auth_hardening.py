@@ -385,7 +385,15 @@ class TestCookieAndOauthHttp:
             oauth_mod.config_util,
             "get",
             lambda key, default=None: (
-                {"google": {"client_id": "test-client"}} if key == "oauth" else default
+                {
+                    "google": {"client_id": "test-client"},
+                    # Localhost redirects are opt-in by default now; this
+                    # test exercises PKCE/state binding, not the redirect
+                    # allow-list policy.
+                    "allow_localhost_redirects": True,
+                }
+                if key == "oauth"
+                else default
             ),
         )
 

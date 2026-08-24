@@ -1,4 +1,7 @@
-from typing import Dict, Any
+from typing import Any, Dict, Optional
+
+import secrets
+import time
 
 import utils.config as config
 import utils.logger as logger
@@ -81,9 +84,54 @@ class ApplicationManager(
                 "requests_per_minute": 50,
                 "burst_limit": 10,
             },
-            "webhook_signature_secret": "plexichat-webhook-secret",  # pragma: allowlist secret
+            # NOTE: no default webhook secret. See _resolve_webhook_secret.
             "webhook_signature_max_skew_seconds": 300,
         }
 
         app_config = config.get("applications", {})
-        return {**defaults, **app_config}
+        merged = {**defaults, **app_config}
+        merged["webhook_signature_secret"] = self._resolve_webhook_secret(app_config)
+        return merged
+
+    @staticmethod
+    def _resolve_webhook_secret(app_config: Dict[str, Any]) -> str:
+        """Return a per-installation webhook signing secret.
+
+        SECURITY: deployments must never share a static signing secret, so
+        a random secret is generated once and persisted to the config
+        store. The legacy hard-coded ``plexichat-webhook-secret`` value is
+        treated as unset and rotated automatically on first boot.
+
+        Persistence is retried with a short backoff; if it still fails the
+        startup HARD-FAILS. Continuing with an unpersisted secret would give
+        every process a different in-memory signing secret (divergent
+        verification results depending on which worker handles a webhook).
+        """
+        configured = app_config.get("webhook_signature_secret") or ""
+        legacy_default = "plexichat-webhook-secret"
+        if configured and configured != legacy_default:
+            return configured
+
+        generated = secrets.token_urlsafe(48)
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, 4):
+            try:
+                applications_cfg = dict(config.get("applications", {}) or {})
+                applications_cfg["webhook_signature_secret"] = generated
+                config.set("applications", applications_cfg)
+                logger.info("Generated new per-installation webhook signing secret")
+                return generated
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    f"Could not persist webhook signing secret to config "
+                    f"(attempt {attempt}/3): {exc}"
+                )
+                if attempt < 3:
+                    time.sleep(0.2 * attempt)
+        raise RuntimeError(
+            "Failed to persist the generated webhook signing secret after "
+            f"3 attempts: {last_exc}. Refusing to start: processes would run "
+            "with divergent in-memory secrets and webhook signature "
+            "verification would be inconsistent."
+        )
