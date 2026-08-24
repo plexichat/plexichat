@@ -14,7 +14,13 @@ from src.utils.encryption import (
     encrypt_data,
 )
 
-from ...models import Message, MessageType, Attachment, MessageStatusType
+from ...models import (
+    Message,
+    MessageType,
+    Attachment,
+    MessageStatusType,
+    ConversationType,
+)
 from ...exceptions import (
     ConversationAccessDeniedError,
     ConversationNotFoundError,
@@ -23,7 +29,7 @@ from ...exceptions import (
     ContentTooLongError,
     AttachmentLimitError,
 )
-from ..base import BaseService
+from ..base import BaseService, _get_relationships_module
 from .protocol import MessageServiceProtocol
 from .search_helpers import search_index_message
 
@@ -49,6 +55,8 @@ class SendMixin(BaseService, MessageServiceProtocol):
             raise ConversationAccessDeniedError(
                 "Not a participant in this conversation"
             )
+
+        self._enforce_dm_block_rules(conversation_id, user_id)
 
         user_settings = self._user_settings_svc.get_message_settings(user_id)
         max_length = user_settings.max_message_length or self._get_config(
@@ -301,6 +309,42 @@ class SendMixin(BaseService, MessageServiceProtocol):
             logger.debug(f"Failed to update recent messages cache: {e}")
 
         return msg
+
+    def _enforce_dm_block_rules(
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        """Reject sends into a DM whose participants block each other.
+
+        Keeps legacy DM channels (created before a block) from remaining
+        writable by either blocked party.
+        """
+        conv_row = self._conversation_repo.get_by_id(conversation_id)
+        if not conv_row or conv_row.get("deleted"):
+            return
+
+        conv_type = conv_row.get("conversation_type")
+        if isinstance(conv_type, str):
+            conv_type = conv_type.lower()
+        else:
+            conv_type = getattr(conv_type, "value", conv_type)
+
+        if conv_type != ConversationType.DM.value:
+            return
+
+        relationships = _get_relationships_module()
+        if relationships is None:
+            return
+
+        other_ids = [
+            pid
+            for pid in self._participant_svc.get_participant_ids(conversation_id)
+            if pid != user_id
+        ]
+        for other_id in other_ids:
+            if relationships.is_blocked_by_either(user_id, other_id):
+                raise ConversationAccessDeniedError(
+                    "Cannot send messages in this conversation"
+                )
 
     def _normalize_url(self, url: str) -> str:
         if not url:

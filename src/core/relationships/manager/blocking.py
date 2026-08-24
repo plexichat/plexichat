@@ -65,6 +65,14 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
         invalidate_blocked_ids = getattr(self.get_blocked_user_ids, "invalidate", None)
         if callable(invalidate_blocked_ids):
             invalidate_blocked_ids(self, blocker_id)
+        invalidate_all_blocked_ids = getattr(
+            self.get_all_blocked_ids, "invalidate", None
+        )
+        if callable(invalidate_all_blocked_ids):
+            # get_all_blocked_ids is bidirectional: both parties' cached sets
+            # change when a block is created.
+            invalidate_all_blocked_ids(self, blocker_id)
+            invalidate_all_blocked_ids(self, blocked_id)
         invalidate_friend_ids = getattr(self.get_friend_ids, "invalidate", None)
         if callable(invalidate_friend_ids):
             invalidate_friend_ids(self, blocker_id)
@@ -91,6 +99,13 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
         invalidate_blocked_ids = getattr(self.get_blocked_user_ids, "invalidate", None)
         if callable(invalidate_blocked_ids):
             invalidate_blocked_ids(self, blocker_id)
+        invalidate_all_blocked_ids = getattr(
+            self.get_all_blocked_ids, "invalidate", None
+        )
+        if callable(invalidate_all_blocked_ids):
+            # Bidirectional cache: both parties' sets change on unblock.
+            invalidate_all_blocked_ids(self, blocker_id)
+            invalidate_all_blocked_ids(self, blocked_id)
         self._invalidate_all_relationships_cache(blocker_id, blocked_id)
 
         logger.debug(f"User {blocker_id} unblocked user {blocked_id}")
@@ -123,8 +138,14 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
         )
         return [row["blocked_id"] for row in rows]
 
+    @cached(ttl=300, prefix="user_blocked_all")
     def get_all_blocked_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]:
-        """Get all user IDs that are either blocked by or blocking this user."""
+        """Get all user IDs that are either blocked by or blocking this user.
+
+        Cached (same TTL as :meth:`get_blocked_user_ids`): the DM event
+        fan-out path calls this per participant per event, so an uncached
+        query per participant dominated hot-path latency.
+        """
         rows = self._db.fetch_all(
             """SELECT blocked_id as user_id FROM rel_blocked WHERE blocker_id = ?
                UNION

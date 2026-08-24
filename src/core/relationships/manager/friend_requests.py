@@ -23,6 +23,10 @@ from .protocol import RelationshipMixinProtocol
 
 MAX_FRIEND_REQUEST_MESSAGE_LENGTH = 256
 
+# Minimum delay before the SAME sender may re-send to the SAME recipient
+# after a previous request was declined/cancelled (anti-harassment cooldown).
+FRIEND_REQUEST_RESEND_COOLDOWN_SECONDS = 60
+
 
 class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
     """Mixin providing friend request operations."""
@@ -68,12 +72,30 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             return self.accept_friend_request(sender_id, reverse["id"])
 
         def create_request() -> SnowflakeIDType:
+            now = self._get_timestamp()
+
+            # Cooldown: block instant re-request after a decline/cancel so a
+            # declined user cannot retry indefinitely without waiting.
+            recent = self._db.fetch_one(
+                """SELECT updated_at FROM rel_friend_requests
+                   WHERE sender_id = ? AND recipient_id = ?
+                   AND status IN ('declined', 'cancelled')
+                   ORDER BY updated_at DESC LIMIT 1""",
+                (sender_id, recipient_id),
+            )
+            if recent is not None:
+                last_updated = int(recent["updated_at"] or 0)
+                cooldown_ms = FRIEND_REQUEST_RESEND_COOLDOWN_SECONDS * 1000
+                if now - last_updated < cooldown_ms:
+                    raise RelationshipValidationError(
+                        "Please wait before sending another friend request to this user"
+                    )
+
             self._db.execute(
                 """DELETE FROM rel_friend_requests
                    WHERE sender_id = ? AND recipient_id = ? AND status != 'pending'""",
                 (sender_id, recipient_id),
             )
-            now = self._get_timestamp()
             request_id = self._generate_id()
             self._db.execute(
                 """INSERT INTO rel_friend_requests
@@ -130,10 +152,31 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
 
         def accept_request() -> None:
             now = self._get_timestamp()
-            self._db.execute(
-                "UPDATE rel_friend_requests SET status = 'accepted', updated_at = ? WHERE id = ?",
+
+            # Re-validate blocks INSIDE the transaction: a concurrent block
+            # (which declines pending requests both ways) must never be
+            # overridden into an active friendship by an in-flight accept.
+            if self._is_blocked(
+                row["sender_id"], row["recipient_id"]
+            ) or self._is_blocked(row["recipient_id"], row["sender_id"]):
+                raise UserBlockedError(
+                    "Cannot accept a friend request involving a block",
+                    blocked_by=row["sender_id"],
+                    blocked_user=row["recipient_id"],
+                )
+
+            # Conditional update guarded on status='pending' so a concurrent
+            # decline/cancel wins and the accept becomes a no-op.
+            cursor = self._db.execute(
+                """UPDATE rel_friend_requests SET status = 'accepted', updated_at = ?
+                   WHERE id = ? AND status = 'pending'""",
                 (now, request_id),
             )
+            if cursor.rowcount != 1:
+                raise FriendRequestNotFoundError(
+                    "Friend request not found or already processed"
+                )
+
             friend_id_1 = self._generate_id()
             friend_id_2 = self._generate_id()
             self._db.insert_or_ignore(
@@ -177,10 +220,15 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             )
 
         now = self._get_timestamp()
-        self._db.execute(
-            "UPDATE rel_friend_requests SET status = 'declined', updated_at = ? WHERE id = ?",
+        cursor = self._db.execute(
+            """UPDATE rel_friend_requests SET status = 'declined', updated_at = ?
+               WHERE id = ? AND status = 'pending'""",
             (now, request_id),
         )
+        if cursor.rowcount != 1:
+            raise FriendRequestNotFoundError(
+                "Friend request not found or already processed"
+            )
         self._invalidate_all_relationships_cache(row["sender_id"], row["recipient_id"])
 
         logger.debug(f"Friend request {request_id} declined")
@@ -206,10 +254,15 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             )
 
         now = self._get_timestamp()
-        self._db.execute(
-            "UPDATE rel_friend_requests SET status = 'cancelled', updated_at = ? WHERE id = ?",
+        cursor = self._db.execute(
+            """UPDATE rel_friend_requests SET status = 'cancelled', updated_at = ?
+               WHERE id = ? AND status = 'pending'""",
             (now, request_id),
         )
+        if cursor.rowcount != 1:
+            raise FriendRequestNotFoundError(
+                "Friend request not found or already processed"
+            )
         self._invalidate_all_relationships_cache(row["sender_id"], row["recipient_id"])
 
         logger.debug(f"Friend request {request_id} cancelled")

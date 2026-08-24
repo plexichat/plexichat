@@ -3,8 +3,9 @@ Friend request mixin - create / accept friend request route handlers.
 """
 
 import asyncio
+import time
 
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, status
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -25,6 +26,49 @@ from src.core.relationships.exceptions import (
 )
 from .base import RelationshipBaseProtocol
 import utils.logger as logger
+
+# Maximum friend requests a single user may send per rolling minute.
+FRIEND_REQUEST_RATE_LIMIT = 10
+
+
+def _check_friend_request_rate_limit(user_id: int) -> None:
+    """Throttle friend-request submission per user (best-effort).
+
+    Reuses the shared rate-limit manager used elsewhere (reports, feedback).
+    If it cannot be initialised we skip the check rather than blocking
+    legitimate requests.
+    """
+    try:
+        import src.core.ratelimit as ratelimit
+        from src.core.ratelimit.storage import MemoryStorage
+
+        if not ratelimit.is_setup():
+            ratelimit.setup(storage_backend=MemoryStorage(), enable_global_limit=False)
+        manager = ratelimit.get_manager()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request rate limit unavailable, skipping check: {e}")
+        return
+
+    now_seconds = int(time.time())
+    minute_window = now_seconds - (now_seconds % 60)
+    key = f"friend_requests:send:minute:{user_id}:{minute_window}"
+    try:
+        count = manager.increment_custom_usage(key, "count", 0, ttl=120)
+        if count >= FRIEND_REQUEST_RATE_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": {
+                        "code": 429,
+                        "message": "Too many friend requests sent. Please slow down.",
+                    }
+                },
+            )
+        manager.increment_custom_usage(key, "count", 1, ttl=120)
+    except HTTPException:
+        raise
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request rate limit increment failed: {e}")
 
 
 class FriendRequestMixin:
@@ -64,6 +108,8 @@ class FriendRequestMixin:
                     detail={"error": {"code": 400, "message": "Invalid user ID"}},
                 )
 
+            _check_friend_request_rate_limit(current_user.user_id)
+
             try:
                 request = relationships.send_friend_request(
                     sender_id=current_user.user_id,
@@ -80,10 +126,21 @@ class FriendRequestMixin:
                         }
                     },
                 )
-            except UserBlockedError as exc:
+            except UserBlockedError:
+                # Deliberately generic: the exact direction of a block must
+                # not be revealed to the sender (anti-harassment).
+                logger.debug(
+                    f"User {current_user.user_id} blocked from sending friend "
+                    f"request to {target_id}"
+                )
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": str(exc)}},
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Cannot send friend request to this user",
+                        }
+                    },
                 )
             except (FriendRequestExistsError, AlreadyFriendsError) as exc:
                 raise HTTPException(
@@ -187,6 +244,7 @@ class FriendRequestMixin:
                             "user_id": str(target_id),
                             "username": target_username,
                             "status": "pending_outgoing",
+                            "message": body.message,
                             "created_at": getattr(request, "created_at", None),
                         },
                     ),

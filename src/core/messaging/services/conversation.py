@@ -14,7 +14,7 @@ from ..exceptions import (
     ParticipantLimitError,
     InvalidContentError,
 )
-from .base import BaseService
+from .base import BaseService, _get_relationships_module
 from .participant import ParticipantService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
@@ -60,6 +60,18 @@ class ConversationService(BaseService):
 
         # Check recipient's DM settings
         recipient_settings = self._user_settings_svc.get_message_settings(recipient_id)
+
+        # Enforce relationship-based DM privacy rules (blocks, friends-only).
+        relationships = _get_relationships_module()
+        if relationships is not None:
+            if relationships.is_blocked_by_either(user_id, recipient_id):
+                raise ConversationAccessDeniedError("Recipient does not accept DMs")
+
+            if recipient_settings.allow_dms_from == "friends":
+                friend_ids = relationships.get_friend_ids(recipient_id)
+                if user_id not in {int(fid) for fid in (friend_ids or [])}:
+                    raise ConversationAccessDeniedError("Recipient does not accept DMs")
+
         if recipient_settings.allow_dms_from == "none":
             raise ConversationAccessDeniedError("Recipient does not accept DMs")
 

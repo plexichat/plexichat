@@ -8,6 +8,30 @@ import time
 from src.core.base import SnowflakeID
 from src.core.database.collections import CappedDict
 import utils.config as config
+import utils.logger as logger
+
+
+def _get_relationships_module():
+    """Return the initialized relationships module, else None.
+
+    Used by DM privacy checks (block enforcement / friends-only DMs).
+    Resolves ``src.core.relationships`` directly rather than through the
+    ``src.api`` service-locator registry so the check always consults the
+    manager bound to the caller's database. A lazy lookup keeps
+    ``core.messaging`` decoupled from ``core.relationships`` and preserves
+    behaviour for embedders that never set relationships up.
+    """
+    try:
+        from src.core import relationships
+
+        if (
+            getattr(relationships, "_setup_complete", False)
+            and getattr(relationships, "_manager", None) is not None
+        ):
+            return relationships
+    except Exception as e:
+        logger.debug(f"Relationships module unavailable for DM privacy checks: {e}")
+    return None
 
 
 class BaseService:
