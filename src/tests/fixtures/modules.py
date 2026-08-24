@@ -257,7 +257,7 @@ class ModuleRegistry:
             from src.core import polls
 
             self._reset_module(polls)
-            polls.setup(self._db, self.messaging)
+            polls.setup(self._db, self.messaging, auth_module=self.auth)
             self._cache["polls"] = polls._manager
         return self._cache["polls"]
 

@@ -31,6 +31,7 @@ from .exceptions import (
     MultipleVoteNotAllowedError,
     PermissionDeniedError,
     MessageNotFoundError,
+    PollConfigurationError,
 )
 
 
@@ -80,6 +81,23 @@ class PollManager(BaseManager):
         self._encrypt_polls = config.get("encryption.encrypt_polls", False)
 
         logger.info("Poll module initialized")
+
+    def _require_messaging(self):
+        """Fail closed when the messaging module is not wired.
+
+        Ownership and channel-access checks are enforced through the
+        messaging layer; running without it would silently skip both,
+        so a missing dependency is a configuration error instead of a
+        permissive fallback. Returns the messaging module so callers
+        keep a narrowed, non-Optional reference.
+        """
+        if not self._messaging:
+            raise PollConfigurationError(
+                "Polls module requires the messaging module to be wired "
+                "for message-existence and authorization checks; call "
+                "polls.setup(db, messaging_module=...) first"
+            )
+        return self._messaging
 
     def _load_config(self) -> Dict[str, Any]:
         """Load poll configuration."""
@@ -174,12 +192,12 @@ class PollManager(BaseManager):
             InvalidPollDurationError: Invalid duration
             MessageNotFoundError: Message not found
         """
-        if self._messaging:
-            msg = self._messaging.get_message(user_id, message_id)
-            if not msg:
-                raise MessageNotFoundError("Message not found")
-            if msg.author_id != user_id:
-                raise PermissionDeniedError("Can only create polls on own messages")
+        messaging = self._require_messaging()
+        msg = messaging.get_message(user_id, message_id)
+        if not msg:
+            raise MessageNotFoundError("Message not found")
+        if msg.author_id != user_id:
+            raise PermissionDeniedError("Can only create polls on own messages")
 
         question = self._validate_question(question)
 
@@ -277,11 +295,12 @@ class PollManager(BaseManager):
         if not row:
             return None
 
-        # Verify access to the message
-        if self._messaging:
-            msg = self._messaging.get_message(user_id, row["message_id"])
-            if not msg:
-                return None
+        # Verify access to the message (fail closed: without the messaging
+        # module there is no way to enforce channel membership).
+        messaging = self._require_messaging()
+        msg = messaging.get_message(user_id, row["message_id"])
+        if not msg:
+            return None
 
         poll = self._row_to_poll(row)
 
@@ -421,6 +440,8 @@ class PollManager(BaseManager):
 
         logger.debug(f"User {user_id} voted on poll {poll_id}")
 
+        self._emit_poll_update(poll, user_id, "vote")
+
         return self.get_results(poll_id, user_id)
 
     def change_vote(
@@ -512,6 +533,8 @@ class PollManager(BaseManager):
             raise
 
         logger.debug(f"User {user_id} changed vote on poll {poll_id}")
+
+        self._emit_poll_update(poll, user_id, "change")
 
         return self.get_results(poll_id, user_id)
 
@@ -610,6 +633,8 @@ class PollManager(BaseManager):
 
         logger.debug(f"Poll {poll_id} closed by user {user_id}")
 
+        self._emit_poll_update(poll, user_id, "close")
+
         result = self.get_poll(poll_id, user_id)
         if result is None:
             raise PollError("Failed to fetch poll after closing")
@@ -631,31 +656,51 @@ class PollManager(BaseManager):
 
         Returns True when at least one row was deleted.  Raises
         :class:`PollNotFoundError` if the poll itself does not exist so
-        callers can distinguish "user hadn't voted" from "no such poll".
+        callers can distinguish "user hadn't voted" from "no such poll",
+        and :class:`PollEndedError` once the poll has ended (consistent
+        with :meth:`vote` — recorded outcomes of closed polls must not
+        be altered after the fact).
         """
         poll = self.get_poll(poll_id, user_id)
         if not poll:
             raise PollNotFoundError("Poll not found")
 
-        cursor = self._db.execute(
-            "DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?",
-            (poll_id, user_id),
-        )
-        try:
-            deleted = cursor.rowcount
-        except Exception:
-            # Database drivers without rowcount support fall through to False
-            deleted = 0
-        try:
-            cursor.close()
-        except Exception:
-            pass
+        if poll.is_ended or (poll.ends_at and self._get_timestamp() >= poll.ends_at):
+            if not poll.is_ended:
+                self._end_poll(poll_id)
+            raise PollEndedError("Poll has ended")
 
-        # De-register the voter slot so the user can vote again on this poll.
-        self._db.execute(
-            "DELETE FROM poll_voters WHERE poll_id = ? AND user_id = ?",
-            (poll_id, user_id),
-        )
+        # Both deletes run in ONE transaction: a crash between them must
+        # never leave the user de-voted but still registered as a voter
+        # (which would block re-voting) or vice versa.
+        deleted = 0
+        try:
+            self._db.begin_transaction()
+            cursor = self._db.execute(
+                "DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?",
+                (poll_id, user_id),
+                auto_commit=False,
+            )
+            try:
+                deleted = cursor.rowcount
+            except Exception:
+                # Database drivers without rowcount support still delete.
+                deleted = 0
+            try:
+                cursor.close()
+            except Exception:
+                pass
+
+            # De-register the voter slot so the user can vote again on this poll.
+            self._db.execute(
+                "DELETE FROM poll_voters WHERE poll_id = ? AND user_id = ?",
+                (poll_id, user_id),
+                auto_commit=False,
+            )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
         logger.debug(
             "User %s vote(s) on poll %s cleared (%d row(s))",
@@ -663,6 +708,9 @@ class PollManager(BaseManager):
             poll_id,
             deleted,
         )
+
+        self._emit_poll_update(poll, user_id, "remove")
+
         return deleted > 0
 
     def get_voters(
@@ -792,6 +840,39 @@ class PollManager(BaseManager):
         except Exception:  # pragma: no cover -- defensive
             return False
 
+    def _emit_poll_update(
+        self,
+        poll: Poll,
+        actor_id: SnowflakeID,
+        action: str,
+    ) -> None:
+        """Broadcast a POLL_UPDATE gateway event for a poll mutation.
+
+        The payload intentionally carries NO vote counts: result
+        visibility is per-viewer (AFTER_VOTE / AFTER_END), so counts are
+        resolved by each client refetching ``GET /polls/{id}/results``
+        with its own credentials. Emission is best-effort and never
+        raises.
+        """
+        try:
+            channel_id = None
+            if self._messaging:
+                msg = self._messaging.get_message(int(actor_id), poll.message_id)
+                if msg is not None:
+                    channel_id = getattr(msg, "conversation_id", None)
+            from src.core.events.gateway_emit import emit_poll_update
+
+            emit_poll_update(
+                poll_id=int(poll.id),
+                message_id=int(poll.message_id),
+                action=action,
+                actor_id=int(actor_id),
+                is_ended=bool(poll.is_ended),
+                channel_id=int(channel_id) if channel_id else None,
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"Failed to emit POLL_UPDATE for poll {poll.id}: {e}")
+
     def _end_poll(self, poll_id: SnowflakeID):
         """Mark a poll as ended."""
         now = self._get_timestamp()
@@ -811,13 +892,34 @@ class PollManager(BaseManager):
         now = self._get_timestamp()
 
         rows = self._db.fetch_all(
-            "SELECT id FROM poll_polls WHERE ends_at IS NOT NULL AND ends_at <= ? AND ended_at IS NULL",
+            """SELECT id, message_id, created_by FROM poll_polls
+               WHERE ends_at IS NOT NULL AND ends_at <= ? AND ended_at IS NULL""",
             (now,),
         )
 
         count = 0
         for row in rows:
             self._end_poll(row["id"])
+            try:
+                channel_id = None
+                if self._messaging:
+                    msg = self._messaging.get_message(
+                        int(row["created_by"]), int(row["message_id"])
+                    )
+                    if msg is not None:
+                        channel_id = getattr(msg, "conversation_id", None)
+                from src.core.events.gateway_emit import emit_poll_update
+
+                emit_poll_update(
+                    poll_id=int(row["id"]),
+                    message_id=int(row["message_id"]),
+                    action="close",
+                    actor_id=int(row["created_by"]),
+                    is_ended=True,
+                    channel_id=int(channel_id) if channel_id else None,
+                )
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"POLL_UPDATE emission failed for expired poll: {e}")
             count += 1
 
         if count > 0:

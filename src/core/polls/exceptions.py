@@ -92,3 +92,9 @@ class MessageNotFoundError(PollError):
     """Message does not exist or is not accessible."""
 
     pass
+
+
+class PollConfigurationError(PollError):
+    """Poll module is misconfigured (required dependency not wired)."""
+
+    pass

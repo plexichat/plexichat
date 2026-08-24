@@ -110,6 +110,39 @@ def emit_message_reaction_remove_all(
     )
 
 
+# --------------------------------------------------------------------------
+# Polls
+# --------------------------------------------------------------------------
+def emit_poll_update(
+    poll_id: int,
+    message_id: int,
+    action: str,
+    actor_id: Optional[int] = None,
+    is_ended: Optional[bool] = None,
+    channel_id: Optional[int] = None,
+) -> None:
+    """Notify channel viewers that a poll changed (vote/change/remove/close).
+
+    The payload carries identifiers only — no vote counts — because
+    result visibility is per-viewer; clients refetch
+    ``GET /polls/{id}/results`` with their own credentials when the
+    event arrives.
+    """
+    _emit(
+        EventType.POLL_UPDATE,
+        {
+            "poll_id": str(poll_id),
+            "message_id": str(message_id),
+            "channel_id": str(channel_id) if channel_id is not None else None,
+            "action": action,
+            "actor_id": str(actor_id) if actor_id is not None else None,
+            "is_ended": is_ended,
+        },
+        channel_id=channel_id,
+        exclude_user_ids=[actor_id] if actor_id is not None else None,
+    )
+
+
 def emit_message_reaction_remove_emoji(
     channel_id: int,
     message_id: int,

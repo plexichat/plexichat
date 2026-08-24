@@ -125,6 +125,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         run_static_client_initial_install()
         await start_static_client_service()
 
+        # Periodic poll-expiry sweep so ``ended_at`` is persisted for
+        # expired polls even when nobody reads/votes on them (lazy
+        # ``is_ended`` alone lags the DB state that AFTER_END result
+        # visibility depends on). The interval is bounded below so a
+        # misconfigured value cannot become a busy loop.
+        from .poll_expiry import start_poll_expiry_sweep, stop_poll_expiry_sweep
+
+        poll_expiry_task = start_poll_expiry_sweep()
+
         # Periodic chunked-upload session sweep so uploads abandoned
         # mid-flight have their temp files reaped even when no request
         # ever revisits the session (TTL cleanup, bounded interval).
@@ -160,6 +169,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         try:
             yield
         finally:
+            await stop_poll_expiry_sweep(poll_expiry_task)
             await stop_media_maintenance_sweep(media_maintenance_task)
 
             # Stop the queue consumer and drain any queued events so

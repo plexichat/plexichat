@@ -36,6 +36,7 @@ from .exceptions import (
     MultipleVoteNotAllowedError,
     PermissionDeniedError,
     MessageNotFoundError,
+    PollConfigurationError,
 )
 
 __all__ = [
@@ -57,7 +58,9 @@ __all__ = [
     "MultipleVoteNotAllowedError",
     "PermissionDeniedError",
     "MessageNotFoundError",
+    "PollConfigurationError",
     "setup",
+    "is_setup",
     "create_poll",
     "get_poll",
     "vote",
@@ -72,20 +75,31 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, messaging_module=None):
+def setup(db, messaging_module=None, auth_module=None):
     """
     Initialize the polls module.
 
     Args:
         db: Database instance (must be connected)
         messaging_module: Optional messaging module for message access
+            and authorization checks (required at call time by
+            create_poll/get_poll — see PollConfigurationError)
+        auth_module: Optional auth module used to evaluate the
+            ``admin.polls.view_voters`` capability for voter rosters
     """
     global _manager, _setup_complete
 
     from .manager import PollManager
 
-    _manager = PollManager(db, messaging_module=messaging_module)
+    _manager = PollManager(
+        db, auth_module=auth_module, messaging_module=messaging_module
+    )
     _setup_complete = True
+
+
+def is_setup() -> bool:
+    """True once :func:`setup` has completed successfully."""
+    return _setup_complete and _manager is not None
 
 
 def _get_manager():

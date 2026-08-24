@@ -366,7 +366,10 @@ def initialize_modules(
         threads_list.append(threading.Thread(target=init_embeds, name="InitEmbeds"))
 
         def init_polls():
-            timed_init("polls", lambda: polls.setup(db, messaging))
+            timed_init(
+                "polls",
+                lambda: polls.setup(db, messaging, auth_module=auth),
+            )
             modules_store["polls"] = polls
 
         threads_list.append(threading.Thread(target=init_polls, name="InitPolls"))
