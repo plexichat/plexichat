@@ -19,12 +19,12 @@ class TestAddReaction:
         """Test adding a reaction successfully."""
         user1, user2, dm, msg, reaction_manager = users_with_dm_and_reaction
 
-        reaction = reaction_manager.add_reaction(user1.id, msg.id, "thumbsup")
+        reaction = reaction_manager.add_reaction(user1.id, msg.id, ":thumbsup:")
 
         assert reaction is not None
         assert reaction.message_id == msg.id
         assert reaction.user_id == user1.id
-        assert reaction.emoji == "thumbsup"
+        assert reaction.emoji == ":thumbsup:"
         assert reaction.is_custom is False
         assert reaction.created_at > 0
 
@@ -32,8 +32,8 @@ class TestAddReaction:
         """Test another user can add same reaction."""
         user1, user2, dm, msg, reaction_manager = users_with_dm_and_reaction
 
-        reaction_manager.add_reaction(user1.id, msg.id, "heart")
-        reaction2 = reaction_manager.add_reaction(user2.id, msg.id, "heart")
+        reaction_manager.add_reaction(user1.id, msg.id, ":heart:")
+        reaction2 = reaction_manager.add_reaction(user2.id, msg.id, ":heart:")
 
         assert reaction2 is not None
         assert reaction2.user_id == user2.id
@@ -42,11 +42,11 @@ class TestAddReaction:
         """Test user can add multiple different reactions."""
         user1, user2, dm, msg, reaction_manager = users_with_dm_and_reaction
 
-        r1 = reaction_manager.add_reaction(user1.id, msg.id, "smile")
-        r2 = reaction_manager.add_reaction(user1.id, msg.id, "laugh")
+        r1 = reaction_manager.add_reaction(user1.id, msg.id, ":smile:")
+        r2 = reaction_manager.add_reaction(user1.id, msg.id, ":laugh:")
 
-        assert r1.emoji == "smile"
-        assert r2.emoji == "laugh"
+        assert r1.emoji == ":smile:"
+        assert r2.emoji == ":laugh:"
 
     def test_add_duplicate_reaction_fails(self, fresh_users_with_dm_and_relationships):
         """Test adding same reaction twice fails."""
@@ -54,17 +54,17 @@ class TestAddReaction:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "star")
+        reaction_manager.add_reaction(user1.id, msg.id, ":star:")
 
         with pytest.raises(ReactionExistsError):
-            reaction_manager.add_reaction(user1.id, msg.id, "star")
+            reaction_manager.add_reaction(user1.id, msg.id, ":star:")
 
     def test_add_reaction_nonexistent_message(self, users_with_dm_and_reaction):
         """Test adding reaction to nonexistent message fails."""
         user1, user2, dm, msg, reaction_manager = users_with_dm_and_reaction
 
         with pytest.raises(MessageNotFoundError):
-            reaction_manager.add_reaction(user1.id, 999999999, "thumbsup")
+            reaction_manager.add_reaction(user1.id, 999999999, ":thumbsup:")
 
     def test_add_reaction_not_participant(
         self, auth_manager, messaging_manager, reaction_manager
@@ -92,7 +92,7 @@ class TestAddReaction:
         msg = messaging_manager.send_message(user1.id, dm.id, "Private message")
 
         with pytest.raises(MessageNotFoundError):
-            reaction_manager.add_reaction(outsider.id, msg.id, "thumbsup")
+            reaction_manager.add_reaction(outsider.id, msg.id, ":thumbsup:")
 
 
 class TestRemoveReaction:
@@ -104,14 +104,14 @@ class TestRemoveReaction:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "wave")
-        result = reaction_manager.remove_reaction(user1.id, msg.id, "wave")
+        reaction_manager.add_reaction(user1.id, msg.id, ":wave:")
+        result = reaction_manager.remove_reaction(user1.id, msg.id, ":wave:")
 
         assert result is True
 
         user_reactions = reaction_manager.get_user_reactions(user1.id, msg.id)
         emojis = [r.emoji for r in user_reactions]
-        assert "wave" not in emojis
+        assert ":wave:" not in emojis
 
     def test_remove_nonexistent_reaction_fails(
         self, fresh_users_with_dm_and_relationships
@@ -122,7 +122,7 @@ class TestRemoveReaction:
         )
 
         with pytest.raises(ReactionNotFoundError):
-            reaction_manager.remove_reaction(user1.id, msg.id, "nonexistent")
+            reaction_manager.remove_reaction(user1.id, msg.id, ":nonexistent:")
 
     def test_remove_other_users_reaction_fails(
         self, fresh_users_with_dm_and_relationships
@@ -132,17 +132,17 @@ class TestRemoveReaction:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "fire")
+        reaction_manager.add_reaction(user1.id, msg.id, ":fire:")
 
         with pytest.raises(PermissionDeniedError):
-            reaction_manager.remove_reaction(user2.id, msg.id, "fire")
+            reaction_manager.remove_reaction(user2.id, msg.id, ":fire:")
 
     def test_remove_reaction_nonexistent_message(self, users_with_dm_and_reaction):
         """Test removing reaction from nonexistent message fails."""
         user1, user2, dm, msg, reaction_manager = users_with_dm_and_reaction
 
         with pytest.raises(MessageNotFoundError):
-            reaction_manager.remove_reaction(user1.id, 999999999, "thumbsup")
+            reaction_manager.remove_reaction(user1.id, 999999999, ":thumbsup:")
 
 
 class TestToggleReaction:
@@ -154,12 +154,12 @@ class TestToggleReaction:
             fresh_users_with_dm_and_relationships
         )
 
-        r1 = reaction_manager.add_reaction(user1.id, msg.id, "cycle")
+        r1 = reaction_manager.add_reaction(user1.id, msg.id, ":cycle:")
         assert r1 is not None
 
-        reaction_manager.remove_reaction(user1.id, msg.id, "cycle")
+        reaction_manager.remove_reaction(user1.id, msg.id, ":cycle:")
 
-        r2 = reaction_manager.add_reaction(user1.id, msg.id, "cycle")
+        r2 = reaction_manager.add_reaction(user1.id, msg.id, ":cycle:")
         assert r2 is not None
         assert r2.id != r1.id
 
@@ -169,21 +169,21 @@ class TestToggleReaction:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "multi")
-        reaction_manager.add_reaction(user2.id, msg.id, "multi")
+        reaction_manager.add_reaction(user1.id, msg.id, ":multi:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":multi:")
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
         multi_reaction = next(
-            (r for r in msg_reactions.reactions if r.emoji == "multi"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":multi:"), None
         )
         assert multi_reaction is not None
         assert multi_reaction.count == 2
 
-        reaction_manager.remove_reaction(user1.id, msg.id, "multi")
+        reaction_manager.remove_reaction(user1.id, msg.id, ":multi:")
 
         msg_reactions = reaction_manager.get_reactions(user2.id, msg.id)
         multi_reaction = next(
-            (r for r in msg_reactions.reactions if r.emoji == "multi"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":multi:"), None
         )
         assert multi_reaction is not None
         assert multi_reaction.count == 1

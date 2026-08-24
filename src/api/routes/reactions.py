@@ -17,10 +17,45 @@ import utils.logger as logger
 router = APIRouter(tags=["Reactions"])
 
 
+def _validate_message_in_channel(reactions, mid: int, cid: int) -> int:
+    """Verify the message actually lives in the URL's channel.
+
+    Prevents writing a reaction via one channel while broadcasting an event
+    that claims another (attacker-controlled) channel id. Returns the real
+    channel id used for events.
+    """
+    try:
+        context = reactions.resolve_message_channel(mid)
+    except Exception:
+        context = None
+
+    if not context:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Message not found"}},
+        )
+
+    real_channel_id = context.get("channel_id")
+    if real_channel_id is None or str(real_channel_id) != str(cid):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Message not found"}},
+        )
+    return int(real_channel_id)
+
+
 async def _dispatch_reaction_event(
-    event_type: str, user_id: int, message_id: int, channel_id: int, emoji: str
-):
-    """Helper to dispatch reaction events via WebSocket."""
+    event_type: str,
+    user_id: int,
+    message_id: int,
+    channel_id: int,
+    emoji: str,
+) -> None:
+    """Helper to dispatch reaction events via WebSocket.
+
+    The acting user is excluded from the fan-out: REST callers already apply
+    optimistic updates locally and must not receive an echo (double-count).
+    """
     try:
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
         from src.core.events.models import Event
@@ -46,12 +81,18 @@ async def _dispatch_reaction_event(
         if not participant_ids:
             return
 
-        # Create and dispatch the event
-        evt_type = (
-            EventType.MESSAGE_REACTION_ADD
-            if event_type == "add"
-            else EventType.MESSAGE_REACTION_REMOVE
-        )
+        # Exclude the acting user so their optimistic update is not doubled.
+        recipient_ids = [pid for pid in participant_ids if pid != user_id]
+
+        if not recipient_ids:
+            return
+
+        evt_type = {
+            "add": EventType.MESSAGE_REACTION_ADD,
+            "remove": EventType.MESSAGE_REACTION_REMOVE,
+            "remove_emoji": EventType.MESSAGE_REACTION_REMOVE_EMOJI,
+        }[event_type]
+
         event = Event(
             event_type=evt_type,
             data={
@@ -61,7 +102,7 @@ async def _dispatch_reaction_event(
                 "emoji": emoji,
             },
         )
-        await dispatcher.dispatch_event(event, participant_ids)
+        await dispatcher.dispatch_event(event, recipient_ids)
 
     except Exception as e:
         logger.debug(f"Failed to dispatch reaction event for message {message_id}: {e}")
@@ -142,11 +183,15 @@ async def add_reaction(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
+        # Validate the message actually belongs to this channel BEFORE any
+        # write or event emission (never trust the URL channel id).
+        real_cid = _validate_message_in_channel(reactions, mid, cid)
+
         # Check for server timeout
         servers_mod = api.get_servers()
         if servers_mod:
             try:
-                channel = servers_mod.get_channel(cid, current_user.user_id)
+                channel = servers_mod.get_channel(real_cid, current_user.user_id)
                 if channel:
                     server_id = getattr(channel, "server_id", None)
                     if server_id and hasattr(servers_mod, "is_timed_out"):
@@ -175,10 +220,10 @@ async def add_reaction(
 
             reactions.add_reaction(current_user.user_id, mid, decoded_emoji)
 
-            # Fire-and-forget WebSocket event dispatch
+            # Fire-and-forget WebSocket event dispatch (real channel id)
             asyncio.create_task(
                 _dispatch_reaction_event(
-                    "add", current_user.user_id, mid, cid, decoded_emoji
+                    "add", current_user.user_id, mid, real_cid, decoded_emoji
                 )
             )
 
@@ -238,6 +283,133 @@ async def add_reaction(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
+
+
+@router.delete(
+    "/channels/{channel_id}/messages/{message_id}/reactions/{emoji:path}/all",
+    response_model=SuccessResponse,
+    summary="Remove all reactions of one emoji (moderator)",
+    responses={
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid message ID or channel ID or emoji",
+        },
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {
+            "model": ErrorResponse,
+            "description": "Not authorized to remove reactions",
+        },
+        404: {"model": ErrorResponse, "description": "Message not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Reactions module not available"},
+    },
+)
+async def clear_reactions_for_emoji(
+    channel_id: str,
+    message_id: str,
+    emoji: str,
+    request: Request,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SuccessResponse:
+    """
+    Moderator action: remove every reaction of a specific emoji from a message.
+
+    Requires manage-messages permission. Emits MESSAGE_REACTION_REMOVE_EMOJI
+    to connected clients so reaction pills update live without a refresh.
+
+    NOTE: this route MUST be declared BEFORE the single-user
+    ``DELETE .../reactions/{emoji:path}`` route. Starlette matches routes in
+    registration order and the ``path`` convertor is greedy, so a later
+    declaration would swallow ``.../reactions/<emoji>/all`` as emoji
+    "<emoji>/all" and the moderator wipe would be unreachable.
+    """
+    rl_result = ratelimit.check_rate_limit(
+        user_id=current_user.user_id,
+        route="DELETE /reactions/emoji/all",
+        is_internal=getattr(request.state, "is_internal", False),
+    )
+    if not rl_result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": f"Rate limited. Try again in {rl_result.retry_after}s",
+                }
+            },
+            headers={"Retry-After": str(rl_result.retry_after)},
+        )
+
+    reactions = api.get_reactions()
+    if not reactions:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {"code": 503, "message": "Reactions module not available"}
+            },
+        )
+
+    try:
+        mid = int(message_id)
+        cid = int(channel_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid message or channel ID"}},
+        )
+
+    # Validate the message actually belongs to this channel BEFORE any write
+    # or event emission.
+    real_cid = _validate_message_in_channel(reactions, mid, cid)
+
+    try:
+        import urllib.parse
+
+        decoded_emoji = urllib.parse.unquote(emoji)
+
+        removed = reactions.remove_all_reactions_for_emoji(
+            current_user.user_id, mid, decoded_emoji
+        )
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Message not found"}},
+            )
+        if "Forbidden" in exc_name or "Permission" in exc_name:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Not authorized to remove these reactions",
+                    }
+                },
+            )
+        if "Invalid" in exc_name or "Limit" in exc_name:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": str(e)}},
+            )
+        logger.error(
+            f"Failed to remove emoji reactions for message {mid}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {"code": 500, "message": "Failed to remove emoji reactions"}
+            },
+        )
+
+    # Fire-and-forget WebSocket event dispatch so clients drop stale pills.
+    asyncio.create_task(
+        _dispatch_reaction_event(
+            "remove_emoji", current_user.user_id, mid, real_cid, decoded_emoji
+        )
+    )
+
+    return SuccessResponse(success=True, message=f"Removed {removed} reactions")
 
 
 @router.delete(
@@ -319,6 +491,10 @@ async def remove_reaction(
             )
 
         try:
+            # Validate the message actually belongs to this channel BEFORE any
+            # write or event emission.
+            real_cid = _validate_message_in_channel(reactions, mid, cid)
+
             # URL decode the emoji if needed
             import urllib.parse
 
@@ -326,10 +502,10 @@ async def remove_reaction(
 
             reactions.remove_reaction(current_user.user_id, mid, decoded_emoji)
 
-            # Fire-and-forget WebSocket event dispatch
+            # Fire-and-forget WebSocket event dispatch (real channel id)
             asyncio.create_task(
                 _dispatch_reaction_event(
-                    "remove", current_user.user_id, mid, cid, decoded_emoji
+                    "remove", current_user.user_id, mid, real_cid, decoded_emoji
                 )
             )
 
@@ -442,10 +618,19 @@ async def clear_reactions(
             detail={"error": {"code": 400, "message": "Invalid message or channel ID"}},
         )
 
+    # Validate the message actually belongs to this channel BEFORE any write
+    # or event emission.
+    real_cid = _validate_message_in_channel(reactions, mid, cid)
+
     try:
         reactions.remove_all_reactions(current_user.user_id, mid)
     except Exception as e:
         exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Message not found"}},
+            )
         if "Forbidden" in exc_name or "Permission" in exc_name:
             raise HTTPException(
                 status_code=403,
@@ -465,7 +650,7 @@ async def clear_reactions(
     from src.core.events.gateway_emit import emit_message_reaction_remove_all
 
     emit_message_reaction_remove_all(
-        channel_id=cid,
+        channel_id=real_cid,
         message_id=mid,
         actor_id=current_user.user_id,
     )

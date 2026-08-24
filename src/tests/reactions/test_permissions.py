@@ -17,10 +17,10 @@ class TestServerPermissions:
             users_with_server
         )
 
-        reaction = reaction_manager.add_reaction(owner.id, msg.id, "owner_react")
+        reaction = reaction_manager.add_reaction(owner.id, msg.id, ":owner_react:")
 
         assert reaction is not None
-        assert reaction.emoji == "owner_react"
+        assert reaction.emoji == ":owner_react:"
 
     def test_member_can_add_reaction(self, users_with_server):
         """Test member with permission can add reactions."""
@@ -28,10 +28,10 @@ class TestServerPermissions:
             users_with_server
         )
 
-        reaction = reaction_manager.add_reaction(member.id, msg.id, "member_react")
+        reaction = reaction_manager.add_reaction(member.id, msg.id, ":member_react:")
 
         assert reaction is not None
-        assert reaction.emoji == "member_react"
+        assert reaction.emoji == ":member_react:"
 
     def test_member_without_permission_cannot_add(
         self, auth_manager, server_manager, test_db, reaction_manager, monkeypatch
@@ -99,9 +99,9 @@ class TestModeratorActions:
             users_with_server
         )
 
-        reaction_manager.add_reaction(owner.id, msg.id, "mod_test1")
-        reaction_manager.add_reaction(member.id, msg.id, "mod_test1")
-        reaction_manager.add_reaction(member.id, msg.id, "mod_test2")
+        reaction_manager.add_reaction(owner.id, msg.id, ":mod_test1:")
+        reaction_manager.add_reaction(member.id, msg.id, ":mod_test1:")
+        reaction_manager.add_reaction(member.id, msg.id, ":mod_test2:")
 
         count = reaction_manager.remove_all_reactions(owner.id, msg.id)
 
@@ -116,20 +116,20 @@ class TestModeratorActions:
             users_with_server
         )
 
-        reaction_manager.add_reaction(owner.id, msg.id, "emoji_mod1")
-        reaction_manager.add_reaction(member.id, msg.id, "emoji_mod1")
-        reaction_manager.add_reaction(owner.id, msg.id, "emoji_mod2")
+        reaction_manager.add_reaction(owner.id, msg.id, ":emoji_mod1:")
+        reaction_manager.add_reaction(member.id, msg.id, ":emoji_mod1:")
+        reaction_manager.add_reaction(owner.id, msg.id, ":emoji_mod2:")
 
         count = reaction_manager.remove_all_reactions_for_emoji(
-            owner.id, msg.id, "emoji_mod1"
+            owner.id, msg.id, ":emoji_mod1:"
         )
 
         assert count == 2
 
         msg_reactions = reaction_manager.get_reactions(owner.id, msg.id)
         emojis = [r.emoji for r in msg_reactions.reactions]
-        assert "emoji_mod1" not in emojis
-        assert "emoji_mod2" in emojis
+        assert ":emoji_mod1:" not in emojis
+        assert ":emoji_mod2:" in emojis
 
     def test_member_cannot_remove_all_reactions(self, users_with_server):
         """Test regular member cannot remove all reactions."""
@@ -137,7 +137,7 @@ class TestModeratorActions:
             users_with_server
         )
 
-        reaction_manager.add_reaction(owner.id, msg.id, "no_mod")
+        reaction_manager.add_reaction(owner.id, msg.id, ":no_mod:")
 
         with pytest.raises(PermissionDeniedError):
             reaction_manager.remove_all_reactions(member.id, msg.id)
@@ -148,11 +148,11 @@ class TestModeratorActions:
             users_with_server
         )
 
-        reaction_manager.add_reaction(owner.id, msg.id, "no_emoji_mod")
+        reaction_manager.add_reaction(owner.id, msg.id, ":no_emoji_mod:")
 
         with pytest.raises(PermissionDeniedError):
             reaction_manager.remove_all_reactions_for_emoji(
-                member.id, msg.id, "no_emoji_mod"
+                member.id, msg.id, ":no_emoji_mod:"
             )
 
     def test_admin_can_remove_all_reactions(
@@ -201,7 +201,7 @@ class TestModeratorActions:
             (owner.id,),
         )
 
-        reaction_manager.add_reaction(owner.id, 1, "admin_remove")
+        reaction_manager.add_reaction(owner.id, 1, ":admin_remove:")
 
         count = reaction_manager.remove_all_reactions(admin.id, 1)
 
@@ -217,8 +217,8 @@ class TestGroupConversationPermissions:
             group_with_message
         )
 
-        reaction_manager.add_reaction(member1.id, msg.id, "grp_mod1")
-        reaction_manager.add_reaction(member2.id, msg.id, "grp_mod1")
+        reaction_manager.add_reaction(member1.id, msg.id, ":grp_mod1:")
+        reaction_manager.add_reaction(member2.id, msg.id, ":grp_mod1:")
 
         count = reaction_manager.remove_all_reactions(owner.id, msg.id)
 
@@ -230,7 +230,7 @@ class TestGroupConversationPermissions:
             group_with_message
         )
 
-        reaction_manager.add_reaction(owner.id, msg.id, "grp_no_mod")
+        reaction_manager.add_reaction(owner.id, msg.id, ":grp_no_mod:")
 
         with pytest.raises(PermissionDeniedError):
             reaction_manager.remove_all_reactions(member1.id, msg.id)
@@ -245,7 +245,7 @@ class TestGroupConversationPermissions:
             owner.id, group.id, member1.id, messaging_manager.ParticipantRole.ADMIN
         )
 
-        reaction_manager.add_reaction(member2.id, msg.id, "grp_admin_mod")
+        reaction_manager.add_reaction(member2.id, msg.id, ":grp_admin_mod:")
 
         count = reaction_manager.remove_all_reactions(member1.id, msg.id)
 

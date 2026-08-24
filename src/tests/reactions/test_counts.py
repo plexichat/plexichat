@@ -26,12 +26,12 @@ class TestReactionCounts:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "single")
+        reaction_manager.add_reaction(user1.id, msg.id, ":single:")
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
 
         assert len(msg_reactions.reactions) == 1
-        assert msg_reactions.reactions[0].emoji == "single"
+        assert msg_reactions.reactions[0].emoji == ":single:"
         assert msg_reactions.reactions[0].count == 1
         assert msg_reactions.reactions[0].me is True
         assert msg_reactions.total_count == 1
@@ -44,13 +44,13 @@ class TestReactionCounts:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "popular")
-        reaction_manager.add_reaction(user2.id, msg.id, "popular")
+        reaction_manager.add_reaction(user1.id, msg.id, ":popular:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":popular:")
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
 
         popular = next(
-            (r for r in msg_reactions.reactions if r.emoji == "popular"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":popular:"), None
         )
         assert popular is not None
         assert popular.count == 2
@@ -58,7 +58,7 @@ class TestReactionCounts:
 
         msg_reactions_u2 = reaction_manager.get_reactions(user2.id, msg.id)
         popular_u2 = next(
-            (r for r in msg_reactions_u2.reactions if r.emoji == "popular"), None
+            (r for r in msg_reactions_u2.reactions if r.emoji == ":popular:"), None
         )
         assert popular_u2 is not None
         assert popular_u2.me is True
@@ -69,9 +69,9 @@ class TestReactionCounts:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "emoji_a")
-        reaction_manager.add_reaction(user1.id, msg.id, "emoji_b")
-        reaction_manager.add_reaction(user2.id, msg.id, "emoji_a")
+        reaction_manager.add_reaction(user1.id, msg.id, ":emoji_a:")
+        reaction_manager.add_reaction(user1.id, msg.id, ":emoji_b:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":emoji_a:")
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
 
@@ -79,10 +79,10 @@ class TestReactionCounts:
         assert msg_reactions.total_count == 3
 
         emoji_a = next(
-            (r for r in msg_reactions.reactions if r.emoji == "emoji_a"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":emoji_a:"), None
         )
         emoji_b = next(
-            (r for r in msg_reactions.reactions if r.emoji == "emoji_b"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":emoji_b:"), None
         )
 
         assert emoji_a is not None
@@ -98,11 +98,13 @@ class TestReactionCounts:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "not_me")
+        reaction_manager.add_reaction(user1.id, msg.id, ":not_me:")
 
         msg_reactions = reaction_manager.get_reactions(user2.id, msg.id)
 
-        not_me = next((r for r in msg_reactions.reactions if r.emoji == "not_me"), None)
+        not_me = next(
+            (r for r in msg_reactions.reactions if r.emoji == ":not_me:"), None
+        )
         assert not_me is not None
         assert not_me.me is False
 
@@ -114,14 +116,14 @@ class TestReactionCounts:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "first")
-        reaction_manager.add_reaction(user1.id, msg.id, "second")
-        reaction_manager.add_reaction(user1.id, msg.id, "third")
+        reaction_manager.add_reaction(user1.id, msg.id, ":first:")
+        reaction_manager.add_reaction(user1.id, msg.id, ":second:")
+        reaction_manager.add_reaction(user1.id, msg.id, ":third:")
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
 
         emojis = [r.emoji for r in msg_reactions.reactions]
-        assert emojis == ["first", "second", "third"]
+        assert emojis == [":first:", ":second:", ":third:"]
 
 
 class TestReactionUsers:
@@ -133,7 +135,7 @@ class TestReactionUsers:
             fresh_users_with_dm_and_relationships
         )
 
-        users = reaction_manager.get_reaction_users(user1.id, msg.id, "nonexistent")
+        users = reaction_manager.get_reaction_users(user1.id, msg.id, ":nonexistent:")
 
         assert len(users) == 0
 
@@ -143,9 +145,9 @@ class TestReactionUsers:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "single_user")
+        reaction_manager.add_reaction(user1.id, msg.id, ":single_user:")
 
-        users = reaction_manager.get_reaction_users(user1.id, msg.id, "single_user")
+        users = reaction_manager.get_reaction_users(user1.id, msg.id, ":single_user:")
 
         assert len(users) == 1
         assert users[0].user_id == user1.id
@@ -157,10 +159,10 @@ class TestReactionUsers:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "multi_user")
-        reaction_manager.add_reaction(user2.id, msg.id, "multi_user")
+        reaction_manager.add_reaction(user1.id, msg.id, ":multi_user:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":multi_user:")
 
-        users = reaction_manager.get_reaction_users(user1.id, msg.id, "multi_user")
+        users = reaction_manager.get_reaction_users(user1.id, msg.id, ":multi_user:")
 
         assert len(users) == 2
         user_ids = [u.user_id for u in users]
@@ -186,17 +188,17 @@ class TestReactionUsers:
         msg = messaging_manager.send_message(users_list[0].id, dm.id, "Pagination test")
 
         for user in users_list[:2]:
-            reaction_manager.add_reaction(user.id, msg.id, "paginate")
+            reaction_manager.add_reaction(user.id, msg.id, ":paginate:")
 
         page1 = reaction_manager.get_reaction_users(
-            users_list[0].id, msg.id, "paginate", limit=1
+            users_list[0].id, msg.id, ":paginate:", limit=1
         )
         assert len(page1) == 1
 
         page2 = reaction_manager.get_reaction_users(
             users_list[0].id,
             msg.id,
-            "paginate",
+            ":paginate:",
             limit=1,
             after_user_id=page1[0].user_id,
         )
@@ -209,11 +211,11 @@ class TestReactionUsers:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "limit_test")
-        reaction_manager.add_reaction(user2.id, msg.id, "limit_test")
+        reaction_manager.add_reaction(user1.id, msg.id, ":limit_test:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":limit_test:")
 
         users = reaction_manager.get_reaction_users(
-            user1.id, msg.id, "limit_test", limit=1
+            user1.id, msg.id, ":limit_test:", limit=1
         )
 
         assert len(users) == 1
@@ -238,12 +240,12 @@ class TestUserReactions:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "my_reaction")
+        reaction_manager.add_reaction(user1.id, msg.id, ":my_reaction:")
 
         user_reactions = reaction_manager.get_user_reactions(user1.id, msg.id)
 
         assert len(user_reactions) == 1
-        assert user_reactions[0].emoji == "my_reaction"
+        assert user_reactions[0].emoji == ":my_reaction:"
 
     def test_get_user_reactions_multiple(self, fresh_users_with_dm_and_relationships):
         """Test getting multiple reactions by user."""
@@ -251,17 +253,17 @@ class TestUserReactions:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "my_r1")
-        reaction_manager.add_reaction(user1.id, msg.id, "my_r2")
-        reaction_manager.add_reaction(user1.id, msg.id, "my_r3")
+        reaction_manager.add_reaction(user1.id, msg.id, ":my_r1:")
+        reaction_manager.add_reaction(user1.id, msg.id, ":my_r2:")
+        reaction_manager.add_reaction(user1.id, msg.id, ":my_r3:")
 
         user_reactions = reaction_manager.get_user_reactions(user1.id, msg.id)
 
         assert len(user_reactions) == 3
         emojis = [r.emoji for r in user_reactions]
-        assert "my_r1" in emojis
-        assert "my_r2" in emojis
-        assert "my_r3" in emojis
+        assert ":my_r1:" in emojis
+        assert ":my_r2:" in emojis
+        assert ":my_r3:" in emojis
 
     def test_get_user_reactions_excludes_others(
         self, fresh_users_with_dm_and_relationships
@@ -271,11 +273,11 @@ class TestUserReactions:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "user1_only")
-        reaction_manager.add_reaction(user2.id, msg.id, "user2_only")
+        reaction_manager.add_reaction(user1.id, msg.id, ":user1_only:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":user2_only:")
 
         user1_reactions = reaction_manager.get_user_reactions(user1.id, msg.id)
 
         emojis = [r.emoji for r in user1_reactions]
-        assert "user1_only" in emojis
-        assert "user2_only" not in emojis
+        assert ":user1_only:" in emojis
+        assert ":user2_only:" not in emojis

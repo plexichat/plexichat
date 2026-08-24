@@ -9,6 +9,8 @@ from .protocol import ReactionProtocol
 
 
 CUSTOM_EMOJI_PATTERN = re.compile(r"^<a?:([a-zA-Z0-9_]+):(\d+)>$")
+SHORTCODE_EMOJI_PATTERN = re.compile(r"^:([a-zA-Z0-9_]{1,32}):$")
+KEYCAP_EMOJI_PATTERN = re.compile(r"^[#*0-9]\uFE0F?\u20E3$")
 
 
 class ReactionValidationMixin(ReactionProtocol):
@@ -23,11 +25,15 @@ class ReactionValidationMixin(ReactionProtocol):
             emoji_id = int(custom_match.group(2))
             return (True, emoji_id, emoji)
 
-        if emoji.startswith(":") or emoji.startswith("<"):
-            raise InvalidEmojiError("Invalid emoji format")
-
         if len(emoji) > 32:
             raise InvalidEmojiError("Emoji is too long")
+
+        # Legacy ":shortcode:" reactions remain valid.
+        if SHORTCODE_EMOJI_PATTERN.match(emoji):
+            return (False, None, emoji)
+
+        if emoji.startswith(":") or emoji.startswith("<"):
+            raise InvalidEmojiError("Invalid emoji format")
 
         if not self._is_valid_unicode_emoji(emoji):
             raise InvalidEmojiError("Invalid emoji characters")
@@ -41,15 +47,16 @@ class ReactionValidationMixin(ReactionProtocol):
             (0x2600, 0x26FF),
             (0x2700, 0x27BF),
             (0x2300, 0x23FF),
-            (0x2B50, 0x2B55),
+            (0x2B00, 0x2BFF),
             (0xFE00, 0xFE0F),
             (0xE0020, 0xE007F),
         ]
 
+        SINGLETON_CHARS = {0x20E3, 0xA9, 0xAE}
+
         REJECTED_CHARS = {
             0x200B,
             0x200C,
-            0x200D,
             0x202E,
             0x202D,
             0xFEFF,
@@ -58,11 +65,16 @@ class ReactionValidationMixin(ReactionProtocol):
         if not text:
             return False
 
+        # Keycap sequences ("1️⃣", "#️⃣", "*️⃣") are the only place ASCII
+        # digits may appear inside a unicode emoji.
+        if KEYCAP_EMOJI_PATTERN.match(text):
+            return True
+
         zwj_count = 0
         for char in text:
             code = ord(char)
 
-            if code < 0x20 and code not in (0x09, 0x0A, 0x0D):
+            if code < 0x20:
                 return False
 
             if code == 0x200D:
@@ -74,23 +86,11 @@ class ReactionValidationMixin(ReactionProtocol):
             if code in REJECTED_CHARS:
                 return False
 
-            in_valid_range = False
-            for start, end in VALID_EMOJI_RANGES:
-                if start <= code <= end:
-                    in_valid_range = True
-                    break
+            in_valid_range = any(
+                start <= code <= end for start, end in VALID_EMOJI_RANGES
+            )
 
-            if (
-                (0x30 <= code <= 0x39)
-                or (0x41 <= code <= 0x5A)
-                or (0x61 <= code <= 0x7A)
-            ):
-                in_valid_range = True
-
-            if code in (0x3A, 0x2D, 0x5F):
-                in_valid_range = True
-
-            if code in (0x20E3, 0xA9, 0xAE):
+            if code in SINGLETON_CHARS:
                 in_valid_range = True
 
             if not in_valid_range:

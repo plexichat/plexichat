@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Optional, Set, cast
 
 from src.core.base import SnowflakeID
 from ..models import Reaction, CustomEmoji
@@ -57,9 +57,10 @@ class ReactionProtocol:
         user_id: SnowflakeID,
         server_id: SnowflakeID,
         channel_id: Optional[SnowflakeID] = None,
+        permission: str = "messages.add_reactions",
     ) -> bool:
         return cast(ReactionProtocol, super())._check_server_permission(
-            user_id, server_id, channel_id
+            user_id, server_id, channel_id, permission
         )
 
     def _validate_emoji(self, emoji: str) -> tuple[bool, Optional[int], str]:
@@ -87,3 +88,8 @@ class ReactionProtocol:
         self, user_id: SnowflakeID, other_id: SnowflakeID
     ) -> bool:
         return cast(ReactionProtocol, super())._is_blocked_by_either(user_id, other_id)
+
+    def _get_blocked_user_ids(
+        self, viewer_id: Optional[SnowflakeID]
+    ) -> "Set[SnowflakeID]":
+        return cast(ReactionProtocol, super())._get_blocked_user_ids(viewer_id)

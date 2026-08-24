@@ -91,13 +91,41 @@ def emit_message_reaction_remove_all(
     guild_id: Optional[int] = None,
     actor_id: Optional[int] = None,
 ) -> None:
-    """Notify clients that all reactions on a message were cleared."""
+    """Notify clients that all reactions on a message were cleared.
+
+    Payload id fields are stringified (and the acting user included) so the
+    shape matches MESSAGE_REACTION_ADD/REMOVE events.
+    """
     _emit(
         EventType.MESSAGE_REACTION_REMOVE_ALL,
         {
-            "channel_id": channel_id,
-            "message_id": message_id,
-            "guild_id": guild_id,
+            "channel_id": str(channel_id),
+            "message_id": str(message_id),
+            "guild_id": str(guild_id) if guild_id is not None else None,
+            "user_id": str(actor_id) if actor_id is not None else None,
+        },
+        channel_id=channel_id,
+        server_id=guild_id,
+        exclude_user_ids=[actor_id] if actor_id is not None else None,
+    )
+
+
+def emit_message_reaction_remove_emoji(
+    channel_id: int,
+    message_id: int,
+    emoji: str,
+    guild_id: Optional[int] = None,
+    actor_id: Optional[int] = None,
+) -> None:
+    """Notify clients that every reaction of one emoji was removed by a moderator."""
+    _emit(
+        EventType.MESSAGE_REACTION_REMOVE_EMOJI,
+        {
+            "channel_id": str(channel_id),
+            "message_id": str(message_id),
+            "emoji": emoji,
+            "guild_id": str(guild_id) if guild_id is not None else None,
+            "user_id": str(actor_id) if actor_id is not None else None,
         },
         channel_id=channel_id,
         server_id=guild_id,

@@ -31,10 +31,10 @@ class TestMaxReactionsLimit:
         msg = messaging_manager.send_message(user1.id, dm.id, "Limit test message")
 
         for i in range(20):
-            reaction_manager.add_reaction(user1.id, msg.id, f"emoji_{i}")
+            reaction_manager.add_reaction(user1.id, msg.id, f":emoji_{i}:")
 
         with pytest.raises(ReactionLimitError) as exc_info:
-            reaction_manager.add_reaction(user1.id, msg.id, "emoji_21")
+            reaction_manager.add_reaction(user1.id, msg.id, ":emoji_21:")
 
         assert exc_info.value.max_allowed == 20
         assert exc_info.value.current == 20
@@ -60,11 +60,11 @@ class TestMaxReactionsLimit:
         msg = messaging_manager.send_message(user1.id, dm.id, "Same emoji test")
 
         for i in range(20):
-            reaction_manager.add_reaction(user1.id, msg.id, f"unique_{i}")
+            reaction_manager.add_reaction(user1.id, msg.id, f":unique_{i}:")
 
-        reaction = reaction_manager.add_reaction(user2.id, msg.id, "unique_0")
+        reaction = reaction_manager.add_reaction(user2.id, msg.id, ":unique_0:")
         assert reaction is not None
-        assert reaction.emoji == "unique_0"
+        assert reaction.emoji == ":unique_0:"
 
     def test_adding_existing_emoji_allowed_at_limit(
         self, auth_manager, messaging_manager, reaction_manager
@@ -87,11 +87,11 @@ class TestMaxReactionsLimit:
         msg = messaging_manager.send_message(user1.id, dm.id, "Existing emoji test")
 
         for i in range(20):
-            reaction_manager.add_reaction(user1.id, msg.id, f"existing_{i}")
+            reaction_manager.add_reaction(user1.id, msg.id, f":existing_{i}:")
 
-        reaction = reaction_manager.add_reaction(user2.id, msg.id, "existing_5")
+        reaction = reaction_manager.add_reaction(user2.id, msg.id, ":existing_5:")
         assert reaction is not None
-        assert reaction.emoji == "existing_5"
+        assert reaction.emoji == ":existing_5:"
 
     def test_remove_and_add_new_at_limit(
         self, auth_manager, messaging_manager, reaction_manager
@@ -114,13 +114,13 @@ class TestMaxReactionsLimit:
         msg = messaging_manager.send_message(user1.id, dm.id, "Remove and add test")
 
         for i in range(20):
-            reaction_manager.add_reaction(user1.id, msg.id, f"removable_{i}")
+            reaction_manager.add_reaction(user1.id, msg.id, f":removable_{i}:")
 
-        reaction_manager.remove_reaction(user1.id, msg.id, "removable_0")
+        reaction_manager.remove_reaction(user1.id, msg.id, ":removable_0:")
 
-        reaction = reaction_manager.add_reaction(user1.id, msg.id, "new_emoji")
+        reaction = reaction_manager.add_reaction(user1.id, msg.id, ":new_emoji:")
         assert reaction is not None
-        assert reaction.emoji == "new_emoji"
+        assert reaction.emoji == ":new_emoji:"
 
 
 class TestPaginationLimits:
@@ -144,11 +144,11 @@ class TestPaginationLimits:
         dm = messaging_manager.create_dm(users_list[0].id, users_list[1].id)
         msg = messaging_manager.send_message(users_list[0].id, dm.id, "Page limit test")
 
-        reaction_manager.add_reaction(users_list[0].id, msg.id, "page_limit")
-        reaction_manager.add_reaction(users_list[1].id, msg.id, "page_limit")
+        reaction_manager.add_reaction(users_list[0].id, msg.id, ":page_limit:")
+        reaction_manager.add_reaction(users_list[1].id, msg.id, ":page_limit:")
 
         users = reaction_manager.get_reaction_users(
-            users_list[0].id, msg.id, "page_limit", limit=1000
+            users_list[0].id, msg.id, ":page_limit:", limit=1000
         )
 
         assert len(users) <= 100
@@ -173,15 +173,17 @@ class TestPaginationLimits:
         dm = messaging_manager.create_dm(user1.id, user2.id)
         msg = messaging_manager.send_message(user1.id, dm.id, "Cursor test")
 
-        reaction_manager.add_reaction(user1.id, msg.id, "cursor_test")
-        reaction_manager.add_reaction(user2.id, msg.id, "cursor_test")
+        reaction_manager.add_reaction(user1.id, msg.id, ":cursor_test:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":cursor_test:")
 
-        all_users = reaction_manager.get_reaction_users(user1.id, msg.id, "cursor_test")
+        all_users = reaction_manager.get_reaction_users(
+            user1.id, msg.id, ":cursor_test:"
+        )
         assert len(all_users) == 2
 
         first_user = all_users[0]
         remaining = reaction_manager.get_reaction_users(
-            user1.id, msg.id, "cursor_test", after_user_id=first_user.user_id
+            user1.id, msg.id, ":cursor_test:", after_user_id=first_user.user_id
         )
 
         assert len(remaining) == 1
@@ -198,10 +200,10 @@ class TestConfigurableLimits:
         )
 
         for i in range(20):
-            reaction_manager.add_reaction(user1.id, msg.id, f"default_{i}")
+            reaction_manager.add_reaction(user1.id, msg.id, f":default_{i}:")
 
         with pytest.raises(ReactionLimitError) as exc_info:
-            reaction_manager.add_reaction(user1.id, msg.id, "default_21")
+            reaction_manager.add_reaction(user1.id, msg.id, ":default_21:")
 
         assert exc_info.value.max_allowed == 20
 
@@ -226,10 +228,10 @@ class TestConfigurableLimits:
         msg = messaging_manager.send_message(user1.id, dm.id, "Info test")
 
         for i in range(20):
-            reaction_manager.add_reaction(user1.id, msg.id, f"info_{i}")
+            reaction_manager.add_reaction(user1.id, msg.id, f":info_{i}:")
 
         with pytest.raises(ReactionLimitError) as exc_info:
-            reaction_manager.add_reaction(user1.id, msg.id, "info_21")
+            reaction_manager.add_reaction(user1.id, msg.id, ":info_21:")
 
         error = exc_info.value
         assert error.max_allowed == 20

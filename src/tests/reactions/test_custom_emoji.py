@@ -283,6 +283,11 @@ class TestCustomEmojiValidation:
             users_with_server
         )
 
+        # Server permission checks fail CLOSED when no servers module is
+        # wired; bind one so the custom-emoji cross-server rule is what
+        # rejects this reaction (not the missing-permission gate).
+        reaction_manager._servers = server_manager
+
         channel = server_manager.create_channel(
             owner.id, server.id, "text-room", "text"
         )
