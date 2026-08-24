@@ -510,6 +510,37 @@ async def get_proxied_content(
             },
         )
 
+    # SECURITY (fetch-amplification defence): every request for an
+    # uncached URL makes the server perform an authenticated outbound
+    # fetch of up to the configured body-size cap against an arbitrary
+    # host. Without a per-user cap any account can turn the server into
+    # a bandwidth-draining fetch amplifier by cycling distinct URLs
+    # (the cache only helps repeats). Enforce a per-user fixed-window
+    # limit on proxy requests, sized generously so normal rendering
+    # traffic is unaffected.
+    from src.core.database.cache import check_rate_limit
+
+    import utils.config as _config
+
+    _proxy_cfg = _config.get("media", {}).get("proxy_rate_limit", {})
+    _limit = int(_proxy_cfg.get("requests_per_window", 120))
+    _window = int(_proxy_cfg.get("window_seconds", 60))
+
+    allowed, _remaining = check_rate_limit(
+        f"media:proxy:user:{user.user_id}", _limit, _window
+    )
+    if not allowed:
+        logger.warning(f"Media proxy rate limit exceeded for user {user.user_id}")
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Too many proxied media requests; retry later",
+                }
+            },
+        )
+
     try:
         media_mod = api.get_media()
         if not media_mod:

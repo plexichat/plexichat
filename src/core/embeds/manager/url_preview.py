@@ -197,17 +197,32 @@ class EmbedURLPreviewMixin(EmbedManagerProtocol):
 
         Uses the secure LinkPreviewService for safe fetching.
 
+        SECURITY: the scraped metadata originates from a remote,
+        attacker-controlled page and is therefore run through the same
+        validation/sanitization pipeline as ``create_url_preview``
+        before being returned. Fields that fail sanitization are
+        dropped rather than propagated raw.
+
         Args:
             url: URL to parse
             user_id: ID of user requesting the parse (used for rate
-                limiting). Defaults to ``0`` for callers that have no
-                authenticated user context.
+                limiting). Callers without an authenticated user are
+                partitioned into per-destination-host shard buckets so a
+                loop over one site cannot starve parses for other sites.
 
         Returns:
-            Dict with metadata (title, description, image, etc.)
+            Dict with sanitized metadata (title, description, image, etc.)
         """
-        from src.core.embeds.validator import validate_url
-        from src.core.embeds.exceptions import InvalidUrlError
+        import zlib
+
+        from src.core.embeds.validator import (
+            AUTHOR_NAME_MAX_LENGTH,
+            DESCRIPTION_MAX_LENGTH,
+            TITLE_MAX_LENGTH,
+            sanitize_content,
+            validate_string_length,
+            validate_url,
+        )
 
         try:
             validated_url = validate_url(url, "url")
@@ -219,11 +234,21 @@ class EmbedURLPreviewMixin(EmbedManagerProtocol):
                 "error": str(e),
             }
 
+        # M3: partition context-less (anonymous) callers into shards by
+        # destination host instead of collapsing them all into the
+        # single ``user_id = 0`` bucket, so one caller's loop over many
+        # URLs on ONE site cannot exhaust the entire anonymous budget
+        # and starve unrelated anonymous parses. Negative ids never
+        # collide with real user ids.
+        if user_id:
+            rate_limit_user: int = int(user_id)
+        else:
+            host = urlparse(validated_url).hostname or ""
+            shard = zlib.crc32(host.encode("utf-8")) % 16
+            rate_limit_user = -(shard + 1)
+
         try:
-            metadata = self._scrape_url_metadata(user_id or 0, validated_url)
-            metadata["url"] = validated_url
-            metadata["valid"] = True
-            return metadata
+            metadata = self._scrape_url_metadata(rate_limit_user, validated_url)
         except Exception as e:
             parsed = urlparse(validated_url)
             logger.warning(f"Failed to parse URL metadata for {validated_url}: {e}")
@@ -235,3 +260,55 @@ class EmbedURLPreviewMixin(EmbedManagerProtocol):
                 "site_url": f"{parsed.scheme}://{parsed.netloc}",
                 "type": "link",
             }
+
+        # M2: NEVER return raw third-party metadata. Sanitize every text
+        # field with the embed pipeline; drop fields that fail.
+        _TEXT_FIELD_LIMITS = {
+            "title": TITLE_MAX_LENGTH,
+            "description": DESCRIPTION_MAX_LENGTH,
+            "site_name": TITLE_MAX_LENGTH,
+            "author": AUTHOR_NAME_MAX_LENGTH,
+        }
+        sanitized: Dict[str, Any] = {}
+        for key, max_length in _TEXT_FIELD_LIMITS.items():
+            value = metadata.get(key)
+            if not value or not isinstance(value, str):
+                continue
+            try:
+                sanitized[key] = validate_string_length(
+                    sanitize_content(value, key), max_length, key
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Dropped unsanitizable preview field {key} for "
+                    f"{validated_url}: {e}"
+                )
+                sanitized[key] = None
+
+        image_url = metadata.get("image")
+        if image_url:
+            try:
+                sanitized["image"] = validate_url(str(image_url), "image.url")
+            except InvalidUrlError as e:
+                logger.warning(f"Dropped unsafe preview image for {validated_url}: {e}")
+                sanitized["image"] = None
+        else:
+            sanitized["image"] = None
+
+        site_url = metadata.get("site_url")
+        if site_url:
+            try:
+                sanitized["site_url"] = validate_url(str(site_url), "site_url")
+            except InvalidUrlError:
+                sanitized["site_url"] = None
+        else:
+            sanitized["site_url"] = None
+
+        embed_type = str(metadata.get("type") or "link").lower()
+        if embed_type not in ("link", "video", "article"):
+            embed_type = "link"
+        sanitized["type"] = embed_type
+
+        sanitized["url"] = validated_url
+        sanitized["valid"] = True
+        return sanitized

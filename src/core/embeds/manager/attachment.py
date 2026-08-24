@@ -230,6 +230,32 @@ class EmbedAttachmentMixin(EmbedManagerProtocol):
 
         return [self._row_to_embed(row) for row in rows]
 
+    def are_embeds_suppressed(self, message_id: SnowflakeID) -> bool:
+        """
+        Report whether ALL embeds attached to a message are suppressed.
+
+        Used by the API response layer so suppression (which flips
+        ``embed_message_embeds.suppressed``) is honored end-to-end for
+        metadata-stored embeds as well, instead of only for core-table
+        embeds.
+
+        Args:
+            message_id: ID of message
+
+        Returns:
+            True if the message has attached embeds and every one of
+            them is suppressed; False otherwise.
+        """
+        row = self._db.fetch_one(
+            """SELECT COUNT(*) AS total,
+                      COALESCE(SUM(suppressed), 0) AS suppressed_count
+               FROM embed_message_embeds WHERE message_id = ?""",
+            (message_id,),
+        )
+        if not row or not row["total"]:
+            return False
+        return int(row["suppressed_count"]) >= int(row["total"])
+
     def suppress_embeds(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
         """
         Suppress (hide) all embeds on a message.

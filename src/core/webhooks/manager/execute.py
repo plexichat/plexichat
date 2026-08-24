@@ -130,13 +130,29 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         display_name = username or row["name"]
         display_avatar = avatar_url or row["avatar_url"]
 
+        # SECURITY: strip persistence-routing keys from webhook-supplied
+        # embed dicts. A malicious ``message_id`` (or ``id``) key must
+        # never influence which message an embed is attached to; embeds
+        # are persisted ONLY via the messaging metadata path below,
+        # attached to the message this execution creates.
+        safe_embeds: Optional[List[Dict[str, Any]]] = None
+        if embeds:
+            safe_embeds = [
+                (
+                    {k: v for k, v in e.items() if k not in ("message_id", "id")}
+                    if isinstance(e, dict)
+                    else e
+                )
+                for e in embeds
+            ]
+
         if self._messaging:
             try:
                 msg = self._messaging.send_message(
                     user_id=row["creator_id"],
                     conversation_id=conversation_id,
                     content=content or "",
-                    embeds=embeds,
+                    embeds=safe_embeds,
                     webhook_id=webhook_id,
                 )
                 message_id = msg.id
@@ -183,16 +199,14 @@ class WebhookExecutionMixin(WebhookManagerTrait):
             ),
         )
 
-        if embeds and self._embeds:
-            for embed_data in embeds:
-                try:
-                    embed = self._embeds.create_embed(row["creator_id"], **embed_data)
-                    self._embeds.attach_embed_to_message(
-                        row["creator_id"], message_id, embed.id
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create embed for webhook message: {e}")
-
+        # NOTE: embeds are intentionally NOT replayed through
+        # ``self._embeds.create_embed`` here. The messaging metadata path
+        # above is the single source of truth for webhook embeds; the
+        # previous dual-persistence replay raised TypeError on
+        # client-style keys (type/invite_code/color:int) that was then
+        # swallowed, so the core copy silently never happened — and a
+        # webhook-supplied ``message_id`` could flow into
+        # ``attach_embed_to_message`` for an arbitrary message.
         logger.debug(f"Webhook {webhook_id} executed, message {message_id} created")
 
         if wait:
@@ -203,7 +217,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                 content=content,
                 username=display_name,
                 avatar_url=display_avatar,
-                embeds=embeds or [],
+                embeds=safe_embeds or [],
                 thread_id=thread_id,
                 created_at=now,
             )

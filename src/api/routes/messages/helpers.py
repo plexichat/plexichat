@@ -199,6 +199,27 @@ def _message_to_response(
             except Exception as e:
                 logger.debug(f"Failed to fetch poll/results for message {msg_id}: {e}")
 
+    # SECURITY/UX parity: ``suppress_embeds`` flips the
+    # ``embed_message_embeds.suppressed`` flag, but metadata-stored
+    # embeds (``metadata["embeds"]``, what clients actually render)
+    # previously ignored that state entirely, making suppression a dead
+    # end-to-end control. If every attached embed is suppressed, omit
+    # the embeds from the response and mark the message so clients can
+    # render an appropriate indicator.
+    embeds_out = get_attr(msg, "embeds", []) or []
+    try:
+        embeds_module = api.get_embeds()
+        if (
+            embeds_module
+            and msg_id
+            and embeds_module.are_embeds_suppressed(int(msg_id))
+        ):
+            embeds_out = []
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            metadata["embeds_suppressed"] = True
+    except Exception as e:
+        logger.debug(f"Failed to evaluate embed suppression for {msg_id}: {e}")
+
     return MessageResponse(
         id=SnowflakeID(msg_id),
         channel_id=SnowflakeID(effective_channel_id),
@@ -210,7 +231,7 @@ def _message_to_response(
         if get_attr(msg, "reply_to_id")
         else None,
         attachments=attachments,
-        embeds=get_attr(msg, "embeds", []) or [],
+        embeds=embeds_out,
         pinned=get_attr(msg, "pinned", False),
         status=getattr(get_attr(msg, "status"), "value", get_attr(msg, "status"))
         if get_attr(msg, "status")

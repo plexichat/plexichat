@@ -58,6 +58,21 @@ URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Characters that enable HTML attribute breakout when a URL is
+# interpolated into a quoted ``src="..."`` / ``href="..."`` attribute on
+# the client. A stored embed URL such as
+# ``https://e.com/a.png"onerror="alert(1)`` contains no whitespace and
+# previously passed every server gate; the injected quote terminated the
+# client-side attribute value and the remainder was parsed as markup
+# (stored XSS for every viewer). These characters have no legitimate
+# role in an http(s) URL we are willing to serve, so they are rejected.
+URL_ATTRIBUTE_BREAKOUT_PATTERN = re.compile(r"""["'<>`]""")
+
+# Raw C0 control characters (including tab/newline/CR) and DEL. Control
+# characters inside a URL-shaped string are never legitimate here: they
+# are either an smuggling primitive or corrupt downstream consumers.
+_URL_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+
 # Color validation pattern (hex color)
 COLOR_PATTERN = re.compile(r"^#?([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$")
 
@@ -86,6 +101,17 @@ DANGEROUS_PATTERNS = [
     re.compile(r"\bdata\s*:", re.IGNORECASE),
     # Event handlers inside an HTML-style tag (whitespace-tolerant).
     re.compile(r"<\s*[^>]*\s*on\w+\s*=", re.IGNORECASE),
+    # Active-content / unknown-element tags. ``<form>`` and ``<math>``
+    # are mXSS/DOM-clobbering primitives in HTML-consuming consumers
+    # even though they carry no event handler of their own; ``<base>``
+    # rewrites every relative URL on the page, and the remaining
+    # elements enable framing/inclusion tricks. Legitimate embed text
+    # never needs these as literal markup.
+    re.compile(
+        r"<\s*/?\s*(?:form|math|base|template|noscript|frame|frameset|"
+        r"applet|meta|link|object|embed)\b",
+        re.IGNORECASE,
+    ),
     # Known standalone event-handler attributes without surrounding tags.
     re.compile(
         r"\bon(?:click|auxclick|dblclick|load|error|abort|focus|blur|"
@@ -152,6 +178,25 @@ def validate_url(url: str, field_name: str = "url") -> str:
         raise InvalidUrlError(
             f"URL must use http or https protocol in {field_name}", url
         )
+
+    # SECURITY (attribute-breakout defence): reject quote, angle-bracket
+    # and backtick characters plus raw control characters BEFORE any
+    # normalization. These enable the stored-XSS attribute breakout
+    # chain: a URL like ``https://e.com/a.png"onerror="alert(1)``
+    # contains no whitespace and would previously pass every other gate,
+    # then break out of the client's double-quoted ``src="..."``
+    # attribute. Checked against BOTH the raw input and the
+    # unicode-stripped form so invisible-character obfuscation cannot
+    # smuggle them past this check either.
+    for candidate in (url, _strip_url_dangerous_unicode(url)):
+        if URL_ATTRIBUTE_BREAKOUT_PATTERN.search(candidate):
+            raise InvalidUrlError(
+                f"URL contains characters not allowed in {field_name}", url
+            )
+        if _URL_CONTROL_CHAR_PATTERN.search(candidate):
+            raise InvalidUrlError(
+                f"URL contains control characters in {field_name}", url
+            )
 
     # SECURITY: a URL-shaped string is the one context where
     # bidi-override / zero-width characters MUST be stripped before
@@ -351,12 +396,30 @@ def sanitize_content(content: str, field_name: str = "content") -> str:
     decoded = _ulr.unquote(content)
     decoded = _html.unescape(decoded)
     normalized_full = unicodedata.normalize("NFKC", decoded)
+    # SECURITY: strip C0/C1 control characters (tab, newline, NUL, ...)
+    # from a dedicated matching form BEFORE pattern matching. A payload
+    # like ``jav&#x09;ascript:`` decodes to ``jav\tascript:`` and relies
+    # on the embedded control character splitting the ``javascript:``
+    # token inside the whitespace-preserving forms. The control-char
+    # stripped form collapses the token so the blocklist sees it, while
+    # the RETURNED content is untouched (legitimate multilingual text
+    # containing formatting controls is not mutilated).
+    normalized_no_ctrl = "".join(
+        ch for ch in normalized_full if not (ord(ch) < 0x20 or ord(ch) == 0x7F)
+    )
     normalized_no_ws = _re.sub(r"\s+", "", normalized_full).lower()
 
-    # The raw content and each progressively-decoded form are all
-    # matched so a payload hidden behind whitespace, entities, or
-    # percent-encoding cannot slip past the blocklist.
-    for target in (content, decoded, normalized_no_ws):
+    # The raw content and each progressively-decoded/normalized form are
+    # all matched so a payload hidden behind whitespace, control
+    # characters, entities, or percent-encoding cannot slip past the
+    # blocklist.
+    for target in (
+        content,
+        decoded,
+        normalized_no_ws,
+        normalized_no_ctrl.lower(),
+        _re.sub(r"\s+", "", normalized_no_ctrl).lower(),
+    ):
         for pattern in DANGEROUS_PATTERNS:
             if pattern.search(target):
                 raise EmbedSanitizationError(
@@ -463,7 +526,14 @@ def _sanitize_message_embed(embed: Any, path: str) -> Dict[str, Any]:
             sanitized[key] = None
             continue
         if key in _MESSAGE_EMBED_URL_KEYS:
-            sanitized[key] = validate_url(str(value), f"{path}.{key}")
+            validated = validate_url(str(value), f"{path}.{key}")
+            # SECURITY: ``validate_url`` enforces URL shape + SSRF but a
+            # shape-valid https URL can still carry XSS payloads in its
+            # path/query (e.g. an ``onerror=`` handler fragment destined
+            # for a client attribute sink). Apply the same dangerous-
+            # pattern blocklist used for text fields to URL-typed keys.
+            sanitize_content(str(value), f"{path}.{key}")
+            sanitized[key] = validated
         elif key == "color":
             sanitized[key] = _validate_message_color(value, f"{path}.color")
         elif key == "timestamp":
