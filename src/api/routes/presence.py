@@ -220,12 +220,16 @@ async def update_presence(
                 # handler already preserves on omission; this REST path must
                 # match, otherwise the HTTP call clears then the WS call can
                 # only re-read the already-cleared value.
-                if body.custom_status is not None:
+                if body.custom_status is not None or body.custom_emoji is not None:
                     text = (body.custom_status or "").strip()
                     emoji = (
                         (body.custom_emoji or "").strip() if body.custom_emoji else None
                     )
-                    if text:
+                    # CORRECTNESS FIX: an emoji-only status (empty text,
+                    # non-empty emoji) is a valid persisted status — the core
+                    # manager explicitly supports it. Only empty-text AND
+                    # empty-emoji clears the custom status.
+                    if text or emoji:
                         presence.set_custom_status(
                             user_id=current_user.user_id,
                             text=text,
@@ -304,6 +308,39 @@ async def update_presence(
         )
 
 
+def _can_view_presence(viewer_id: int, target_id: int) -> bool:
+    """Relationship/membership gate for reading another user's presence.
+
+    A viewer may read a target's presence when they are the target, share a
+    friendship, or share at least one server. Everything else (strangers,
+    blocked relationships) is denied; invisible/block scrubbing still applies
+    on top of an allowed read.
+    """
+    if viewer_id == target_id:
+        return True
+
+    relationships = api.get_relationships()
+    if relationships:
+        try:
+            friend_ids = relationships.get_friend_ids(viewer_id)
+            if friend_ids and int(target_id) in {int(f) for f in friend_ids}:
+                return True
+        except Exception as e:
+            logger.debug(f"Friend check failed for presence gate: {e}")
+
+    servers = api.get_servers()
+    if servers:
+        try:
+            if hasattr(servers, "get_all_shared_member_ids"):
+                shared_ids = servers.get_all_shared_member_ids(viewer_id)
+                if shared_ids and int(target_id) in {int(s) for s in shared_ids}:
+                    return True
+        except Exception as e:
+            logger.debug(f"Shared-server check failed for presence gate: {e}")
+
+    return False
+
+
 @router.get(
     "/users/{user_id:int}/presence",
     response_model=PresenceResponse,
@@ -311,6 +348,7 @@ async def update_presence(
     responses={
         400: {"model": ErrorResponse, "description": "Invalid user ID"},
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "No relationship with user"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -320,7 +358,9 @@ def get_user_presence(
     """
     Get a user's presence.
 
-    Returns the user's current online status and custom status.
+    Returns the user's current online status and custom status. Only the
+    user themself, friends, and members of shared servers may read a
+    presence; other requests are rejected with 404.
     """
     presence = api.get_presence()
     if not presence:
@@ -328,6 +368,15 @@ def get_user_presence(
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Presence module not available"}},
+        )
+
+    # CORRECTNESS FIX: previously any authenticated user could poll the real
+    # status/custom status/last_seen of arbitrary users by enumerating IDs.
+    # Gate reads on self/friend/shared-server like the rest of the codebase.
+    if not _can_view_presence(current_user.user_id, user_id):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "User not found"}},
         )
 
     try:

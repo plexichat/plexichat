@@ -45,17 +45,25 @@ async def _dispatch_offline_presence(
     dispatcher: "GatewayDispatcher",
     session_manager: Optional[Any] = None,
 ) -> None:
-    """Dispatch offline presence to friends and server members when user disconnects."""
+    """Dispatch offline presence to friends and server members when user disconnects.
+
+    The caller MUST unregister this connection from the session manager BEFORE
+    invoking this function, so the remaining-connection count reflects only the
+    user's OTHER live connections.
+    """
     try:
         import src.api as api
 
         # CORRECTNESS FIX: a user with several tabs/connections must only go
-        # offline once their LAST connection drops. This connection is still
-        # registered with the session manager at this point, so a count > 1
-        # means at least one other active connection remains.
+        # offline once their LAST connection drops. This connection has
+        # already been unregistered by the caller, so any remaining count
+        # means at least one other active connection exists and we must stay
+        # online. Evaluating the count AFTER removal removes the concurrent-
+        # close race where two tabs each saw the other still registered and
+        # neither dispatched the offline transition.
         if session_manager is not None:
             try:
-                if session_manager.get_user_connection_count(user_id) > 1:
+                if session_manager.get_user_connection_count(user_id) > 0:
                     logger.debug(
                         f"User {user_id} still has active connections; staying online"
                     )
@@ -64,6 +72,36 @@ async def _dispatch_offline_presence(
                 logger.debug(
                     f"Failed to check remaining connections for user {user_id}: {e}"
                 )
+
+        # CORRECTNESS FIX: mark OFFLINE unconditionally BEFORE any target
+        # fan-out logic. Previously an early return for users with no
+        # presence targets (no friends / no shared servers) skipped the DB
+        # update entirely, leaving the persisted status stuck on a live
+        # value after disconnect.
+        if presence_module:
+            try:
+                from starlette.concurrency import run_in_threadpool
+
+                from src.core.presence.models import UserStatus
+
+                await run_in_threadpool(
+                    presence_module.set_status, user_id, UserStatus.OFFLINE
+                )
+            except Exception as e:
+                logger.debug(f"Failed to persist offline status for {user_id}: {e}")
+
+            # Lightweight reconciliation: even if the DB write failed above,
+            # drop any stale membership from the Valkey online-users index so
+            # ghost entries cannot survive a last-connection close.
+            try:
+                from src.core.database import get_valkey_client, valkey_available
+
+                if valkey_available():
+                    client = get_valkey_client()
+                    if client:
+                        client.srem("presence:online_users", str(user_id))
+            except Exception as e:
+                logger.debug(f"Valkey presence reconciliation failed: {e}")
 
         # Collect all user IDs who should receive this presence update
         target_user_ids = set()
@@ -150,15 +188,6 @@ async def _dispatch_offline_presence(
 
         if not target_user_ids:
             return
-
-        # Update presence to offline
-        if presence_module:
-            try:
-                from src.core.presence.models import UserStatus
-
-                presence_module.set_status(user_id, UserStatus.OFFLINE)
-            except Exception:
-                pass
 
         # Dispatch presence update to all relevant users
         from src.core.events.models import Event
@@ -264,6 +293,15 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
     except Exception as e:
         logger.error(f"Gateway error for {connection_id}: {e}")
     finally:
+        # CORRECTNESS FIX: unregister THIS connection from the session manager
+        # BEFORE evaluating remaining connections for the offline transition.
+        # Previously removal happened after _dispatch_offline_presence, so two
+        # tabs closing concurrently both counted each other, both observed
+        # count > 1 and neither marked the user offline. Removing first makes
+        # the last real disconnect always see a zero remaining count.
+        connection.set_disconnected()
+        session_manager.remove_connection(connection_id)
+
         # Clean up voice connection when WebSocket disconnects
         if connection.is_authenticated and connection.user_id:
             await _cleanup_voice_connection(connection.user_id)
@@ -295,8 +333,6 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
         except Exception as exc:
             logger.debug("Sum subscription cleanup failed: %s", exc)
 
-        connection.set_disconnected()
-        session_manager.remove_connection(connection_id)
         logger.debug(f"Connection {connection_id} cleaned up")
 
 

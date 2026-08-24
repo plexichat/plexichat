@@ -228,7 +228,7 @@ class ConnectionHandler:
         session_id: str,
     ) -> Dict[str, Any]:
         """Build the READY event payload."""
-        user_data = {"id": str(user_id)}
+        user_data: Dict[str, Any] = {"id": str(user_id)}
         guilds = []
 
         if self._auth:
@@ -244,6 +244,24 @@ class ConnectionHandler:
                     }
             except Exception:
                 pass
+
+        # P1 parity: the client reads data.user.presence.status on boot to
+        # honour the server-known status (including a persisted idle/dnd).
+        # Without this object every reconnect silently reset to "online".
+        presence_status = "online"
+        if self._presence:
+            try:
+                status_enum = await run_in_threadpool(
+                    self._presence.get_status, user_id
+                )
+                presence_status = (
+                    status_enum.value
+                    if hasattr(status_enum, "value")
+                    else str(status_enum)
+                )
+            except Exception:
+                pass
+        user_data["presence"] = {"status": presence_status}
 
         # Resolve guilds through the INJECTED servers boundary only, so the
         # handler stays fully self-contained (and unit tests never touch a
@@ -279,8 +297,14 @@ class ConnectionHandler:
         }
 
     async def _dispatch_online_presence(self, user_id: int) -> None:
-        """Dispatch online presence to friends when user connects."""
-        # Set presence to online FIRST before dispatching
+        """Dispatch online presence to friends when user connects.
+
+        CORRECTNESS FIX: a persisted idle/dnd status chosen by the user via
+        REST must survive reconnects. Only an OFFLINE user is promoted to
+        ONLINE; invisible users stay scrubbed to offline; the broadcast
+        reflects the persisted custom status instead of wiping it with None.
+        """
+        # Set presence FIRST before dispatching
         if self._presence:
             from src.core.presence.models import UserStatus
 
@@ -296,16 +320,41 @@ class ConnectionHandler:
                 await self._dispatch_presence_to_friends(user_id, "offline", None, None)
                 return
 
-            try:
-                await run_in_threadpool(
-                    self._presence.set_status, user_id, UserStatus.ONLINE
-                )
-                logger.debug(f"Set user {user_id} presence to ONLINE on connect")
-            except Exception as e:
-                logger.warning(f"Failed to set online presence for user {user_id}: {e}")
+            if current_status == UserStatus.OFFLINE:
+                try:
+                    await run_in_threadpool(
+                        self._presence.set_status, user_id, UserStatus.ONLINE
+                    )
+                    current_status = UserStatus.ONLINE
+                    logger.debug(f"Set user {user_id} presence to ONLINE on connect")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to set online presence for user {user_id}: {e}"
+                    )
 
-        # Then dispatch to friends
-        await self._dispatch_presence_to_friends(user_id, "online", None, None)
+            # Reflect the persisted custom status (text and/or emoji-only) so
+            # friends' clients do not see it flash to null on reconnect.
+            custom_text: Optional[str] = None
+            custom_emoji: Optional[str] = None
+            try:
+                pres = await run_in_threadpool(self._presence.get_presence, user_id)
+                if pres and pres.custom_status:
+                    custom_text = pres.custom_status.text
+                    custom_emoji = pres.custom_status.emoji
+            except Exception as e:
+                logger.debug(f"Failed to read custom status for {user_id}: {e}")
+
+            current_str = (
+                current_status.value
+                if hasattr(current_status, "value")
+                else str(current_status)
+            )
+            # Then dispatch to friends with the ACTUAL persisted state.
+            await self._dispatch_presence_to_friends(
+                user_id, current_str, custom_text, custom_emoji
+            )
+        else:
+            await self._dispatch_presence_to_friends(user_id, "online", None, None)
 
     async def _dispatch_presence_to_friends(
         self,

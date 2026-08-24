@@ -49,10 +49,12 @@ __all__ = [
     "PresenceNotFoundError",
     # Setup
     "setup",
+    "is_setup",
     # Status operations
     "set_status",
     "get_status",
     "clear_status",
+    "sweep_all_offline",
     # Custom status operations
     "set_custom_status",
     "get_custom_status",
@@ -116,6 +118,16 @@ def _get_manager():
     return _manager
 
 
+def is_setup() -> bool:
+    """True once :func:`setup` has completed in this process.
+
+    Lets callers that run concurrently with the background InitPresence
+    thread (e.g. the app lifespan startup hook) wait for readiness instead
+    of racing it.
+    """
+    return _setup_complete and _manager is not None
+
+
 # === Status Operations ===
 
 
@@ -132,6 +144,11 @@ def get_status(user_id: int) -> UserStatus:
 def clear_status(user_id: int) -> Presence:
     """Clear user's status (set to offline)."""
     return _get_manager().clear_status(user_id)
+
+
+def sweep_all_offline() -> int:
+    """Mark every persisted presence row offline (startup crash recovery)."""
+    return _get_manager().sweep_all_offline()
 
 
 # === Custom Status Operations ===

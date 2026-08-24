@@ -12,6 +12,10 @@ This module aggregates opcode handlers from sub-modules:
 
 from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
 
+import time
+
+import utils.logger as logger
+
 from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
 from src.api.websocket.connection import Connection
 from src.api.websocket.session import SessionManager
@@ -21,6 +25,17 @@ if TYPE_CHECKING:
     from src.core.presence.manager import PresenceManager
     from src.core.servers.manager import ServerManager
     from src.api.websocket.dispatcher import GatewayDispatcher
+
+
+# CORRECTNESS FIX: inbound per-connection throttling for opcodes that each
+# trigger synchronous DB writes followed by a fan-out to every friend and
+# shared-server member. Without this, a malicious client looping these
+# frames produces unbounded DB write amplification and event construction.
+# (max events, window seconds)
+INBOUND_RATE_LIMITS: Dict[int, Tuple[int, float]] = {
+    int(GatewayOpcode.PRESENCE_UPDATE): (5, 10.0),
+    int(GatewayOpcode.TYPING_START): (10, 10.0),
+}
 
 
 class OpcodeHandler:
@@ -97,6 +112,27 @@ class OpcodeHandler:
 
         return visible_user_ids
 
+    def _allow_inbound(self, connection: Connection, opcode: int) -> bool:
+        """Cheap per-connection sliding-window check for rate-limited opcodes."""
+        limit = INBOUND_RATE_LIMITS.get(int(opcode))
+        if limit is None:
+            return True
+
+        max_events, window = limit
+        now = time.monotonic()
+
+        buckets = connection._inbound_rate_buckets
+
+        timestamps = buckets.setdefault(int(opcode), [])
+        while timestamps and now - timestamps[0] > window:
+            timestamps.pop(0)
+
+        if len(timestamps) >= max_events:
+            return False
+
+        timestamps.append(now)
+        return True
+
     async def handle(
         self,
         connection: Connection,
@@ -126,8 +162,20 @@ class OpcodeHandler:
             return await self._connection_handler.handle_identify(connection, data)
         elif op == GatewayOpcode.RESUME:
             return await self._connection_handler.handle_resume(connection, data)
-        elif op == GatewayOpcode.PRESENCE_UPDATE:
-            return await self._presence_handler.handle_presence_update(connection, data)
+        elif int(op) in INBOUND_RATE_LIMITS:
+            # Drop silently (no close) when the connection exceeds its
+            # inbound budget for presence/typing frames.
+            if not self._allow_inbound(connection, op):
+                logger.debug(
+                    f"Connection {connection.connection_id}: "
+                    f"rate-limited inbound opcode {op}"
+                )
+                return None, None, None
+            if op == GatewayOpcode.PRESENCE_UPDATE:
+                return await self._presence_handler.handle_presence_update(
+                    connection, data
+                )
+            return await self._presence_handler.handle_typing_start(connection, data)
         elif op == GatewayOpcode.VOICE_STATE_UPDATE:
             return await self._voice_handler.handle_voice_state_update(connection, data)
         elif op == GatewayOpcode.REQUEST_GUILD_MEMBERS:
@@ -150,8 +198,6 @@ class OpcodeHandler:
             return await self._voice_handler.handle_voice_speaking(connection, data)
         elif op == GatewayOpcode.VOICE_QUALITY:
             return await self._voice_handler.handle_voice_quality(connection, data)
-        elif op == GatewayOpcode.TYPING_START:
-            return await self._presence_handler.handle_typing_start(connection, data)
         elif op == GatewayOpcode.TYPING_STOP:
             return await self._presence_handler.handle_typing_stop(connection, data)
         elif op == GatewayOpcode.ARTIFACT_SUBSCRIBE:

@@ -55,6 +55,10 @@ class PresenceManagerBase(BaseManager):
         """Remove an expired custom status. Overridden by CustomStatusMixin."""
         raise NotImplementedError
 
+    def _revalidate_online_users_set(self) -> None:
+        """Evict stale members from the Valkey online-users set. Overridden by StatusMixin."""
+        raise NotImplementedError
+
     def __init__(
         self, db, auth_module=None, relationships_module=None, servers_module=None
     ):

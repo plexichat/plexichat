@@ -310,6 +310,14 @@ class PresenceMixin(PresenceManagerBase):
             except Exception:
                 pass
 
+        # CORRECTNESS FIX: periodically evict stale members from the Valkey
+        # online-users set so ghost entries cannot survive indefinitely just
+        # because SOME member keeps heartbeating (the whole-set TTL refresh).
+        try:
+            self._revalidate_online_users_set()
+        except Exception as e:
+            logger.debug(f"Online set revalidation skipped: {e}")
+
         return self._reseed_presence_cache(user_id)
 
     def set_focused_channel(

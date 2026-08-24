@@ -35,6 +35,10 @@ def _get_channel_recipients(
     servers_mod = api.get_servers()
     if servers_mod:
         try:
+            # CORRECTNESS FIX: resolve the channel ONCE for the sender, then
+            # filter members with cached permission checks. Previously every
+            # member triggered a full get_channel() (channel row lookup +
+            # membership query + permission check) per typing event.
             channel = servers_mod.get_channel(channel_id, user_id)
             if channel:
                 sid = getattr(channel, "server_id", None)
@@ -43,9 +47,15 @@ def _get_channel_recipients(
                     member_user_ids = servers_mod.get_member_user_ids(
                         sid, exclude_user_id=user_id
                     )
+                    has_perm = getattr(servers_mod, "has_permission", None)
                     for member_user_id in member_user_ids:
                         try:
-                            if servers_mod.get_channel(channel_id, member_user_id):
+                            if callable(has_perm):
+                                if has_perm(
+                                    member_user_id, sid, "channels.view", channel_id
+                                ):
+                                    user_ids.append(member_user_id)
+                            elif servers_mod.get_channel(channel_id, member_user_id):
                                 user_ids.append(member_user_id)
                         except Exception:
                             continue
@@ -152,10 +162,14 @@ class PresenceHandler:
             broadcast_status = status if status != "invisible" else "offline"
             broadcast_custom: Optional[str] = None
             broadcast_emoji: Optional[str] = None
-            if custom_status is not None:
+            if custom_status is not None or custom_emoji is not None:
                 text = (custom_status or "").strip()
                 emoji = (custom_emoji or "").strip() if custom_emoji else None
-                if text:
+                # CORRECTNESS FIX: an emoji-only status (empty text, non-empty
+                # emoji) is a valid persisted status — the core manager
+                # explicitly supports it. Only empty-text AND empty-emoji is
+                # a clear.
+                if text or emoji:
                     await run_in_threadpool(
                         self._presence.set_custom_status, uid, text, emoji
                     )

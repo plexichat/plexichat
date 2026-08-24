@@ -4,7 +4,7 @@ Connection state management - Tracks individual WebSocket connections.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import time
 import asyncio
 import zlib
@@ -48,6 +48,10 @@ class Connection:
     is_selftest: bool = False
     _zlib_context: Optional[Any] = field(default=None, repr=False)
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    # Per-connection inbound throttle state: opcode -> monotonic timestamps.
+    _inbound_rate_buckets: Dict[int, List[float]] = field(
+        default_factory=dict, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.compress and self._zlib_context is None:

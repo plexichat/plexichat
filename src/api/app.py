@@ -130,6 +130,40 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             stop_static_client_service,
         )
 
+        # CORRECTNESS FIX: mark every persisted presence row offline on boot.
+        # If a previous process crashed, its users' presence rows stayed
+        # stuck on live statuses (online/idle/dnd) forever, so DB-fallback
+        # reads reported ghosts. The Valkey online index is cleared too.
+        #
+        # The sweep runs AFTER the background InitPresence thread finishes
+        # (bounded wait): sweeping before setup completes used to raise
+        # "module not initialized", silently skipping the ghost cleanup.
+        # Multi-worker double-sweeps are prevented by the distributed lock
+        # inside sweep_all_offline itself.
+        try:
+            import asyncio as _asyncio
+
+            from src.core import presence as presence_module
+
+            deadline = _asyncio.get_event_loop().time() + 15.0
+            while not presence_module.is_setup():
+                if _asyncio.get_event_loop().time() >= deadline:
+                    logger.warning(
+                        "Presence module did not finish initializing; "
+                        "startup sweep skipped"
+                    )
+                    break
+                await _asyncio.sleep(0.05)
+
+            if presence_module.is_setup():
+                swept = presence_module.sweep_all_offline()
+                if swept:
+                    logger.info(f"Startup presence sweep reset {swept} rows to offline")
+        except RuntimeError as e:
+            logger.debug(f"Presence module not initialized; sweep skipped: {e}")
+        except Exception as e:
+            logger.warning(f"Startup presence sweep failed: {e}")
+
         run_static_client_initial_install()
         await start_static_client_service()
 
