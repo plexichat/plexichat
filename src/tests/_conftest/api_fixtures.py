@@ -87,6 +87,11 @@ def test_client(
     # Setup events
     events.setup(rel_manager, server_manager, messaging_manager)
 
+    # Setup soundboard (media pipeline wired for byte uploads)
+    from src.core import soundboard
+
+    soundboard.setup(db, servers_module=server_manager, media_module=media._manager)
+
     # Setup API with all modules
     setup(
         db=db,
@@ -105,6 +110,7 @@ def test_client(
         events_module=events._manager,
         reports_module=reports,
         feedback_module=feedback,
+        soundboard_module=soundboard,
     )
 
     app = create_app(enable_rate_limiting=False)
@@ -126,6 +132,12 @@ def test_client(
     # reset above guards against.
     notifications._manager = None
     notifications._setup_complete = False
+
+    # Same leak-guard for the soundboard manager: a stale manager pointing
+    # at this test's deleted db breaks later suites.
+    if soundboard._manager is not None:
+        soundboard._manager = None
+        soundboard._setup_complete = False
 
 
 @pytest.fixture
@@ -207,6 +219,11 @@ def rate_limit_client(
     # Setup events
     events.setup(rel_manager, server_manager, messaging_manager)
 
+    # Setup soundboard (media pipeline wired for byte uploads)
+    from src.core import soundboard
+
+    soundboard.setup(db, servers_module=server_manager, media_module=media._manager)
+
     # Setup API with all modules
     setup(
         db=db,
@@ -225,6 +242,7 @@ def rate_limit_client(
         events_module=events._manager,
         reports_module=reports,
         feedback_module=feedback,
+        soundboard_module=soundboard,
     )
 
     app = create_app(enable_rate_limiting=True)
@@ -246,6 +264,12 @@ def rate_limit_client(
     # reset above guards against.
     notifications._manager = None
     notifications._setup_complete = False
+
+    # Same leak-guard for the soundboard manager: a stale manager pointing
+    # at this test's deleted db breaks later suites.
+    if soundboard._manager is not None:
+        soundboard._manager = None
+        soundboard._setup_complete = False
 
 
 @pytest.fixture

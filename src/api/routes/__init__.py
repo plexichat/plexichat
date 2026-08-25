@@ -25,6 +25,7 @@ from .feedback import router as feedback_router
 from .notifications import router as notifications_router
 from .polls import router as polls_router
 from .stickers import router as stickers_router
+from .soundboard import router as soundboard_router
 from .docs import (
     router as docs_router,
     is_docs_enabled,
@@ -102,6 +103,9 @@ def create_api_router() -> APIRouter:
 
     # Include Stickers router
     api_router.include_router(stickers_router)
+
+    # Include Soundboard router (server sound library)
+    api_router.include_router(soundboard_router, prefix="/servers")
 
     # Include help router
     api_router.include_router(robots_router)

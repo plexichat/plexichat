@@ -102,3 +102,9 @@ class SoundPlayback:
     user_id: SnowflakeID
     channel_id: SnowflakeID
     timestamp: int
+
+
+# Permission scope required for soundboard manage operations (upload,
+# delete, metadata edits, per-role playback permissions). Routes gate on
+# this OR ``server.manage``; the manager re-checks and fails closed.
+SOUNDBOARD_MANAGE_PERMISSION = "server.soundboard.manage"

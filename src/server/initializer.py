@@ -25,6 +25,7 @@ def initialize_modules(
         presence,
         reactions,
         stickers,
+        soundboard,
         embeds,
         webhooks,
         settings,
@@ -408,6 +409,21 @@ def initialize_modules(
             modules_store["stickers"] = stickers
 
         threads_list.append(threading.Thread(target=init_stickers, name="InitStickers"))
+
+        def init_soundboard():
+            timed_init(
+                "soundboard",
+                lambda: soundboard.setup(
+                    db,
+                    servers_module=servers,
+                    media_module=media,
+                ),
+            )
+            modules_store["soundboard"] = soundboard
+
+        threads_list.append(
+            threading.Thread(target=init_soundboard, name="InitSoundboard")
+        )
 
         for t in threads_list:
             t.start()

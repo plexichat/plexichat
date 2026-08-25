@@ -16,27 +16,33 @@ from src.core.base import BaseManager
 from .models import (
     Sound,
     SoundPermissions,
-    SoundPlayback,
     SoundFormat,
+    SOUNDBOARD_MANAGE_PERMISSION,
 )
+from ._playback import SoundboardPlaybackMixin
 from .exceptions import (
     SoundNotFoundError,
     SoundLimitError,
     InvalidSoundFormatError,
+    InvalidSoundUrlError,
     SoundTooLargeError,
     SoundTooLongError,
     InvalidSoundNameError,
-    SoundCooldownError,
     PermissionDeniedError,
-    ChannelNotFoundError,
-    NotInVoiceChannelError,
+    ServerNotFoundError,
 )
 
 
-class SoundboardManager(BaseManager):
+class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
     """Core soundboard manager handling all operations."""
 
-    def __init__(self, db, auth_module=None, servers_module=None):
+    def __init__(
+        self,
+        db,
+        auth_module=None,
+        servers_module=None,
+        media_module=None,
+    ):
         """
         Initialize the soundboard manager.
 
@@ -44,9 +50,11 @@ class SoundboardManager(BaseManager):
             db: Database instance (must be connected)
             auth_module: Optional auth module for user verification
             servers_module: Optional servers module for permission checks
+            media_module: Optional media pipeline for byte uploads
         """
         super().__init__(db, auth_module)
         self._servers = servers_module
+        self._media = media_module
         self._config = self._load_config()
         # Cooldown state persists in the ``soundboard_user_cooldowns``
         # table (created by ``soundboard/schema.py``); we deliberately
@@ -81,15 +89,29 @@ class SoundboardManager(BaseManager):
         return name
 
     def _check_server_permission(self, user_id: int, server_id: int) -> bool:
-        """Check if user has manage server permission."""
+        """Check if user has manage-server (or soundboard) permission.
+
+        SECURITY: fails CLOSED — without the servers module the check
+        cannot be evaluated, so deny instead of granting everything.
+        """
         if not self._servers:
-            return True
-        return self._servers.has_permission(user_id, server_id, "server.manage")
+            logger.error(
+                "Soundboard permission check failed CLOSED: servers module "
+                "is not wired into the soundboard manager."
+            )
+            return False
+        return self._servers.has_permission(
+            user_id, server_id, SOUNDBOARD_MANAGE_PERMISSION
+        ) or self._servers.has_permission(user_id, server_id, "server.manage")
 
     def _is_server_member(self, user_id: int, server_id: int) -> bool:
-        """Check if user is a member of the server."""
+        """Check if user is a member of the server (fails closed)."""
         if not self._servers:
-            return True
+            logger.error(
+                "Soundboard membership check failed CLOSED: servers module "
+                "is not wired into the soundboard manager."
+            )
+            return False
         member = self._servers.get_member(server_id, user_id)
         return member is not None
 
@@ -100,75 +122,202 @@ class SoundboardManager(BaseManager):
         roles = self._servers.get_member_roles(server_id, user_id)
         return [role.id for role in roles]
 
-    def _check_cooldown(
-        self, user_id: int, sound_id: int, cooldown_seconds: int
-    ) -> Optional[int]:
-        """
-        Check if sound is on cooldown for ``user_id``.
+    # ------------------------------------------------------------------ #
+    # format + URL validation                                             #
+    # ------------------------------------------------------------------ #
 
-        Source of truth is the ``soundboard_user_cooldowns`` table so
-        enforcement survives process restarts and works across multiple
-        Plexichat instances; the in-process ``_client_local_cooldowns``
-        cache is consulted first to avoid a DB round-trip on every
-        repeat play.  Returns ``None`` if the user is free to play
-        the sound again, otherwise the remaining cooldown seconds.
-        """
-        if cooldown_seconds <= 0:
+    _AUDIO_EXT_ALIASES = {
+        "mp3": "mp3",
+        "ogg": "ogg",
+        "oga": "ogg",
+        "wav": "wav",
+        "webm": "webm",
+    }
+
+    _AUDIO_MIME_ALIASES = {
+        "mpeg": "mp3",
+        "mp3": "mp3",
+        "ogg": "ogg",
+        "vorbis": "ogg",
+        "wav": "wav",
+        "x-wav": "wav",
+        "wave": "wav",
+        "vnd.wave": "wav",
+        "webm": "webm",
+    }
+
+    @classmethod
+    def _normalize_audio_format(cls, value: Any) -> Optional[str]:
+        """Normalise an extension or MIME form to a canonical extension."""
+        if not isinstance(value, str):
             return None
+        v = value.strip().lower()
+        if v.startswith("audio/"):
+            return cls._AUDIO_MIME_ALIASES.get(v[len("audio/") :])
+        if v.startswith("."):
+            v = v[1:]
+        if "/" in v:
+            v = v.rsplit("/", 1)[-1]
+        return cls._AUDIO_EXT_ALIASES.get(v)
 
-        now = self._get_timestamp()
-        candidates: List[int] = []
+    def _format_allowed(self, fmt: Any) -> bool:
+        """Check ``fmt`` (extension or MIME) against the configured allow-list.
 
-        local_ts = self._client_local_cooldowns.get((user_id, sound_id))
-        if local_ts is not None:
-            candidates.append(int(local_ts))
+        Both sides are normalised so ``"audio/mpeg"``, ``".mp3"`` and
+        ``"mp3"`` are equivalent regardless of which form the config or
+        the client used.
+        """
+        canonical = self._normalize_audio_format(fmt)
+        if canonical is None:
+            return False
+        for entry in self._config.get("allowed_formats", ["mp3", "ogg"]):
+            if self._normalize_audio_format(entry) == canonical:
+                return True
+        return False
 
+    _URL_ALLOWED_SCHEMES = ("http://", "https://")
+
+    def _validate_sound_url(self, url: str) -> str:
+        """Validate a sound URL, rejecting dangerous schemes.
+
+        Only absolute ``http(s)`` URLs and server-relative media paths
+        (``/...``) are accepted; ``javascript:``, ``data:``, ``file:`` and
+        friends are rejected as a stored-XSS / SSRF defence.
+        Returns the trimmed URL.
+        """
+        if not isinstance(url, str) or not url.strip():
+            raise InvalidSoundUrlError("Sound URL must be a non-empty string")
+        url = url.strip()
+        lowered = url.lower()
+        if lowered.startswith(self._URL_ALLOWED_SCHEMES):
+            return url
+        # Server-relative media paths produced by the shared pipeline.
+        if url.startswith("/") and not lowered.startswith("//"):
+            return url
+        # Scheme-relative or scheme-less opaque strings carry no scheme the
+        # browser could abuse; anything with an explicit scheme other than
+        # http(s) (javascript:, data:, file:, ...) is rejected.
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", url):
+            raise InvalidSoundUrlError(
+                f"Sound URL scheme is not allowed: {url.split(':', 1)[0]}"
+            )
+        return url
+
+    _MP3_FRAME_SYNC = 0xE0
+
+    @staticmethod
+    def _detect_audio_format(data: bytes) -> Optional[str]:
+        """Detect the audio container of raw bytes via magic numbers.
+
+        Returns the canonical extension (``mp3``, ``ogg``, ``wav``,
+        ``webm``) or ``None`` when the bytes do not match any known
+        audio container — client-declared Content-Type is never trusted.
+        """
+        if not data:
+            return None
+        if data[:3] == b"ID3":
+            return "mp3"
+        if (
+            len(data) >= 2
+            and data[0] == 0xFF
+            and (data[1] & SoundboardManager._MP3_FRAME_SYNC)
+            == SoundboardManager._MP3_FRAME_SYNC
+        ):
+            return "mp3"
+        if data[:4] == b"OggS":
+            return "ogg"
+        if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+            return "wav"
+        if data[:4] == b"\x1aE\xdf\xa3":
+            return "webm"
+        return None
+
+    def create_sound_from_upload(
+        self,
+        user_id: int,
+        server_id: int,
+        name: str,
+        file_data: bytes,
+        filename: Optional[str] = None,
+        content_type: Optional[str] = None,
+        duration_seconds: Optional[float] = None,
+        emoji: Optional[str] = None,
+        volume: float = 1.0,
+    ) -> Sound:
+        """Store uploaded audio bytes via the shared media pipeline.
+
+        The real container format is derived from magic bytes (never the
+        client-declared Content-Type), checked against the configured
+        allow-list, then persisted through :meth:`upload_sound` with the
+        pipeline-produced URL.
+        """
+        detected = self._detect_audio_format(file_data)
+        allowed = self._config.get("allowed_formats", ["mp3", "ogg"])
+        if detected is None:
+            raise InvalidSoundFormatError(
+                "Uploaded bytes are not a recognised audio container",
+                content_type or (filename or "").rsplit(".", 1)[-1],
+                allowed,
+            )
+        if not self._format_allowed(detected):
+            raise InvalidSoundFormatError(
+                f"Format {detected} not allowed", detected, allowed
+            )
+
+        media = getattr(self, "_media", None)
+        if media is None or not hasattr(media, "upload_file"):
+            raise RuntimeError("Media storage unavailable")
+
+        max_size = int(
+            self._config.get(
+                "max_sound_size", config.get("soundboard.max_sound_size", 524288)
+            )
+            or 524288
+        )
+        if len(file_data) > max_size:
+            raise SoundTooLargeError(
+                f"Sound exceeds maximum size of {max_size} bytes",
+                max_size,
+                len(file_data),
+            )
+
+        ext_suffix = (filename or f"sound.{detected}").rsplit(".", 1)[-1].lower()
+        safe_ext = (
+            ext_suffix
+            if self._normalize_audio_format(ext_suffix) == detected
+            else detected
+        )
+        upload_filename = f"{name}.{safe_ext}"
+        upload_ct = "audio/mpeg" if detected == "mp3" else f"audio/{detected}"
+
+        result = media.upload_file(user_id, file_data, upload_filename, upload_ct)
         try:
-            row = self._db.fetch_one(
-                "SELECT last_play_at FROM soundboard_user_cooldowns "
-                "WHERE user_id = ? AND sound_id = ?",
-                (user_id, sound_id),
+            return self.upload_sound(
+                user_id=user_id,
+                server_id=server_id,
+                name=name,
+                format=SoundFormat(detected),
+                url=result.url,
+                size=len(file_data),
+                duration_seconds=float(duration_seconds or 0.0),
+                emoji=emoji,
+                volume=volume,
             )
-            if row and row.get("last_play_at") is not None:
-                candidates.append(int(row["last_play_at"]))
-        except Exception as e:
-            logger.error(
-                f"Failed to check cooldown for user {user_id} sound {sound_id}: {e}"
-            )
-            return cooldown_seconds
-
-        if not candidates:
-            return None
-        last_used = max(candidates)
-        elapsed_seconds = (now - last_used) / 1000.0
-        if elapsed_seconds >= cooldown_seconds:
-            return None
-        return int(cooldown_seconds - elapsed_seconds)
-
-    def _set_cooldown(self, user_id: int, sound_id: int, server_id: int) -> None:
-        """Persist the cooldown timestamp for ``user_id`` on ``sound_id``.
-
-        Writes both the authoritative DB row and the in-process cache
-        so back-to-back plays within a single connection don't hit
-        the DB.
-        """
-        now = self._get_timestamp()
-        self._client_local_cooldowns[(user_id, sound_id)] = now
-
-        try:
-            self._db.execute(
-                "INSERT INTO soundboard_user_cooldowns "
-                "(user_id, sound_id, server_id, last_play_at) "
-                "VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(user_id, sound_id) DO UPDATE SET "
-                "  last_play_at = excluded.last_play_at, "
-                "  server_id    = excluded.server_id",
-                (user_id, sound_id, server_id, now),
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to persist cooldown for user {user_id} sound {sound_id}: {e}"
-            )
+        except Exception:
+            # Roll back the just-uploaded file so storage does not
+            # accumulate orphaned media objects when validation fails
+            # after the bytes were already written.
+            try:
+                if hasattr(media, "delete_file_permanently"):
+                    media.delete_file_permanently(user_id, int(result.file_id))
+                elif hasattr(media, "delete_file"):
+                    media.delete_file(user_id, int(result.file_id))
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to clean up orphaned soundboard media %s: %s",
+                    getattr(result, "file_id", "?"),
+                    cleanup_err,
+                )
             raise
 
     def upload_sound(
@@ -214,10 +363,22 @@ class SoundboardManager(BaseManager):
                 "Missing permission to manage server", "server.manage"
             )
 
-        name = self._validate_sound_name(name)
+        # A permitted upload targeting a vanished server must not create
+        # orphaned rows — verify the backing server still exists.
+        if (
+            self._db.fetch_one(
+                "SELECT 1 FROM srv_servers WHERE id = ? AND deleted = 0",
+                (server_id,),
+            )
+            is None
+        ):
+            raise ServerNotFoundError(f"Server {server_id} not found")
 
-        allowed_formats = self._config.get("allowed_formats", ["mp3", "ogg"])
-        if format.value not in allowed_formats:
+        name = self._validate_sound_name(name)
+        url = self._validate_sound_url(url)
+
+        if not self._format_allowed(format.value):
+            allowed_formats = self._config.get("allowed_formats", ["mp3", "ogg"])
             raise InvalidSoundFormatError(
                 f"Format {format.value} not allowed", format.value, allowed_formats
             )
@@ -383,6 +544,15 @@ class SoundboardManager(BaseManager):
                 "Missing permission to manage server", "server.manage"
             )
 
+        # Cross-server guard: a role from a DIFFERENT server must never be
+        # attachable to this sound's permission rows.
+        role_row = self._db.fetch_one(
+            "SELECT server_id FROM srv_roles WHERE id = ? AND deleted = 0",
+            (role_id,),
+        )
+        if not role_row or int(role_row["server_id"]) != int(sound.server_id):
+            raise PermissionDeniedError("Role does not belong to this sound's server")
+
         existing = self._db.fetch_one(
             "SELECT id FROM soundboard_permissions WHERE sound_id = ? AND role_id = ?",
             (sound_id, role_id),
@@ -407,11 +577,14 @@ class SoundboardManager(BaseManager):
         )
 
     def _can_use_sound(self, user_id: int, sound_id: int, server_id: int) -> bool:
-        """Check if user can use a sound based on role permissions."""
-        user_roles = self._get_user_roles(user_id, server_id)
-        if not user_roles:
-            return True
+        """Check if user can use a sound based on role permissions.
 
+        Semantics: with no permission rows configured every member may
+        play. Once rows exist they act as an ALLOW-list (deny-wins): the
+        user needs at least one matching ``can_use`` entry and no
+        matching deny entry — members whose roles match nothing are NOT
+        implicitly allowed.
+        """
         perms = self._db.fetch_all(
             "SELECT role_id, can_use FROM soundboard_permissions WHERE sound_id = ?",
             (sound_id,),
@@ -420,12 +593,13 @@ class SoundboardManager(BaseManager):
         if not perms:
             return True
 
-        for perm in perms:
-            if perm["role_id"] in user_roles:
-                if not perm["can_use"]:
-                    return False
-
-        return True
+        user_roles = set(self._get_user_roles(user_id, server_id))
+        denied = any(
+            not perm["can_use"] and perm["role_id"] in user_roles for perm in perms
+        )
+        if denied:
+            return False
+        return any(perm["can_use"] and perm["role_id"] in user_roles for perm in perms)
 
     # ------------------------------------------------------------------ #
     # supplementary / alias surface                                       #
@@ -434,23 +608,6 @@ class SoundboardManager(BaseManager):
     # original manager did not expose.  These wrappers sit on top of the
     # existing privileged routines to avoid duplicating permission /
     # cooldown logic.
-
-    def get_sounds(self, server_id: int, user_id: Optional[int] = None) -> List[Sound]:
-        """Alias for :meth:`get_server_sounds` accepting an optional user."""
-        if user_id is None:
-            # Read-only public listing (no membership check) for admin /
-            # global usage surfaces.
-            rows = self._db.fetch_all(
-                """SELECT s.*, COUNT(u.id) as usage_count
-                   FROM soundboard_sounds s
-                   LEFT JOIN soundboard_usage u ON s.id = u.sound_id
-                   WHERE s.server_id = ?
-                   GROUP BY s.id
-                   ORDER BY s.name""",
-                (server_id,),
-            )
-            return [self._row_to_sound(row) for row in rows]
-        return self.get_server_sounds(user_id, server_id)
 
     def update_sound(
         self,
@@ -492,8 +649,8 @@ class SoundboardManager(BaseManager):
             updates["volume"] = v
             params.append(v)
         if url is not None:
-            updates["url"] = url
-            params.append(url)
+            updates["url"] = self._validate_sound_url(url)
+            params.append(updates["url"])
         if cooldown is not None:
             # ``cooldown_seconds`` is provisioned by
             # ``soundboard/schema.py`` as a NOT NULL DEFAULT 0
@@ -501,7 +658,11 @@ class SoundboardManager(BaseManager):
             # lazy-ALTER approach acquired an ACCESS EXCLUSIVE lock
             # on Postgres for every metadata write — replaced once the
             # column was moved into the schema.
-            updates["cooldown_seconds"] = int(cooldown)
+            clamped = int(cooldown)
+            max_cooldown = int(self._config.get("max_cooldown_seconds", 0) or 0)
+            if max_cooldown > 0:
+                clamped = min(clamped, max_cooldown)
+            updates["cooldown_seconds"] = clamped
             params.append(updates["cooldown_seconds"])
         if not updates:
             return sound
@@ -516,271 +677,6 @@ class SoundboardManager(BaseManager):
         refreshed = self.get_sound(sound_id, user_id)
         assert refreshed is not None
         return refreshed
-
-    def can_play_sound(
-        self,
-        user_id: int,
-        sound_id: int,
-        channel_id: Optional[int] = None,
-    ) -> bool:
-        """Permission/cooldown probe used by the UI before triggering playback."""
-        try:
-            sound = self.get_sound(sound_id, user_id)
-        except SoundNotFoundError:
-            return False
-        if not sound:
-            return False
-        if not self._can_use_sound(user_id, sound_id, sound.server_id):
-            return False
-        if channel_id is not None and self._servers:
-            # Use keyword arguments — the legacy ``ServerManager``
-            # accepts ``(user_id, channel_id)`` while the public
-            # ``ServersManager`` exposes ``(channel_id, user_id)``.
-            # The kwarg form is invariant to either ordering.
-            # Canonical (channel_id, user_id) per manager/base.py.
-            channel = self._servers.get_channel(channel_id, user_id)
-            if not channel:
-                return False
-            ctype = self._get_channel_type_value(channel)
-            # Strict parity with ``play_sound``: any channel whose
-            # ``channel_type`` is missing or not ``"voice"`` is
-            # rejected.  Silent permissiveness here would let the UI
-            # probe say "yes you can play" while ``play_sound`` later
-            # raises ``ChannelNotFoundError``.
-            if ctype != "voice":
-                return False
-        return True
-
-    def search_sounds(
-        self,
-        server_id: int,
-        user_id: Optional[int],
-        query: str,
-        limit: int = 25,
-    ) -> List[Sound]:
-        """Free-text search across server sounds."""
-        if not query or not query.strip():
-            return []
-        needle = f"%{query.strip().lower()}%"
-        rows = self._db.fetch_all(
-            """SELECT s.*, COUNT(u.id) as usage_count
-               FROM soundboard_sounds s
-               LEFT JOIN soundboard_usage u ON s.id = u.sound_id
-               WHERE s.server_id = ? AND LOWER(s.name) LIKE ?
-               GROUP BY s.id
-               ORDER BY usage_count DESC
-               LIMIT ?""",
-            (server_id, needle, max(1, limit)),
-        )
-        if user_id is not None and not self._is_server_member(user_id, server_id):
-            return []
-        return [self._row_to_sound(row) for row in rows]
-
-    def get_popular_sounds(self, server_id: int, limit: int = 10) -> List[Sound]:
-        """Top-N sounds for the server by usage frequency."""
-        rows = self._db.fetch_all(
-            """SELECT s.*, COUNT(u.id) as usage_count
-               FROM soundboard_sounds s
-               LEFT JOIN soundboard_usage u ON s.id = u.sound_id
-               WHERE s.server_id = ?
-               GROUP BY s.id
-               ORDER BY usage_count DESC
-               LIMIT ?""",
-            (server_id, max(1, limit)),
-        )
-        return [self._row_to_sound(row) for row in rows]
-
-    def get_recent_sounds(
-        self, server_id: int, user_id: int, limit: int = 10
-    ) -> List[Sound]:
-        """Return distinct sounds the user has played recently in `server_id`."""
-        rows = self._db.fetch_all(
-            """SELECT s.*, COUNT(u.id) as usage_count, MAX(u.used_at) as last_used
-               FROM soundboard_sounds s
-               INNER JOIN soundboard_usage u ON s.id = u.sound_id
-               WHERE s.server_id = ? AND u.user_id = ?
-               GROUP BY s.id
-               ORDER BY last_used DESC
-               LIMIT ?""",
-            (server_id, user_id, max(1, limit)),
-        )
-        return [self._row_to_sound(row) for row in rows]
-
-    def get_usage_count(self, sound_id: int) -> int:
-        row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM soundboard_usage WHERE sound_id = ?",
-            (sound_id,),
-        )
-        return int(row["count"]) if row else 0
-
-    def play_sound(
-        self,
-        user_id: int,
-        sound_id: int,
-        channel_id: Optional[int] = None,
-        *,
-        volume: Optional[float] = None,
-    ) -> "SoundPlayback":
-        """
-        Play a sound in a voice channel.
-
-        This triggers a playback event that the voice module should handle.
-
-        Args:
-            user_id: ID of user playing sound
-            sound_id: ID of sound
-            channel_id: ID of voice channel
-
-        Returns:
-            SoundPlayback event
-
-        Raises:
-            SoundNotFoundError: Sound not found
-            ChannelNotFoundError: Channel not found or not voice
-            PermissionDeniedError: No permission to use sound
-            SoundCooldownError: Sound is on cooldown
-        """
-        sound = self.get_sound(sound_id, user_id)
-        if not sound:
-            raise SoundNotFoundError("Sound not found")
-
-        if channel_id is None:
-            raise NotInVoiceChannelError(
-                "Cannot play sound without joining a voice channel"
-            )
-
-        if self._servers:
-            # Use keyword arguments — the legacy ``ServerManager``
-            # accepts ``(user_id, channel_id)`` while the public
-            # ``ServersManager`` exposes ``(channel_id, user_id)``.
-            # The kwarg form is invariant to either ordering.
-            # Canonical (channel_id, user_id) per manager/base.py.
-            channel = self._servers.get_channel(channel_id, user_id)
-            if not channel:
-                raise ChannelNotFoundError("Channel not found")
-            ctype = self._get_channel_type_value(channel)
-            # Strict: any channel whose ``channel_type`` is missing or
-            # not ``"voice"`` is rejected.  A missing attribute usually
-            # indicates a legacy / migration-backlog row — better to
-            # surface that as a config error than to silently play a
-            # sound in a non-voice channel.
-            if ctype != "voice":
-                raise ChannelNotFoundError("Channel is not a voice channel")
-
-        if not self._can_use_sound(user_id, sound_id, sound.server_id):
-            raise PermissionDeniedError("You do not have permission to use this sound")
-
-        # Optional per-sound cooldown column look-up.  Use an
-        # explicit ``is not None`` check on the column value so a
-        # row-stored ``0`` (the "no per-sound cooldown" sentinel) is
-        # honoured — a plain truthiness test would treat ``0`` as
-        # falsy and let the global default override it, breaking
-        # owners that explicitly set ``cooldown=0`` on a sound.
-        #
-        # FLAG-DAY GRACE: if ``soundboard.cooldown_grace_until_zero_ts``
-        # in the active config is a future Unix timestamp, treat
-        # ``0`` the same as ``NULL`` (fall back to the global
-        # default).  This gives the 046 migration a one-release
-        # safety window: ship the migration before turning this on
-        # at deploy time, then drop the config key after owners have
-        # rolled forward.
-        per_sound_cooldown: Optional[int] = None
-        cooldown_grace_active = False
-        try:
-            # Re-read the grace timestamp from the live top-level
-            # config (not the cached ``self._config``) so a deploy-
-            # time config flip is observed without restarting every
-            # Plexichat worker — important for the one-release
-            # safety window migration 046 relies on.
-            grace_until = int(
-                config.get("soundboard.cooldown_grace_until_zero_ts", 0) or 0
-            )
-            cooldown_grace_active = grace_until > 0 and (
-                self._get_timestamp() // 1000 < grace_until
-            )
-        except (TypeError, ValueError):  # noqa: BLE001
-            cooldown_grace_active = False
-        cs_row = self._db.fetch_one(
-            "SELECT cooldown_seconds FROM soundboard_sounds WHERE id = ?",
-            (sound_id,),
-        )
-        if cs_row is not None and cs_row.get("cooldown_seconds") is not None:
-            raw = int(cs_row["cooldown_seconds"])
-            if raw != 0 or not cooldown_grace_active:
-                per_sound_cooldown = raw
-            # else: grace window active + stored 0 → treat as NULL.
-
-        # Honour "global_cooldown_seconds" by sharing the key with any
-        # sound — the test suite checks that playing a *different* sound
-        # within the global window fails.
-        # Global cooldown (any sound within ``global_cooldown_seconds``)
-        # consults ``soundboard_usage`` for the user's most recent play
-        # on this server: pure DB-backed, no in-memory cache, so the
-        # behaviour is consistent across processes and instances.
-        global_window = int(self._config.get("global_cooldown_seconds", 0) or 0)
-        if global_window > 0:
-            last_row = self._db.fetch_one(
-                """SELECT MAX(u.used_at) AS last_play_at
-                   FROM soundboard_usage AS u
-                   INNER JOIN soundboard_sounds AS s
-                     ON s.id = u.sound_id
-                   WHERE u.user_id = ? AND s.server_id = ?""",
-                (user_id, sound.server_id),
-            )
-            if last_row and last_row.get("last_play_at"):
-                elapsed = (
-                    self._get_timestamp() - int(last_row["last_play_at"])
-                ) / 1000.0
-                if elapsed < global_window:
-                    raise SoundCooldownError(
-                        f"Global soundboard cooldown: {int(global_window - elapsed)}s remaining",
-                        int(global_window - elapsed),
-                    )
-
-        # ``or`` would treat a per-sound value of ``0`` as falsy and
-        # silently fall back to the global default — breaking tests
-        # / owners that explicitly set ``cooldown=0`` to disable
-        # per-sound throttling for that sound.  Use an explicit
-        # ``None`` check so 0 is honoured.
-        if per_sound_cooldown is not None:
-            cooldown_seconds = per_sound_cooldown
-        else:
-            cooldown_seconds = self._config.get("default_cooldown_seconds", 5)
-        remaining = self._check_cooldown(user_id, sound_id, cooldown_seconds)
-        if remaining is not None:
-            raise SoundCooldownError(
-                f"Sound is on cooldown for {remaining} more seconds", remaining
-            )
-
-        now = self._get_timestamp()
-        usage_id = self._generate_id()
-
-        # Honour volume override by clamping the playback's per-user
-        # multiplier, if provided.
-        if volume is not None:
-            sound.volume = max(0.0, min(1.0, float(volume)))
-
-        self._db.execute(
-            """INSERT INTO soundboard_usage (id, sound_id, user_id, channel_id, used_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (usage_id, sound_id, user_id, channel_id, now),
-        )
-
-        # Persist per-sound cooldown in the DB (source of truth) and
-        # also keep a tiny in-process cache so back-to-back plays from
-        # the same client don't hit the DB on every request.  The DB
-        # row remains authoritative across restarts / multi-instance.
-        # ``_set_cooldown`` already updates ``_client_local_cooldowns``,
-        # so no explicit cache write is needed here.
-        self._set_cooldown(user_id, sound_id, sound.server_id)
-
-        logger.debug(
-            f"Sound {sound_id} played by user {user_id} in channel {channel_id}"
-        )
-
-        return SoundPlayback(
-            sound=sound, user_id=user_id, channel_id=channel_id, timestamp=now
-        )
 
     def _row_to_sound(self, row) -> Sound:
         """Convert database row to Sound."""
@@ -816,22 +712,3 @@ class SoundboardManager(BaseManager):
             created_at=row["created_at"],
             usage_count=usage_count,
         )
-
-    def _get_channel_type_value(self, channel) -> Optional[str]:
-        """Normalise ``channel.channel_type`` into its string form.
-
-        Different code paths (DB rows, manager wrappers, the test
-        suite's enum input) deliver ``channel_type`` as either an
-        ``Enum`` with a ``.value`` attribute or as a plain ``str``.
-        Centralising the conversion here avoids drift between
-        ``play_sound`` (which previously required the ``Enum`` form)
-        and ``can_play_sound`` (which already handled both).  Returns
-        ``None`` when the channel is missing the attribute entirely.
-        """
-        if channel is None or not hasattr(channel, "channel_type"):
-            return None
-        if hasattr(channel.channel_type, "value"):
-            return channel.channel_type.value
-        if isinstance(channel.channel_type, str):
-            return channel.channel_type
-        return None

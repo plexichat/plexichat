@@ -34,6 +34,7 @@ def create_application(
         presence_module=presence,
         reactions_module=reactions,
         stickers_module=server._modules.get("stickers"),
+        soundboard_module=server._modules.get("soundboard"),
         embeds_module=embeds,
         webhooks_module=webhooks,
         settings_module=settings,

@@ -91,3 +91,9 @@ class NotInVoiceChannelError(SoundboardError):
     """User is not in a voice channel."""
 
     pass
+
+
+class InvalidSoundUrlError(SoundboardError):
+    """Sound URL is malformed or uses a dangerous scheme."""
+
+    pass
