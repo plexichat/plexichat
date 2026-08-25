@@ -29,8 +29,15 @@ class ValidationMixin(WebhookManagerTrait):
                 WEBHOOK_NAME_MAX_LENGTH,
             )
 
-        name = re.sub(r"<[^>]*>", "", name)
-        name = re.sub(r"javascript:", "", name, flags=re.IGNORECASE)
+        # Sanitize to a FIXED POINT: a single pass over a blacklist is
+        # bypassable ("javajavascript:script:" -> "javascript:"). Repeat
+        # until neither pattern matches any more.
+        while True:
+            sanitized = re.sub(r"<[^>]*>", "", name)
+            sanitized = re.sub(r"javascript:", "", sanitized, flags=re.IGNORECASE)
+            if sanitized == name:
+                break
+            name = sanitized
 
         name = name.strip()
         if not name:

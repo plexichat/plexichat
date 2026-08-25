@@ -768,6 +768,10 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "max_webhooks_per_server": 50,
             "max_message_length": 2000,
             "max_embeds_per_message": 10,
+            # Per-webhook execution rate limit. The public execute endpoint
+            # is unauthenticated (token-only), so a sane default is enabled
+            # out of the box; set to 0 to disable.
+            "rate_limit_per_minute": 30,
             # Background retry-delivery sweep: seconds between passes over the
             # webhook_retry_queue. Set to 0 to disable the worker entirely.
             "delivery_interval_seconds": 30,

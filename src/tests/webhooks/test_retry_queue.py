@@ -112,11 +112,39 @@ class TestEnqueue:
                 endpoint_url="https://example.com/hook",
             )
 
+    def test_enqueue_rejects_loopback_endpoint(self, retry_queue):
+        """F1: SSRF guard refuses internal targets at enqueue time."""
+        for url in (
+            "http://127.0.0.1:8080/hook",
+            "http://localhost/hook",
+            "http://169.254.169.254/latest/meta-data",
+            "http://10.1.2.3/hook",
+        ):
+            with pytest.raises(ValueError, match="SSRF|forbidden|not allowed"):
+                retry_queue.enqueue(
+                    webhook_id=404,
+                    event_type="message.created",
+                    payload={"a": 1},
+                    endpoint_url=url,
+                )
+
+    def test_enqueue_rejects_non_http_scheme(self, retry_queue):
+        with pytest.raises(ValueError, match="scheme"):
+            retry_queue.enqueue(
+                webhook_id=405,
+                event_type="message.created",
+                payload={"a": 1},
+                endpoint_url="file:///etc/passwd",
+            )
+
 
 class TestMarkSuccess:
     def test_mark_success_marks_delivered(self, db, retry_queue):
         record = retry_queue.enqueue(
-            webhook_id=101, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=101,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         retry_queue.mark_success(record["id"], 200)
 
@@ -132,7 +160,10 @@ class TestMarkSuccess:
 class TestMarkFailure:
     def test_mark_failure_schedules_retry(self, db, retry_queue, monkeypatch):
         record = retry_queue.enqueue(
-            webhook_id=101, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=101,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         monkeypatch.setattr(retry_queue, "_get_timestamp", lambda: 1_000_000_000_000)
         monkeypatch.setattr(random, "randint", lambda a, b: 0)
@@ -160,7 +191,10 @@ class TestMarkFailure:
 
     def test_mark_failure_moves_to_dead_letter_after_max(self, db, retry_queue):
         record = retry_queue.enqueue(
-            webhook_id=101, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=101,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         # MAX_RETRIES = 5: attempts 1-4 schedule retries, the 5th dead-letters.
         for _ in range(WebhookRetryQueue.MAX_RETRIES - 1):
@@ -231,7 +265,7 @@ class TestGetPendingRetries:
             webhook_id=7,
             event_type="message.created",
             payload=_due_payload(),
-            endpoint_url="http://x",
+            endpoint_url="https://example.com/hook",
             signing_headers={"X-Sig": "s"},
         )
         assert record["id"] > 0
@@ -257,7 +291,7 @@ class TestDeadLetterQueue:
             webhook_id=webhook_id,
             event_type="e",
             payload={},
-            endpoint_url="http://x",
+            endpoint_url="https://example.com/hook",
         )
         for _ in range(WebhookRetryQueue.MAX_RETRIES):
             retry_queue.mark_failure(record["id"], 500)
@@ -297,9 +331,35 @@ class TestDeadLetterQueue:
     def test_retry_dead_letter_unknown_id_false(self, retry_queue):
         assert retry_queue.retry_dead_letter(999999) is False
 
+    def test_retry_dead_letter_strips_frozen_signing_headers(self, db, retry_queue):
+        """F17: stale signatures must not be reused on manual retry."""
+        record = retry_queue.enqueue(
+            webhook_id=101,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
+            signing_headers={
+                "X-Plexichat-Signature": "stale",
+                "X-Plexichat-Timestamp": "123",
+            },
+        )
+        for _ in range(WebhookRetryQueue.MAX_RETRIES):
+            retry_queue.mark_failure(record["id"], 500)
+
+        assert retry_queue.retry_dead_letter(record["id"]) is True
+
+        row = db.fetch_one(
+            "SELECT metadata FROM webhook_retry_queue WHERE id = ?", (record["id"],)
+        )
+        metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+        assert "original_signing_headers" not in metadata
+
     def test_retry_dead_letter_non_dead_letter_false(self, db, retry_queue):
         record = retry_queue.enqueue(
-            webhook_id=1, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=1,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         assert retry_queue.retry_dead_letter(record["id"]) is False
 
@@ -307,7 +367,10 @@ class TestDeadLetterQueue:
 class TestCleanupExpired:
     def test_cleanup_gated_by_interval(self, db, retry_queue):
         record = retry_queue.enqueue(
-            webhook_id=1, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=1,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         retry_queue.mark_success(record["id"], 200)
         # Force the record to be older than the retention window.
@@ -328,7 +391,7 @@ class TestCleanupExpired:
                 webhook_id=webhook_id,
                 event_type="e",
                 payload={},
-                endpoint_url="http://x",
+                endpoint_url="https://example.com/hook",
             )
             retry_queue.mark_success(record["id"], 200)
             db.execute(
@@ -337,7 +400,10 @@ class TestCleanupExpired:
             )
         # A recent delivered record must survive the sweep.
         fresh = retry_queue.enqueue(
-            webhook_id=3, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=3,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         retry_queue.mark_success(fresh["id"], 200)
 
@@ -348,7 +414,10 @@ class TestCleanupExpired:
 
     def test_cleanup_abandons_stuck_retrying(self, db, retry_queue):
         record = retry_queue.enqueue(
-            webhook_id=1, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=1,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         retry_queue.mark_failure(record["id"], 500)
         old = int(time.time() * 1000) - retry_queue.RETRY_WINDOW_MS - 1000
@@ -370,7 +439,7 @@ class TestStats:
             webhook_id=webhook_id,
             event_type="e",
             payload={},
-            endpoint_url="http://x",
+            endpoint_url="https://example.com/hook",
         )
         for _ in range(WebhookRetryQueue.MAX_RETRIES):
             retry_queue.mark_failure(record["id"], 500)
@@ -378,10 +447,16 @@ class TestStats:
 
     def test_get_stats_overall_counts(self, db, retry_queue):
         pending = retry_queue.enqueue(
-            webhook_id=1, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=1,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         delivered = retry_queue.enqueue(
-            webhook_id=2, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=2,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         retry_queue.mark_success(delivered["id"], 200)
         self._dead_letter(retry_queue, 3)
@@ -396,10 +471,16 @@ class TestStats:
 
     def test_get_stats_filtered_by_webhook(self, db, retry_queue):
         retry_queue.enqueue(
-            webhook_id=1, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=1,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         retry_queue.enqueue(
-            webhook_id=2, event_type="e", payload={}, endpoint_url="http://x"
+            webhook_id=2,
+            event_type="e",
+            payload={},
+            endpoint_url="https://example.com/hook",
         )
         stats = retry_queue.get_stats(webhook_id=1)
         assert stats["pending"] == 1

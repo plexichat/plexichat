@@ -20,9 +20,10 @@ so concurrent workers can never double-deliver the same record).
 
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import utils.logger as logger
+from src.core.webhooks.url_safety import redact_url, validate_delivery_endpoint
 
 try:
     import httpx
@@ -31,17 +32,44 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 
 DEFAULT_INTERVAL_SECONDS = 30
 
+# Signing headers captured at enqueue time carry a timestamp; receivers
+# enforcing the documented replay window reject deliveries signed more
+# than ~5 minutes ago. Retries (especially manual dead-letter retries)
+# can legitimately exceed that, so a stored signature older than the
+# window is refreshed (or stripped) before the HTTP call.
+SIGNATURE_STALE_AFTER_MS = 5 * 60 * 1000
+
 
 class WebhookDeliveryError(Exception):
     """Raised when an outbound webhook delivery fails at the transport level."""
 
 
 class WebhookDeliverer:
-    """POST webhook payloads to external endpoints with stored signing headers."""
+    """POST webhook payloads to external endpoints with stored signing headers.
 
-    def __init__(self, client: Optional[Any] = None, timeout: float = 10.0):
+    Args:
+        client: Optional pre-configured HTTP client (testing seam).
+        timeout: Per-request timeout when creating the default client.
+        signer: Optional ``callable(webhook_id, payload) -> Dict[str, str]``
+            used to re-sign deliveries whose captured signing headers are
+            older than the replay window (or missing entirely). Typically
+            ``WebhookManager.sign_payload``.
+        allow_private_network: Testing seam ONLY for loopback end-to-end
+            tests; production must keep the strict SSRF default.
+    """
+
+    def __init__(
+        self,
+        client: Optional[Any] = None,
+        timeout: float = 10.0,
+        signer: Optional[Callable[[int, Dict[str, Any]], Dict[str, str]]] = None,
+        *,
+        allow_private_network: bool = False,
+    ):
         self._client = client
         self._timeout = timeout
+        self._signer = signer
+        self._allow_private_network = allow_private_network
 
     def _session(self) -> Any:
         """Return the HTTP client used for delivery."""
@@ -51,12 +79,49 @@ class WebhookDeliverer:
             raise WebhookDeliveryError("httpx is not installed")
         return httpx.Client(timeout=self._timeout)
 
+    def _effective_signing_headers(
+        self, webhook_id: Any, payload: Dict[str, Any], stored: Dict[str, str]
+    ) -> Dict[str, str]:
+        """Return signing headers fit for THIS delivery attempt.
+
+        Stored headers whose timestamp is older than the replay window are
+        replaced with a freshly signed pair when a signer is available, or
+        dropped entirely otherwise — a frozen stale timestamp would be
+        rejected by receivers as a replay.
+        """
+        timestamp_header = stored.get("X-Plexichat-Timestamp")
+        try:
+            signed_at = int(timestamp_header) if timestamp_header else 0
+        except (TypeError, ValueError):
+            signed_at = 0
+
+        fresh_enough = (
+            timestamp_header is not None
+            and abs(int(time.time() * 1000) - signed_at) <= SIGNATURE_STALE_AFTER_MS
+        )
+        if fresh_enough:
+            return stored
+
+        if self._signer is not None:
+            try:
+                refreshed = self._signer(webhook_id, payload) or {}
+                if refreshed:
+                    return refreshed
+            except Exception as exc:  # signing is best-effort; never block delivery
+                logger.warning(
+                    f"Failed to refresh webhook signature for {webhook_id}: {exc}"
+                )
+        # No signer / signing failed: deliver unsigned rather than with a
+        # permanently-rejected stale signature.
+        return {}
+
     def deliver(self, record: Dict[str, Any]) -> int:
         """Deliver one queued record and return the HTTP status code.
 
         Raises:
-            WebhookDeliveryError: when the record is malformed or the
-                HTTP transport fails (connection errors, timeouts...).
+            WebhookDeliveryError: when the record is malformed, the
+                endpoint URL fails SSRF validation, or the HTTP transport
+                fails (connection errors, timeouts...).
         """
         endpoint_url = record.get("endpoint_url")
         payload = record.get("payload")
@@ -65,17 +130,40 @@ class WebhookDeliverer:
                 "retry record missing endpoint_url or a dict payload"
             )
 
+        # SECURITY (SSRF): re-validate immediately before the fetch. A row
+        # persisted by an older version, or mutated after enqueue, must
+        # never reach an internal target. Fail closed on validation errors
+        # so the record is marked failed/dead-letter instead of delivered.
+        try:
+            validate_delivery_endpoint(
+                endpoint_url, allow_private_network=self._allow_private_network
+            )
+        except ValueError as exc:
+            logger.warning(
+                f"Refusing webhook delivery to unsafe endpoint "
+                f"{redact_url(endpoint_url)}: {exc}"
+            )
+            raise WebhookDeliveryError(
+                "endpoint URL refused by SSRF validation"
+            ) from exc
+
         headers = {"Content-Type": "application/json"}
         metadata = record.get("metadata") or {}
         original = metadata.get("original_signing_headers") or {}
-        for key, value in original.items():
+        effective = self._effective_signing_headers(
+            record.get("webhook_id"), payload, original
+        )
+        for key, value in effective.items():
             headers[str(key)] = str(value)
 
         session = self._session()
         try:
             response = session.post(endpoint_url, json=payload, headers=headers)
         except Exception as exc:
-            logger.warning(f"Webhook delivery transport error to {endpoint_url}: {exc}")
+            # F6: redact credentials/query tokens before the URL hits logs.
+            logger.warning(
+                f"Webhook delivery transport error to {redact_url(endpoint_url)}: {exc}"
+            )
             raise WebhookDeliveryError(f"delivery failed: {exc}") from exc
         return int(response.status_code)
 
@@ -200,7 +288,18 @@ class WebhookDeliveryJob:
         from src.core.webhooks.retry import WebhookRetryQueue
 
         retry_queue = WebhookRetryQueue(self._db)
-        stats = process_due_retries(retry_queue, WebhookDeliverer())
+        # Re-sign stale/missing delivery signatures with a FRESH timestamp
+        # so retried deliveries (auto backoff past the 5-minute replay
+        # window, or manual dead-letter retries) are not rejected as
+        # replays by receivers. Unavailable manager -> unsigned fallback.
+        signer = None
+        try:
+            from src.core.webhooks import _get_manager
+
+            signer = _get_manager().sign_payload
+        except Exception:
+            signer = None
+        stats = process_due_retries(retry_queue, WebhookDeliverer(signer=signer))
         # Expired-record cleanup piggybacks on the delivery cycle (the
         # queue self-throttles via CLEANUP_INTERVAL_MS) so delivered/
         # dead-letter rows and stale 'delivering' claims are reaped

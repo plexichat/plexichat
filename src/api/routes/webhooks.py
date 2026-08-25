@@ -40,6 +40,9 @@ def _webhook_to_response(webhook, include_token: bool = False) -> WebhookRespons
             avatar_url=webhook.avatar_url,
             token=webhook.token if include_token and webhook.token else None,
             url=webhook.url if include_token and webhook.token else None,
+            require_signed_deliveries=bool(
+                getattr(webhook, "require_signed_deliveries", False)
+            ),
             created_at=webhook.created_at,
         )
     except Exception as e:
@@ -170,6 +173,7 @@ async def create_webhook(
                 channel_id=cid,
                 name=body.name,
                 avatar_url=body.avatar_url,
+                require_signed_deliveries=bool(body.require_signed_deliveries),
             )
             logger.info(
                 f"User {current_user.user_id} created webhook {webhook.id} in channel {cid}"
@@ -332,6 +336,7 @@ async def update_webhook(
                 name=body.name,
                 avatar_url=body.avatar_url,
                 channel_id=int(body.channel_id) if body.channel_id else None,
+                require_signed_deliveries=body.require_signed_deliveries,
             )
             logger.info(f"User {current_user.user_id} updated webhook {wid}")
             # Invalidate webhook cache for this server
@@ -405,6 +410,17 @@ async def delete_webhook(
             )
 
         try:
+            # Capture scope BEFORE deletion so gateway clients can refresh
+            # their open webhook panels (emitting guild_id=0 makes them
+            # ignore the event).
+            try:
+                existing = webhooks.get_webhook(wid)
+                deleted_server_id = getattr(existing, "server_id", None) or 0
+                deleted_channel_id = getattr(existing, "channel_id", None)
+            except Exception:
+                deleted_server_id = 0
+                deleted_channel_id = None
+
             webhooks.delete_webhook(current_user.user_id, wid)
             logger.info(f"User {current_user.user_id} deleted webhook {wid}")
             # Invalidate webhook cache for this server
@@ -412,7 +428,7 @@ async def delete_webhook(
             try:
                 from src.core.events.gateway_emit import emit_webhooks_update
 
-                emit_webhooks_update(0, channel_id=None)
+                emit_webhooks_update(deleted_server_id, channel_id=deleted_channel_id)
             except Exception as ge:
                 logger.debug(f"emit_webhooks_update failed: {ge}")
             return SuccessResponse(success=True, message=None)
@@ -517,6 +533,20 @@ async def execute_webhook(
                 )
 
         try:
+            # F8: signature enforcement is only meaningful when the webhook
+            # REQUIRES signed deliveries. A token holder can otherwise just
+            # omit the headers; with the flag enabled, unsigned requests are
+            # rejected even though the token itself is valid.
+            requires_signature = False
+            if not (x_signature and x_timestamp):
+                try:
+                    webhook_record = webhooks.get_webhook(wid)
+                    requires_signature = bool(
+                        getattr(webhook_record, "require_signed_deliveries", False)
+                    )
+                except Exception:
+                    requires_signature = False
+
             if x_signature and x_timestamp:
                 payload = {
                     "content": body.content,
@@ -538,6 +568,20 @@ async def execute_webhook(
                             }
                         },
                     )
+            elif requires_signature:
+                logger.warning(
+                    f"Unsigned execution refused for webhook {wid} "
+                    f"(require_signed_deliveries enabled)"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "error": {
+                            "code": 401,
+                            "message": "This webhook requires signed deliveries",
+                        }
+                    },
+                )
 
             message = webhooks.execute_webhook(
                 webhook_id=wid,

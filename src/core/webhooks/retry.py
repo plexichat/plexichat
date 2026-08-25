@@ -15,6 +15,7 @@ from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
 from src.core.base import timestamp_ms, generate_id
+from src.core.webhooks.url_safety import validate_delivery_endpoint
 
 
 class WebhookRetryQueue:
@@ -60,6 +61,8 @@ class WebhookRetryQueue:
         payload: Dict[str, Any],
         endpoint_url: str,
         signing_headers: Optional[Dict[str, str]] = None,
+        *,
+        allow_private_network: bool = False,
     ) -> Dict[str, Any]:
         """
         Enqueue a webhook delivery for retry tracking.
@@ -71,13 +74,27 @@ class WebhookRetryQueue:
             webhook_id: ID of the webhook
             event_type: Type of event (e.g., 'message.created')
             payload: Event payload dict
-            endpoint_url: Target URL for delivery
+            endpoint_url: Target URL for delivery. Validated for SSRF
+                safety (scheme allowlist, private/reserved IP blocking)
+                BEFORE insertion; invalid URLs are rejected outright.
             signing_headers: Optional Ed25519 signing headers
+            allow_private_network: Testing seam only (loopback end-to-end
+                tests). Production callers must keep the strict default.
 
         Returns:
             Retry queue record dict
+
+        Raises:
+            ValueError: When the payload exceeds the size limit or the
+                endpoint URL fails SSRF validation.
         """
         now = self._get_timestamp()
+
+        # SECURITY (SSRF): never persist an endpoint we would refuse to
+        # POST to. Rejection happens here AND again at delivery time.
+        validate_delivery_endpoint(
+            endpoint_url, allow_private_network=allow_private_network
+        )
 
         # Validate payload size
         payload_json = json.dumps(payload, sort_keys=True)
@@ -291,14 +308,45 @@ class WebhookRetryQueue:
 
         Return ``True`` only when an eligible dead-letter row was changed;
         callers must not report success for an unknown or already-retried id.
+
+        The frozen signing headers captured at enqueue time are stripped:
+        their timestamp predates the 5-minute replay window receivers
+        enforce, so re-using them would guarantee permanent rejection.
+        The delivery worker re-signs with a fresh timestamp when a webhook
+        manager is available (see ``delivery.WebhookDeliverer``).
         """
         now = self._get_timestamp()
+        row = self._db.fetch_one(
+            "SELECT metadata FROM webhook_retry_queue WHERE id = ? AND status = 'dead_letter'",
+            (retry_id,),
+        )
+        if not row:
+            logger.debug("Dead letter entry %s was not eligible for retry", retry_id)
+            return False
+
+        metadata: Dict[str, Any] = {}
+        raw_metadata = row["metadata"]
+        if raw_metadata:
+            if isinstance(raw_metadata, str):
+                try:
+                    metadata = json.loads(raw_metadata)
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
+            elif isinstance(raw_metadata, dict):
+                metadata = dict(raw_metadata)
+        metadata.pop("original_signing_headers", None)
+
         result = self._db.execute(
             """UPDATE webhook_retry_queue
                SET status = 'retrying', attempt_count = 0,
-                   next_retry_at = ?, updated_at = ?
+                   next_retry_at = ?, updated_at = ?, metadata = ?
                WHERE id = ? AND status = 'dead_letter'""",
-            (now, now, retry_id),
+            (
+                now,
+                now,
+                json.dumps(metadata) if metadata else None,
+                retry_id,
+            ),
         )
         changed = int(getattr(result, "rowcount", 0) or 0)
         if changed == 1:

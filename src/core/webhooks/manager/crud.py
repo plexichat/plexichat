@@ -29,6 +29,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
         channel_id: SnowflakeID,
         name: str,
         avatar_url: Optional[str] = None,
+        require_signed_deliveries: bool = False,
     ) -> Webhook:
         """Create a new webhook for a channel."""
         channel = self._get_channel(channel_id)
@@ -78,8 +79,10 @@ class WebhookCRUDMixin(WebhookManagerTrait):
         self._db.execute(
             """INSERT INTO webhook_webhooks
                (id, channel_id, server_id, creator_id, name, webhook_type,
-                avatar_url, token_hash, signing_key_public, signing_key_private_encrypted, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                avatar_url, token_hash, signing_key_public,
+                signing_key_private_encrypted, require_signed_deliveries,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 webhook_id,
                 channel_id,
@@ -91,6 +94,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
                 token_hash,
                 public_key,
                 private_key_encrypted,
+                1 if require_signed_deliveries else 0,
                 now,
                 now,
             ),
@@ -106,6 +110,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
             avatar_url=avatar_url,
             token=full_token,
             signing_key_public=public_key,
+            require_signed_deliveries=bool(require_signed_deliveries),
             created_at=now,
             updated_at=now,
         )
@@ -196,6 +201,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
         name: Optional[str] = None,
         avatar_url: Optional[str] = None,
         channel_id: Optional[SnowflakeID] = None,
+        require_signed_deliveries: Optional[bool] = None,
     ) -> Webhook:
         """Update a webhook."""
         row = self._db.fetch_one(
@@ -255,6 +261,10 @@ class WebhookCRUDMixin(WebhookManagerTrait):
 
             sets.append("channel_id = ?")
             params.append(channel_id)
+
+        if require_signed_deliveries is not None:
+            sets.append("require_signed_deliveries = ?")
+            params.append(1 if require_signed_deliveries else 0)
 
         now = self._get_timestamp()
         if not sets:
@@ -353,6 +363,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
             token=None,
             signing_key_public=row.get("signing_key_public"),
             signing_key_private_encrypted=row.get("signing_key_private_encrypted"),
+            require_signed_deliveries=bool(row.get("require_signed_deliveries") or 0),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

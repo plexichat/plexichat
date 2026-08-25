@@ -72,6 +72,15 @@ _INVALID_EXC = (
     wh.WebhookLimitError,
 )
 
+# 429 - throttled. The webhook execution window is 60s (see
+# WebhookExecutionMixin.execute_webhook), so that is the honest
+# Retry-After hint for clients.
+RATE_LIMIT_RETRY_AFTER_SECONDS = 60
+
+
+def is_rate_limited(exc: BaseException) -> bool:
+    return isinstance(exc, wh.RateLimitError)
+
 
 def is_not_found(exc: BaseException) -> bool:
     return isinstance(exc, _NOT_FOUND_EXC)
@@ -103,6 +112,15 @@ def raise_mapped(
         raise _http(403, permission_message)
     if is_not_found(exc):
         raise _http(404, not_found_message)
+    if is_rate_limited(exc):
+        # 429 with Retry-After semantics so clients can back off instead
+        # of treating the throttle as a server fault (previous behavior
+        # surfaced a generic 500).
+        raise HTTPException(
+            status_code=429,
+            detail={"error": {"code": 429, "message": "Rate limit exceeded"}},
+            headers={"Retry-After": str(RATE_LIMIT_RETRY_AFTER_SECONDS)},
+        )
     if is_invalid_request(exc):
         raise _http(400, invalid_message)
     raise exc

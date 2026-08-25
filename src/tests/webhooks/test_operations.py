@@ -26,6 +26,18 @@ class TestWebhookErrors:
         with pytest.raises(WebhookNameError):
             webhook_manager._validate_name("x" * 100)
 
+    def test_name_sanitizer_reaches_fixed_point(self, webhook_manager):
+        """F18: nested 'javascript:' payloads must not survive sanitization."""
+        # Single-pass blacklist would turn this INTO 'javascript:'.
+        name = "javajavascript:script:alert(1)"
+        sanitized = webhook_manager._validate_name(name)
+        assert "javascript:" not in sanitized.lower()
+
+        deeply_nested = "javajavajavascript:script:script:x"
+        assert (
+            "javascript:" not in webhook_manager._validate_name(deeply_nested).lower()
+        )
+
     def test_invalid_avatar_url(self, webhook_manager):
         """Invalid avatar URL."""
         with pytest.raises(WebhookAvatarError):

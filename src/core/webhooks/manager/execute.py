@@ -67,7 +67,11 @@ class WebhookExecutionMixin(WebhookManagerTrait):
             )
 
         rate_limit = self._config.get("rate_limit_per_minute")
-        if rate_limit:
+        try:
+            rate_limit = int(rate_limit) if rate_limit else 0
+        except (TypeError, ValueError):
+            rate_limit = 0
+        if rate_limit > 0:
             from src.core.database.cache import check_rate_limit
 
             allowed, _remaining = check_rate_limit(

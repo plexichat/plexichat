@@ -13,11 +13,16 @@ import pytest
 
 from src.core.webhooks.retry import WebhookRetryQueue
 from src.core.webhooks.delivery import (
+    SIGNATURE_STALE_AFTER_MS,
     WebhookDeliverer,
     WebhookDeliveryError,
     WebhookDeliveryJob,
     process_due_retries,
 )
+
+
+def _fresh_timestamp_ms() -> str:
+    return str(int(time.time() * 1000))
 
 
 class _FakeResponse:
@@ -60,13 +65,14 @@ def _enqueue(retry_queue, url="https://example.com/hook", headers=None):
 
 class TestWebhookDeliverer:
     def test_delivers_payload_with_signing_headers(self):
+        fresh_ts = _fresh_timestamp_ms()
         record = {
             "endpoint_url": "https://example.com/hook",
             "payload": {"content": "hello"},
             "metadata": {
                 "original_signing_headers": {
                     "X-Plexichat-Signature": "sig",
-                    "X-Plexichat-Timestamp": "123",
+                    "X-Plexichat-Timestamp": fresh_ts,
                 }
             },
         }
@@ -79,7 +85,7 @@ class TestWebhookDeliverer:
         assert call["json"] == {"content": "hello"}
         assert call["headers"]["Content-Type"] == "application/json"
         assert call["headers"]["X-Plexichat-Signature"] == "sig"
-        assert call["headers"]["X-Plexichat-Timestamp"] == "123"
+        assert call["headers"]["X-Plexichat-Timestamp"] == fresh_ts
 
     def test_deliver_without_signing_headers_sends_content_type_only(self):
         record = {
@@ -102,12 +108,95 @@ class TestWebhookDeliverer:
     def test_deliver_non_dict_payload_raises(self):
         deliverer = WebhookDeliverer(client=_ScriptedClient([]))
         with pytest.raises(WebhookDeliveryError, match="payload"):
-            deliverer.deliver({"endpoint_url": "https://x", "payload": "not-a-dict"})
+            deliverer.deliver(
+                {"endpoint_url": "https://example.com/x", "payload": "not-a-dict"}
+            )
 
     def test_deliver_wraps_transport_errors(self):
         deliverer = WebhookDeliverer(client=_RaisingClient())
         with pytest.raises(WebhookDeliveryError, match="connection refused"):
-            deliverer.deliver({"endpoint_url": "https://x", "payload": {"a": 1}})
+            deliverer.deliver(
+                {"endpoint_url": "https://example.com/x", "payload": {"a": 1}}
+            )
+
+    def test_deliver_refuses_private_endpoint(self):
+        """F1: loopback/private endpoints must never be POSTed to."""
+        deliverer = WebhookDeliverer(client=_ScriptedClient([200]))
+        with pytest.raises(WebhookDeliveryError, match="SSRF"):
+            deliverer.deliver(
+                {
+                    "endpoint_url": "http://127.0.0.1:9/hook",
+                    "payload": {"a": 1},
+                }
+            )
+        assert not _ScriptedClient([200]).calls
+
+    def test_deliver_refuses_disallowed_scheme(self):
+        deliverer = WebhookDeliverer(client=_ScriptedClient([200]))
+        with pytest.raises(WebhookDeliveryError, match="SSRF"):
+            deliverer.deliver(
+                {"endpoint_url": "file:///etc/passwd", "payload": {"a": 1}}
+            )
+
+    def test_stale_signature_refreshed_by_signer(self):
+        """F17: frozen signatures older than the replay window are re-signed."""
+        captured = {}
+
+        class _CaptureClient:
+            def post(self, url, json=None, headers=None):
+                captured["headers"] = headers
+                return _FakeResponse(200)
+
+        def signer(webhook_id, payload):
+            return {
+                "X-Plexichat-Signature": "fresh-sig",
+                "X-Plexichat-Timestamp": _fresh_timestamp_ms(),
+            }
+
+        deliverer = WebhookDeliverer(client=_CaptureClient(), signer=signer)
+        stale_ts = str(int(time.time() * 1000) - SIGNATURE_STALE_AFTER_MS - 1000)
+        status = deliverer.deliver(
+            {
+                "endpoint_url": "https://example.com/hook",
+                "webhook_id": 7,
+                "payload": {"a": 1},
+                "metadata": {
+                    "original_signing_headers": {
+                        "X-Plexichat-Signature": "stale-sig",
+                        "X-Plexichat-Timestamp": stale_ts,
+                    }
+                },
+            }
+        )
+        assert status == 200
+        assert captured["headers"]["X-Plexichat-Signature"] == "fresh-sig"
+        assert captured["headers"]["X-Plexichat-Timestamp"] != stale_ts
+
+    def test_stale_signature_without_signer_delivers_unsigned(self):
+        captured = {}
+
+        class _CaptureClient:
+            def post(self, url, json=None, headers=None):
+                captured["headers"] = headers
+                return _FakeResponse(200)
+
+        deliverer = WebhookDeliverer(client=_CaptureClient())
+        stale_ts = str(int(time.time() * 1000) - SIGNATURE_STALE_AFTER_MS - 1000)
+        deliverer.deliver(
+            {
+                "endpoint_url": "https://example.com/hook",
+                "webhook_id": 7,
+                "payload": {"a": 1},
+                "metadata": {
+                    "original_signing_headers": {
+                        "X-Plexichat-Signature": "stale-sig",
+                        "X-Plexichat-Timestamp": stale_ts,
+                    }
+                },
+            }
+        )
+        assert "X-Plexichat-Signature" not in captured["headers"]
+        assert "X-Plexichat-Timestamp" not in captured["headers"]
 
 
 class _StubDeliverer:
@@ -215,8 +304,8 @@ class TestProcessDueRetries:
         assert row["status"] == "dead_letter"
 
     def test_mixed_statuses(self, db, retry_queue):
-        ok = _enqueue(retry_queue, url="https://ok.example")
-        bad = _enqueue(retry_queue, url="https://bad.example")
+        ok = _enqueue(retry_queue, url="https://example.com/ok")
+        bad = _enqueue(retry_queue, url="https://example.com/bad")
         deliverer = _StubDeliverer({ok["id"]: 200, bad["id"]: 503})
 
         stats = process_due_retries(retry_queue, deliverer)
@@ -305,7 +394,7 @@ class TestWebhookDeliveryJob:
 
         deliverer = _StubDeliverer({record["id"]: 200})
         original = delivery_module.WebhookDeliverer
-        delivery_module.WebhookDeliverer = lambda: deliverer
+        delivery_module.WebhookDeliverer = lambda **kwargs: deliverer
         try:
             stats = job.run_once()
         finally:
@@ -320,8 +409,8 @@ class TestWebhookDeliveryJob:
 
     def test_run_once_isolates_bad_records(self, db, retry_queue):
         # A record whose delivery raises must not stop the cycle.
-        bad = _enqueue(retry_queue, url="https://bad.example")
-        good = _enqueue(retry_queue, url="https://good.example")
+        bad = _enqueue(retry_queue, url="https://example.com/bad")
+        good = _enqueue(retry_queue, url="https://example.com/good")
         job = WebhookDeliveryJob(db, {"delivery_interval_seconds": 30})
 
         import src.core.webhooks.delivery as delivery_module
@@ -333,7 +422,7 @@ class TestWebhookDeliveryJob:
             }
         )
         original = delivery_module.WebhookDeliverer
-        delivery_module.WebhookDeliverer = lambda: deliverer
+        delivery_module.WebhookDeliverer = lambda **kwargs: deliverer
         try:
             stats = job.run_once()
         finally:
@@ -427,13 +516,16 @@ class TestRealHttpEndpointDelivery:
                 event_type="message.created",
                 payload={"content": "real payload", "n": 1},
                 endpoint_url=f"http://127.0.0.1:{port}/hooks/endpoint",
+                allow_private_network=True,
                 signing_headers={
                     "X-Plexichat-Signature": "ed25519:sig",
-                    "X-Plexichat-Timestamp": "1754000000",
+                    "X-Plexichat-Timestamp": _fresh_timestamp_ms(),
                 },
             )
 
-            stats = process_due_retries(retry_queue, WebhookDeliverer())
+            stats = process_due_retries(
+                retry_queue, WebhookDeliverer(allow_private_network=True)
+            )
 
             assert stats == {
                 "processed": 1,
@@ -477,9 +569,12 @@ class TestRealHttpEndpointDelivery:
                 event_type="message.created",
                 payload={"content": "x"},
                 endpoint_url=f"http://127.0.0.1:{port}/hooks/fail",
+                allow_private_network=True,
             )
 
-            stats = process_due_retries(retry_queue, WebhookDeliverer())
+            stats = process_due_retries(
+                retry_queue, WebhookDeliverer(allow_private_network=True)
+            )
 
             assert stats["processed"] == 1
             assert stats["failed"] == 1
@@ -515,10 +610,13 @@ class TestRealHttpEndpointDelivery:
                 event_type="message.created",
                 payload={"content": "x"},
                 endpoint_url=f"http://127.0.0.1:{port}/hooks/never",
+                allow_private_network=True,
             )
 
             for _ in range(WebhookRetryQueue.MAX_RETRIES):
-                process_due_retries(retry_queue, WebhookDeliverer())
+                process_due_retries(
+                    retry_queue, WebhookDeliverer(allow_private_network=True)
+                )
                 db.execute(
                     "UPDATE webhook_retry_queue SET next_retry_at = 0 WHERE id = ?",
                     (record["id"],),
@@ -547,9 +645,12 @@ class TestRealHttpEndpointDelivery:
             event_type="message.created",
             payload={"content": "x"},
             endpoint_url=f"http://127.0.0.1:{port}/hooks/refused",
+            allow_private_network=True,
         )
 
-        stats = process_due_retries(retry_queue, WebhookDeliverer())
+        stats = process_due_retries(
+            retry_queue, WebhookDeliverer(allow_private_network=True)
+        )
 
         assert stats["processed"] == 1
         assert stats["transport_errors"] == 1

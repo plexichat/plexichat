@@ -241,3 +241,30 @@ class TestVerifyPayload:
             )
             is False
         )
+
+    def test_verify_rejects_replayed_signature(self, webhook_with_token):
+        """F7: a captured valid (signature, timestamp) pair must be
+        rejected on reuse within the replay window."""
+        setup = webhook_with_token
+        payload = {"event": "replay-me"}
+        headers = setup["webhooks"].sign_payload(setup["webhook"].id, payload)
+
+        assert (
+            setup["webhooks"].verify_payload(
+                setup["webhook"].id,
+                payload,
+                headers["X-Plexichat-Signature"],
+                headers["X-Plexichat-Timestamp"],
+            )
+            is True
+        )
+        # Same pair a second time (classic capture-and-replay) -> rejected.
+        assert (
+            setup["webhooks"].verify_payload(
+                setup["webhook"].id,
+                payload,
+                headers["X-Plexichat-Signature"],
+                headers["X-Plexichat-Timestamp"],
+            )
+            is False
+        )

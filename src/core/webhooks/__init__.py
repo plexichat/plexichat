@@ -126,10 +126,16 @@ def _get_manager():
 
 
 def create_webhook(
-    user_id: int, channel_id: int, name: str, avatar_url: Optional[str] = None
+    user_id: int,
+    channel_id: int,
+    name: str,
+    avatar_url: Optional[str] = None,
+    require_signed_deliveries: bool = False,
 ) -> Webhook:
     """Create a new webhook for a channel."""
-    return _get_manager().create_webhook(user_id, channel_id, name, avatar_url)
+    return _get_manager().create_webhook(
+        user_id, channel_id, name, avatar_url, require_signed_deliveries
+    )
 
 
 def get_webhook(webhook_id: int, user_id: Optional[int] = None) -> Optional[Webhook]:
@@ -158,10 +164,11 @@ def update_webhook(
     name: Optional[str] = None,
     avatar_url: Optional[str] = None,
     channel_id: Optional[int] = None,
+    require_signed_deliveries: Optional[bool] = None,
 ) -> Webhook:
     """Update a webhook."""
     return _get_manager().update_webhook(
-        user_id, webhook_id, name, avatar_url, channel_id
+        user_id, webhook_id, name, avatar_url, channel_id, require_signed_deliveries
     )
 
 

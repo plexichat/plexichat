@@ -3,6 +3,7 @@ Webhook payload signing using Ed25519.
 """
 
 import base64
+import hashlib
 import json
 import time
 from typing import Dict, Any, Optional
@@ -25,6 +26,17 @@ from .base import WebhookManagerTrait
 # 5 minutes is a reasonable upper bound that catches obvious replays
 # without rejecting legitimately retried deliveries from slow proxies.
 WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
+
+# A captured (signature, timestamp) pair stays valid for up to the full
+# replay window after capture; recording it for twice that duration
+# guarantees the cache entry outlives any possible reuse of the pair.
+_REPLAY_CACHE_TTL_SECONDS = WEBHOOK_REPLAY_WINDOW_SECONDS * 2
+
+
+def _replay_cache_key(webhook_id: SnowflakeID, signature_header: str) -> str:
+    """Cache-tier key for a seen (webhook_id, signature) pair."""
+    digest = hashlib.sha256(signature_header.encode("utf-8")).hexdigest()
+    return f"webhook:signature-seen:{webhook_id}:{digest}"
 
 
 class SignatureMixin(WebhookManagerTrait):
@@ -134,6 +146,25 @@ class SignatureMixin(WebhookManagerTrait):
             )
             return False
 
+        # Replay protection: a valid (webhook_id, signature) pair seen
+        # inside the ±window must never be accepted twice. The cache tier
+        # (Valkey with in-memory fallback) records seen pairs with a TTL
+        # covering the whole window.
+        from src.core.database.cache import cache_get, cache_set
+
+        replay_key = _replay_cache_key(webhook_id, signature_header)
+        try:
+            if cache_get(replay_key) is not None:
+                logger.warning(
+                    f"Webhook signature rejected as REPLAY for {webhook_id} "
+                    f"(signature/timestamp pair already used within the "
+                    f"{WEBHOOK_REPLAY_WINDOW_SECONDS}s window)"
+                )
+                return False
+        except Exception as e:  # cache failure must not bypass the check silently
+            logger.error(f"Replay-cache lookup failed for webhook {webhook_id}: {e}")
+            return False
+
         row = self._db.fetch_one(
             "SELECT signing_key_public FROM webhook_webhooks WHERE id = ?",
             (webhook_id,),
@@ -184,6 +215,13 @@ class SignatureMixin(WebhookManagerTrait):
             Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
                 signature, signed_data
             )
+            # Mark this (webhook_id, signature) pair as consumed BEFORE
+            # reporting success so a racing duplicate cannot slip through.
+            try:
+                cache_set(replay_key, True, ttl=_REPLAY_CACHE_TTL_SECONDS)
+            except Exception as e:
+                logger.error(f"Replay-cache store failed for webhook {webhook_id}: {e}")
+                return False
             return True
         except InvalidSignature:
             logger.warning(f"Webhook signature mismatch for {webhook_id}")
