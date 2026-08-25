@@ -18,6 +18,12 @@ class AuthManagerProtocol:
     crypto: Any = None
     _config: Dict[str, Any] = {}
     email_sender: Any = None
+
+    def _send_verification_email(self, user_id: int, email: str) -> bool:
+        # Implemented by RegistrationMixin; declared here so other mixins
+        # (e.g. the profile mixin's post-change re-verification) type-check.
+        raise NotImplementedError
+
     blacklist: Any = None
     deletion_log: Any = None
     passkeys: Any = None

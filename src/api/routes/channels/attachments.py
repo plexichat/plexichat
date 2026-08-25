@@ -207,7 +207,7 @@ class ChannelAttachmentsMixin(ChannelBase):
                 )
                 raise HTTPException(
                     status_code=400,
-                    detail={"error": {"code": 400, "message": str(e)}},
+                    detail={"error": {"code": 400, "message": "Invalid request"}},
                 )
             except (MalwareDetectedError, ScannerUnavailableError) as e:
                 logger.warning(
@@ -230,5 +230,11 @@ class ChannelAttachmentsMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )

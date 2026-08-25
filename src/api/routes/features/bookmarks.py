@@ -146,6 +146,6 @@ async def list_bookmarks(
     from src.core.messaging.services.bookmarks import BookmarkService
 
     bookmark_svc = BookmarkService(db, messaging)
-    conv_id = int(conversation_id) if conversation_id else None
+    conv_id = parse_id(conversation_id, "conversation ID") if conversation_id else None
     results = bookmark_svc.get_bookmarks(current_user.user_id, conv_id, limit)
     return {"bookmarks": results}

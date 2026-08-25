@@ -287,4 +287,19 @@ async def get_report_details(
     if not is_reporter and not is_admin:
         raise_forbidden("Access denied")
 
+    # H3 FIX: reporters must not see internal moderation fields. Project to a
+    # reporter-safe allowlist unless the viewer is an admin.
+    if not is_admin:
+        admin_only_fields = (
+            "admin_notes",
+            "reviewed_by",
+            "reviewed_at",
+            "action_taken",
+            "resolution",
+            "resolved_by",
+            "assigned_to",
+            "escalated_at",
+        )
+        data = {k: v for k, v in data.items() if k not in admin_only_fields}
+
     return {"report": data}

@@ -204,7 +204,13 @@ class ChannelInvitesMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )
 
     async def _get_invite_info(
@@ -279,7 +285,13 @@ class ChannelInvitesMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )
 
     async def _join_server_via_invite(
@@ -415,7 +427,13 @@ class ChannelInvitesMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )
 
     async def _delete_invite(
@@ -468,5 +486,11 @@ class ChannelInvitesMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )

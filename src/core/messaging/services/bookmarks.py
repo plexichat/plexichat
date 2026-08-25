@@ -28,6 +28,43 @@ class BookmarkService:
     def _generate_id(self) -> int:
         return generate_snowflake_id()
 
+    def _ensure_bookmark_access(
+        self, user_id: int, message_id: int, conversation_id: int
+    ) -> None:
+        """Validate message existence, conversation match, and membership.
+
+        Raises ``ValueError`` when the message does not exist (or lives in a
+        different conversation than claimed) and ``PermissionError`` when the
+        user is not a participant of the target conversation.
+        """
+        msg_row = self._db.fetch_one(
+            "SELECT conversation_id FROM msg_messages WHERE id = ? AND deleted = 0",
+            (message_id,),
+        )
+        if not msg_row:
+            raise ValueError("Message not found")
+        if int(msg_row["conversation_id"]) != int(conversation_id):
+            raise PermissionError("Message is not in the specified conversation")
+
+        participant_svc = (
+            getattr(self._messaging, "_participant_svc", None)
+            if self._messaging
+            else None
+        )
+        if participant_svc is not None:
+            allowed = participant_svc.is_participant(conversation_id, user_id)
+        else:
+            # Fallback when the messaging module is unavailable: direct
+            # participant-table probe so the check can never fail open.
+            row = self._db.fetch_one(
+                "SELECT 1 FROM msg_participants WHERE conversation_id = ? "
+                "AND user_id = ?",
+                (conversation_id, user_id),
+            )
+            allowed = row is not None
+        if not allowed:
+            raise PermissionError("Not a participant in this conversation")
+
     def add_bookmark(
         self,
         user_id: int,
@@ -47,6 +84,12 @@ class BookmarkService:
         Returns:
             Bookmark record dict
         """
+        # H2 FIX: the caller must be a participant of the conversation the
+        # bookmark claims, and the message must actually exist inside that
+        # conversation. Without this, arbitrary message/conversation ids could
+        # be probed and foreign (possibly private) content referenced.
+        self._ensure_bookmark_access(user_id, message_id, conversation_id)
+
         # Check limit
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM user_bookmarks WHERE user_id = ?",

@@ -134,7 +134,7 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def get_data_export_requests(
@@ -170,7 +170,7 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def get_data_export_status(
@@ -213,7 +213,7 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def cancel_data_export_request(
@@ -269,7 +269,7 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def download_data_export(
@@ -424,5 +424,5 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )

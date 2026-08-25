@@ -1,6 +1,8 @@
 import json
 from typing import Optional, List, Dict, Any
 
+import utils.logger as logger
+
 from ..exceptions import (
     UserNotFoundError,
     InvalidUsernameError,
@@ -52,11 +54,27 @@ class ProfileMixin(AuthManagerProtocol):
             updates.append("force_username_change = ?")
             params.append(0)
 
+        email_changed = False
         if email:
-            email_index = self.crypto.blind_index(email, "user_email")
-            email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
-            updates.append("email_index = ?, email_encrypted = ?")
-            params.extend([email_index, email_encrypted])
+            current_for_email = self.get_user(user_id)
+            if not current_for_email:
+                raise UserNotFoundError("User not found")
+            # Only an actual address change demotes verification and triggers
+            # a new verification email (resubmitting the same address is a
+            # no-op for the verified flag).
+            email_changed = email != current_for_email.email
+            if email_changed:
+                email_index = self.crypto.blind_index(email, "user_email")
+                email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
+                # M2 FIX: a changed address is unverified until the user
+                # completes the email-verification flow for the new value.
+                # Forcing the flag down here (manager level) means no route
+                # can accidentally leave a hijacked/stale session holding a
+                # verified new address.
+                updates.append(
+                    "email_index = ?, email_encrypted = ?, email_verified = ?"
+                )
+                params.extend([email_index, email_encrypted, 0])
         if permissions is not None:
             updates.append("permissions = ?")
             params.append(permissions_to_json(permissions))
@@ -74,6 +92,18 @@ class ProfileMixin(AuthManagerProtocol):
             from src.core.database import cache_delete
 
             cache_delete(f"user_profile:{user_id}")
+
+        # W7 lockout FIX: a changed address is now unverified, so the
+        # verification email for the NEW address must actually be sent —
+        # otherwise the user is permanently locked out of the verified state.
+        if updates and email and email_changed and self.email_sender:
+            try:
+                self._send_verification_email(user_id, email)
+            except Exception as e:
+                logger.error(
+                    f"Failed to send verification email after address change "
+                    f"for user {user_id}: {e}"
+                )
 
         user = self.get_user(user_id)
         if not user:

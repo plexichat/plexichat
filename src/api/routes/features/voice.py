@@ -6,9 +6,67 @@ import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
-from .common import parse_id, raise_bad_request, raise_internal
+from .common import (
+    parse_id,
+    raise_bad_request,
+    raise_forbidden,
+    raise_internal,
+)
 
 router = APIRouter()
+
+# M3 FIX: the JSON variant previously trusted client-supplied attachment
+# metadata verbatim (url/filename/content_type/size), unlike the multipart
+# variant which validates server-side. Apply the same class of checks here.
+ALLOWED_CONTENT_TYPES = {
+    "audio/webm",
+    "audio/ogg",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/opus",
+}
+ALLOWED_EXTENSIONS = {"webm", "ogg", "mp3", "wav", "opus"}
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # matches the multipart variant
+MAX_DURATION_MS = 600000
+ALLOWED_URL_PREFIXES = ("/api/v1/media/", "/media/", "/uploads/")
+ALLOWED_URL_SCHEMES = ("http://", "https://")
+
+
+def _validate_voice_metadata(
+    filename: str, content_type: str, size: int, duration_ms: int, url: str
+) -> None:
+    if content_type not in ALLOWED_CONTENT_TYPES:
+        raise_bad_request(
+            f"Invalid content type '{content_type}'. "
+            f"Allowed: {', '.join(sorted(ALLOWED_CONTENT_TYPES))}"
+        )
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise_bad_request(
+            f"Unsupported voice format '{ext}'. "
+            f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        )
+
+    if size <= 0:
+        raise_bad_request("Voice file is empty")
+    if size > MAX_UPLOAD_SIZE:
+        raise_bad_request("Audio file exceeds 10MB maximum size")
+
+    if duration_ms <= 0:
+        raise_bad_request("Duration must be positive")
+    if duration_ms > MAX_DURATION_MS:
+        raise_bad_request("Voice message exceeds 10 minute maximum duration")
+
+    lowered = url.strip().lower()
+    if lowered.startswith(("javascript:", "data:", "file:", "blob:")):
+        raise_bad_request("Invalid storage URL")
+    if not (
+        lowered.startswith(ALLOWED_URL_SCHEMES) or url.startswith(ALLOWED_URL_PREFIXES)
+    ):
+        raise_bad_request("Invalid storage URL")
 
 
 class VoiceMessageRequest(BaseModel):
@@ -29,6 +87,16 @@ class VoiceMessageRequest(BaseModel):
 async def send_voice_message(
     body: VoiceMessageRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    conv_id = parse_id(body.conversation_id, "conversation ID")
+
+    _validate_voice_metadata(
+        filename=body.filename,
+        content_type=body.content_type,
+        size=body.size,
+        duration_ms=body.duration_ms,
+        url=body.url,
+    )
+
     db = api.get_db()
     messaging = api.get_messaging()
     participant_svc = (
@@ -42,7 +110,7 @@ async def send_voice_message(
     try:
         result = svc.create_voice_message(
             user_id=current_user.user_id,
-            conversation_id=int(body.conversation_id),
+            conversation_id=conv_id,
             duration_ms=body.duration_ms,
             filename=body.filename,
             content_type=body.content_type,
@@ -72,7 +140,7 @@ async def send_voice_message(
             try:
                 msg = messaging.send_message(
                     user_id=current_user.user_id,
-                    conversation_id=int(body.conversation_id),
+                    conversation_id=conv_id,
                     content="Voice message",
                     attachments=[attachment_data],
                 )
@@ -86,6 +154,10 @@ async def send_voice_message(
         return {"success": True, "voice_message": result}
     except ValueError as e:
         raise_bad_request(str(e))
+    except PermissionError:
+        # M6 FIX: authorization failures are 403 with a static message,
+        # never a 500 echoing the exception text.
+        raise_forbidden("Not a participant in this conversation")
 
 
 @router.post(
@@ -111,8 +183,7 @@ async def upload_voice_message(
     }
     if not audio.content_type or audio.content_type not in allowed_content_types:
         raise_bad_request(
-            f"Invalid content type '{audio.content_type}'. "
-            f"Allowed: {', '.join(sorted(allowed_content_types))}"
+            f"Invalid content type. Allowed: {', '.join(sorted(allowed_content_types))}"
         )
 
     MAX_UPLOAD_SIZE = 10 * 1024 * 1024
@@ -222,5 +293,6 @@ async def upload_voice_message(
         return {"success": True, "voice_message": result}
     except ValueError as e:
         raise_bad_request(str(e))
-    except PermissionError as e:
-        raise_internal(str(e))
+    except PermissionError:
+        # M6 FIX: static 403 instead of raise_internal(str(e)).
+        raise_forbidden("Not a participant in this conversation")

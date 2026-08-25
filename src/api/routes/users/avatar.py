@@ -45,7 +45,7 @@ class AvatarMixin:
                     detail={
                         "error": {
                             "code": 400,
-                            "message": f"Failed to read file: {str(e)}",
+                            "message": "Failed to read file",
                         }
                     },
                 )
@@ -86,9 +86,10 @@ class AvatarMixin:
                     size=result["size"],
                     animated=result["animated"],
                 )
-            except ValueError as e:
+            except ValueError:
                 raise HTTPException(
-                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid request"}},
                 )
             except Exception as e:
                 logger.error(
@@ -97,9 +98,7 @@ class AvatarMixin:
                 )
                 raise HTTPException(
                     status_code=500,
-                    detail={
-                        "error": {"code": 500, "message": f"Upload failed: {str(e)}"}
-                    },
+                    detail={"error": {"code": 500, "message": "Upload failed"}},
                 )
         except HTTPException:
             raise
@@ -109,5 +108,6 @@ class AvatarMixin:
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )

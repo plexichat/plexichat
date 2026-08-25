@@ -63,7 +63,11 @@ class ChannelCRUDMixin(ChannelBase):
             },
         )
 
-    @cached(ttl=30, prefix="channel_api")
+    # F6 FIX: the 30s per-user cache served stale (pre-revocation) channel
+    # representations for up to half a minute after a kick/ban/downgrade.
+    # A short TTL keeps the read hot-path benefit while bounding the
+    # revocation-staleness window to seconds.
+    @cached(ttl=5, prefix="channel_api")
     async def _get_channel(
         self, channel_id: str, current_user: TokenInfo = Depends(get_current_user)
     ) -> ChannelResponse:
@@ -167,7 +171,13 @@ class ChannelCRUDMixin(ChannelBase):
                 f"Unexpected error in get_channel for {channel_id}: {e}", exc_info=True
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )
 
     async def _update_channel(
@@ -302,7 +312,13 @@ class ChannelCRUDMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )
 
     async def _delete_channel(
@@ -400,5 +416,11 @@ class ChannelCRUDMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )

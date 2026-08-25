@@ -163,6 +163,15 @@ class ThreadStateMixin(ThreadProtocol):
             "UPDATE thread_threads SET deleted = 1 WHERE id = ?", (thread_id,)
         )
 
+        # Invalidate the slowmode cache so a deleted thread's interval is
+        # never served from cache post-delete.
+        try:
+            from src.core.database import cache_delete
+
+            cache_delete(f"thread_slowmode:{thread_id}")
+        except Exception as e:
+            logger.debug(f"Failed to invalidate slowmode cache for {thread_id}: {e}")
+
         logger.debug(f"Thread {thread_id} deleted by user {user_id}")
 
         return True
@@ -208,15 +217,25 @@ class ThreadStateMixin(ThreadProtocol):
                 self._db.rollback()
             except Exception as rollback_exc:
                 logger.error(
-                    f"Thread cascade rollback failed for channel {channel_id}: "
-                    f"{rollback_exc}",
-                    exc_info=True,
+                    f"Failed to rollback thread cascade delete for channel "
+                    f"{channel_id}: {rollback_exc}",
                 )
-            logger.error(
-                f"Thread cascade for channel {channel_id} failed and was rolled back",
-                exc_info=True,
-            )
+                raise
             raise
+        finally:
+            # Post-delete (or post-failure) cache cleanup: never serve a
+            # deleted thread's slowmode from cache.
+            if thread_ids:
+                try:
+                    from src.core.database import cache_delete
+
+                    for tid in thread_ids:
+                        cache_delete(f"thread_slowmode:{tid}")
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to invalidate slowmode caches after cascade "
+                        f"delete of channel {channel_id}: {e}"
+                    )
 
         logger.debug(
             f"Cascade-deleted {len(thread_ids)} thread(s) for channel {channel_id}"

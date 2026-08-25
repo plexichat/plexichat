@@ -24,8 +24,10 @@ class ThreadSlowmode:
     MAX_INTERVAL_MS = 21600000  # 6 hours maximum
     DEFAULT_INTERVAL_MS = 0  # Disabled by default
 
-    # Cache TTL for slowmode checks (slightly longer than max interval)
-    CACHE_TTL = 21600  # 6 hours in seconds
+    # Cache TTL for slowmode settings. Kept short so a deleted/changed
+    # thread's stale interval cannot be served for hours after deletion
+    # (previously 6h, which outlived the thread itself).
+    CACHE_TTL = 300  # 5 minutes
 
     def __init__(self, db):
         self._db = db

@@ -63,7 +63,7 @@ async def list_scheduled_messages(
     from src.core.messaging.services.scheduled import ScheduledMessageService
 
     svc = ScheduledMessageService(db)
-    conv_id = int(conversation_id) if conversation_id else None
+    conv_id = parse_id(conversation_id, "conversation ID") if conversation_id else None
     results = svc.list_scheduled_messages(current_user.user_id, conv_id, status, limit)
     return {"scheduled_messages": results}
 

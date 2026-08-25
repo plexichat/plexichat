@@ -97,7 +97,11 @@ async def set_channel_slowmode(
 @router.get(
     "/channels/{channel_id}/slowmode",
     summary="Get channel slowmode",
-    responses={401: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
 )
 async def get_channel_slowmode(
     channel_id: str, current_user: TokenInfo = Depends(get_current_user)
@@ -108,11 +112,30 @@ async def get_channel_slowmode(
     if not db:
         raise_internal("Database not available")
     row = db.fetch_one(
-        "SELECT id, slowmode_seconds FROM srv_channels WHERE id = ?",
+        "SELECT id, server_id, slowmode_seconds FROM srv_channels WHERE id = ?",
         (cid,),
     )
     if not row:
         raise_not_found("Channel not found")
+
+    # M4 FIX: reads are gated behind channel view access so an authenticated
+    # user cannot confirm the existence of private cross-server channels.
+    servers_mod = api.get_servers()
+    if servers_mod:
+        can_view = False
+        try:
+            can_view = servers_mod.get_channel(cid, current_user.user_id) is not None
+        except Exception:
+            can_view = False
+        if not can_view:
+            exists = False
+            try:
+                exists = bool(servers_mod.channel_exists(cid))
+            except Exception:
+                exists = False
+            if not exists:
+                raise_not_found("Channel not found")
+            raise_forbidden("Channel access denied")
 
     return {"channel_id": cid, "slowmode_seconds": row["slowmode_seconds"] or 0}
 
@@ -157,7 +180,11 @@ async def set_thread_slowmode(
 @router.get(
     "/threads/{thread_id}/slowmode",
     summary="Get thread slowmode",
-    responses={401: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
 )
 async def get_thread_slowmode(
     thread_id: str, current_user: TokenInfo = Depends(get_current_user)
@@ -167,6 +194,19 @@ async def get_thread_slowmode(
     db = api.get_db()
     from src.core.threads.slowmode import ThreadSlowmode
 
+    # M4 FIX: gate the read behind thread view access, mirroring the write
+    # path's can_manage_thread gate, so cross-server threads cannot be probed.
+    threads = api.get_threads()
+    if threads is not None:
+        try:
+            can_view = threads.can_view_thread(current_user.user_id, tid)
+        except Exception:
+            can_view = False
+        if not can_view:
+            raise_not_found("Thread not found")
+
     svc = ThreadSlowmode(db)
     result = svc.get_slowmode(tid)
+    if not result:
+        raise_not_found("Thread not found")
     return {"slowmode": result}

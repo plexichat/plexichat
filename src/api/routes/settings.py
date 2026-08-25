@@ -35,6 +35,29 @@ router = APIRouter(tags=["User Settings"])
 # handling instead of storing verbatim as user settings.
 _SERVER_SETTING_KEYS = {"_focused_channel"}
 
+# Setting keys whose dedicated read caches must be invalidated on write.
+_PROFILE_VISIBILITY_KEY = "profile_visibility"
+
+
+def _invalidate_feature_caches(user_id: int, keys) -> None:
+    """Invalidate feature-level caches derived from user settings.
+
+    Currently covers the profile-privacy enforcement cache (short-TTL read
+    of ``profile_visibility`` in the features/profiles route); unknown keys
+    are ignored. Best-effort: never fails the write.
+    """
+    if not keys:
+        return
+    if _PROFILE_VISIBILITY_KEY in keys:
+        try:
+            from src.api.routes.features.profiles import (
+                invalidate_profile_visibility_cache,
+            )
+
+            invalidate_profile_visibility_cache(int(user_id))
+        except Exception as e:
+            logger.debug(f"Profile visibility cache invalidation failed: {e}")
+
 
 def _invalidate_user_settings_cache(
     current_user: TokenInfo, keys: Optional[list] = None
@@ -251,6 +274,7 @@ async def bulk_update_settings(
                     failures[key] = "Internal server error"
 
         _invalidate_user_settings_cache(current_user, keys=list(body.keys()))
+        _invalidate_feature_caches(current_user.user_id, body.keys())
 
         return BulkSettingsResponse(
             success=len(failures) == 0 and updated == len(body),
@@ -417,6 +441,7 @@ async def set_setting(
         logger.info(f"Set setting '{key}' for user {current_user.user_id}")
 
         _invalidate_user_settings_cache(current_user, keys=[key])
+        _invalidate_feature_caches(current_user.user_id, [key])
 
         return SettingResponse(
             key=setting.key,
@@ -507,6 +532,7 @@ async def delete_setting(
         logger.info(f"Deleted setting '{key}' for user {current_user.user_id}")
 
         _invalidate_user_settings_cache(current_user, keys=[key])
+        _invalidate_feature_caches(current_user.user_id, [key])
 
         return SuccessResponse(success=True, message=None)
     except HTTPException:
