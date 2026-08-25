@@ -11,6 +11,7 @@ import src.api as api
 import utils.logger as logger
 
 from ..context import SelfTestContext
+from ..db_guard import destructive_phase_allowed, sanitize_error
 
 
 class CleanupService:
@@ -29,6 +30,31 @@ class CleanupService:
             if db.type == "sqlite":
                 db.execute("PRAGMA foreign_keys=OFF")
 
+            # Reconcile privileged artifacts left behind by a previously
+            # crashed run (wildcard grants, elevated accounts) BEFORE any
+            # other work, then clear the journal.
+            journal = getattr(self.ctx, "journal", None)
+            if journal is not None:
+                try:
+                    reconciled = journal.reconcile(db)
+                    if reconciled:
+                        logger.info(
+                            "Journal reconciliation revoked %s recorded "
+                            "privileged artifacts from a previous run",
+                            reconciled,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Journal reconciliation failed (non-critical): %s",
+                        sanitize_error(e),
+                    )
+
+            # Whole-table wipes destroy EVERY row in the target tables. They
+            # are refused unless the database is flagged disposable — a
+            # misconfigured production boot with self-test enabled must not
+            # be able to destroy live data.
+            wipe_allowed = destructive_phase_allowed(self.ctx, "pre_test_table_wipe")
+
             # Sum workbooks own external .plexisum blobs, so their purge must
             # happen before this SQL transaction starts. The domain manager
             # deliberately rejects nested lifecycle transactions to prevent
@@ -43,6 +69,8 @@ class CleanupService:
             db.begin_transaction()
 
             for tbl in ["media_upload_sessions", "plexijoin_traffic_log"]:
+                if not wipe_allowed:
+                    break
                 try:
                     db.execute(f"DELETE FROM {tbl}")
                 except Exception:
@@ -75,6 +103,12 @@ class CleanupService:
                 "plexijoin_traffic_log",
             ]
             for tbl in truncate_tables:
+                if not wipe_allowed:
+                    logger.warning(
+                        f"Skipping whole-table wipe of {tbl}: database not "
+                        "flagged disposable"
+                    )
+                    continue
                 try:
                     db.execute(f"DELETE FROM {tbl}")
                 except Exception:

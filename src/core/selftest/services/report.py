@@ -49,8 +49,13 @@ class ReportGenerator:
 
     def report_summary(self) -> bool:
         total = len(self.ctx.results)
-        passed = sum(1 for r in self.ctx.results if r["success"])
-        failed = total - passed
+        # Skipped entries are recorded honestly as skipped: they are neither
+        # passes (inflating confidence) nor server faults.
+        skipped = sum(1 for r in self.ctx.results if r.get("skipped"))
+        passed = sum(
+            1 for r in self.ctx.results if r["success"] and not r.get("skipped")
+        )
+        failed = total - passed - skipped
         duration = time.time() - self.ctx.start_time
 
         by_source: dict[str, dict] = {}
@@ -61,11 +66,14 @@ class ReportGenerator:
                     "total": 0,
                     "passed": 0,
                     "failed": 0,
+                    "skipped": 0,
                     "duration_ms": 0,
                 }
             by_source[src]["total"] += 1
-            if r["success"]:
+            if r["success"] and not r.get("skipped"):
                 by_source[src]["passed"] += 1
+            elif r.get("skipped"):
+                by_source[src]["skipped"] += 1
             else:
                 by_source[src]["failed"] += 1
             by_source[src]["duration_ms"] += r.get("duration_ms", 0)
@@ -83,6 +91,8 @@ class ReportGenerator:
         logger.info(f"Total Endpoints: {total}")
         logger.info(f"Passed:          {passed}")
         logger.info(f"Failed:          {failed}")
+        if skipped:
+            logger.info(f"Skipped:         {skipped}")
         logger.info(
             f"Success Rate:    {(passed / total * 100 if total > 0 else 0):.1f}%"
         )
@@ -92,9 +102,12 @@ class ReportGenerator:
         for src in ["auto_loop", "standalone", "delete_batch"]:
             if src in by_source:
                 s = by_source[src]
-                rate = (s["passed"] / s["total"] * 100) if s["total"] > 0 else 0
+                judged = s["passed"] + s["failed"]
+                rate = (s["passed"] / judged * 100) if judged > 0 else 0
                 logger.info(
-                    f"  {src:<15} {s['total']:>4} total | {s['passed']:>4} ok | {s['failed']:>4} fail | {rate:>5.1f}% | {s['duration_ms']:>8.1f}ms"
+                    f"  {src:<15} {s['total']:>4} total | {s['passed']:>4} ok | "
+                    f"{s['failed']:>4} fail | {s['skipped']:>4} skip | {rate:>5.1f}% | "
+                    f"{s['duration_ms']:>8.1f}ms"
                 )
         logger.info("-" * 60)
         logger.info("SLOWEST ENDPOINTS:")
@@ -135,7 +148,7 @@ class ReportGenerator:
         if failed > 0:
             logger.error("Failed endpoint checks:")
             for r in self.ctx.results:
-                if not r["success"]:
+                if not r["success"] and not r.get("skipped"):
                     label = r.get("label", r.get("path", ""))
                     logger.error(
                         f"  - {r['method']:<6} {label} (Status: {r['status_code']})"

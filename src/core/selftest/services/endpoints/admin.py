@@ -9,6 +9,7 @@ import secrets
 
 import utils.logger as logger
 
+from ...db_guard import destructive_phase_allowed
 from .base import EndpointTesterBase
 
 
@@ -21,6 +22,11 @@ class AdminMixin(EndpointTesterBase):
             return
         if not self.ctx.session.headers.get("Authorization"):
             logger.debug("Skipping migration tests (no auth token)")
+            return
+        # Rollbacks execute real down-migrations against the configured DB.
+        # They are ONLY permitted when the target is flagged disposable —
+        # otherwise they are refused and the refusal is recorded as a failure.
+        if not destructive_phase_allowed(self.ctx, "migration_rollback_tests"):
             return
 
         session = self.ctx.session
@@ -563,6 +569,10 @@ class AdminMixin(EndpointTesterBase):
             return
         if not self.ctx.session.headers.get("Authorization"):
             logger.debug("Skipping new migration tests (no auth token)")
+            return
+        # Same disposable-DB guard as the legacy migration tests: the
+        # 001 rollback is a real down-migration against the target DB.
+        if not destructive_phase_allowed(self.ctx, "new_migration_rollback_tests"):
             return
 
         session = self.ctx.session

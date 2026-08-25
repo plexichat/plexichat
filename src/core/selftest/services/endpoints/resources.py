@@ -11,6 +11,8 @@ import utils.logger as logger
 
 from .base import EndpointTesterBase
 
+from ...db_guard import sanitize_error
+
 
 class ResourceMixin(EndpointTesterBase):
     """Tests resource deletion and password-reset endpoints."""
@@ -117,7 +119,7 @@ class ResourceMixin(EndpointTesterBase):
                         "status_code": 0,
                         "duration_ms": 0,
                         "success": False,
-                        "error": str(e),
+                        "error": sanitize_error(e),
                         "label": f"delete_{label}",
                     }
                 )

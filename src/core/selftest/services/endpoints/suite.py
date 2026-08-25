@@ -11,6 +11,8 @@ import utils.logger as logger
 
 from .base import EndpointTesterBase
 
+from ...db_guard import sanitize_error
+
 
 class SuiteMixin(EndpointTesterBase):
     """Exercise real Stash and Sum resources in dependency order."""
@@ -113,7 +115,7 @@ class SuiteMixin(EndpointTesterBase):
                     "duration_ms": (time.time() - started) * 1000,
                     "success": False,
                     "label": label,
-                    "error": str(exc),
+                    "error": sanitize_error(exc),
                 }
             )
             logger.warning("%s exception: %s", label, exc)

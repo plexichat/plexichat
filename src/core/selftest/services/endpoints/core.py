@@ -11,7 +11,14 @@ from typing import Any, Dict
 
 import utils.logger as logger
 
+from ...db_guard import sanitize_error
 from .base import EndpointTesterBase
+
+# Retrying a non-idempotent request re-executes its side effects
+# (duplicate resources, duplicate sends). Only these methods may be
+# retried freely; POST/PATCH require an explicit opt-in plus an
+# Idempotency-Key header so the server can deduplicate.
+_IDEMPOTENT_RETRY_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
 
 
 class CoreMixin(EndpointTesterBase):
@@ -228,23 +235,41 @@ class CoreMixin(EndpointTesterBase):
                 # so a retry could report a different failure (or mutate a
                 # resource with an incomplete body) than the request being
                 # diagnosed.
-                retry_resp = active_session.request(
-                    method,
-                    f"{self.ctx.base_url}{url_path}",
-                    json=json_body,
-                    data=form_data if form_data else None,
-                    files=files,
-                    params=query_params,
-                    headers={"X-Plexichat-SelfTest-Debug": "true"},
-                    timeout=10,
-                )
-                if retry_resp.status_code >= 400:
-                    try:
-                        traceback_data = (
-                            retry_resp.json().get("error", {}).get("traceback")
-                        )
-                    except Exception:
-                        pass
+                non_idempotent = method.upper() not in _IDEMPOTENT_RETRY_METHODS
+                if non_idempotent and not self.ctx.config.get(
+                    "retry_non_idempotent", False
+                ):
+                    logger.debug(
+                        f"Skipping retry of side-effecting {method} {path} "
+                        "(non-idempotent; set selftest.retry_non_idempotent "
+                        "against servers that honour Idempotency-Key)"
+                    )
+                else:
+                    extra_headers: Dict[str, str] = {
+                        "X-Plexichat-SelfTest-Debug": "true"
+                    }
+                    if non_idempotent:
+                        # Same key for the original attempt and the retry so
+                        # a compliant server deduplicates the side effect.
+                        idempotency_key = secrets.token_hex(16)
+                        extra_headers["Idempotency-Key"] = idempotency_key
+                    retry_resp = active_session.request(
+                        method,
+                        f"{self.ctx.base_url}{url_path}",
+                        json=json_body,
+                        data=form_data if form_data else None,
+                        files=files,
+                        params=query_params,
+                        headers=extra_headers,
+                        timeout=10,
+                    )
+                    if retry_resp.status_code >= 400:
+                        try:
+                            traceback_data = (
+                                retry_resp.json().get("error", {}).get("traceback")
+                            )
+                        except Exception:
+                            pass
 
             result = {
                 "method": method,
@@ -336,10 +361,12 @@ class CoreMixin(EndpointTesterBase):
                     "status_code": 0,
                     "duration_ms": 0,
                     "success": False,
-                    "error": str(e),
+                    # Sanitized: raw exception strings must not reach shared
+                    # result state that status endpoints can expose.
+                    "error": sanitize_error(e),
                 }
             )
-            logger.error(f"EXCEPTION: {method:<6} {path:<40} -> {e}")
+            logger.error(f"EXCEPTION: {method:<6} {path:<40} -> {sanitize_error(e)}")
 
     def test_bulk_delete_messages(self) -> None:
         """Verify POST /channels/{id}/messages/bulk-delete end-to-end.

@@ -64,6 +64,12 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         "database": {
             "type": "sqlite",
             "path": str(home_dir / "data" / "plexichat.db"),
+            # Explicit flag that this database is disposable (test/CI target).
+            # Self-test destructive phases (whole-table wipes, migration
+            # rollbacks) REFUSE to run unless this is set, the
+            # PLEXICHAT_DISPOSABLE_DB=1 env marker is present, or the
+            # persistent disposable marker row exists.
+            "disposable": False,
             "postgres": {
                 "host": "${POSTGRES_HOST:-localhost}",
                 "port": 5432,
@@ -508,6 +514,21 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             # is NOT granted admin permissions. Set to True to test admin routes
             # (requires admin-level permissions on the test user).
             "enable_admin_tests": True,
+            # Destructive self-test phases (whole-table wipes, migration
+            # rollback tests) are REFUSED unless the target database is
+            # flagged disposable. Operators may explicitly disable the
+            # guard, but refusal results then still fail nothing silently:
+            # disabling shifts responsibility entirely to the operator.
+            "require_disposable_db": True,
+            # Persistent journal of privileged test artifacts (wildcard
+            # grants, elevated accounts). Reconciled on the next run so a
+            # crashed suite cannot leave escalated state behind.
+            "journal_path": str(home_dir / "data" / "selftest_artifact_journal.json"),
+            # Retry re-executes requests on transient failure. Non-idempotent
+            # methods (POST/PATCH) duplicate side effects, so they are only
+            # retried when an Idempotency-Key can be honoured — disabled by
+            # default; enable only against servers that dedupe by that key.
+            "retry_non_idempotent": False,
             "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],
             "test_user": {
                 "username": "selftest_admin",

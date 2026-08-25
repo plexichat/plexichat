@@ -81,9 +81,14 @@ class RateLimitTester:
                 if rate_limited
                 else (status_codes[-1] if status_codes else 0),
                 "duration_ms": 0,
-                "success": True,
+                # The check only passes when 429 was ACTUALLY observed.
+                # Hardcoding success here would make the rate-limit test
+                # structurally incapable of failing.
+                "success": rate_limited,
                 "label": "rate_limit_test",
                 "status_codes": status_codes,
+                # Kept for summary compatibility; failure is now also
+                # recorded honestly via ``success`` above.
                 "warning": not rate_limited,
             }
         )

@@ -22,6 +22,7 @@ import utils.config as config
 import utils.logger as logger
 
 from .context import SelfTestContext
+from .artifact_journal import ArtifactJournal
 from .services.setup import SetupService
 
 from .services.cleanup import CleanupService
@@ -58,6 +59,7 @@ class SelfTestRunner:
             standalone_mode=standalone_mode,
             unlicensed=unlicensed,
         )
+        self.ctx.journal = ArtifactJournal(selftest_cfg.get("journal_path"))
 
         # Service composition — each service operates on the shared context
         self.data = DataGenerator(self.ctx)
@@ -170,6 +172,18 @@ class SelfTestRunner:
         return False
 
     def run_all(self) -> bool:
+        """Run all discovered API tests."""
+        try:
+            return self._run_all()
+        except Exception:
+            # Error paths must not leak the RAM monitor thread.
+            try:
+                self.ram_monitor.stop()
+            except Exception:
+                pass
+            raise
+
+    def _run_all(self) -> bool:
         """Run all discovered API tests."""
         self.ctx.start_time = time.time()
         self.ram_monitor.start()

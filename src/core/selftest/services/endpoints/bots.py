@@ -9,6 +9,8 @@ import utils.logger as logger
 
 from .base import EndpointTesterBase
 
+from ...db_guard import sanitize_error
+
 
 class BotMixin(EndpointTesterBase):
     """Tests bot-server integration endpoints."""
@@ -90,7 +92,7 @@ class BotMixin(EndpointTesterBase):
                     "status_code": 0,
                     "duration_ms": 0,
                     "success": False,
-                    "error": str(e),
+                    "error": sanitize_error(e),
                     "label": "bot_request",
                 }
             )
@@ -144,7 +146,7 @@ class BotMixin(EndpointTesterBase):
                     "status_code": 0,
                     "duration_ms": 0,
                     "success": False,
-                    "error": str(e),
+                    "error": sanitize_error(e),
                     "label": "bot_review",
                 }
             )

@@ -6,10 +6,12 @@ Verifies the static client middleware:
 * serves ``/`` with a 200 (index.html or placeholder) and sensible headers
 * serves the SPA fallback for unknown paths
 * returns 404 for non-existent files
-* returns 503 (or 200) for the ``/config.js`` runtime injection
+* serves the ``/config.js`` runtime injection with a 200
 * does not block the API
 
 These tests are only meaningful when ``static_client.enabled`` is True.
+A 503 means the static client failed to serve and is recorded as a
+failure, not a pass.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import utils.logger as logger
 import src.api as api
 
 from ..context import SelfTestContext
+from ..db_guard import sanitize_error
 
 
 class StaticClientTester:
@@ -54,12 +57,16 @@ class StaticClientTester:
         self._add_internal_secret_header(session)
 
         checks = [
-            ("/", [200, 503]),
-            ("/app", [200, 503]),
-            ("/settings", [200, 503]),
-            ("/register", [200, 503]),
-            ("/robots.txt", [200, 503, 404]),
-            ("/config.js", [200, 503]),
+            # Documented contract: enabled+serve static client must serve the
+            # SPA pages and config.js with 200; robots.txt may legitimately
+            # be absent (404). 503 is NOT accepted — it means the middleware
+            # is broken, and recording it as a pass would hide the fault.
+            ("/", [200]),
+            ("/app", [200]),
+            ("/settings", [200]),
+            ("/register", [200]),
+            ("/robots.txt", [200, 404]),
+            ("/config.js", [200]),
             ("/__nope_does_not_exist__.html", [404]),
         ]
 
@@ -83,7 +90,7 @@ class StaticClientTester:
                         "success": False,
                         "label": "static_client",
                         "warning": True,
-                        "error": str(exc),
+                        "error": sanitize_error(exc),
                     }
                 )
                 continue
@@ -141,7 +148,7 @@ class StaticClientTester:
         try:
             index_url = f"{self.ctx.base_url}/"
             index_resp = session.get(index_url, timeout=3, allow_redirects=False)
-            if index_resp.status_code in [200, 503]:
+            if index_resp.status_code == 200:
                 # Parse HTML to find asset references
                 import re
 
@@ -178,7 +185,9 @@ class StaticClientTester:
         except Exception:
             pass
 
-        # Deduplicate and verify - expect 200 or 503 (not installed), NOT 404
+        # Deduplicate and verify - assets must be served with 200.
+        # 503 (not installed) and 404 (missing bundle file) are failures,
+        # not passes: the static client is enabled at this point.
         seen = set()
         for path in asset_checks:
             if path in seen:
@@ -187,7 +196,7 @@ class StaticClientTester:
             url = f"{self.ctx.base_url}{path}"
             try:
                 resp = session.get(url, timeout=3, allow_redirects=False)
-                ok = resp.status_code in [200, 503]
+                ok = resp.status_code == 200
                 self.ctx.results.append(
                     {
                         "method": "GET",
@@ -201,7 +210,7 @@ class StaticClientTester:
                 )
                 if not ok:
                     logger.warning(
-                        f"static_client GET {path} -> {resp.status_code} (expected 200 or 503)"
+                        f"static_client GET {path} -> {resp.status_code} (expected 200)"
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.debug(f"static_client GET {path} failed: {exc}")

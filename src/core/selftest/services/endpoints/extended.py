@@ -24,7 +24,8 @@ class ExtendedCoverageMixin(EndpointTesterBase):
             resp = self.ctx.other_session.put(
                 url, json={"interval_ms": 5000}, timeout=5
             )
-            success = resp.status_code in (403, 401)
+            # Documented contract: a plain member must be denied with 403.
+            success = resp.status_code == 403
             self.ctx.results.append(
                 {
                     "method": "PUT",
@@ -55,8 +56,10 @@ class ExtendedCoverageMixin(EndpointTesterBase):
                 resp = self.ctx.other_session.post(
                     url, data=data, files=files, timeout=5
                 )
-                # Should be 403, 401, 400 or 409 – all indicate not-allowed, not 200/500
-                success = resp.status_code in (403, 401, 400, 409)
+                # Should be 403 – the documented contract for a member
+                # without emojis.manage. Accepting 400/409 here would mask
+                # permission regressions as passes.
+                success = resp.status_code == 403
                 self.ctx.results.append(
                     {
                         "method": "POST",
@@ -152,23 +155,26 @@ class ExtendedCoverageMixin(EndpointTesterBase):
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
                 results = list(pool.map(lambda _: do_join(), range(5)))
-            # All should be 200 (idempotent) or 409, never 500
-            success = all(code in (200, 201, 409) for code in results) and all(
-                code != 500 for code in results
+            # Documented contract: 200/201 (idempotent join) or 409 (already
+            # member). Any other status — including EVERY 5xx — is a failure;
+            # server faults under load must not be masked as passes.
+            success = all(code in (200, 201, 409) for code in results)
+            status_code = next(
+                (code for code in results if code not in (200, 201, 409)),
+                results[0] if results else 0,
             )
-            # If any 500, treat as not success but log, not fail the suite (concurrency race is not critical)
             if not success:
                 logger.warning(
-                    f"Concurrency threads got {results}, treating as non-critical"
+                    f"Concurrency threads got {results}; classified as failure"
                 )
-                success = True
             self.ctx.results.append(
                 {
                     "method": "POST",
                     "path": "/api/v1/threads/{thread_id}/join (concurrent 5)",
-                    "status_code": 200 if success else 500,
+                    "status_code": status_code,
                     "duration_ms": 0,
                     "success": success,
+                    "status_codes": results,
                 }
             )
         except Exception as e:
@@ -257,9 +263,23 @@ class ExtendedCoverageMixin(EndpointTesterBase):
                     if isinstance(lst, list)
                     else False
                 )
-            # 404 means thread not visible to other_user (private thread) – still not a suite failure
+            # 404 means the thread is not visible to other_user (private
+            # thread). Record this honestly as SKIPPED — it is neither a
+            # pass (dispatch unverified) nor a server fault.
             if resp.status_code == 404:
-                success = True
+                self.ctx.results.append(
+                    {
+                        "method": "GET",
+                        "path": "/api/v1/channels/{channel_id}/threads "
+                        "(websocket dispatch check)",
+                        "status_code": resp.status_code,
+                        "duration_ms": 0,
+                        "success": False,
+                        "skipped": True,
+                        "note": "thread not visible to other_user (private thread); dispatch unverified",
+                    }
+                )
+                return
             self.ctx.results.append(
                 {
                     "method": "GET",
@@ -282,14 +302,15 @@ class ExtendedCoverageMixin(EndpointTesterBase):
             )
 
     def test_oauth_passkeys_federation_stubs(self) -> None:
-        """Stub tests for previously excluded OAuth/passkeys/federation without browser."""
-        # OAuth login should redirect or 200 (not 500)
+        """Stub tests for previously excluded OAuth/passkeys/federation."""
+        # OAuth login: documented contract is a 302 redirect to the provider,
+        # 400 for a rejected redirect_uri, or 404 for an unsupported provider.
+        # Accepting 200/401 here would hide contract drift.
         for provider in ["github", "google"]:
             url = f"{self.ctx.base_url}/api/v1/auth/oauth/{provider}/login"
             try:
                 resp = self.ctx.session.get(url, timeout=5, allow_redirects=False)
-                # Expect 302 redirect, 200, or 400 (missing config) – all are not 500
-                success = resp.status_code in (200, 302, 400, 401, 404)
+                success = resp.status_code in (302, 400, 404)
                 self.ctx.results.append(
                     {
                         "method": "GET",
@@ -301,10 +322,12 @@ class ExtendedCoverageMixin(EndpointTesterBase):
                 )
             except Exception as e:
                 logger.debug(f"OAuth stub {provider} error: {e}")
-        # Passkeys options should return 200/400 not 500 – correct methods are POST
-        for ep, method in [
-            ("/api/v1/auth/passkeys", "GET"),
-            ("/api/v1/auth/passkeys/options/authenticate", "POST"),
+        # Passkeys: the unauthenticated list returns 200; the authenticate
+        # options endpoint with an empty body is a documented 400/422
+        # validation error. 404/405 acceptance would hide route drift.
+        for ep, method, expected in [
+            ("/api/v1/auth/passkeys", "GET", (200,)),
+            ("/api/v1/auth/passkeys/options/authenticate", "POST", (400, 422)),
         ]:
             url = f"{self.ctx.base_url}{ep}"
             try:
@@ -312,7 +335,7 @@ class ExtendedCoverageMixin(EndpointTesterBase):
                     resp = self.ctx.session.get(url, timeout=5)
                 else:
                     resp = self.ctx.session.post(url, json={}, timeout=5)
-                success = resp.status_code in (200, 400, 401, 404, 405)
+                success = resp.status_code in expected
                 self.ctx.results.append(
                     {
                         "method": method,
@@ -324,11 +347,12 @@ class ExtendedCoverageMixin(EndpointTesterBase):
                 )
             except Exception as e:
                 logger.debug(f"Passkey stub {ep} error: {e}")
-        # Federation artifact-op with dummy HMAC should be 401 (not 500) when no key
+        # Federation artifact-op with dummy HMAC: documented contract is 401
+        # (unauthenticated). 400/403 acceptance would mask auth drift.
         url = f"{self.ctx.base_url}/api/v1/federation/artifact-op"
         try:
             resp = self.ctx.session.post(url, json={"test": 1}, timeout=5)
-            success = resp.status_code in (401, 403, 400)
+            success = resp.status_code == 401
             self.ctx.results.append(
                 {
                     "method": "POST",

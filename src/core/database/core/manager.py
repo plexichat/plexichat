@@ -5,6 +5,7 @@ This module follows the zero-friction pattern established by common_utils.
 It acts as a facade, delegating to engine-specific, monitoring, and dialect components.
 """
 
+import os
 import threading
 from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
@@ -103,6 +104,21 @@ class Database(
         self._max_connection_age_seconds = max_age_hours * 3600
 
         logger.info(f"Database initialized with type: {self.type}")
+        # Disposable-DB flag (test/CI targets only). Computed at DB init from
+        # the instance config (``database.disposable``) or an EXTERNALLY set
+        # ``PLEXICHAT_DISPOSABLE_DB=1`` environment marker; the server never
+        # writes the variable itself, so no process-wide state is polluted —
+        # consumers consult the ``Database.disposable`` attribute instead.
+        self.disposable: bool = bool(self.config.get("disposable")) or (
+            os.environ.get("PLEXICHAT_DISPOSABLE_DB") == "1"
+        )
+        if self.disposable:
+            try:
+                from src.core.selftest.db_guard import write_disposable_marker
+
+                write_disposable_marker(self)
+            except Exception as e:
+                logger.debug(f"Disposable marker persistence skipped: {e}")
         if self.type in ("postgres", "sqlite"):
             self.start_pool_monitoring()
         self._initialized = True

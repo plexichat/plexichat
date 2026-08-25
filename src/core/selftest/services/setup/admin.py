@@ -10,11 +10,35 @@ import time
 import src.api as api
 import utils.logger as logger
 
+from ...db_guard import sanitize_error
 from .base import SetupServiceBase
 
 
 class AdminSetupMixin(SetupServiceBase):
     """Sets up admin permissions, roles, and approvals."""
+
+    def _revoke_grants(self, user_id: int, granted: list) -> None:
+        """Best-effort revocation of partially-applied privilege grants."""
+        db = api.get_db()
+        if db is not None:
+            try:
+                db.execute(
+                    "UPDATE auth_users SET permissions = '{}' "
+                    "WHERE id = ? AND username LIKE 'selftest_%'",
+                    (user_id,),
+                )
+            except Exception as e:
+                logger.debug(f"Grant revocation note: {sanitize_error(e)}")
+        try:
+            auth_mod = api.get_auth()
+            if auth_mod is not None and hasattr(auth_mod, "revoke_permission"):
+                for perm in granted:
+                    try:
+                        auth_mod.revoke_permission(user_id, perm)
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.debug(f"Grant revocation note: {sanitize_error(e)}")
 
     def grant_admin_permissions(self) -> bool:
         enable_admin = self.ctx.config.get("enable_admin_tests", True)
@@ -28,8 +52,27 @@ class AdminSetupMixin(SetupServiceBase):
             return False
 
         user_id = self.ctx.test_user_id
-        auth_mod.grant_permission(user_id, "admin.*")
-        auth_mod.grant_permission(user_id, "*")
+        if not isinstance(user_id, int):
+            logger.error("No test user id available for admin grant")
+            return False
+        # Record the grants BEFORE applying them so a crash mid-phase can be
+        # reconciled by the next run's pre-test cleanup (journal-based).
+        journal = getattr(self.ctx, "journal", None)
+        permissions = ("admin.*", "*")
+        if journal is not None:
+            journal.record(
+                "permission_grant", user_id=user_id, permissions=list(permissions)
+            )
+        granted: list = []
+        try:
+            for permission in permissions:
+                auth_mod.grant_permission(user_id, permission)
+                granted.append(permission)
+        except Exception:
+            # try/finally-style revocation: a partially-applied escalation
+            # must never survive this phase.
+            self._revoke_grants(user_id, granted)
+            raise
         logger.debug("Admin permissions granted to test user")
         return True
 
@@ -290,10 +333,24 @@ class AdminSetupMixin(SetupServiceBase):
             # insertion of other_id, then unchanged other_id) becomes the
             # ``target`` for admin-to-admin endpoints.
             self.ctx.test_admin_user_id = other_id
-            db.execute(
-                "UPDATE auth_users SET permissions = ? WHERE id = ?",
-                ('{"admin.*": true, "*": true}', other_id),
-            )
+            # Journal BEFORE escalating so a crash mid-write is reconciled by
+            # the next run; revoke-on-failure keeps partial writes from
+            # surviving this phase.
+            journal = getattr(self.ctx, "journal", None)
+            if journal is not None:
+                journal.record(
+                    "elevated_account",
+                    user_id=other_id,
+                    username=self.ctx._setup_other_username,
+                )
+            try:
+                db.execute(
+                    "UPDATE auth_users SET permissions = ? WHERE id = ?",
+                    ('{"admin.*": true, "*": true}', other_id),
+                )
+            except Exception:
+                self._revoke_grants(other_id, ["admin.*", "*"])
+                raise
 
             support_admin_row = db.fetch_one(
                 "SELECT id FROM admin_roles WHERE name = ?",

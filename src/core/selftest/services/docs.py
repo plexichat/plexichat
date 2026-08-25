@@ -11,6 +11,7 @@ import utils.logger as logger
 import src.api as api
 
 from ..context import SelfTestContext
+from ..db_guard import sanitize_error
 
 
 class DocsTester:
@@ -115,6 +116,6 @@ class DocsTester:
                         "success": False,
                         "label": "docs",
                         "warning": True,
-                        "error": str(exc),
+                        "error": sanitize_error(exc),
                     }
                 )

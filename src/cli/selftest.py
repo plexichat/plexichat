@@ -64,11 +64,13 @@ def handle_selftest(
     server_thread = threading.Thread(target=uvi_server.run, daemon=True)
     server_thread.start()
 
-    if not _wait_until_ready(host, port):
-        logger.error(f"Server did not become healthy within {20.0:.0f}s - aborting")
-        sys.exit(1)
-
+    exit_code = 1
+    runner = None
     try:
+        if not _wait_until_ready(host, port):
+            logger.error(f"Server did not become healthy within {20.0:.0f}s - aborting")
+            sys.exit(1)
+
         from src.core.selftest.runner import SelfTestRunner
 
         runner = SelfTestRunner(
@@ -76,10 +78,28 @@ def handle_selftest(
             unlicensed=unlicensed,
         )
         success = runner.run_all()
-
-        uvi_server.should_exit = True
-        server.cleanup()
-        sys.exit(0 if success else 1)
+        exit_code = 0 if success else 1
     except Exception as e:
         logger.error(f"Self-test execution failed: {e}", exc_info=True)
-        sys.exit(1)
+        exit_code = 1
+    finally:
+        # Full teardown on EVERY exit path (success, failure, exception):
+        # stop uvicorn, join its thread, close self-test HTTP sessions,
+        # stop background monitors, and release app resources. Without
+        # this, short-lived CLI processes leak threads and connections.
+        uvi_server.should_exit = True
+        server_thread.join(timeout=10)
+        if runner is not None:
+            try:
+                runner.ctx.close_sessions()
+            except Exception:
+                pass
+            try:
+                runner.ram_monitor.stop()
+            except Exception:
+                pass
+        try:
+            server.cleanup()
+        except Exception:
+            pass
+        sys.exit(exit_code)

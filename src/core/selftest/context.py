@@ -111,6 +111,9 @@ class SelfTestContext:
         self.static_client: Any = None
         self.docs: Any = None
         self.report: Any = None
+        # Persistent journal of privileged test artifacts (grants/elevated
+        # accounts) so a crashed run can be reconciled by the next run.
+        self.journal: Any = None
 
         self.session = self.make_session()
         self.other_session = self.make_session()
@@ -122,3 +125,14 @@ class SelfTestContext:
         if copy_headers_from is not None:
             session.headers.update(copy_headers_from)
         return session
+
+    def close_sessions(self) -> None:
+        """Close all long-lived HTTP sessions (full teardown helper)."""
+        for attr in ("session", "other_session"):
+            session = getattr(self, attr, None)
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
