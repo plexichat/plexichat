@@ -7,6 +7,16 @@ import secrets
 from pathlib import Path
 from typing import Dict, Any
 
+try:
+    from .config_defaults_artifacts import get_artifacts_defaults
+    from .config_defaults_authentication import get_authentication_defaults
+except ImportError:  # pragma: no cover - direct/script import fallback
+    from config_defaults_artifacts import get_artifacts_defaults
+    from config_defaults_authentication import get_authentication_defaults
+
+_artifacts_defaults = get_artifacts_defaults
+_authentication_defaults = get_authentication_defaults
+
 # Version should be updated in main.py, this is a fallback
 DEFAULT_VERSION = "a.1.0-131"
 
@@ -107,150 +117,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "ttl": {"session": 1800, "presence": 300, "cache": 60},
             "cache_max_items": 1000,
         },
-        "authentication": {
-            "encryption": {
-                # SECURITY: Enforce TPM or Environment Variable key source for production
-                "require_secure_source": True,
-                # Media encryption key (Base64 encoded 32-byte key)
-                # If not set, media encryption will be disabled
-                "media_key": "${PLEXICHAT_MEDIA_KEY:-}",
-            },
-            "account_deletion": {
-                "enabled": True,
-                "grace_period_days": 30,
-                "reminder_days_before_purge": [7, 1],
-                "hard_freeze": True,
-                "anonymize_content": True,
-                "audit_log": {
-                    # Path to the deletion audit log (JSONL file with hash chain)
-                    "file_path": str(home_dir / "data" / "deletion_log.jsonl"),
-                    # Enable SHA256 hash chaining for tamper-evidence
-                    "hash_chain_enabled": True,
-                    # Backup audit log to S3 for disaster recovery
-                    "backup_to_s3": True,
-                    "s3_backup_path": "audit/deletions/log_backup.jsonl",
-                    # If True, server refuses to start when audit log integrity check fails.
-                    # Disable only if you need to recover from a backup or rebuild the chain.
-                    "halt_on_invalid_audit": True,
-                    # SECURITY: when True and the chain fails verification
-                    # at boot, ``verify_chain`` renames the broken file to
-                    # ``<path>.broken-<ts>`` so the next ``log_event`` call
-                    # can begin a fresh genesis chain.  The sidecar keeps
-                    # the broken GDPR records for inventory / forensic
-                    # review without blocking legitimate new entries.
-                    # Operators MUST audit sidecar files manually.
-                    "rotate_on_broken_chain": False,
-                },
-                "reaper": {
-                    "interval_hours": 24,
-                    "boot_check_enabled": True,
-                    "batch_size": 50,
-                },
-            },
-            "accounts": {
-                "allow_registration": True,
-                "require_email_verification": False,
-                "max_bots_per_user": 5,
-                "username_min_length": 3,
-                "username_max_length": 32,
-                "age_gate_enabled": False,
-                "minimum_age": 13,
-                "age_verification_type": "boolean",  # "boolean" or "dob"
-            },
-            "dsar": {
-                # Data Subject Access Request (GDPR Article 20 - Right to Portability)
-                "enabled": True,
-                # Require admin review before generating exports (vs auto-approve)
-                "require_admin_review": True,
-                # Default export format
-                "default_format": "json",
-                # Supported export formats
-                "export_formats": ["json", "zip"],
-                # Maximum export size in MB (approximate limit, collection is unconstrained)
-                "max_export_size_mb": 500,
-                # How long download links remain valid after export is ready (days)
-                "retention_days": 7,
-                # How long pending requests survive without admin action (days)
-                "pending_expiry_days": 30,
-                # Local directory for export files when using the local storage
-                # backend. The backend itself, S3 credentials, and database
-                # storage settings are all inherited from the `media` block to
-                # avoid duplicating configuration.
-                "local_path": str(home_dir / "data" / "exports" / "dsar"),
-                # Audit log settings (mirrors account_deletion audit_log structure)
-                "audit_log": {
-                    "file_path": str(home_dir / "data" / "dsar_audit_log.jsonl"),
-                    "hash_chain_enabled": True,
-                    "backup_to_s3": True,
-                    "s3_backup_path": "audit/dsar/log_backup.jsonl",
-                    "halt_on_invalid_audit": True,
-                    # SECURITY: when True and the chain fails verification
-                    # at boot, ``verify_chain`` renames the broken file
-                    # to ``<path>.broken-<ts>`` so the harvester can
-                    # continue writing against a fresh genesis chain
-                    # instead of being blocked.  GDPR-impacting
-                    # artefacts still live in the sidecar.
-                    "rotate_on_broken_chain": False,
-                },
-                "harvester": {
-                    "interval_hours": 24,
-                    "boot_check_enabled": True,
-                    "batch_size": 20,
-                },
-            },
-            "email_validation": {
-                "strict": True,
-                "allow_custom_tlds": False,
-                "valid_tlds": [],
-            },
-            "sessions": {
-                "token_bytes": 32,
-                "expire_hours": 168,
-                "max_per_user": 10,
-                "extend_on_activity": True,
-                "extend_threshold_hours": 24,
-            },
-            "security": {
-                "max_failed_attempts": 5,
-                "lockout_duration_minutes": 15,
-                # Account lockout requires failures from at least this many
-                # distinct source IPs within failed_login_window_minutes, so a
-                # single host cannot deny service to a known username.
-                "lockout_min_distinct_ips": 2,
-                "failed_login_window_minutes": 15,
-                "token_cache_ttl": 30,
-                "token_verify_rate_limit": 100,
-                "token_binding": False,
-                # HttpOnly session cookie Secure flag. SECURE BY DEFAULT;
-                # explicitly set false ONLY for plain-HTTP localhost/dev
-                # deployments (production behind TLS needs no override).
-                "session_cookie_secure": True,
-            },
-            "totp": {
-                "issuer": "Plexichat",
-                "digits": 6,
-                "interval": 30,
-                "backup_code_count": 10,
-            },
-            "password": {
-                "min_length": 12,
-                "max_length": 128,
-                "require_uppercase": True,
-                "require_lowercase": True,
-                "require_digit": True,
-                "require_special": True,
-                "guidance_url": "/docs/api/end-user/password-guidance.md",
-            },
-            "passkeys": {
-                "enabled": True,
-                "rp_name": "Plexichat",
-                "rp_id": "${PASSKEY_RP_ID:-localhost}",
-                "origin": "${PASSKEY_ORIGIN:-http://localhost}",
-                "challenge_ttl_seconds": 300,
-                "cleanup_interval_hours": 24,
-            },
-            "bots": {"token_bytes": 48, "require_owner_2fa": False},
-        },
+        "authentication": _authentication_defaults(home_dir),
         "api": {
             "title": "Plexichat API",
             "description": "REST API for the Plexichat messaging platform",
@@ -713,6 +580,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "auto_generate_self_signed": False,
             "cert_path": str(home_dir / "certs" / "server.crt"),
             "key_path": str(home_dir / "certs" / "server.key"),
+            "hostname": "localhost",
             "cert_days": 365,
         },
         "email": {
@@ -832,174 +700,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         #   - "artifacts.voice.transcription" is gated by the
         #     "voice_transcription" feature
         # See ARTIFACTS_LICENSE_FEATURES for the full documented set.
-        "artifacts": {
-            "enabled": True,
-            "default_retention_days": None,  # None = artifacts never expire by default
-            "evaluation": {
-                # License-free evaluation of the licensed Suite apps
-                # (PlexiScribe/Script/Board/Stash/Sum). When enabled and the
-                # deployment lacks the matching license feature, the apps are
-                # usable in an ephemeral "evaluation" state and their content
-                # is auto-deleted after ttl_days by the retention cleanup job.
-                "enabled": False,
-                "ttl_days": 30,
-            },
-            "allow_per_server_override": True,
-            "max_artifact_size_mb": 200,
-            "plexiscribe": {
-                "enabled": True,
-                "licensed_feature": "plexiscribe",
-                "max_document_size_mb": 100,
-                "max_participants": 50,
-                "native_format_version": 1,
-            },
-            "plexiscript": {
-                "enabled": True,
-                "licensed_feature": "plexiscript",
-                "max_file_size_kb": 2048,
-                "max_participants": 50,
-                "allowed_languages": [
-                    "python",
-                    "javascript",
-                    "typescript",
-                    "json",
-                    "markdown",
-                    "go",
-                    "rust",
-                    "sql",
-                    "yaml",
-                    "html",
-                    "css",
-                    "cpp",
-                    "c",
-                    "java",
-                    "ruby",
-                    "php",
-                    "bash",
-                    "lua",
-                    "swift",
-                    "kotlin",
-                    "scala",
-                    "r",
-                    "dart",
-                    "graphql",
-                    "dockerfile",
-                    "makefile",
-                    "toml",
-                    "ini",
-                    "protobuf",
-                    "xml",
-                    "csv",
-                    "conf",
-                ],
-                "allowed_extensions": [
-                    ".py",
-                    ".js",
-                    ".ts",
-                    ".json",
-                    ".md",
-                    ".go",
-                    ".rs",
-                    ".sql",
-                    ".yaml",
-                    ".yml",
-                    ".html",
-                    ".htm",
-                    ".css",
-                    ".scss",
-                    ".less",
-                    ".cpp",
-                    ".c",
-                    ".h",
-                    ".hpp",
-                    ".java",
-                    ".rb",
-                    ".php",
-                    ".sh",
-                    ".bash",
-                    ".lua",
-                    ".swift",
-                    ".kt",
-                    ".scala",
-                    ".r",
-                    ".dart",
-                    ".graphql",
-                    ".dockerfile",
-                    ".makefile",
-                    ".toml",
-                    ".ini",
-                    ".proto",
-                    ".xml",
-                    ".csv",
-                    ".txt",
-                    ".env",
-                    ".cfg",
-                    ".conf",
-                    ".gitignore",
-                    ".editorconfig",
-                ],
-                "blocked_extensions": [
-                    ".exe",
-                    ".dll",
-                    ".dmg",
-                    ".pkg",
-                    ".bin",
-                    ".wasm",
-                    ".so",
-                    ".o",
-                    ".a",
-                    ".class",
-                    ".jar",
-                    ".pyc",
-                    ".pyo",
-                    ".elf",
-                ],
-            },
-            "plexistash": {
-                "enabled": True,
-                "licensed_feature": "plexistash",
-                "cleanup_interval_minutes": 60,
-                "retention_days": 30,
-            },
-            "plexisum": {
-                "enabled": True,
-                "licensed_feature": "plexisum",
-            },
-            "whiteboard": {
-                "enabled": True,
-                "licensed_feature": "artifacts_whiteboard",
-                "max_participants": 50,
-                "persist_ops": True,
-                "op_rate_per_sec": 30,
-                "native_format_version": 2,
-            },
-            "voice": {
-                "allow_recording": True,
-                "recording": {
-                    "output_dir": str(home_dir / "data" / "recordings"),
-                    "max_duration_minutes": 120,
-                    "format": "webm",
-                },
-                "transcription": {
-                    "provider": "local_whisper",  # default; active only when enabled:True AND whisper present
-                    "enabled": False,  # OFF until explicitly configured
-                    "auto_transcribe": False,
-                    "language": "auto",
-                    "diarize": False,
-                    "model_size": "base",
-                    "whisper_probe_on_startup": True,
-                    "openai_api_key": "${OPENAI_API_KEY:-}",
-                    "azure_key": "${AZURE_SPEECH_KEY:-}",
-                    "max_audio_minutes": 120,
-                },
-                "transcript_retention_days": None,
-            },
-            "retention": {
-                "run_cleanup_interval_minutes": 60,
-                "purge_expired": True,
-                "suite_deleted_retention_days": 30,
-            },
-        },
+        "artifacts": _artifacts_defaults(home_dir),
         "bots": {
             "enabled": True,
             "max_per_server": 10,
