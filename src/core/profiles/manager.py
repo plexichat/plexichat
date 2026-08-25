@@ -26,6 +26,21 @@ class _Unset(Enum):
 
 _UNSET = _Unset.UNSET
 
+# Internal bookkeeping keys that must never cross the API boundary
+# (see ``_strip_internal_keys``).
+_INTERNAL_PROFILE_KEYS = ("_custom_status_expired",)
+
+
+def _strip_internal_keys(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return ``data`` without internal bookkeeping keys.
+
+    ``get_profile`` flags expired custom statuses for the manager's own use;
+    the flag is stripped here so API responses never expose it (F7).
+    """
+    if not data:
+        return data
+    return {k: v for k, v in data.items() if k not in _INTERNAL_PROFILE_KEYS}
+
 
 class ProfileManager:
     """Core profile manager handling all operations."""
@@ -95,13 +110,19 @@ class ProfileManager:
         return validated
 
     def get_profile(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Get a user's profile.
+        """Get a user's profile (public shape; internal keys stripped).
 
         Read-only: this never mutates the database. If no row exists a default
         in-memory dict is returned (no INSERT), so a fetch can be served by a
         read replica and does not burn a write transaction. The persisted row
         is created lazily on the first write via :meth:`_ensure_profile_row`.
         """
+        return _strip_internal_keys(self._get_profile_data(user_id))
+
+    def _get_profile_data(self, user_id: int) -> Dict[str, Any]:
+        """Raw profile fetch including the internal ``_custom_status_expired``
+        flag. Callers serving this dict to clients MUST pass it through
+        :func:`_strip_internal_keys` first."""
         row = self._db.fetch_one(
             "SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)
         )
@@ -177,6 +198,13 @@ class ProfileManager:
     ) -> Dict[str, Any]:
         """Update a user's profile.
 
+        Clearing semantics (explicit, documented):
+          - ``None`` (or the kwarg omitted) means "leave unchanged";
+          - an empty string means "clear this field" — after strip/truncate
+            the empty value is persisted as NULL;
+          - ``social_links=[]`` clears all links (``[]`` is stored).
+        This is what lets clients actually clear a previously-set field
+        instead of it persisting forever.
         N+2 COLLAPSE: previous implementation issued one UPDATE per
         changed field (6 round trips when every field was supplied).
         We now build a single UPDATE statement with only the
@@ -202,9 +230,11 @@ class ProfileManager:
             banner_url = banner_url.strip()
             if banner_url and not banner_url.startswith(("http://", "https://")):
                 raise ValueError("Banner URL must use http or https")
-            if banner_url and (
-                "javascript:" in banner_url.lower() or "data:" in banner_url.lower()
-            ):
+            # Reject dangerous schemes by *prefix* (not substring), mirroring
+            # _validate_social_links: a legitimate URL whose path contains
+            # e.g. "database:" must not be rejected by a naive substring hit.
+            lowered = banner_url.lower()
+            if lowered.startswith(("javascript:", "data:", "vbscript:")):
                 raise ValueError("Invalid banner URL scheme")
             sets.append("banner_url = ?")
             params.append(banner_url if banner_url else None)
@@ -257,7 +287,7 @@ class ProfileManager:
         """
         self._ensure_profile_row(user_id)
         now = self._get_timestamp()
-        current = self.get_profile(user_id)
+        current = self._get_profile_data(user_id)
         if current is None:
             current = self._default_profile_dict(user_id)
 
@@ -286,18 +316,28 @@ class ProfileManager:
         else:
             new_expires = self._normalise_expiry(expires_at, now)
 
-        self._db.execute(
-            """UPDATE user_profiles SET custom_status_text = ?, custom_status_emoji = ?,
-               custom_status_expires_at = ?, updated_at = ? WHERE user_id = ?""",
-            (new_text, new_emoji, new_expires, now, user_id),
-        )
+        # Dual write (user_profiles + auth_users) must be atomic: if the
+        # second UPDATE failed the two stores would diverge — presence reads
+        # auth_users while profile reads user_profiles.
+        self._db.begin_transaction()
+        try:
+            self._db.execute(
+                """UPDATE user_profiles SET custom_status_text = ?, custom_status_emoji = ?,
+                   custom_status_expires_at = ?, updated_at = ? WHERE user_id = ?""",
+                (new_text, new_emoji, new_expires, now, user_id),
+            )
 
-        # Also update auth_users for quick access in presence
-        self._db.execute(
-            """UPDATE auth_users SET custom_status_text = ?, custom_status_emoji = ?,
-               custom_status_expires_at = ? WHERE id = ?""",
-            (new_text, new_emoji, new_expires, user_id),
-        )
+            # Also update auth_users for quick access in presence
+            self._db.execute(
+                """UPDATE auth_users SET custom_status_text = ?, custom_status_emoji = ?,
+                   custom_status_expires_at = ? WHERE id = ?""",
+                (new_text, new_emoji, new_expires, user_id),
+            )
+        except Exception:
+            self._db.rollback()
+            raise
+        else:
+            self._db.commit()
 
         logger.debug(f"User {user_id} set custom status")
         result = self.get_profile(user_id)
@@ -379,7 +419,7 @@ class ProfileManager:
                     data["custom_status_emoji"] = None
                     data["custom_status_expires_at"] = None
                     data["_custom_status_expired"] = True
-            results[uid] = data
+            results[uid] = _strip_internal_keys(data)
 
         # In-memory defaults for missing users (no DB write).
         for uid in user_ids:

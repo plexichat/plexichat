@@ -182,3 +182,88 @@ class TestProfileBugFixes:
         # Bug 8: malformed (non-dict) entries are skipped, not 500'd.
         out = profiles_setup._validate_social_links(["oops", None, 123])
         assert out == []
+
+
+class TestProfileClearingAndHygiene:
+    def test_empty_string_clears_fields(self, profiles_setup, db):
+        # F3: "" must CLEAR; omitted/None must leave unchanged.
+        _seed(db, 81)
+        mgr = profiles_setup
+        mgr.update_profile(
+            81,
+            bio="original",
+            pronouns="they/them",
+            location="Earth",
+            timezone="UTC",
+            banner_url="https://x.com/b.png",
+        )
+        # None leaves unchanged
+        out = mgr.update_profile(81)
+        assert out["bio"] == "original"
+        # Empty strings clear
+        out = mgr.update_profile(81, bio="", pronouns="", location="", timezone="")
+        assert out["bio"] is None
+        assert out["pronouns"] is None
+        assert out["location"] is None
+        assert out["timezone"] is None
+
+    def test_empty_social_links_list_clears(self, profiles_setup, db):
+        _seed(db, 82)
+        mgr = profiles_setup
+        mgr.update_profile(
+            82, social_links=[{"platform": "github", "url": "https://github.com/x"}]
+        )
+        out = mgr.update_profile(82, social_links=[])
+        assert out["social_links"] == []
+
+    def test_banner_path_containing_dangerous_substring_is_kept(
+        self, profiles_setup, db
+    ):
+        # F5: prefix checks only — a path containing "database:" is legit.
+        _seed(db, 83)
+        out = profiles_setup.update_profile(
+            83, banner_url="https://cdn.example.com/database:diagram.png"
+        )
+        assert out["banner_url"] == "https://cdn.example.com/database:diagram.png"
+
+    def test_banner_javascript_scheme_rejected(self, profiles_setup, db):
+        _seed(db, 84)
+        with pytest.raises(ValueError):
+            profiles_setup.update_profile(84, banner_url="javascript:alert(1)")
+
+    def test_expired_flag_not_exposed_by_reads(self, profiles_setup, db):
+        # F7: internal _custom_status_expired key never crosses the boundary.
+        past = int(time.time() * 1000) - 10000
+        db.execute(
+            "INSERT INTO user_profiles (id, user_id, bio, social_links, custom_status_text, "
+            "custom_status_emoji, custom_status_expires_at, created_at, updated_at) "
+            "VALUES (85, 85, NULL, '[]', 'stale', 'e', ?, 1000, 1000)",
+            (past,),
+        )
+        p = profiles_setup.get_profile(85)
+        assert "_custom_status_expired" not in p
+        bulk = profiles_setup.get_bulk_profiles([85])
+        assert "_custom_status_expired" not in bulk[85]
+        out = profiles_setup.set_custom_status(user_id=85, text="fresh")
+        assert "_custom_status_expired" not in out
+
+    def test_custom_status_dual_write_consistent(self, profiles_setup, db):
+        # F8: user_profiles and auth_users stay in sync after set.
+        db.execute(
+            "INSERT INTO auth_users (id, username, password_hash, permissions, created_at, updated_at) "
+            "VALUES (86, 'statususer86', 'x', '{}', 1000, 1000)"
+        )
+        _seed(db, 86)
+        future_ms = int(time.time() * 1000) + 60000
+        profiles_setup.set_custom_status(
+            user_id=86, text="sync", emoji="✨", expires_at=future_ms
+        )
+        prof = db.fetch_one(
+            "SELECT custom_status_text, custom_status_emoji FROM user_profiles "
+            "WHERE user_id = 86"
+        )
+        auth_row = db.fetch_one(
+            "SELECT custom_status_text, custom_status_emoji FROM auth_users WHERE id = 86"
+        )
+        assert prof["custom_status_text"] == auth_row["custom_status_text"] == "sync"
+        assert prof["custom_status_emoji"] == auth_row["custom_status_emoji"] == "✨"
