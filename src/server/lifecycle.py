@@ -162,18 +162,12 @@ class PlexichatServer:
         if tls_config.get("enabled", False) or tls_config.get(
             "auto_generate_self_signed", False
         ):
-            try:
-                from src.core import tls
+            from src.core import tls
 
-                if tls.is_tls_enabled():
-                    ssl_config = tls.get_tls_config()
-                    if ssl_config:
-                        use_https = True
-                        logger.info("TLS enabled - server will use HTTPS")
-            except ImportError:
-                logger.warning("TLS module not available")
-            except Exception as e:
-                logger.error(f"Failed to configure TLS: {e}")
+            ssl_config = tls.get_tls_config()
+            if ssl_config:
+                use_https = True
+                logger.info("TLS enabled - server will use HTTPS")
 
         assert self.app is not None
         assert host is not None

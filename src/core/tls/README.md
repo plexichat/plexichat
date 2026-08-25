@@ -29,11 +29,17 @@ tls:
   # Enable automatic self-signed certificate generation
   auto_generate_self_signed: false
   
-  # Certificate file paths (default: ~/.plexichat/certs/)
+  # Certificate file paths (default: ~/.plexichat/certs/, ~ is expanded)
   cert_path: ~/.plexichat/certs/server.crt
   key_path: ~/.plexichat/certs/server.key
   
-  # Certificate validity period in days
+  # Hostname/IP embedded in the certificate CN and SAN.
+  # Set this to the domain clients actually connect to; on auto-renewal
+  # the original hostname and SANs are preserved.
+  # Valid range for cert_days: 1-3650; invalid values abort startup with
+  # a configuration error. Missing/unreadable certificates when TLS is
+  # enabled also abort startup rather than falling back to plain HTTP.
+  hostname: localhost
   cert_days: 365
 ```
 
