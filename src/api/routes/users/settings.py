@@ -12,6 +12,8 @@ from src.api.schemas.messages import (
     MessagingSettingsUpdateRequest,
 )
 from src.core.database import cached
+from src.core.database.cache.operations import invalidate_cached
+from src.core.database.cache.serialization import generate_cache_key
 
 
 class SettingsMixin:
@@ -61,6 +63,14 @@ class SettingsMixin:
             update_data = body.model_dump(exclude_unset=True)
             settings = messaging.update_user_message_settings(
                 user_id=current_user.user_id, **update_data
+            )
+            # Mirror the routes/settings.py pattern: a write must invalidate
+            # the cached GET for the same user or PATCH-then-GET serves stale
+            # data for up to the cache TTL. The key layout matches how the
+            # cached decorator builds it when FastAPI calls the bound GET
+            # handler with keyword arguments (current_user=...).
+            invalidate_cached(
+                generate_cache_key("messaging_settings_api", current_user=current_user)
             )
             return MessagingSettingsResponse.model_validate(settings)
         except Exception as e:

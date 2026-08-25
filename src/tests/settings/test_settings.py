@@ -181,11 +181,18 @@ class TestSettingsEdgeCases:
         assert value == special_value
 
     def test_unicode_in_key_and_value(self, settings_manager, test_user):
-        """Test unicode characters in keys and values."""
-        settings_manager.set_setting(test_user.id, "日本語キー", "日本語の値")
+        """Keys outside the [a-z0-9_-] charset contract are rejected; values
+        may still contain any unicode."""
+        from src.core.settings.exceptions import SettingsKeyInvalid
 
-        value = settings_manager.get_setting(test_user.id, "日本語キー")
-        assert value == "日本語の値"
+        with pytest.raises(SettingsKeyInvalid):
+            settings_manager.set_setting(test_user.id, "日本語キー", "日本語の値")
+
+        # Unicode values remain fine for valid keys.
+        settings_manager.set_setting(test_user.id, "unicode_value", "日本語の値")
+        assert (
+            settings_manager.get_setting(test_user.id, "unicode_value") == "日本語の値"
+        )
 
     def test_get_settings_list(self, settings_manager, test_user):
         """Test getting settings as a list of objects."""

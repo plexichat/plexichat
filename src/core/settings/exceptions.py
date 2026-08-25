@@ -33,6 +33,18 @@ class SettingsKeyReserved(SettingsError):
     pass
 
 
+class SettingsKeyInvalid(SettingsError):
+    """Raised when a setting key fails the charset/format contract."""
+
+    pass
+
+
+class SettingsBulkLimitExceeded(SettingsError):
+    """Raised when a bulk write exceeds entry-count or payload-size caps."""
+
+    pass
+
+
 class SettingsNotFound(SettingsError):
     """Raised when a setting is not found."""
 
