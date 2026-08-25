@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Any, Optional, List
 
 from ..models import Thread, ThreadType, ThreadState
 from ..exceptions import (
@@ -79,7 +79,10 @@ class ThreadListingMixin(ThreadProtocol):
             )
             member_thread_ids = {r["thread_id"] for r in rows}
 
-        has_server_view = True
+        # SECURITY: default to NO server view; only a positive permission
+        # check (which itself fails closed without a servers module) may
+        # reveal public threads.
+        has_server_view = False
         public_exists = any(t.thread_type != ThreadType.PRIVATE for t in active_threads)
         if public_exists and self._servers:
             first_public = next(
@@ -148,7 +151,8 @@ class ThreadListingMixin(ThreadProtocol):
             )
             member_thread_ids = {r["thread_id"] for r in rows}
 
-        has_server_view = True
+        # SECURITY: same fail-closed default as get_active_threads.
+        has_server_view = False
         public_exists = any(
             t.thread_type != ThreadType.PRIVATE for t in archived_threads
         )
@@ -193,7 +197,7 @@ class ThreadListingMixin(ThreadProtocol):
                 (user_id, ThreadState.ACTIVE.value),
             )
 
-        return [_row_to_thread(row, self._encrypt_thread_names) for row in rows]
+        return self._filter_user_threads(rows, user_id)
 
     def get_user_private_threads(
         self, user_id: int, channel_id: Optional[int] = None
@@ -215,4 +219,22 @@ class ThreadListingMixin(ThreadProtocol):
                 (user_id, ThreadType.PRIVATE.value),
             )
 
-        return [_row_to_thread(row, self._encrypt_thread_names) for row in rows]
+        return self._filter_user_threads(rows, user_id)
+
+    def _filter_user_threads(self, rows: List[Any], user_id: int) -> List[Thread]:
+        """Re-check channel/server access for every listed thread.
+
+        Membership alone is not proof of visibility: a user's channel or
+        server access can be revoked after they joined a public thread.
+        Private threads stay membership-gated by definition; public ones
+        must still pass ``can_view_thread`` (which fails closed without a
+        servers module).
+        """
+        visible: List[Thread] = []
+        for row in rows:
+            thread = _row_to_thread(row, self._encrypt_thread_names)
+            if thread.thread_type == ThreadType.PRIVATE:
+                visible.append(thread)
+            elif self.can_view_thread(user_id, thread.id):
+                visible.append(thread)
+        return visible

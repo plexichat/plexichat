@@ -55,6 +55,34 @@ def db_and_modules(modules):
 
 
 @pytest.fixture
+def thread_manager(db):
+    """ThreadManager for low-level operation unit tests.
+
+    Production permission checks fail CLOSED when no servers module is
+    wired (``permissions.py``), so the bare db-only manager would deny
+    every operation. These unit tests exercise non-permission logic and
+    inject their own mocks for negative permission cases, so the fixture
+    wires an explicit GRANTING stub instead.
+    """
+    from unittest.mock import Mock
+
+    from src.core.threads.manager import ThreadManager
+
+    manager = ThreadManager(db)
+    servers = Mock()
+    # Grant everything except the manage scope: ownership already covers
+    # the positive manage flows these tests exercise, while non-owner
+    # manage attempts must stay denied (mirrors production role setups).
+    servers.has_permission = Mock(
+        side_effect=lambda user_id, server_id, permission, channel_id=None: (
+            permission != "threads.manage"
+        )
+    )
+    manager._servers = servers
+    return manager
+
+
+@pytest.fixture
 def users(modules, user_pool):
     """Get test users."""
     user1 = user_pool.get_user()

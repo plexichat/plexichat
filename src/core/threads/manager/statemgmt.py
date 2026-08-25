@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 import utils.logger as logger
 from ..models import Thread, ThreadState, AutoArchiveDuration
@@ -13,9 +13,15 @@ from .protocol import ThreadProtocol
 
 class ThreadStateMixin(ThreadProtocol):
     def _unarchive_thread_internal(self, thread_id: int) -> None:
+        # Bump last_message_at to NOW in the same UPDATE that clears the
+        # archived state: the auto-archive window is measured from
+        # last_activity, so an explicitly unarchived (stale) thread would
+        # otherwise be instantly re-archived by _check_auto_archive on the
+        # very next read.
         self._db.execute(
-            "UPDATE thread_threads SET state = ?, archived_at = NULL WHERE id = ?",
-            (ThreadState.ACTIVE.value, thread_id),
+            "UPDATE thread_threads SET state = ?, archived_at = NULL, "
+            "last_message_at = ? WHERE id = ?",
+            (ThreadState.ACTIVE.value, self._get_timestamp(), thread_id),
         )
 
     def archive_thread(self, user_id: int, thread_id: int) -> Thread:
@@ -160,3 +166,59 @@ class ThreadStateMixin(ThreadProtocol):
         logger.debug(f"Thread {thread_id} deleted by user {user_id}")
 
         return True
+
+    def delete_threads_for_channel(self, channel_id: int) -> List[int]:
+        """Atomically cascade-delete every thread of a channel.
+
+        Runs the full cleanup (thread_messages links, thread_members rows,
+        ``deleted = 1`` tombstones and ``parent_message_id`` unlinking)
+        inside ONE transaction so a mid-cascade failure leaves every
+        thread intact instead of orphaning half-deleted rows.
+
+        Returns:
+            The ids of the threads that were deleted.
+        """
+        rows = self._db.fetch_all(
+            "SELECT id FROM thread_threads WHERE channel_id = ? AND deleted = 0",
+            (channel_id,),
+        )
+        thread_ids = [int(row["id"]) for row in rows]
+        if not thread_ids:
+            return []
+
+        placeholders = ",".join("?" * len(thread_ids))
+        self._db.begin_transaction()
+        try:
+            self._db.execute(
+                f"DELETE FROM thread_messages WHERE thread_id IN ({placeholders})",
+                tuple(thread_ids),
+            )
+            self._db.execute(
+                f"DELETE FROM thread_members WHERE thread_id IN ({placeholders})",
+                tuple(thread_ids),
+            )
+            self._db.execute(
+                f"UPDATE thread_threads SET deleted = 1, parent_message_id = NULL "
+                f"WHERE id IN ({placeholders})",
+                tuple(thread_ids),
+            )
+            self._db.commit()
+        except Exception:
+            try:
+                self._db.rollback()
+            except Exception as rollback_exc:
+                logger.error(
+                    f"Thread cascade rollback failed for channel {channel_id}: "
+                    f"{rollback_exc}",
+                    exc_info=True,
+                )
+            logger.error(
+                f"Thread cascade for channel {channel_id} failed and was rolled back",
+                exc_info=True,
+            )
+            raise
+
+        logger.debug(
+            f"Cascade-deleted {len(thread_ids)} thread(s) for channel {channel_id}"
+        )
+        return thread_ids

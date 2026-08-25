@@ -404,6 +404,21 @@ class ChannelHandler:
             (now, channel_id),
         )
 
+        # Cascade thread cleanup: every thread of this channel is
+        # atomically tombstoned (links + members removed, starter linkage
+        # cleared) and each deletion is announced as THREAD_DELETE so
+        # gateway clients drop their panels.
+        try:
+            from src.core import threads as threads_mod
+            from src.core.events.gateway_emit import emit_thread_delete
+
+            for thread_id in threads_mod.delete_threads_for_channel(channel_id):
+                emit_thread_delete(
+                    thread_id, guild_id=channel.server_id, parent_id=channel_id
+                )
+        except Exception as e:
+            logger.warning(f"Thread cascade skipped for channel {channel_id}: {e}")
+
         self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
         if valkey_available():
             cache_delete(f"channel:{channel_id}")

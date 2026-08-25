@@ -72,11 +72,13 @@ __all__ = [
     "send_message",
     "get_messages",
     "get_message_count",
+    "unlink_deleted_message",
     # Thread state
     "archive_thread",
     "unarchive_thread",
     "lock_thread",
     "unlock_thread",
+    "delete_threads_for_channel",
     # Thread listing
     "get_active_threads",
     "get_archived_threads",
@@ -296,6 +298,16 @@ def update_thread(
 def delete_thread(user_id: int, thread_id: int) -> bool:
     """Delete a thread."""
     return _get_manager().delete_thread(user_id, thread_id)
+
+
+def unlink_deleted_message(message_id: int) -> int:
+    """Remove all thread references to a deleted messaging message."""
+    return _get_manager().unlink_deleted_message(message_id)
+
+
+def delete_threads_for_channel(channel_id: int) -> List[int]:
+    """Atomically cascade-delete every thread of a channel."""
+    return _get_manager().delete_threads_for_channel(channel_id)
 
 
 # === Permission Checks ===

@@ -246,6 +246,7 @@ async def create_channel_thread(
                 body.name,
                 thread_type,
                 duration,
+                expected_channel_id=cid,
             )
         else:
             thread = threads_mod.create_thread(
@@ -462,8 +463,10 @@ async def join_thread(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -493,8 +496,10 @@ async def leave_thread(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -529,8 +534,10 @@ async def list_thread_members(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -570,8 +577,10 @@ async def add_thread_member(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -602,8 +611,10 @@ async def remove_thread_member(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -632,8 +643,10 @@ async def archive_thread_ep(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -662,8 +675,10 @@ async def unarchive_thread_ep(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -692,8 +707,10 @@ async def lock_thread_ep(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -722,8 +739,10 @@ async def unlock_thread_ep(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -751,8 +770,10 @@ async def list_archived_threads(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -772,8 +793,10 @@ async def list_my_threads(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -808,8 +831,10 @@ async def get_thread_messages(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -844,6 +869,8 @@ async def send_thread_message(
         mapped = _map_thread_exception(e)
         if mapped:
             raise mapped
+        logger.error(f"Threads route error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

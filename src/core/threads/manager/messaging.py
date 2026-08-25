@@ -114,24 +114,31 @@ class ThreadMessagingMixin(ThreadProtocol):
 
         Deletes the ``thread_messages`` row for the message and decrements the
         thread's ``message_count`` (never below zero).
+
+        Only the sender of the link, or a thread manager, may remove it:
+        mere viewers get :class:`ThreadAccessDeniedError`.
         """
         thread = _get_thread_internal(self._db, thread_id, self._encrypt_thread_names)
         if not thread:
             raise ThreadNotFoundError(f"Thread {thread_id} not found")
 
-        if not self.can_view_thread(user_id, thread_id):
-            raise ThreadAccessDeniedError("Cannot access this thread")
-
         row = self._db.fetch_one(
-            "SELECT id FROM thread_messages WHERE thread_id = ? AND message_id = ?",
+            "SELECT id, user_id FROM thread_messages WHERE thread_id = ? AND message_id = ?",
             (thread_id, message_id),
         )
         if not row:
             return False
 
+        if int(row["user_id"]) != int(user_id) and not self.can_manage_thread(
+            user_id, thread_id
+        ):
+            raise ThreadAccessDeniedError(
+                "Only the sender or a thread manager can remove this message"
+            )
+
         self._db.execute(
-            "DELETE FROM thread_messages WHERE thread_id = ? AND message_id = ?",
-            (thread_id, message_id),
+            "DELETE FROM thread_messages WHERE id = ?",
+            (row["id"],),
         )
 
         self._db.execute(
@@ -169,8 +176,13 @@ class ThreadMessagingMixin(ThreadProtocol):
         thread = _get_thread_internal(self._db, thread_id, self._encrypt_thread_names)
         conversation_id = thread.conversation_id if thread else None
 
+        # SECURITY (column projection): select ONLY the safe, response
+        # columns. ``SELECT tm.*`` previously leaked internal storage
+        # fields (content_encrypted ciphertext, message_created_at) into
+        # every payload returned to clients.
         query = """
-            SELECT tm.*, m.content, m.content_encrypted, m.author_id, m.created_at as message_created_at
+            SELECT tm.id, tm.thread_id, tm.message_id, tm.user_id,
+                   m.author_id, m.content, tm.created_at
             FROM thread_messages tm
             JOIN msg_messages m ON tm.message_id = m.id
             WHERE tm.thread_id = ? AND m.deleted = 0
@@ -213,6 +225,66 @@ class ThreadMessagingMixin(ThreadProtocol):
             results.append(data)
 
         return results
+
+    def unlink_deleted_message(self, message_id: int) -> int:
+        """Remove every thread link for a deleted messaging message.
+
+        Deletes all ``thread_messages`` rows referencing ``message_id``,
+        decrements each affected thread's ``message_count`` (floor 0),
+        recomputes ``last_message_at`` and clears the
+        ``parent_message_id`` starter linkage when the deleted message
+        started a thread.
+
+        Returns:
+            Number of thread links removed.
+        """
+        links = self._db.fetch_all(
+            "SELECT id, thread_id FROM thread_messages WHERE message_id = ?",
+            (message_id,),
+        )
+
+        removed = 0
+        affected_thread_ids: List[int] = []
+        for link in links:
+            self._db.execute(
+                "DELETE FROM thread_messages WHERE id = ?",
+                (link["id"],),
+            )
+            removed += 1
+            if int(link["thread_id"]) not in affected_thread_ids:
+                affected_thread_ids.append(int(link["thread_id"]))
+
+        for thread_id in affected_thread_ids:
+            self._db.execute(
+                """UPDATE thread_threads
+                   SET message_count = MAX(message_count - 1, 0)
+                   WHERE id = ?""",
+                (thread_id,),
+            )
+            self._db.execute(
+                """UPDATE thread_threads
+                   SET last_message_at = (
+                       SELECT MAX(tm.created_at) FROM thread_messages tm
+                       WHERE tm.thread_id = thread_threads.id
+                   )
+                   WHERE id = ?""",
+                (thread_id,),
+            )
+
+        # Clear starter linkage EVEN when the deleted message was never
+        # linked into thread_messages: a thread's starter message is
+        # referenced only via parent_message_id.
+        self._db.execute(
+            "UPDATE thread_threads SET parent_message_id = NULL "
+            "WHERE parent_message_id = ? AND deleted = 0",
+            (message_id,),
+        )
+
+        logger.debug(
+            f"Unlinked message {message_id} from {removed} thread(s) "
+            f"({len(affected_thread_ids)} thread(s) re-counted)"
+        )
+        return removed
 
     def get_message_count(self, thread_id: int) -> int:
         row = self._db.fetch_one(

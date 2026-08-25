@@ -113,6 +113,22 @@ def _is_server_message_moderator(user_id, conversation_id) -> bool:
 
 
 class EditDeleteMixin(BaseService, MessageServiceProtocol):
+    @staticmethod
+    def _cleanup_thread_links(message_id) -> None:
+        """Best-effort unlink of a deleted message from any threads.
+
+        When the threads module is wired, every ``thread_messages`` link
+        referencing this message is dropped, affected thread counters are
+        re-synced and starter linkage is cleared. Failures never block
+        the delete itself.
+        """
+        try:
+            from src.core import threads as threads_mod
+
+            threads_mod.unlink_deleted_message(int(message_id))
+        except Exception as e:
+            logger.debug(f"Thread link cleanup skipped for {message_id}: {e}")
+
     """Mixin providing edit and delete operations."""
 
     _ratchet_manager: Any = None
@@ -462,6 +478,8 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         except Exception:
             pass
 
+        self._cleanup_thread_links(message_id)
+
         return True
 
     def delete_messages_bulk(
@@ -556,6 +574,8 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                         client.delete(f"recent_messages:{msg_row['conversation_id']}")
                 except Exception:
                     pass
+
+                self._cleanup_thread_links(message_id)
 
                 success_count += 1
                 deleted_ids.append(message_id)

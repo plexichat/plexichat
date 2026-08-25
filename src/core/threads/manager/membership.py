@@ -90,6 +90,39 @@ class ThreadMembershipMixin(ThreadProtocol):
 
         return True
 
+    def _validate_add_target(self, thread, member_user_id: int) -> None:
+        """Validate a prospective thread member BEFORE any insert.
+
+        The target must be an existing user (auth lookup when available)
+        AND a member of the thread's backing server; for public threads
+        they must additionally be able to view the parent channel.
+        Violations raise 404/403-mapped domain errors instead of silently
+        creating orphaned memberships.
+        """
+        # Unknown users are rejected outright (404 semantics).
+        if self._auth:
+            try:
+                target = self._auth.get_user(member_user_id)
+            except Exception:
+                target = None
+            if not target:
+                raise ThreadMemberNotFoundError(f"User {member_user_id} does not exist")
+
+        # Must belong to the server that owns the thread's channel.
+        row = self._db.fetch_one(
+            "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
+            (thread.server_id, member_user_id),
+        )
+        if not row:
+            raise ThreadAccessDeniedError("User is not a member of the backing server")
+
+        # Public threads: the target must actually be able to see the
+        # parent channel (fail-closed permission check).
+        if thread.thread_type != ThreadType.PRIVATE and not self.can_view_thread(
+            member_user_id, thread.id
+        ):
+            raise ThreadAccessDeniedError("User cannot view this thread's channel")
+
     def add_member(
         self, user_id: int, thread_id: int, member_user_id: int
     ) -> ThreadMember:
@@ -108,6 +141,8 @@ class ThreadMembershipMixin(ThreadProtocol):
                 raise PermissionDeniedError(
                     "Cannot add members to private thread", "threads.manage"
                 )
+
+        self._validate_add_target(thread, member_user_id)
 
         now = self._get_timestamp()
         self._db.execute(
