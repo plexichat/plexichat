@@ -1,0 +1,666 @@
+"""Formula evaluator mixin: evaluation core and standard functions."""
+
+import math
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
+from ._formula_protocol import FormulaEvaluatorProtocol
+from ._formula_shared import (
+    CYCLE_ERROR,
+    DIV_ZERO,
+    ERROR_CODES,
+    MAX_CALL_DEPTH,
+    MAX_DEPENDENCIES,
+    N_A_ERROR,
+    NAME_ERROR,
+    NUM_ERROR,
+    REF_ERROR,
+    VALUE_ERROR,
+    CellResolver,
+    _numeric,
+    _to_number,
+    _to_number_or_zero,
+    _to_text,
+    is_error,
+    parse_cell_ref,
+    parse_formula,
+)
+
+
+class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
+    def __init__(
+        self,
+        resolver: CellResolver,
+        dependencies: int = MAX_DEPENDENCIES,
+        named_ranges: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._resolver = resolver
+        self._dependencies = dependencies
+        self._used = 0
+        self._named_ranges = named_ranges or {}
+        # Cache key includes the formula text: the same coordinates may be
+        # evaluated with a different formula when the evaluator is reused
+        # (e.g. ``compute_value`` evaluates arbitrary cells, and a cell's
+        # formula may change between reads). Keying on the formula keeps the
+        # memoization sound in every reuse scenario.
+        self._computed: Dict[Tuple[Optional[str], int, int, str], Any] = {}
+
+    def evaluate_cell(
+        self,
+        sheet: Optional[str],
+        row: int,
+        column: int,
+        formula: str,
+        seen: Optional[set] = None,
+        depth: int = 0,
+    ) -> Any:
+        key = (sheet, row, column, formula)
+        if depth == 0:
+            # Root evaluation starts a fresh dependency budget. Without this
+            # the counter would be cumulative across every formula cell in a
+            # viewport, so a dense sheet of many multi-reference formulas
+            # could spuriously exceed the bound and return #NUM!.
+            self._used = 0
+        if depth > MAX_CALL_DEPTH:
+            return CYCLE_ERROR
+        if seen is None:
+            seen = set()
+        if key in seen:
+            return CYCLE_ERROR
+        if key in self._computed:
+            return self._computed[key]
+        self._used += 1
+        if self._used > self._dependencies:
+            raise ValueError(NUM_ERROR)
+        seen.add(key)
+        try:
+            node = parse_formula(formula)
+            value = self._eval(node, sheet, seen, depth)
+            self._computed[key] = value
+            return value
+        except ValueError as exc:
+            message = str(exc)
+            return message if message in ERROR_CODES else VALUE_ERROR
+        finally:
+            seen.discard(key)
+
+    def _resolve(
+        self, sheet: Optional[str], row: int, column: int, seen: set, depth: int
+    ) -> Any:
+        cell = self._resolver(sheet, row, column)
+        if cell is None:
+            return None
+        self._used += 1
+        if self._used > self._dependencies:
+            raise ValueError(NUM_ERROR)
+        formula = cell.get("formula")
+        if formula:
+            return self.evaluate_cell(sheet, row, column, formula, seen, depth + 1)
+        return cell.get("value")
+
+    def _range_values(
+        self,
+        sheet: Optional[str],
+        row1: int,
+        col1: int,
+        row2: int,
+        col2: int,
+        seen: set,
+        depth: int,
+    ) -> List[Any]:
+        values: List[Any] = []
+        r_start, r_end = sorted((row1, row2))
+        c_start, c_end = sorted((col1, col2))
+        for r in range(r_start, r_end + 1):
+            for c in range(c_start, c_end + 1):
+                self._used += 1
+                if self._used > self._dependencies:
+                    raise ValueError(NUM_ERROR)
+                values.append(self._resolve(sheet, r, c, seen, depth + 1))
+        return values
+
+    def _eval(self, node: Any, sheet: Optional[str], seen: set, depth: int) -> Any:
+        kind = node[0]
+        if kind == "num":
+            return node[1]
+        if kind == "str":
+            return node[1]
+        if kind == "bool":
+            return node[1]
+        if kind == "ref":
+            ref = node[1]
+            r_sheet, row, column = parse_cell_ref(ref, self._named_ranges)
+            target_sheet = r_sheet or sheet
+            return self._resolve(target_sheet, row, column, seen, depth)
+        if kind == "neg":
+            value = self._eval(node[1], sheet, seen, depth)
+            if is_error(value):
+                return value
+            return -_to_number(value)
+        if kind == "%":
+            value = self._eval(node[1], sheet, seen, depth)
+            if is_error(value):
+                return value
+            return _to_number(value) / 100.0
+        if kind == "cmp":
+            # Comparison nodes are ("cmp", op, left, right).
+            op = node[1]
+            left = self._eval(node[2], sheet, seen, depth)
+            right = self._eval(node[3], sheet, seen, depth)
+            return self._apply(op, left, right)
+        if kind in ("+", "-", "*", "/", "^", "&"):
+            op = kind
+            left = self._eval(node[1], sheet, seen, depth)
+            right = self._eval(node[2], sheet, seen, depth)
+            return self._apply(op, left, right)
+        if kind == "call":
+            name = node[1]
+            args = node[2]
+            return self._call(name, args, sheet, seen, depth)
+        raise ValueError(VALUE_ERROR)
+
+    def _apply(self, op: str, left: Any, right: Any) -> Any:
+        if is_error(left):
+            return left
+        if is_error(right):
+            return right
+        if op == "&":
+            return _to_text(left) + _to_text(right)
+        if op in ("=", "<>", "<", ">", "<=", ">="):
+            if op in ("=", "<>"):
+                if isinstance(left, str) or isinstance(right, str):
+                    comparison = _to_text(left) == _to_text(right)
+                else:
+                    comparison = left == right
+                return comparison if op == "=" else not comparison
+            try:
+                ln = _to_number(left)
+                rn = _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+            if op == "<":
+                return ln < rn
+            if op == ">":
+                return ln > rn
+            if op == "<=":
+                return ln <= rn
+            return ln >= rn
+        if op == "+":
+            if isinstance(left, str) or isinstance(right, str):
+                return VALUE_ERROR
+            try:
+                return _to_number(left) + _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+        if op == "-":
+            try:
+                return _to_number(left) - _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+        if op == "*":
+            try:
+                return _to_number(left) * _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+        if op == "/":
+            try:
+                rn = _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+            if rn == 0:
+                return DIV_ZERO
+            return _to_number(left) / rn
+        if op == "^":
+            try:
+                return math.pow(_to_number(left), _to_number(right))
+            except (ValueError, OverflowError):
+                return NUM_ERROR
+        return VALUE_ERROR
+
+    def _call(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        # Evaluate the arguments lazily where the function is short-circuiting.
+        if name == "IF":
+            if len(args) != 3:
+                return VALUE_ERROR
+            condition = self._truthy(self._eval(args[0], sheet, seen, depth))
+            if (
+                is_error(condition)
+                and isinstance(condition, str)
+                and condition in ERROR_CODES
+            ):
+                return condition
+            branch = args[1] if condition else args[2]
+            return self._eval(branch, sheet, seen, depth)
+        if name in ("AND", "OR"):
+            if not args:
+                return VALUE_ERROR
+            results = [
+                self._truthy(self._eval(arg, sheet, seen, depth)) for arg in args
+            ]
+            if any(is_error(r) for r in results):
+                return VALUE_ERROR
+            return all(results) if name == "AND" else any(results)
+        if name == "NOT":
+            if len(args) != 1:
+                return VALUE_ERROR
+            return not self._truthy(self._eval(args[0], sheet, seen, depth))
+        if name in ("VLOOKUP", "HLOOKUP"):
+            return self._lookup(name, args, sheet, seen, depth)
+        if name in ("SUMIF", "COUNTIF", "AVERAGEIF"):
+            return self._criteria(name, args, sheet, seen, depth)
+        if name in ("IFERROR", "IFNA"):
+            if len(args) != 2:
+                return VALUE_ERROR
+            value = self._eval(args[0], sheet, seen, depth)
+            if isinstance(value, str) and value in ERROR_CODES:
+                if name == "IFNA" and value != N_A_ERROR:
+                    return value
+                return self._eval(args[1], sheet, seen, depth)
+            return value
+
+        values: List[Any] = []
+        for arg in args:
+            values.extend(self._expand_arg(arg, sheet, seen, depth))
+        if name in ("SUM", "AVERAGE", "COUNT", "COUNTA", "MIN", "MAX", "PRODUCT"):
+            return self._aggregate(name, values)
+        if name in (
+            "ABS",
+            "SQRT",
+            "INT",
+            "LEN",
+            "UPPER",
+            "LOWER",
+            "TRIM",
+            "ISBLANK",
+            "ISNUMBER",
+            "ISTEXT",
+        ):
+            return self._single(name, values)
+        if name in (
+            "ROUND",
+            "ROUNDUP",
+            "ROUNDDOWN",
+            "MOD",
+            "POWER",
+            "LEFT",
+            "RIGHT",
+            "MID",
+        ):
+            return self._double(name, values)
+        if name in ("CONCAT", "CONCATENATE"):
+            return "".join(_to_text(value) for value in values)
+        if name == "EXACT":
+            if len(values) != 2:
+                return VALUE_ERROR
+            return _to_text(values[0]) == _to_text(values[1])
+        if name == "PROPER":
+            if len(values) != 1:
+                return VALUE_ERROR
+            text = _to_text(values[0])
+            return "".join(
+                part[:1].upper() + part[1:].lower() for part in re.split(r"(\s+)", text)
+            )
+        if name == "SUBSTITUTE":
+            return self._substitute(values)
+        if name in ("DATE", "YEAR", "MONTH", "DAY"):
+            return self._date(name, values)
+        if name == "DAYS":
+            return self._days(values)
+        # ── Advanced functions ──────────────────────────────────────────────
+        if name in ("INDEX", "MATCH", "INDIRECT", "OFFSET", "LOOKUP"):
+            return self._lookup_advanced(name, args, sheet, seen, depth)
+        if name in ("COUNTBLANK", "COUNTIF", "SUMPRODUCT"):
+            return self._advanced_aggregate(name, args, sheet, seen, depth)
+        if name in (
+            "TEXT",
+            "VALUE",
+            "NUMBERVALUE",
+            "FIND",
+            "SEARCH",
+            "REPLACE",
+            "REPT",
+        ):
+            return self._advanced_text(name, values)
+        if name in ("EOMONTH", "EDATE", "WEEKDAY", "WEEKNUM", "NETWORKDAYS", "WORKDAY"):
+            return self._advanced_date(name, values)
+        if name in (
+            "PI",
+            "RADIANS",
+            "DEGREES",
+            "SIN",
+            "COS",
+            "TAN",
+            "ASIN",
+            "ACOS",
+            "ATAN",
+        ):
+            return self._advanced_trig(name, values)
+        if name in ("AVERAGEIF", "AVERAGEIFS", "SUMIFS", "COUNTIFS"):
+            return self._advanced_criteria(name, args, sheet, seen, depth)
+        return NAME_ERROR
+
+    def _expand_arg(
+        self, node: Any, sheet: Optional[str], seen: set, depth: int
+    ) -> List[Any]:
+        kind = node[0]
+        if kind == "ref":
+            text = node[1]
+            if ":" in text:
+                first, second = text.split(":", 1)
+                s1, r1, c1 = parse_cell_ref(first, self._named_ranges)
+                s2, r2, c2 = parse_cell_ref(second, self._named_ranges)
+                return self._range_values(s1 or sheet, r1, c1, r2, c2, seen, depth)
+            return [self._eval(node, sheet, seen, depth)]
+        value = self._eval(node, sheet, seen, depth)
+        return [value]
+
+    def _truthy(self, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if _numeric(value):
+            return value != 0
+        if isinstance(value, str) and value not in ERROR_CODES:
+            return True
+        return bool(value)
+
+    def _aggregate(self, name: str, values: List[Any]) -> Any:
+        if name == "COUNTA":
+            return sum(1 for value in values if value is not None and value != "")
+        if name == "COUNT":
+            return sum(1 for value in values if _numeric(value))
+        numbers = [value for value in values if _numeric(value)]
+        if name == "SUM":
+            return float(sum(numbers))
+        if name == "PRODUCT":
+            product = 1.0
+            for value in numbers:
+                product *= value
+            return product
+        if not numbers:
+            if name == "MIN" or name == "MAX":
+                return 0
+            return DIV_ZERO if name == "AVERAGE" else 0
+        if name == "AVERAGE":
+            return float(sum(numbers)) / len(numbers)
+        if name == "MIN":
+            return min(numbers)
+        if name == "MAX":
+            return max(numbers)
+        return VALUE_ERROR
+
+    def _single(self, name: str, values: List[Any]) -> Any:
+        if not values:
+            return VALUE_ERROR
+        value = values[0]
+        if is_error(value):
+            return value
+        if name == "ABS":
+            return abs(_to_number(value))
+        if name == "SQRT":
+            number = _to_number(value)
+            if number < 0:
+                return NUM_ERROR
+            return math.sqrt(number)
+        if name == "INT":
+            return float(math.floor(_to_number(value)))
+        if name == "LEN":
+            return float(len(_to_text(value)))
+        if name == "UPPER":
+            return _to_text(value).upper()
+        if name == "LOWER":
+            return _to_text(value).lower()
+        if name == "TRIM":
+            return _to_text(value).strip()
+        if name == "ISBLANK":
+            return value is None or value == ""
+        if name == "ISNUMBER":
+            return _numeric(value)
+        if name == "ISTEXT":
+            return isinstance(value, str) and value not in ERROR_CODES
+        return VALUE_ERROR
+
+    def _double(self, name: str, values: List[Any]) -> Any:
+        if len(values) < 2:
+            return VALUE_ERROR
+        a, b = values[0], values[1]
+        if is_error(a):
+            return a
+        if name == "MOD":
+            try:
+                divisor = _to_number(b)
+            except ValueError as exc:
+                return str(exc)
+            if divisor == 0:
+                return DIV_ZERO
+            return math.fmod(_to_number(a), divisor)
+        if name == "POWER":
+            try:
+                return math.pow(_to_number(a), _to_number(b))
+            except (ValueError, OverflowError):
+                return NUM_ERROR
+        if name in ("ROUND", "ROUNDUP", "ROUNDDOWN"):
+            try:
+                digits = int(_to_number(b))
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
+            # Spreadsheets cap rounding precision at 15 digits. Without a
+            # clamp, ``ROUND(1, 99999999999)`` computes ``10 ** digits`` as a
+            # multi-gigabyte big integer and stalls/OOMs the viewport read.
+            digits = max(-15, min(digits, 15))
+            factor = 10**digits
+            number = _to_number(a)
+            if name == "ROUND":
+                return round(number * factor) / factor
+            if name == "ROUNDUP":
+                return math.ceil(number * factor - 1e-12) / factor
+            return math.floor(number * factor + 1e-12) / factor
+        if name == "LEFT":
+            return _to_text(a)[: max(0, int(_to_number(b)))]
+        if name == "RIGHT":
+            count = max(0, int(_to_number(b)))
+            text = _to_text(a)
+            return text[-count:] if count else ""
+        if name == "MID":
+            if len(values) < 3:
+                return VALUE_ERROR
+            start = int(_to_number(b)) - 1
+            length = max(0, int(_to_number(values[2])))
+            text = _to_text(a)
+            return text[start : start + length]
+        return VALUE_ERROR
+
+    def _range_matrix(
+        self, node: Any, sheet: Optional[str], seen: set, depth: int
+    ) -> List[List[Any]]:
+        """Resolve a ``A1:C10`` ref node into a 2-D matrix of values.
+
+        Lookup and criteria functions need the *shape* of a range (rows ×
+        columns), which the flat ``_expand_arg`` path discards.
+        """
+        if node[0] != "ref" or ":" not in node[1]:
+            return []
+        first, second = node[1].split(":", 1)
+        s1, r1, c1 = parse_cell_ref(first, self._named_ranges)
+        s2, r2, c2 = parse_cell_ref(second, self._named_ranges)
+        target = s1 or sheet
+        r_start, r_end = sorted((r1, r2))
+        c_start, c_end = sorted((c1, c2))
+        matrix: List[List[Any]] = []
+        for r in range(r_start, r_end + 1):
+            row_values: List[Any] = []
+            for c in range(c_start, c_end + 1):
+                self._used += 1
+                if self._used > self._dependencies:
+                    raise ValueError(NUM_ERROR)
+                row_values.append(self._resolve(target, r, c, seen, depth + 1))
+            matrix.append(row_values)
+        return matrix
+
+    @staticmethod
+    def _lookup_eq(a: Any, b: Any) -> bool:
+        """Equality used by V/HLOOKUP: numeric cells compare numerically,
+        anything text-like compares as text."""
+        if a is None and b is None:
+            return True
+        if a is None or b is None:
+            return False
+        if isinstance(a, str) or isinstance(b, str):
+            return _to_text(a) == _to_text(b)
+        try:
+            return _to_number(a) == _to_number(b)
+        except ValueError:
+            return _to_text(a) == _to_text(b)
+
+    def _lookup(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """VLOOKUP / HLOOKUP with exact or sorted approximate matching."""
+        if len(args) < 3 or len(args) > 4:
+            return VALUE_ERROR
+        lookup_value = self._eval(args[0], sheet, seen, depth)
+        if is_error(lookup_value):
+            return lookup_value
+        matrix = self._range_matrix(args[1], sheet, seen, depth)
+        if not matrix:
+            return N_A_ERROR
+        try:
+            index = int(_to_number(self._eval(args[2], sheet, seen, depth))) - 1
+        except ValueError as exc:
+            return str(exc)
+        if index < 0:
+            return VALUE_ERROR
+        range_lookup = True
+        if len(args) == 4:
+            range_lookup = bool(self._truthy(self._eval(args[3], sheet, seen, depth)))
+
+        if name == "HLOOKUP":
+            if not matrix[0]:
+                return N_A_ERROR
+            if index >= len(matrix):
+                return REF_ERROR
+            key_row = matrix[0]
+            for c, key in enumerate(key_row):
+                if self._lookup_eq(key, lookup_value):
+                    return matrix[index][c]
+            if range_lookup:
+                try:
+                    target = _to_number(lookup_value)
+                except ValueError:
+                    return N_A_ERROR
+                best = None
+                for c, key in enumerate(key_row):
+                    if key is None or key == "":
+                        continue
+                    try:
+                        if _to_number(key) <= target:
+                            best = matrix[index][c]
+                        else:
+                            break
+                    except ValueError:
+                        continue
+                return best if best is not None else N_A_ERROR
+            return N_A_ERROR
+
+        # VLOOKUP: search the first column.
+        if index >= len(matrix[0]):
+            return REF_ERROR
+        for row in matrix:
+            if not row:
+                continue
+            if self._lookup_eq(row[0], lookup_value):
+                return row[index]
+        if range_lookup:
+            try:
+                target = _to_number(lookup_value)
+            except ValueError:
+                return N_A_ERROR
+            best = None
+            for row in matrix:
+                if not row:
+                    continue
+                key = row[0]
+                if key is None or key == "":
+                    continue
+                try:
+                    if _to_number(key) <= target:
+                        best = row[index]
+                    else:
+                        break
+                except ValueError:
+                    continue
+            return best if best is not None else N_A_ERROR
+        return N_A_ERROR
+
+    def _criteria(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """SUMIF / COUNTIF / AVERAGEIF with operator-prefixed criteria."""
+        if len(args) < 2 or len(args) > 3:
+            return VALUE_ERROR
+        matrix = self._range_matrix(args[0], sheet, seen, depth)
+        if not matrix:
+            return DIV_ZERO if name == "AVERAGEIF" else 0.0
+        first = args[1]
+        if first[0] == "str":
+            criteria: Any = first[1]
+        elif first[0] == "num":
+            criteria = first[1]
+        else:
+            criteria = self._eval(first, sheet, seen, depth)
+        sum_matrix = matrix
+        if len(args) == 3:
+            sum_matrix = self._range_matrix(args[2], sheet, seen, depth)
+        total = 0.0
+        count = 0
+        for r in range(min(len(matrix), len(sum_matrix))):
+            row = matrix[r]
+            sum_row = sum_matrix[r]
+            for c in range(min(len(row), len(sum_row))):
+                if self._criteria_test(criteria, row[c]):
+                    total += _to_number_or_zero(sum_row[c])
+                    count += 1
+        if name == "SUMIF":
+            return float(total)
+        if name == "COUNTIF":
+            return float(count)
+        if name == "AVERAGEIF":
+            return float(total) / count if count else DIV_ZERO
+        return VALUE_ERROR
+
+    @staticmethod
+    def _criteria_test(criteria: Any, value: Any) -> bool:
+        """Match ``value`` against an Excel-style criteria (e.g. ``">2"``)."""
+        if criteria is None:
+            return value is None or value == ""
+        if isinstance(criteria, str):
+            for op in (">=", "<=", "<>", ">", "<", "="):
+                if criteria.startswith(op) and len(criteria) > len(op):
+                    rest = criteria[len(op) :].strip()
+                    try:
+                        target = float(rest)
+                    except ValueError:
+                        return op == "=" and _to_text(value) == rest
+                    try:
+                        number = _to_number(value)
+                    except ValueError:
+                        return False
+                    if op == ">":
+                        return number > target
+                    if op == "<":
+                        return number < target
+                    if op == ">=":
+                        return number >= target
+                    if op == "<=":
+                        return number <= target
+                    if op == "<>":
+                        return number != target
+                    return number == target
+            return _to_text(value) == criteria
+        if isinstance(value, str) or isinstance(value, bool):
+            return value == criteria
+        try:
+            return _to_number(value) == _to_number(criteria)
+        except ValueError:
+            return False

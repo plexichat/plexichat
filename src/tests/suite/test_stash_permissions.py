@@ -67,3 +67,63 @@ class TestPersonalDelegation:
             ["view_metadata", "share", "manage_versions"]
         )
         assert set(result) == {"share", "manage_versions"}
+
+
+class TestServerScopedGrantEnforcement:
+    """Agent 30 H2: explicit grants on server-scoped items are enforced.
+
+    Grants on server-scoped items were accepted and displayed but never
+    consulted by ``_authorize`` for mutations, so every grantee edit/move
+    call failed with 403 despite the permission UI showing access.
+    """
+
+    def _manager(self, db, server_manager, media_manager):
+        from src.core.suite.stash import StashManager
+        from src.core.suite.stash.schema import (
+            create_tables as create_stash_tables,
+        )
+
+        create_stash_tables(db)
+        return StashManager(db, servers_module=server_manager, media=media_manager)
+
+    def test_grantee_can_mutate_server_item(
+        self, db, two_users, server_manager, media_manager
+    ):
+        owner, grantee = two_users
+        server = server_manager.create_server(owner.id, "Enforcement server")
+        server_manager.add_member(server.id, grantee.id)
+        manager = self._manager(db, server_manager, media_manager)
+        item = manager.create_item(
+            owner.id,
+            item_type="note",
+            title="Server note",
+            scope="server",
+            server_id=server.id,
+        )
+        manager.grant(owner.id, int(item["id"]), grantee.id, ["edit"])
+
+        updated = manager.update_item(
+            grantee.id, int(item["id"]), title="Edited by grantee"
+        )
+        assert updated["title"] == "Edited by grantee"
+
+    def test_member_without_grant_cannot_mutate_server_item(
+        self, db, two_users, server_manager, media_manager
+    ):
+        from src.core.suite.stash.manager import StashPermissionError
+
+        owner, member = two_users
+        server = server_manager.create_server(owner.id, "Boundary server")
+        server_manager.add_member(server.id, member.id)
+        manager = self._manager(db, server_manager, media_manager)
+        item = manager.create_item(
+            owner.id,
+            item_type="note",
+            title="Server note",
+            scope="server",
+            server_id=server.id,
+        )
+        import pytest
+
+        with pytest.raises(StashPermissionError):
+            manager.update_item(member.id, int(item["id"]), title="Nope")

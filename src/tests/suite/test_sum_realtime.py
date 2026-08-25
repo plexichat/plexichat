@@ -352,6 +352,39 @@ async def test_sum_handler_op_applies_and_relays(
         frame = other_conn.sent[0]
         assert frame["op"] == int(GatewayOpcode.SUM_OP)
         assert frame["d"]["op"]["result_revision"] == 1
+        # Agent 30 M1: the broadcast carries the post-ack sequence numbers,
+        # not the sender's (possibly stale) enqueue-time base_revision.
+        assert frame["d"]["op"]["base_revision"] == 0
+
+        stale = await handler.handle_sum_op(
+            owner_conn,
+            {
+                "workbook_id": workbook_id,
+                "op": {
+                    "operation_id": "op-next-base",
+                    "operation_type": "set_cell",
+                    "sheet_id": sheet_id,
+                    "base_revision": 1,
+                    "cells": [
+                        {
+                            "row": 4,
+                            "column": 4,
+                            "value_type": "text",
+                            "value": "hi2",
+                        }
+                    ],
+                },
+            },
+            dispatcher,
+        )
+        assert stale == (None, None, None)
+        frame2 = next(
+            f for f in other_conn.sent if f["d"]["op"]["operation_id"] == "op-next-base"
+        )
+        # Sequence numbers are derived from the acked revision, so they stay
+        # consistent for recipients' revision bookkeeping.
+        assert frame2["d"]["op"]["result_revision"] == 2
+        assert frame2["d"]["op"]["base_revision"] == 1
     finally:
         registry.unsubscribe_all(other.id)
 
@@ -383,7 +416,41 @@ async def test_sum_handler_op_conflict_returns_sync(
     )
     response_op, response_data, close_code = result
     assert close_code is None
-    assert response_op == int(GatewayOpcode.SUM_SYNC)
-    assert response_data["workbook_id"] == workbook_id
-    assert response_data["revision"] == 0
-    assert response_data["ops"] == []
+    assert response_op is None and response_data is None
+    # The conflict sync is sent through the rate-limited fabric path, so the
+    # frame lands on the connection instead of the gateway's inline reply.
+    sync = next(f for f in conn.sent if f.get("op") == int(GatewayOpcode.SUM_SYNC))
+    assert sync["d"]["workbook_id"] == workbook_id
+    assert sync["d"]["revision"] == 0
+    assert sync["d"]["ops"] == []
+
+
+@pytest.mark.asyncio
+async def test_sum_handler_conflict_sync_is_rate_limited(
+    sum_manager, workbook, two_users, patch_fabric
+):
+    """Agent 30 L3: a SUM_SYNC conflict reply must respect the connection's
+    rate limit like every other fabric send."""
+    owner, _other = two_users
+    workbook_id = int(workbook["id"])
+    sheet_id = int(workbook["sheets"][0]["id"])
+    conn = FakeConnection(owner.id, "conn-conflict-rl", rate_ok=False)
+    dispatcher = FakeDispatcher([conn])
+    handler = SumHandler()
+
+    result = await handler.handle_sum_op(
+        conn,
+        {
+            "workbook_id": workbook_id,
+            "op": {
+                "operation_id": "op-stale-rl",
+                "operation_type": "set_cell",
+                "sheet_id": sheet_id,
+                "base_revision": 99,
+                "cells": [{"row": 0, "column": 0, "value_type": "text", "value": "x"}],
+            },
+        },
+        dispatcher,
+    )
+    assert result == (None, None, None)
+    assert not [f for f in conn.sent if f.get("op") == int(GatewayOpcode.SUM_SYNC)]

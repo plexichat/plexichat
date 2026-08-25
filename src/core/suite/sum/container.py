@@ -18,6 +18,7 @@ File layout::
 """
 
 import hashlib
+import io
 import struct
 
 import zstandard as _zstd
@@ -35,6 +36,13 @@ COMPRESS_ZSTD = 1
 FLAG_WAL = 1 << 0
 FLAG_ENCRYPTED = 1 << 1
 
+# Decompression-bomb guard: a crafted 50 MB upload can legitimately expand to
+# at most the manager's own uncompressed workbook bound (50 MB) plus WAL
+# overhead, so anything beyond this ceiling is hostile and is rejected
+# mid-stream instead of being materialized in memory first.
+MAX_DECOMPRESSED_SIZE = 64 * 1024 * 1024
+_DECOMPRESS_CHUNK = 1 << 20
+
 
 # ── compression helpers ─────────────────────────────────────────────────────
 
@@ -44,9 +52,37 @@ def compress_zstd(data: bytes) -> bytes:
     return _zstd.ZstdCompressor().compress(data)
 
 
-def decompress_zstd(data: bytes) -> bytes:
-    """Decompress zstandard-compressed *data*."""
-    return _zstd.ZstdDecompressor().decompress(data)
+def decompress_zstd(data: bytes, max_output_size: int = MAX_DECOMPRESSED_SIZE) -> bytes:
+    """Decompress zstandard-compressed *data* under a size ceiling.
+
+    The payload is consumed as a bounded stream: decoding aborts with
+    ``ValueError`` as soon as the cumulative output would exceed
+    *max_output_size*, so a small compressed bomb can never expand into an
+    unbounded allocation before any size check runs.
+    """
+    if max_output_size < 1:
+        raise ValueError("max_output_size must be positive")
+    dctx = _zstd.ZstdDecompressor()
+    reader = dctx.stream_reader(io.BytesIO(data))
+    total = 0
+    parts: list[bytes] = []
+    try:
+        while True:
+            chunk = reader.read(_DECOMPRESS_CHUNK)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_output_size:
+                raise ValueError(
+                    "Decompressed container exceeds size limit "
+                    f"({total} > {max_output_size})"
+                )
+            parts.append(chunk)
+    except _zstd.ZstdError as exc:
+        raise ValueError(f"Invalid zstandard payload: {exc}") from exc
+    finally:
+        reader.close()
+    return b"".join(parts)
 
 
 # ── encode / decode ─────────────────────────────────────────────────────────

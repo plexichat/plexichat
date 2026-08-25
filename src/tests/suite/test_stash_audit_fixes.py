@@ -279,13 +279,15 @@ def test_server_grantee_privileged_grant_is_not_usable_without_management(
         media_object_id=str(uploaded.file_id),
     )
     # Owner may grant privileged permissions to a member (server scope allows
-    # the full set), but the grant must remain inert for non-managers.
+    # the full set); Agent 30 H2 fixed _authorize so those explicit grants are
+    # actually ENFORCED on server-scoped mutations instead of merely displayed
+    # (previously every grantee mutation 403'd despite the permission UI).
     manager.grant(owner.id, int(item["id"]), member.id, ["delete", "share"])
 
-    with pytest.raises(StashPermissionError):
-        manager.delete_item(member.id, int(item["id"]))
-    with pytest.raises(StashPermissionError):
-        manager.grant(member.id, int(item["id"]), owner.id, ["view_metadata"])
+    # A granted permission is usable by the grantee...
+    #
+    # ...but only the permissions actually granted: ``manage_versions`` was
+    # not in the grant, so creating versions must still be denied.
     with pytest.raises(StashPermissionError):
         manager.create_version(
             member.id,
@@ -293,6 +295,30 @@ def test_server_grantee_privileged_grant_is_not_usable_without_management(
             media_object_id=str(uploaded.file_id),
             content_type="text/plain",
         )
+
+    manager.delete_item(member.id, int(item["id"]))
+
+
+def test_server_member_without_grant_cannot_mutate(
+    db, two_users, server_manager, media_manager
+):
+    """Complement to the H2 fix: plain server membership alone still does not
+    confer mutation rights on another member's server-scoped item."""
+    owner, member = two_users
+    server = server_manager.create_server(owner.id, "Stash server")
+    server_manager.add_member(server.id, member.id)
+    manager = _manager(db, server_manager, media_manager)
+    item = manager.create_item(
+        owner.id,
+        item_type="note",
+        title="Server note",
+        scope="server",
+        server_id=server.id,
+    )
+    with pytest.raises(StashPermissionError):
+        manager.delete_item(member.id, int(item["id"]))
+    with pytest.raises(StashPermissionError):
+        manager.update_item(member.id, int(item["id"]), title="Nope")
 
 
 def test_regrant_returns_same_id_and_is_revocable(

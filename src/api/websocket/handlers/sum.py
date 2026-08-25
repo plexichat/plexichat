@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import utils.logger as logger
 
-from src.api.websocket.opcodes import GatewayCloseCode, GatewayOpcode
+from src.api.websocket.opcodes import GatewayCloseCode
 from src.api.websocket.connection import Connection
 from src.api.websocket.sum import (
     _get_sum_manager,
@@ -247,7 +247,10 @@ class SumHandler:
             # The sender's base revision is stale. Push a SUM_SYNC containing
             # the current revision plus every operation after the sender's
             # base so the client can rebase and re-apply rather than lose the
-            # edit.
+            # edit. The reply goes through ``send_sum_sync`` so it honors the
+            # same per-connection rate limiting as every other fabric send;
+            # returning the frame for the gateway to inline would let an
+            # attacker spam stale ops to force unbounded snapshot builds.
             try:
                 workbook = manager.get_workbook(int(connection.user_id), workbook_id)
                 revision = int(workbook.get("current_revision") or 0)
@@ -256,12 +259,16 @@ class SumHandler:
                     workbook_id,
                     after_revision=base_revision,
                 )
-                sync_payload = {
-                    "workbook_id": workbook_id,
-                    "revision": revision,
-                    "ops": replay,
-                }
-                return int(GatewayOpcode.SUM_SYNC), sync_payload, None
+                await send_sum_sync(
+                    connection,
+                    workbook_id,
+                    revision,
+                    replay,
+                    rate_limit_per_minute=getattr(
+                        dispatcher, "_rate_limit_per_minute", None
+                    ),
+                )
+                return None, None, None
             except Exception:
                 logger.error(
                     f"Sum conflict sync failed for workbook {workbook_id}",
@@ -285,14 +292,20 @@ class SumHandler:
         # Relay the applied op to the workbook's other subscribers. The op is
         # idempotent by operation_id, so a relayed copy can never double-apply
         # on the server; recipients apply it locally to their grid.
+        # Broadcast POST-ACK: derive the sequence numbers from the acked
+        # result revision instead of echoing the sender's (possibly stale)
+        # enqueue-time base_revision. A client flushing a queue of ops
+        # enqueued at one revision would otherwise stamp every relayed frame
+        # with the same old base, forcing spurious SUM_SYNC round-trips.
+        applied_revision = int(
+            result.get("revision") or result.get("result_revision") or 0
+        )
         envelope: Dict[str, Any] = {
             "operation_id": operation_id,
             "operation_type": operation_type,
             "sheet_id": sheet_id,
-            "base_revision": base_revision,
-            "result_revision": int(
-                result.get("revision") or result.get("result_revision") or 0
-            ),
+            "base_revision": max(0, applied_revision - 1),
+            "result_revision": applied_revision,
             "cells": cells,
         }
         try:

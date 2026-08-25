@@ -6,7 +6,10 @@ from src.core.suite.sum.container import (
     COMPRESS_NONE,
     COMPRESS_ZSTD,
     FLAG_WAL,
+    MAX_DECOMPRESSED_SIZE,
+    compress_zstd,
     decode_container,
+    decompress_zstd,
     encode_container,
 )
 
@@ -71,3 +74,14 @@ def test_decode_rejects_checksum_mismatch():
     container[-1] ^= 0xFF
     with pytest.raises(ValueError):
         decode_container(bytes(container))
+
+
+def test_decompression_bomb_is_rejected_midstream():
+    """Agent 30 M7: a small container that expands beyond the ceiling must
+    abort during decode instead of materializing gigabytes first."""
+    bomb = compress_zstd(b"\x00" * (MAX_DECOMPRESSED_SIZE + 1))
+    with pytest.raises(ValueError, match="exceeds size limit"):
+        decompress_zstd(bomb)
+    # Legitimate payloads under the ceiling still decode intact.
+    ok = compress_zstd(b"SQLite format 3\x00" * 1000)
+    assert decompress_zstd(ok) == b"SQLite format 3\x00" * 1000

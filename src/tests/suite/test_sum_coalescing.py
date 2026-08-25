@@ -12,6 +12,7 @@ import glob
 
 import pytest
 
+import src.core.suite.sum._shared as sum_shared_module
 import src.core.suite.sum.manager as sum_manager_module
 from src.core.suite.sum.manager import SumConflictError, SumManager
 from src.core.suite.sum.schema import create_tables as create_sum_tables
@@ -174,7 +175,7 @@ def test_solo_workbook_edits_coalesce_one_blob_per_flush_window(
     # Pin the age-based window so the op-count threshold is the ONLY flush
     # source; the promoted-revision list is then exact and deterministic even
     # on very slow CI workers.
-    monkeypatch.setattr(sum_manager_module, "SUM_FLUSH_MAX_MS", 10**6)
+    monkeypatch.setattr(sum_shared_module, "SUM_FLUSH_MAX_MS", 10**6)
     manager = SumManager(db, servers_module=server_manager, storage_dir=str(tmp_path))
     workbook = manager.create_workbook(owner.id, "Solo Coalesced")
     sheet_id = workbook["sheets"][0]["id"]
@@ -334,8 +335,8 @@ def test_time_based_flush_fires_after_window(
     """
     owner, _ = two_users
     create_sum_tables(db)
-    monkeypatch.setattr(sum_manager_module, "SUM_FLUSH_MAX_OPS", 10**9)
-    monkeypatch.setattr(sum_manager_module, "SUM_FLUSH_MAX_MS", 0)
+    monkeypatch.setattr(sum_shared_module, "SUM_FLUSH_MAX_OPS", 10**9)
+    monkeypatch.setattr(sum_shared_module, "SUM_FLUSH_MAX_MS", 0)
     manager = SumManager(db, servers_module=server_manager, storage_dir=str(tmp_path))
     workbook = manager.create_workbook(owner.id, "Temporal")
     sheet_id = workbook["sheets"][0]["id"]
@@ -382,7 +383,7 @@ def test_eviction_flushes_pending_sessions_without_data_loss(
     # Pin the age-based window far beyond the test duration so eviction is the
     # ONLY flush source; the flushed-workbook count is then exact and the test
     # is deterministic even on very slow CI workers.
-    monkeypatch.setattr(sum_manager_module, "SUM_FLUSH_MAX_MS", 10**6)
+    monkeypatch.setattr(sum_shared_module, "SUM_FLUSH_MAX_MS", 10**6)
     owner, _ = two_users
     create_sum_tables(db)
     manager = SumManager(db, servers_module=server_manager, storage_dir=str(tmp_path))

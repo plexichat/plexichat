@@ -6,6 +6,7 @@ from src.core.suite.sum.formulas import (
     FormulaEvaluator,
     MAX_CALL_DEPTH,
     MAX_DEPENDENCIES,
+    NUM_ERROR,
     VALUE_ERROR,
 )
 
@@ -352,3 +353,29 @@ def test_round_exponent_is_clamped_to_spreadsheet_precision():
     # Precision inside the ±15 window is unchanged.
     assert _eval("ROUND(1.2345, 2)") == 1.23
     assert _eval("ROUND(123.456, -2)") == 100.0
+
+
+def test_rept_is_bounded_against_multi_gb_allocations():
+    """Agent 30 M3: REPT must cap the allocation like ROUND caps digits.
+
+    ``REPT("x", 10**9)`` used to attempt a multi-gigabyte string on a read
+    path; beyond the cell-length bound it now returns #VALUE!.
+    """
+    assert _eval('REPT("ab", 3)') == "ababab"
+    assert _eval('REPT("x", 999999999)') == VALUE_ERROR
+
+
+def test_networkdays_and_workday_span_is_bounded():
+    """Agent 30 M3: date loops must not run for billions of iterations.
+
+    ``NETWORKDAYS(1, 10**9)`` iterated day by day for hours and
+    ``WORKDAY(1, 10**9)`` looped unbounded; both now return #NUM! once the
+    requested span exceeds the evaluation budget.
+    """
+    start = datetime.date(2024, 1, 1)
+    epoch = datetime.date(1899, 12, 30)
+    serial = (start - epoch).days
+    assert _eval(f"NETWORKDAYS({serial}, {serial} + 9)") == 8.0
+    assert _eval("NETWORKDAYS(1, 1000000000)") == NUM_ERROR
+    assert _eval(f"WORKDAY({serial}, 5)") == float(serial + 7)
+    assert _eval("WORKDAY(1, 1000000000)") == NUM_ERROR

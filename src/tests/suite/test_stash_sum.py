@@ -295,7 +295,7 @@ def test_sum_list_includes_grant_shared_workbooks(db, two_users, server_manager)
 
 
 def test_sum_csv_import_exceeds_single_operation_limit(db, two_users, server_manager):
-    """A CSV larger than one operation chunk imports in a single revision."""
+    """A CSV larger than one operation chunk imports one revision per chunk."""
     owner, _ = two_users
     create_sum_tables(db)
     manager = SumManager(db, servers_module=server_manager)
@@ -308,15 +308,99 @@ def test_sum_csv_import_exceeds_single_operation_limit(db, two_users, server_man
         owner.id, int(workbook["id"]), int(sheet_id), content, 0
     )
     assert result["cells"] == 3000
-    assert result["revision"] == 1
+    assert result["revision"] == 2
 
     viewport = manager.read_viewport(
         owner.id, int(workbook["id"]), int(sheet_id), 0, 2, 0, 2
     )
     assert viewport["cells"][0]["value"] == "r0c0"
-    # Replay returns both bounded operation chunks.
+    # Replay returns both bounded operation chunks at strictly increasing
+    # revisions (Agent 30 M4: every chunk used to share one result_revision,
+    # making replay ordering nondeterministic).
     operations = manager.replay_operations(owner.id, int(workbook["id"]))
     assert len(operations) == 2
+    assert [op["result_revision"] for op in operations] == [1, 2]
+    assert [op["base_revision"] for op in operations] == [0, 1]
+
+
+def test_sum_chunked_import_monotonic_revisions_and_segment_invalidation(
+    db, two_users, server_manager
+):
+    """Agent 30 M4 regression: chunked bulk imports must assign a monotonic
+    result revision per chunk and invalidate packed column segments over the
+    imported ranges so stale segment values cannot resurface."""
+    import json as json_module
+
+    from src.core.suite.sum.segments import SegmentEncoder
+
+    owner, _ = two_users
+    create_sum_tables(db)
+    manager = SumManager(db, servers_module=server_manager)
+    workbook = manager.create_workbook(owner.id, "Chunked import")
+    sheet_id = int(workbook["sheets"][0]["id"])
+
+    with manager._session_lock(int(workbook["id"])):
+        connection = manager._materialized_connection_unlocked(int(workbook["id"]))
+        cells = [
+            {
+                "row_index": row_index,
+                "value_type": "text",
+                "value_json": json_module.dumps("stale"),
+                "formula": None,
+                "style_json": None,
+            }
+            for row_index in range(4)
+        ]
+        for seg_id, seg_data in SegmentEncoder.pack_column(cells):
+            decoded = SegmentEncoder.decode_segment(seg_data)
+            connection.execute(
+                "INSERT OR REPLACE INTO sum_column_segments "
+                "(sheet_id, column_id, segment_id, row_start, row_end, "
+                "encoding, compressed_values, statistics_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(sheet_id),
+                    "0",
+                    seg_id,
+                    decoded["row_start"],
+                    decoded["row_end"],
+                    decoded["encoding"],
+                    seg_data,
+                    json_module.dumps(decoded.get("statistics", {})),
+                ),
+            )
+        connection.commit()
+
+    # Import overwrites all four segment-backed coordinates; 2500 cells force
+    # the chunked path.
+    content = "\n".join(",".join(f"v{r}c{c}" for c in range(50)) for r in range(50))
+    result = manager.import_csv(owner.id, int(workbook["id"]), sheet_id, content, 0)
+    assert result["cells"] == 2500
+
+    operations = manager.replay_operations(owner.id, int(workbook["id"]))
+    results = [op["result_revision"] for op in operations]
+    assert len(results) >= 2
+    assert results == sorted(set(results)), "chunk revisions must be unique + ordered"
+
+    # Simulate the imported cells being cleared afterwards: if the chunked
+    # import had left the packed segment intact, the gap-fill merge would
+    # resurface its stale "overwritten" values through the cleared gaps.
+    with manager._session_lock(int(workbook["id"])):
+        connection = manager._materialized_connection_unlocked(int(workbook["id"]))
+        connection.execute(
+            "DELETE FROM sum_cells WHERE sheet_id = ? AND column_index = 0 AND row_index < 4",
+            (str(sheet_id),),
+        )
+        connection.commit()
+
+    viewport = manager.read_viewport(
+        owner.id, int(workbook["id"]), sheet_id, 0, 4, 0, 1
+    )
+    by_position = {(cell["row"], cell["column"]): cell for cell in viewport["cells"]}
+    for row_index in range(4):
+        assert (row_index, 0) not in by_position, (
+            "cleared coordinate must not resurface a stale packed segment value"
+        )
 
 
 def test_sum_download_file_is_base64_and_round_trips(db, two_users, server_manager):
@@ -357,9 +441,9 @@ def test_sum_revision_blobs_are_pruned(
     """
     import glob
 
-    import src.core.suite.sum.manager as sum_manager_module
+    import src.core.suite.sum._shared as sum_shared_module
 
-    monkeypatch.setattr(sum_manager_module, "SUM_FLUSH_MAX_OPS", 1)
+    monkeypatch.setattr(sum_shared_module, "SUM_FLUSH_MAX_OPS", 1)
     owner, _ = two_users
     create_sum_tables(db)
     manager = SumManager(db, servers_module=server_manager, storage_dir=str(tmp_path))
