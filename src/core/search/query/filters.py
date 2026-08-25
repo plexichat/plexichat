@@ -79,7 +79,7 @@ class FilterProcessor:
         value = query_filter.value
 
         if filter_type == FilterType.FROM_USER:
-            target_user_id = self._resolve_user(value)
+            target_user_id = self._resolve_user(value, user_id)
             if target_user_id is None:
                 return lambda r: False
             return lambda r, uid=target_user_id: r.author_id == uid
@@ -106,7 +106,7 @@ class FilterProcessor:
             return self._get_has_filter(value)
 
         if filter_type == FilterType.MENTIONS_USER:
-            target_user_id = self._resolve_user(value)
+            target_user_id = self._resolve_user(value, user_id)
             if target_user_id is None:
                 return lambda r: False
             return lambda r, uid=target_user_id: self._check_mentions(r, uid)
@@ -145,8 +145,24 @@ class FilterProcessor:
 
         return lambda r: r.has_attachments
 
-    def _resolve_user(self, identifier: str) -> Optional[int]:
-        """Resolve username or user ID to user ID."""
+    def _resolve_user(
+        self, identifier: str, caller_id: Optional[int] = None
+    ) -> Optional[int]:
+        """Resolve username or user ID to user ID.
+
+        The ``me`` alias (also ``@me``, case-insensitive) resolves to the
+        calling user's own ID so advertised filters such as ``from:me`` and
+        ``mentions:me`` work.  Alias resolution happens BEFORE the shared
+        cache lookup because this processor instance is shared across all
+        callers and the alias is caller-dependent.
+        """
+        if identifier is None:
+            return None
+
+        alias = identifier.strip().lstrip("@").lower()
+        if alias == "me":
+            return caller_id
+
         if identifier in self._user_cache:
             return self._user_cache[identifier]
 
@@ -169,7 +185,21 @@ class FilterProcessor:
         return None
 
     def _resolve_channel(self, identifier: str) -> Optional[int]:
-        """Resolve channel name or ID to channel ID."""
+        """Resolve channel name or ID to channel ID.
+
+        A leading ``#`` (as advertised by the client hint ``in:#channel``)
+        is stripped before lookup because channels are stored without it.
+        """
+        if identifier is None:
+            return None
+
+        identifier = identifier.strip()
+        if identifier.startswith("#"):
+            identifier = identifier[1:]
+
+        if not identifier:
+            return None
+
         if identifier in self._channel_cache:
             return self._channel_cache[identifier]
 

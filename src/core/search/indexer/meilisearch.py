@@ -116,6 +116,22 @@ class MeilisearchIndexer(BaseIndexer):
         """Close the indexer."""
         self._initialized = False
 
+    @staticmethod
+    def _escape_filter_value(value: Any) -> str:
+        """Escape a value for interpolation into a Meilisearch filter
+        expression.
+
+        User-supplied values (e.g. discovery ``category``) must not be able
+        to alter filter semantics via unescaped double quotes or backslashes
+        (OR/AND injection widening result sets).
+        """
+        text = str(value)
+        return text.replace("\\", "\\\\").replace('"', '\\"')
+
+    @classmethod
+    def _filter_equality(cls, field: str, value: Any) -> str:
+        return f'{field} = "{cls._escape_filter_value(value)}"'
+
     def _request(
         self,
         method: str,
@@ -338,21 +354,39 @@ class MeilisearchIndexer(BaseIndexer):
 
             if conversation_ids:
                 conv_filter = " OR ".join(
-                    f'conversation_id = "{c}"' for c in conversation_ids
+                    self._filter_equality("conversation_id", int(c))
+                    for c in conversation_ids
+                    if c is not None
                 )
-                filters.append(f"({conv_filter})")
+                if conv_filter:
+                    filters.append(f"({conv_filter})")
 
             if server_ids:
-                server_filter = " OR ".join(f'server_id = "{s}"' for s in server_ids)
-                filters.append(f"({server_filter})")
+                server_filter = " OR ".join(
+                    self._filter_equality("server_id", int(s))
+                    for s in server_ids
+                    if s is not None
+                )
+                if server_filter:
+                    filters.append(f"({server_filter})")
 
             if channel_ids:
-                channel_filter = " OR ".join(f'channel_id = "{c}"' for c in channel_ids)
-                filters.append(f"({channel_filter})")
+                channel_filter = " OR ".join(
+                    self._filter_equality("channel_id", int(c))
+                    for c in channel_ids
+                    if c is not None
+                )
+                if channel_filter:
+                    filters.append(f"({channel_filter})")
 
             if author_ids:
-                author_filter = " OR ".join(f'author_id = "{a}"' for a in author_ids)
-                filters.append(f"({author_filter})")
+                author_filter = " OR ".join(
+                    self._filter_equality("author_id", int(a))
+                    for a in author_ids
+                    if a is not None
+                )
+                if author_filter:
+                    filters.append(f"({author_filter})")
 
             search_body = {
                 "q": query,
@@ -396,9 +430,15 @@ class MeilisearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Meilisearch search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Meilisearch message search failed: {e}",
+                backend="meilisearch",
+                original_error=e,
+            )
 
     def index_user(self, user: IndexedUser) -> bool:
         """Index a user."""
@@ -455,9 +495,15 @@ class MeilisearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Meilisearch user search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Meilisearch user search failed: {e}",
+                backend="meilisearch",
+                original_error=e,
+            )
 
     def index_server(self, server: IndexedServer) -> bool:
         """Index a server."""
@@ -505,7 +551,7 @@ class MeilisearchIndexer(BaseIndexer):
             if public_only:
                 filters.append("is_public = true")
             if category:
-                filters.append(f'category = "{category}"')
+                filters.append(self._filter_equality("category", category))
 
             search_body = {
                 "q": query,
@@ -538,9 +584,15 @@ class MeilisearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Meilisearch server search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Meilisearch server search failed: {e}",
+                backend="meilisearch",
+                original_error=e,
+            )
 
     def get_stats(self) -> Dict[str, Any]:
         """Get indexer statistics."""

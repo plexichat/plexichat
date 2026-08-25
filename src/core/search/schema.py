@@ -176,14 +176,6 @@ def create_tables(db):
     """Create all search tables including FTS5 virtual tables."""
     db_type = getattr(db, "type", "sqlite")
 
-    # Drop FTS5 virtual tables first to ensure schema updates are applied
-    if db_type == "sqlite":
-        for table in ["search_messages_fts", "search_users_fts", "search_servers_fts"]:
-            try:
-                db.execute(f"DROP TABLE IF EXISTS {table}")
-            except Exception:
-                pass
-
     statements = split_sql_statements(SCHEMA)
 
     for statement in statements:

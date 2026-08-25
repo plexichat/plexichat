@@ -347,7 +347,16 @@ class DiscoveryManager:
     def _check_list_permission(self, user_id: int, server_id: int):
         """Check if user can list/unlist the server."""
         if not self._servers:
-            return
+            # Fail closed: without the servers module there is no way to
+            # verify permissions, so discovery mutations must be denied
+            # rather than treated as unrestricted.
+            logger.error(
+                f"Discovery list/unlist denied for user {user_id}: servers module unavailable"
+            )
+            raise SearchPermissionError(
+                "Server permissions are unavailable; listing is disabled",
+                permission="server.manage",
+            )
 
         try:
             if not self._servers.has_permission(user_id, server_id, "server.manage"):
@@ -365,7 +374,14 @@ class DiscoveryManager:
     def _check_bump_permission(self, user_id: int, server_id: int):
         """Check if user can bump the server."""
         if not self._servers:
-            return
+            # Fail closed (see _check_list_permission).
+            logger.error(
+                f"Discovery bump denied for user {user_id}: servers module unavailable"
+            )
+            raise SearchPermissionError(
+                "Server membership cannot be verified; bumping is disabled",
+                permission="server.member",
+            )
 
         try:
             member = self._db.fetch_one(

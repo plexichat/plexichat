@@ -69,6 +69,11 @@ class MessageSearchMixin(SearchManagerBase):
 
         results = self._filter_processor.apply_filters(results, parsed, user_id)
 
+        # Re-verify per-result channel/conversation visibility server-side:
+        # explicit filters (from:/in:) search globally and must never return
+        # messages from private channels the searcher cannot access.
+        results = self._verify_results_visible(user_id, results)
+
         results = self._enrich_message_results(results, user_id)
 
         results = self._ranking_engine.rank_message_results(
@@ -111,29 +116,42 @@ class MessageSearchMixin(SearchManagerBase):
 
         search_text = parsed.search_text if parsed.search_terms else query
 
-        # Fetch one backend page at a time.  Post-index filters (mentions,
-        # attachments, and query filters) can remove rows; advancing the
-        # backend cursor only by ``limit * 2`` would either skip matches or
-        # return a cursor that points past unseen results.
+        # Fetch backend pages of max(limit*2, 50) rows per round-trip.
+        # Post-index filters (mentions, attachments, and query filters) can
+        # remove rows, so we keep fetching pages until the requested limit
+        # is filled or the backend is exhausted; the backend cursor always
+        # points past the last fully-examined page so the client never sees
+        # duplicates. A hard cap (~500 scanned rows) bounds the work a
+        # single page request can trigger; hitting it returns the page with
+        # next_cursor=None rather than a cursor that skips unseen rows.
+        _MAX_SCANNED_ROWS = 500
+        backend_page_size = max(limit * 2, 50)
+
         collected = []
         page_cursor = cursor
         next_cursor = None
+        scanned = 0
         while len(collected) < limit:
+            if scanned >= _MAX_SCANNED_ROWS:
+                # Scan budget exhausted before filling this page: stop
+                # paginating entirely instead of handing back a cursor that
+                # would skip the rows we never examined.
+                next_cursor = None
+                break
             page_results, page_next_cursor = self._indexer.search_messages_page(
                 query=search_text,
                 conversation_ids=accessible_conversations,
                 server_ids=[server_id] if server_id else None,
                 channel_ids=[channel_id] if channel_id else None,
                 author_ids=[author_id] if author_id is not None else None,
-                # Advance by one backend result at a time.  Returning a cursor
-                # for a larger backend page would skip filtered rows that were
-                # not included in this response.
-                limit=1,
+                limit=backend_page_size,
                 cursor=page_cursor,
             )
             if not page_results:
                 next_cursor = None
                 break
+
+            scanned += len(page_results)
 
             filtered = page_results
             if after_timestamp is not None:
@@ -153,6 +171,8 @@ class MessageSearchMixin(SearchManagerBase):
                 ]
 
             filtered = self._filter_processor.apply_filters(filtered, parsed, user_id)
+            # Per-result visibility re-check (see search_messages).
+            filtered = self._verify_results_visible(user_id, filtered)
             filtered = self._enrich_message_results(filtered, user_id)
             filtered = self._ranking_engine.rank_message_results(
                 filtered, parsed, self._get_timestamp()

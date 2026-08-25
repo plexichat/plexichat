@@ -14,7 +14,7 @@ from src.api.schemas.search import (
     ServerSearchPageResponse,
 )
 from src.api.schemas.common import ErrorResponse
-from src.core.search.exceptions import SearchError
+from src.core.search.exceptions import SearchError, SearchBackendError
 
 
 import utils.logger as logger
@@ -73,6 +73,12 @@ async def search_messages(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except SearchBackendError as e:
+        logger.error(f"Search backend unavailable (messages): {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "search_backend_unavailable", "message": str(e)},
+        )
     except SearchError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -140,6 +146,12 @@ async def search_users(
             results=items,
             next_cursor=page.next_cursor,
         )
+    except SearchBackendError as e:
+        logger.error(f"Search backend unavailable (users): {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "search_backend_unavailable", "message": str(e)},
+        )
     except SearchError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -175,6 +187,12 @@ async def search_servers(
 
         return ServerSearchPageResponse(
             results=page.results, next_cursor=page.next_cursor
+        )
+    except SearchBackendError as e:
+        logger.error(f"Search backend unavailable (servers): {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "search_backend_unavailable", "message": str(e)},
         )
     except SearchError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -296,6 +314,12 @@ async def get_search_suggestions(
             limit=limit,
         )
         return {"suggestions": suggestions}
+    except SearchBackendError as e:
+        logger.error(f"Search backend unavailable (suggestions): {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "search_backend_unavailable", "message": str(e)},
+        )
     except Exception as e:
         logger.error(f"Search suggestions failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal search error")

@@ -339,7 +339,11 @@ class PostgresIndexer(BaseIndexer):
             return results
         except Exception as e:
             logger.error(f"Postgres search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Postgres message search failed: {e}",
+                backend="postgres",
+                original_error=e,
+            )
 
     def _encode_cursor(self, payload: dict) -> str:
         raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -453,7 +457,11 @@ class PostgresIndexer(BaseIndexer):
             return results, next_cursor
         except Exception as e:
             logger.error(f"Postgres paged message search failed: {e}")
-            return [], None
+            raise SearchBackendError(
+                f"Postgres paged message search failed: {e}",
+                backend="postgres",
+                original_error=e,
+            )
 
     def update_message(self, message: IndexedMessage) -> bool:
         return self.index_message(message)
@@ -535,7 +543,11 @@ class PostgresIndexer(BaseIndexer):
             ]
         except Exception as e:
             logger.error(f"Postgres user search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Postgres user search failed: {e}",
+                backend="postgres",
+                original_error=e,
+            )
 
     def search_users_page(
         self,
@@ -607,7 +619,11 @@ class PostgresIndexer(BaseIndexer):
             return results, next_cursor
         except Exception as e:
             logger.error(f"Postgres paged user search failed: {e}")
-            return [], None
+            raise SearchBackendError(
+                f"Postgres paged user search failed: {e}",
+                backend="postgres",
+                original_error=e,
+            )
 
     def index_server(self, server: IndexedServer) -> bool:
         try:
@@ -705,7 +721,11 @@ class PostgresIndexer(BaseIndexer):
             ]
         except Exception as e:
             logger.error(f"Postgres server search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Postgres server search failed: {e}",
+                backend="postgres",
+                original_error=e,
+            )
 
     def search_servers_page(
         self,
@@ -791,7 +811,11 @@ class PostgresIndexer(BaseIndexer):
             return results, next_cursor
         except Exception as e:
             logger.error(f"Postgres paged server search failed: {e}")
-            return [], None
+            raise SearchBackendError(
+                f"Postgres paged server search failed: {e}",
+                backend="postgres",
+                original_error=e,
+            )
 
     def get_stats(self):
         try:

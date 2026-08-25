@@ -77,15 +77,43 @@ class AccessControlMixin(SearchManagerBase):
                     conversations.append(row["conversation_id"])
         else:
             rows = self._db.fetch_all(
-                """SELECT c.conversation_id
+                """SELECT c.id AS channel_id, c.conversation_id
                    FROM srv_channels c
                    JOIN srv_members m ON c.server_id = m.server_id
                    WHERE m.user_id = ? AND c.conversation_id IS NOT NULL""",
                 (user_id,),
             )
-            conversations.extend(row["conversation_id"] for row in rows)
+            for row in rows:
+                # Per-channel visibility re-check: membership of a server
+                # alone does not grant read access to every channel (private
+                # channels, role-gated channels, channel overrides).
+                if self._can_access_channel(user_id, row["channel_id"]):
+                    conversations.append(row["conversation_id"])
 
         return list(set(conversations))
+
+    def _verify_results_visible(self, user_id: int, results: List) -> List:
+        """Re-verify per-result visibility before returning search results.
+
+        Defense-in-depth for global searches with explicit filters
+        (``from:`` / ``in:``): every returned message must resolve to a
+        conversation/channel the searcher can actually see.  Results that
+        fail the check are dropped rather than leaked.
+        """
+        verified = []
+        for r in results:
+            channel_id = getattr(r, "channel_id", None)
+            conversation_id = getattr(r, "conversation_id", None)
+            if channel_id is not None:
+                if self._can_access_channel(user_id, channel_id):
+                    verified.append(r)
+            elif conversation_id:
+                if self._can_access_conversation(user_id, conversation_id):
+                    verified.append(r)
+            # Rows with neither a channel nor a conversation id cannot be
+            # proven visible to the searcher, so they are dropped
+            # (fail-closed) rather than leaked.
+        return verified
 
     def _get_server_member_ids(self, server_id: int) -> set:
         rows = self._db.fetch_all(

@@ -452,9 +452,15 @@ class ElasticsearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Elasticsearch search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Elasticsearch message search failed: {e}",
+                backend="elasticsearch",
+                original_error=e,
+            )
 
     def index_user(self, user: IndexedUser) -> bool:
         """Index a user."""
@@ -519,9 +525,15 @@ class ElasticsearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Elasticsearch user search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Elasticsearch user search failed: {e}",
+                backend="elasticsearch",
+                original_error=e,
+            )
 
     def index_server(self, server: IndexedServer) -> bool:
         """Index a server."""
@@ -607,9 +619,15 @@ class ElasticsearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Elasticsearch server search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Elasticsearch server search failed: {e}",
+                backend="elasticsearch",
+                original_error=e,
+            )
 
     def get_stats(self) -> Dict[str, Any]:
         """Get indexer statistics."""

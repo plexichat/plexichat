@@ -20,10 +20,14 @@ class QueryUtilsMixin(SearchManagerBase):
         suggestions.extend(filter_suggestions)
 
         if len(suggestions) < limit:
+            # GROUP BY rewrite: SELECT DISTINCT + ORDER BY on a non-selected
+            # column (searched_at) is invalid on Postgres.  Aggregating the
+            # ordering column keeps identical semantics on SQLite and PG.
             history = self._db.fetch_all(
-                """SELECT DISTINCT query FROM search_history 
+                """SELECT query FROM search_history
                    WHERE user_id = ? AND query LIKE ?
-                   ORDER BY searched_at DESC LIMIT ?""",
+                   GROUP BY query
+                   ORDER BY MAX(searched_at) DESC LIMIT ?""",
                 (user_id, f"{partial_query}%", limit - len(suggestions)),
             )
             suggestions.extend(row["query"] for row in history)

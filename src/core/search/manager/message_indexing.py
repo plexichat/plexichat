@@ -18,14 +18,29 @@ class MessageIndexingMixin(SearchManagerBase):
 
         metadata = metadata or {}
 
+        server_id = metadata.get("server_id")
+        channel_id = metadata.get("channel_id")
+        if server_id is None and channel_id is None and metadata.get("conversation_id"):
+            # Scoped searches filter on server_id/channel_id in the index
+            # backend; resolve them from the owning channel so indexed
+            # documents are actually reachable by scoped queries.
+            channel_row = self._db.fetch_one(
+                "SELECT id AS channel_id, server_id FROM srv_channels "
+                "WHERE conversation_id = ? LIMIT 1",
+                (metadata.get("conversation_id"),),
+            )
+            if channel_row:
+                channel_id = channel_row["channel_id"]
+                server_id = channel_row["server_id"]
+
         indexed = IndexedMessage(
             message_id=message_id,
             content=content,
             author_id=metadata.get("author_id", 0),
             author_username=metadata.get("author_username", ""),
             conversation_id=metadata.get("conversation_id", 0),
-            server_id=metadata.get("server_id"),
-            channel_id=metadata.get("channel_id"),
+            server_id=server_id,
+            channel_id=channel_id,
             created_at=metadata.get("created_at", self._get_timestamp()),
             has_attachments=metadata.get("has_attachments", False),
             attachment_types=metadata.get("attachment_types", []),
@@ -78,23 +93,27 @@ class MessageIndexingMixin(SearchManagerBase):
             "DELETE FROM search_message_index WHERE message_id = ?", (message_id,)
         )
 
+    _REINDEX_SELECT = """
+        SELECT m.id, m.content, m.content_encrypted, m.author_id,
+               u.username AS author_username,
+               m.conversation_id, m.created_at, m.updated_at,
+               ch.id AS channel_id, ch.server_id AS server_id
+        FROM msg_messages m
+        LEFT JOIN auth_users u ON u.id = m.author_id
+        LEFT JOIN srv_channels ch ON ch.conversation_id = m.conversation_id
+    """
+
     def reindex_all(self, force: bool = False) -> int:
         if force:
-            messages = self._db.fetch_all(
-                """SELECT m.id, m.content, m.content_encrypted, m.author_id,
-                          m.conversation_id, m.created_at, m.updated_at
-                   FROM msg_messages m
-                   WHERE m.deleted = 0"""
-            )
+            messages = self._db.fetch_all(self._REINDEX_SELECT + " WHERE m.deleted = 0")
         else:
             messages = self._db.fetch_all(
-                """SELECT m.id, m.content, m.content_encrypted, m.author_id,
-                          m.conversation_id, m.created_at, m.updated_at
-                   FROM msg_messages m
-                   LEFT JOIN search_message_index i ON m.id = i.message_id
-                   WHERE m.deleted = 0
-                     AND (i.message_id IS NULL
-                          OR m.updated_at > COALESCE(i.source_updated_at, 0))"""
+                self._REINDEX_SELECT
+                + """
+                LEFT JOIN search_message_index i ON m.id = i.message_id
+                WHERE m.deleted = 0
+                  AND (i.message_id IS NULL
+                       OR m.updated_at > COALESCE(i.source_updated_at, 0))"""
             )
 
         indexed = 0
@@ -109,24 +128,24 @@ class MessageIndexingMixin(SearchManagerBase):
                     "author_id": msg["author_id"],
                     "author_username": msg.get("author_username", ""),
                     "conversation_id": msg["conversation_id"],
+                    "server_id": msg.get("server_id"),
+                    "channel_id": msg.get("channel_id"),
                     "created_at": msg["created_at"],
                     "source_updated_at": msg.get("updated_at", 0) or 0,
-                    "has_attachments": msg.get("has_attachments", False),
-                    "attachment_types": msg.get("attachment_types", []),
-                    "has_embeds": msg.get("has_embeds", False),
                 },
             )
             indexed += 1
 
-        if not force:
-            stale = self._db.fetch_all(
-                """SELECT i.message_id
-                   FROM search_message_index i
-                   LEFT JOIN msg_messages m ON i.message_id = m.id
-                   WHERE m.id IS NULL OR m.deleted = 1"""
-            )
-            for row in stale:
-                self.remove_from_index(row["message_id"])
+        # Purge deleted/missing messages from the index in BOTH modes so a
+        # forced rebuild cannot resurrect soft-deleted content into results.
+        stale = self._db.fetch_all(
+            """SELECT i.message_id
+               FROM search_message_index i
+               LEFT JOIN msg_messages m ON i.message_id = m.id
+               WHERE m.id IS NULL OR m.deleted = 1"""
+        )
+        for row in stale:
+            self.remove_from_index(row["message_id"])
 
         return indexed
 
