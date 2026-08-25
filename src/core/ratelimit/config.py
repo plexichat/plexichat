@@ -422,12 +422,14 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         daily_limit=20,
     ),
     "POST /telemetry": RateLimitConfig(
-        requests=30,
+        # Wired from telemetry config so the advertised knob is enforced
+        # (config advertises max_per_minute; defaults match that value).
+        requests=app_config.get("telemetry.rate_limit.max_per_minute", 10),
         window_seconds=60.0,
-        burst=5,
+        burst=app_config.get("telemetry.rate_limit.burst", 5),
         algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
         scope=BucketType.IP,
-        hourly_limit=1000,
+        hourly_limit=app_config.get("telemetry.rate_limit.max_per_hour", 600),
     ),
     "GET /suite/stash/items": RateLimitConfig(
         requests=120,

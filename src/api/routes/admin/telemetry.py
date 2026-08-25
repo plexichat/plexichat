@@ -5,7 +5,6 @@ Admin telemetry routes.
 from fastapi import APIRouter, Request, HTTPException, Response
 from typing import Optional
 import time
-import urllib.parse
 import csv
 import io
 from src.api.schemas.admin import (
@@ -61,7 +60,11 @@ async def get_telemetry_stats(
         return TelemetryStatsResponse(
             stats=[
                 TelemetryEndpointStat(
-                    endpoint=urllib.parse.unquote(s.endpoint),
+                    # No URL-decoding here: stored endpoints are already
+                    # decoded once at ingest; decoding again corrupts literal
+                    # '%' sequences and aliases distinct endpoints. Stats and
+                    # export paths now treat stored values identically.
+                    endpoint=s.endpoint,
                     method=s.method,
                     count=s.count,
                     avg_ms=round(s.avg_response_time_ms, 2),

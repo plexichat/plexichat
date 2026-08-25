@@ -22,7 +22,8 @@ class ResponseTimeEntry(BaseModel):
         0.0, description="Time spent executing database queries in ms"
     )
     timestamp: Optional[int] = Field(
-        None, description="The Unix timestamp of the measurement"
+        None,
+        description="The Unix timestamp of the measurement; omitted/None defaults to server-receive time",
     )
 
 

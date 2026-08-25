@@ -4,16 +4,18 @@ Collects and aggregates anonymized response time telemetry data from clients.
 
 ## Overview
 
-This module enables opt-in client-side telemetry collection for monitoring API performance. Clients can submit response time measurements which are aggregated for admin dashboards.
+This module enables **opt-in** client-side telemetry collection for monitoring API performance. Clients can submit response time measurements which are aggregated for admin dashboards. Telemetry is **disabled by default**: it only runs when `telemetry.enabled` is explicitly set to `true` in configuration.
 
 ## Features
 
-- **Anonymized Collection**: Client identifiers are hashed, no PII is stored
+- **Opt-In Only**: Disabled unless explicitly enabled in config; users must opt in via client settings
+- **Anonymized Collection**: Client identifiers are salted SHA-256 digests (never raw user IDs); no PII is stored
 - **Batch Submissions**: Clients can batch up to 100 entries per request
-- **Rate Limiting**: Prevents abuse with configurable rate limits
-- **Aggregation**: Calculates percentiles (p50, p95, p99), averages, and error rates
+- **Rate Limiting**: Prevents abuse with configurable rate limits (`telemetry.rate_limit.max_per_minute`)
+- **Cardinality Protection**: Client endpoints are allowlisted against registered route templates; unrecognized endpoints collapse into an `_other` overflow bucket, distinct endpoint keys are capped (`telemetry.max_distinct_endpoints`), and total stored rows are hard-capped (`telemetry.max_total_rows`) with a rejection counter exposed via `get_cardinality_stats()`
+- **Aggregation**: Calculates percentiles (p50, p95, p99), averages, and error rates; percentile sampling is bounded in SQL (`telemetry.percentile_sample_rows`)
 - **Time-Series Data**: Historical data bucketed by configurable intervals
-- **Auto-Cleanup**: Old data can be purged automatically
+- **Auto-Cleanup**: A background retention sweep deletes data older than `telemetry.retention_days` on every application start (lifespan task)
 
 ## Usage
 
@@ -74,10 +76,14 @@ Add to `config.yaml`:
 
 ```yaml
 telemetry:
-  enabled: true
+  enabled: false            # opt-in: set true to enable telemetry
   rate_limit:
     max_per_minute: 10
   retention_days: 30
+  max_distinct_endpoints: 500
+  max_total_rows: 100000
+  percentile_sample_rows: 25000
+  client_hash_salt: "<random per-install secret>"
 ```
 
 ## Database Schema
@@ -102,7 +108,8 @@ See `src/api/routes/telemetry.py` for the API implementation.
 
 ## Privacy
 
-- Client IDs are SHA-256 hashes of IP + User-Agent
+- Client IDs are salted SHA-256 hashes of the **user ID** (salted per install via `telemetry.client_hash_salt`); raw user IDs are never stored
 - No personally identifiable information is stored
-- Users must opt-in via client settings
-- Data is automatically cleaned up after retention period
+- Telemetry is disabled unless explicitly enabled; users must opt in via client settings
+- Data is automatically cleaned up by a background retention sweep after `retention_days`
+- Entries submitted without a timestamp default to server-receive time

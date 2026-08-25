@@ -144,6 +144,40 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
         media_maintenance_task = start_media_maintenance_sweep()
 
+        # Periodic telemetry retention sweep so ``cleanup_old_data`` actually
+        # runs on the configured retention schedule instead of never.
+        from .telemetry_maintenance import (
+            start_telemetry_retention_sweep,
+            stop_telemetry_retention_sweep,
+        )
+
+        telemetry_retention_task = start_telemetry_retention_sweep()
+
+        # Register route templates so client-supplied telemetry endpoints are
+        # allowlisted against real API routes (cardinality protection).
+        # ``route.path`` carries the router mount prefix (e.g. /api/v1) while
+        # clients report unprefixed paths, so the configured prefix is
+        # stripped here to keep both sides on the same form.
+        try:
+            from fastapi.routing import APIRoute
+
+            from src.core import telemetry as _telemetry_module
+
+            def _strip_api_prefix(path: str) -> str:
+                prefix = (config.api_prefix or "/api/v1").rstrip("/")
+                if prefix and path.startswith(prefix + "/"):
+                    return path[len(prefix) :] or "/"
+                return path
+
+            if _telemetry_module.is_setup():
+                _telemetry_module.register_route_templates(
+                    _strip_api_prefix(route.path)
+                    for route in app.routes
+                    if isinstance(route, APIRoute)
+                )
+        except Exception as e:
+            logger.debug(f"Telemetry route template registration skipped: {e}")
+
         # Start the cross-worker WebSocket event listener so this
         # worker receives events published by sibling workers via
         # Valkey pub/sub.
@@ -171,6 +205,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         finally:
             await stop_poll_expiry_sweep(poll_expiry_task)
             await stop_media_maintenance_sweep(media_maintenance_task)
+            await stop_telemetry_retention_sweep(telemetry_retention_task)
 
             # Stop the queue consumer and drain any queued events so
             # shutdown does not silently drop them.

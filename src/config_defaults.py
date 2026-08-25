@@ -807,9 +807,17 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "temporary_storage_hours": 24,
         },
         "telemetry": {
-            "enabled": True,
+            # Privacy stance: telemetry is OPT-IN. It stays disabled unless
+            # explicitly enabled in config.yaml.
+            "enabled": False,
             "rate_limit": {"max_per_minute": 10},
             "retention_days": 30,
+            # Cardinality bounds for client-supplied endpoint strings.
+            "max_distinct_endpoints": 500,
+            "max_total_rows": 100000,
+            "percentile_sample_rows": 25000,
+            # Per-install salt used to hash client identifiers.
+            "client_hash_salt": secrets.token_hex(16),
         },
         "static_client": {
             "enabled": False,

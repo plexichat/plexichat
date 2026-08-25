@@ -770,7 +770,8 @@ def initialize_modules(
             failed_modules.append("ratelimit")
 
     telemetry_config = config.get("telemetry") or {}
-    if telemetry_config.get("enabled", True):
+    # Opt-in only: telemetry stays disabled unless explicitly enabled.
+    if telemetry_config.get("enabled", False):
         try:
             from src.core import telemetry
 
