@@ -287,6 +287,17 @@ class JanusAdapter(SFUAdapter):
         # Destroy session
         await self._request(f"/{session_id}", {"janus": "destroy"})
 
+        # L1 (Agent 34): drop producer-kind bookkeeping owned by this room's
+        # peers so closing a room leaves no stale entries behind.
+        for peer_key in list(self._janus_handles.get(room_id, {})):
+            stale_kinds = [
+                pid
+                for pid in self._producer_kinds
+                if isinstance(peer_key, str) and pid.startswith(f"{peer_key}_")
+            ]
+            for pid in stale_kinds:
+                self._producer_kinds.pop(pid, None)
+
         del self._janus_sessions[room_id]
         if room_id in self._janus_handles:
             del self._janus_handles[room_id]
@@ -343,7 +354,8 @@ class JanusAdapter(SFUAdapter):
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """Remove a peer from a room."""
         session_id = self._janus_sessions.get(room_id)
-        handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
+        room_handles = self._janus_handles.get(room_id, {})
+        handle_id = room_handles.get(peer_id)
 
         if session_id and handle_id:
             await self._send_message(session_id, handle_id, {"request": "leave"})
@@ -351,7 +363,38 @@ class JanusAdapter(SFUAdapter):
             # Detach handle
             await self._request(f"/{session_id}/{handle_id}", {"janus": "detach"})
 
-            del self._janus_handles[room_id][peer_id]
+            room_handles.pop(peer_id, None)
+
+        # L1 (Agent 34): detach any subscriber handles this peer created via
+        # consume() (consumer ids are prefixed "<peer_id>_sub_") so they do
+        # not leak on the Janus side.
+        if session_id:
+            subscriber_ids = [
+                cid
+                for cid in room_handles
+                if isinstance(cid, str) and cid.startswith(f"{peer_id}_sub_")
+            ]
+            for consumer_id in subscriber_ids:
+                sub_handle = room_handles.pop(consumer_id, None)
+                if sub_handle is None:
+                    continue
+                try:
+                    await self._request(
+                        f"/{session_id}/{sub_handle}", {"janus": "detach"}
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to detach Janus subscriber handle for "
+                        f"{consumer_id}: {e}"
+                    )
+
+        # L1: drop producer-kind bookkeeping owned by this peer so it does
+        # not grow unbounded across join/leave cycles.
+        stale_kinds = [
+            pid for pid in self._producer_kinds if pid.startswith(f"{peer_id}_")
+        ]
+        for pid in stale_kinds:
+            self._producer_kinds.pop(pid, None)
 
         logger.debug(f"Peer {peer_id} left Janus room {room_id}")
         return True
@@ -469,6 +512,13 @@ class JanusAdapter(SFUAdapter):
 
         consumer_id = f"{peer_id}_sub_{producer_id}_{int(time.time() * 1000)}"
 
+        # L1 (Agent 34): subscriber handles were attached to Janus but never
+        # tracked, leaking the remote handle forever. Track them so they are
+        # detached when the consuming peer leaves the room.
+        if room_id not in self._janus_handles:
+            self._janus_handles[room_id] = {}
+        self._janus_handles[room_id][consumer_id] = handle_id
+
         kind = self._producer_kinds.get(producer_id, MediaKind.AUDIO)
 
         return SFUConsumer(
@@ -535,6 +585,10 @@ class JanusAdapter(SFUAdapter):
 
         if session_id and handle_id:
             await self._send_message(session_id, handle_id, {"request": "unpublish"})
+
+        # L1 (Agent 34): closed producers must drop their kind bookkeeping or
+        # the map grows unbounded.
+        self._producer_kinds.pop(producer_id, None)
         return True
 
     async def get_room_info(self, room_id: str) -> Optional[RoomInfo]:

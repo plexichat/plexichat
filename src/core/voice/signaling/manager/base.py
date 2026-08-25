@@ -128,6 +128,11 @@ class SignalingManagerBase:
         self._sdp_manipulator = SDPManipulator()
         self._connections = {}
         self._rooms = {}
+        # Registry of minted media-plane tokens: token -> issuance metadata.
+        # SECURITY: tokens issued via VoiceServerInfo MUST be persisted here
+        # so media-plane operations can verify them (previously tokens were
+        # minted and never checked anywhere).
+        self._media_tokens: Dict[str, Dict[str, Any]] = {}
 
         logger.info(f"Signaling manager initialized with {sfu_backend} backend")
 
@@ -181,3 +186,4 @@ class SignalingManagerBase:
             self._sfu = None
         self._connections.clear()
         self._rooms.clear()
+        self._media_tokens.clear()

@@ -8,6 +8,7 @@ import utils.logger as logger
 import utils.config as _cfg
 
 from ..exceptions import NotConnectedError, SDPError
+from ...exceptions import PermissionDeniedError
 from ..models import SDPMessage, SDPType, SignalingState
 from ..sdp import parse_sdp, validate_sdp, SDPCodecConfig
 from ..sfu.base import TransportDirection
@@ -26,6 +27,10 @@ class SDPMixin:
         ) -> VoiceServerInfo: ...
         def _get_timestamp(self) -> int: ...
         def _get_room_id(self, channel_id: int) -> str: ...
+        def _require_connect_permission(
+            self, user_id: int, channel_id: int
+        ) -> None: ...
+        def _require_stream_permission(self, user_id: int, channel_id: int) -> None: ...
 
     _voice: Optional[Any]
     _connections: Dict[int, Any]
@@ -88,14 +93,54 @@ class SDPMixin:
         """
         connection = self._connections.get(user_id)
         if not connection:
+            # SECURITY (Agent 34 C3): an SDP offer without a signaling
+            # connection used to auto-create one after checking ONLY
+            # ``channels.view`` (via get_voice_channel), letting users who
+            # could see a voice channel obtain full SFU room joins without
+            # ``voice.connect``. Enforce connect permission BEFORE any
+            # media-plane resource allocation.
+            self._require_connect_permission(user_id, channel_id)
             self.create_voice_connection(user_id, channel_id)
             connection = self._connections[user_id]
+        elif connection.channel_id != channel_id:
+            # SECURITY (Agent 34 H4): the offered channel MUST match the
+            # channel bound at connection time; otherwise clients could
+            # cross-inject signaling into arbitrary channels.
+            logger.warning(
+                f"Channel mismatch on SDP offer for user {user_id}: "
+                f"bound={connection.channel_id} offered={channel_id}"
+            )
+            raise NotConnectedError(
+                f"User {user_id} is not connected to channel {channel_id}",
+                user_id=user_id,
+                channel_id=channel_id,
+            )
 
         try:
             parsed_type = SDPType(sdp_type)
             validate_sdp(sdp, parsed_type)
         except Exception as e:
             raise SDPError(f"Invalid SDP: {e}")
+
+        # SECURITY (Agent 34 M7, media plane): a client that shares its
+        # screen (or camera) P2P publishes the video track directly inside
+        # this SDP offer and never calls start_screen_share, so the REST
+        # endpoint's voice.speak gate was silently bypassed. Reject any
+        # offer that publishes a video/screen track from a user without
+        # voice.speak in the channel's server.
+        try:
+            offered_media = parse_sdp(sdp).get("media", [])
+            if any(
+                str(media.get("type", "")).lower() == "video" for media in offered_media
+            ):
+                self._require_stream_permission(user_id, channel_id)
+        except PermissionDeniedError:
+            raise
+        except Exception as e:
+            logger.warning(
+                f"Could not inspect SDP media sections for stream permission "
+                f"(user {user_id}, channel {channel_id}): {e}"
+            )
 
         connection.remote_sdp = sdp
         connection.last_activity = self._get_timestamp()

@@ -90,6 +90,10 @@ __all__ = [
     "get_connection_quality",
     "update_quality_hint",
     "get_active_connections",
+    "validate_media_token",
+    "revoke_media_token",
+    "record_activity",
+    "sweep_stale_connections",
 ]
 
 _manager = None
@@ -276,6 +280,44 @@ def get_quality_stats(channel_id: int) -> list:
 def get_active_connections(channel_id: int) -> List[Dict[str, Any]]:
     """Get all active connections in a channel."""
     return _get_manager().get_active_connections(channel_id)
+
+
+def validate_media_token(
+    token: Optional[str],
+    user_id: Optional[int] = None,
+    channel_id: Optional[int] = None,
+) -> bool:
+    """Verify a media-plane bearer token (Agent 34 C4).
+
+    Media-plane entry points that are NOT already gateway-authenticated
+    (e.g. the mediasoup_ws endpoint URL handed to clients) must verify the
+    token issued with VoiceServerInfo before admitting the caller.
+    """
+    return _get_manager().validate_media_token(token, user_id, channel_id)
+
+
+def revoke_media_token(token: Optional[str]) -> bool:
+    """Revoke a previously issued media-plane bearer token."""
+    return _get_manager().revoke_media_token(token)
+
+
+def record_activity(user_id: int) -> bool:
+    """Refresh last_activity for a user's signaling connection.
+
+    Called on SFU stats/keepalive traffic so quiet-but-active calls are
+    not falsely swept as stale.
+    """
+    return _get_manager().record_activity(user_id)
+
+
+async def sweep_stale_connections(max_idle_ms: int = 30 * 60 * 1000) -> List[int]:
+    """Disconnect signaling connections idle beyond ``max_idle_ms``.
+
+    Agent 34 H2: performs full teardown (SFU leave + local cleanup + token
+    revoke) for orphaned voice sessions; call periodically from a
+    maintenance task or heartbeat loop.
+    """
+    return await _get_manager().sweep_stale_connections(max_idle_ms)
 
 
 async def close() -> None:

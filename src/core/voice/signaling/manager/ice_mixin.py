@@ -46,6 +46,16 @@ class ICEMixin:
                 "User not connected to voice", user_id=user_id, channel_id=channel_id
             )
 
+        # SECURITY (Agent 34 H4): candidates must belong to the channel the
+        # connection is bound to; otherwise clients can cross-inject ICE
+        # candidates into arbitrary channels' sessions.
+        if connection.channel_id != channel_id:
+            logger.warning(
+                f"Channel mismatch on ICE candidate for user {user_id}: "
+                f"bound={connection.channel_id} offered={channel_id}"
+            )
+            return False
+
         ice_candidate = parse_ice_candidate(candidate, sdp_mid, sdp_mline_index)
 
         self._ice_manager.add_candidate(

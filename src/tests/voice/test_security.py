@@ -16,6 +16,7 @@ import hmac
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.core.voice.exceptions import PermissionDeniedError
 from src.core.voice.signaling import (
     setup,
     get_voice_server_info,
@@ -244,7 +245,10 @@ class TestSignalingManipulation:
 
         fake_user_id = 999999999
 
-        with pytest.raises((ValueError, NotConnectedError, KeyError)):
+        # Agent 34 W5-A: credential issuance now requires voice.connect, so
+        # an unknown/unauthorized user is denied with PermissionDeniedError
+        # (stricter than the legacy NotConnectedError path).
+        with pytest.raises((NotConnectedError, ValueError, PermissionDeniedError)):
             create_voice_connection(fake_user_id, voice_channel.id)
 
     def test_cross_channel_connection_spoofing(self, server_with_voice, security_setup):
@@ -444,7 +448,8 @@ class TestMediaStreamHijacking:
 
         create_voice_connection(member1.id, voice_channel.id)
 
-        with pytest.raises((NotConnectedError, ValueError)):
+        # Agent 34 W5-A: credential issuance now requires voice.connect.
+        with pytest.raises((NotConnectedError, ValueError, PermissionDeniedError)):
             create_voice_connection(999999, voice_channel.id)
 
         disconnect_voice(member1.id)

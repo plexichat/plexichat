@@ -201,12 +201,19 @@ class AiortcAdapter(SFUAdapter):
                     processed_track = AudioProcessingTrack(
                         track, self._acoustic_defense
                     )
-                peer.incoming_audio_tracks.append(processed_track)
+                # L1 (Agent 34): renegotiation redelivers tracks; appending
+                # unconditionally accumulated duplicate/ghost entries. Dedupe
+                # and prune to a bounded set per kind.
+                if processed_track not in peer.incoming_audio_tracks:
+                    peer.incoming_audio_tracks.append(processed_track)
+                    self._prune_incoming_tracks(peer.incoming_audio_tracks)
                 logger.debug(
                     f"Audio track received from peer {peer_id} in room {room_id}"
                 )
             elif track.kind == "video":
-                peer.incoming_video_tracks.append(track)
+                if track not in peer.incoming_video_tracks:
+                    peer.incoming_video_tracks.append(track)
+                    self._prune_incoming_tracks(peer.incoming_video_tracks)
                 logger.debug(
                     f"Video track received from peer {peer_id} in room {room_id}"
                 )
@@ -266,6 +273,40 @@ class AiortcAdapter(SFUAdapter):
         logger.info(f"Peer {peer_id} joined room {room_id}")
         return await self.get_router_capabilities(room_id)
 
+    # ------------------------------------------------------------------
+    # Track / sender hygiene
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _prune_incoming_tracks(tracks: List[Any], max_len: int = 4) -> None:
+        """Bound an incoming-track list so renegotiation cannot grow it."""
+        if len(tracks) > max_len:
+            del tracks[: len(tracks) - max_len]
+
+    def _remove_forwarded_senders(self, room_id: str, track: Any) -> None:
+        """Remove every sender forwarding ``track`` on other peers' PCs.
+
+        L1 (Agent 34): forwarded tracks added to other peers were never
+        removed when the producer closed or the producing peer left, leaving
+        ghost senders on live peer connections.
+        """
+        if room_id not in self._rooms or track is None:
+            return
+
+        for peer in self._rooms[room_id].values():
+            try:
+                senders = list(peer.pc.getSenders())
+            except Exception:
+                continue
+            for sender in senders:
+                if getattr(sender, "track", None) is track:
+                    try:
+                        peer.pc.removeTrack(sender)
+                    except Exception as e:
+                        logger.debug(
+                            f"Could not remove ghost sender on {peer.peer_id}: {e}"
+                        )
+
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """Remove a peer from a room."""
         if room_id not in self._rooms:
@@ -276,10 +317,28 @@ class AiortcAdapter(SFUAdapter):
 
         peer = self._rooms[room_id][peer_id]
 
+        # L1 (Agent 34): before tearing down this peer, remove the tracks it
+        # produced from every other peer's connection so ghost senders do not
+        # outlive the producing peer.
+        produced_tracks = [
+            track
+            for track in list(peer.producer_tracks.values())
+            + list(peer.incoming_audio_tracks)
+            + list(peer.incoming_video_tracks)
+        ]
+        for track in produced_tracks:
+            self._remove_forwarded_senders(room_id, track)
+
         try:
             await peer.pc.close()
         except Exception as e:
             logger.warning(f"Error closing peer connection: {e}")
+
+        peer.incoming_audio_tracks.clear()
+        peer.incoming_video_tracks.clear()
+        peer.producer_tracks.clear()
+        peer.producers.clear()
+        peer.consumers.clear()
 
         del self._rooms[room_id][peer_id]
         logger.info(f"Peer {peer_id} left room {room_id}")
@@ -567,7 +626,11 @@ class AiortcAdapter(SFUAdapter):
             return False
 
         del peer.producers[producer_id]
-        peer.producer_tracks.pop(producer_id, None)
+        track = peer.producer_tracks.pop(producer_id, None)
+        # L1 (Agent 34): closing a producer must also stop forwarding its
+        # track to every other peer (ghost senders otherwise persist).
+        if track is not None:
+            self._remove_forwarded_senders(room_id, track)
         logger.debug(f"Closed producer {producer_id}")
         return True
 

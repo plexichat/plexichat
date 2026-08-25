@@ -69,10 +69,18 @@ class VoiceHandler:
                 video=self_video,
             )
 
+            # SECURITY (Agent 34 M2): derive fan-out from the AUTHORITATIVE
+            # DB state's channel. Trusting the client-supplied channel_id let
+            # a user in channel A spoof membership events into channel B's
+            # viewer set (information disclosure about B).
+            authoritative_channel_id = getattr(voice_state, "channel_id", None) or (
+                channel_id
+            )
+
             await self._dispatch_voice_state_update(
                 user_id=connection.user_id,
-                channel_id_for_recipients=channel_id,
-                event_channel_id=channel_id,
+                channel_id_for_recipients=authoritative_channel_id,
+                event_channel_id=authoritative_channel_id,
                 voice_state=voice_state,
             )
         except Exception as e:
@@ -137,6 +145,20 @@ class VoiceHandler:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
             from src.core import voice
+            from src.core.voice import signaling
+
+            # SECURITY (Agent 34 H2): the VOICE_DISCONNECT opcode previously
+            # only removed the DB voice_states row and NEVER called the
+            # signaling layer, leaking SFU rooms/peers/transports and minted
+            # media tokens for the lifetime of the gateway socket. Tear down
+            # the signaling connection (SFU leave + local state + token
+            # revoke) as well; leave_channel below cleans voice_states.
+            try:
+                await signaling.disconnect_voice_async(connection.user_id)
+            except Exception as e:
+                logger.warning(
+                    f"Signaling teardown failed for user {connection.user_id}: {e}"
+                )
 
             voice_state = voice.leave_channel(connection.user_id)
             channel_id = getattr(voice_state, "channel_id", None)
@@ -300,6 +322,15 @@ class VoiceHandler:
 
             state = voice.get_voice_state(connection.user_id)
             if state and state.channel_id == channel_id:
+                # Speaking indicators are keepalive traffic for the media
+                # plane: refresh the signaling idle clock so the stale
+                # sweeper does not disconnect quiet-but-active calls.
+                try:
+                    from src.core.voice import signaling
+
+                    signaling.record_activity(connection.user_id)
+                except Exception:
+                    pass
                 await self._dispatch_voice_state_update(
                     user_id=connection.user_id,
                     channel_id_for_recipients=channel_id,

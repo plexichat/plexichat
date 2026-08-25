@@ -247,6 +247,10 @@ class VoiceConnection:
     sfu_peer_id: Optional[str] = None
     sfu_producer_ids: List[str] = field(default_factory=list)
     sfu_consumer_ids: List[str] = field(default_factory=list)
+    # Media-plane bearer token issued with VoiceServerInfo. Persisted so
+    # media-plane operations that are NOT already gateway-authenticated can
+    # verify the caller was actually issued credentials for this session.
+    media_token: Optional[str] = None
 
 
 # Quality thresholds for bitrate adjustment

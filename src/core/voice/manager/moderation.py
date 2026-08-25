@@ -4,6 +4,7 @@ from ..models import VoiceState
 from ..exceptions import (
     ChannelNotFoundError,
     ChannelAccessDeniedError,
+    ChannelFullError,
     ChannelTypeError,
     UserNotInChannelError,
 )
@@ -151,8 +152,26 @@ class ModerationMixin(VoiceProtocol):
                 f"User {target_user_id} is not in a voice channel"
             )
 
+        # Agent 34 M3: moving a member into a channel they cannot connect to
+        # (or that is full) must fail just like a normal join_channel.
+        self._require_permission(target_user_id, server_id, "voice.connect", channel_id)
+
+        settings = self._get_channel_settings(channel_id)
+        user_limit = settings.get("user_limit", 0)
+        if user_limit > 0 and state.channel_id != channel_id:
+            current_count = self._get_channel_user_count(channel_id)
+            if current_count >= user_limit:
+                raise ChannelFullError(
+                    f"Channel is full ({current_count}/{user_limit})",
+                    limit=user_limit,
+                    current=current_count,
+                )
+
+        # Scope the cleanup to the channel being LEFT so pending speaker
+        # requests in unrelated voice channels are preserved.
         self._db.execute(
-            "DELETE FROM voice_speaker_requests WHERE user_id = ?", (target_user_id,)
+            "DELETE FROM voice_speaker_requests WHERE user_id = ? AND channel_id = ?",
+            (target_user_id, state.channel_id),
         )
 
         now = self._get_timestamp()

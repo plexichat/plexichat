@@ -146,7 +146,10 @@ async def get_voice_channel_info(
                     },
                 )
             if isinstance(e, Exception):
-                from src.core.voice.exceptions import ChannelNotFoundError
+                from src.core.voice.exceptions import (
+                    ChannelNotFoundError,
+                    PermissionDeniedError,
+                )
 
                 if isinstance(e, ChannelNotFoundError):
                     logger.warning(
@@ -155,6 +158,17 @@ async def get_voice_channel_info(
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail={"error": {"code": 404, "message": "Channel not found"}},
+                    )
+                if isinstance(e, PermissionDeniedError):
+                    # Agent 34 M6: credential issuance now requires
+                    # voice.connect; surface denial as 403 instead of 500.
+                    logger.warning(
+                        f"User {current_user.user_id} lacks voice.connect "
+                        f"for channel {cid}: {e}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={"error": {"code": 403, "message": str(e)}},
                     )
                 if "NotConnected" in type(e).__name__:
                     logger.warning(

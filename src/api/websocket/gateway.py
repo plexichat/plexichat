@@ -27,6 +27,35 @@ if TYPE_CHECKING:
 
 router = APIRouter()
 
+# H2 follow-up: periodically sweep signaling connections whose media plane
+# went silent past the idle threshold. Runs once per process, started lazily
+# alongside the per-connection heartbeat/cleanup tasks.
+VOICE_SWEEP_INTERVAL_SECONDS = 60.0
+_voice_sweeper_task: Optional[asyncio.Task] = None
+
+
+async def _voice_stale_connection_sweeper() -> None:
+    """Periodically disconnect orphaned voice signaling connections."""
+    while True:
+        try:
+            from src.core.voice import signaling
+
+            swept = await signaling.sweep_stale_connections()
+            if swept:
+                logger.info(f"Voice stale-connection sweep disconnected users: {swept}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"Voice stale-connection sweep failed: {e}")
+        await asyncio.sleep(VOICE_SWEEP_INTERVAL_SECONDS)
+
+
+def _ensure_voice_sweeper_task() -> None:
+    """Start the shared voice sweeper task if it is not already running."""
+    global _voice_sweeper_task
+    if _voice_sweeper_task is None or _voice_sweeper_task.done():
+        _voice_sweeper_task = asyncio.create_task(_voice_stale_connection_sweeper())
+
 
 async def _cleanup_voice_connection(user_id: int) -> None:
     """Clean up voice connection when WebSocket disconnects."""
@@ -278,6 +307,7 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
         await dispatcher.send_hello(connection)
 
         heartbeat_task = asyncio.create_task(_heartbeat_monitor(connection, dispatcher))
+        _ensure_voice_sweeper_task()
 
         try:
             await _message_loop(connection, handler, dispatcher)
