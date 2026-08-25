@@ -10,6 +10,11 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
+try:
+    import utils.config as config
+except ImportError:  # pragma: no cover - config always present in production
+    config = None
+
 from .exceptions import (
     EmbedValidationError,
     InvalidUrlError,
@@ -72,6 +77,45 @@ URL_ATTRIBUTE_BREAKOUT_PATTERN = re.compile(r"""["'<>`]""")
 # characters inside a URL-shaped string are never legitimate here: they
 # are either an smuggling primitive or corrupt downstream consumers.
 _URL_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+
+# Server-relative media-pipeline paths accepted by ``validate_url``.
+# Strictly shaped: exactly one leading slash, then only safe path
+# characters under the /api/v1/media/ prefix. Anything else (query
+# strings, backslashes, encoded characters, other prefixes) is rejected
+# as it would be for an absolute URL.
+_RELATIVE_MEDIA_PATTERN = re.compile(r"^/api/v1/media/[A-Za-z0-9._\-/]*$")
+
+
+def _public_media_origin() -> Optional[str]:
+    """Return the public absolute origin media URLs should be lifted to.
+
+    Uses ``static_client.config_injection.public_server_url`` when it is
+    configured with a public (non-local) host; falls back to
+    ``http://localhost:<server.port>`` otherwise. Returns ``None`` when
+    no public origin is available so callers can keep the relative form.
+    """
+    origin = ""
+    try:
+        static_cfg = (config.get("static_client", {}) if config else {}) or {}
+        injection = static_cfg.get("config_injection", {}) or {}
+        origin = str(injection.get("public_server_url") or "").strip()
+    except Exception:
+        origin = ""
+    if origin:
+        parsed = urlparse(origin)
+        host = (parsed.hostname or "").lower()
+        if (
+            not host
+            or host in {"localhost", "127.0.0.1", "::1"}
+            or host.endswith((".local", ".internal"))
+        ):
+            return None
+        return f"{parsed.scheme.lower() or 'https'}://{parsed.netloc}"
+    # No explicit override: the localhost:<port> fallback is NOT a
+    # public origin, so report None and let the caller keep the
+    # same-origin relative path.
+    return None
+
 
 # Color validation pattern (hex color)
 COLOR_PATTERN = re.compile(r"^#?([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$")
@@ -173,12 +217,6 @@ def validate_url(url: str, field_name: str = "url") -> str:
     if lower_url.startswith("vbscript:"):
         raise InvalidUrlError(f"VBScript URLs not allowed in {field_name}", url)
 
-    # Must be http or https
-    if not (lower_url.startswith("http://") or lower_url.startswith("https://")):
-        raise InvalidUrlError(
-            f"URL must use http or https protocol in {field_name}", url
-        )
-
     # SECURITY (attribute-breakout defence): reject quote, angle-bracket
     # and backtick characters plus raw control characters BEFORE any
     # normalization. These enable the stored-XSS attribute breakout
@@ -204,6 +242,27 @@ def validate_url(url: str, field_name: str = "url") -> str:
     # invisible character inside the host doesn't let a malicious
     # URL slip past.
     url = _strip_url_dangerous_unicode(url)
+
+    # Server-relative media-pipeline URLs are legitimate embed targets:
+    # uploads come back as ``/api/v1/media/...`` paths. Accept ONLY the
+    # strictly-shaped form (single leading slash, safe path characters,
+    # no traversal) and lift it against the configured public origin so
+    # the full absolute validation below (shape + SSRF) still runs.
+    if url.startswith("/") and _RELATIVE_MEDIA_PATTERN.match(url):
+        if ".." in url.split("/"):
+            raise InvalidUrlError(f"Path traversal not allowed in {field_name}", url)
+        base = _public_media_origin()
+        if not base:
+            # No public origin configured: keep the relative path, but
+            # only after re-checking it carries no breakout payloads.
+            return url
+        url = base.rstrip("/") + url
+
+    # Must be http or https (absolute URLs only from here on)
+    if not (url.lower().startswith("http://") or url.lower().startswith("https://")):
+        raise InvalidUrlError(
+            f"URL must use http or https protocol in {field_name}", url
+        )
 
     # Normalise internationalised (non-ASCII) hostnames to their
     # punycode form so IDN sites (e.g. ``https://пример.рф``) pass the

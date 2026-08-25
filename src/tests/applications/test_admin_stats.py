@@ -43,13 +43,25 @@ class TestAdminStats:
         queue = WebhookRetryQueue(db)
 
         pending = queue.enqueue(
-            101, "message.created", {"n": 1}, "https://hook.example/pending"
+            101,
+            "message.created",
+            {"n": 1},
+            "https://hook.example/pending",
+            allow_private_network=True,
         )
         retrying = queue.enqueue(
-            101, "message.created", {"n": 2}, "https://hook.example/retrying"
+            101,
+            "message.created",
+            {"n": 2},
+            "https://hook.example/retrying",
+            allow_private_network=True,
         )
         dead = queue.enqueue(
-            101, "message.created", {"n": 3}, "https://hook.example/dead"
+            101,
+            "message.created",
+            {"n": 3},
+            "https://hook.example/dead",
+            allow_private_network=True,
         )
 
         # Move one row to retrying and one to dead-letter via the real queue

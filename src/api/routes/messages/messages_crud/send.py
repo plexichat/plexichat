@@ -108,8 +108,12 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
 
             content_value = body.content or ""
             if (not content_value or not content_value.strip()) and (
-                attachments or body.poll
+                attachments or body.poll or body.embeds
             ):
+                # Embeds-only messages (e.g. sticker sends) carry their
+                # payload in the embeds slot; substitute the zero-width
+                # space so the messaging layer's non-empty-content
+                # validation passes without inventing visible text.
                 content_value = "\u200b"
 
             # Aggregate ALL user-controlled text surfaces (message content,
