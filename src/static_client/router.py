@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from email.utils import formatdate
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
+from urllib.parse import quote
 
 from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -259,21 +260,47 @@ def _check_static_client_rate_limit(
     Returns an ``_RateLimitOutcome`` describing whether the request is
     allowed, the suggested ``Retry-After`` (when blocked) and any
     informational headers to surface to the client.
+
+    Failure semantics are tier-aware:
+
+    * ``static_client:html`` FAILS CLOSED — if the limiter cannot answer,
+      HTML (the expensive, dynamic tier) is denied 429 with a loud error
+      log. An unmetered HTML tier combined with this middleware sitting
+      outside the global RateLimitMiddleware would otherwise be a free
+      DoS amplifier.
+    * asset requests fail open but log a warning; hashed static files are
+      cheap and cacheable, so availability outweighs strict metering.
     """
+    fail_closed = route_key == _ROUTE_HTML
+
+    def _limiter_failure(reason: str) -> _RateLimitOutcome:
+        if fail_closed:
+            logger.error(
+                f"static_client: rate limiter unavailable for HTML tier "
+                f"({reason}); failing CLOSED (denying request)"
+            )
+            return _RateLimitOutcome(False, 5, ())
+        logger.warning(
+            f"static_client: rate limiter unavailable for asset tier "
+            f"({reason}); allowing un-metered asset request"
+        )
+        return _RateLimitOutcome(True, None, ())
+
     if not enabled:
+        # Explicit operator disable is configuration, not a failure.
         return _RateLimitOutcome(True, None, ())
 
     try:
         from src.core import ratelimit
 
         if not ratelimit.is_setup():
-            return _RateLimitOutcome(True, None, ())
-    except Exception:
-        return _RateLimitOutcome(True, None, ())
+            return _limiter_failure("rate limiter not set up")
+    except Exception as exc:
+        return _limiter_failure(f"rate limiter import failed: {exc}")
 
     ip = _scope_client_ip(scope)
     if not ip:
-        return _RateLimitOutcome(True, None, ())
+        return _limiter_failure("client IP could not be extracted")
 
     is_internal = _is_internal_scope(scope)
     if is_internal:
@@ -287,7 +314,7 @@ def _check_static_client_rate_limit(
         )
     except Exception as exc:
         logger.warning(f"static_client: rate limit check failed: {exc}")
-        return _RateLimitOutcome(True, None, ())
+        return _limiter_failure(f"check raised: {exc}")
 
     info_headers: List[Tuple[bytes, bytes]] = []
     try:
@@ -437,6 +464,14 @@ class StaticClientMiddleware:
         """Return True if *path* should be served by this middleware."""
         if not path:
             return False
+        # SECURITY: API-prefix exclusion MUST run FIRST. Extension- and
+        # prefix-based heuristics below must never be able to claim a path
+        # that belongs to the API/admin/docs/gateway surface; otherwise any
+        # future route ending in .js/.html/... would be shadowed by this
+        # middleware and bypass Authentication/RateLimit entirely.
+        for prefix in self._paths.api_prefixes:
+            if path == prefix or path.startswith(prefix):
+                return False
         # Exact-match static files are always ours
         if path in self._paths.static_files:
             return True
@@ -457,10 +492,6 @@ class StaticClientMiddleware:
         # "/" and "/index.html" are ours
         if path == "/" or path == "/index.html":
             return True
-        # Exclude API prefixes
-        for prefix in self._paths.api_prefixes:
-            if path == prefix or path.startswith(prefix):
-                return False
         # Anything else: SPA fallback (we will serve index.html)
         return True
 
@@ -491,11 +522,13 @@ class StaticClientMiddleware:
         # (uvicorn), so it is used directly. A second ``unquote`` would
         # double-decode literal ``%XX`` sequences in real file names.
 
-        # Invite redirect: /invite/CODE -> 302 to /app.html?invite=CODE
+        # Invite redirect: /invite/CODE -> 302 to /app.html?invite=CODE.
+        # The code is percent-encoded so characters such as &, # or =
+        # cannot inject extra query parameters/fragments into the target.
         if self._cfg.invite_redirect:
             m = self._invite_redirect_re.match(path)
             if m:
-                target = f"/app.html?invite={m.group(1)}"
+                target = f"/app.html?invite={quote(m.group(1), safe='')}"
                 await self._send_redirect(send, target)
                 return
 
@@ -608,10 +641,11 @@ class StaticClientMiddleware:
             (b"permissions-policy", sec.permissions_policy.encode()),
             (b"content-security-policy", sec.content_security_policy.encode()),
         ]
-        origin = self._extract_origin_header(scope)
-        if origin:
-            headers.append((b"access-control-allow-origin", origin.encode()))
-        headers.append((b"vary", b"Accept-Encoding, Origin"))
+        # SECURITY: no Access-Control-Allow-Origin is emitted for static
+        # assets. Cross-origin reads of served files are not a feature, so
+        # reflecting the request Origin (previously unconditionally) only
+        # widened the attack surface beyond the configured CORS allowlist.
+        headers.append((b"vary", b"Accept-Encoding"))
         for k, v in rate_limit_headers:
             headers.append((k, v))
         return headers

@@ -42,9 +42,14 @@ from .fetcher import (
 )
 
 from .manifest import (
+    VERIFY_HMAC_MISMATCH,
+    VERIFY_OK,
+    files_match_manifest,
     get_signing_key,
+    key_epoch,
+    read_key_epoch,
     regenerate_manifest,
-    verify_manifest,
+    verify_manifest_detailed,
 )
 
 # Re-export InstallResult to keep callers stable
@@ -263,19 +268,29 @@ class StaticClientManager:
                 if cmp < 0:
                     continue
                 if cmp == 0:
-                    # Verify manifest integrity on startup
+                    # Verify manifest integrity on startup.
                     path = self._install_dir / format_release_tag(parsed)
                     key = get_signing_key()
                     if key is not None and path.is_dir():
-                        if not verify_manifest(path, key):
+                        status = verify_manifest_detailed(path, key)
+                        if status != VERIFY_OK:
                             logger.info(
-                                f"static_client: manifest invalid for "
-                                f"{format_release_tag(parsed)}, attempting repair"
+                                f"static_client: manifest invalid "
+                                f"(status={status}) for "
+                                f"{format_release_tag(parsed)}, evaluating repair"
                             )
-                            if not regenerate_manifest(path, key):
+                            repaired = False
+                            if status == VERIFY_HMAC_MISMATCH:
+                                repaired = self._maybe_repair_key_migration(path, key)
+                            if not repaired:
+                                # HMAC/hash failure that is not a proven key
+                                # migration means the install is UNTRUSTED:
+                                # never re-sign whatever happens to be on
+                                # disk — re-download from the release source.
                                 logger.warning(
-                                    f"static_client: manifest repair failed, "
-                                    f"re-downloading {format_release_tag(parsed)}"
+                                    f"static_client: install "
+                                    f"{format_release_tag(parsed)} untrusted "
+                                    f"(status={status}); re-downloading"
                                 )
                                 return self._fetch_and_install(parsed, asset)
                     logger.info(
@@ -303,6 +318,38 @@ class StaticClientManager:
             already_current=True,
             error="below_min_age",
         )
+
+    def _maybe_repair_key_migration(self, path: Path, key: bytes) -> bool:
+        """Re-sign the manifest ONLY for a proven key migration.
+
+        Narrow window: the stored key epoch differs from the current key
+        (i.e. the manifest was signed under a since-retired key) AND every
+        on-disk file still matches the signed hash list. Anything else —
+        missing epoch marker, matching epoch (same-key HMAC failure =
+        tampering), or any file hash drift — is rejected so tampered
+        installs get re-downloaded instead of silently re-signed.
+        """
+        stored_epoch = read_key_epoch(path)
+        current_epoch = key_epoch(key)
+        if stored_epoch is None or stored_epoch == current_epoch:
+            logger.warning(
+                "static_client: HMAC mismatch with unchanged key epoch "
+                "(or missing epoch marker); treating install as tampered"
+            )
+            return False
+        if not files_match_manifest(path):
+            logger.warning(
+                "static_client: file hashes diverge from signed manifest "
+                "during suspected key migration; refusing to re-sign"
+            )
+            return False
+        logger.info(
+            "static_client: confirmed key migration (epoch %s -> %s) with "
+            "intact files; re-signing manifest under new key",
+            stored_epoch,
+            current_epoch,
+        )
+        return regenerate_manifest(path, key)
 
     def _fetch_and_install(self, parsed: Version, asset: ReleaseAsset) -> InstallResult:
         target_dir = self._install_dir / format_release_tag(parsed)

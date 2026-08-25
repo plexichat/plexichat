@@ -31,11 +31,39 @@ if TYPE_CHECKING:
 # trigger synchronous DB writes followed by a fan-out to every friend and
 # shared-server member. Without this, a malicious client looping these
 # frames produces unbounded DB write amplification and event construction.
+# REQUEST_GUILD_MEMBERS fans out one threadpool DB lookup PER MEMBER and
+# HEARTBEAT updates liveness bookkeeping, so both are throttled too.
 # (max events, window seconds)
 INBOUND_RATE_LIMITS: Dict[int, Tuple[int, float]] = {
     int(GatewayOpcode.PRESENCE_UPDATE): (5, 10.0),
     int(GatewayOpcode.TYPING_START): (10, 10.0),
+    int(GatewayOpcode.REQUEST_GUILD_MEMBERS): (2, 10.0),
+    int(GatewayOpcode.HEARTBEAT): (10, 10.0),
 }
+
+# Client-sendable extension opcodes that have no server-side consumer yet,
+# plus server-push-only opcodes echoed back by misbehaving clients. These
+# are SOFT-REJECTED (ignored + logged): tearing the socket down for an
+# echo or an unimplemented extension forces healthy clients into
+# reconnect loops for something they can recover from in-session.
+IGNORED_OPCODES = frozenset(
+    {
+        GatewayOpcode.SERVER_STATUS,
+        GatewayOpcode.VERSION_CHECK,
+        GatewayOpcode.INTERACTION_CREATE,
+        GatewayOpcode.INTERACTION_RESPONSE,
+        GatewayOpcode.RATCHET_UPDATE,
+        # Server-push-only opcodes that must never arrive from a client;
+        # echoes are dropped instead of hard-closing the connection.
+        GatewayOpcode.DISPATCH,
+        GatewayOpcode.RECONNECT,
+        GatewayOpcode.INVALID_SESSION,
+        GatewayOpcode.HELLO,
+        GatewayOpcode.HEARTBEAT_ACK,
+        GatewayOpcode.ARTIFACT_SYNC,
+        GatewayOpcode.SUM_SYNC,
+    }
+)
 
 
 class OpcodeHandler:
@@ -156,25 +184,33 @@ class OpcodeHandler:
         except ValueError:
             return None, None, int(GatewayCloseCode.UNKNOWN_OPCODE)
 
+        # Cheap per-connection throttle for heavy opcodes runs BEFORE any
+        # handler dispatch; over-budget frames are dropped (no close) so a
+        # burst cannot amplify into DB/threadpool work or tear the socket.
+        if int(op) in INBOUND_RATE_LIMITS and not self._allow_inbound(connection, op):
+            logger.debug(
+                f"Connection {connection.connection_id}: "
+                f"rate-limited inbound opcode {op}"
+            )
+            return None, None, None
+
+        if op in IGNORED_OPCODES:
+            logger.debug(
+                f"Connection {connection.connection_id}: soft-rejected "
+                f"unrouted/echo opcode {op} (ignored, connection kept)"
+            )
+            return None, None, None
+
         if op == GatewayOpcode.HEARTBEAT:
             return await self._connection_handler.handle_heartbeat(connection, data)
         elif op == GatewayOpcode.IDENTIFY:
             return await self._connection_handler.handle_identify(connection, data)
         elif op == GatewayOpcode.RESUME:
             return await self._connection_handler.handle_resume(connection, data)
-        elif int(op) in INBOUND_RATE_LIMITS:
-            # Drop silently (no close) when the connection exceeds its
-            # inbound budget for presence/typing frames.
-            if not self._allow_inbound(connection, op):
-                logger.debug(
-                    f"Connection {connection.connection_id}: "
-                    f"rate-limited inbound opcode {op}"
-                )
-                return None, None, None
-            if op == GatewayOpcode.PRESENCE_UPDATE:
-                return await self._presence_handler.handle_presence_update(
-                    connection, data
-                )
+        elif op == GatewayOpcode.PRESENCE_UPDATE:
+            # Throttle already enforced above.
+            return await self._presence_handler.handle_presence_update(connection, data)
+        elif op == GatewayOpcode.TYPING_START:
             return await self._presence_handler.handle_typing_start(connection, data)
         elif op == GatewayOpcode.VOICE_STATE_UPDATE:
             return await self._voice_handler.handle_voice_state_update(connection, data)
@@ -210,13 +246,29 @@ class OpcodeHandler:
             )
         elif op == GatewayOpcode.ARTIFACT_OP:
             if self._dispatcher is None:
-                return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
+                # SOFT REJECT: a wiring/config gap must not kill healthy
+                # connections with UNKNOWN_ERROR 4000; clients would
+                # reconnect-loop straight into the same condition. Ignore
+                # and log so the session survives until the dispatcher is
+                # available.
+                logger.warning(
+                    f"Connection {connection.connection_id}: {op.name} received "
+                    f"but no gateway dispatcher is configured; frame ignored"
+                )
+                return None, None, None
             return await self._artifact_handler.handle_artifact_op(
                 connection, data, self._dispatcher
             )
         elif op == GatewayOpcode.SUM_SUBSCRIBE:
             if self._dispatcher is None:
-                return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
+                # Deliberate silent denial (documented on the sum handler):
+                # never NOT_AUTHENTICATED / UNKNOWN_ERROR, which would push
+                # clients into auth/reconnect loops for a server-side gap.
+                logger.warning(
+                    f"Connection {connection.connection_id}: SUM_SUBSCRIBE received "
+                    f"but no gateway dispatcher is configured; request denied"
+                )
+                return None, None, None
             return await self._sum_handler.handle_sum_subscribe(
                 connection, data, self._dispatcher
             )
@@ -224,7 +276,11 @@ class OpcodeHandler:
             return await self._sum_handler.handle_sum_unsubscribe(connection, data)
         elif op == GatewayOpcode.SUM_OP:
             if self._dispatcher is None:
-                return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
+                logger.warning(
+                    f"Connection {connection.connection_id}: SUM_OP received "
+                    f"but no gateway dispatcher is configured; frame ignored"
+                )
+                return None, None, None
             return await self._sum_handler.handle_sum_op(
                 connection, data, self._dispatcher
             )

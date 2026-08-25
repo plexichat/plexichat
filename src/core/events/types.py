@@ -11,6 +11,12 @@ class EventType(Enum):
     READY = "READY"
     RESUMED = "RESUMED"
 
+    # Server -> client error frame for a specific request that could not
+    # be fulfilled (denied permission, internal failure, ...). Carries a
+    # stable machine code so clients can distinguish outcomes instead of
+    # guessing from silence.
+    ERROR = "ERROR"
+
     MESSAGE_CREATE = "MESSAGE_CREATE"
     MESSAGE_UPDATE = "MESSAGE_UPDATE"
     MESSAGE_DELETE = "MESSAGE_DELETE"

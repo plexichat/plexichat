@@ -7,6 +7,7 @@ import time
 
 from .types import EventType
 from .models import (
+    Event,
     ReadyEvent,
     MessageEvent,
     PresenceEvent,
@@ -569,6 +570,26 @@ def create_reaction_remove(
         message_id=message_id,
         emoji=emoji,
     )
+
+
+def create_gateway_error(
+    code: str,
+    message: Optional[str] = None,
+    guild_id: Optional[int] = None,
+) -> Event:
+    """Create an ERROR event frame for a failed client request.
+
+    ``code`` is a stable machine-readable identifier (e.g.
+    ``"guild_members_denied"``); ``message`` is optional and must never
+    contain internal details. ``guild_id``, when present, lets the client
+    correlate the error with the request that produced it.
+    """
+    data: Dict[str, Any] = {"code": code}
+    if message:
+        data["message"] = message
+    if guild_id is not None:
+        data["guild_id"] = _str_id(guild_id)
+    return Event(event_type=EventType.ERROR, data=data)
 
 
 def create_guild_members_chunk(
