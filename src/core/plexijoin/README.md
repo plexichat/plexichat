@@ -1,35 +1,66 @@
 # PlexiJoin - Federation Module
 
-Server-to-server federation system for Plexichat. Enables cross-server communication, federation requests, and distributed messaging between independent Plexichat instances.
+Server-to-server federation for Plexichat. Enables inter-instance connections, join-request approval, and federated messaging between independent instances.
 
 ## Components
 
-### FederationManager (`manager.py`)
+### PlexiJoinManager (`manager.py`)
 Central orchestrator for federation operations:
 
-- **`request_federation(server_id, target_server)`** - Initiate a federation request to a remote server
-- **`accept_federation_request(request_id)`** - Approve a pending federation request
-- **`reject_federation_request(request_id, reason)`** - Deny a federation request with reason
-- **`list_active_federations(server_id)`** - List all active federation connections
-- **`get_federation_status(federation_id)`** - Get detailed status of a federation link
-- **`resolve_conflict(conflict_id, resolution)`** - Resolve data conflicts between federated servers
+Outbound connections:
+- **`list_connections(status=None, page=1, per_page=50)`** - Paginated list (rows carry a decrypted `shared_key`)
+- **`get_connection(connection_id)`** - One connection with decrypted `shared_key`, or `None`
+- **`create_connection(remote_instance_id, remote_url, shared_key, note, admin_id, ...)`** - Create an outbound connection (`status="pending"`)
+- **`generate_shared_key()`** - Cryptographically secure shared key for a new link
+- **`delete_connection(connection_id, admin_id, ...)`** - Break and delete a connection
+- **`test_connection(connection_id)`** *(async)* - Health-probe the remote; SSRF-validates `remote_url` first; success ACTIVATES a pending/broken connection, failure marks an active connection broken
+- **`activate_connection(connection_id)`** - Idempotent transition to `active`
+
+Federation transport:
+- **`send_join_request(connection_id)`** *(async)* - POST this instance's HMAC-signed join request to the remote's `/api/v1/federation/join-request`
+- **`send_message(connection_id, message_type, payload)`** *(async)* - POST an HMAC-signed message envelope to the remote's `/api/v1/federation/message`; records outbound traffic on success
+
+Inbound requests:
+- **`submit_inbound_request(remote_instance_id, remote_url, requested_by, note)`** - Record a verified inbound join request (`status="pending"`); called only by the HMAC-authenticated inbound endpoint
+- **`approve_request(request_id, admin_id, ...)`** / **`deny_request(request_id, admin_id, ...)`** - ATOMIC conditional updates (`WHERE id = ? AND status = 'pending'`) so concurrent reviewers cannot both win; approving also activates any matching pending outbound connection
+
+Status & analytics:
+- **`get_status_summary()`**, **`get_traffic_data(hours=24)`**, **`record_traffic(connection_id, direction, message_count)`**
+
+Validation:
+- **`validate_remote_url(url)`** / **`RemoteURLBlockedError`** - SSRF hygiene: https scheme required, private/reserved IP resolution rejected (shared `URLValidator` from `src/utils/security.py`)
 
 ### Schema (`schema.py`)
-Pydantic models for federation data structures:
+SQL table definitions: `plexijoin_connections`, `plexijoin_inbound_requests`, `plexijoin_traffic_log`.
 
-- **`FederationJoinRequest`** - Incoming/outgoing federation join request
-- **`FederationResponse`** - Standard response envelope for federation operations
-- **`ServerFederationInfo`** - Metadata about a federated server connection
-- **`FederationConfig`** - Global federation configuration (enabled, max_federations, allow_public)
+## HTTP Surface
+
+Admin management (host-restricted, admin-token + `admin.plexijoin.manage` permission, license-gated):
+- `GET  /api/v1/admin/plexijoin/connections[/{id}]`
+- `POST /api/v1/admin/plexijoin/connections`
+- `DELETE /api/v1/admin/plexijoin/connections/{id}`
+- `POST /api/v1/admin/plexijoin/connections/{id}/test`
+- `GET  /api/v1/admin/plexijoin/requests`
+- `POST /api/v1/admin/plexijoin/requests/{id}/approve` | `/deny`
+- `GET  /api/v1/admin/plexijoin/status` | `/traffic`
+
+Client contract (`src/api/routes/join.py`, consumed by the web client's
+`join.js`; same host restriction + admin permission gates):
+- `GET  /api/v1/Join/list` - `{Joins: [...]}` keyed on `Join_id`
+- `POST /api/v1/Join/request` - `{remote_url}` creates a pending connection and sends our signed join request
+- `POST /api/v1/Join/{id}/message` - `{message_type, payload}` over an active Join
+- `POST /api/v1/Join/{id}/break` - break a Join
+- `POST /api/v1/Join/{id}/approve` - `{selected_servers}` approve an inbound request
+- `POST /api/v1/Join/{id}/reject` - reject an inbound request
+
+Cross-instance inbound transport (HMAC-SHA256 signed via the
+`x-plexijoin-signature` header; no JWT — the signature is the credential):
+- `POST /api/v1/federation/join-request` - verified requests become pending inbound rows
+- `POST /api/v1/federation/message` - verified messages are acknowledged and accounted as inbound traffic
+- `POST /api/v1/federation/artifact-op` | `/artifact-event` - artifact realtime fabric relay
 
 ## Key Concepts
 
-- **Federation** - Two or more independent Plexichat servers sharing data and events
-- **Join Request** - Formal request from server A to federate with server B
-- **Conflict Resolution** - Mechanism to handle conflicting data between federated servers
-
-## Dependencies
-
-- `src.core.base` - SnowflakeID generation
-- `src.core.servers` - Server membership and channel data
-- External transport layer (not in this module) handles actual inter-server communication
+- **Connection** - An instance-scoped outbound link with a symmetric shared key (`pending` -> `active` -> `broken`)
+- **Join Request** - HMAC-signed request from a remote instance, recorded for admin approval
+- **Trust bootstrap** - The shared key is exchanged out-of-band; both sides create connections with the same key before federation traffic flows

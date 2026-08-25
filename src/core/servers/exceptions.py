@@ -107,6 +107,22 @@ class InviteMaxUsesError(ServerError):
         self.current_uses = current_uses
 
 
+class InviteRateLimitedError(ServerError):
+    """Invite creation rate limit exceeded for this user."""
+
+    def __init__(self, message: str, retry_after_seconds: int = 60):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
+class InviteLimitReachedError(ServerError):
+    """Active-invite quota reached (per user or per server)."""
+
+    def __init__(self, message: str, limit: int = 0):
+        super().__init__(message)
+        self.limit = limit
+
+
 class BanExistsError(ServerError):
     """User is already banned from this server."""
 

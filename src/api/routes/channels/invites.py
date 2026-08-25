@@ -433,16 +433,20 @@ class ChannelInvitesMixin(ChannelBase):
 
         try:
             try:
+                # Capture the invite's server_id BEFORE deletion — after
+                # delete_invite the row is gone (or revoked) and
+                # get_invite returns None, which used to make us emit
+                # INVITE_DELETE with guild_id=0 that every client drops.
+                try:
+                    inv = servers_mod.get_invite(invite_code)
+                    server_id = getattr(inv, "server_id", None)
+                except Exception:
+                    server_id = None
+
                 servers_mod.delete_invite(current_user.user_id, invite_code)
                 try:
                     from src.core.events.gateway_emit import emit_invite_delete
 
-                    server_id = None
-                    try:
-                        inv = servers_mod.get_invite(invite_code)
-                        server_id = getattr(inv, "server_id", None)
-                    except Exception:
-                        pass
                     emit_invite_delete(
                         server_id if server_id is not None else 0, invite_code
                     )

@@ -20,7 +20,7 @@ Security model:
   check inside ``relay_artifact_op``.
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -84,25 +84,50 @@ def _get_plexijoin_manager():
     )
 
 
-def _authenticate(manager, body: bytes, signature: Optional[str]) -> bool:
-    """Verify the HMAC signature against any active connection's shared key."""
+def _authenticate(
+    manager, body: bytes, signature: Optional[str], statuses=("active",)
+) -> Optional[Dict[str, Any]]:
+    """Verify the HMAC signature against a connection's shared key.
+
+    Returns the matching connection dict (so callers can attribute traffic),
+    or ``None`` when no known connection's key verifies the payload.
+    """
     from src.core.artifacts.federation import verify_payload_signature
 
     if not signature:
-        return False
-    try:
-        result = manager.list_connections(status="active")
-        raw = result.get("connections") if isinstance(result, dict) else []
-        connections = raw if isinstance(raw, list) else []
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug("federation inbound: list_connections failed: %s", e)
-        return False
-    for conn in connections:
-        if not isinstance(conn, dict):
+        return None
+    for status in statuses:
+        try:
+            result = manager.list_connections(status=status)
+            raw = result.get("connections") if isinstance(result, dict) else []
+            connections = raw if isinstance(raw, list) else []
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug("federation inbound: list_connections failed: %s", e)
             continue
-        if verify_payload_signature(conn.get("shared_key"), body, signature):
-            return True
-    return False
+        for conn in connections:
+            if not isinstance(conn, dict):
+                continue
+            if verify_payload_signature(conn.get("shared_key"), body, signature):
+                return conn
+    return None
+
+
+def _parse_json_body(body: bytes) -> Dict[str, Any]:
+    import json
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid federation payload"}},
+        )
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid federation payload"}},
+        )
+    return payload
 
 
 async def _relay_op(artifact_id, op, actor_id) -> int:
@@ -137,15 +162,7 @@ async def artifact_op_inbound(request: Request):
             detail={"error": {"code": 401, "message": "Invalid federation signature"}},
         )
 
-    import json
-
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid federation payload"}},
-        )
+    payload = _parse_json_body(body)
 
     artifact_id = payload.get("artifact_id")
     op = payload.get("op")
@@ -180,15 +197,7 @@ async def artifact_event_inbound(request: Request):
             detail={"error": {"code": 401, "message": "Invalid federation signature"}},
         )
 
-    import json
-
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid federation payload"}},
-        )
+    payload = _parse_json_body(body)
 
     logger.info(
         "federation inbound: received artifact event %s for artifact %s",
@@ -196,5 +205,92 @@ async def artifact_event_inbound(request: Request):
         (payload.get("artifact") or {}).get("id")
         if isinstance(payload.get("artifact"), dict)
         else None,
+    )
+    return {"ok": True}
+
+
+@router.post(
+    "/join-request",
+    status_code=200,
+    summary="Receive a federation join request from a remote instance",
+)
+async def join_request_inbound(request: Request):
+    """Record an inbound PlexiJoin join request for admin review.
+
+    The request must be HMAC-signed with the shared key of a connection this
+    instance already knows about (pending or active) — that key exchange is
+    what bootstraps trust. Verified requests are inserted into
+    ``plexijoin_inbound_requests`` as ``pending`` and surface through the
+    admin review endpoints.
+    """
+    manager = _get_plexijoin_manager()
+    body = await request.body()
+    signature = request.headers.get("x-plexijoin-signature")
+    conn = _authenticate(manager, body, signature, statuses=("active", "pending"))
+    if not conn:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid federation signature"}},
+        )
+
+    payload = _parse_json_body(body)
+
+    remote_instance_id = str(payload.get("instance_id") or "").strip()
+    if not remote_instance_id:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "instance_id is required"}},
+        )
+
+    row = manager.submit_inbound_request(
+        remote_instance_id=remote_instance_id,
+        remote_url=str(payload.get("remote_url") or conn.get("remote_url") or ""),
+        requested_by=payload.get("requested_by"),
+        note=payload.get("note"),
+    )
+    return {"ok": True, "request_id": row["id"]}
+
+
+@router.post(
+    "/message",
+    status_code=200,
+    summary="Receive a federated message from a remote instance",
+)
+async def message_inbound(request: Request):
+    """Receive a cross-instance message over an ACTIVE federation link.
+
+    The payload is HMAC-verified against the sending connection's shared
+    key; verified traffic is recorded via ``record_traffic`` so the inbound
+    counters stay accurate. Delivery into local channels is limited to the
+    logged relay until the per-server channel-mapping layer exists — the
+    message is acknowledged, accounted, and logged.
+    """
+    manager = _get_plexijoin_manager()
+    body = await request.body()
+    signature = request.headers.get("x-plexijoin-signature")
+    conn = _authenticate(manager, body, signature, statuses=("active",))
+    if not conn:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid federation signature"}},
+        )
+
+    payload = _parse_json_body(body)
+    if not payload.get("message_type"):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "message_type is required"}},
+        )
+
+    try:
+        manager.record_traffic(int(conn["id"]), "inbound", 1)
+    except Exception as e:  # pragma: no cover - defensive accounting
+        logger.debug("federation inbound: record_traffic failed: %s", e)
+
+    logger.info(
+        "federation inbound: %s message over connection %s from %s",
+        payload.get("message_type"),
+        conn.get("id"),
+        conn.get("remote_instance_id"),
     )
     return {"ok": True}

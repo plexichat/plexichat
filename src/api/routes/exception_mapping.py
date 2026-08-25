@@ -65,6 +65,7 @@ _INVALID_EXC = (
     srv.InvalidTemplateCodeError,
     srv.ChannelTypeError,
     srv.RoleHierarchyError,
+    srv.InviteLimitReachedError,
     wh.WebhookNameError,
     wh.WebhookAvatarError,
     wh.InvalidContentError,
@@ -79,7 +80,7 @@ RATE_LIMIT_RETRY_AFTER_SECONDS = 60
 
 
 def is_rate_limited(exc: BaseException) -> bool:
-    return isinstance(exc, wh.RateLimitError)
+    return isinstance(exc, (wh.RateLimitError, srv.InviteRateLimitedError))
 
 
 def is_not_found(exc: BaseException) -> bool:
@@ -116,10 +117,13 @@ def raise_mapped(
         # 429 with Retry-After semantics so clients can back off instead
         # of treating the throttle as a server fault (previous behavior
         # surfaced a generic 500).
+        retry_after = getattr(
+            exc, "retry_after_seconds", RATE_LIMIT_RETRY_AFTER_SECONDS
+        )
         raise HTTPException(
             status_code=429,
             detail={"error": {"code": 429, "message": "Rate limit exceeded"}},
-            headers={"Retry-After": str(RATE_LIMIT_RETRY_AFTER_SECONDS)},
+            headers={"Retry-After": str(retry_after)},
         )
     if is_invalid_request(exc):
         raise _http(400, invalid_message)

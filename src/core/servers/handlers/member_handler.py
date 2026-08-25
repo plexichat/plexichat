@@ -4,6 +4,8 @@ Member, ban, and invite handler for server operations.
 
 import string
 import secrets
+import threading
+import time
 from typing import Optional, List, Any
 from src.core.base import SnowflakeID
 from ..models import Member, Ban, Invite, ChannelType, AuditLogAction
@@ -20,6 +22,8 @@ from ..exceptions import (
     InviteNotFoundError,
     InviteExpiredError,
     InviteMaxUsesError,
+    InviteRateLimitedError,
+    InviteLimitReachedError,
     PermissionDeniedError,
     BanPurgeNotSupportedError,
 )
@@ -36,6 +40,22 @@ from src.utils.encryption import encrypt_data
 from src.core.database.cache.serialization import register_reconstructable_type
 
 register_reconstructable_type(Member)
+
+
+# Per-user invite-creation sliding window (in-process; the global rate-limit
+# middleware covers transport-level floods, this guards the invite-minting
+# endpoint itself). Keyed by user_id, bounded by config.
+_invite_creation_lock = threading.Lock()
+_invite_creation_windows: dict = {}
+
+
+def _invite_config() -> dict:
+    try:
+        import utils.config as config
+
+        return config.get("invites", {}) or {}
+    except Exception:  # pragma: no cover - config loader always present
+        return {}
 
 
 class MemberHandler:
@@ -563,8 +583,15 @@ class MemberHandler:
         return member
 
     def delete_invite(self, user_id: SnowflakeID, code: str) -> bool:
-        """Delete an invite."""
-        row = self.db.fetch_one("SELECT * FROM srv_invites WHERE code = ?", (code,))
+        """Revoke an invite (soft-revoke).
+
+        The row is kept with ``revoked = 1`` — every read path
+        (``get_invite``, ``get_invites``, ``use_invite``) filters
+        ``revoked = 0`` — so historical audit references survive.
+        """
+        row = self.db.fetch_one(
+            "SELECT * FROM srv_invites WHERE code = ? AND revoked = 0", (code,)
+        )
         if not row:
             raise InviteNotFoundError("Invite not found")
 
@@ -579,7 +606,10 @@ class MemberHandler:
             if server.owner_id != user_id:
                 self.manager.require_permission(user_id, server_id, "invites.manage")
 
-        self.db.execute("DELETE FROM srv_invites WHERE code = ?", (code,))
+        self.db.execute(
+            "UPDATE srv_invites SET revoked = 1 WHERE code = ? AND revoked = 0",
+            (code,),
+        )
 
         self.manager._log_audit(
             server_id, user_id, AuditLogAction.INVITE_DELETE, "invite", invite_id
@@ -667,6 +697,70 @@ class MemberHandler:
             created_at=now,
         )
 
+    def _enforce_invite_quota(
+        self, user_id: SnowflakeID, server_id: SnowflakeID
+    ) -> None:
+        """Rate-limit and cap invite creation per user / per server.
+
+        Configured under the ``invites`` config section:
+        - ``creation_max_per_window`` (default 20) invites per
+          ``creation_window_seconds`` (default 3600) per user;
+        - ``max_active_per_user`` (default 25) and
+          ``max_active_per_server`` (default 100) concurrently-live
+          (unrevoked, unexpired) invites.
+        """
+        cfg = _invite_config()
+
+        # --- Per-user creation rate limit (sliding window) ---
+        window_seconds = int(cfg.get("creation_window_seconds", 3600))
+        window_max = int(cfg.get("creation_max_per_window", 20))
+        if window_max > 0:
+            now = time.monotonic()
+            key = str(user_id)
+            with _invite_creation_lock:
+                timestamps = [
+                    ts
+                    for ts in _invite_creation_windows.get(key, [])
+                    if now - ts < window_seconds
+                ]
+                if len(timestamps) >= window_max:
+                    raise InviteRateLimitedError(
+                        "Invite creation rate limit exceeded",
+                        retry_after_seconds=window_seconds,
+                    )
+                timestamps.append(now)
+                _invite_creation_windows[key] = timestamps
+
+        # --- Active-invite quotas ---
+        now_ms = self.manager._get_timestamp()
+        live_predicate = "(expires_at IS NULL OR expires_at > ?)"
+
+        max_per_user = int(cfg.get("max_active_per_user", 25))
+        if max_per_user > 0:
+            row = self.db.fetch_one(
+                f"SELECT COUNT(*) AS c FROM srv_invites "
+                f"WHERE inviter_id = ? AND revoked = 0 AND {live_predicate}",  # nosec: B608 - constant predicate
+                (user_id, now_ms),
+            )
+            if row and row["c"] >= max_per_user:
+                raise InviteLimitReachedError(
+                    "Active invite limit reached for this user",
+                    limit=max_per_user,
+                )
+
+        max_per_server = int(cfg.get("max_active_per_server", 100))
+        if max_per_server > 0:
+            row = self.db.fetch_one(
+                f"SELECT COUNT(*) AS c FROM srv_invites "
+                f"WHERE server_id = ? AND revoked = 0 AND {live_predicate}",  # nosec: B608 - constant predicate
+                (server_id, now_ms),
+            )
+            if row and row["c"] >= max_per_server:
+                raise InviteLimitReachedError(
+                    "Active invite limit reached for this server",
+                    limit=max_per_server,
+                )
+
     def create_invite(
         self,
         user_id: SnowflakeID,
@@ -682,6 +776,8 @@ class MemberHandler:
         self.manager.require_permission(
             user_id, channel.server_id, "invites.create", channel_id
         )
+
+        self._enforce_invite_quota(user_id, channel.server_id)
 
         now = self.manager._get_timestamp()
         expires_at = now + (max_age * 1000) if max_age > 0 else None

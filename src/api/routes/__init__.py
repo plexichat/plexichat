@@ -45,6 +45,7 @@ from .config import router as config_router
 from .capabilities import router as capabilities_router
 from .artifacts import router as artifacts_router
 from .federation import router as federation_router
+from .join import router as join_router
 from .suite.registry import router as suite_router
 from .suite.stash import router as stash_router
 from .suite.sum import router as sum_router
@@ -119,6 +120,9 @@ def create_api_router() -> APIRouter:
 
     # Cross-instance artifact federation (PlexiJoin) inbound transport.
     api_router.include_router(federation_router, prefix="/federation")
+
+    # Client-facing PlexiJoin federation surface (/Join contract, join.js).
+    api_router.include_router(join_router, prefix="/Join")
 
     # Include the authenticated PlexiSuite registry and universal-home feed.
     api_router.include_router(suite_router)

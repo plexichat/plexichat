@@ -401,3 +401,27 @@ def setup_exception_handlers(app: FastAPI):
             content=format_error_response(status_code, message),
             headers=headers,
         )
+
+    # /Join client-contract errors must reach the web client as a FLAT
+    # {"error": {"code", "message"}} body (the client reads
+    # ``body.error.message``), never nested under FastAPI's ``detail``
+    # envelope. Imported lazily to avoid an import cycle with the routes
+    # package.
+    try:
+        from ..routes.join import JoinApiError
+
+        @app.exception_handler(JoinApiError)
+        async def join_api_error_handler(request: Request, exc: JoinApiError):
+            """Render /Join contract errors flat: {"error": {code, message}}."""
+            debug = False
+            try:
+                debug = config.get("api", {}).get("debug", False)
+            except Exception:
+                pass
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=format_error_response(exc.status_code, exc.message, debug),
+                headers=_merge_error_headers(_get_cors_headers(request), None),
+            )
+    except ImportError:  # pragma: no cover
+        pass

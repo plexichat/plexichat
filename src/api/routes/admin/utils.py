@@ -34,8 +34,15 @@ def is_authenticated_self_test(request: Request) -> bool:
     return bool(user and getattr(user, "user_id", None))
 
 
-def check_host_restriction(request: Request) -> None:
-    """Check if client IP is allowed to access admin UI."""
+def check_host_restriction(request: Request, require_admin_ui: bool = True) -> None:
+    """Check if client IP is allowed to access admin surface.
+
+    ``require_admin_ui=False`` keeps every host-level check (provisional
+    license allowlist, proxy-spoofing guard, configured allowed_hosts) but
+    skips the ``admin_ui.enabled`` gate, for routes that are administered
+    through the normal web client by permissioned admins rather than
+    through the standalone admin UI.
+    """
     # Self-test/internal requests do NOT bypass host restrictions wholesale.
     # They only skip the provisional-license host allowlist, and only when
     # they arrive via the fully authenticated self-test path (internal
@@ -67,7 +74,7 @@ def check_host_restriction(request: Request) -> None:
             pass
 
     admin_config = config.get("admin_ui", {})
-    if not admin_config.get("enabled", False):
+    if require_admin_ui and not admin_config.get("enabled", False):
         raise HTTPException(
             status_code=404, detail={"error": {"code": 404, "message": "Not found"}}
         )
