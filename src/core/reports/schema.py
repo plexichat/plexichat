@@ -49,6 +49,14 @@ CREATE INDEX IF NOT EXISTS idx_reports_server ON reports(server_id);
 CREATE INDEX IF NOT EXISTS idx_reports_assigned ON reports(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_reports_priority ON reports(priority);
 
+-- A reporter may have only one active report for a target. This partial
+-- index is supported by SQLite and PostgreSQL and closes concurrent duplicate
+-- inserts at the database boundary.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_active_reporter_target
+ON reports(reporter_id, report_type, target_id)
+WHERE status IN ('open', 'investigating');
+
+
 -- Message reports
 CREATE TABLE IF NOT EXISTS message_reports (
     id BIGINT PRIMARY KEY,

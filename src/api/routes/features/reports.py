@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
@@ -16,6 +16,54 @@ from .common import (
 from .protocol import DatabaseProtocol
 
 router = APIRouter()
+
+ENHANCED_REPORT_RATE_LIMIT = 10
+ENHANCED_REPORT_RATE_WINDOW = 60
+VALID_REPORT_CATEGORIES = {
+    "harassment",
+    "spam",
+    "inappropriate",
+    "illegal",
+    "hate_speech",
+    "threats",
+    "impersonation",
+    "other",
+}
+
+
+def _check_enhanced_report_rate_limit(user_id: int) -> None:
+    """Atomically cap enhanced reports per user in the shared cache tier."""
+    try:
+        from src.core.database import check_rate_limit
+
+        allowed, _remaining = check_rate_limit(
+            f"reports:enhanced:{user_id}",
+            ENHANCED_REPORT_RATE_LIMIT,
+            ENHANCED_REPORT_RATE_WINDOW,
+        )
+    except Exception as exc:
+        # A limiter failure must not silently reopen a report-flooding path.
+        logger.error("Enhanced report rate limiter unavailable: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {
+                    "code": 503,
+                    "message": "Report submission temporarily unavailable",
+                }
+            },
+        )
+
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Too many reports submitted. Please slow down.",
+                }
+            },
+        )
 
 
 def _is_safe_url(url: str) -> bool:
@@ -70,6 +118,8 @@ class ReportStatusUpdateRequest(BaseModel):
 async def submit_enhanced_report(
     body: EnhancedReportRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    _check_enhanced_report_rate_limit(current_user.user_id)
+
     valid_priorities = {"low", "medium", "high", "critical"}
     if body.priority not in valid_priorities:
         raise_bad_request(
@@ -79,6 +129,8 @@ async def submit_enhanced_report(
     # REP-4: only supported target types are accepted
     if body.target_type not in ("message", "user"):
         raise_bad_request("target_type must be 'message' or 'user'")
+    if body.category not in VALID_REPORT_CATEGORIES:
+        raise_bad_request("Invalid report category")
 
     db: DatabaseProtocol | None = api.get_db()
     if not db:
@@ -105,8 +157,10 @@ async def submit_enhanced_report(
     server_id = None
 
     if body.target_type == "message":
-        channel_id = int(body.channel_id) if body.channel_id else None
-        server_id = int(body.server_id) if body.server_id else None
+        channel_id = (
+            parse_id(body.channel_id, "channel ID") if body.channel_id else None
+        )
+        server_id = parse_id(body.server_id, "server ID") if body.server_id else None
         messaging = api.get_messaging()
         msg = None
         if messaging:
@@ -132,6 +186,24 @@ async def submit_enhanced_report(
         # REP-3: reporters may not report themselves
         if reported_user_id == current_user.user_id:
             raise_bad_request("You cannot report yourself")
+
+    # Return the existing open report for this reporter/target rather than
+    # creating another moderation-queue entry.
+    existing = db.fetch_one(
+        "SELECT id FROM reports WHERE reporter_id = ? AND report_type = ? "
+        "AND target_id = ? AND status IN ('open', 'investigating') "
+        "ORDER BY created_at DESC LIMIT 1",
+        (current_user.user_id, body.target_type, target_id),
+    )
+    if existing:
+        existing_id = existing["id"] if isinstance(existing, dict) else existing[0]
+        return {
+            "success": True,
+            "report_id": str(existing_id),
+            "status": "open",
+            "priority": body.priority,
+            "message": "Report already submitted",
+        }
 
     evidence_urls_str = json.dumps(body.evidence_urls) if body.evidence_urls else None
 
@@ -171,6 +243,24 @@ async def submit_enhanced_report(
             "priority": body.priority,
         }
     except Exception as e:
+        # The partial unique index closes the check-then-insert race. If a
+        # concurrent request won the insert, return that existing report as an
+        # idempotent success rather than exposing a database error.
+        existing = db.fetch_one(
+            "SELECT id FROM reports WHERE reporter_id = ? AND report_type = ? "
+            "AND target_id = ? AND status IN ('open', 'investigating') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (current_user.user_id, body.target_type, target_id),
+        )
+        if existing:
+            existing_id = existing["id"] if isinstance(existing, dict) else existing[0]
+            return {
+                "success": True,
+                "report_id": str(existing_id),
+                "status": "open",
+                "priority": body.priority,
+                "message": "Report already submitted",
+            }
         logger.error(f"Failed to submit enhanced report: {e}")
         raise_internal("Internal server error")
 

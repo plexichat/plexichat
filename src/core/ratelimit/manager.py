@@ -537,7 +537,24 @@ class RateLimitManager:
         Increment a custom usage counter directly in storage.
         Useful for non-request metrics like daily upload size.
         """
-        return self._storage.increment(key, field, amount)
+        outcome: Dict[str, int] = {}
+
+        def _mutate(state: Dict[str, Any]) -> None:
+            current = state.get(field, 0)
+            try:
+                current = int(current)
+            except (TypeError, ValueError):
+                current = 0
+            new_value = current + amount
+            state[field] = new_value
+            outcome["value"] = new_value
+
+        # Keep the counter and its expiry under the same backend lock. This
+        # matters for shared report/abuse counters: a read-then-increment
+        # sequence permits concurrent requests to lose updates, and the old
+        # implementation ignored ``ttl`` entirely.
+        self._storage.update_bucket(key, _mutate, ttl=ttl)
+        return outcome.get("value", amount)
 
     def _check_global_limit(
         self,

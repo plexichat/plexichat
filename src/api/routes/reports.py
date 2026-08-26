@@ -4,8 +4,6 @@ Reports API routes - Message and user reporting endpoints.
 
 from fastapi import APIRouter, HTTPException, Depends, status
 
-import time
-
 import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -24,42 +22,35 @@ REPORT_RATE_LIMIT = 10
 
 
 def _check_report_rate_limit(user_id: int) -> None:
-    """Throttle report submission per user (best-effort).
-
-    Reuses the shared rate-limit manager used elsewhere. If it cannot be
-    initialised we skip the check rather than blocking legitimate requests.
-    """
+    """Atomically throttle report submissions in the shared cache tier."""
     try:
-        import src.core.ratelimit as ratelimit
-        from src.core.ratelimit.storage import MemoryStorage
+        from src.core.database import check_rate_limit
 
-        if not ratelimit.is_setup():
-            ratelimit.setup(storage_backend=MemoryStorage(), enable_global_limit=False)
-        manager = ratelimit.get_manager()
+        allowed, _remaining = check_rate_limit(
+            f"reports:submit:{user_id}", REPORT_RATE_LIMIT, 60
+        )
     except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"Report rate-limit unavailable, skipping check: {e}")
-        return
+        logger.error(f"Report rate-limit unavailable: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": 503,
+                    "message": "Report submission temporarily unavailable",
+                }
+            },
+        )
 
-    now_seconds = int(time.time())
-    minute_window = now_seconds - (now_seconds % 60)
-    key = f"reports:submit:minute:{user_id}:{minute_window}"
-    try:
-        count = manager.increment_custom_usage(key, "count", 0, ttl=120)
-        if count >= REPORT_RATE_LIMIT:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={
-                    "error": {
-                        "code": 429,
-                        "message": "Too many reports submitted. Please slow down.",
-                    }
-                },
-            )
-        manager.increment_custom_usage(key, "count", 1, ttl=120)
-    except HTTPException:
-        raise
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"Report rate-limit increment failed: {e}")
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Too many reports submitted. Please slow down.",
+                }
+            },
+        )
 
 
 # ==================== Message Reports ====================

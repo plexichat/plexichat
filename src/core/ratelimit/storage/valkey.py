@@ -228,10 +228,11 @@ class ValkeyStorage(RateLimitStorage):
         """Atomically evaluate a token bucket using Lua."""
         client = get_client()
         if not client or not is_available():
-            # Fallback if Valkey fails - fail closed or open?
-            # Usually rate limiting fails open to avoid blocking traffic,
-            # but for safety let's return a default "allowed"
-            return True, capacity, 0.0
+            # A configured distributed limiter must not silently become an
+            # unlimited path when Valkey is unavailable. Deployments that
+            # intentionally run without Valkey should select MemoryStorage
+            # explicitly during setup.
+            return False, 0, 60.0
 
         script = """
         local key = KEYS[1]

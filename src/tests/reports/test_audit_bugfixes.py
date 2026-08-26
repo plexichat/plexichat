@@ -156,6 +156,31 @@ class TestRep345EnhancedReportValidation:
             asyncio.run(submit_enhanced_report(req, _FakeUser(5)))
         assert exc.value.status_code == 400
 
+    def test_enhanced_report_rate_limit_rejects_flood(self, monkeypatch):
+        db = _FakeDB(user_exists=True)
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (False, 0)
+        )
+        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam")
+        with pytest.raises(Exception) as exc:
+            asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert exc.value.status_code == 429
+        assert db.executed == []
+
+    def test_enhanced_report_deduplicates_existing_open_report(self, monkeypatch):
+        db = _FakeDB(user_exists=True, report_row={"id": 42})
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (True, 9)
+        )
+        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam")
+        result = asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert result["success"] is True
+        assert result["report_id"] == "42"
+        assert result["message"] == "Report already submitted"
+        assert db.executed == []
+
     def test_valid_user_report_accepted(self, monkeypatch):
         db = _FakeDB(user_exists=True)
         _patch_api(monkeypatch, db, None)
