@@ -96,7 +96,7 @@ class DeleteMessageAction(BaseAction):
                 f"Deleted message {violation.message_id} for violation {violation.id}"
             )
 
-            self._broadcast_removed(violation)
+            self._broadcast_removed(violation, context)
 
             return True
 
@@ -143,36 +143,106 @@ class DeleteMessageAction(BaseAction):
         logger.debug(
             f"Replaced message {violation.message_id} for violation {violation.id}"
         )
-        self._broadcast_updated(violation, msg)
+        self._broadcast_updated(violation, msg, context)
         return True
 
-    def _broadcast_updated(self, violation: Violation, msg) -> None:
-        """Broadcast a MESSAGE_UPDATE event so clients re-render the tombstone."""
+    def _resolve_recipients(
+        self, violation: Violation, context: Optional[Dict[str, Any]]
+    ) -> tuple:
+        """Resolve broadcast recipients through the shared route-level filter.
+
+        Delegates to the messages CRUD ``_resolve_recipients`` so AutoMod
+        broadcasts obey the same rules as user-triggered ones: server
+        channels fan out ONLY to members holding ``channels.view`` on the
+        channel (the actor is not a member, hence the server_id hint), and
+        DM/group conversations (``server_id is None``) fan out to their
+        participants instead of vanishing.
+        """
+        from src.api.routes.messages.messages_crud.broadcast import (
+            _resolve_recipients as resolve,
+        )
+
+        actor_id = (context or {}).get("bot_user_id") or 0
+        return resolve(
+            self._servers,
+            self._messaging,
+            violation.channel_id,
+            None,
+            actor_id,
+            server_id_hint=violation.server_id,
+        )
+
+    def _broadcast_updated(
+        self, violation: Violation, msg, context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Broadcast a MESSAGE_UPDATE event so clients re-render the tombstone.
+
+        The client merges MESSAGE_UPDATE payloads as a spread-PATCH, so any
+        default field in the dump OVERWRITES live client state. The response
+        therefore carries real author identity (username/avatar/badges via
+        the auth module), the message's actual reactions, and a poll
+        hydrated for the author as context viewer — instead of the
+        state-clobbering defaults ("User {id}", [], null).
+        """
         try:
-            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-            from src.core.events.models import Event
-            from src.core.events.types import EventType
-            from src.api.routes.messages.helpers import _message_to_response
             import asyncio
+
+            import src.api as api
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+            from src.core.events import build_message_update
+            from src.api.routes.messages.helpers import _message_to_response
 
             if not ws_is_setup():
                 return
 
-            response = _message_to_response(msg, channel_id=violation.channel_id)
-            dispatcher = get_dispatcher()
-            user_ids = []
-            if self._servers:
+            author_id = getattr(msg, "author_id", None)
+
+            author_username = None
+            author_avatar_url = None
+            author_badges = []
+            auth = api.get_auth()
+            if auth and author_id is not None:
                 try:
-                    user_ids = self._servers.get_member_user_ids(violation.server_id)
-                except Exception:
-                    pass
+                    user = auth.get_user(int(author_id))
+                    if user:
+                        author_username = user.username
+                        author_avatar_url = getattr(user, "avatar_url", None)
+                        author_badges = getattr(user, "badges", []) or []
+                except Exception as e:
+                    logger.debug(f"AutoMod tombstone author lookup failed: {e}")
+
+            reactions_data = []
+            reactions_module = api.get_reactions()
+            if reactions_module:
+                try:
+                    # Viewer id 0: no per-viewer "me" flags or block
+                    # filtering in a fan-out broadcast; counts stay real.
+                    reactions_data = reactions_module.get_reactions_batch(
+                        0, [violation.message_id]
+                    ).get(violation.message_id, [])
+                except Exception as e:
+                    logger.debug(f"AutoMod tombstone reactions lookup failed: {e}")
+
+            response = _message_to_response(
+                msg,
+                author_username=author_username,
+                author_avatar_url=author_avatar_url,
+                author_badges=author_badges,
+                channel_id=violation.channel_id,
+                reactions_data=reactions_data,
+                # Hydrate the poll (metadata.poll_id survives removal) using
+                # the AUTHOR as context viewer so the poll UI survives the
+                # merge; results visibility is enforced against that viewer.
+                poll_viewer_user_id=int(author_id) if author_id else None,
+            )
+            dispatcher = get_dispatcher()
+            user_ids, resolved_server_id = self._resolve_recipients(violation, context)
 
             if user_ids:
-                event = Event(
-                    event_type=EventType.MESSAGE_UPDATE,
-                    data=response.model_dump(),
-                    server_id=violation.server_id,
+                event = build_message_update(
+                    response.model_dump(),
                     channel_id=violation.channel_id,
+                    server_id=resolved_server_id or violation.server_id,
                 )
 
                 async def dispatch():
@@ -186,36 +256,27 @@ class DeleteMessageAction(BaseAction):
         except Exception as we:
             logger.debug(f"Failed to broadcast AutoMod tombstone update: {we}")
 
-    def _broadcast_removed(self, violation: Violation) -> None:
-        """Broadcast a MESSAGE_DELETE event to all clients."""
+    def _broadcast_removed(
+        self, violation: Violation, context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Broadcast a MESSAGE_DELETE event to clients allowed to see it."""
         try:
             from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-            from src.core.events.models import Event
-            from src.core.events.types import EventType
+            from src.core.events import build_message_delete
             import asyncio
 
             if ws_is_setup():
                 dispatcher = get_dispatcher()
-                user_ids = []
-                if self._servers:
-                    try:
-                        user_ids = self._servers.get_member_user_ids(
-                            violation.server_id
-                        )
-                    except Exception:
-                        pass
+                user_ids, resolved_server_id = self._resolve_recipients(
+                    violation, context
+                )
 
                 if user_ids:
-                    event = Event(
-                        event_type=EventType.MESSAGE_DELETE,
-                        data={
-                            "id": str(violation.message_id),
-                            "channel_id": str(violation.channel_id),
-                            "server_id": str(violation.server_id),
-                            "automod": True,
-                        },
-                        server_id=violation.server_id,
-                        channel_id=violation.channel_id,
+                    event = build_message_delete(
+                        violation.message_id,
+                        violation.channel_id,
+                        server_id=resolved_server_id or violation.server_id,
+                        extra={"automod": True},
                     )
 
                     async def dispatch():

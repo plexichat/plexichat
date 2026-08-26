@@ -85,7 +85,11 @@ def create_message_create(
         "type": 0,
     }
     if server_id:
-        data["guild_id"] = _str_id(server_id)
+        sid = _str_id(server_id)
+        # Canonical scope key is ``server_id``; ``guild_id`` is kept as a
+        # legacy alias so older client readers keep working.
+        data["server_id"] = sid
+        data["guild_id"] = sid
 
     return MessageEvent(
         event_type=EventType.MESSAGE_CREATE,
@@ -124,7 +128,10 @@ def create_message_update(
     if author:
         data["author"] = author
     if server_id:
-        data["guild_id"] = _str_id(server_id)
+        # Canonical ``server_id`` with legacy ``guild_id`` alias.
+        sid = _str_id(server_id)
+        data["server_id"] = sid
+        data["guild_id"] = sid
 
     return MessageEvent(
         event_type=EventType.MESSAGE_UPDATE,
@@ -144,13 +151,19 @@ def create_message_delete(
     channel_id: int,
     server_id: Optional[int] = None,
 ) -> MessageEvent:
-    """Create a MESSAGE_DELETE event."""
+    """Create a MESSAGE_DELETE event.
+
+    The scope key is canonical ``server_id`` (matching every other live
+    message event); ``guild_id`` remains as an alias for older readers.
+    """
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
     }
     if server_id:
-        data["guild_id"] = _str_id(server_id)
+        sid = _str_id(server_id)
+        data["server_id"] = sid
+        data["guild_id"] = sid
 
     return MessageEvent(
         event_type=EventType.MESSAGE_DELETE,

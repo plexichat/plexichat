@@ -424,9 +424,16 @@ def _emit_artifact_message(
     the ``artifact`` message type. Delivery is scoped to the conversation
     participants (preferred) or the owning server; failures are swallowed so
     the underlying artifact write is never rolled back.
+
+    The payload uses the FLAT family (``author_id``/``author_username``/
+    ``created_at`` at the top level) via the shared builder in
+    :mod:`src.core.events.message_events` — the same shape live CRUD
+    broadcasts use — so own-message detection, typing-clear and renderers
+    work for artifact messages too.
     """
     try:
         from src.core import events
+        from src.core.events import build_flat_message_create
 
         if not events.is_setup():
             return
@@ -450,17 +457,17 @@ def _emit_artifact_message(
             except Exception as e:  # best-effort: never break the artifact write
                 logger.debug(f"Failed to persist artifact message: {e}")
 
-        event = events.create_message_create(
-            message_id=int(artifact.id),
+        event = build_flat_message_create(
+            message_id=artifact.id,
             channel_id=int(channel_id) if channel_id else 0,
-            author_id=int(artifact.author_id),
+            author_id=artifact.author_id,
             content=content,
+            author_username=author.get("username"),
+            author_avatar_url=author.get("avatar_url"),
+            metadata={"artifact_id": str(artifact.id), "message_type": "artifact"},
             server_id=int(server_id) if server_id else None,
-            author=author,
+            extra={"message_type": "artifact"},
         )
-        event.data["type"] = 0
-        event.data["message_type"] = "artifact"
-        event.data["metadata"] = {"artifact_id": str(artifact.id)}
 
         user_ids: Optional[List[int]] = None
         messaging_mod = api.get_messaging()

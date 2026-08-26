@@ -71,13 +71,19 @@ def emit_message_delete_bulk(
     guild_id: Optional[int] = None,
     actor_id: Optional[int] = None,
 ) -> None:
-    """Notify clients that a batch of messages was deleted from a channel."""
+    """Notify clients that a batch of messages was deleted from a channel.
+
+    The scope key is canonical ``server_id`` (matching single
+    MESSAGE_DELETE); ``guild_id`` stays as a legacy alias.
+    """
+    sid = str(guild_id) if guild_id is not None else None
     _emit(
         EventType.MESSAGE_DELETE_BULK,
         {
-            "channel_id": channel_id,
-            "guild_id": guild_id,
-            "message_ids": message_ids,
+            "channel_id": str(channel_id),
+            "message_ids": [str(mid) for mid in message_ids],
+            "server_id": sid,
+            "guild_id": sid,
         },
         channel_id=channel_id,
         server_id=guild_id,

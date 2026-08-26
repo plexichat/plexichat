@@ -161,8 +161,7 @@ class _ScanningMixin:
             import asyncio
 
             from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-            from src.core.events.models import Event
-            from src.core.events.types import EventType
+            from src.core.events import build_message_update
 
             if not ws_is_setup():
                 return
@@ -170,8 +169,12 @@ class _ScanningMixin:
             dispatcher = get_dispatcher()
 
             async def _broadcast():
-                # Resolve user_ids from channel_id
+                # Resolve recipients and scope from channel_id. server_id is
+                # resolved once here so the payload can carry the canonical
+                # scope key (clients drop MESSAGE_UPDATE payloads whose
+                # channel/server context they cannot verify).
                 user_ids = []
+                server_id = None
                 if channel_id:
                     try:
                         import src.api as api_module
@@ -231,10 +234,10 @@ class _ScanningMixin:
                             ],
                         }
 
-                        event = Event(
-                            event_type=EventType.MESSAGE_UPDATE,
-                            data=event_data,
+                        event = build_message_update(
+                            event_data,
                             channel_id=channel_id,
+                            server_id=server_id,
                         )
                         await dispatcher.dispatch_event(event, user_ids)
                     except Exception as e:

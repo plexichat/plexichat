@@ -29,6 +29,13 @@ from .models import (
     VoiceStateEvent,
     ReactionEvent,
 )
+from .message_events import (
+    apply_server_scope,
+    build_message_create,
+    build_message_update,
+    build_message_delete,
+    build_flat_message_create,
+)
 from .payloads import (
     create_ready_event,
     create_message_create,
@@ -73,6 +80,11 @@ __all__ = [
     "GuildMemberEvent",
     "VoiceStateEvent",
     "ReactionEvent",
+    "apply_server_scope",
+    "build_message_create",
+    "build_message_update",
+    "build_message_delete",
+    "build_flat_message_create",
     "create_ready_event",
     "create_message_create",
     "create_message_update",

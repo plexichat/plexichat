@@ -47,6 +47,7 @@ def _message_to_response(
     read_by_data: Optional[List[Dict[str, Any]]] = None,
     media_mod=None,
     viewer_user_id: Optional[int] = None,
+    poll_viewer_user_id: Optional[int] = None,
 ) -> MessageResponse:
     def get_attr(obj, name, default=None):
         if isinstance(obj, dict):
@@ -195,15 +196,23 @@ def _message_to_response(
     if isinstance(metadata, dict):
         poll_id = metadata.get("poll_id")
 
-    if poll_id and viewer_user_id is not None:
+    # ``poll_viewer_user_id`` lets broadcast emitters (e.g. AutoMod
+    # tombstones) hydrate the poll for a context viewer without also
+    # signing attachment URLs for that specific user.
+    if poll_viewer_user_id is None:
+        poll_viewer_user_id = viewer_user_id
+
+    if poll_id and poll_viewer_user_id is not None:
         polls_module = api.get_polls()
         if polls_module:
             try:
-                poll_obj = polls_module.get_poll(int(poll_id), viewer_user_id)
+                poll_obj = polls_module.get_poll(int(poll_id), poll_viewer_user_id)
                 if poll_obj:
                     poll_response = _poll_to_response(poll_obj)
-                    # Include current results and user's voting status
-                    results = polls_module.get_results(int(poll_id), viewer_user_id)
+                    # Include current results and the poll viewer's voting status
+                    results = polls_module.get_results(
+                        int(poll_id), poll_viewer_user_id
+                    )
                     if results:
                         from src.api.routes.polls import _results_to_response
 
@@ -232,6 +241,19 @@ def _message_to_response(
     except Exception as e:
         logger.debug(f"Failed to evaluate embed suppression for {msg_id}: {e}")
 
+    # Mention parity: clients (notifications.js) read ``mentions`` to
+    # decide mention vs plain-message notifications. Parse user-mention
+    # ids straight from the content so REST responses and broadcast
+    # payloads carry the same array without extra service plumbing.
+    mention_ids: List[str] = []
+    try:
+        from src.core.notifications.parser import USER_MENTION_PATTERN
+
+        raw_content = content if isinstance(content, str) else ""
+        mention_ids = [m for m in USER_MENTION_PATTERN.findall(raw_content)]
+    except Exception as e:
+        logger.debug(f"Failed to parse mentions for message {msg_id}: {e}")
+
     return MessageResponse(
         id=SnowflakeID(msg_id),
         channel_id=SnowflakeID(effective_channel_id),
@@ -257,6 +279,7 @@ def _message_to_response(
         or f"User {author_id}",
         author_avatar_url=author_avatar_url or get_attr(msg, "author_avatar_url"),
         author_badges=author_badges or get_attr(msg, "author_badges") or [],
+        mentions=mention_ids,
         reactions=reactions_data or [],
         metadata=metadata,
         deleted=bool(get_attr(msg, "deleted", False)),

@@ -125,6 +125,10 @@ class MessageResponse(BaseModel):
     author_badges: List[str] = Field(
         default_factory=list, description="Author's profile badges"
     )
+    mentions: List[str] = Field(
+        default_factory=list,
+        description="IDs of users @mentioned in the message content",
+    )
     reactions: List[ReactionResponse] = Field(
         default_factory=list, description="Message reactions"
     )
