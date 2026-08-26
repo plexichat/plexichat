@@ -137,6 +137,11 @@ Returns the message object.
 
 Edit a message. Only the author can edit their messages.
 
+Edits are subject to the server-configured edit window
+(`messaging.edit_window_seconds`): when set greater than 0, edits older than
+that many seconds are rejected with HTTP 400; the default of `0` means no
+time limit.
+
 ### Request Body
 
 - `content` (string, required, Max 4000 chars): New message content

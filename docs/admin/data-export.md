@@ -68,8 +68,6 @@ dsar:
   audit_log:
     file_path: "~/.plexichat/data/dsar_audit_log.jsonl"
     hash_chain_enabled: true
-    backup_to_s3: true
-    s3_backup_path: "audit/dsar/log_backup.jsonl"
     halt_on_invalid_audit: true
 
   # Harvester worker configuration
@@ -96,6 +94,8 @@ dsar:
 | `harvester.interval_hours` | integer | `24` | Harvester check frequency |
 | `harvester.boot_check_enabled` | boolean | `true` | Run harvester on server startup |
 | `harvester.batch_size` | integer | `20` | Requests per harvester batch |
+| `audit_log.hash_chain_enabled` | boolean | `true` | Hash-chain the DSAR audit log |
+| `audit_log.halt_on_invalid_audit` | boolean | `true` | Halt harvester if chain verification fails |
 
 ## User-Facing API Endpoints
 
@@ -346,5 +346,5 @@ The DSAR system maintains a hash-chained audit log for compliance:
 ### Harvester Halted on Audit Error
 - This is a critical security feature preventing potential data tampering
 - Investigate the audit log integrity issue
-- Restore from S3 backup if available
+- Restore your own backup of the audit log file if you keep one (no automated S3 backup exists)
 - After resolution, set `halt_on_invalid_audit: false` to restart (only after thorough investigation)

@@ -4,7 +4,10 @@ The backend exposes an operator-only admin surface in addition to the public API
 
 ## Base Path
 
-All paths below are relative to the configured admin base path, shown here as `<admin-base>`. The default value is `/admin`, and these routes are mounted at the application root rather than under `https://api.plexichat.com`.
+All paths below are relative to the configured admin base path. The default is
+`/admin`, mounted under the API prefix — i.e. the effective default base path is
+`<admin-base>` = **`/api/v1/admin`** (both `api.api_prefix` and `admin_ui.path`
+are configurable).
 
 ## Access Model
 
@@ -20,6 +23,7 @@ All paths below are relative to the configured admin base path, shown here as `<
 - `POST <admin-base>/verify-otp`
 - `POST <admin-base>/logout`
 - `POST <admin-base>/auth/change-password`
+- `POST <admin-base>/auth/force-password-change/{target_admin_id}`
 - `GET <admin-base>/auth/security-status`
 - `POST <admin-base>/auth/2fa/begin-setup`
 - `POST <admin-base>/auth/2fa/disable`
@@ -40,6 +44,7 @@ All paths below are relative to the configured admin base path, shown here as `<
 - `GET <admin-base>/tickets/{ticket_id}/notes`
 - `POST <admin-base>/tickets/{ticket_id}/notes`
 - `GET <admin-base>/users/search`
+- `GET <admin-base>/users/scheduled-deletions`
 - `GET <admin-base>/users/{user_id}`
 - `PUT <admin-base>/users/{user_id}/tier`
 - `POST <admin-base>/users/{user_id}/badges/{badge}`
@@ -47,12 +52,34 @@ All paths below are relative to the configured admin base path, shown here as `<
 - `GET <admin-base>/users/{user_id}/notes`
 - `POST <admin-base>/users/{user_id}/notes`
 - `POST <admin-base>/users/{user_id}/force-username-change`
-- `POST <admin-base>/users/{user_id}/scheduled-deletions`
-- `PATCH <admin-base>/users/{user_id}/cancel-deletion`
-- `PATCH <admin-base>/users/{user_id}/delay-deletion`
+- `POST <admin-base>/users/{user_id}/cancel-deletion`
+- `POST <admin-base>/users/{user_id}/delay-deletion`
 - `POST <admin-base>/users/{user_id}/force-purge`
-- `POST <admin-base>/users/{user_id}/unlock-user`
-- `POST <admin-base>/users/{user_id}/logout-all`
+
+There is **no** per-user `POST <admin-base>/users/{user_id}/logout-all` route.
+To revoke sessions, use the security group below: `POST
+<admin-base>/security/force-logout` (targeted) or `POST
+<admin-base>/security/logout-all` (global).
+
+### Admin Account Management
+
+- `GET <admin-base>/admin-users`
+- `GET <admin-base>/admin-users/{user_id}`
+- `POST <admin-base>/admin-users`
+- `PUT <admin-base>/admin-users/{user_id}`
+- `DELETE <admin-base>/admin-users/{user_id}`
+- `POST <admin-base>/admin-users/{user_id}/toggle-status`
+
+### Data Export (DSAR)
+
+Admin review surface for user data-export requests — see
+[data-export.md](../admin/data-export.md):
+
+- `GET <admin-base>/data-export` (`data_export.read`)
+- `GET <admin-base>/data-export/{request_id}` (`data_export.read`)
+- `POST <admin-base>/data-export/{request_id}/approve` (`data_export.process`)
+- `POST <admin-base>/data-export/{request_id}/deny` (`data_export.process`, body `{"reason": ...}`)
+- `POST <admin-base>/data-export/{request_id}/generate` (`data_export.process`)
 
 ### Security Controls
 
@@ -67,6 +94,7 @@ All paths below are relative to the configured admin base path, shown here as `<
 - `POST <admin-base>/security/access-tokens/{token_id}/scopes`
 - `DELETE <admin-base>/security/access-tokens/{token_id}/scopes/{scope_id}`
 - `POST <admin-base>/security/access-tokens/{token_id}/revoke`
+- `POST <admin-base>/security/access-tokens/{token_id}/unrevoke`
 - `GET <admin-base>/security/banned-usernames`
 - `POST <admin-base>/security/banned-usernames`
 - `DELETE <admin-base>/security/banned-usernames/{pattern_id}`

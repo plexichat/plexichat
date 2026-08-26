@@ -30,21 +30,36 @@ Content-Type: application/json
 }
 ```
 
-Response:
+Response (`ApplicationResponse`):
 ```json
 {
   "id": "123456789012345678",
+  "owner_id": "111222333444555666",
   "name": "My Awesome Bot",
   "description": "A bot that does awesome things",
-  "bot_id": "987654321098765432",
-  "client_secret": "your_client_secret_here",
-  "redirect_uris": []
+  "icon_emoji": null,
+  "icon_url": null,
+  "bot_id": null,
+  "bot": false,
+  "bot_public": true,
+  "capabilities": null,
+  "created_at": 1704067200
 }
 ```
 
+Notes:
+- **No `client_secret` is returned** by create. Secrets are managed separately via
+  `POST /api/v1/applications/{application_id}/regenerate-secret` (returns `{"secret": ...}`).
+- `redirect_uris` are request-only fields on create/update; they are **not** echoed back
+  in the response.
+- **No bot account is created automatically** — `bot_id` starts as `null` and `bot` is
+  `false` until you explicitly create the bot in the next step.
+
 ### Step 2: Create Bot Account
 
-The application includes a bot account automatically. The `bot_id` is the bot's user ID.
+A bot account must be created explicitly. On success the application's `bot_id`
+(the bot's user ID) is set. Creating a second bot for the same application fails
+with HTTP 400 ("A bot already exists for this application").
 
 ### Step 3: Generate Bot Token
 
@@ -139,9 +154,17 @@ ws.onopen = () => {
 - Requires external endpoint
 
 **Example:**
+Application webhook delivery (server → your endpoint) is **NOT IMPLEMENTED**.
+There is no `POST /api/v1/applications/{application_id}/webhooks` creation route
+today. The database tables for application webhook deliveries already exist, but
+no HTTP API currently creates or manages these webhooks — treat this as roadmap,
+not an available feature.
+
+Inbound channel/server webhooks (posting messages *into* Plexichat from external
+services) are a separate, implemented feature — see [Webhooks API](../api/webhooks.md).
+
 ```http
-POST /api/v1/applications/{application_id}/webhooks
-Authorization: Bearer your_user_token
+POST /api/v1/applications/{application_id}/webhooks   # NOT IMPLEMENTED
 Content-Type: application/json
 
 {
@@ -191,13 +214,16 @@ Request privileged intents from your server administrator.
 
 ## Slash Commands
 
-Slash commands provide a structured way for users to interact with your bot.
+> **NOT IMPLEMENTED — ROADMAP:** Slash-command *management* does not exist yet.
+> There are no `POST /api/v1/applications/{application_id}/commands` (or similar)
+> routes for registering, listing, or updating commands. The interaction-handling
+> half below (the callback route and response types) **is** implemented and
+> documented for when command registration ships.
 
-### Creating a Command
+### Creating a Command (Roadmap)
 
 ```http
-POST /api/v1/applications/{application_id}/commands
-Authorization: Bot bot_token_here
+POST /api/v1/applications/{application_id}/commands   # NOT IMPLEMENTED
 Content-Type: application/json
 
 {
@@ -212,13 +238,10 @@ Command types:
 - `2` - User context menu
 - `3` - Message context menu
 
-### Command Options
-
-Add options to commands:
+### Command Options (Roadmap)
 
 ```http
-POST /api/v1/applications/{application_id}/commands
-Authorization: Bot bot_token_here
+POST /api/v1/applications/{application_id}/commands   # NOT IMPLEMENTED
 Content-Type: application/json
 
 {
@@ -251,9 +274,10 @@ Option types:
 - `8` - Role
 - `9` - Mentionable
 
-### Handling Interactions
+### Handling Interactions (Implemented)
 
-When a user uses a slash command, your bot receives an interaction:
+When an interaction is dispatched to your bot (gateway event
+`INTERACTION_CREATE`, op `30`), respond via the interactions callback route:
 
 ```javascript
 ws.onmessage = (event) => {
@@ -272,7 +296,7 @@ async function handleCommand(interaction) {
   const { name, options } = interaction.data;
 
   if (name === 'ping') {
-    await respondToInteraction(interaction.id, interaction.token, {
+    await respondToInteraction(interaction.token, {
       type: 4,  // Channel message with source
       data: {
         content: 'Pong!'
@@ -281,17 +305,22 @@ async function handleCommand(interaction) {
   }
 }
 
-async function respondToInteraction(interactionId, token, response) {
-  await fetch(`/api/v1/interactions/${interactionId}/${token}/callback`, {
+async function respondToInteraction(interactionToken, response) {
+  await fetch(`/api/v1/applications/interactions/${interactionToken}/callback`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bot bot_token_here'
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify(response)
   });
 }
 ```
+
+The callback endpoint is
+`POST /api/v1/applications/interactions/{interaction_token}/callback` and returns
+HTTP 204 on success. Error responses: `400` invalid/expired-shape response,
+`404` unknown interaction token, `409` interaction already responded to,
+`410` interaction expired.
 
 ### Interaction Response Types
 
@@ -308,7 +337,7 @@ Components allow interactive UI elements in messages.
 ### Buttons
 
 ```javascript
-await respondToInteraction(interactionId, token, {
+await respondToInteraction(interaction.token, {
   type: 4,
   data: {
     content: 'Choose an option:',
@@ -345,7 +374,7 @@ Button styles:
 ### Select Menus
 
 ```javascript
-await respondToInteraction(interactionId, token, {
+await respondToInteraction(interaction.token, {
   type: 4,
   data: {
     content: 'Select a role:',
@@ -644,10 +673,22 @@ Bot features are gated by the instance license:
 | Bot directory access | Read-only | Full access |
 | Bot profile management | Limited | Full |
 
-## OAuth2 Authorization URL
+## Bot Authorization via OAuth2
+
+> **NOT IMPLEMENTED — ROADMAP:** Plexichat does not currently act as an OAuth2
+> authorization server. There is no `/oauth2/authorize` endpoint, so the classic
+> "add bot to server" authorization URL (`scope=bot&permissions=...`) **cannot be
+> used**. See [oauth-integration.md](../client-development/oauth-integration.md).
+>
+> The implemented way to install a bot on a server is the request/approval
+> workflow described in
+> [Bot Installation & Approval Workflow](#bot-installation--approval-workflow)
+> above.
+
+For reference, the planned (unimplemented) URL shape is:
 
 ```
-https://your-server.com/oauth2/authorize?
+https://your-server.com/oauth2/authorize?   # NOT IMPLEMENTED
   client_id=your_application_id&
   redirect_uri=https://your-bot.com/callback&
   response_type=code&
@@ -656,56 +697,18 @@ https://your-server.com/oauth2/authorize?
   state=random_state_string
 ```
 
-### Permissions
-
-Calculate permissions bitmask:
-
-```javascript
-const Permissions = {
-  CREATE_INSTANT_INVITE: 1 << 0,
-  KICK_MEMBERS: 1 << 1,
-  BAN_MEMBERS: 1 << 2,
-  ADMINISTRATOR: 1 << 3,
-  MANAGE_CHANNELS: 1 << 4,
-  MANAGE_GUILD: 1 << 5,
-  ADD_REACTIONS: 1 << 6,
-  VIEW_AUDIT_LOG: 1 << 7,
-  PRIORITY_SPEAKER: 1 << 8,
-  STREAM: 1 << 9,
-  READ_MESSAGES: 1 << 10,
-  SEND_MESSAGES: 1 << 11,
-  SEND_TTS_MESSAGES: 1 << 12,
-  MANAGE_MESSAGES: 1 << 13,
-  EMBED_LINKS: 1 << 14,
-  ATTACH_FILES: 1 << 15,
-  READ_MESSAGE_HISTORY: 1 << 16,
-  MENTION_EVERYONE: 1 << 17,
-  EXTERNAL_EMOJIS: 1 << 18,
-  VIEW_GUILD_INSIGHTS: 1 << 19,
-  CONNECT: 1 << 20,
-  SPEAK: 1 << 21,
-  MUTE_MEMBERS: 1 << 22,
-  DEAFEN_MEMBERS: 1 << 23,
-  MOVE_MEMBERS: 1 << 24,
-  USE_VAD: 1 << 25,
-  CHANGE_NICKNAME: 1 << 26,
-  MANAGE_NICKNAMES: 1 << 27,
-  MANAGE_ROLES: 1 << 28,
-  MANAGE_WEBHOOKS: 1 << 29,
-  MANAGE_EMOJIS: 1 << 30
-};
-
-// Example: Send messages + read messages
-const permissions = Permissions.SEND_MESSAGES | Permissions.READ_MESSAGES;
-```
-
 ### Handling OAuth Callback
 
+The only live OAuth routes are *inbound* provider sign-in flows, which are for
+user login, not bot installation:
+
 ```http
-GET /api/v1/oauth/{provider}/callback?code=authorization_code&state=state_token
+POST /api/v1/auth/oauth/{provider}/callback?code=authorization_code&state=state_token
 ```
 
-Plexichat handles the code-to-token exchange internally. After the user authorizes your application, the OAuth provider redirects back to `/api/v1/oauth/{provider}/callback` where Plexichat exchanges the authorization code for an access token with the provider and creates a session. No additional token exchange is required on your end.
+Plexichat handles the code-to-token exchange with the provider internally and
+creates a user session. No additional token exchange is required on your end.
+See [Authentication API](../api/authentication.md#oauth-sign-in).
 
 ## Testing
 

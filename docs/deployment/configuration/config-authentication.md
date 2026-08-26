@@ -238,15 +238,13 @@ authentication:
     audit_log:
       file_path: "~/.plexichat/audit/deletion_log.jsonl"
       hash_chain_enabled: true
-      backup_to_s3: true
-      s3_backup_path: "audit/deletions/log_backup.jsonl"
     reaper:
       interval_hours: 24
       batch_size: 50
       boot_check_enabled: true
 ```
 
-**Note**: The audit log config does NOT have an `enabled` key. The audit log is always active when `account_deletion.enabled: true`. The `file_path` defaults to `~/.plexichat/audit/deletion_log.jsonl`. The `backup_to_s3` and `s3_backup_path` keys control optional S3 backup of the deletion audit log. The `reminder_days_before_purge` key controls when reminder notifications are sent before the grace period expires (default: 7 days and 1 day before). The `hard_freeze` key freezes the account immediately upon deletion request (default: true).
+**Note**: The audit log config does NOT have an `enabled` key. The audit log is always active when `account_deletion.enabled: true`. The `file_path` defaults to `~/.plexichat/audit/deletion_log.jsonl`. There is NO automated S3 backup of the audit log — back the file up yourself if redundancy is required. The `reminder_days_before_purge` key controls when reminder notifications are sent before the grace period expires (default: 7 days and 1 day before). The `hard_freeze` key freezes the account immediately upon deletion request (default: true).
 
 ### Deployment Considerations
 

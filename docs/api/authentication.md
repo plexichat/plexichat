@@ -202,9 +202,8 @@ Returns standard `LoginResponse`.
 
 ## POST /api/v1/auth/password-reset/request
 
-> **Note**: This endpoint is planned but not currently implemented. Email integration is required for password reset functionality.
-
-Request a password reset email. Always returns success to prevent email enumeration.
+Request a password reset. Always returns success to prevent email enumeration
+(even for unknown addresses or delivery failures).
 
 ### Request Body
 
@@ -220,9 +219,7 @@ Request a password reset email. Always returns success to prevent email enumerat
 
 ## POST /api/v1/auth/password-reset/confirm
 
-> **Note**: This endpoint is planned but not currently implemented.
-
-Complete password reset using token from email.
+Complete password reset using token from the reset email.
 
 ### Request Body
 
@@ -236,6 +233,11 @@ Complete password reset using token from email.
   "success": true
 }
 ```
+
+### Error Responses
+
+- `400` (Invalid input): Token malformed or password doesn't meet requirements
+- `401` (Invalid or expired token): Reset token unknown or expired
 
 ## GET /api/v1/auth/sessions
 
@@ -267,8 +269,6 @@ curl -X GET http://localhost:8000/api/v1/auth/sessions \
 
 ## DELETE /api/v1/auth/sessions/{session_id}
 
-> **Note**: This endpoint is planned but not currently implemented. Use `POST /api/v1/auth/logout` to revoke the current session.
-
 Revoke a specific session.
 
 ### Headers
@@ -279,7 +279,7 @@ Authorization: Bearer <token>
 
 ### Path Parameters
 
-- `session_id` (string): Session's snowflake ID
+- `session_id` (integer): Session's snowflake ID (the `id` value from the sessions list)
 
 ### Response (200 OK)
 
@@ -292,13 +292,13 @@ Authorization: Bearer <token>
 ### Error Responses
 
 - `400` (Invalid session ID): ID format invalid
-- `404` (Session not found): Session doesn't exist
+- `401` (Not authenticated): Missing or invalid token
+- `404` (Session not found): Session doesn't exist or belongs to another user
 
 ## POST /api/v1/auth/sessions/revoke-all
 
-> **Note**: This endpoint is planned but not currently implemented.
-
-Revoke all sessions except optionally the current one.
+Revoke all sessions for the current user, optionally keeping the current one.
+If the current session is revoked too, the session cookie is cleared.
 
 ### Headers
 
@@ -308,7 +308,7 @@ Authorization: Bearer <token>
 
 ### Request Body
 
-- except_current: bool
+- `except_current` (bool, optional, default `true`): Keep the current session
 
 ### Response (200 OK)
 
@@ -318,6 +318,35 @@ Authorization: Bearer <token>
   "revoked_count": 3
 }
 ```
+
+## POST /api/v1/auth/ws-ticket
+
+Mint a short-lived, single-use ticket for authenticating the WebSocket gateway
+handshake. This lets clients connect without exposing their long-lived bearer
+token: request a ticket immediately before connecting and send it as the
+gateway `token` in IDENTIFY. The ticket is consumed on first use and expires
+quickly (see `expires_in`). Only available for interactive (non-bot) sessions;
+returns `409` otherwise.
+
+### Headers
+
+```http
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "ticket": "wst.example_ticket_value",
+  "expires_in": 60
+}
+```
+
+### Error Responses
+
+- `401` (Not authenticated)
+- `409` (No underlying session): Tickets are only issued for interactive sessions
 
 ## GET /api/v1/auth/2fa/status
 

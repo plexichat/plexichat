@@ -207,6 +207,15 @@ Privileged intents must be enabled in the server configuration. Requests for the
 
 #### MESSAGE_CREATE
 
+Live message events use the FLAT payload family (the `MessageResponse`
+shape): the author is identified by top-level string fields
+(`author_id`, `author_username`, `author_avatar_url`) rather than a
+nested `author` object, and timestamps are integer milliseconds.
+
+The canonical server scope key is `server_id`. For compatibility the
+same value is also emitted as `guild_id`; treat them as exact aliases.
+For DM/group messages both keys are present and `null`.
+
 ```json
 {
   "op": 0,
@@ -214,24 +223,58 @@ Privileged intents must be enabled in the server configuration. Requests for the
   "d": {
     "id": "123456789012345678",
     "channel_id": "987654321098765432",
-    "author": {
-      "id": "111222333444555666",
-      "username": "johndoe",
-      "avatar": "avatar_hash"
-    },
+    "author_id": "111222333444555666",
+    "author_username": "johndoe",
+    "author_avatar_url": null,
     "content": "Hello everyone!",
-    "timestamp": "2024-01-15T10:30:00.000Z",
-    "edited_timestamp": null,
-    "mentions": [],
-    "attachments": [],
+    "created_at": 1705314600000,
+    "edited_at": null,
+    "deleted": false,
+    "reply_to_id": null,
+    "mentions": ["111222333444555666"],
+    "attachments": [
+      {
+        "id": "555666777888999000",
+        "filename": "cat.png",
+        "content_type": "image/png",
+        "size": 12345,
+        "url": "/api/v1/media/attachments/...",
+        "hash": "sha256..."
+      }
+    ],
     "embeds": [],
-    "reactions": []
+    "pinned": false,
+    "status": "sent",
+    "delivery_count": 0,
+    "read_count": 0,
+    "read": false,
+    "read_by": [],
+    "reactions": [],
+    "metadata": null,
+    "poll": null,
+    "poll_results": null,
+    "server_id": "111222333444555666",
+    "guild_id": "111222333444555666"
   },
   "s": 42
 }
 ```
 
+Notes:
+
+- `mentions` is the array of user ids @mentioned in the content (parsed
+  server-side); clients should use it for mention notifications instead
+  of substring heuristics.
+- A moderation **tombstone** is delivered as a MESSAGE_UPDATE whose
+  payload has `deleted: true` and/or `metadata.automod_removed: true`
+  plus `metadata.automod_violation_id`; renderers should show the
+  tombstone from these flags, never from content.
+
 #### MESSAGE_UPDATE
+
+MESSAGE_UPDATE carries the FULL flat message object (not a partial diff);
+merge it as a whole. Pin/unpin broadcasts reuse the same shape with
+`edited_at: null`.
 
 ```json
 {
@@ -240,14 +283,27 @@ Privileged intents must be enabled in the server configuration. Requests for the
   "d": {
     "id": "123456789012345678",
     "channel_id": "987654321098765432",
+    "author_id": "111222333444555666",
+    "author_username": "johndoe",
     "content": "Hello everyone! (edited)",
-    "edited_timestamp": "2024-01-15T10:35:00.000Z"
+    "created_at": 1705314600000,
+    "edited_at": 1705314900000,
+    "deleted": false,
+    "mentions": [],
+    "pinned": true,
+    "server_id": "111222333444555666",
+    "guild_id": "111222333444555666"
   },
   "s": 43
 }
 ```
 
 #### MESSAGE_DELETE
+
+A hard delete removes the row; the payload is an identifier-only
+tombstone. The scope key is canonical `server_id` (with the legacy
+`guild_id` alias). When the deletion was performed by AutoMod the extra
+boolean marker `automod: true` is included.
 
 ```json
 {
@@ -256,11 +312,47 @@ Privileged intents must be enabled in the server configuration. Requests for the
   "d": {
     "id": "123456789012345678",
     "channel_id": "987654321098765432",
+    "server_id": "111222333444555666",
     "guild_id": "111222333444555666"
   },
   "s": 44
 }
 ```
+
+AutoMod hard-delete variant:
+
+```json
+{
+  "op": 0,
+  "t": "MESSAGE_DELETE",
+  "d": {
+    "id": "123456789012345678",
+    "channel_id": "987654321098765432",
+    "server_id": "111222333444555666",
+    "guild_id": "111222333444555666",
+    "automod": true
+  },
+  "s": 45
+}
+```
+
+#### MESSAGE_DELETE_BULK
+
+```json
+{
+  "op": 0,
+  "t": "MESSAGE_DELETE_BULK",
+  "d": {
+    "channel_id": "987654321098765432",
+    "message_ids": ["123456789012345678", "123456789012345679"],
+    "server_id": "111222333444555666",
+    "guild_id": "111222333444555666"
+  },
+  "s": 46
+}
+```
+
+All identifier fields on live message events are strings.
 
 ### Presence Events
 

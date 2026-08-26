@@ -80,8 +80,6 @@ authentication:
     audit_log:
       file_path: /root/.plexichat/data/deletion_log.jsonl
       hash_chain_enabled: true
-      backup_to_s3: true
-      s3_backup_path: audit/deletions/log_backup.jsonl
       halt_on_invalid_audit: true
       rotate_on_broken_chain: false
     reaper:
@@ -111,8 +109,6 @@ authentication:
     audit_log:
       file_path: /root/.plexichat/data/dsar_audit_log.jsonl
       hash_chain_enabled: true
-      backup_to_s3: true
-      s3_backup_path: audit/dsar/log_backup.jsonl
       halt_on_invalid_audit: true
       rotate_on_broken_chain: false
     harvester:
@@ -798,7 +794,9 @@ embeds:
     - http
     - https
 telemetry:
-  enabled: true
+  # Privacy stance: telemetry is OPT-IN. It stays disabled unless explicitly
+  # enabled in config.yaml.
+  enabled: false
   rate_limit:
     max_per_minute: 10
   retention_days: 30

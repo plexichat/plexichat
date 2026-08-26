@@ -152,8 +152,8 @@ Configuration: [Rate Limiting Configuration](deployment/configuration/config-rat
 ### Applications and Bots
 
 - Bot accounts with dedicated authentication tokens
-- Application system for OAuth2 integrations
-- Slash commands and interaction handling
+- Application system (inbound OAuth2 provider login; acting as an OAuth2 authorization server is not yet implemented)
+- Interaction handling via the applications callback route (slash-command registration is not yet implemented)
 - Webhook execution for inbound integrations
 - Per-application rate limits
 
@@ -182,7 +182,7 @@ Configuration: See `polls` section in [Default Configuration Reference](default-
 - Sticker packs with per-server and per-pack limits
 - Soundboard with configurable cooldowns and size limits
 
-Configuration: See `emojis`, `stickers`, `soundboard` sections in [Default Configuration Reference](default-config.md) | API: [Emojis Routes](api/emojis.md)
+Configuration: See `emojis`, `stickers`, `soundboard` sections in [Default Configuration Reference](default-config.md) | API: [Emojis Routes](api/emojis.md), [Soundboard API](api/soundboard.md)
 
 ---
 

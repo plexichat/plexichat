@@ -29,6 +29,7 @@ All routes in this section are relative to `https://api.plexichat.com`.
 - [Webhooks](webhooks.md): webhook management and execution
 - [Avatars](avatars.md): user and server avatar endpoints
 - [Emojis](emojis.md): custom emoji management
+- [Soundboard](soundboard.md): per-server sound uploads, permissions, playback
 - [Features](features.md): public feature visibility plus admin-controlled tiers/badges
 
 ## Artifacts Capability Endpoints

@@ -45,45 +45,57 @@ POST /api/v1/auth/login
 Content-Type: application/json
 
 {
-  "email": "john@example.com",
+  "username": "johndoe",
   "password": "securepassword123"
 }
 ```
 
+Note the body key is `username` (it accepts a username **or** email address).
+A request using an `email` key fails validation.
+
 Response:
 ```json
 {
+  "status": "success",
+  "token": "session_token_here",
   "user": {
     "id": "123456789012345678",
     "username": "johndoe",
     "email": "john@example.com"
-  },
-  "token": "session_token_here"
+  }
 }
 ```
 
 ### Two-Factor Authentication
 
-If 2FA is enabled, login returns a 401 with requires_2fa flag:
+If 2FA is enabled, login still returns **HTTP 200**, but with
+`status: "two_factor_required"` and a `challenge_token` instead of a session token:
 
 ```json
 {
-  "error": "requires_2fa",
-  "message": "Two-factor authentication required"
+  "status": "two_factor_required",
+  "token": null,
+  "user": null,
+  "challenge_token": "challenge_token_here",
+  "methods": ["totp", "backup_code"],
+  "expires_in": 300
 }
 ```
 
-Submit 2FA code:
+Submit the 2FA code with the challenge token:
 
 ```http
-POST /api/v1/auth/2fa/verify
+POST /api/v1/auth/2fa
 Content-Type: application/json
-Authorization: Bearer session_token
 
 {
+  "challenge_token": "challenge_token_here",
   "code": "123456"
 }
 ```
+
+On success this returns a standard `LoginResponse` (HTTP 200) containing the
+session `token` and `user`. Invalid or expired codes/challenges return HTTP 401.
 
 ### Session Token Usage
 
@@ -620,11 +632,20 @@ class PlexiClient {
     this.crypto = null;
   }
 
-  async login(email, password) {
+  async login(username, password) {
     const response = await this.api.request('POST', '/auth/login', {
-      email,
+      username,
       password
     });
+
+    if (response.status === 'two_factor_required') {
+      // Prompt the user for their code, then:
+      // const done = await this.api.request('POST', '/auth/2fa', {
+      //   challenge_token: response.challenge_token, code
+      // });
+      // return this._finishLogin(done);
+      throw new Error('2FA required — complete the challenge via POST /auth/2fa');
+    }
 
     this.api.token = response.token;
     this.state.currentUser = response.user;
