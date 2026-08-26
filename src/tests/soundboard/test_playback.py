@@ -16,7 +16,10 @@ class TestPlaySound:
 
     def test_play_sound_success(self, db_and_modules):
         """Test playing a sound successfully."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -54,7 +57,10 @@ class TestPlaySound:
 
     def test_play_sound_tracks_usage(self, db_and_modules):
         """Test playing sound increments usage count."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -92,7 +98,10 @@ class TestPlaySound:
 
     def test_play_sound_nonexistent_fails(self, db_and_modules):
         """Test playing nonexistent sound fails."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -115,7 +124,10 @@ class TestPlaySound:
 
     def test_play_sound_text_channel_fails(self, db_and_modules):
         """Test playing sound in text channel fails."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -148,7 +160,10 @@ class TestPlaySound:
 
     def test_play_sound_nonexistent_channel_fails(self, db_and_modules):
         """Test playing sound in nonexistent channel fails."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(

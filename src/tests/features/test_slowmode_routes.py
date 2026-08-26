@@ -86,7 +86,7 @@ class TestChannelSlowmodeAuthorization:
     def test_unauthenticated_is_rejected(self, test_client, channel_setup):
         url = SLOWMODE_URL.format(channel_id=channel_setup["channel"].id)
         response = test_client.put(url, json={"interval_ms": 5000})
-        assert response.status_code in (401, 403), response.text
+        assert response.status_code == 401, response.text
 
 
 class TestChannelSlowmodeValidation:

@@ -327,6 +327,35 @@ pytest src/tests
 - Optional parallel execution with `pytest-xdist`
 - Relationship regression coverage lives in `src/tests/relationships/` and `src/tests/api/test_relationship_routes.py`, including cache invalidation and transaction-safety checks for send/accept/decline/cancel/block flows
 
+### Marker Selection & Opt-In Risk Classes
+
+The default `pytest src/tests` run deselects the slow/high-risk marker
+classes via `-m "not slow and not performance and not production_simulation
+and not multiprocess"`. These stay opt-in because they are slow,
+timing-sensitive, or spawn worker processes:
+
+```bash
+# Rate-limit timing / chaos suites
+pytest src/tests -m "slow"
+
+# Full multiprocess production simulations (needs a Postgres backend for
+# the requires_postgres subset)
+pytest src/tests -m "production_simulation or multiprocess"
+
+# PostgreSQL Docker/backend tier — included in the DEFAULT run:
+# tests SKIP visibly ("PostgreSQL not available") when no backend is
+# reachable and run automatically when one is. They are never silently
+# deselected.
+pytest src/tests -m "postgres"
+```
+
+Client-side chat-runtime unit tests (channel ratchet, WebSocket dedup)
+run with Node's built-in runner from `plexichat-client/`:
+
+```bash
+node --test tests/unit/channel-ratchet.test.mjs tests/unit/websocket-dedup.dom.test.mjs
+```
+
 ### Documentation
 
 - **Test Suite Details**: [src/tests/README.md](src/tests/README.md)

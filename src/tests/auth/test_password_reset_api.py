@@ -65,7 +65,7 @@ class TestPasswordResetAPI:
             json={"token": "invalid_token", "new_password": "NewPass123!"},
         )
         # Should fail with invalid/expired token
-        assert response.status_code in (400, 401, 404)
+        assert response.status_code == 401
 
     def test_reset_password_weak_password(self, test_client, auth_manager):
         """Test resetting with weak password fails."""
@@ -75,7 +75,7 @@ class TestPasswordResetAPI:
             json={"token": "some_token", "new_password": "weak"},
         )
         # Should fail due to weak password or invalid token
-        assert response.status_code in (400, 401, 404, 422)
+        assert response.status_code == 401
 
     def test_reset_password_missing_token(self, test_client):
         """Test reset without token fails."""

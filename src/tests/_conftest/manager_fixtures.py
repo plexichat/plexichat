@@ -131,10 +131,21 @@ def notification_manager(db):
 
 @pytest.fixture
 def automod_manager(db, server_manager, messaging_manager, notification_manager):
-    """AutoModManager fixture."""
-    from src.core.automod.manager import AutoModManager
+    """AutoModManager fixture.
 
-    return AutoModManager(db, server_manager, messaging_manager, notification_manager)
+    Wires the manager through ``automod.setup`` so the MODULE GLOBAL points
+    at this test's database too: ``servers.create_server`` calls
+    ``automod.ensure_default_rules`` through that global, and a stale
+    global (re-pointed at the shared Database singleton by whichever test
+    ran last) made default-rule creation order-dependent across suites.
+    Teardown clears the globals so no stale manager survives.
+    """
+    from src.core import automod
+
+    automod.setup(db, server_manager, messaging_manager, notification_manager)
+    yield automod._manager
+    automod._manager = None
+    automod._setup_complete = False
 
 
 @pytest.fixture

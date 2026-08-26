@@ -42,7 +42,7 @@ class TestAuditRequiresPermission:
         client = TestClient(self._app())
         with patch.object(audit_routes, "check_host_restriction"):
             response = client.get(path)
-        assert response.status_code in (401, 403)
+        assert response.status_code == 401
 
     def test_audit_logs_reject_unauthenticated(self):
         self._assert_unauthenticated_rejected("/api/v1/admin/audit/logs")

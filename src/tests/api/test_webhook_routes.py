@@ -11,7 +11,7 @@ def test_create_webhook(test_client, test_server, test_user_with_token):
         json={"name": "Test Webhook"},
     )
     # Webhook routes might not be fully set up in tests
-    assert response.status_code in [200, 404, 405, 500]
+    assert response.status_code == 405
 
 
 def test_execute_webhook(test_client):
@@ -21,7 +21,7 @@ def test_execute_webhook(test_client):
         json={"content": "Test message"},
     )
     # Webhook routes might not be fully set up in tests
-    assert response.status_code in [200, 400, 401, 404, 405, 500]
+    assert response.status_code == 401
 
 
 def test_webhook_without_auth(test_client, test_server):
@@ -31,7 +31,7 @@ def test_webhook_without_auth(test_client, test_server):
         f"/api/v1/servers/{server.id}/webhooks",
         json={"name": "Test Webhook"},
     )
-    assert response.status_code in [401, 404, 405]
+    assert response.status_code == 405
 
 
 def _make_webhook(modules, server, require_signed: bool):

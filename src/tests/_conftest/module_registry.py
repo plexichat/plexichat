@@ -2,12 +2,34 @@
 
 import pytest
 import uuid
+from typing import Any, NamedTuple
 
 from src.utils import encryption
 
 # =============================================================================
 # Backward Compatibility Fixtures
 # =============================================================================
+
+
+class ModuleBundle(NamedTuple):
+    """Named-tuple replacement for the historical ``db_and_modules`` tuples.
+
+    Positional unpacking (``db, auth, msg, servers, mod = db_and_modules``)
+    keeps working exactly as before — NamedTuples iterate like plain
+    tuples — while every element is ALSO addressable by name
+    (``bundle.messaging``). This removes the positional-mixup failure mode
+    where a suite forgetting that its conftest re-bound the fifth slot
+    silently received another suite's manager.
+    """
+
+    db: Any
+    auth: Any
+    messaging: Any
+    servers: Any
+    # Suite-specific fifth element: embeds at the repo root, the owning
+    # suite's manager inside suites that re-bind ``db_and_modules``
+    # (soundboard, stickers). Always read it as ``bundle.module``.
+    module: Any
 
 
 class ModuleRegistry:
@@ -173,22 +195,36 @@ def user_pool(auth_manager):
 
 @pytest.fixture
 def db_and_modules(db, auth_manager, messaging_manager, server_manager, embeds_manager):
-    """
-    Backward compatibility fixture that returns db and module managers as a tuple.
+    """Backward compatibility fixture returning db + module managers.
 
-    Returns: (db, auth_manager, messaging_manager, server_manager, embeds_manager)
+    Returns a :class:`ModuleBundle` (named tuple) shaped
+    ``(db, auth, messaging, servers, module)`` where ``module`` is the
+    embeds manager at the repo root. Suites that need a different fifth
+    element re-bind this fixture with their own manager — unpack by name
+    (``bundle.module``), not by position.
     """
-    return db, auth_manager, messaging_manager, server_manager, embeds_manager
+    return ModuleBundle(
+        db=db,
+        auth=auth_manager,
+        messaging=messaging_manager,
+        servers=server_manager,
+        module=embeds_manager,
+    )
 
 
 @pytest.fixture
 def db_and_search(db, auth_manager, messaging_manager, server_manager, search_manager):
-    """
-    Fixture that returns db and search-related module managers as a tuple.
+    """Fixture that returns db and search-related module managers as a bundle.
 
-    Returns: (db, auth_manager, messaging_manager, server_manager, search_manager)
+    Returns: ``(db, auth, messaging, servers, module=search_manager)``
     """
-    return db, auth_manager, messaging_manager, server_manager, search_manager
+    return ModuleBundle(
+        db=db,
+        auth=auth_manager,
+        messaging=messaging_manager,
+        servers=server_manager,
+        module=search_manager,
+    )
 
 
 @pytest.fixture

@@ -30,7 +30,7 @@ def test_access_admin_route_as_regular_user(test_client, auth_manager):
     )
 
     # Should be forbidden or not found
-    assert response.status_code in [403, 404]
+    assert response.status_code == 404
 
 
 def test_access_other_user_data(test_client, auth_manager):
@@ -64,7 +64,7 @@ def test_access_other_user_data(test_client, auth_manager):
     # Public profiles are typically accessible
     # If the API returns 200, it means public profiles are accessible
     # If it returns 403/404, it means profiles are private
-    assert response.status_code in [200, 403, 404]
+    assert response.status_code == 200
 
 
 def test_modify_resource_without_ownership(test_client, auth_manager, server_manager):
@@ -103,4 +103,4 @@ def test_modify_resource_without_ownership(test_client, auth_manager, server_man
     )
 
     # Should be forbidden
-    assert response.status_code in [403, 404]
+    assert response.status_code == 404

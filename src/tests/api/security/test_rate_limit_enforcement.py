@@ -14,7 +14,7 @@ def test_rate_limiting_on_login(rate_limit_client):
             assert response.status_code == 401
         else:
             # Should be rate limited
-            assert response.status_code in [401, 429]
+            assert response.status_code == 429
 
 
 def test_rate_limiting_on_register(rate_limit_client):
@@ -31,7 +31,10 @@ def test_rate_limiting_on_register(rate_limit_client):
         )
         # Rate limiting may kick in at any point due to previous tests
         # Just verify the request doesn't crash
-        assert response.status_code in [200, 400, 409, 429]
+        assert response.status_code in [
+            200,
+            429,
+        ]  # both outcomes occur depending on limiter state
 
 
 def test_rate_limit_headers(rate_limit_client):
@@ -44,7 +47,7 @@ def test_rate_limit_headers(rate_limit_client):
     # Check for rate limit headers
     # Rate limit headers may or may not be present depending on implementation
     # Just verify the request doesn't crash
-    assert response.status_code in [401, 429]
+    assert response.status_code == 401
 
 
 def test_rate_limit_bypass_with_admin_token(rate_limit_client, auth_manager):
@@ -74,4 +77,7 @@ def test_rate_limit_bypass_with_admin_token(rate_limit_client, auth_manager):
             headers={"Authorization": f"Bearer {result.token}"},
         )
         # Admin should bypass rate limiting, but may still hit rate limit from previous tests
-        assert response.status_code in [401, 429]
+        assert response.status_code in [
+            401,
+            429,
+        ]  # both outcomes occur depending on limiter state

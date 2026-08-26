@@ -36,6 +36,21 @@ from src.tests._conftest.hooks import (
     pytest_collection_modifyitems,
 )
 
+# PostgreSQL Docker fixtures: pytest only sees fixtures defined in (or
+# imported into) a conftest on the collection path, so they are re-exported
+# here. With them exposed, the Postgres tests SKIP VISIBLY ("PostgreSQL not
+# available") in environments without a backend and RUN where one exists —
+# instead of erroring on a missing fixture or being silently deselected.
+from src.tests.fixtures.postgres_docker import (  # noqa: F401
+    clean_postgres_db,
+    postgres_config,
+    postgres_connection_pool_tester,
+    postgres_db,
+    postgres_db_with_constraints,
+    postgres_db_with_table,
+    postgres_manager,
+)
+
 __all__ = [
     "config_env",
     "DEFAULT_TEST_CONFIG",

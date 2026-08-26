@@ -68,7 +68,7 @@ class TestQrRoutes:
     def test_missing_data_rejected(self, test_client):
         """Missing data must be rejected with 422 (validation)."""
         response = test_client.get("/api/v1/qr")
-        assert response.status_code in (400, 422)
+        assert response.status_code == 400
 
 
 class TestHelpRoutes:

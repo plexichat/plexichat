@@ -8,12 +8,26 @@ from src.core.events.router import EventRouter
 
 
 @pytest.fixture(autouse=True)
-def setup_events():
-    """Setup events module for each test."""
+def setup_events(db, rel_manager, server_manager, messaging_manager):
+    """Setup the events module with production-equivalent routing modules.
+
+    Production wires relationships/servers/messaging into
+    ``events.setup()`` (see ``src/server/initializer.py``); wiring NONE of
+    them here made every recipient-resolution decision in these tests run
+    through the fail-open "no routing module" bypass instead of the real
+    router. The teardown clears the module globals so no stale manager
+    (pinned to this test's deleted database) leaks into later suites.
+    """
     if not logger._setup_called:
         logger.setup(log_dir="logs", level="WARNING")
-    events.setup()
+    events.setup(
+        relationships_module=rel_manager,
+        servers_module=server_manager,
+        messaging_module=messaging_manager,
+    )
     yield
+    events._manager = None
+    events._setup_complete = False
 
 
 @pytest.fixture

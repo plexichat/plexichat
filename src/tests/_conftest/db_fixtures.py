@@ -386,11 +386,13 @@ def db(setup_config, migrated_db_template):
         pass
     db.connect()
 
-    # Mock the hashing to be instant (active for the whole test, matching
-    # the historical fixture behaviour that tests rely on for register()).
-    with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-        with patch.object(encryption, "verify_password", return_value=True):
-            yield db
+    # REAL hashing/verification runs for every test: the session template
+    # pins test-friendly Argon2id cost parameters (time_cost=1,
+    # memory_cost=8KiB), so a real hash costs well under a millisecond and
+    # the suite exercises the actual Argon2 implementation instead of a
+    # fake. Tests that need the historical deterministic behaviour opt in
+    # explicitly via the ``fake_crypto`` fixture below.
+    yield db
 
     # Cleanup
     try:
@@ -469,3 +471,41 @@ def db(setup_config, migrated_db_template):
 def test_db(db):
     """Alias for db fixture for backward compatibility."""
     return db
+
+
+@pytest.fixture
+def fake_crypto():
+    """Explicit opt-in: deterministic fake hashing/verification.
+
+    Request this fixture ONLY in tests that need the historical
+    ``fake_hash_$test`` semantics (e.g. asserting hash round-trips without
+    real Argon2). Every other test runs the real (test-cost) Argon2
+    implementation.
+    """
+    with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+        with patch.object(encryption, "verify_password", return_value=True):
+            yield
+
+
+@pytest.fixture
+def lenient_email_validation():
+    """Explicit opt-in: reserved-TLD email whitelist accommodation.
+
+    Patches ``auth.passwords.validate_email`` AND the registration
+    manager's imported reference so addresses on RFC 6761 reserved TLDs
+    (``.test``/``.local``/``.example``/``.invalid``) pass after the real
+    validator rejects them. The production validator is untouched for
+    every test that does not request this fixture.
+    """
+    from src.core.auth import passwords as _auth_passwords
+    from src.core.auth.managers import registration as _reg_module
+
+    import src.tests._conftest.config_env as _config_env
+
+    with patch.object(
+        _auth_passwords, "validate_email", _config_env._test_always_valid_email
+    ):
+        with patch.object(
+            _reg_module, "validate_email", _config_env._test_always_valid_email
+        ):
+            yield

@@ -10,7 +10,7 @@ def test_xss_in_user_agent(test_client):
     )
 
     # Should fail authentication but not crash
-    assert response.status_code in [401, 400]
+    assert response.status_code == 401
 
 
 def test_header_injection_in_authorization(test_client):
@@ -44,4 +44,4 @@ def test_long_header_value(test_client):
     )
 
     # Should either reject or handle safely
-    assert response.status_code in [200, 400, 413, 431]
+    assert response.status_code == 200

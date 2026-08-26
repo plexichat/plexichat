@@ -12,7 +12,10 @@ class TestSoundPermissions:
 
     def test_set_permissions_success(self, db_and_modules):
         """Test setting sound permissions successfully."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -48,7 +51,10 @@ class TestSoundPermissions:
 
     def test_deny_permissions(self, db_and_modules):
         """Test denying sound permissions."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -81,7 +87,10 @@ class TestSoundPermissions:
 
     def test_update_permissions(self, db_and_modules):
         """Test updating existing permissions."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -118,7 +127,10 @@ class TestSoundPermissions:
 
     def test_non_owner_cannot_set_permissions(self, db_and_modules):
         """Test non-owner cannot set permissions."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(

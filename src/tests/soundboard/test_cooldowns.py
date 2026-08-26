@@ -12,7 +12,10 @@ class TestSoundCooldowns:
 
     def test_cooldown_after_play(self, db_and_modules):
         """Test sound goes on cooldown after playing."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -49,7 +52,10 @@ class TestSoundCooldowns:
 
     def test_different_sounds_no_shared_cooldown(self, db_and_modules):
         """Test different sounds have independent cooldowns."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(
@@ -95,7 +101,10 @@ class TestSoundCooldowns:
 
     def test_different_users_no_shared_cooldown(self, db_and_modules):
         """Test different users have independent cooldowns."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(

@@ -293,7 +293,7 @@ class TestCookieAndOauthHttp:
                     "password": "TestPass123!",
                 },
             )
-        assert r.status_code in (200, 201), r.text
+        assert r.status_code == 200, r.text
         return username
 
     def test_login_sets_httponly_cookie_and_cookie_auth_works(self, test_client):

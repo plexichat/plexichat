@@ -13,7 +13,7 @@ def test_get_channel(test_client, test_server, test_user_with_token):
     )
 
     # Channel routes might not be fully set up in tests
-    assert response.status_code in [200, 401, 404, 500]
+    assert response.status_code == 404
 
 
 def test_get_channel_without_auth(test_client):
@@ -45,7 +45,7 @@ def test_update_channel(test_client, test_server, test_user_with_token):
     )
 
     # Channel routes might not be fully set up in tests
-    assert response.status_code in [200, 401, 403, 404, 500]
+    assert response.status_code == 404
 
 
 def test_update_channel_without_auth(test_client):
@@ -69,7 +69,7 @@ def test_delete_channel(test_client, test_server, test_user_with_token):
     )
 
     # Channel routes might not be fully set up in tests
-    assert response.status_code in [200, 401, 403, 404, 500]
+    assert response.status_code == 404
 
 
 def test_delete_channel_without_auth(test_client):

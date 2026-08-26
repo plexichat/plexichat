@@ -54,12 +54,12 @@ class TestAuthentication:
         """Test that listing migrations requires authentication."""
         response = client.get("/api/v1/admin/migrations")
         # Should get 401 or 403
-        assert response.status_code in (401, 403)
+        assert response.status_code == 401
 
     def test_get_migration_details_requires_auth(self, client):
         """Test that getting migration details requires authentication."""
         response = client.get("/api/v1/admin/migrations/001")
-        assert response.status_code in (401, 403)
+        assert response.status_code == 401
 
     def test_run_migration_requires_auth(self, client):
         """Test that running a migration requires authentication."""
@@ -68,12 +68,12 @@ class TestAuthentication:
         )
         # 401/403 when reachable; 404 hides the route entirely when the
         # admin UI is disabled (host restriction fires first).
-        assert response.status_code in (401, 403, 404)
+        assert response.status_code == 404
 
     def test_rollback_migration_requires_auth(self, client):
         """Test that rollback requires authentication."""
         response = client.post("/api/v1/admin/migrations/001/rollback")
-        assert response.status_code in (401, 403, 404)
+        assert response.status_code == 404
 
     def test_emergency_override_requires_auth(self, client):
         """Test that generating emergency override requires authentication."""
@@ -81,7 +81,7 @@ class TestAuthentication:
             "/api/v1/admin/migrations/emergency-override",
             json={"reason": "Test", "expires_minutes": 30},
         )
-        assert response.status_code in (401, 403, 404)
+        assert response.status_code == 404
 
 
 class TestPathTraversalPrevention:
@@ -94,7 +94,7 @@ class TestPathTraversalPrevention:
         ):
             response = client.get("/api/v1/admin/migrations/../etc/passwd")
             # FastAPI returns 404 for invalid paths, or 400 if validation catches it
-            assert response.status_code in (400, 404)
+            assert response.status_code == 404
             if response.status_code == 400:
                 assert "Invalid migration version format" in response.json()["detail"]
 
@@ -106,7 +106,7 @@ class TestPathTraversalPrevention:
             response = client.get("/api/v1/admin/migrations/../../../etc/passwd")
             # FastAPI will return 404 for paths with slashes, but our validation should catch it
             # or return 400 if it gets to our handler
-            assert response.status_code in (400, 404)
+            assert response.status_code == 404
 
     def test_invalid_version_format_letters_rejected(self, client):
         """Test that version with letters is rejected."""
@@ -115,7 +115,7 @@ class TestPathTraversalPrevention:
         ):
             response = client.get("/api/v1/admin/migrations/abc")
             # Should get 400 from our validation or 404 from FastAPI path matching
-            assert response.status_code in (400, 404)
+            assert response.status_code == 404
             if response.status_code == 400:
                 assert "Invalid migration version format" in response.json()["detail"]
 
@@ -125,7 +125,7 @@ class TestPathTraversalPrevention:
             "src.api.routes.admin.migrations.get_admin_from_token", return_value=1
         ):
             response = client.get("/api/v1/admin/migrations/12345")
-            assert response.status_code in (400, 404)
+            assert response.status_code == 404
             if response.status_code == 400:
                 assert "Invalid migration version format" in response.json()["detail"]
 
@@ -135,7 +135,7 @@ class TestPathTraversalPrevention:
             "src.api.routes.admin.migrations.get_admin_from_token", return_value=1
         ):
             response = client.get("/api/v1/admin/migrations/1")
-            assert response.status_code in (400, 404)
+            assert response.status_code == 404
             if response.status_code == 400:
                 assert "Invalid migration version format" in response.json()["detail"]
 
@@ -179,7 +179,7 @@ class TestConfirmationRequirement:
         )
 
         # Should fail with 400 (bad confirmation) or 404 (migration not found in reality)
-        assert response.status_code in (400, 404)
+        assert response.status_code == 404
         if response.status_code == 400:
             assert "THE DATABASE IS BACKED UP" in response.json()["detail"]
 
@@ -204,7 +204,7 @@ class TestConfirmationRequirement:
             json={"dry_run": False, "confirmation_text": "wrong text"},
         )
 
-        assert response.status_code in (400, 404)
+        assert response.status_code == 404
         if response.status_code == 400:
             assert "THE DATABASE IS BACKED UP" in response.json()["detail"]
 
@@ -295,7 +295,7 @@ class TestRollbackIrreversible:
         response = client.post("/api/v1/admin/migrations/025/rollback")
 
         # Should get 400 if blocked by our code, or 404 if migration not found
-        assert response.status_code in (400, 404)
+        assert response.status_code == 404
         if response.status_code == 400:
             assert "Cannot rollback irreversible" in response.json()["detail"]
 
@@ -333,7 +333,7 @@ class TestVersionValidationEdgeCases:
             # Null byte injection attempt
             response = client.get("/api/v1/admin/migrations/001%00.py")
             # Should get 400 or 404, not succeed
-            assert response.status_code in (400, 404, 422)
+            assert response.status_code == 404
 
     def test_version_with_special_chars_rejected(self, client):
         """Test that version with special characters is rejected."""
@@ -341,7 +341,7 @@ class TestVersionValidationEdgeCases:
             "src.api.routes.admin.migrations.get_admin_from_token", return_value=1
         ):
             response = client.get("/api/v1/admin/migrations/00%3B")  # URL encoded ;
-            assert response.status_code in (400, 404)
+            assert response.status_code == 404
 
     def test_version_unicode_rejected(self, client):
         """Test that unicode in version is rejected."""
@@ -351,7 +351,7 @@ class TestVersionValidationEdgeCases:
             response = client.get(
                 "/api/v1/admin/migrations/\u0030\u0030\u0031"
             )  # Unicode 001
-            assert response.status_code in (400, 404)
+            assert response.status_code == 404
 
 
 class TestHostRestriction:

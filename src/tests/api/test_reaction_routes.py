@@ -9,7 +9,7 @@ def test_add_reaction(test_client, test_user_with_token):
         headers={"Authorization": f"Bearer {token}"},
     )
     # Reaction routes might not be fully set up in tests
-    assert response.status_code in [200, 404, 500]
+    assert response.status_code == 404
 
 
 def test_remove_reaction(test_client, test_user_with_token):
@@ -20,10 +20,10 @@ def test_remove_reaction(test_client, test_user_with_token):
         headers={"Authorization": f"Bearer {token}"},
     )
     # Reaction routes might not be fully set up in tests
-    assert response.status_code in [200, 404, 500]
+    assert response.status_code == 404
 
 
 def test_reaction_without_auth(test_client):
     """Test that reactions without authentication fail."""
     response = test_client.put("/api/v1/messages/123/reactions/👍")
-    assert response.status_code in [401, 404]
+    assert response.status_code == 404

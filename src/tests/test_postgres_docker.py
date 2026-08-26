@@ -21,7 +21,11 @@ import pytest
 
 pytestmark = [
     pytest.mark.postgres,
-    pytest.mark.skip(reason="PostgreSQL Docker tests require Docker environment"),
+    # NOT skipped unconditionally: the ``postgres_manager`` fixture skips
+    # cleanly ("PostgreSQL not available") when neither Docker/testcontainers
+    # nor a local PostgreSQL is reachable, so these tests appear as VISIBLE
+    # SKIPS in the default run instead of being silently deselected — and
+    # they actually run wherever a PostgreSQL backend is available.
 ]
 import os  # noqa: E402
 import threading  # noqa: E402

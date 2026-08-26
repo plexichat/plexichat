@@ -10,7 +10,7 @@ def test_get_user_profile(test_client, test_user_with_token):
         headers={"Authorization": f"Bearer {token}"},
     )
     # User routes might not be fully set up in tests
-    assert response.status_code in [200, 404, 500]
+    assert response.status_code == 200
 
 
 def test_update_user_profile(test_client, test_user_with_token):
@@ -22,7 +22,7 @@ def test_update_user_profile(test_client, test_user_with_token):
         json={"username": "newusername"},
     )
     # User routes might not be fully set up in tests
-    assert response.status_code in [200, 400, 404, 500]
+    assert response.status_code == 200
 
 
 def test_user_routes_without_auth(test_client):

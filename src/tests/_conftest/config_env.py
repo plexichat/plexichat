@@ -159,26 +159,20 @@ if not hasattr(Database, "fetch_last_insert_id"):
 
 
 # =============================================================================
-# Test-only validator bypass (module-level, scoped to test session)
+# Test validator helpers (opt-in only — NO import-time rebinding)
 # -----------------------------------------------------------------------------
-# The authentication module's ``validate_email`` performs strict
-# validation.  Every fixture that creates users via ``auth.register()``
-# would hit ``raise InvalidEmailError`` for test-generated ``@test``
-# / ``@test.local`` addresses -- breaking settings/polls/soundboard/
-# stickers suites.  We rebind the validators at import time.  This is
-# scoped to the test conftest and reverts when pytest's interpreter
-# exits; the production runtime is never touched.
+# Production validators are NOT patched globally any more: the email
+# whitelist accommodation below is available as an explicit opt-in via the
+# ``lenient_email_validation`` fixture (see misc_fixtures.py), so the
+# default run exercises the REAL ``validate_email`` /
+# ``hash_password`` / ``verify_password`` implementations.
 #
-# Two layers:
-#   1. The real validator runs first (so genuine bug-detection still
-#      kicks in for real-world addresses like ``bad@x.x``).
-#   2. A blanket whitelist catches every RFC 6761 reserved TLD
-#      (``.test``/``.local``/``.example``/``.invalid``). The bare ``@test``
-#      host is deliberately NOT whitelisted: ``user@test`` has no TLD and
-#      must be rejected by the strict validator (the security suite asserts
-#      this). Fixture emails use ``@test.local``, which ``.local`` covers.
+# Note every fixture-generated address (``...@example.com``,
+# ``...@test.local``, RFC 6761 reserved TLDs) already passes the
+# production regex validator, so no suite depends on a global bypass;
+# the bare ``@test`` host has no TLD and MUST stay rejected by the
+# strict validator (the security suite asserts this).
 from src.core.auth import passwords as _auth_passwords  # noqa: E402
-from src.core.auth.managers import registration as _reg_module  # noqa: E402
 
 _TEST_TLD_WHITELIST = (
     ".test",
@@ -201,19 +195,9 @@ def address_whitelisted(email: str) -> bool:
 
 
 def _test_always_valid_email(email, _orig=_original_validate_email):
-    """Bypass: real validator first; whitelist as final fallback."""
+    """Opt-in bypass: real validator first; whitelist as final fallback."""
     if email and "@" in email and not any(c.isspace() for c in email):
         if _orig(email):
             return True
         return address_whitelisted(email)
     return False
-
-
-# Apply the email-only test accommodation at module import time so every
-# fixture sees it without depending on autouse-fixture ordering. Username
-# validation deliberately remains the production implementation: globally
-# bypassing it made the property-based security tests test the fixture rather
-# than the validator.
-_auth_passwords.validate_email = _test_always_valid_email
-_reg_module.validate_email = _test_always_valid_email
-_reg_module.validate_username = _auth_passwords.validate_username

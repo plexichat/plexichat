@@ -23,7 +23,7 @@ def test_tamper_with_user_id_in_url(test_client, auth_manager):
     )
 
     # Should fail (either 404 or 403)
-    assert response.status_code in [404, 403]
+    assert response.status_code == 404
 
 
 def test_tamper_with_boolean_parameters(test_client):
@@ -39,7 +39,7 @@ def test_tamper_with_boolean_parameters(test_client):
     )
 
     # Should handle the type conversion or reject
-    assert response.status_code in [200, 400]
+    assert response.status_code == 200
 
 
 def test_tamper_with_numeric_parameters(test_client):
@@ -55,7 +55,7 @@ def test_tamper_with_numeric_parameters(test_client):
     )
 
     # Should either reject or handle safely
-    assert response.status_code in [200, 400]
+    assert response.status_code == 200
 
 
 def test_tamper_with_array_parameters(test_client):
@@ -84,4 +84,4 @@ def test_tamper_with_extra_fields(test_client):
     )
 
     # Should ignore extra field or reject
-    assert response.status_code in [401, 400]
+    assert response.status_code == 401

@@ -100,7 +100,7 @@ class TestPasskeyAPI:
             headers=auth_headers,
         )
         # May return 200 with options, 501 if webauthn not available, or 403
-        assert response.status_code in (200, 403, 501)
+        assert response.status_code == 200
         if response.status_code == 200:
             data = response.json()
             assert "challenge_id" in data or "options" in data
@@ -111,7 +111,7 @@ class TestPasskeyAPI:
             "/api/v1/auth/passkeys",
             headers=auth_headers,
         )
-        assert response.status_code in (200, 403, 501)
+        assert response.status_code == 200
         if response.status_code == 200:
             data = response.json()
             assert isinstance(data, list)
@@ -123,7 +123,7 @@ class TestPasskeyAPI:
             headers=auth_headers,
         )
         # 404 (not found), 403 (forbidden), or 501 (not available)
-        assert response.status_code in (200, 404, 403, 501)
+        assert response.status_code == 404
 
     def test_passkey_rename_endpoint(self, test_client, auth_headers):
         """Test passkey rename endpoint."""
@@ -133,4 +133,4 @@ class TestPasskeyAPI:
             headers=auth_headers,
         )
         # 404 (not found), 403 (forbidden), or 501 (not available)
-        assert response.status_code in (200, 404, 403, 501)
+        assert response.status_code == 404

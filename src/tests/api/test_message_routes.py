@@ -10,7 +10,7 @@ def test_send_message(test_client, test_user_with_token):
         json={"content": "Test message"},
     )
     # Message routes might not be fully set up in tests
-    assert response.status_code in [200, 400, 404, 500]
+    assert response.status_code == 404
 
 
 def test_send_message_without_auth(test_client):
@@ -20,7 +20,7 @@ def test_send_message_without_auth(test_client):
         json={"content": "Test message"},
     )
     # Message routes might not be fully set up in tests
-    assert response.status_code in [401, 404]
+    assert response.status_code == 404
 
 
 def test_get_messages(test_client, test_user_with_token):
@@ -31,7 +31,7 @@ def test_get_messages(test_client, test_user_with_token):
         headers={"Authorization": f"Bearer {token}"},
     )
     # Message routes might not be fully set up in tests
-    assert response.status_code in [200, 400, 404, 500]
+    assert response.status_code == 404
 
 
 def _first_channel(modules, server):

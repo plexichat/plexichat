@@ -8,7 +8,7 @@ def test_get_user_avatar(test_client, test_user_with_token):
     user_id = test_user_with_token["user"].id
     response = test_client.get(f"/api/v1/avatars/users/{user_id}")
     # Avatar module might not be fully set up in tests
-    assert response.status_code in [200, 404, 500]
+    assert response.status_code == 200
 
 
 def test_upload_avatar(test_client, test_user_with_token):
@@ -24,8 +24,9 @@ def test_upload_avatar(test_client, test_user_with_token):
         headers={"Authorization": f"Bearer {token}"},
         files=files,
     )
-    # Avatar module might not be fully set up in tests
-    assert response.status_code in [200, 500]
+    # The avatar module is wired (production parity): fake bytes are a
+    # client error, not a server failure.
+    assert response.status_code == 400, response.text
 
 
 def test_upload_avatar_without_auth(test_client):
@@ -64,8 +65,9 @@ def test_delete_avatar(test_client, test_user_with_token):
         "/api/v1/avatars/users/@me",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # Avatar module might not be fully set up in tests
-    assert response.status_code in [200, 500]
+    # The avatar module is wired (production parity): deleting a
+    # (non-existent) avatar succeeds as a no-op.
+    assert response.status_code == 200, response.text
 
 
 def test_delete_avatar_without_auth(test_client):
