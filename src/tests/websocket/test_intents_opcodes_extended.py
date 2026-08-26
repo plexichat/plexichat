@@ -231,6 +231,24 @@ def test_all_opcodes_unique():
     assert len(values) == len(set(values))
 
 
+@pytest.mark.asyncio
+async def test_invalid_session_payload_uses_gateway_wire_shape():
+    """The gateway reads the resumable flag from the nested ``d`` payload."""
+    from unittest.mock import AsyncMock
+
+    from src.api.websocket.dispatcher import GatewayDispatcher
+
+    dispatcher = GatewayDispatcher(session_manager=object())
+    connection = type("ConnectionStub", (), {})()
+    connection.send_json = AsyncMock(return_value=True)
+    connection.increment_sequence = lambda: 1
+    connection.session_id = None
+
+    assert await dispatcher.send_invalid_session(connection, resumable=True)
+    sent = connection.send_json.await_args.args[0]
+    assert sent == {"op": int(GatewayOpcode.INVALID_SESSION), "d": True}
+
+
 # ---------------------------------------------------------------------------
 # Close codes
 # ---------------------------------------------------------------------------

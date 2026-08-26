@@ -216,7 +216,7 @@ class GatewayDispatcher:
         self,
         connection: Connection,
         opcode: GatewayOpcode,
-        data: Optional[Dict[str, Any]] = None,
+        data: Optional[Any] = None,
         event_type: Optional[str] = None,
     ) -> bool:
         """
@@ -293,7 +293,7 @@ class GatewayDispatcher:
         return await self.dispatch_raw(
             connection,
             GatewayOpcode.INVALID_SESSION,
-            {"resumable": resumable},
+            resumable,
         )
 
     async def send_reconnect(self, connection: Connection) -> bool:
