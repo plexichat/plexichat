@@ -135,6 +135,10 @@ def get_authentication_defaults(home_dir: Path) -> Dict[str, Any]:
             "digits": 6,
             "interval": 30,
             "backup_code_count": 10,
+            # Minimum 8 enforced in totp.generate_backup_codes(); lower values
+            # are clamped. 32 bits (~10/2^32 per 10 codes) with per-challenge
+            # and per-user limiters. Configure higher for more entropy.
+            "backup_code_length": 8,
         },
         "password": {
             "min_length": 12,

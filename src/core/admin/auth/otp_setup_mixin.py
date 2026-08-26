@@ -29,9 +29,8 @@ class OTPSetupMixin:
 
         secret = pyotp.random_base32()
         totp = pyotp.TOTP(secret)
-        qr_uri = totp.provisioning_uri(
-            name=row["username"], issuer_name="Plexichat Admin"
-        )
+        username = row["username"] if isinstance(row, dict) else row[0]
+        qr_uri = totp.provisioning_uri(name=username, issuer_name="Plexichat Admin")
         encrypted_secret = _encrypt(secret, context=f"admin_totp:{admin_id}")
         self._db.execute(
             """
@@ -61,6 +60,11 @@ class OTPSetupMixin:
         if not valid or row is None:
             return False, message
 
+        from .helpers import _check_otp_attempt_limit
+
+        if not _check_otp_attempt_limit(f"disable:{admin_id}"):
+            return False, "Too many OTP attempts"
+
         secret_row = self._db.fetch_one(
             "SELECT totp_secret, totp_secret_encrypted, totp_enabled, backup_codes, backup_codes_hash FROM admin_users WHERE id = ?",
             (admin_id,),
@@ -87,7 +91,9 @@ class OTPSetupMixin:
 
                 secret = _decrypt(encrypted_secret, context=f"admin_totp:{admin_id}")
             except Exception:
-                secret = plaintext_secret
+                # A decryption failure must not downgrade OTP to a plaintext
+                # secret stored for legacy compatibility.
+                return False, "OTP unavailable"
         else:
             secret = plaintext_secret
 
@@ -99,15 +105,30 @@ class OTPSetupMixin:
 
         normalized = code.upper().replace("-", "")
         candidate_sha256 = hashlib.sha256(normalized.lower().encode()).hexdigest()
-        verified = pyotp.TOTP(secret).verify(code, valid_window=1)
+        verified = False
+        verified_backup_index = None
+
+        # TOTP disable must honor the same single-use replay rule as login.
+        if secret and pyotp.TOTP(secret).verify(code, valid_window=1):
+            now_ms = int(__import__("time").time() * 1000)
+            cursor = self._db.execute(
+                "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ? "
+                "WHERE id = ? AND (otp_last_used_code IS NULL OR otp_last_used_code <> ?)",
+                (code, now_ms, admin_id, code),
+            )
+            if getattr(cursor, "rowcount", 0) != 1:
+                return False, "Code already used — wait for next code"
+            verified = True
+
         if not verified:
             if backup_codes_hashed:
                 try:
                     hashed_list = json.loads(backup_codes_hashed)
-                    for h in hashed_list:
+                    for i, h in enumerate(hashed_list):
                         if candidate_sha256 == str(h) or _verify_pwd(
                             normalized.lower(), str(h)
                         ):
+                            verified_backup_index = i
                             verified = True
                             break
                 except (json.JSONDecodeError, TypeError):
@@ -116,9 +137,45 @@ class OTPSetupMixin:
                 codes = [
                     item for item in str(backup_codes_plaintext).split(",") if item
                 ]
-                verified = normalized in codes
+                if normalized in codes:
+                    verified_backup_index = codes.index(normalized)
+                    verified = True
         if not verified:
             return False, "Invalid OTP or backup code"
+
+        if verified_backup_index is not None and backup_codes_hashed:
+            try:
+                hashed_list = json.loads(backup_codes_hashed)
+            except (json.JSONDecodeError, TypeError):
+                hashed_list = []
+            if verified_backup_index >= len(hashed_list):
+                return False, "Invalid OTP or backup code"
+            remaining = (
+                hashed_list[:verified_backup_index]
+                + hashed_list[verified_backup_index + 1 :]
+            )
+            cursor = self._db.execute(
+                "UPDATE admin_users SET backup_codes_hash = ? WHERE id = ? AND backup_codes_hash = ?",
+                (json.dumps(remaining), admin_id, backup_codes_hashed),
+            )
+            if getattr(cursor, "rowcount", 0) != 1:
+                return False, "Invalid OTP or backup code"
+        elif verified_backup_index is not None and backup_codes_plaintext:
+            codes = [item for item in str(backup_codes_plaintext).split(",") if item]
+            if verified_backup_index >= len(codes):
+                return False, "Invalid OTP or backup code"
+            codes.pop(verified_backup_index)
+            cursor = self._db.execute(
+                "UPDATE admin_users SET backup_codes = ?, backup_codes_hash = NULL "
+                "WHERE id = ? AND backup_codes = ?",
+                (
+                    (",").join(codes) if codes else None,
+                    admin_id,
+                    backup_codes_plaintext,
+                ),
+            )
+            if getattr(cursor, "rowcount", 0) != 1:
+                return False, "Invalid OTP or backup code"
 
         self._db.execute(
             """

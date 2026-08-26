@@ -54,9 +54,8 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
     def authenticate_admin(
         self, username: str, password: str, ip: str = "unknown"
     ) -> AdminLoginResult:
-        """Authenticate admin user."""
-        import time
-        from src.core.database import cache_get, cache_set, cache_delete
+        """Authenticate admin user with password and optional OTP."""
+        from src.core.database import reset_rate_limit
 
         admin_config = config.get("admin_ui", {})
         rate_config = admin_config.get("rate_limit", {})
@@ -75,91 +74,49 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
 
         db = self._db
         row = db.fetch_one(
-            "SELECT id, password_hash, totp_secret, totp_secret_encrypted, totp_enabled, must_setup_otp FROM admin_users WHERE username = ?",
+            "SELECT id, password_hash, totp_secret, totp_secret_encrypted, "
+            "totp_enabled, must_setup_otp FROM admin_users WHERE username = ?",
             (username,),
         )
         if not row:
-            attempts_key = f"admin_login_attempts:{ip}"
-            attempts = cache_get(attempts_key) or []
-            attempts.append(time.time() * 1000)
-            cache_set(
-                attempts_key, attempts, ttl=rate_config.get("window_seconds", 300)
-            )
             return AdminLoginResult(success=False, error="Invalid credentials")
 
         if isinstance(row, dict):
             admin_id = row["id"]
             password_hash = row["password_hash"]
-            totp_enabled = bool(row["totp_enabled"])
-            must_setup_otp = bool(row["must_setup_otp"])
+            totp_enabled = bool(row.get("totp_enabled", 0))
+            must_setup_otp = bool(row.get("must_setup_otp", 0))
         else:
             admin_id = row[0]
             password_hash = row[1]
-            _totp_secret = (
-                row[3]
-                if len(row) > 3 and row[3]
-                else (row[2] if len(row) > 2 else None)
-            )
             totp_enabled = bool(row[4]) if len(row) > 4 else False
             must_setup_otp = bool(row[5]) if len(row) > 5 else False
 
         import src.utils.encryption as encryption
 
-        authenticated = False
-        # SECURITY: the previous implementation silently accepted
-        # plain SHA-256 hex digests (``hashlib.sha256(pw).hexdigest()``)
-        # as a password-equivalent when encountering legacy DB rows.
-        # Unsalted SHA-256 is rainbow-table-friendly: anyone with a
-        # read-only leak of the password_hash column can recover usable
-        # passwords offline in seconds. We now refuse any non-Argon2id
-        # hash outright and force the operator to either clear or
-        # re-credential the affected admin row.
-        if not password_hash.startswith("$argon2"):
-            import hashlib
+        # Passwords stored outside Argon2 are legacy credentials and are not
+        # accepted. This prevents a leaked unsalted digest from becoming a
+        # usable login credential.
+        if not isinstance(password_hash, str) or not password_hash.startswith(
+            "$argon2"
+        ):
+            import utils.logger as auth_logger
 
-            import utils.logger as _auth_logger
-
-            legacy_match = (
-                hashlib.sha256(password.encode()).hexdigest() == password_hash
+            auth_logger.critical(
+                "Refusing admin login for %s: password hash is not Argon2id",
+                admin_id,
             )
-            if legacy_match or password_hash.startswith("sha256$"):
-                _auth_logger.critical(
-                    "AUTH-BYPASS-ATTEMPT: admin %s attempted login with a "
-                    "row stored using an insecure password hash (sha256 no salt). "
-                    "Refusing authentication; rotate this admin's password "
-                    "via the operator tools before granting access.",
-                    admin_id,
-                )
-                # increment rate-limit so a brute-force over a leaked
-                # hash column cannot enumerate this account.
-                attempts_key = f"admin_login_attempts:{ip}"
-                attempts = cache_get(attempts_key) or []
-                attempts.append(time.time() * 1000)
-                cache_set(
-                    attempts_key,
-                    attempts,
-                    ttl=rate_config.get("window_seconds", 300),
-                )
-                return AdminLoginResult(
-                    success=False,
-                    error="Insecure password hash on file; contact operator",
-                    rate_limited=False,
-                )
-        else:
-            if encryption.verify_password(password, password_hash):
-                authenticated = True
-
-        if not authenticated:
-            attempts_key = f"admin_login_attempts:{ip}"
-            attempts = cache_get(attempts_key) or []
-            attempts.append(time.time() * 1000)
-            cache_set(
-                attempts_key, attempts, ttl=rate_config.get("window_seconds", 300)
+            return AdminLoginResult(
+                success=False,
+                error="Insecure password hash on file; contact operator",
             )
+
+        if not encryption.verify_password(password, password_hash):
             return AdminLoginResult(success=False, error="Invalid credentials")
 
-        cache_delete(f"admin_login_attempts:{ip}")
-        cache_delete(f"admin_login_lockout:{ip}")
+        # A successful password phase clears the shared failure bucket. OTP
+        # verification has its own challenge-bound attempt budget.
+        reset_rate_limit(f"admin_login:{ip}")
 
         otp_required = admin_config.get("require_otp", True)
         if not otp_required:
@@ -173,14 +130,11 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
                 "UPDATE admin_users SET last_login = ? WHERE id = ?",
                 (int(time.time() * 1000), admin_id),
             )
-
-            requires_password_change = self.check_password_change_required(admin_id)
-
             return AdminLoginResult(
                 success=True,
                 token=token,
                 user_id=admin_id,
-                requires_password_change=requires_password_change,
+                requires_password_change=self.check_password_change_required(admin_id),
             )
 
         if must_setup_otp or not totp_enabled:
@@ -188,11 +142,13 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
             from src.utils.encryption import encrypt_data as _encrypt
 
             secret = pyotp.random_base32()
-            totp = pyotp.TOTP(secret)
-            qr_uri = totp.provisioning_uri(name=username, issuer_name="Plexichat Admin")
+            qr_uri = pyotp.TOTP(secret).provisioning_uri(
+                name=username, issuer_name="Plexichat Admin"
+            )
             encrypted_secret = _encrypt(secret, context=f"admin_totp:{admin_id}")
             db.execute(
-                "UPDATE admin_users SET totp_secret_encrypted = ?, totp_secret = NULL, must_setup_otp = 1 WHERE id = ?",
+                "UPDATE admin_users SET totp_secret_encrypted = ?, totp_secret = NULL, "
+                "must_setup_otp = 1 WHERE id = ?",
                 (encrypted_secret, admin_id),
             )
             return AdminLoginResult(
@@ -204,14 +160,6 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
                 challenge_token=_create_otp_challenge(admin_id, is_setup=True),
             )
 
-        if totp_enabled:
-            return AdminLoginResult(
-                success=True,
-                user_id=admin_id,
-                requires_otp_verify=True,
-                challenge_token=_create_otp_challenge(admin_id, is_setup=False),
-            )
-
         return AdminLoginResult(
             success=True,
             user_id=admin_id,
@@ -221,26 +169,51 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
 
 
 def _seed_default_admin_roles(db, admin_id: int, now: int) -> None:
-    """Create the super_admin role and assign it to the first admin."""
+    """Create the system super-admin role and a delegable standard role."""
     import json
     import utils.logger as logger
     from src.utils.encryption import generate_snowflake_id
 
     existing = db.fetch_one("SELECT COUNT(*) as c FROM admin_roles")
-    if existing and existing.get("c", 0) > 0:
-        return
-
-    super_admin_id = generate_snowflake_id()
-    db.execute(
-        """INSERT INTO admin_roles (id, name, description, permissions, created_at, created_by, is_system, position)
-           VALUES (?, 'super_admin', 'Full system access with all permissions', ?, ?, ?, 1, 100)""",
-        (super_admin_id, json.dumps({"*": True}), now, admin_id),
+    count = (
+        existing.get("c", 0)
+        if isinstance(existing, dict)
+        else (existing[0] if existing else 0)
     )
 
-    db.execute(
-        """INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by)
-           VALUES (?, ?, ?, ?)""",
-        (admin_id, super_admin_id, now, admin_id),
-    )
+    if not count:
+        super_admin_id = generate_snowflake_id()
+        db.execute(
+            """INSERT INTO admin_roles
+               (id, name, description, permissions, created_at, created_by, is_system, position)
+               VALUES (?, 'super_admin', 'Full system access with all permissions', ?, ?, ?, 1, 100)""",
+            (super_admin_id, json.dumps({"*": True}), now, admin_id),
+        )
+        db.execute(
+            """INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by)
+               VALUES (?, ?, ?, ?)""",
+            (admin_id, super_admin_id, now, admin_id),
+        )
+        count = 1
 
-    logger.info(f"Created super_admin role and assigned to admin {admin_id}")
+    # Keep a non-system role available for delegated administrators. Existing
+    # installations may have only the original super_admin seed.
+    standard = db.fetch_one(
+        "SELECT id FROM admin_roles WHERE name = ?", ("support_admin",)
+    )
+    if not standard:
+        standard_id = generate_snowflake_id()
+        db.execute(
+            """INSERT INTO admin_roles
+               (id, name, description, permissions, created_at, created_by, is_system, position)
+               VALUES (?, 'support_admin', 'Limited administrative access', ?, ?, ?, 0, 10)""",
+            (
+                standard_id,
+                json.dumps({"admin.read": True, "admin.edit": True}),
+                now,
+                admin_id,
+            ),
+        )
+
+    if not count:
+        logger.info(f"Created default admin roles for admin {admin_id}")

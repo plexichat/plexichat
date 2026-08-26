@@ -448,17 +448,25 @@ def get_user_notes(db: Any, user_id: int) -> str:
         (user_id,),
     )
     if row:
-        notes = (row["internal_notes"] if isinstance(row, dict) else row[0]) or ""
-        # Decrypt if encryption is enabled and encrypted data exists
-        if encrypt_internal_notes and row.get("internal_notes_encrypted"):
-            from src.utils.encryption import decrypt_data
+        if isinstance(row, dict):
+            plaintext = row.get("internal_notes")
+            encrypted = row.get("internal_notes_encrypted")
+        else:
+            plaintext = row[0] if len(row) > 0 else None
+            encrypted = row[1] if len(row) > 1 else None
 
-            try:
-                notes = decrypt_data(row["internal_notes_encrypted"])
-            except Exception as e:
-                logger.warning(f"Failed to decrypt user notes {user_id}: {e}")
-                notes = row["internal_notes"] or ""  # Fallback to unencrypted
-        return notes
+        if not encrypt_internal_notes:
+            return plaintext or ""
+        if not encrypted:
+            return ""
+
+        from src.utils.encryption import decrypt_data
+
+        try:
+            return decrypt_data(encrypted)
+        except Exception as e:
+            logger.warning(f"Failed to decrypt user notes {user_id}: {e}")
+            return ""
     return ""
 
 
@@ -475,8 +483,8 @@ def save_user_notes(db: Any, user_id: int, notes: str, admin_id: int) -> bool:
 
     if encrypt_internal_notes:
         db.execute(
-            "UPDATE auth_users SET internal_notes = ?, internal_notes_encrypted = ? WHERE id = ?",
-            (notes, notes_encrypted, user_id),
+            "UPDATE auth_users SET internal_notes = NULL, internal_notes_encrypted = ? WHERE id = ?",
+            (notes_encrypted, user_id),
         )
     else:
         db.execute(

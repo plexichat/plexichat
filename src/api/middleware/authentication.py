@@ -294,8 +294,10 @@ class AuthenticationMiddleware:
                             ua = request.headers.get("User-Agent")
 
                             # Verify token in a threadpool to avoid blocking the event loop
-                            def _verify_with_cleanup(token_str, client_ip, user_agent):
-                                return auth.verify_token(
+                            def _verify_with_cleanup(
+                                token_str, client_ip, user_agent, auth_ref=auth
+                            ):
+                                return auth_ref.verify_token(
                                     token_str,
                                     ip_address=client_ip,
                                     user_agent=user_agent,
@@ -343,8 +345,17 @@ class AuthenticationMiddleware:
                     logger.debug(
                         f"Auth: Failed to extract token from header '{masked_header}' for path {path}"
                     )
-            elif (
-                not auth_header
+                    scope["state"]["auth_error"] = "Invalid Authorization header"
+            # Cookie fallback: runs when no Authorization header was sent OR
+            # when the bearer token failed verification (F1). A valid HttpOnly
+            # cookie session is not shadowed by a stale/invalid bearer header.
+            _bearer_failed = bool(
+                auth_header
+                and not scope["state"].get("user")
+                and not scope["state"].get("system_error")
+            )
+            if (
+                (not auth_header or _bearer_failed)
                 and not is_admin_path
                 and not is_public_endpoint
                 and scope.get("method") != "OPTIONS"
@@ -388,8 +399,13 @@ class AuthenticationMiddleware:
                                 if token_info:
                                     scope["state"]["user"] = token_info
                                     scope["state"]["cookie_auth"] = True
+                                    # Bearer fallback succeeded: a stale bearer no
+                                    # longer shadows the valid cookie session (F1).
+                                    scope["state"].pop("auth_error", None)
                                     logger.debug(
-                                        f"Auth: Cookie-authenticated user {token_info.user_id} for path {path}"
+                                        f"Auth: Cookie-authenticated user {token_info.user_id} for path {path} (bearer fallback)"
+                                        if _bearer_failed
+                                        else f"Auth: Cookie-authenticated user {token_info.user_id} for path {path}"
                                     )
                             except AuthError as e:
                                 logger.debug(f"Cookie auth failed for {path}: {e}")

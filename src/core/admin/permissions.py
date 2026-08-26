@@ -314,7 +314,7 @@ def _get_admin_roles(db, admin_id: int) -> List[AdminRole]:
                         permissions=permissions,
                         created_at=row[4],
                         created_by=row[5],
-                        is_system=bool(row[7]) if len(row) > 7 else False,
+                        is_system=bool(row[6]) if len(row) > 6 else False,
                     )
                 )
 

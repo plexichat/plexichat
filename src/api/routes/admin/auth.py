@@ -45,7 +45,9 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
     from src.core import admin
 
     try:
-        client_ip = request.client.host if request.client else "unknown"
+        from src.utils.net import get_client_ip
+
+        client_ip = get_client_ip(request) or "unknown"
         result = admin.login(login_data.username, login_data.password, client_ip)
         if not result.success:
             status_code = 429 if result.rate_limited else 401
@@ -229,7 +231,9 @@ async def admin_force_password_change(request: Request, target_admin_id: str):
                 detail={"error": {"code": 400, "message": "Invalid admin ID"}},
             )
 
-        client_ip = request.client.host if request.client else "unknown"
+        from src.utils.net import get_client_ip
+
+        client_ip = get_client_ip(request) or "unknown"
         success, message = admin.force_password_change(
             acting_admin_id=current_admin_id,
             target_admin_id=target_id_int,

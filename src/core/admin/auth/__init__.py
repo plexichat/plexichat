@@ -98,13 +98,11 @@ def change_password(
     return _get_auth().change_password(admin_id, current_password, new_password)
 
 
-def change_admin_password(
-    db: Any, admin_id: int, old_password: str, new_password: str
-) -> Tuple[bool, str]:
-    """Change admin password with validation."""
+def set_password(db: Any, admin_id: int, new_password: str) -> Tuple[bool, str]:
+    """Set a delegated administrator password using the hardened policy path."""
     if _auth_instance is None or _auth_instance._db is not db:
         init_auth(db)
-    return _get_auth().change_admin_password(admin_id, old_password, new_password)
+    return _get_auth().set_password(admin_id, new_password)
 
 
 def get_security_status(db: Any, admin_id: int) -> Optional[AdminSecurityStatus]:

@@ -71,8 +71,9 @@ def get_feedback_tickets(
     tickets = []
     for row in rows:
         if isinstance(row, dict):
-            # Decrypt internal_notes if encryption is enabled
-            internal_notes = row["internal_notes"]
+            # Encrypted mode is ciphertext-only; never expose a legacy
+            # plaintext column when ciphertext is absent or invalid.
+            internal_notes = None if encrypt_internal_notes else row["internal_notes"]
             if encrypt_internal_notes and row.get("internal_notes_encrypted"):
                 from src.utils.encryption import decrypt_data
 
@@ -80,7 +81,7 @@ def get_feedback_tickets(
                     internal_notes = decrypt_data(row["internal_notes_encrypted"])
                 except Exception as e:
                     logger.warning(f"Failed to decrypt feedback notes {row['id']}: {e}")
-                    internal_notes = row["internal_notes"]  # Fallback
+                    internal_notes = None
 
             tickets.append(
                 FeedbackTicket(
@@ -99,7 +100,7 @@ def get_feedback_tickets(
             )
         else:
             # Handle tuple rows (legacy)
-            internal_notes = row[10]
+            internal_notes = None if encrypt_internal_notes else row[10]
             if encrypt_internal_notes and len(row) > 11 and row[11]:
                 from src.utils.encryption import decrypt_data
 
@@ -107,7 +108,7 @@ def get_feedback_tickets(
                     internal_notes = decrypt_data(row[11])
                 except Exception as e:
                     logger.warning(f"Failed to decrypt feedback notes {row[0]}: {e}")
-                    internal_notes = row[10]  # Fallback
+                    internal_notes = None
 
             tickets.append(
                 FeedbackTicket(
@@ -144,8 +145,9 @@ def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
         return None
 
     if isinstance(row, dict):
-        # Decrypt internal_notes if encryption is enabled
-        internal_notes = row["internal_notes"]
+        # Encrypted mode is ciphertext-only; never expose a legacy
+        # plaintext column when ciphertext is absent or invalid.
+        internal_notes = None if encrypt_internal_notes else row["internal_notes"]
         if encrypt_internal_notes and row.get("internal_notes_encrypted"):
             from src.utils.encryption import decrypt_data
 
@@ -153,7 +155,7 @@ def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
                 internal_notes = decrypt_data(row["internal_notes_encrypted"])
             except Exception as e:
                 logger.warning(f"Failed to decrypt feedback notes {row['id']}: {e}")
-                internal_notes = row["internal_notes"]  # Fallback
+                internal_notes = None
 
         return FeedbackTicket(
             id=row["id"],
@@ -170,7 +172,7 @@ def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
         )
 
     # Handle tuple rows (legacy)
-    internal_notes = row[10]
+    internal_notes = None if encrypt_internal_notes else row[10]
     if encrypt_internal_notes and len(row) > 11 and row[11]:
         from src.utils.encryption import decrypt_data
 
@@ -178,7 +180,7 @@ def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
             internal_notes = decrypt_data(row[11])
         except Exception as e:
             logger.warning(f"Failed to decrypt feedback notes {row[0]}: {e}")
-            internal_notes = row[10]  # Fallback
+            internal_notes = None
 
     return FeedbackTicket(
         id=row[0],
@@ -227,8 +229,8 @@ def update_ticket_internal_notes(
 
     if encrypt_internal_notes:
         db.execute(
-            "UPDATE feedback SET internal_notes = ?, internal_notes_encrypted = ? WHERE id = ?",
-            (notes, notes_encrypted, ticket_id),
+            "UPDATE feedback SET internal_notes = NULL, internal_notes_encrypted = ? WHERE id = ?",
+            (notes_encrypted, ticket_id),
         )
     else:
         db.execute(

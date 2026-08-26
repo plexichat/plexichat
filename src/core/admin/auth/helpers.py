@@ -2,9 +2,11 @@
 Private helper functions for admin authentication.
 """
 
+import hashlib
 import os
 import secrets
 import string
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -13,21 +15,15 @@ import utils.logger as logger
 
 
 def _hash_admin_token(token: str) -> str:
-    """Hash admin bearer tokens before persistence.
+    """Return a deterministic one-way fingerprint for an admin bearer token.
 
-    SECURITY: the previous implementation used unsalted
-    ``hashlib.sha256(token).hexdigest()`` giving us a deterministic
-    fingerprint that an attacker with read-only DB access could
-    brute-force against a dictionary of guessed secrets. We now use
-    Argon2id via the encryption module which adds a per-row random
-    salt and a key-stretching cost that makes offline guessing
-    economically infeasible. The returned string is the canonical
-    ``$argon2id$v=19$m=…$salt$hash`` digest with no extra prefix; any
-    legacy ``sha256$`` row can be detected by prefix scan and rotated.
+    Password hashes must be salted, but session validation needs to look up a
+    row from the presented token. The token is generated from high-entropy
+    randomness, so a SHA-256 fingerprint is appropriate here and avoids
+    storing the bearer value itself. This is deliberately separate from the
+    Argon2id password hashing path.
     """
-    import src.utils.encryption as encryption
-
-    return encryption.hash_password(token)
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _create_otp_challenge(admin_id: int, is_setup: bool, ttl_seconds: int = 300) -> str:
@@ -72,10 +68,24 @@ def _validate_otp_challenge(
     return True
 
 
+def _check_otp_attempt_limit(
+    challenge_token: str, max_attempts: int = 5, window_seconds: int = 300
+) -> bool:
+    """Atomically enforce a bounded OTP challenge attempt budget."""
+    from src.core.database import check_rate_limit
+
+    allowed, _remaining = check_rate_limit(
+        f"admin_otp:{challenge_token}", max_attempts, window_seconds
+    )
+    return bool(allowed)
+
+
 def _consume_otp_challenge(challenge_token: str) -> None:
     from src.core.database import cache_delete
 
     cache_delete(f"admin_otp_challenge:{challenge_token}")
+    # The atomic rate-limit bucket expires naturally; explicitly deleting the
+    # challenge is sufficient and avoids a second non-atomic counter path.
 
 
 def _generate_password(length: int = 24) -> str:
@@ -140,11 +150,33 @@ IMPORTANT:
 
 Login URL: https://<your-server>:8000/admin
 """
-    creds_file.write_text(content)
+    temporary_path = None
     try:
-        os.chmod(creds_file, 0o600)
-    except Exception:
-        pass
+        # Write beside the destination with restrictive creation mode, then
+        # atomically replace the destination. This avoids exposing new
+        # credentials through an existing permissive file mode and preserves
+        # the old file if secure preparation fails.
+        fd, temporary_path = tempfile.mkstemp(
+            prefix=f".{creds_file.name}.", suffix=".tmp", dir=str(home_dir)
+        )
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as output:
+            output.write(content)
+        os.replace(temporary_path, creds_file)
+        temporary_path = None
+    except OSError as exc:
+        logger.critical(
+            "Could not create private admin credential file %s: %s",
+            creds_file,
+            exc,
+        )
+        raise RuntimeError("Admin credentials could not be stored securely") from exc
+    finally:
+        if temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
     logger.warning(f"Admin credentials saved to: {creds_file}")
 
 
@@ -185,26 +217,20 @@ def _check_rate_limit(
     window_seconds: int = 300,
     lockout_seconds: int = 900,
 ) -> Tuple[bool, Optional[int]]:
-    from src.core.database import cache_get, cache_set, cache_delete
+    """Atomically limit admin login attempts by the trusted client address.
 
-    now = time.time() * 1000
+    The limiter consumes one slot for each login attempt. Successful login
+    resets the bucket in ``AuthenticationMixin``; failed attempts remain
+    counted across workers and processes.
+    """
+    from src.core.database import check_rate_limit
 
-    lockout_key = f"admin_login_lockout:{ip}"
-    lockout = cache_get(lockout_key)
-    if lockout:
-        if now < lockout:
-            return False, int((lockout - now) / 1000)
-        else:
-            cache_delete(lockout_key)
-
-    attempts_key = f"admin_login_attempts:{ip}"
-    attempts = cache_get(attempts_key) or []
-
-    cutoff = now - (window_seconds * 1000)
-    attempts = [t for t in attempts if t > cutoff]
-
-    if len(attempts) >= max_attempts:
-        cache_set(lockout_key, now + (lockout_seconds * 1000), ttl=lockout_seconds)
-        return False, lockout_seconds
-
-    return True, None
+    # Use the longer lockout window for the shared atomic bucket. This avoids
+    # the old cache_get/list/cache_set race and keeps the denial effective
+    # across workers without a separate non-atomic lockout key.
+    allowed, _remaining = check_rate_limit(
+        f"admin_login:{ip}", max_attempts, max(window_seconds, lockout_seconds)
+    )
+    if allowed:
+        return True, None
+    return False, lockout_seconds

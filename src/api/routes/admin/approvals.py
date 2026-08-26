@@ -408,7 +408,7 @@ async def approve_request(request: Request, approval_id: int):
         # Get approval request
         approval = db.fetch_one(
             """
-            SELECT id, requested_by, status, current_approvals, required_approvals, approved_by
+            SELECT id, requested_by, status, current_approvals, required_approvals, approved_by, expires_at
             FROM admin_approvals
             WHERE id = ?
         """,
@@ -428,11 +428,13 @@ async def approve_request(request: Request, approval_id: int):
             required_approvals = approval["required_approvals"]
             requested_by = approval["requested_by"]
             raw_approved_by = approval["approved_by"]
+            expires_at = approval.get("expires_at")
         else:
             status = approval[2]
             required_approvals = approval[4]
             requested_by = approval[1]
             raw_approved_by = approval[5]
+            expires_at = approval[6] if len(approval) > 6 else None
 
         # Check if admin is the requester (self-approval not allowed)
         if admin_id == requested_by:
@@ -443,7 +445,15 @@ async def approve_request(request: Request, approval_id: int):
                 },
             )
 
-        # Check if approval is still pending
+        # Check if approval is still pending and within its configured
+        # lifetime. Expired requests cannot be used to authorize actions.
+        if expires_at is not None and int(expires_at) <= int(time.time() * 1000):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {"code": 400, "message": "Approval request has expired"}
+                },
+            )
         if status != "pending":
             raise HTTPException(
                 status_code=400,
@@ -614,7 +624,7 @@ async def reject_request(
     # Get approval request
     approval = db.fetch_one(
         """
-        SELECT id, status, requested_by
+        SELECT id, status, requested_by, expires_at
         FROM admin_approvals
         WHERE id = ?
     """,
@@ -631,6 +641,18 @@ async def reject_request(
         status = approval["status"]
     else:
         status = approval[1]
+
+    # Expired requests cannot be rejected or otherwise mutated.
+    expires_at = (
+        approval.get("expires_at")
+        if isinstance(approval, dict)
+        else (approval[3] if len(approval) > 3 else None)
+    )
+    if expires_at is not None and int(expires_at) <= int(time.time() * 1000):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Approval request has expired"}},
+        )
 
     # Check if approval is still pending
     if status != "pending":
@@ -717,7 +739,7 @@ async def cancel_approval(request: Request, approval_id: int):
 
     approval = db.fetch_one(
         """
-        SELECT id, status, requested_by
+        SELECT id, status, requested_by, expires_at
         FROM admin_approvals
         WHERE id = ?
     """,

@@ -731,12 +731,17 @@ class SessionMixin(AuthManagerProtocol):
         now = self._get_timestamp()
         expire_hours = self._config.get("sessions", {}).get("expire_hours", 720)
         new_expires = now + (expire_hours * 3600 * 1000)
+        # Token rotation (F3): mint a fresh secret so an intercepted token
+        # is only valid until the next refresh. Old token is invalidated
+        # immediately by replacing token_hash; client storage must be updated
+        # atomically (caller sets both bearer and cookie to the new token).
+        new_token, new_hash = create_session_token(parsed["id"])
         self._db.execute(
-            "UPDATE auth_sessions SET expires_at = ?, last_activity = ? WHERE id = ?",
-            (new_expires, now, parsed["id"]),
+            "UPDATE auth_sessions SET token_hash = ?, expires_at = ?, last_activity = ? WHERE id = ?",
+            (new_hash, new_expires, now, parsed["id"]),
         )
         invalidate_pattern("token_verify:*")
-        return token
+        return new_token
 
     def logout(self, token: str) -> bool:
         parsed = parse_token(token)

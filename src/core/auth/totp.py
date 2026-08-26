@@ -253,6 +253,19 @@ def generate_backup_codes(count: Optional[int] = None) -> List[str]:
         count = int(totp_config.get("backup_code_count", 10))
 
     code_length = int(totp_config.get("backup_code_length", 8))
+    # F3: enforce minimum entropy floor — 8 hex chars (32 bits) minimum;
+    # lower values are clamped and warned so misconfiguration cannot weaken
+    # backup codes below ~10/2^32 guessing resistance.
+    if code_length < 8:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "backup_code_length %s below minimum 8 — clamping to 8", code_length
+        )
+        code_length = 8
+    # Ensure even length for symmetric dash formatting and notify completeness
+    if code_length % 2 != 0:
+        code_length += 1
     half_length = code_length // 2
 
     codes = []
@@ -260,7 +273,7 @@ def generate_backup_codes(count: Optional[int] = None) -> List[str]:
         # Generate random bytes and convert to hex
         random_bytes = os.urandom(half_length)
         code = random_bytes.hex().upper()
-        # Format as XXXX-XXXX
+        # Format as XXXX-XXXX (length notification: each code is code_length chars plus dash)
         formatted = f"{code[:half_length]}-{code[half_length:]}"
         codes.append(formatted)
 

@@ -1,3 +1,4 @@
+import hmac
 import json
 import time
 from typing import Optional, List
@@ -124,7 +125,13 @@ class TwoFactorMixin(AuthManagerProtocol):
             token=token,
         )
 
-    def complete_2fa(self, challenge_token: str, code: str) -> AuthResult:
+    def complete_2fa(
+        self,
+        challenge_token: str,
+        code: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> AuthResult:
         parsed = parse_token(challenge_token)
         if not parsed or parsed["token_type"] != "2fa":
             raise TokenInvalidError("Invalid challenge")
@@ -140,6 +147,45 @@ class TwoFactorMixin(AuthManagerProtocol):
             raise TokenInvalidError("Expired/Used")
         if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
+
+        # F1: bind challenge to client context at mint time (blind indexes)
+        # and enforce at completion. Reject step-up mismatch when the
+        # requester's IP/UA does not match the stored blind indexes.
+        # Only enforce when both stored and presented values are available
+        # so that programmatic callers without network context (tests) are
+        # not broken; a real HTTP path will present an IP.
+        if ip_address is not None and row.get("ip_index"):
+            try:
+                presented_ip_index = self.crypto.blind_index(ip_address, "ip_address")
+                if not hmac.compare_digest(
+                    str(row["ip_index"]), str(presented_ip_index)
+                ):
+                    logger.warning("2FA challenge IP binding mismatch")
+                    raise TokenInvalidError("Client context mismatch")
+            except TokenInvalidError:
+                raise
+            except Exception:
+                logger.warning("2FA IP binding check failed", exc_info=True)
+                raise TokenInvalidError("Client context mismatch")
+        if user_agent is not None and row.get("ua_index"):
+            try:
+                presented_ua_index = self._ua_index(user_agent)
+                if presented_ua_index and not hmac.compare_digest(
+                    str(row["ua_index"]), str(presented_ua_index)
+                ):
+                    logger.warning("2FA challenge UA binding mismatch")
+                    raise TokenInvalidError("Client context mismatch")
+            except TokenInvalidError:
+                raise
+            except Exception:
+                logger.warning("2FA UA binding check failed", exc_info=True)
+                raise TokenInvalidError("Client context mismatch")
+
+        # F2: shared per-user limiter (mirrors confirm_2fa/disable_2fa) so
+        # fresh challenge tokens cannot reset the guessing budget. Fail-closed.
+        user_id_for_limit = row.get("user_id")
+        if user_id_for_limit is not None:
+            self._check_and_record_2fa_attempt(int(user_id_for_limit))
 
         max_attempts = int(self._config.get("totp", {}).get("max_attempts", 3))
         if row.get("attempts", 0) >= max_attempts:
@@ -300,7 +346,13 @@ class TwoFactorMixin(AuthManagerProtocol):
         invalidate_pattern("user_data:*")
         return True
 
-    def disable_2fa(self, user_id: int, password: str, code: str) -> bool:
+    def disable_2fa(
+        self,
+        user_id: int,
+        password: str,
+        code: str,
+        except_session_id: Optional[int] = None,
+    ) -> bool:
         user = self._db.fetch_one(
             "SELECT password_hash, totp_secret_encrypted, totp_enabled FROM auth_users WHERE id = ?",
             (user_id,),
@@ -326,6 +378,29 @@ class TwoFactorMixin(AuthManagerProtocol):
             (user_id,),
         )
         invalidate_pattern("user_data:*")
+        # F8: emit audit log entry for 2FA disable; policy: revoke other
+        # sessions or at least re-challenge. We emit audit and revoke all
+        # other sessions so that previously trusted sessions cannot bypass
+        # the now-disabled second factor without re-authentication.
+        self._log_audit(AuditEventType.TWO_FACTOR_DISABLED, user_id, True)
+        try:
+            # Policy: revoke all other sessions so previously trusted sessions
+            # cannot bypass the now-disabled second factor. Preserve the
+            # current session if the caller supplied it (route passes
+            # current_user.session_id).
+            if except_session_id is not None:
+                self._db.execute(
+                    "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0 AND id != ?",
+                    (user_id, except_session_id),
+                )
+            else:
+                self._db.execute(
+                    "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
+                    (user_id,),
+                )
+            invalidate_pattern("token_verify:*")
+        except Exception:
+            logger.debug("Failed to revoke sessions on 2FA disable", exc_info=True)
         try:
             from src.core.events.gateway_emit import emit_security_alert
 

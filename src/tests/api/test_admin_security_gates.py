@@ -268,6 +268,99 @@ class TestAccessTokenServerSideGeneration:
         assert exc.value.status_code == 400
 
 
+class TestAdminHostRestriction:
+    """CIDR allowlists must use real network membership, not string prefixes."""
+
+    def test_cidr_does_not_match_other_subnets(self):
+        from src.core import admin
+
+        assert admin.check_host_restriction("192.168.1.42", ["192.168.1.0/24"])
+        assert not admin.check_host_restriction("192.168.99.42", ["192.168.1.0/24"])
+        assert not admin.check_host_restriction("192.168.evil", ["192.168.1.0/24"])
+
+
+class TestRoleInputValidation:
+    """Delegated roles cannot create wildcard or out-of-hierarchy access."""
+
+    def test_role_create_rejects_subscope_wildcard(self):
+        from src.api.routes.admin import roles as role_routes
+        from src.api.routes.admin.roles import RoleCreate
+
+        request = _build_request("/roles", method="POST")
+        body = RoleCreate(
+            name="wild-subscope",
+            description="bad",
+            permissions={"admin.*": True},
+        )
+        with (
+            patch.object(role_routes, "check_host_restriction"),
+            patch.object(role_routes, "require_admin_permission", return_value=1),
+            patch("src.api.get_db"),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                __import__("asyncio").run(role_routes.create_role(request, body))
+        assert exc.value.status_code == 400
+
+    def test_role_create_rejects_wildcard(self):
+        from src.api.routes.admin import roles as role_routes
+        from src.api.routes.admin.roles import RoleCreate
+
+        request = _build_request("/roles", method="POST")
+        body = RoleCreate(
+            name="wild",
+            description="bad",
+            permissions={"*": True},
+        )
+        with (
+            patch.object(role_routes, "check_host_restriction"),
+            patch.object(role_routes, "require_admin_permission", return_value=1),
+            patch("src.api.get_db"),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                __import__("asyncio").run(role_routes.create_role(request, body))
+        assert exc.value.status_code == 400
+
+
+class TestAdminApprovalExpiry:
+    """Expired approval requests cannot be voted or rejected."""
+
+    def test_expired_approval_vote_rejected(self):
+        from src.api.routes.admin import approvals as approval_routes
+
+        class Cursor:
+            rowcount = 1
+
+        class ExpiredDB:
+            def fetch_one(self, query, params=None):
+                q = query.lower()
+                if "admin_approvals" in q:
+                    if "current_approvals" in q:
+                        return {
+                            "id": 1,
+                            "requested_by": 2,
+                            "status": "pending",
+                            "current_approvals": 0,
+                            "required_approvals": 2,
+                            "approved_by": None,
+                            "expires_at": 1,
+                        }
+                    return {"status": "pending"}
+                return {"id": 1}
+
+            def execute(self, query, params=None):
+                return Cursor()
+
+        request = _build_request("/approvals/1/approve", method="POST")
+        with (
+            patch.object(approval_routes, "check_host_restriction"),
+            patch.object(approval_routes, "require_admin_permission", return_value=3),
+            patch("src.api.get_db", return_value=ExpiredDB()),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                __import__("asyncio").run(approval_routes.approve_request(request, 1))
+        assert exc.value.status_code == 400
+
+
 class TestSelfTestHardening:
     """[S1] Self-test signals alone never grant admin access."""
 

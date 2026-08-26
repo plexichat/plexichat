@@ -17,6 +17,7 @@ class RoleCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=50)
     description: str = Field(..., max_length=500)
     permissions: dict = Field(...)
+    position: Optional[int] = Field(None, ge=0, le=99)
 
 
 class RoleUpdate(BaseModel):
@@ -192,7 +193,47 @@ async def create_role(request: Request, role_data: RoleCreate):
     now = int(time.time() * 1000)
     role_id = generate_snowflake_id()
 
-    # Validate permissions JSON
+    # Only documented, non-wildcard scopes may be delegated. The wildcard
+    # permission is reserved for the seeded system super_admin role.
+    from src.core.admin.permissions import PERMISSION_SCOPES, get_admin_max_position
+
+    if not isinstance(role_data.permissions, dict) or any(
+        not isinstance(name, str)
+        or name == "*"
+        or name.endswith(".*")
+        or name not in PERMISSION_SCOPES
+        or not isinstance(granted, bool)
+        for name, granted in role_data.permissions.items()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": "Invalid or non-delegable permission scope",
+                }
+            },
+        )
+
+    actor_position = get_admin_max_position(db, admin_id)
+    requested_position = (
+        actor_position - 1 if role_data.position is None else role_data.position
+    )
+    if (
+        actor_position <= 0
+        or requested_position < 0
+        or requested_position >= actor_position
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Role position must be below your own",
+                }
+            },
+        )
+
     try:
         permissions_json = json.dumps(role_data.permissions)
     except (TypeError, ValueError):
@@ -213,8 +254,9 @@ async def create_role(request: Request, role_data: RoleCreate):
 
     db.execute(
         """
-        INSERT INTO admin_roles (id, name, description, permissions, created_at, created_by, is_system)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
+        INSERT INTO admin_roles
+            (id, name, description, permissions, created_at, created_by, is_system, position)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
     """,
         (
             role_id,
@@ -223,6 +265,7 @@ async def create_role(request: Request, role_data: RoleCreate):
             permissions_json,
             now,
             admin_id,
+            requested_position,
         ),
     )
 
@@ -312,6 +355,25 @@ async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
         params.append(role_data.description)
 
     if role_data.permissions is not None:
+        from src.core.admin.permissions import PERMISSION_SCOPES
+
+        if not isinstance(role_data.permissions, dict) or any(
+            not isinstance(name, str)
+            or name == "*"
+            or name.endswith(".*")
+            or name not in PERMISSION_SCOPES
+            or not isinstance(granted, bool)
+            for name, granted in role_data.permissions.items()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Invalid or non-delegable permission scope",
+                    }
+                },
+            )
         try:
             permissions_json = json.dumps(role_data.permissions)
             updates.append("permissions = ?")
@@ -574,7 +636,7 @@ async def revoke_role(request: Request, admin_id: int, role_id: int):
     Revoke a role from an admin.
     """
     check_host_restriction(request)
-    current_admin_id = require_admin_permission(request, "admin.roles.assign")
+    current_admin_id = require_admin_permission(request, "admin.roles")
 
     import src.api as api
 
@@ -655,7 +717,7 @@ async def get_admin_roles(request: Request, admin_id: int):
     Get all roles assigned to a specific admin.
     """
     check_host_restriction(request)
-    require_admin_permission(request, "admin.roles.read")
+    require_admin_permission(request, "admin.roles")
 
     import src.api as api
 

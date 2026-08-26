@@ -49,7 +49,7 @@ class PasswordMixin:
 
         if last_password_change and change_interval_days > 0:
             now = int(time.time())
-            days_since_change = (now - last_password_change) / (24 * 3600 * 1000)
+            days_since_change = (now - last_password_change) / (24 * 3600)
             if days_since_change >= change_interval_days:
                 return True
 
@@ -130,8 +130,48 @@ class PasswordMixin:
             "UPDATE admin_users SET password_hash = ?, force_password_change = 0, last_password_change = ? WHERE id = ?",
             (new_hash, now, admin_id),
         )
+        # Password rotation invalidates every existing admin session, so a
+        # stolen session cannot survive credential replacement.
+        self._db.execute(
+            "DELETE FROM admin_sessions WHERE admin_id = ?",
+            (admin_id,),
+        )
 
         username = _row["username"] if _row and isinstance(_row, dict) else "admin"
+        if username:
+            _sync_password_to_auth_users(self._db, str(username), new_hash)
+        return True, "Password updated successfully"
+
+    def set_password(self, admin_id: int, new_password: str) -> Tuple[bool, str]:
+        """Set an admin password after delegated authorization.
+
+        This is intentionally separate from ``change_password``: callers such
+        as the hierarchy-checked admin-management route have already
+        authorized the target and must not need the target's old password.
+        The same policy, timestamp, session revocation, and auth-user sync
+        rules still apply.
+        """
+        row = self._db.fetch_one(
+            "SELECT username FROM admin_users WHERE id = ?", (admin_id,)
+        )
+        if not row:
+            return False, "Admin user not found"
+
+        valid, message = self._validate_password_policy(new_password)
+        if not valid:
+            return False, message
+
+        import src.utils.encryption as encryption
+
+        new_hash = encryption.hash_password(new_password)
+        now = int(time.time())
+        self._db.execute(
+            "UPDATE admin_users SET password_hash = ?, force_password_change = 0, last_password_change = ? WHERE id = ?",
+            (new_hash, now, admin_id),
+        )
+        self._db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (admin_id,))
+
+        username = row.get("username") if isinstance(row, dict) else row[0]
         if username:
             _sync_password_to_auth_users(self._db, str(username), new_hash)
         return True, "Password updated successfully"
@@ -168,6 +208,10 @@ class PasswordMixin:
         self._db.execute(
             "UPDATE admin_users SET password_hash = ?, force_password_change = 0, last_password_change = ? WHERE id = ?",
             (new_hash, now, admin_id),
+        )
+        self._db.execute(
+            "DELETE FROM admin_sessions WHERE admin_id = ?",
+            (admin_id,),
         )
 
         admin_row = self._db.fetch_one(

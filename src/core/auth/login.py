@@ -43,9 +43,18 @@ def login(
     )
 
 
-def complete_2fa(challenge_token: str, code: str) -> AuthResult:
+def complete_2fa(
+    challenge_token: str,
+    code: str,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> AuthResult:
     """Complete 2FA challenge with TOTP code or backup code."""
-    return _get_auth_manager().get_instance().complete_2fa(challenge_token, code)
+    return (
+        _get_auth_manager()
+        .get_instance()
+        .complete_2fa(challenge_token, code, ip_address, user_agent)
+    )
 
 
 __all__ = [

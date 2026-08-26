@@ -122,7 +122,7 @@ async def create_ws_ticket(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def refresh_session(request: Request) -> LoginResponse:
+async def refresh_session(request: Request, response: Response) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -157,7 +157,17 @@ async def refresh_session(request: Request) -> LoginResponse:
     user_agent = request.headers.get("User-Agent")
 
     try:
-        token_info = auth.verify_token(token, ip_address, user_agent)
+        # Rotation (F3): mint a fresh token and invalidate the old one.
+        # The response re-issues the HttpOnly cookie (F4) so the browser
+        # and JS storage stay in sync.
+        new_token = auth.refresh_session(token)
+        if not new_token:
+            raise TokenInvalidError("Invalid or expired session")
+        from .cookies import set_session_cookie as _set_cookie
+
+        _set_cookie(response, new_token)
+        # Verify the freshly minted token to build the response payload
+        token_info = auth.verify_token(new_token, ip_address, user_agent)
 
         user = auth.get_user(token_info.user_id)
         if not user:
@@ -165,18 +175,20 @@ async def refresh_session(request: Request) -> LoginResponse:
 
         return LoginResponse(
             status="success",
-            token=token,
+            token=new_token,
             user=_user_to_response(user),
         )
-    except (TokenInvalidError, TokenExpiredError) as e:
-        logger.warning(f"Session refresh failed: {e}")
+    except (TokenInvalidError, TokenExpiredError):
+        logger.warning("Session refresh failed: invalid or expired token")
         raise HTTPException(
-            status_code=401, detail={"error": {"code": 401, "message": str(e)}}
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid or expired session"}},
         )
     except Exception as e:
         logger.error(f"Unexpected error in refresh_session: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -221,7 +233,8 @@ async def get_sessions_list(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -265,7 +278,8 @@ async def revoke_session(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -320,5 +334,6 @@ async def revoke_all_sessions(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

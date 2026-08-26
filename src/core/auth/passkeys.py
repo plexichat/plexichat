@@ -184,6 +184,16 @@ class PasskeyManager:
         self._challenge_ttl = self._config.get("challenge_ttl_seconds", 300)
 
         # Get RP configuration
+        # SECURITY/CONFIG: rp_id and origin MUST be set explicitly for
+        # production. When behind a TLS-terminating proxy (nginx, Cloudflare),
+        # the origin seen by the browser is https://<public-host> while the
+        # app's direct host may be localhost. Set:
+        #   authentication.passkeys.rp_id: "example.com"
+        #   authentication.passkeys.origin: "https://example.com"
+        # or env PASSKEY_RP_ID / PASSKEY_ORIGIN. Defaults use http://localhost
+        # and will fail closed (verification rejects) if mismatched. The server
+        # host default is intentionally not https so misconfiguration is visible.
+        # Always use https origin in production; http is only for plain-HTTP dev.
         server_config = config.get("server", {})
         self._rp_name = self._config.get("rp_name", "Plexichat")
         self._rp_id = self._config.get("rp_id", server_config.get("host", "localhost"))
@@ -521,6 +531,19 @@ class PasskeyManager:
                             id=self._base64url_decode(cred_id)
                         )
                     )
+            # F4: enumeration mitigation — when the user has no passkeys or
+            # does not exist, inject a constant-time dummy credential so that
+            # allowCredentials shape is indistinguishable from a single-credential
+            # account. This is a best-effort tradeoff: accounts with multiple
+            # credentials still differ in count, but the existence oracle for
+            # "has any passkey" is closed. The endpoint remains rate-limited
+            # 10/min (see api/routes/auth/passkeys.py) as defense-in-depth.
+            # Operators who prefer empty allowCredentials for discoverable
+            # flows can disable this by setting authentication.passkeys
+            # .dummy_credential to false.
+            if not allow_credentials and self._config.get("dummy_credential", True):
+                dummy_id = os.urandom(32)
+                allow_credentials.append(PublicKeyCredentialDescriptor(id=dummy_id))
 
         self._db.execute(
             """
