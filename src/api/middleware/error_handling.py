@@ -122,27 +122,21 @@ def _get_cors_headers(request: Request) -> dict:
         cors_methods = api_conf.get(
             "cors_allow_methods", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
         )
-        allow_wildcard = api_conf.get("allow_wildcard_cors", False)
     except Exception:
-        cors_origins = ["*"]
-        allow_wildcard = True
+        # Error handling must fail closed if configuration cannot be read;
+        # reflecting an arbitrary Origin with credentials would weaken the
+        # authentication/CSRF boundary precisely during failures.
+        cors_origins = []
 
     origin = request.headers.get("origin", "")
 
-    # Check if origin is allowed
-    is_allowed = False
-    if "*" in cors_origins:
-        if allow_wildcard or not origin:
-            is_allowed = True
-        else:
-            # If wildcard is not allowed for this origin, check if origin is explicitly allowed
-            is_allowed = origin in cors_origins
-    elif origin in cors_origins:
-        is_allowed = True
+    # Wildcard origins are never reflected when credentials are enabled.
+    # Only an explicitly configured origin may receive credentialed errors.
+    is_allowed = bool(origin) and origin in cors_origins
 
     if is_allowed:
         return {
-            "Access-Control-Allow-Origin": origin if origin else "*",
+            "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": ", ".join(cors_methods),
             "Access-Control-Allow-Headers": ", ".join(cors_allow_headers),
