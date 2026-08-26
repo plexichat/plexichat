@@ -520,9 +520,12 @@ def handle_interaction(
 def create_interaction_response(
     interaction_token: str,
     response: InteractionResponse,
+    application_id: Optional[int] = None,
 ) -> bool:
     """Respond to an interaction."""
-    return _get_manager().create_interaction_response(interaction_token, response)
+    return _get_manager().create_interaction_response(
+        interaction_token, response, application_id=application_id
+    )
 
 
 # === Webhook Operations ===

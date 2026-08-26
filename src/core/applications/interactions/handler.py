@@ -206,6 +206,7 @@ class InteractionHandler:
         self,
         interaction_token: str,
         response: InteractionResponse,
+        application_id: Optional[int] = None,
     ) -> bool:
         """
         Respond to an interaction.
@@ -224,6 +225,11 @@ class InteractionHandler:
             InteractionValidationError: Invalid response
         """
         interaction = self.verify_interaction_token(interaction_token)
+
+        if application_id is not None and interaction.application_id != application_id:
+            raise InteractionNotFoundError(
+                "Interaction does not belong to this application"
+            )
 
         if interaction.responded:
             raise InteractionAlreadyRespondedError(

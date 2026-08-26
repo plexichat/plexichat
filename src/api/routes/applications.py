@@ -4,6 +4,7 @@ Application management API routes.
 Handles user application CRUD, bot token management, and interaction responses.
 """
 
+import hashlib
 import logging
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, status
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from src.core import applications
+from src.core.database import check_rate_limit
 from src.core.applications import InteractionResponse, InteractionResponseType
 from src.core.applications.exceptions import (
     ApplicationNotFoundError,
@@ -80,8 +82,19 @@ class BotTokenResponse(BaseModel):
 class InteractionCallbackRequest(BaseModel):
     """Request to respond to an interaction."""
 
+    application_id: int
     type: InteractionResponseType
     data: Optional[Dict[str, Any]] = None
+
+
+_INTERACTION_CALLBACK_LIMIT = 30
+_INTERACTION_CALLBACK_WINDOW_SECONDS = 60
+
+
+def _interaction_rate_limit_key(interaction_token: str) -> str:
+    """Build a non-reversible rate-limit key without storing the bearer token."""
+    token_fingerprint = hashlib.sha256(interaction_token.encode("utf-8")).hexdigest()
+    return f"applications:interaction-callback:{token_fingerprint}"
 
 
 # === Helper ===
@@ -417,6 +430,20 @@ async def respond_to_interaction(
 ):
     """Respond to an interaction with a callback."""
     try:
+        allowed, _remaining = check_rate_limit(
+            _interaction_rate_limit_key(interaction_token),
+            _INTERACTION_CALLBACK_LIMIT,
+            _INTERACTION_CALLBACK_WINDOW_SECONDS,
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": {"code": 429, "message": "Too many interaction callbacks"}
+                },
+                headers={"Retry-After": str(_INTERACTION_CALLBACK_WINDOW_SECONDS)},
+            )
+
         response_kwargs = {
             key: value
             for key, value in (body.data or {}).items()
@@ -441,7 +468,10 @@ async def respond_to_interaction(
         applications.create_interaction_response(
             interaction_token=interaction_token,
             response=response,
+            application_id=body.application_id,
         )
+    except HTTPException:
+        raise
     except InteractionNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

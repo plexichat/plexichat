@@ -297,6 +297,7 @@ async function handleCommand(interaction) {
 
   if (name === 'ping') {
     await respondToInteraction(interaction.token, {
+      application_id: interaction.application_id,
       type: 4,  // Channel message with source
       data: {
         content: 'Pong!'
@@ -318,9 +319,12 @@ async function respondToInteraction(interactionToken, response) {
 
 The callback endpoint is
 `POST /api/v1/applications/interactions/{interaction_token}/callback` and returns
-HTTP 204 on success. Error responses: `400` invalid/expired-shape response,
-`404` unknown interaction token, `409` interaction already responded to,
-`410` interaction expired.
+HTTP 204 on success. The JSON body must include the interaction's
+`application_id`; the server verifies that it matches the token before accepting
+the response. Callback attempts are also rate limited per interaction token.
+Error responses: `400` invalid response, `404` unknown token or application
+binding, `409` interaction already responded to, `410` interaction expired, and
+`429` callback rate limit exceeded.
 
 ### Interaction Response Types
 

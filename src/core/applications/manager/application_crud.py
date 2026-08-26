@@ -467,5 +467,8 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         self,
         interaction_token: str,
         response: InteractionResponse,
+        application_id: Optional[SnowflakeID] = None,
     ) -> bool:
-        return self._interactions.respond(interaction_token, response)
+        return self._interactions.respond(
+            interaction_token, response, application_id=application_id
+        )
