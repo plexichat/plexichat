@@ -35,10 +35,11 @@ local users, so visibility of federated artifacts remains gated by the local
 route/permission layer; this module does not relax any local access check.
 """
 
+import concurrent.futures
 import hashlib
 import hmac as _hmac
 import json
-import threading
+import secrets
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -102,18 +103,44 @@ def _default_transport(
     )
 
 
-def _sign_payload(shared_key: str, body: bytes) -> str:
-    """HMAC-SHA256 signature over the raw request body using the shared key."""
-    return _hmac.new(shared_key.encode("utf-8"), body, hashlib.sha256).hexdigest()
+def _signature_material(
+    body: bytes, timestamp: Optional[str] = None, nonce: Optional[str] = None
+) -> bytes:
+    """Build the signed federation envelope.
+
+    The legacy body-only form remains available to callers of the primitive,
+    while network transports always include freshness and uniqueness metadata.
+    """
+    if timestamp is None or nonce is None:
+        return body
+    return body + b"\n" + timestamp.encode("ascii") + b"\n" + nonce.encode("ascii")
+
+
+def _sign_payload(
+    shared_key: str,
+    body: bytes,
+    timestamp: Optional[str] = None,
+    nonce: Optional[str] = None,
+) -> str:
+    """HMAC-SHA256 signature over the federation envelope."""
+    return _hmac.new(
+        shared_key.encode("utf-8"),
+        _signature_material(body, timestamp, nonce),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def verify_payload_signature(
-    shared_key: Optional[str], body: bytes, signature: Optional[str]
+    shared_key: Optional[str],
+    body: bytes,
+    signature: Optional[str],
+    timestamp: Optional[str] = None,
+    nonce: Optional[str] = None,
 ) -> bool:
     """Constant-time verification of a federation payload signature."""
     if not shared_key or not signature:
         return False
-    expected = _sign_payload(shared_key, body)
+    expected = _sign_payload(shared_key, body, timestamp, nonce)
     return _hmac.compare_digest(expected, signature)
 
 
@@ -136,10 +163,15 @@ class HttpFederationTransport:
         plexijoin_manager: Any,
         timeout: float = 5.0,
         max_retries: int = 2,
+        max_workers: int = 16,
     ) -> None:
         self._plexijoin = plexijoin_manager
         self._timeout = timeout
-        self._max_retries = max_retries
+        self._max_retries = max(0, int(max_retries))
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, int(max_workers)),
+            thread_name_prefix="plexijoin-artifact",
+        )
 
     def _connection(self, conn_id: int) -> Optional[Dict[str, Any]]:
         try:
@@ -163,11 +195,19 @@ class HttpFederationTransport:
             if not remote_url:
                 continue
             shared_key = conn.get("shared_key")
-            threading.Thread(
-                target=self._post_with_retry,
-                args=(remote_url, shared_key, payload, path),
-                daemon=True,
-            ).start()
+            if not shared_key:
+                logger.error(
+                    "FederationArtifactBridge: refusing unsigned delivery for connection %s",
+                    conn_id,
+                )
+                continue
+            self._executor.submit(
+                self._post_with_retry,
+                remote_url,
+                shared_key,
+                payload,
+                path,
+            )
 
     def _post_with_retry(
         self,
@@ -179,9 +219,21 @@ class HttpFederationTransport:
         import httpx
 
         body = json.dumps(payload).encode("utf-8")
-        headers = {"content-type": "application/json"}
-        if shared_key:
-            headers["x-plexijoin-signature"] = _sign_payload(shared_key, body)
+        if not shared_key:
+            logger.error(
+                "FederationArtifactBridge: refusing unsigned delivery to %s", remote_url
+            )
+            return
+        timestamp = str(int(time.time()))
+        nonce = secrets.token_urlsafe(24)
+        headers = {
+            "content-type": "application/json",
+            "x-plexijoin-timestamp": timestamp,
+            "x-plexijoin-nonce": nonce,
+        }
+        headers["x-plexijoin-signature"] = _sign_payload(
+            shared_key, body, timestamp, nonce
+        )
         url = remote_url.rstrip("/") + path
         for attempt in range(self._max_retries + 1):
             try:

@@ -24,12 +24,20 @@ class RemoteURLBlockedError(ValueError):
     """A remote federation URL failed SSRF validation (scheme/private IP)."""
 
 
-def _sign_payload(shared_key: str, body: bytes) -> str:
-    """HMAC-SHA256 signature over the raw request body using the shared key."""
+def _sign_payload(
+    shared_key: str,
+    body: bytes,
+    timestamp: Optional[str] = None,
+    nonce: Optional[str] = None,
+) -> str:
+    """HMAC-SHA256 signature over the federation envelope."""
     import hashlib
     import hmac as _hmac
 
-    return _hmac.new(shared_key.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    material = body
+    if timestamp is not None and nonce is not None:
+        material += b"\n" + timestamp.encode("ascii") + b"\n" + nonce.encode("ascii")
+    return _hmac.new(shared_key.encode("utf-8"), material, hashlib.sha256).hexdigest()
 
 
 def validate_remote_url(remote_url: str) -> None:
@@ -71,6 +79,57 @@ class PlexiJoinManager:
         self.db = db
         self.admin_logger = admin_logger
         self.encryption_service = encryption_service
+
+    def _ensure_replay_nonce_table(self) -> None:
+        """Ensure replay state exists for both fresh and upgraded databases."""
+        try:
+            self.db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS plexijoin_replay_nonces (
+                    connection_id INTEGER NOT NULL,
+                    nonce TEXT NOT NULL,
+                    seen_at INTEGER NOT NULL,
+                    PRIMARY KEY (connection_id, nonce),
+                    FOREIGN KEY (connection_id)
+                        REFERENCES plexijoin_connections(id) ON DELETE CASCADE
+                )
+                """
+            )
+            self.db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_plexijoin_replay_seen "
+                "ON plexijoin_replay_nonces(seen_at)"
+            )
+        except Exception as exc:  # pragma: no cover - surfaced on use
+            logger.error("plexijoin: could not ensure replay table: %s", exc)
+            raise
+
+    def consume_replay_nonce(
+        self, connection_id: int, nonce: str, timestamp: int, max_skew: int = 300
+    ) -> bool:
+        """Atomically claim a fresh federation nonce within the clock window."""
+        if not nonce or len(nonce) > 256:
+            return False
+        now = int(time.time())
+        if abs(now - int(timestamp)) > max_skew:
+            return False
+
+        self._ensure_replay_nonce_table()
+        # INSERT OR IGNORE is translated to the PostgreSQL equivalent by the
+        # database dialect. Exactly one concurrent request can claim a nonce.
+        claimed = self.db.insert_or_ignore(
+            "plexijoin_replay_nonces",
+            ["connection_id", "nonce", "seen_at"],
+            (int(connection_id), nonce, now),
+        )
+        if claimed:
+            try:
+                self.db.execute(
+                    "DELETE FROM plexijoin_replay_nonces WHERE seen_at < ?",
+                    (now - max_skew,),
+                )
+            except Exception:
+                logger.debug("plexijoin: replay nonce cleanup failed", exc_info=True)
+        return bool(claimed)
 
     def _encrypt_key(self, shared_key: str) -> str:
         """Encrypt shared key using keyring infrastructure."""
@@ -588,9 +647,18 @@ class PlexiJoinManager:
         validate_remote_url(remote_url)
 
         body = json.dumps(payload).encode("utf-8")
-        headers = {"content-type": "application/json"}
-        if shared_key:
-            headers["x-plexijoin-signature"] = _sign_payload(shared_key, body)
+        timestamp = str(int(time.time()))
+        nonce = secrets.token_urlsafe(24)
+        headers = {
+            "content-type": "application/json",
+            "x-plexijoin-timestamp": timestamp,
+            "x-plexijoin-nonce": nonce,
+        }
+        if not shared_key:
+            return {"success": False, "error": "Federation shared key is required"}
+        headers["x-plexijoin-signature"] = _sign_payload(
+            shared_key, body, timestamp, nonce
+        )
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(

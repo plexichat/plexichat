@@ -85,7 +85,12 @@ def _get_plexijoin_manager():
 
 
 def _authenticate(
-    manager, body: bytes, signature: Optional[str], statuses=("active",)
+    manager,
+    body: bytes,
+    signature: Optional[str],
+    timestamp: Optional[str],
+    nonce: Optional[str],
+    statuses=("active",),
 ) -> Optional[Dict[str, Any]]:
     """Verify the HMAC signature against a connection's shared key.
 
@@ -94,7 +99,11 @@ def _authenticate(
     """
     from src.core.artifacts.federation import verify_payload_signature
 
-    if not signature:
+    if not signature or not timestamp or not nonce:
+        return None
+    try:
+        timestamp_int = int(timestamp)
+    except (TypeError, ValueError):
         return None
     for status in statuses:
         try:
@@ -107,7 +116,9 @@ def _authenticate(
         for conn in connections:
             if not isinstance(conn, dict):
                 continue
-            if verify_payload_signature(conn.get("shared_key"), body, signature):
+            if verify_payload_signature(
+                conn.get("shared_key"), body, signature, timestamp, nonce
+            ) and manager.consume_replay_nonce(int(conn["id"]), nonce, timestamp_int):
                 return conn
     return None
 
@@ -156,7 +167,9 @@ async def artifact_op_inbound(request: Request):
     manager = _get_plexijoin_manager()
     body = await request.body()
     signature = request.headers.get("x-plexijoin-signature")
-    if not _authenticate(manager, body, signature):
+    timestamp = request.headers.get("x-plexijoin-timestamp")
+    nonce = request.headers.get("x-plexijoin-nonce")
+    if not _authenticate(manager, body, signature, timestamp, nonce):
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid federation signature"}},
@@ -191,7 +204,9 @@ async def artifact_event_inbound(request: Request):
     manager = _get_plexijoin_manager()
     body = await request.body()
     signature = request.headers.get("x-plexijoin-signature")
-    if not _authenticate(manager, body, signature):
+    timestamp = request.headers.get("x-plexijoin-timestamp")
+    nonce = request.headers.get("x-plexijoin-nonce")
+    if not _authenticate(manager, body, signature, timestamp, nonce):
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid federation signature"}},
@@ -226,7 +241,16 @@ async def join_request_inbound(request: Request):
     manager = _get_plexijoin_manager()
     body = await request.body()
     signature = request.headers.get("x-plexijoin-signature")
-    conn = _authenticate(manager, body, signature, statuses=("active", "pending"))
+    timestamp = request.headers.get("x-plexijoin-timestamp")
+    nonce = request.headers.get("x-plexijoin-nonce")
+    conn = _authenticate(
+        manager,
+        body,
+        signature,
+        timestamp,
+        nonce,
+        statuses=("active", "pending"),
+    )
     if not conn:
         raise HTTPException(
             status_code=401,
@@ -268,7 +292,11 @@ async def message_inbound(request: Request):
     manager = _get_plexijoin_manager()
     body = await request.body()
     signature = request.headers.get("x-plexijoin-signature")
-    conn = _authenticate(manager, body, signature, statuses=("active",))
+    timestamp = request.headers.get("x-plexijoin-timestamp")
+    nonce = request.headers.get("x-plexijoin-nonce")
+    conn = _authenticate(
+        manager, body, signature, timestamp, nonce, statuses=("active",)
+    )
     if not conn:
         raise HTTPException(
             status_code=401,

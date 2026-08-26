@@ -152,5 +152,17 @@ def test_http_transport_posts_signed_body(monkeypatch):
     assert captured["url"] == "https://peer.example/api/v1/federation/artifact-op"
     body = captured["content"]
     assert json.loads(body.decode())["artifact_id"] == 1
-    sig = captured["headers"]["x-plexijoin-signature"]
-    assert verify_payload_signature("k1", body, sig) is True
+    headers = captured["headers"]
+    sig = headers["x-plexijoin-signature"]
+    assert headers["x-plexijoin-timestamp"].isdigit()
+    assert headers["x-plexijoin-nonce"]
+    assert (
+        verify_payload_signature(
+            "k1",
+            body,
+            sig,
+            headers["x-plexijoin-timestamp"],
+            headers["x-plexijoin-nonce"],
+        )
+        is True
+    )
