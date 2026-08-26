@@ -290,6 +290,13 @@ class VoiceHandler:
             if not connection.user_id:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
+            try:
+                channel_id = int(channel_id)
+            except (TypeError, ValueError):
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+            if channel_id <= 0:
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
             signaling.handle_ice_candidate(
                 connection.user_id, channel_id, candidate, sdp_mid, sdp_mline_index
             )
