@@ -46,6 +46,8 @@ from .exceptions import (
     AttachmentTooLargeError,
     AttachmentLimitError,
     RateLimitError,
+    MessageConflictError,
+    MessageEditWindowExpiredError,
 )
 from .models import (
     Message,
@@ -350,9 +352,20 @@ def send_message(
     )
 
 
-def edit_message(user_id: int, message_id: int, content: str) -> Message:
-    """Edit a message (own messages only)."""
-    return _get_manager().edit_message(user_id, message_id, content)
+def edit_message(
+    user_id: int,
+    message_id: int,
+    content: str,
+    expected_edited_at: Optional[int] = None,
+) -> Message:
+    """Edit a message (own messages only).
+
+    ``expected_edited_at`` is an optional optimistic-concurrency token;
+    when provided and stale, MessageConflictError is raised.
+    """
+    return _get_manager().edit_message(
+        user_id, message_id, content, expected_edited_at=expected_edited_at
+    )
 
 
 def update_message_metadata(
@@ -686,6 +699,8 @@ __all__ = [
     "AttachmentTooLargeError",
     "AttachmentLimitError",
     "RateLimitError",
+    "MessageConflictError",
+    "MessageEditWindowExpiredError",
     # Models
     "Message",
     "Conversation",

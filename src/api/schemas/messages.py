@@ -47,6 +47,15 @@ class MessageUpdateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     content: str = Field(..., max_length=4000, description="New message content")
+    expected_edited_at: Optional[int] = Field(
+        None,
+        description=(
+            "Optional optimistic-concurrency token: the edited_at (or "
+            "created-time fallback) revision the client last saw. When "
+            "provided and stale the edit is rejected with 409. Omit to "
+            "keep last-write-wins behaviour."
+        ),
+    )
 
 
 class BulkDeleteRequest(BaseModel):

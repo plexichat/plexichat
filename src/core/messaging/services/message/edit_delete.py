@@ -17,8 +17,10 @@ from ...exceptions import (
     MessageNotFoundError,
     MessageAccessDeniedError,
     InvalidContentError,
+    MessageConflictError,
+    MessageEditWindowExpiredError,
 )
-from ..base import BaseService
+from ..base import BaseService, get_encrypt_messages_default
 from .protocol import MessageServiceProtocol
 from .search_helpers import search_index_message, search_remove_from_index
 
@@ -133,10 +135,42 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
 
     _ratchet_manager: Any = None
 
+    def _can_edit_outside_window(self, user_id, conversation_id) -> bool:
+        """Moderator exemption from the edit-window restriction.
+
+        Conversation OWNER/ADMIN participants and server users holding
+        ``messages.manage`` on the backing channel may edit regardless of
+        the configured ``messaging.edit_window_seconds`` window.
+        """
+        try:
+            participant = self._participant_svc.get_participant(
+                conversation_id, user_id
+            )
+            if participant and participant.role in [
+                ParticipantRole.OWNER,
+                ParticipantRole.ADMIN,
+            ]:
+                return True
+        except Exception as e:
+            logger.debug(f"Edit-window participant check failed: {e}")
+        return _is_server_message_moderator(user_id, conversation_id)
+
     def edit_message(
-        self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
+        self,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
+        content: str,
+        expected_edited_at: Optional[int] = None,
     ) -> Message:
-        """Edit a message (own messages only)."""
+        """Edit a message (own messages only).
+
+        ``expected_edited_at`` is an optional optimistic-concurrency token:
+        when provided it must match the message's current revision
+        (``edited_at``, falling back to ``updated_at`` for never-edited
+        messages) or a :class:`MessageConflictError` is raised. Clients
+        that ignore the field keep full backward compatibility (the token
+        is simply not enforced).
+        """
         msg_row = self._repo.get_by_id(message_id)
         if not msg_row or msg_row["deleted"]:
             raise MessageNotFoundError("Message not found")
@@ -148,6 +182,37 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
 
         if msg_row["author_id"] != user_id:
             raise MessageAccessDeniedError("Can only edit own messages")
+
+        # Optimistic locking (M3): reject stale writes when the client
+        # supplied a revision token that no longer matches.
+        if expected_edited_at is not None:
+            current_revision = msg_row.get("edited_at") or msg_row.get("updated_at")
+            if current_revision is None or int(expected_edited_at) != int(
+                current_revision
+            ):
+                raise MessageConflictError(
+                    "Message was modified by another request; refresh and retry",
+                    expected=expected_edited_at,
+                    actual=current_revision,
+                )
+
+        # Configurable edit window (parity #1): 0 (the default) means no
+        # limit; a positive value restricts edits to that many seconds
+        # after creation, except for moderators/admins.
+        edit_window_seconds = int(self._get_config("edit_window_seconds", 0) or 0)
+        if edit_window_seconds > 0:
+            now_check = self._get_timestamp()
+            created_at = int(msg_row.get("created_at") or 0)
+            if (
+                created_at > 0
+                and now_check - created_at > edit_window_seconds * 1000
+                and not self._can_edit_outside_window(
+                    user_id, msg_row["conversation_id"]
+                )
+            ):
+                raise MessageEditWindowExpiredError(
+                    "Edit window has expired for this message"
+                )
 
         user_settings = self._user_settings_svc.get_message_settings(user_id)
         max_length = user_settings.max_message_length or self._get_config(
@@ -179,7 +244,7 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                 raise MessageNotFoundError("Failed to retrieve message")
             return msg
 
-        if self._get_config("encrypt_messages", True):
+        if self._get_config("encrypt_messages", get_encrypt_messages_default()):
             from src.utils.encryption.channel_ratchet import (
                 ratchet_encryption_licensed,
             )
@@ -237,6 +302,25 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                     final_content = encrypt_message(final_content, message_id)
             else:
                 final_content = encrypt_message(final_content, message_id)
+
+        # Record the PRIOR content in the edit history before it is
+        # overwritten (parity #2). The history service encrypts the prior
+        # content at rest when encryption is enabled; failures are
+        # best-effort and never block the edit itself.
+        try:
+            from ..edit_history import EditHistoryService
+
+            history_svc = EditHistoryService(
+                self._db,
+                self._participant_svc,
+                encryption_enabled=get_encrypt_messages_default(),
+            )
+            prior_row = self._repo.get_by_id(message_id)
+            if prior_row is not None:
+                prior_content = self._repo.row_to_model(prior_row).content
+                history_svc.record_edit(user_id, message_id, prior_content)
+        except Exception as exc:
+            logger.debug(f"Failed to record edit history for {message_id}: {exc}")
 
         self._repo.update_content(
             message_id, final_content, now, content_index=content_idx

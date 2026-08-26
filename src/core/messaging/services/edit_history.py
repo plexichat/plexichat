@@ -76,13 +76,20 @@ class EditHistoryService(BaseService):
         current_version = self._repo.get_latest_version(message_id) or 0
         new_version = current_version + 1
 
-        # Encrypt content if enabled
+        # Encrypt content if enabled. When the encrypted blob is produced
+        # successfully the plaintext MUST NOT be persisted alongside it:
+        # storing both would defeat the encryption-at-rest contract that
+        # applies to live message content. The NOT NULL old_content column
+        # keeps a non-reversible "[encrypted]" marker instead.
         old_content_encrypted = None
         if self._encryption_enabled:
             try:
                 old_content_encrypted = encrypt_data(old_content)
             except Exception as e:
                 logger.warning(f"Failed to encrypt edit history: {e}")
+        stored_old_content = (
+            old_content if old_content_encrypted is None else "[encrypted]"
+        )
 
         now = int(time.time() * 1000)
         edit_id = self._generate_id()
@@ -91,7 +98,7 @@ class EditHistoryService(BaseService):
             edit_id=edit_id,
             message_id=message_id,
             editor_id=user_id,
-            old_content=old_content,
+            old_content=stored_old_content,
             old_content_encrypted=old_content_encrypted,
             edit_timestamp=now,
             version_number=new_version,

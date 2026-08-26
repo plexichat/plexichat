@@ -486,10 +486,16 @@ class MessagingManager(BaseManager):
         )
 
     def edit_message(
-        self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
+        self,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
+        content: str,
+        expected_edited_at: Optional[int] = None,
     ) -> Message:
         """Edit a message (own messages only)."""
-        return self._message_svc.edit_message(user_id, message_id, content)
+        return self._message_svc.edit_message(
+            user_id, message_id, content, expected_edited_at=expected_edited_at
+        )
 
     def update_message_metadata(
         self,

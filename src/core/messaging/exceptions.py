@@ -140,3 +140,26 @@ class AttachmentNotFoundError(AttachmentError):
     """Raised when an attachment cannot be found."""
 
     pass
+
+
+class MessageConflictError(MessagingError):
+    """Raised when an optimistic-concurrency check fails on edit.
+
+    Carries the expected and actual revision tokens so callers can
+    distinguish a stale write from other failures.
+    """
+
+    def __init__(self, message: str, expected=None, actual=None):
+        super().__init__(message)
+        self.expected = expected
+        self.actual = actual
+
+
+class MessageEditWindowExpiredError(MessageAccessDeniedError):
+    """Raised when an edit is attempted after the configured edit window.
+
+    Subclasses :class:`MessageAccessDeniedError` so existing 403 mapping
+    keeps working; routes may special-case it for a clearer error body.
+    """
+
+    pass

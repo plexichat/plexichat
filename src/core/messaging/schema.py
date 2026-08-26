@@ -5,7 +5,13 @@ Tables are auto-created on messaging.setup() if they don't exist.
 All IDs use Snowflake format for distributed generation.
 """
 
+import logging
+
+from typing import Optional
+
 from src.core.database.core.schema_splitter import split_sql_statements
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_SQLITE = """
 -- Conversations table
@@ -64,6 +70,10 @@ CREATE TABLE IF NOT EXISTS msg_messages (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     edited INTEGER DEFAULT 0,
+    -- Real wall-clock time of the last user edit (NULL = never edited).
+    -- Consumers previously fell back to updated_at, which also moves on
+    -- tombstones/pin changes and is NOT an edit timestamp.
+    edited_at INTEGER,
     deleted INTEGER DEFAULT 0,
     deleted_at INTEGER,
     reply_to_id INTEGER,
@@ -300,6 +310,71 @@ CREATE INDEX IF NOT EXISTS idx_profile_user ON user_profiles(user_id);
 SCHEMA_STATEMENTS = split_sql_statements(SCHEMA_SQLITE)
 
 
+def _column_exists(db, table: str, column: str) -> Optional[bool]:
+    """Best-effort column probe.
+
+    Returns True/False when the backend answers, or None when the check
+    cannot be performed (unknown dialect) so callers never misreport.
+    """
+    try:
+        rows = db.fetch_all(f"PRAGMA table_info({table})")
+    except Exception:
+        return None
+    try:
+        for row in rows or []:
+            name = row["name"] if not isinstance(row, dict) else row.get("name")
+            if name == column:
+                return True
+    except Exception:
+        return None
+    return False
+
+
+def _ensure_runtime_columns(db) -> None:
+    """Add columns introduced after the initial schema to existing tables.
+
+    CREATE TABLE IF NOT EXISTS never upgrades pre-existing databases, so
+    new columns are back-filled here with a guarded ALTER TABLE. A failure
+    is logged and the column's presence is verified via PRAGMA table_info;
+    if verification says the column is still missing the ALTER is retried
+    once before giving up loudly (a missing runtime column silently breaks
+    every query that selects it).
+    """
+    runtime_columns = [
+        ("msg_messages", "edited_at", "INTEGER"),
+    ]
+    for table, column, definition in runtime_columns:
+        exists = _column_exists(db, table, column)
+        if exists:
+            continue
+
+        attempts = 2
+        for attempt in range(1, attempts + 1):
+            try:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            except Exception as e:
+                logger.warning(
+                    f"Runtime ALTER {table}.{column} failed "
+                    f"(attempt {attempt}/{attempts}): {e}"
+                )
+
+            verified = _column_exists(db, table, column)
+            if verified or verified is None:
+                # Present — or unverifiable (non-SQLite dialect); do not
+                # claim failure we cannot back up.
+                break
+            if attempt < attempts:
+                continue
+
+        final_state = _column_exists(db, table, column)
+        if final_state is False:
+            logger.error(
+                f"Runtime column {table}.{column} could NOT be added after "
+                f"{attempts} attempts; edited_at-dependent queries will fail. "
+                "Apply the migration manually."
+            )
+
+
 def create_tables(db) -> None:
     """
     Create all messaging tables if they don't exist.
@@ -315,6 +390,8 @@ def create_tables(db) -> None:
                 else statement
             )
             db.execute(converted)
+
+    _ensure_runtime_columns(db)
 
 
 def drop_tables(db) -> None:

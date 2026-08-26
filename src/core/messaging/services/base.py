@@ -10,6 +10,20 @@ from src.core.database.collections import CappedDict
 import utils.config as config
 import utils.logger as logger
 
+# Single source of truth for the ``messaging.encrypt_messages`` default.
+# Both the message-send path (which decides actual storage behaviour) and
+# the conversation-creation path (which stamps the ``encrypted`` flag on
+# msg_conversations rows) MUST read the config through this default so the
+# stored flag can never disagree with what send_message actually does.
+ENCRYPT_MESSAGES_DEFAULT = True
+
+
+def get_encrypt_messages_default() -> bool:
+    """Configured encryption-at-rest default (single source of truth)."""
+    return bool(
+        config.get("messaging", {}).get("encrypt_messages", ENCRYPT_MESSAGES_DEFAULT)
+    )
+
 
 def _get_relationships_module():
     """Return the initialized relationships module, else None.

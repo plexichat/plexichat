@@ -101,6 +101,73 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
 
             servers_mod = api.get_servers()
 
+            # Contract alignment (parity #3): the repository soft-delete
+            # keeps a tombstone row that REFETCHES will render, while
+            # MESSAGE_DELETE makes live clients remove the element. Both
+            # views must agree, so a MESSAGE_UPDATE tombstone
+            # (deleted=true, content blanked) is broadcast IN ADDITION to
+            # MESSAGE_DELETE. Clients tolerate both events.
+            try:
+                from src.api.routes.messages.helpers import _message_to_response
+
+                auth = api.get_auth()
+                author_username = None
+                author_avatar_url = None
+                author_badges = []
+                if auth:
+                    try:
+                        user = auth.get_user(int(getattr(msg, "author_id")))
+                        if user:
+                            author_username = user.username
+                            author_avatar_url = getattr(user, "avatar_url", None)
+                            author_badges = getattr(user, "badges", []) or []
+                    except Exception:
+                        pass
+
+                reactions_data = []
+                reactions_module = api.get_reactions()
+                if reactions_module:
+                    try:
+                        reactions_data = reactions_module.get_reactions_batch(
+                            0, [mid]
+                        ).get(mid, [])
+                    except Exception:
+                        reactions_data = []
+
+                tombstone = _message_to_response(
+                    msg,
+                    author_username=author_username,
+                    author_avatar_url=author_avatar_url,
+                    author_badges=author_badges,
+                    channel_id=url_cid,
+                    reactions_data=reactions_data,
+                    # Fan-out broadcast: no per-viewer media signing (the
+                    # deleter-bound signatures would be useless to every
+                    # other recipient and leak who deleted the message);
+                    # attachment URLs stay auth+per-file protected. The
+                    # poll is hydrated with the AUTHOR as context viewer
+                    # so AFTER_VOTE/AFTER_END results are not leaked to
+                    # the deleter's visibility window.
+                    poll_viewer_user_id=int(getattr(msg, "author_id"))
+                    if getattr(msg, "author_id", None)
+                    else None,
+                )
+                tombstone.content = ""
+                tombstone.deleted = True
+
+                await self._broadcast_message_update(
+                    tombstone,
+                    url_cid,
+                    servers_mod,
+                    messaging,
+                    current_user,
+                    conversation_id=cid,
+                )
+            except Exception as e:
+                logger.debug(
+                    f"Tombstone MESSAGE_UPDATE broadcast skipped for {mid}: {e}"
+                )
+
             await self._broadcast_message_delete(
                 mid,
                 url_cid,

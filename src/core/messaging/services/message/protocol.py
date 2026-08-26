@@ -63,7 +63,11 @@ class MessageServiceProtocol(Protocol):
     # === Editing & Deleting ===
 
     def edit_message(
-        self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
+        self,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
+        content: str,
+        expected_edited_at: Optional[int] = None,
     ) -> Message: ...
 
     def update_message_metadata(

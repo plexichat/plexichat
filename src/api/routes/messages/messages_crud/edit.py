@@ -15,6 +15,8 @@ from src.core.messaging.exceptions import (
     MessageAccessDeniedError,
     InvalidContentError,
     ContentTooLongError,
+    MessageConflictError,
+    MessageEditWindowExpiredError,
 )
 from src.core.servers.exceptions import (
     ServerNotFoundError,
@@ -187,7 +189,10 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                         )
 
             edited_msg = messaging.edit_message(
-                current_user.user_id, message_id, body.content
+                current_user.user_id,
+                message_id,
+                body.content,
+                expected_edited_at=body.expected_edited_at,
             )
 
             author_username, author_avatar_url, author_badges = (
@@ -250,6 +255,32 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
             return response
         except HTTPException:
             raise
+        except MessageConflictError as e:
+            logger.warning(f"Edit conflict for message {message_id}")
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": {
+                        "code": "EDIT_CONFLICT",
+                        "message": (
+                            "Message was modified by another request; refresh and retry"
+                        ),
+                        "expected_edited_at": e.expected,
+                        "actual_edited_at": e.actual,
+                    }
+                },
+            )
+        except MessageEditWindowExpiredError:
+            logger.warning(f"Edit window expired for message {message_id}")
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": "EDIT_WINDOW_EXPIRED",
+                        "message": "The edit window for this message has expired",
+                    }
+                },
+            )
         except Exception as e:
             if isinstance(
                 e, (MessageNotFoundError, ServerNotFoundError, ChannelNotFoundError)

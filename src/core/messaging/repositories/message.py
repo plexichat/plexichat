@@ -283,7 +283,9 @@ class MessageRepository(BaseRepository[Message]):
         flag is not raised. Callers can additionally suppress the edited
         flag entirely (system operations such as AutoMod tombstoning pass
         ``mark_edited=False``) so system rewrites never masquerade as user
-        edits.
+        edits. When the edited flag IS raised, ``edited_at`` is stamped
+        with ``updated_at`` so consumers see the real edit time instead of
+        silently falling back to a generic last-updated timestamp.
         """
         cid = self._get_conv_id(msg_id)
         existing = self._fetch_one(
@@ -291,20 +293,24 @@ class MessageRepository(BaseRepository[Message]):
             (msg_id,),
         )
         content_changed = existing is None or existing["content"] != content
+        raise_edited = 1 if (content_changed and mark_edited) else 0
         self._execute(
             """UPDATE msg_messages
                SET content = ?,
                    content_encrypted = CASE WHEN ? THEN NULL ELSE content_encrypted END,
                    content_index = ?,
                    updated_at = ?,
-                   edited = CASE WHEN ? THEN 1 ELSE edited END
+                   edited = CASE WHEN ? THEN 1 ELSE edited END,
+                   edited_at = CASE WHEN ? THEN ? ELSE edited_at END
                WHERE id = ?""",
             (
                 content,
-                1 if (content_changed and mark_edited) else 0,
+                raise_edited,
                 content_index,
                 updated_at,
-                1 if (content_changed and mark_edited) else 0,
+                raise_edited,
+                raise_edited,
+                updated_at,
                 msg_id,
             ),
             auto_commit=auto_commit,

@@ -14,7 +14,11 @@ from ..exceptions import (
     ParticipantLimitError,
     InvalidContentError,
 )
-from .base import BaseService, _get_relationships_module
+from .base import (
+    BaseService,
+    _get_relationships_module,
+    get_encrypt_messages_default,
+)
 from .participant import ParticipantService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
@@ -105,7 +109,7 @@ class ConversationService(BaseService):
         # Create new DM
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
 
         self._repo.create(
             conv_id,
@@ -182,7 +186,7 @@ class ConversationService(BaseService):
 
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
 
         self._repo.create(
             conv_id,
@@ -222,7 +226,7 @@ class ConversationService(BaseService):
         # Create new notes conversation
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
 
         self._repo.create(
             conv_id,
@@ -251,7 +255,7 @@ class ConversationService(BaseService):
         """Create a conversation for a server channel."""
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
         metadata = {"server_id": server_id, "channel_id": channel_id}
 
         self._repo.create(
@@ -281,7 +285,7 @@ class ConversationService(BaseService):
         """Create a conversation for a thread."""
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
         metadata = {"server_id": server_id, "channel_id": channel_id}
 
         self._repo.create(

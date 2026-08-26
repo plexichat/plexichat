@@ -4,6 +4,8 @@ Send message operations mixin for the MessageService.
 
 from typing import Any, Dict, List, Optional
 
+from urllib.parse import urlparse
+
 import utils.logger as logger
 from src.core.base import SnowflakeID
 from src.core.database import cache_set
@@ -29,7 +31,7 @@ from ...exceptions import (
     ContentTooLongError,
     AttachmentLimitError,
 )
-from ..base import BaseService, _get_relationships_module
+from ..base import BaseService, _get_relationships_module, get_encrypt_messages_default
 from .protocol import MessageServiceProtocol
 from .search_helpers import search_index_message
 
@@ -111,7 +113,7 @@ class SendMixin(BaseService, MessageServiceProtocol):
             ratchet_encryption_licensed,
         )
 
-        if self._get_config("encrypt_messages", True):
+        if self._get_config("encrypt_messages", get_encrypt_messages_default()):
             if self._ratchet_manager is not None and ratchet_encryption_licensed():
                 ratchet_result = self._ratchet_manager.encrypt(
                     conversation_id=conversation_id,
@@ -434,10 +436,40 @@ class SendMixin(BaseService, MessageServiceProtocol):
                     "Cannot send messages in this conversation"
                 )
 
+    # Attachment URL scheme allowlist (L4): only absolute http(s) URLs and
+    # site-relative media paths are accepted. Everything else — javascript:,
+    # data:, vbscript:, file:, protocol-relative "//host", etc. — is
+    # rejected at send time so dangerous schemes can never reach storage.
+    _ALLOWED_ATTACHMENT_SCHEMES = frozenset({"http", "https"})
+
     def _normalize_url(self, url: str) -> str:
         if not url:
             return url
-        return url
+
+        candidate = url.strip()
+        if not candidate:
+            return candidate
+
+        lowered = candidate.lower()
+
+        # Site-relative media path (e.g. /api/v1/media/attachments/...).
+        # Must start with a single "/" and must not be protocol-relative.
+        if candidate.startswith("/"):
+            if lowered.startswith("//") or candidate.startswith("/\\"):
+                raise InvalidContentError(
+                    "Attachment URL scheme is not allowed",
+                    [f"disallowed url: {candidate[:120]}"],
+                )
+            return candidate
+
+        parsed = urlparse(candidate)
+        if parsed.scheme in self._ALLOWED_ATTACHMENT_SCHEMES and parsed.netloc:
+            return candidate
+
+        raise InvalidContentError(
+            "Attachment URL scheme is not allowed",
+            [f"disallowed url scheme: {candidate[:120]}"],
+        )
 
     def send_system_message(
         self,
@@ -446,7 +478,25 @@ class SendMixin(BaseService, MessageServiceProtocol):
         event_type: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Message:
-        """Send a system message."""
+        """Send a system message.
+
+        Encryption parity (L2): when the conversation encryption default is
+        enabled the content is routed through the SAME ``encrypt_message``
+        path user messages take when no channel ratchet applies. The
+        per-message channel-ratchet envelope is NOT applied here — system
+        messages are not part of any key interval (author id 0) — so on an
+        encrypted deployment nothing is stored in plaintext, but the
+        ciphertext is the standard ``encrypt_message`` envelope carrying
+        its ``system`` metadata flag and ``event_type``, not ratchet
+        framing. The deterministic blind index of the plaintext is stored
+        for search parity.
+
+        NOTE on author id 0: system messages keep ``author_id = 0`` which
+        has NO matching auth_users row. SQLite does not enforce the FK so
+        this works, but PostgreSQL deployments must either disable FK
+        enforcement for msg_messages.author_id or provision a reserved
+        system user with id 0 before migrating.
+        """
         conv_row = self._conversation_repo.get_by_id(conversation_id)
         if not conv_row or conv_row.get("deleted"):
             raise ConversationNotFoundError("Conversation not found")
@@ -454,17 +504,26 @@ class SendMixin(BaseService, MessageServiceProtocol):
         now = self._get_timestamp()
         msg_id = self._generate_id()
 
-        full_metadata: Dict[str, Any] = {"event_type": event_type}
+        full_metadata: Dict[str, Any] = {
+            "event_type": event_type,
+            "system": True,
+        }
         if metadata:
             full_metadata.update(metadata)
+
+        final_content = content
+        content_idx = blind_index(content, "message_content")
+        if self._get_config("encrypt_messages", get_encrypt_messages_default()):
+            final_content = encrypt_message(final_content, msg_id)
 
         self._repo.create(
             msg_id,
             conversation_id,
             0,
-            content,
+            final_content,
             MessageType.SYSTEM,
             now,
+            content_index=content_idx,
             metadata=full_metadata,
         )
 
