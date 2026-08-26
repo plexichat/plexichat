@@ -21,6 +21,22 @@ RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt
 
 COPY . /app
 
+# Run the internet-facing FastAPI process as a dedicated non-root user.
+#
+# Volume ownership notes:
+#   - The compose stack mounts the named volume plexichat_home at
+#     /root/.plexichat. Creating that directory owned by UID/GID 10001 in the
+#     image means the first-time named-volume population inherits correct
+#     ownership, so the app can write data/media/logs there.
+#   - One-shot init steps intentionally stay root: cert-init is a separate
+#     container, and deploy tooling invokes config generation with
+#     `docker run --user 0` (it writes to host bind mounts).
+RUN useradd --uid 10001 --user-group --create-home --shell /usr/sbin/nologin plexichat \
+    && mkdir -p /root/.plexichat \
+    && chown -R plexichat:plexichat /root/.plexichat /app
+
+USER plexichat
+
 EXPOSE 8000
 EXPOSE 30000-30100/udp
 

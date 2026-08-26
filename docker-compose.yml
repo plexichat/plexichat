@@ -28,7 +28,8 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DBNAME:-plexichat}
       POSTGRES_USER: ${POSTGRES_USER:-plexichat}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Fail fast on unset/empty password rather than starting with no auth.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -42,12 +43,16 @@ services:
     image: valkey/valkey:9.1.1-alpine
     env_file:
       - .env
+    # Fail fast when VALKEY_PASSWORD is unset/empty - an empty --requirepass
+    # would start Valkey with NO authentication.
     command: >
-      sh -c "redis-server --appendonly yes --requirepass \"$${VALKEY_PASSWORD}\""
+      sh -c "exec redis-server --appendonly yes --requirepass \"$${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set}\""
     volumes:
       - valkey_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${VALKEY_PASSWORD}\" ping | grep PONG"]
+      # Authenticate via REDISCLI_AUTH so the password never appears in
+      # process arguments (`redis-cli -a ...` leaks it in ps output).
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set}\" redis-cli ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -64,7 +69,7 @@ services:
 
   rustfs:
     restart: unless-stopped
-    image: rustfs/rustfs:latest
+    image: rustfs/rustfs:1.0.0-rc.3
     env_file:
       - .env
     depends_on:
@@ -91,7 +96,7 @@ services:
       start_period: 40s
 
   rustfs-init:
-    image: rustfs/rc:latest
+    image: rustfs/rc:v0.1.30
     env_file:
       - .env
     depends_on:
@@ -123,7 +128,7 @@ services:
 
   clamav:
     restart: unless-stopped
-    image: clamav/clamav:latest
+    image: clamav/clamav:1.5.4
     environment:
       CLAMD_CONF_StreamMaxLength: "600M"
       CLAMD_CONF_MaxScanSize: "600M"
@@ -219,7 +224,10 @@ services:
       backend:
         condition: service_started
       cert-init:
-        condition: service_started
+        # Wait for the one-shot cert job to actually FINISH (not merely start):
+        # on first boot nginx would otherwise race ahead of certificate
+        # generation and crash-loop until a restart.
+        condition: service_completed_successfully
     volumes:
       - certs:/etc/nginx/certs
       - ./docker/runtime/client-config.js:/usr/share/nginx/html/config.js:ro
@@ -233,7 +241,9 @@ services:
       - .env
     environment:
       RESTIC_REPOSITORY: /repo
-      RESTIC_PASSWORD: ${BACKUP_RESTIC_PASSWORD:-}
+      # Fail fast on unset/empty restic password - blank fallbacks make the
+      # backup entrypoint crash-loop silently.
+      RESTIC_PASSWORD: ${BACKUP_RESTIC_PASSWORD:?BACKUP_RESTIC_PASSWORD must be set}
       BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 2 * * *}
       BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-7}
       BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
@@ -255,6 +265,15 @@ services:
       - rustfs_data:/rustfs-data:ro
       - backup_repo:/repo
     restart: unless-stopped
+    healthcheck:
+      # Liveness = supercronic running AND a recent successful backup marker
+      # (see /scripts/healthcheck.sh). Catches dead cron loops, broken mounts,
+      # empty restic passwords and failed runs that previously went undetected.
+      test: ["CMD-SHELL", "/scripts/healthcheck.sh"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 2m
 
   # Local AI moderation (Shieldstral) - OPTIONAL.
   #
@@ -271,7 +290,7 @@ services:
   shieldstral:
     profiles: ["ai"]
     restart: unless-stopped
-    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b10614}
     environment:
       LLAMA_ARG_MODEL: /models/shieldstral/${SHIELDSTRAL_MODEL:-Shieldstral-1.0-3B-Q4_K_M.gguf}
       LLAMA_ARG_MMPROJ: /models/shieldstral/${SHIELDSTRAL_MMPROJ:-mmproj-Shieldstral-1.0-3b-BF16.gguf}

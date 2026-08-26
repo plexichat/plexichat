@@ -22,6 +22,8 @@ case "$COMMAND" in
 
     if [ "$FAILED" -eq 0 ]; then
       log_info "Backup completed successfully"
+      # Liveness marker consumed by /scripts/healthcheck.sh (compose healthcheck).
+      date -u +%s > /tmp/.last_successful_backup
       run_hook "$BACKUP_SUCCESS_HOOK" "success"
     else
       log_error "Backup completed with errors"
