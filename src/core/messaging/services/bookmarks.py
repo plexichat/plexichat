@@ -43,7 +43,10 @@ class BookmarkService:
         )
         if not msg_row:
             raise ValueError("Message not found")
-        if int(msg_row["conversation_id"]) != int(conversation_id):
+        message_conversation_id = (
+            msg_row["conversation_id"] if isinstance(msg_row, dict) else msg_row[0]
+        )
+        if int(message_conversation_id) != int(conversation_id):
             raise PermissionError("Message is not in the specified conversation")
 
         participant_svc = (
@@ -95,7 +98,11 @@ class BookmarkService:
             "SELECT COUNT(*) as count FROM user_bookmarks WHERE user_id = ?",
             (user_id,),
         )
-        count = count_row["count"] if count_row else 0
+        count = (
+            (count_row["count"] if isinstance(count_row, dict) else count_row[0])
+            if count_row
+            else 0
+        )
         if count >= self.MAX_BOOKMARKS_PER_USER:
             raise ValueError(
                 f"Maximum {self.MAX_BOOKMARKS_PER_USER} bookmarks per user"
@@ -113,12 +120,16 @@ class BookmarkService:
         if existing:
             # Update label if provided
             if label is not None:
+                existing_id = (
+                    existing["id"] if isinstance(existing, dict) else existing[0]
+                )
                 self._db.execute(
                     "UPDATE user_bookmarks SET label = ? WHERE id = ?",
-                    (label, existing["id"]),
+                    (label, existing_id),
                 )
+            existing_id = existing["id"] if isinstance(existing, dict) else existing[0]
             row = self._db.fetch_one(
-                "SELECT * FROM user_bookmarks WHERE id = ?", (existing["id"],)
+                "SELECT * FROM user_bookmarks WHERE id = ?", (existing_id,)
             )
             return dict(row) if row else {}
 
@@ -172,7 +183,18 @@ class BookmarkService:
         # Enrich with message content if messaging module available
         results = []
         for row in rows:
-            data = dict(row)
+            data = (
+                dict(row)
+                if isinstance(row, dict)
+                else {
+                    "id": row[0],
+                    "user_id": row[1],
+                    "message_id": row[2],
+                    "conversation_id": row[3],
+                    "label": row[4],
+                    "created_at": row[5],
+                }
+            )
             if self._messaging:
                 try:
                     msg = self._messaging.get_message(user_id, data["message_id"])
@@ -191,7 +213,7 @@ class BookmarkService:
             "SELECT COUNT(*) as count FROM user_bookmarks WHERE user_id = ?",
             (user_id,),
         )
-        return row["count"] if row else 0
+        return (row["count"] if isinstance(row, dict) else row[0]) if row else 0
 
     def is_bookmarked(self, user_id: int, message_id: int) -> bool:
         """Check if a message is bookmarked by a user."""

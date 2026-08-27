@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -147,5 +147,16 @@ async def list_bookmarks(
 
     bookmark_svc = BookmarkService(db, messaging)
     conv_id = parse_id(conversation_id, "conversation ID") if conversation_id else None
-    results = bookmark_svc.get_bookmarks(current_user.user_id, conv_id, limit)
+    try:
+        results = bookmark_svc.get_bookmarks(current_user.user_id, conv_id, limit)
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Bookmark access denied"}},
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid bookmark request"}},
+        )
     return {"bookmarks": results}

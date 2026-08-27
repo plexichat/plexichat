@@ -51,10 +51,13 @@ async def register_push_token(
             "success": True,
             "token_record": PushManager._sanitize_token_record(result),
         }
-    except ValueError as e:
-        raise_bad_request(str(e))
-    except PermissionDeniedError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError:
+        raise_bad_request("Invalid push token data")
+    except PermissionDeniedError:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Push token operation denied"}},
+        )
 
 
 @router.get(

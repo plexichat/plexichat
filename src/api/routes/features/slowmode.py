@@ -55,9 +55,14 @@ async def set_channel_slowmode(
         "SELECT server_id FROM srv_channels WHERE id = ?",
         (cid,),
     )
-    if not channel_row or not channel_row["server_id"]:
+    if not channel_row:
         raise_not_found("Channel not found")
-    server_id = int(channel_row["server_id"])
+    server_id_value = (
+        channel_row["server_id"] if isinstance(channel_row, dict) else channel_row[0]
+    )
+    if not server_id_value:
+        raise_not_found("Channel not found")
+    server_id = int(server_id_value)
 
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -137,7 +142,8 @@ async def get_channel_slowmode(
                 raise_not_found("Channel not found")
             raise_forbidden("Channel access denied")
 
-    return {"channel_id": cid, "slowmode_seconds": row["slowmode_seconds"] or 0}
+    slowmode_seconds = row["slowmode_seconds"] if isinstance(row, dict) else row[2]
+    return {"channel_id": cid, "slowmode_seconds": slowmode_seconds or 0}
 
 
 @router.put(
