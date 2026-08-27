@@ -43,7 +43,8 @@ async def get_db_pool_health(request: Request):
     except Exception as e:
         logger.error(f"DB pool health error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -73,7 +74,8 @@ async def get_migration_status(request: Request):
     except Exception as e:
         logger.error(f"Migration status error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -103,7 +105,8 @@ async def validate_migration_integrity(request: Request):
     except Exception as e:
         logger.error(f"Migration integrity check error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -138,7 +141,8 @@ async def apply_all_migrations(request: Request, dry_run: bool = False):
     except Exception as e:
         logger.error(f"Apply migrations error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -174,7 +178,8 @@ async def apply_migration(request: Request, version: str, dry_run: bool = False)
     except Exception as e:
         logger.error(f"Apply migration {version} error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -209,5 +214,6 @@ async def rollback_migration(request: Request, version: str):
     except Exception as e:
         logger.error(f"Rollback migration {version} error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

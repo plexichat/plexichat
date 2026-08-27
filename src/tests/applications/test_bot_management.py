@@ -107,18 +107,20 @@ class TestBotManagement:
     ):
         owner, other = bot_test_users
         server = server_manager.create_server(owner.id, "Bot Server")
-        app_manager_with_servers.create_application(owner.id, "Bot App")
+        app_manager_with_servers.create_application(other.id, "Bot App")
         request = app_manager_with_servers.request_bot(
             server.id,
             app_manager_with_servers.get_application(
                 app_manager_with_servers._db.fetch_one(
                     "SELECT id FROM app_applications WHERE owner_id = ?",
-                    (owner.id,),
+                    (other.id,),
                 )["id"]
             ).id,
-            owner.id,
+            other.id,  # requester is other
         )
 
+        # SECURITY: reviewers must be different from the requester (self-review blocked).
+        # owner is the server creator and has server.manage; other is the requester.
         app_manager_with_servers.review_bot_request(
             server_id=server.id,
             request_id=request.id,

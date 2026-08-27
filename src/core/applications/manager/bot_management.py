@@ -137,10 +137,21 @@ class BotManagementMixin(ApplicationManagerProtocol):
         self._require_server_manage_permission(user_id, server_id)
         now = self._get_timestamp()
 
-        self._db.execute(
-            "UPDATE app_approved_bots SET status = 'removed', updated_at = ? WHERE server_id = ? AND application_id = ?",
+        # SECURITY: only transition rows that are in an active state
+        # (approved or pending).  Previously the UPDATE targeted ALL rows
+        # regardless of current status, which would silently flip
+        # previously-denied requests to 'removed' — erasing audit
+        # history and allowing re-approval via the request-bot flow.
+        cursor = self._db.execute(
+            "UPDATE app_approved_bots SET status = 'removed', updated_at = ? "
+            "WHERE server_id = ? AND application_id = ? AND status IN ('approved', 'pending')",
             (now, server_id, application_id),
         )
+        rows = getattr(cursor, "rowcount", 0)
+        if rows == 0:
+            raise InstallationNotFoundError(
+                f"No active bot installation found for app {application_id} on server {server_id}"
+            )
 
         try:
             self.uninstall_application(application_id, server_id, user_id)
@@ -149,7 +160,10 @@ class BotManagementMixin(ApplicationManagerProtocol):
         except Exception as e:
             logger.warning(f"Failed to uninstall bot on removal: {e}")
 
-        logger.info(f"Bot {application_id} removed from server {server_id}")
+        logger.info(
+            f"Bot {application_id} removed from server {server_id} "
+            f"({rows} row(s) transitioned)"
+        )
         return True
 
     def get_approved_bots(
@@ -219,7 +233,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
         if current_pending >= max_pending:
             raise BotRequestError(
                 f"Maximum of {max_pending} pending bot requests per user",
-                requester_id,
+                request_id=None,
             )
 
         request_id = self._generate_id()
@@ -270,6 +284,15 @@ class BotManagementMixin(ApplicationManagerProtocol):
 
         if row["status"] != "pending":
             raise BotRequestError(f"Request already {row['status']}", request_id)
+
+        # SECURITY: prevent self-review.  A requester must not approve or
+        # deny their own bot request — that would bypass the second-party
+        # review that the approval flow is designed to enforce.
+        if row["requester_id"] == reviewer_id:
+            raise PermissionDeniedError(
+                "Requesters cannot review their own bot request",
+                "bots.review",
+            )
 
         self._require_server_manage_permission(reviewer_id, row["server_id"])
 

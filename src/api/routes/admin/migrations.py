@@ -215,7 +215,7 @@ async def list_migrations(
         logger.error(f"Failed to list migrations: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list migrations: {str(e)}",
+            detail="Failed to list migrations",
         )
 
 
@@ -245,7 +245,7 @@ async def get_migration_system_status(
         logger.error(f"Failed to get migration system status: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get migration system status: {str(e)}",
+            detail="Failed to get migration system status",
         )
 
 
@@ -427,7 +427,7 @@ async def run_migration(
         logger.error(f"Failed to run migration {version}: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to run migration: {str(e)}",
+            detail="Failed to run migration",
         )
 
 
@@ -480,7 +480,7 @@ async def rollback_migration(
         logger.error(f"Failed to rollback migration {version}: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to rollback migration: {str(e)}",
+            detail="Failed to rollback migration",
         )
 
 
@@ -531,5 +531,5 @@ async def generate_emergency_override(
         logger.error(f"Failed to generate emergency override: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate emergency override: {str(e)}",
+            detail="Failed to generate emergency override",
         )

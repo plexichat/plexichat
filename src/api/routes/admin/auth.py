@@ -19,6 +19,7 @@ from .utils import (
     get_admin_from_token,
     require_admin_permission,
 )
+import src.api as api
 import utils.logger as logger
 
 router = APIRouter()
@@ -49,6 +50,24 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
 
         client_ip = get_client_ip(request) or "unknown"
         result = admin.login(login_data.username, login_data.password, client_ip)
+
+        # SECURITY: audit every login attempt (success and failure)
+        # so that brute-force campaigns and credential-stuffing are
+        # visible in the admin audit trail.
+        try:
+            from src.core.admin.logging import get_admin_logger
+
+            _admin_db = api.get_db()
+            if _admin_db is not None and result.user_id:
+                get_admin_logger().log_login(
+                    _admin_db,
+                    admin_id=result.user_id,
+                    success=result.success and bool(result.token),
+                    ip_address=client_ip,
+                )
+        except Exception:
+            logger.warning("Failed to record admin login audit", exc_info=True)
+
         if not result.success:
             status_code = 429 if result.rate_limited else 401
             raise HTTPException(

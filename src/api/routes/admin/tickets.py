@@ -61,7 +61,8 @@ async def get_tickets(
     except Exception as e:
         logger.error(f"Tickets error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 

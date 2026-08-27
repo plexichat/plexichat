@@ -123,7 +123,14 @@ def get_hash_reports(
 
 def get_hash_report_counts(db: Any) -> Dict[str, int]:
     """Get counts of hash reports by status."""
-    counts = {"pending": 0, "blocked": 0, "cleared": 0, "total": 0}
+    counts = {
+        "pending": 0,
+        "blocked": 0,
+        "cleared": 0,
+        "dismissed": 0,
+        "reviewed": 0,
+        "total": 0,
+    }
     rows = db.fetch_all(
         "SELECT status, COUNT(*) as count FROM media_hash_reports GROUP BY status"
     )
@@ -208,6 +215,8 @@ def review_hash_report(
         status = "blocked"
     elif action == "clear":
         status = "cleared"
+    elif action == "dismiss":
+        status = "dismissed"
     else:
         status = "reviewed"
 

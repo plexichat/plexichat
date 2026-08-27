@@ -63,7 +63,8 @@ async def reindex_search(request: Request, body: ReindexRequest | None = None):
     except Exception as e:
         logger.error(f"Reindex failed: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Reindex failed"}},
         )
 
 
@@ -279,5 +280,6 @@ async def reindex_conversation(
     except Exception as e:
         logger.error(f"Reindex conversation failed: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Reindex failed"}},
         )

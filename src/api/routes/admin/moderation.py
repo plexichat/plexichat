@@ -173,7 +173,8 @@ async def get_hash_reports(
     except Exception as e:
         logger.error(f"Hash reports error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -257,7 +258,8 @@ async def get_message_reports(
     except Exception as e:
         logger.error(f"Message reports error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -418,7 +420,8 @@ async def get_user_reports(
     except Exception as e:
         logger.error(f"User reports error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -716,7 +719,8 @@ async def get_automod_rules(request: Request, server_id: str):
     except Exception as e:
         logger.error(f"Automod rules error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -769,7 +773,8 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
     except Exception as e:
         logger.error(f"Create automod rule error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Failed to create rule"}},
         )
 
 
@@ -834,7 +839,8 @@ async def update_automod_rule(
     except Exception as e:
         logger.error(f"Update automod rule error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Failed to update rule"}},
         )
 
 
@@ -871,7 +877,8 @@ async def delete_automod_rule(rule_id: int, request: Request):
     except Exception as e:
         logger.error(f"Delete automod rule error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 

@@ -96,8 +96,15 @@ class InteractionHandler:
                     plaintext, context=f"interaction:{interaction_id}"
                 )
             except Exception as e:
-                logger.warning(f"Failed to encrypt interaction data: {e}")
-                data_json = plaintext
+                # SECURITY: fail closed.  Storing plaintext when encryption
+                # breaks would silently downgrade the confidentiality of every
+                # interaction payload until the operator notices.  Surface the
+                # failure so the caller can retry with a working crypto backend.
+                logger.error(f"Encryption of interaction data failed: {e}")
+                raise InteractionValidationError(
+                    "Failed to encrypt interaction data",
+                    ["Encryption subsystem unavailable"],
+                ) from e
         else:
             data_json = None
 

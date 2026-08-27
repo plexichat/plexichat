@@ -391,11 +391,15 @@ class OAuth2Flow:
         if token_record["revoked"]:
             raise TokenRevokedError()
 
-        if token_record["expires_at"] < self._current_time():
-            raise TokenExpiredError()
-
+        # SECURITY: verify the token secret hash BEFORE checking expiry.
+        # This avoids a timing side-channel where a non-holder can
+        # distinguish valid-but-expired tokens from invalid tokens by
+        # measuring response time.
         if not verify_token_hash(parsed["secret"], token_record["access_token_hash"]):
             raise InvalidGrantError("Invalid access token")
+
+        if token_record["expires_at"] < self._current_time():
+            raise TokenExpiredError()
 
         try:
             self._db.execute(
