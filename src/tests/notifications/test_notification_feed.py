@@ -141,6 +141,52 @@ class TestGetNotificationFeed:
 
         assert feed.has_more is True
 
+    def test_feed_counts_are_user_scoped_not_page_scoped(
+        self, auth_manager, messaging_manager, wired_send_path
+    ):
+        """Regression: total/unread must not shrink on deeper pages.
+
+        Counts used to be computed with window functions INSIDE the
+        paginated SELECT, so requesting page 2 with ``before_id`` returned
+        totals covering only that page. Clients relying on feed counts for
+        badges would undercount as soon as they paginated. Counts must stay
+        stable across pages for the same user data.
+        """
+        notification_manager = wired_send_path
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            owner = auth_manager.register(
+                username="feedcountowner",
+                email="feedcount-owner@example.com",
+                password="TestPass123!",
+            )
+            member1 = auth_manager.register(
+                username="feedcountmember",
+                email="feedcount-member@example.com",
+                password="TestPass123!",
+            )
+
+        group = messaging_manager.create_group(owner.id, "Count Group", [member1.id])
+
+        for i in range(5):
+            content = f"<@{member1.id}> count message {i}"
+            messaging_manager.send_message(owner.id, group.id, content)
+
+        page1 = notification_manager.get_notification_feed(member1.id, limit=2)
+        page2 = notification_manager.get_notification_feed(
+            member1.id, limit=2, before_id=page1.notifications[-1].id
+        )
+
+        # Item pagination still applies...
+        assert len(page1.notifications) == 2
+        assert len(page2.notifications) == 2
+        assert page1.has_more is True
+
+        # ...but totals are user-scoped and identical across pages.
+        assert page1.total_count == 5
+        assert page2.total_count == 5
+        assert page1.unread_count == 5
+        assert page2.unread_count == 5
+
 
 class TestGetNotifications:
     """Tests for getting notifications list."""

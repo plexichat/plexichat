@@ -159,7 +159,8 @@ class InteractionHandler:
         row = self._db.fetch_one(
             """SELECT id, application_id, interaction_type, data, server_id,
                       channel_id, user_id, token_hash, version, message_id,
-                      locale, server_locale, created_at, responded
+                      locale, server_locale, created_at, responded,
+                      response_payload_encrypted
                FROM app_interactions WHERE id = ?""",
             (interaction_id,),
         )
@@ -240,9 +241,37 @@ class InteractionHandler:
         if issues:
             raise InteractionValidationError("Invalid response", issues)
 
-        self._db.execute(
-            "UPDATE app_interactions SET responded = 1 WHERE id = ?", (interaction.id,)
+        response_payload = json.dumps(
+            {
+                "response_type": int(response.response_type),
+                "content": response.content,
+                "embeds": response.embeds or [],
+                "components": response.components or [],
+                "flags": response.flags,
+                "tts": response.tts,
+                "allowed_mentions": response.allowed_mentions,
+                "attachments": response.attachments or [],
+                "choices": response.choices or [],
+                "custom_id": response.custom_id,
+                "title": response.title,
+            },
+            separators=(",", ":"),
         )
+        response_encrypted = encrypt_data(
+            response_payload, context=f"interaction-response:{interaction.id}"
+        )
+        # Atomic responded guard prevents two concurrent callbacks from both
+        # becoming the stored original response.
+        result = self._db.execute(
+            """UPDATE app_interactions
+               SET responded = 1, response_payload_encrypted = ?
+               WHERE id = ? AND responded = 0""",
+            (response_encrypted, interaction.id),
+        )
+        if hasattr(result, "rowcount") and result.rowcount == 0:
+            raise InteractionAlreadyRespondedError(
+                "Interaction has already been responded to"
+            )
 
         logger.debug(
             f"Interaction {interaction.id} responded with type {response.response_type}"
@@ -305,12 +334,24 @@ class InteractionHandler:
         """
         interaction = self.verify_interaction_token(interaction_token)
 
-        return {
-            "interaction_id": str(interaction.id),
-            "content": content,
-            "embeds": embeds or [],
-            "components": components or [],
-        }
+        if not interaction.response:
+            raise InteractionNotFoundError("Interaction response not found")
+        updated = dict(interaction.response)
+        if content is not None:
+            updated["content"] = content
+        if embeds is not None:
+            updated["embeds"] = embeds
+        if components is not None:
+            updated["components"] = components
+        encrypted = encrypt_data(
+            json.dumps(updated, separators=(",", ":")),
+            context=f"interaction-response:{interaction.id}",
+        )
+        self._db.execute(
+            "UPDATE app_interactions SET response_payload_encrypted = ? WHERE id = ? AND responded = 1",
+            (encrypted, interaction.id),
+        )
+        return {"interaction_id": str(interaction.id), **updated}
 
     def delete_original(self, interaction_token: str) -> bool:
         """
@@ -322,7 +363,13 @@ class InteractionHandler:
         Returns:
             True if deleted
         """
-        self.verify_interaction_token(interaction_token)
+        interaction = self.verify_interaction_token(interaction_token)
+        if not interaction.response:
+            raise InteractionNotFoundError("Interaction response not found")
+        self._db.execute(
+            "UPDATE app_interactions SET response_payload_encrypted = NULL, responded = 0 WHERE id = ?",
+            (interaction.id,),
+        )
         return True
 
     def dispatch_interaction(self, interaction: Interaction) -> None:
@@ -526,6 +573,19 @@ class InteractionHandler:
             if decoded is not None and isinstance(decoded, dict):
                 data = self._parse_interaction_data(decoded)
 
+        response = None
+        encrypted_response = row.get("response_payload_encrypted")
+        if encrypted_response:
+            try:
+                response = json.loads(
+                    decrypt_data(
+                        encrypted_response,
+                        context=f"interaction-response:{row['id']}",
+                    )
+                )
+            except Exception:
+                response = None
+
         return Interaction(
             id=row["id"],
             application_id=row["application_id"],
@@ -541,5 +601,6 @@ class InteractionHandler:
             server_locale=row["server_locale"],
             created_at=row["created_at"],
             responded=bool(row["responded"]),
+            response=response,
             token_hash=row["token_hash"],
         )

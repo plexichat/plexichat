@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS app_interactions (
     server_locale TEXT,
     created_at INTEGER NOT NULL,
     responded INTEGER NOT NULL DEFAULT 0,
+    response_payload_encrypted TEXT,
     FOREIGN KEY (application_id) REFERENCES app_applications(id) ON DELETE CASCADE
 );
 

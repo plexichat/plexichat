@@ -363,7 +363,7 @@ class TestPermissionGrantSecurity:
                 user_id=owner.id,
                 server_id=server.id,
                 name="Bogus",
-                permissions={"webhooks.manage": True},
+                permissions={"not.a.real.permission": True},
             )
 
     def test_moderator_cannot_grant_permissions_it_lacks(self, fresh_server):

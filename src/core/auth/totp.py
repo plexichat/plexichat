@@ -33,6 +33,7 @@ from src.utils.encryption import (
 
 # pyotp for TOTP
 import pyotp
+import utils.logger as logger
 
 
 class TOTPReplayCache:
@@ -53,6 +54,47 @@ class TOTPReplayCache:
         self._ttl = ttl_seconds
         self._lock = threading.Lock()
         self._last_cleanup = 0
+
+    @staticmethod
+    def _shared_cache_claim(key: str, ttl_seconds: int) -> Optional[bool]:
+        """Try to claim ``key`` once in the shared (Valkey) cache.
+
+        Returns:
+            True  - claim succeeded (code not seen before, now marked used).
+            False - replay detected (key already claimed).
+            None  - no shared backend configured or the backend errored;
+                    caller must fall back to the process-local cache.
+        """
+        try:
+            from src.core.database.valkey_client import (
+                get_client,
+                is_available,
+                ValkeyOperationError,
+            )
+        except Exception:  # pragma: no cover - defensive
+            return None
+
+        client = get_client()
+        if not client or not is_available():
+            return None
+        full_key = f"totp_replay:{key}"
+        try:
+            # SET NX + EXPIRE is an atomic claim-and-mark: exactly one worker
+            # wins, every other worker sees the replay.
+            # The project Valkey protocol exposes a small set operation
+            # without keyword arguments; use the atomic SET command options
+            # positionally for compatibility with every backend adapter.
+            claimed = client.set(full_key, "1", ttl_seconds)
+            return bool(claimed)
+        except ValkeyOperationError:
+            logger.warning(
+                "TOTP replay cache: shared backend error - falling back to "
+                "process-local replay window"
+            )
+            return None
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(f"TOTP replay cache: unexpected shared-cache error: {e}")
+            return None
 
     def _cleanup(self, now: int) -> None:
         """Remove expired entries. Called while holding lock."""
@@ -89,6 +131,11 @@ class TOTPReplayCache:
         actor_part = f":a:{acting_user_id if acting_user_id is not None else user_id}"
         key = f"{user_id}:{code}{purpose_part}{actor_part}"
         now = int(time.time())
+
+        # Prefer the shared cache so replay protection holds across workers.
+        shared = self._shared_cache_claim(key, self._ttl)
+        if shared is not None:
+            return shared
 
         with self._lock:
             self._cleanup(now)

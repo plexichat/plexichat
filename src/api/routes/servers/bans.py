@@ -47,9 +47,32 @@ async def get_server_bans(
             )
 
         bans = servers_mod.get_bans(current_user.user_id, sid)
+
+        # Enrich bans with the banned user's public info so clients can render
+        # real usernames instead of "Unknown User".
+        users_map = {}
+        user_ids = {
+            int(b.user_id)
+            for b in (bans or [])
+            if getattr(b, "user_id", None) is not None
+        }
+        if user_ids:
+            auth_mod = api.get_auth()
+            if auth_mod and hasattr(auth_mod, "get_users_bulk"):
+                try:
+                    from ..users import _user_to_public_response
+
+                    for uid, u in (
+                        auth_mod.get_users_bulk(list(user_ids)) or {}
+                    ).items():
+                        users_map[int(uid)] = _user_to_public_response(u)
+                except Exception as ue:
+                    logger.debug(f"Failed to enrich ban users: {ue}")
+
         return [
             BanResponse(
                 user_id=SnowflakeID(b.user_id),
+                user=users_map.get(int(b.user_id)),
                 reason=getattr(b, "reason", None),
                 banned_by=SnowflakeID(b.banned_by) if hasattr(b, "banned_by") else None,
                 banned_at=getattr(b, "created_at", None),

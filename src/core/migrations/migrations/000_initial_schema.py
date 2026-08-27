@@ -52,6 +52,9 @@ from src.core.suite.stash.schema import create_tables as create_stash_tables  # 
 from src.core.suite.sum.schema import create_tables as create_sum_tables  # noqa: E402
 from src.core.chat_tracking.schema import create_chat_tracking_tables  # noqa: E402
 
+# Interaction responses are part of the initial application schema for new
+# installations; existing databases are upgraded by the normal schema creator.
+
 
 def up(db):
     """Apply the initial schema migration.

@@ -5,7 +5,8 @@ This module handles password changes, reset requests, resets, and validation.
 """
 
 import re
-from typing import List, Tuple
+from pathlib import Path
+from typing import List, Tuple, Set
 
 import utils.config as config
 
@@ -120,6 +121,32 @@ def validate_password(password: str) -> PasswordValidation:
 
     if len(password) > max_length:
         issues.append(f"Password must be at most {max_length} characters")
+
+    # Reject common/breached passwords before composition checks. Keep the
+    # list lazy-loaded and process-local so startup does not do file I/O, while
+    # ensuring the bundled list is actually enforced for every password path.
+    common_passwords_enabled = pwd_config.get("reject_common_passwords", True)
+    if common_passwords_enabled:
+        common_path = Path(__file__).parent / "data" / "common-passwords.txt"
+        try:
+            common_passwords: Set[str] = getattr(
+                validate_password, "_common_passwords", set()
+            )
+            if not common_passwords:
+                common_passwords = {
+                    line.strip().casefold()
+                    for line in common_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                }
+                setattr(validate_password, "_common_passwords", common_passwords)
+            if password.casefold() in common_passwords:
+                issues.append(
+                    "Password is too common; choose a less predictable password"
+                )
+        except OSError:
+            # A missing bundled policy file must not make password changes
+            # fail closed unexpectedly; log/configuration monitoring catches it.
+            pass
 
     if pwd_config.get("require_uppercase", True):
         if not re.search(r"[A-Z]", password):

@@ -55,12 +55,16 @@ def search_users(
             (user_id, limit, offset),
         )
     except ValueError:
+        # Escape LIKE metacharacters so an admin search for `%` or `_` is a
+        # literal search rather than a wildcard probe.
+        escaped_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped_q}%"
         rows = db.fetch_all(
             """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
-               WHERE u.username LIKE ? OR u.email_index LIKE ? LIMIT ? OFFSET ?""",
-            (f"%{q}%", f"%{q}%", limit, offset),
+               WHERE u.username LIKE ? ESCAPE '\\' OR u.email_index LIKE ? ESCAPE '\\' LIMIT ? OFFSET ?""",
+            (pattern, pattern, limit, offset),
         )
 
     users = []

@@ -76,7 +76,11 @@ async def get_notifications(
         raise HTTPException(status_code=500, detail="Notification module not available")
 
     try:
-        notifications, unread_count = await asyncio.gather(
+        # total_unread is the EXACT count of unread notification rows for the
+        # user (page-independent), so clients can render an accurate badge no
+        # matter how many entries fit in `limit`. unread_count keeps its
+        # historical mention-counter semantics for existing consumers.
+        notifications, unread_count, unread_totals = await asyncio.gather(
             run_in_threadpool(
                 notif_mod.get_notifications,
                 current_user.user_id,
@@ -84,11 +88,13 @@ async def get_notifications(
                 unread_only=unread_only,
             ),
             run_in_threadpool(notif_mod.get_mention_count, current_user.user_id),
+            run_in_threadpool(notif_mod.get_unread_count, current_user.user_id),
         )
 
         return NotificationsResponse(
             notifications=[_notif_to_response(n) for n in notifications],
             unread_count=unread_count,
+            total_unread=int(getattr(unread_totals, "unread_count", 0) or 0),
         )
     except Exception as e:
         logger.error(

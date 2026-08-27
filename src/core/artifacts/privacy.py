@@ -133,6 +133,7 @@ def anonymize_user_artifacts(
                 "plexiscribe",
                 "plexiscript",
                 "whiteboard",
+                "voice_call",
             ):
                 new_payload = _scrub_transcript_text(row.get("payload"))
             try:
@@ -140,14 +141,17 @@ def anonymize_user_artifacts(
                     db.execute(
                         """
                         UPDATE artifacts
-                        SET author_id = ?, payload = ?
+                        SET author_id = ?, title = '[deleted user content]',
+                            summary = NULL, payload = ?
                         WHERE id = ?
                         """,
                         (ANONYMIZED_AUTHOR_ID, new_payload, artifact_id),
                     )
                 else:
                     db.execute(
-                        "UPDATE artifacts SET author_id = ? WHERE id = ?",
+                        """UPDATE artifacts
+                           SET author_id = ?, title = '[deleted user content]', summary = NULL
+                           WHERE id = ?""",
                         (ANONYMIZED_AUTHOR_ID, artifact_id),
                     )
                 touched += 1

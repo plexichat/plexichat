@@ -400,7 +400,12 @@ class DMSpamDetector:
             "SELECT event_type, COUNT(*) as count FROM dm_spam_events WHERE recipient_id = ? AND created_at > ? GROUP BY event_type",
             (user_id, day_ago),
         )
-        stats = {row["event_type"]: row["count"] for row in rows}
+        stats = {
+            (row["event_type"] if isinstance(row, dict) else row[0]): (
+                row["count"] if isinstance(row, dict) else row[1]
+            )
+            for row in (rows or [])
+        }
 
         # Get top spammers
         spammer_rows = self._db.fetch_all(
@@ -408,8 +413,11 @@ class DMSpamDetector:
             (user_id, day_ago),
         )
         top_spammers = [
-            {"sender_id": row["sender_id"], "count": row["count"]}
-            for row in spammer_rows
+            {
+                "sender_id": row["sender_id"] if isinstance(row, dict) else row[0],
+                "count": row["count"] if isinstance(row, dict) else row[1],
+            }
+            for row in (spammer_rows or [])
         ]
 
         return {

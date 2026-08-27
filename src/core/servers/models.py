@@ -465,6 +465,8 @@ SERVER_PERMISSIONS = {
     "invites.manage": "Manage and delete invites",
     # Emoji management
     "emojis.manage": "Create, edit, delete custom emojis",
+    # Webhook management (enforced by src/core/webhooks via has_permission)
+    "webhooks.manage": "Create and manage webhooks",
     # Message permissions (per channel)
     "messages.send": "Send messages",
     "messages.read": "Read messages",

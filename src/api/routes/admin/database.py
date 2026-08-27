@@ -5,7 +5,6 @@ Admin database monitoring routes.
 from fastapi import APIRouter, Request, HTTPException
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
     require_admin_permission,
     require_approved_request,
 )
@@ -31,7 +30,7 @@ async def get_db_pool_health(request: Request):
     Provides information on active, idle, and total connections.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "maintenance")
     db = api.get_db()
     if not db:
         raise HTTPException(
@@ -60,7 +59,7 @@ async def get_migration_status(request: Request):
     Get current migration status including applied, pending, and failed migrations.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "maintenance")
     db = api.get_db()
     if not db:
         raise HTTPException(
@@ -90,7 +89,7 @@ async def validate_migration_integrity(request: Request):
     Validate integrity of applied migrations by comparing checksums.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "maintenance")
     db = api.get_db()
     if not db:
         raise HTTPException(

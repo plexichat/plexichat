@@ -34,8 +34,8 @@ def test_send_artifact_ack_emits_op_with_seq():
     payload = conn.send_json.call_args.args[0]
     assert payload["op"] == 62  # ARTIFACT_OP
     d = payload["d"]
-    assert d["artifact_id"] == 777
-    assert d["actor_id"] == 42
+    assert str(d["artifact_id"]) == "777"
+    assert str(d["actor_id"]) == "42"
     assert d["seq"] == 9
     assert d["op"] == op
 

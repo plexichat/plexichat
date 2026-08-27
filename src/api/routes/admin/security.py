@@ -28,7 +28,6 @@ from src.api.schemas.admin import (
 from src.api.schemas.common import SuccessResponse, ErrorResponse
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
     require_admin_permission,
 )
 import utils.logger as logger
@@ -84,7 +83,7 @@ async def get_blocked_ips(request: Request):
     Retrieve a list of all currently blocked IP addresses.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.ipblock")
     from src.core import auth
 
     return [BlockedIPResponse(**ip) for ip in auth.get_blocked_ips()]
@@ -125,7 +124,7 @@ async def list_access_tokens(request: Request, include_revoked: bool = True):
     List all API access tokens created by administrators.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     tokens = auth.list_api_access_tokens(include_revoked=include_revoked)
@@ -199,7 +198,7 @@ async def get_access_token_detail(
 ):
     """Get detailed usage and policy information for a specific API access token."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     try:
@@ -534,7 +533,7 @@ async def get_banned_usernames(request: Request):
     Retrieve the list of patterns used to ban specific usernames.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.usernames")
     from src.core import admin
 
     return [

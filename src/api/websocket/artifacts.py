@@ -171,8 +171,10 @@ async def relay_artifact_op(
     connections = session_manager.get_connections_for_users(list(subscribers))
 
     d: Dict[str, object] = {
-        "artifact_id": int(artifact_id),
-        "actor_id": int(actor_id),
+        # Snowflake ids exceed 2^53 — serialize as strings so JS clients
+        # JSON.parse them losslessly (matches the REST SnowflakeID convention).
+        "artifact_id": str(artifact_id),
+        "actor_id": str(actor_id),
         "op": op,
     }
     # Carry the server-assigned op sequence so clients can order ops and
@@ -276,7 +278,8 @@ async def send_artifact_sync(
     payload = {
         "op": int(GatewayOpcode.ARTIFACT_SYNC),
         "d": {
-            "artifact_id": int(artifact_id),
+            # String ids: see note in relay_artifact_op about 2^53 precision.
+            "artifact_id": str(artifact_id),
             "snapshot": snapshot,
             "ops": ops or [],
         },
@@ -309,8 +312,9 @@ async def send_artifact_ack(
     payload = {
         "op": int(GatewayOpcode.ARTIFACT_OP),
         "d": {
-            "artifact_id": int(artifact_id),
-            "actor_id": int(actor_id) if actor_id is not None else None,
+            # String ids: see note in relay_artifact_op about 2^53 precision.
+            "artifact_id": str(artifact_id),
+            "actor_id": str(actor_id) if actor_id is not None else None,
             "seq": int(seq),
             "op": op,
         },

@@ -209,6 +209,7 @@ class Interaction:
     server_locale: Optional[str]
     created_at: int
     responded: bool = False
+    response: Optional[Dict[str, Any]] = None
 
     token_hash: Optional[str] = field(default=None, repr=False)
 

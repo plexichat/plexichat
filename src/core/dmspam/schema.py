@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS dm_spam_events (
 -- DM spam events indexes
 CREATE INDEX IF NOT EXISTS idx_dm_spam_evt_sender ON dm_spam_events(sender_id);
 CREATE INDEX IF NOT EXISTS idx_dm_spam_evt_created ON dm_spam_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_dm_spam_evt_recipient_created ON dm_spam_events(recipient_id, created_at);
 """
 
 

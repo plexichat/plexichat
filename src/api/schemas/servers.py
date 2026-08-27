@@ -36,6 +36,9 @@ class ServerUpdateRequest(BaseModel):
     default_channel_id: Optional[SnowflakeID] = Field(
         None, description="Default channel ID to select when joining"
     )
+    system_channel_id: Optional[SnowflakeID] = Field(
+        None, description='System messages channel ID (send "0" to clear)'
+    )
     verification_level: Optional[int] = Field(
         None, ge=0, le=4, description="Verification level required to join"
     )
@@ -250,6 +253,9 @@ class BanResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
     user_id: SnowflakeID = Field(..., description="Banned user ID")
+    user: Optional[UserPublicResponse] = Field(
+        default=None, description="Public info of the banned user"
+    )
     reason: Optional[str] = Field(None, description="Reason for ban")
     banned_by: Optional[SnowflakeID] = Field(
         None, description="User who performed the ban"
@@ -265,6 +271,14 @@ class BanCreateRequest(BaseModel):
     delete_message_days: int = Field(
         0, ge=0, le=7, description="Number of days of messages to delete"
     )
+
+
+class KickMemberRequest(BaseModel):
+    """Optional body for kick-member so the collected reason reaches the
+    audit trail instead of being discarded."""
+
+    model_config = ConfigDict(from_attributes=True)
+    reason: Optional[str] = Field(None, max_length=512, description="Reason for kick")
 
 
 class AuditLogEntryResponse(BaseModel):
@@ -313,6 +327,9 @@ class InviteResponse(BaseModel):
     channel_id: Optional[SnowflakeID] = Field(default=None, description="Channel ID")
     inviter_id: Optional[SnowflakeID] = Field(
         default=None, description="Inviter user ID"
+    )
+    inviter: Optional[UserPublicResponse] = Field(
+        default=None, description="Public info of the inviter"
     )
     uses: int = Field(default=0, description="Number of uses")
     max_uses: int = Field(default=0, description="Maximum uses (0 = unlimited)")

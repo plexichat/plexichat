@@ -517,10 +517,19 @@ async def block_hash_manually(block_request: ManualBlockHashRequest, request: Re
     admin_id = require_admin_permission(request, "admin.moderation.hashes")
     from src.core import admin
 
-    hash_type = "phash" if len(block_request.hash_value) <= 32 else "sha256"
+    hash_value = block_request.hash_value.strip().lower()
+    hash_type = "phash" if len(hash_value) <= 32 else "sha256"
+    valid_lengths = (16, 32) if hash_type == "phash" else (64,)
+    if len(hash_value) not in valid_lengths or any(
+        c not in "0123456789abcdef" for c in hash_value
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": f"Invalid {hash_type} hash"}},
+        )
     phash_threshold = 10 if hash_type == "phash" else 0
     if not admin.block_hash(
-        block_request.hash_value,
+        hash_value,
         block_request.reason,
         admin_id,
         hash_type,
@@ -530,9 +539,7 @@ async def block_hash_manually(block_request: ManualBlockHashRequest, request: Re
             status_code=500,
             detail={"error": {"code": 500, "message": "Failed to block hash"}},
         )
-    return BlockHashResponse(
-        success=True, hash_value=block_request.hash_value, hash_type=hash_type
-    )
+    return BlockHashResponse(success=True, hash_value=hash_value, hash_type=hash_type)
 
 
 @router.delete(

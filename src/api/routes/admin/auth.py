@@ -184,7 +184,7 @@ async def admin_change_password(request: Request, body: AdminChangePasswordReque
     Requires verification of the current password before applying the new one.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.edit")
     from src.core import admin
 
     success, message = admin.change_password(
@@ -270,7 +270,7 @@ async def admin_force_password_change(request: Request, target_admin_id: str):
 async def admin_security_status(request: Request):
     """Return the current admin account security settings and posture."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.read")
     from src.core import admin
 
     status = admin.get_security_status(admin_id)

@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
     require_admin_permission,
     require_approved_request,
 )
@@ -42,7 +41,7 @@ class ReindexRequest(BaseModel):
 )
 async def reindex_search(request: Request, body: ReindexRequest | None = None):
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.data.reindex")
 
     if not search_module._setup_complete or search_module._manager is None:
         raise HTTPException(
@@ -235,15 +234,17 @@ async def reindex_standalone(request: Request, body: ReindexRequest | None = Non
 async def reindex_status(request: Request):
     """Get current reindex status."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.data.reindex")
 
+    with _reindex_lock:
+        status = dict(_reindex_status)
     return {
-        "in_progress": _reindex_status["in_progress"],
-        "last_run": _reindex_status["last_run"],
-        "last_count": _reindex_status["last_count"],
-        "last_duration_ms": _reindex_status.get("last_duration_ms", 0),
-        "last_incremental": _reindex_status.get("last_incremental", True),
-        "last_error": _reindex_status["last_error"],
+        "in_progress": status["in_progress"],
+        "last_run": status["last_run"],
+        "last_count": status["last_count"],
+        "last_duration_ms": status.get("last_duration_ms", 0),
+        "last_incremental": status.get("last_incremental", True),
+        "last_error": status["last_error"],
     }
 
 
@@ -258,7 +259,7 @@ async def reindex_conversation(
     request: Request, conversation_id: int, body: ReindexRequest | None = None
 ):
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.data.reindex")
 
     if not search_module._setup_complete or search_module._manager is None:
         raise HTTPException(

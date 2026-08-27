@@ -308,7 +308,7 @@ def require_approved_request(action_type: str) -> Optional[int]:
 
 def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> str:
     """Load an admin UI template."""
-    allowed_templates = ["login.html", "dashboard.html"]
+    allowed_templates = ["login.html", "dashboard.html", "migrations.html"]
     if template_name not in allowed_templates:
         return "<h1>Access Denied</h1>"
 
@@ -342,4 +342,5 @@ def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> 
         return content
     except Exception as e:
         logger.error(f"Error reading template {template_name}: {e}")
-        return f"<h1>Template Error: {e}</h1>"
+        # Do not expose filesystem/parser exception details to browsers.
+        return "<h1>Template Error</h1>"

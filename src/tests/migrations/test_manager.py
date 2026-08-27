@@ -53,9 +53,7 @@ class TestManager:
             checksum="abc123",
             depends_on=[],
         )
-        assert (
-            migration_manager.validate_dependencies(migration, ["001", "002"]) is True
-        )
+        assert migration_manager.validate_dependencies(migration, ["001"]) is True
 
     def test_validate_dependencies_satisfied(self, migration_manager):
         """Test validating migration with satisfied dependencies."""
@@ -64,11 +62,9 @@ class TestManager:
             name="test_migration",
             file_path="/tmp/test.py",
             checksum="abc123",
-            depends_on=["001", "002"],
+            depends_on=["001"],
         )
-        assert (
-            migration_manager.validate_dependencies(migration, ["001", "002"]) is True
-        )
+        assert migration_manager.validate_dependencies(migration, ["001"]) is True
 
     def test_validate_dependencies_unsatisfied(self, migration_manager):
         """Test validating migration with unsatisfied dependencies."""

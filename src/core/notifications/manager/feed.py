@@ -55,14 +55,13 @@ class FeedMixin(NotificationProtocol):
         max_items = self._config.get("max_feed_items", 100)
         limit = min(limit, max_items)
 
-        # Single query with window functions to get total and unread counts
+        # Page items only — pagination-scoped ON PURPOSE so deeper pages
+        # never shrink their item list.
         query = """
-            SELECT 
-                id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id, 
-                mention_type, content_preview, content_preview_encrypted, read, created_at,
-                COUNT(*) OVER() as total_count,
-                SUM(CASE WHEN read = 0 THEN 1 ELSE 0 END) OVER() as unread_count
-            FROM notif_notifications 
+            SELECT
+                id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id,
+                mention_type, content_preview, content_preview_encrypted, read, created_at
+            FROM notif_notifications
             WHERE user_id = ?
         """
         params = [user_id]
@@ -82,8 +81,21 @@ class FeedMixin(NotificationProtocol):
 
         notifications = [row_to_notification(row) for row in rows]
 
-        total_count = rows[0]["total_count"] if rows else 0
-        unread_count = rows[0]["unread_count"] if rows else 0
+        # TOTAL/unread are USER-SCOPED, never page-scoped: computing them
+        # via window functions inside the paginated SELECT made them change
+        # depending on which page the caller requested (a ``before_id``
+        # cursor filtered out older rows BEFORE the aggregate ran). A
+        # client badge that reflects these numbers would undercount as soon
+        # as the user scrolled past page one. Count across the user's full
+        # notification set instead.
+        count_row = self._db.fetch_one(
+            """SELECT COUNT(*) AS total_count,
+                      COALESCE(SUM(CASE WHEN read = 0 THEN 1 ELSE 0 END), 0) AS unread_count
+               FROM notif_notifications WHERE user_id = ?""",
+            (user_id,),
+        )
+        total_count = count_row["total_count"] if count_row else 0
+        unread_count = count_row["unread_count"] if count_row else 0
 
         return NotificationFeed(
             notifications=notifications,

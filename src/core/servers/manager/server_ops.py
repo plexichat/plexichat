@@ -300,6 +300,7 @@ class ServerOpsMixin(ServerProtocol):
         description: Optional[str] = None,
         icon_url: Optional[str] = None,
         default_channel_id: Optional[SnowflakeID] = None,
+        system_channel_id: Optional[SnowflakeID] = None,
         verification_level: Optional[int] = None,
         default_message_notifications: Optional[int] = None,
         max_reactions_per_message: Optional[int] = None,
@@ -353,6 +354,35 @@ class ServerOpsMixin(ServerProtocol):
                 "old": server.default_channel_id,
                 "new": default_channel_id,
             }
+
+        if system_channel_id is not None:
+            try:
+                scid = int(system_channel_id)
+            except (ValueError, TypeError):
+                raise ValueError("system_channel_id must be a valid channel id")
+            if scid == 0:
+                # Sentinel 0 clears the system channel.
+                updates.append("system_channel_id = ?")
+                params.append(None)
+                changes["system_channel_id"] = {
+                    "old": server.system_channel_id,
+                    "new": None,
+                }
+            else:
+                channel = self._db.fetch_one(
+                    "SELECT 1 FROM srv_channels WHERE id = ? AND server_id = ? AND deleted = 0",
+                    (scid, server_id),
+                )
+                if not channel:
+                    raise ChannelNotFoundError(
+                        "System channel not found in this server"
+                    )
+                updates.append("system_channel_id = ?")
+                params.append(scid)
+                changes["system_channel_id"] = {
+                    "old": server.system_channel_id,
+                    "new": scid,
+                }
 
         if verification_level is not None:
             if not 0 <= int(verification_level) <= 4:

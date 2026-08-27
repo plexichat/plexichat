@@ -38,7 +38,7 @@ async def get_dashboard(request: Request):
     Returns a summary of system health, active sessions, and recent activity.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "metrics.read")
     from src.core import admin
 
     try:
@@ -148,7 +148,7 @@ async def get_dashboard(request: Request):
 async def get_cross_worker_tuning(request: Request):
     """Return the current poll-loop tuning constants."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.dashboard.tuning")
 
     try:
         from src.api.websocket import get_poll_tuning

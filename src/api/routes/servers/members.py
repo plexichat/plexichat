@@ -8,6 +8,7 @@ from src.api.schemas.servers import (
     MemberListResponse,
     PresenceResponse,
     MemberUpdateRequest,
+    KickMemberRequest,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.database import cached
@@ -295,7 +296,10 @@ async def update_server_member(
     },
 )
 async def kick_member(
-    server_id: str, member_id: str, current_user: TokenInfo = Depends(get_current_user)
+    server_id: str,
+    member_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+    payload: Optional[KickMemberRequest] = None,
 ) -> SuccessResponse:
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -332,7 +336,8 @@ async def kick_member(
             raise HTTPException(status_code=404, detail="Member not found")
 
         target_user_id = row["user_id"]
-        servers_mod.kick_member(current_user.user_id, sid, target_user_id)
+        reason = getattr(payload, "reason", None) if payload else None
+        servers_mod.kick_member(current_user.user_id, sid, target_user_id, reason)
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise

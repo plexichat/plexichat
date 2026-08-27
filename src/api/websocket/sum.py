@@ -199,8 +199,10 @@ async def relay_sum_op(
     payload = {
         "op": int(GatewayOpcode.SUM_OP),
         "d": {
-            "workbook_id": int(workbook_id),
-            "actor_id": int(actor_id),
+            # Snowflake ids exceed 2^53 — serialize as strings so JS clients
+            # JSON.parse them losslessly (matches the REST convention).
+            "workbook_id": str(workbook_id),
+            "actor_id": str(actor_id),
             "op": op,
         },
     }
@@ -271,7 +273,8 @@ async def send_sum_sync(
     payload = {
         "op": int(GatewayOpcode.SUM_SYNC),
         "d": {
-            "workbook_id": int(workbook_id),
+            # String id: see note in relay_sum_op about 2^53 precision.
+            "workbook_id": str(workbook_id),
             "revision": int(revision),
             "ops": ops or [],
         },

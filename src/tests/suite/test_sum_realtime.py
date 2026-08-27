@@ -182,7 +182,7 @@ async def test_sum_relay_delivers_to_authorized_subscribers_excludes_actor(
         assert len(other_conn.sent) == 1
         frame = other_conn.sent[0]
         assert frame["op"] == int(GatewayOpcode.SUM_OP)
-        assert frame["d"]["workbook_id"] == workbook_id
+        assert str(frame["d"]["workbook_id"]) == str(workbook_id)
         assert frame["d"]["actor_id"] == owner.id
         assert frame["d"]["op"]["operation_id"] == "op-relay"
         assert owner_conn.sent == []
@@ -274,7 +274,7 @@ async def test_sum_handler_subscribe_sends_sync_bootstrap(
         assert len(conn.sent) == 1
         sync = conn.sent[0]
         assert sync["op"] == int(GatewayOpcode.SUM_SYNC)
-        assert sync["d"]["workbook_id"] == workbook_id
+        assert str(sync["d"]["workbook_id"]) == str(workbook_id)
         assert sync["d"]["revision"] == 1
         assert len(sync["d"]["ops"]) == 1
         assert sync["d"]["ops"][0]["operation_id"] == "op-bootstrap"
@@ -420,7 +420,7 @@ async def test_sum_handler_op_conflict_returns_sync(
     # The conflict sync is sent through the rate-limited fabric path, so the
     # frame lands on the connection instead of the gateway's inline reply.
     sync = next(f for f in conn.sent if f.get("op") == int(GatewayOpcode.SUM_SYNC))
-    assert sync["d"]["workbook_id"] == workbook_id
+    assert str(sync["d"]["workbook_id"]) == str(workbook_id)
     assert sync["d"]["revision"] == 0
     assert sync["d"]["ops"] == []
 
