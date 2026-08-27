@@ -93,7 +93,8 @@ async def create_server(
         exc_name = type(e).__name__
         if "Limit" in exc_name:
             raise HTTPException(
-                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
 
         logger.error(
@@ -217,7 +218,8 @@ async def update_server(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(f"Failed to update server {server_id}: {e}", exc_info=True)
@@ -272,7 +274,8 @@ async def delete_server(
             )
         elif "Permission" in exc_name or "Owner" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(f"Failed to delete server {server_id}: {e}", exc_info=True)

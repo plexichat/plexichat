@@ -103,7 +103,7 @@ async def get_notifications(
         )
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -125,7 +125,10 @@ async def mark_all_read(
         return SuccessResponse(success=True, message=None)
     except Exception as e:
         logger.error(f"Failed to mark all notifications read: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
 
 
 @router.put(
@@ -154,4 +157,7 @@ async def mark_read(
         raise HTTPException(status_code=404, detail="Notification not found")
     except Exception as e:
         logger.error(f"Failed to mark notification {notification_id} read: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )

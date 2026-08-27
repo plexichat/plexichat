@@ -119,13 +119,21 @@ def _error(exc: Exception) -> HTTPException:
     if isinstance(exc, HTTPException):
         return exc
     if isinstance(exc, SumNotFoundError):
-        return HTTPException(status_code=404, detail=str(exc))
+        return HTTPException(
+            status_code=404, detail={"error": {"code": 404, "message": "Not found"}}
+        )
     if isinstance(exc, SumPermissionError):
-        return HTTPException(status_code=403, detail=str(exc))
+        return HTTPException(
+            status_code=403, detail={"error": {"code": 404, "message": "Not found"}}
+        )
     if isinstance(exc, SumConflictError):
-        return HTTPException(status_code=409, detail=str(exc))
+        return HTTPException(
+            status_code=409, detail={"error": {"code": 404, "message": "Not found"}}
+        )
     if isinstance(exc, SumValidationError):
-        return HTTPException(status_code=400, detail=str(exc))
+        return HTTPException(
+            status_code=400, detail={"error": {"code": 404, "message": "Not found"}}
+        )
     # Unknown failures must never vanish silently: log the full traceback so
     # a bare 500 is always diagnosable from latest.log.
     import utils.logger as logger

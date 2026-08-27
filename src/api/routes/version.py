@@ -87,7 +87,7 @@ def get_server_version() -> ServerVersionResponse:
         logger.error(f"Error in get_server_version: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -113,7 +113,7 @@ def negotiate_version(
     try:
         try:
             client_ver = version_util.parse(request.client_version)
-        except InvalidVersionError as e:
+        except InvalidVersionError:
             logger.warning(
                 f"Invalid version format negotiated: {request.client_version}"
             )
@@ -122,7 +122,7 @@ def negotiate_version(
                 detail={
                     "error": {
                         "code": "INVALID_VERSION_FORMAT",
-                        "message": str(e),
+                        "message": "Invalid version format",
                         "client_version": request.client_version,
                     }
                 },
@@ -218,7 +218,12 @@ def negotiate_version(
         logger.error(f"Unexpected error in negotiate_version: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": "INTERNAL_SERVER_ERROR", "message": str(e)}},
+            detail={
+                "error": {
+                    "code": "INTERNAL_SERVER_ERROR",
+                    "message": "Internal server error",
+                }
+            },
         )
 
 
@@ -256,7 +261,7 @@ def get_server_status() -> ServerStatusResponse:
         logger.error(f"Error in get_server_status: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 

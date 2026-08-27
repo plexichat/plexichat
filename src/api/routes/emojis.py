@@ -183,7 +183,8 @@ async def get_server_emojis(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -283,7 +284,8 @@ async def get_emoji_counts(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -364,7 +366,8 @@ async def get_emoji(
             f"Unexpected error in get_emoji for emoji {emoji_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -472,24 +475,29 @@ async def create_emoji(
                     f"User {current_user.user_id} denied permission to create emoji in server {sid}"
                 )
                 raise HTTPException(
-                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Internal server error"}},
                 )
             elif "Limit" in exc_name:
                 logger.warning(f"Emoji limit reached for server {sid}")
                 raise HTTPException(
-                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Internal server error"}},
                 )
             elif "Name" in exc_name or "Invalid" in exc_name:
                 raise HTTPException(
-                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Internal server error"}},
                 )
             elif "Size" in exc_name or "File" in exc_name:
                 raise HTTPException(
-                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Internal server error"}},
                 )
             elif "Exists" in exc_name:
                 raise HTTPException(
-                    status_code=409, detail={"error": {"code": 409, "message": str(e)}}
+                    status_code=409,
+                    detail={"error": {"code": 409, "message": "Internal server error"}},
                 )
 
             logger.error(f"Failed to create emoji in server {sid}: {e}", exc_info=True)
@@ -510,7 +518,8 @@ async def create_emoji(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -597,15 +606,18 @@ async def update_emoji(
                     f"User {current_user.user_id} denied permission to update emoji {emoji_id}"
                 )
                 raise HTTPException(
-                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Internal server error"}},
                 )
             elif "Name" in exc_name or "Invalid" in exc_name:
                 raise HTTPException(
-                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Internal server error"}},
                 )
             elif "Exists" in exc_name:
                 raise HTTPException(
-                    status_code=409, detail={"error": {"code": 409, "message": str(e)}}
+                    status_code=409,
+                    detail={"error": {"code": 409, "message": "Internal server error"}},
                 )
 
             logger.error(f"Failed to update emoji {emoji_id}: {e}", exc_info=True)
@@ -620,7 +632,8 @@ async def update_emoji(
             f"Unexpected error in update_emoji for emoji {emoji_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -709,7 +722,8 @@ async def delete_emoji(
                     f"User {current_user.user_id} denied permission to delete emoji {eid}"
                 )
                 raise HTTPException(
-                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Internal server error"}},
                 )
 
             logger.error(f"Failed to delete emoji {eid}: {e}", exc_info=True)
@@ -726,5 +740,6 @@ async def delete_emoji(
             f"Unexpected error in delete_emoji for emoji {emoji_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

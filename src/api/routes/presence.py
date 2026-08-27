@@ -274,13 +274,15 @@ async def update_presence(
             exc_name = type(e).__name__
             if "Invalid" in exc_name:
                 raise HTTPException(
-                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Internal server error"}},
                 )
             if "NotFound" in exc_name:
                 # A target user id may have been soft-deleted; surface a clean
                 # 404 instead of a 500 (P2).
                 raise HTTPException(
-                    status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "Internal server error"}},
                 )
 
             logger.error(
@@ -304,7 +306,8 @@ async def update_presence(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -423,5 +426,6 @@ def get_user_presence(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

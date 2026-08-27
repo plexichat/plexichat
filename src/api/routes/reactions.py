@@ -242,11 +242,13 @@ async def add_reaction(
                     f"User {current_user.user_id} denied permission to react to message {mid}"
                 )
                 raise HTTPException(
-                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Internal server error"}},
                 )
             elif "Invalid" in exc_name or "Limit" in exc_name:
                 raise HTTPException(
-                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Internal server error"}},
                 )
             elif "Blocked" in exc_name:
                 raise HTTPException(
@@ -390,7 +392,7 @@ async def clear_reactions_for_emoji(
         if "Invalid" in exc_name or "Limit" in exc_name:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}},
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
         logger.error(
             f"Failed to remove emoji reactions for message {mid}: {e}", exc_info=True
@@ -519,7 +521,8 @@ async def remove_reaction(
                     f"User {current_user.user_id} denied permission to remove reaction on message {mid}"
                 )
                 raise HTTPException(
-                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Internal server error"}},
                 )
             elif "Blocked" in exc_name:
                 raise HTTPException(

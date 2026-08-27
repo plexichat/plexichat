@@ -201,7 +201,8 @@ async def create_server_channel(
             f"Failed to create channel in server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
     except Exception as e:
         exc_name = type(e).__name__
@@ -212,14 +213,16 @@ async def create_server_channel(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(
             f"Failed to create channel in server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -312,12 +315,14 @@ async def get_server_invites(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(
             f"Failed to fetch invites for server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

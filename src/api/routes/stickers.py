@@ -260,10 +260,16 @@ async def create_sticker(
         StickerLimitError,
         PackLimitError,
         PackNotFoundError,
-    ) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except PermissionDeniedError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
+    except PermissionDeniedError:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except Exception as e:
         logger.error(f"Failed to create sticker: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to create sticker")
@@ -299,10 +305,16 @@ async def delete_sticker(
             await _dispatch_stickers_update(server_id, current_user.user_id)
 
         return {"success": True}
-    except PermissionDeniedError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except PackNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionDeniedError:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
+    except PackNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except Exception as e:
         logger.error(f"Failed to delete sticker {sticker_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete sticker")
@@ -331,8 +343,11 @@ async def send_sticker_usage(
             )
         stickers_mod.send_sticker(current_user.user_id, mid, sid)
         return {"success": True}
-    except PermissionDeniedError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    except PermissionDeniedError:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except Exception as e:
         # Log but don't fail hard if usage tracking fails
         logger.warning(f"Failed to track sticker usage: {e}")

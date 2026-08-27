@@ -72,7 +72,8 @@ async def login(
         masked_username = mask_string(body.username)
         logger.warning(f"Login failed for '{masked_username}': {type(e).__name__}")
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except Exception as e:
         masked_username = mask_string(body.username)

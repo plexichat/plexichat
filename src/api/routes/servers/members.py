@@ -173,7 +173,8 @@ def get_server_members(
             f"Failed to fetch members for server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -271,7 +272,8 @@ async def update_server_member(
             )
         elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(
@@ -279,7 +281,8 @@ async def update_server_member(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -350,7 +353,8 @@ async def kick_member(
             )
         elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(
@@ -358,7 +362,8 @@ async def kick_member(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -431,12 +436,13 @@ async def assign_role_to_member(
             )
         elif "Permission" in exc_name or "Hierarchy" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
         elif "InvalidPermissionKey" in exc_name:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}},
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
         elif "Exists" in exc_name:
             return SuccessResponse(success=True, message=None)
@@ -446,7 +452,8 @@ async def assign_role_to_member(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -521,7 +528,8 @@ async def remove_role_from_member(
             "Permission" in exc_name or "Hierarchy" in exc_name or "Default" in exc_name
         ):
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(
@@ -529,5 +537,6 @@ async def remove_role_from_member(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

@@ -119,7 +119,7 @@ async def get_license_status(request: Request):
         }
     except Exception as e:
         logger.error(f"License status error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get(
@@ -175,7 +175,7 @@ async def get_license_features(request: Request):
         return {"features": feature_matrix}
     except Exception as e:
         logger.error(f"License features error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post(
@@ -214,7 +214,7 @@ async def validate_license_key(request: Request, body: LicenseKey):
         raise
     except Exception as e:
         logger.error(f"License validation error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post(

@@ -268,15 +268,15 @@ async def update_application(
             bot_require_code_grant=body.bot_require_code_grant,
         )
         return _application_to_response(app)
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
-    except ApplicationAccessDeniedError as e:
+    except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except Exception:
         logger.exception("Unhandled error in applications API")
@@ -306,15 +306,15 @@ async def delete_application(
             user_id=current_user.user_id,
             application_id=int(application_id),
         )
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
-    except ApplicationAccessDeniedError as e:
+    except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except Exception:
         logger.exception("Unhandled error in applications API")
@@ -352,10 +352,10 @@ async def create_bot(
             token=result.get("token", ""),
             bot_id=str(raw_bot_id) if raw_bot_id is not None else None,
         )
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
     except ApplicationAccessDeniedError:
         # Bot already exists — indicate this so frontend can show proper message
@@ -397,15 +397,15 @@ async def regenerate_secret(
             user_id=current_user.user_id,
         )
         return {"secret": result}
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
-    except ApplicationAccessDeniedError as e:
+    except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except Exception:
         logger.exception("Unhandled error in applications API")
@@ -472,30 +472,30 @@ async def respond_to_interaction(
         )
     except HTTPException:
         raise
-    except InteractionNotFoundError as e:
+    except InteractionNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
-    except InteractionExpiredError as e:
+    except InteractionExpiredError:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
-            detail={"error": {"code": 410, "message": str(e)}},
+            detail={"error": {"code": 410, "message": "Internal server error"}},
         )
-    except InteractionAlreadyRespondedError as e:
+    except InteractionAlreadyRespondedError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"error": {"code": 409, "message": str(e)}},
+            detail={"error": {"code": 409, "message": "Internal server error"}},
         )
-    except InteractionValidationError as e:
+    except InteractionValidationError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
     except Exception:
         logger.exception("Unhandled error in applications API")

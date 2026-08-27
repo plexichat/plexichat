@@ -64,7 +64,8 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
     except Exception as e:
         logger.error(f"Failed to get password requirements: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -138,15 +139,15 @@ async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
             return SuccessResponse(success=True, message=None)
         else:
             raise TokenInvalidError("Invalid or expired token")
-    except TokenInvalidError as e:
+    except TokenInvalidError:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": 401, "message": str(e)}},
+            detail={"error": {"code": 401, "message": "Internal server error"}},
         )
-    except WeakPasswordError as e:
+    except WeakPasswordError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
     except Exception as e:
         logger.error(f"Password reset confirmation failed: {e}", exc_info=True)

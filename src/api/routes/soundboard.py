@@ -154,15 +154,27 @@ def _require_manage_permission(user_id: int, server_id: int) -> None:
 def _map_soundboard_error(e: Exception) -> HTTPException:
     """Translate core soundboard errors into safe HTTP responses."""
     if isinstance(e, (SoundNotFoundError, ServerNotFoundError)):
-        return HTTPException(status_code=404, detail=str(e))
+        return HTTPException(
+            status_code=404, detail={"error": {"code": 404, "message": "Not found"}}
+        )
     if isinstance(e, ChannelNotFoundError):
-        return HTTPException(status_code=404, detail=str(e))
+        return HTTPException(
+            status_code=404, detail={"error": {"code": 404, "message": "Not found"}}
+        )
     if isinstance(e, NotInVoiceChannelError):
-        return HTTPException(status_code=400, detail=str(e))
+        return HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     if isinstance(e, PermissionDeniedError):
-        return HTTPException(status_code=403, detail=str(e))
+        return HTTPException(
+            status_code=403, detail={"error": {"code": 403, "message": "Access denied"}}
+        )
     if isinstance(e, SoundCooldownError):
-        return HTTPException(status_code=429, detail=str(e))
+        return HTTPException(
+            status_code=429,
+            detail={"error": {"code": 429, "message": "Rate limit exceeded"}},
+        )
     if isinstance(
         e,
         (
@@ -174,9 +186,15 @@ def _map_soundboard_error(e: Exception) -> HTTPException:
             SoundLimitError,
         ),
     ):
-        return HTTPException(status_code=400, detail=str(e))
+        return HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     if isinstance(e, SoundboardError):
-        return HTTPException(status_code=400, detail=str(e))
+        return HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     logger.error(f"Unhandled soundboard error: {e}", exc_info=True)
     return HTTPException(status_code=500, detail="Soundboard operation failed")
 

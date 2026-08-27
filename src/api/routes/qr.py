@@ -140,5 +140,5 @@ async def generate_qr(
             raise
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

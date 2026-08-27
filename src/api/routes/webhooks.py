@@ -622,7 +622,7 @@ async def execute_webhook(
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": str(e)}},
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
         except InvalidWebhookTokenError:
             logger.warning(f"Invalid token provided for webhook {wid} execution")

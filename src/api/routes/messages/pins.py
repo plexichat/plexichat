@@ -148,7 +148,8 @@ async def pin_message(
             )
         elif isinstance(e, (ChannelAccessDeniedError, PermissionDeniedError)):
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
         logger.error(
             f"Error pinning message {message_id} in channel {channel_id}: {e}",
@@ -289,7 +290,8 @@ async def unpin_message(
             )
         elif isinstance(e, (ChannelAccessDeniedError, PermissionDeniedError)):
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
         logger.error(
             f"Error unpinning message {message_id} in channel {channel_id}: {e}",

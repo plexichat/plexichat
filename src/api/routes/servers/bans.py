@@ -90,12 +90,14 @@ async def get_server_bans(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(f"Failed to get bans for server {server_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -157,19 +159,21 @@ async def ban_member(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
         elif "NotSupported" in exc_name:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}},
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
 
         logger.error(
             f"Failed to ban user {user_id} from server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -219,7 +223,8 @@ async def unban_member(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(
@@ -227,5 +232,6 @@ async def unban_member(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

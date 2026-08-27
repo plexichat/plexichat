@@ -122,10 +122,10 @@ async def passkey_register_options(
             challenge_id=options["challenge_id"],
             options=options["options"],
         )
-    except RuntimeError as e:
+    except RuntimeError:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
     except Exception as e:
         logger.error(f"Passkey registration options failed: {e}", exc_info=True)
@@ -190,10 +190,10 @@ async def passkey_register(
             backed_up=result["backed_up"],
             revoked=False,
         )
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
     except Exception as e:
         logger.error(f"Passkey registration failed: {e}", exc_info=True)
@@ -230,10 +230,10 @@ async def passkey_authenticate_options(
             challenge_id=options["challenge_id"],
             options=options["options"],
         )
-    except RuntimeError as e:
+    except RuntimeError:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
     except Exception as e:
         logger.error(f"Passkey authentication options failed: {e}", exc_info=True)
@@ -291,20 +291,20 @@ async def passkey_authenticate(
             token=result.token,
             user=_user_to_response(result.user) if result.user else None,
         )
-    except InvalidCredentialsError as e:
+    except InvalidCredentialsError:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": 401, "message": str(e)}},
+            detail={"error": {"code": 401, "message": "Internal server error"}},
         )
-    except AccountLockedError as e:
+    except AccountLockedError:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": 401, "message": str(e)}},
+            detail={"error": {"code": 401, "message": "Internal server error"}},
         )
     except Exception as e:
         logger.error(f"Passkey authentication failed: {e}", exc_info=True)

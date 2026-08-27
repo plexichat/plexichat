@@ -141,7 +141,7 @@ async def get_audit_logs(
         }
     except Exception as e:
         logger.error(f"Audit logs retrieval error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/audit/logs/stats")
@@ -203,7 +203,7 @@ async def get_audit_stats(request: Request):
         return stats
     except Exception as e:
         logger.error(f"Audit stats retrieval error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get(
@@ -336,4 +336,4 @@ async def export_audit_logs(
         )
     except Exception as e:
         logger.error(f"Audit export error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

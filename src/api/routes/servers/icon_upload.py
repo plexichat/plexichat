@@ -86,11 +86,13 @@ async def upload_server_icon(
         exc_name = type(e).__name__
         if "Size" in exc_name or "Type" in exc_name:
             raise HTTPException(
-                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
         elif "Blocked" in exc_name or "Malware" in exc_name:
             raise HTTPException(
-                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
 
         logger.error(

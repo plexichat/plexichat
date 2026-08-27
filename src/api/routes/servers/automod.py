@@ -43,7 +43,10 @@ async def get_server_automod_rules(
         raise
     except Exception as e:
         logger.error(f"Failed to get automod rules for server {server_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
 
 
 @router.post(
@@ -113,7 +116,10 @@ async def create_server_automod_rule(
         raise
     except Exception as e:
         logger.error(f"Failed to create automod rule for server {server_id}: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
 
 
 @router.patch(
@@ -176,7 +182,10 @@ async def update_server_automod_rule(
         raise
     except Exception as e:
         logger.error(f"Failed to update automod rule {rule_id}: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
 
 
 @router.delete(
@@ -212,7 +221,10 @@ async def delete_server_automod_rule(
         raise
     except Exception as e:
         logger.error(f"Failed to delete automod rule {rule_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
 
 
 @router.get(
@@ -271,7 +283,10 @@ async def get_server_automod_violations(
         raise
     except Exception as e:
         logger.error(f"Failed to get automod violations for server {server_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
 
 
 @router.get(
@@ -326,4 +341,7 @@ async def get_server_automod_violation(
         logger.error(
             f"Failed to get automod violation {violation_id} for server {server_id}: {e}"
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )

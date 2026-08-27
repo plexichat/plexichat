@@ -168,7 +168,9 @@ async def get_voice_channel_info(
                     )
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
-                        detail={"error": {"code": 403, "message": str(e)}},
+                        detail={
+                            "error": {"code": 403, "message": "Internal server error"}
+                        },
                     )
                 if "NotConnected" in type(e).__name__:
                     logger.warning(
@@ -176,7 +178,9 @@ async def get_voice_channel_info(
                     )
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
-                        detail={"error": {"code": 403, "message": str(e)}},
+                        detail={
+                            "error": {"code": 403, "message": "Internal server error"}
+                        },
                     )
 
             logger.error(

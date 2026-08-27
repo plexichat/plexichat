@@ -104,7 +104,8 @@ async def get_server_roles(
                 detail={"error": {"code": 403, "message": "Access denied"}},
             )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -174,16 +175,19 @@ async def create_role(
             )
         elif "Permission" in exc_name or "Hierarchy" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
         elif "InvalidPermissionKey" in exc_name:
             raise HTTPException(
-                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
 
         logger.error(f"Failed to create role in server {server_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -251,18 +255,21 @@ async def update_role(
             "Permission" in exc_name or "Hierarchy" in exc_name or "Default" in exc_name
         ):
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
         elif "InvalidPermissionKey" in exc_name:
             raise HTTPException(
-                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
 
         logger.error(
             f"Failed to update role {role_id} in server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -316,12 +323,14 @@ async def delete_role(
             "Permission" in exc_name or "Hierarchy" in exc_name or "Default" in exc_name
         ):
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Internal server error"}},
             )
 
         logger.error(
             f"Failed to delete role {role_id} in server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

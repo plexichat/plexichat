@@ -137,17 +137,20 @@ async def create_poll(
         InvalidPollDurationError,
         AlreadyVotedError,
         MultipleVoteNotAllowedError,
-    ) as e:
+    ):
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
-    except MessageNotFoundError as e:
+    except MessageNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except HTTPException:
         raise
@@ -196,9 +199,10 @@ async def get_poll(
         if not poll:
             raise PollNotFoundError("Poll not found")
         return _poll_to_response(poll)
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
     except HTTPException:
         raise
@@ -245,9 +249,10 @@ async def get_poll_results(
     try:
         results = polls_module.get_results(pid, current_user.user_id)
         return _results_to_response(results)
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
     except HTTPException:
         raise
@@ -305,17 +310,20 @@ async def vote_on_poll(
         AlreadyVotedError,
         MultipleVoteNotAllowedError,
         InvalidPollOptionError,
-    ) as e:
+    ):
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except HTTPException:
         raise
@@ -372,13 +380,15 @@ async def change_vote_on_poll(
         PollEndedError,
         MultipleVoteNotAllowedError,
         InvalidPollOptionError,
-    ) as e:
+    ):
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
     except HTTPException:
         raise
@@ -426,17 +436,20 @@ async def close_poll(
     try:
         poll = polls_module.close_poll(current_user.user_id, pid)
         return _poll_to_response(poll)
-    except (PollEndedError, InvalidPollDurationError) as e:
+    except (PollEndedError, InvalidPollDurationError):
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except HTTPException:
         raise
@@ -484,13 +497,15 @@ async def delete_poll(
     try:
         polls_module.delete_poll(current_user.user_id, pid)
         return SuccessResponse(success=True, message=None)
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except HTTPException:
         raise

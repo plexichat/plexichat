@@ -137,7 +137,7 @@ async def submit_feedback(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -186,5 +186,5 @@ async def get_feedback_status(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

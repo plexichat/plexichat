@@ -134,7 +134,7 @@ async def list_connections(
         logger.error(f"PlexiJoin list connections error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -181,7 +181,8 @@ async def get_connection(request: Request, connection_id: int):
     except Exception as e:
         logger.error(f"PlexiJoin get connection error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -234,16 +235,16 @@ async def create_connection(request: Request):
         return {"success": True, "connection_id": connection["id"]}
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
     except Exception as e:
         logger.error(f"PlexiJoin create connection error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -285,7 +286,7 @@ async def delete_connection(request: Request, connection_id: int):
         logger.error(f"PlexiJoin delete connection error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -315,7 +316,7 @@ async def test_connection(request: Request, connection_id: int):
         logger.error(f"PlexiJoin test connection error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -374,7 +375,7 @@ async def list_requests(
         logger.error(f"PlexiJoin list requests error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -407,16 +408,16 @@ async def approve_request(request: Request, request_id: int):
         return {"success": True, "request": result}
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
     except Exception as e:
         logger.error(f"PlexiJoin approve request error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -449,16 +450,16 @@ async def deny_request(request: Request, request_id: int):
         return {"success": True, "request": result}
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
     except Exception as e:
         logger.error(f"PlexiJoin deny request error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -490,7 +491,7 @@ async def get_status(request: Request):
         logger.error(f"PlexiJoin status error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -523,5 +524,5 @@ async def get_traffic(
         logger.error(f"PlexiJoin traffic error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

@@ -344,7 +344,7 @@ async def get_migration_details(
         logger.error(f"Failed to get migration details: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get migration details: {str(e)}",
+            detail="Failed to get migration details",
         )
 
 
@@ -418,10 +418,10 @@ async def run_migration(
         )
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Internal server error",
         )
     except Exception as e:
         logger.error(f"Failed to run migration {version}: {e}")
@@ -471,10 +471,10 @@ async def rollback_migration(
         return result
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Internal server error",
         )
     except Exception as e:
         logger.error(f"Failed to rollback migration {version}: {e}")

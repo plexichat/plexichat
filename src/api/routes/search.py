@@ -71,16 +71,25 @@ async def search_messages(
         return MessageSearchPageResponse(
             results=page.results, next_cursor=page.next_cursor
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except SearchBackendError as e:
         logger.error(f"Search backend unavailable (messages): {e}")
         raise HTTPException(
             status_code=503,
-            detail={"error": "search_backend_unavailable", "message": str(e)},
+            detail={
+                "error": "search_backend_unavailable",
+                "message": "Internal server error",
+            },
         )
-    except SearchError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except SearchError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except Exception as e:
         logger.error(f"Search messages failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal search error")
@@ -150,10 +159,16 @@ async def search_users(
         logger.error(f"Search backend unavailable (users): {e}")
         raise HTTPException(
             status_code=503,
-            detail={"error": "search_backend_unavailable", "message": str(e)},
+            detail={
+                "error": "search_backend_unavailable",
+                "message": "Internal server error",
+            },
         )
-    except SearchError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except SearchError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except Exception as e:
         logger.error(f"Search users failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal search error")
@@ -192,10 +207,16 @@ async def search_servers(
         logger.error(f"Search backend unavailable (servers): {e}")
         raise HTTPException(
             status_code=503,
-            detail={"error": "search_backend_unavailable", "message": str(e)},
+            detail={
+                "error": "search_backend_unavailable",
+                "message": "Internal server error",
+            },
         )
-    except SearchError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except SearchError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except Exception as e:
         logger.error(f"Search servers failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal search error")
@@ -318,7 +339,10 @@ async def get_search_suggestions(
         logger.error(f"Search backend unavailable (suggestions): {e}")
         raise HTTPException(
             status_code=503,
-            detail={"error": "search_backend_unavailable", "message": str(e)},
+            detail={
+                "error": "search_backend_unavailable",
+                "message": "Internal server error",
+            },
         )
     except Exception as e:
         logger.error(f"Search suggestions failed: {e}", exc_info=True)

@@ -206,7 +206,8 @@ async def get_user_avatar(user_id: int, request: Request):
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -268,9 +269,10 @@ async def upload_my_avatar(
                 image_data=file_data,
                 content_type=file.content_type,
             )
-        except ValueError as e:
+        except ValueError:
             raise HTTPException(
-                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
         except Exception as e:
             logger.error(
@@ -309,7 +311,8 @@ async def upload_my_avatar(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -369,7 +372,8 @@ async def delete_my_avatar(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -519,7 +523,8 @@ async def get_server_icon(server_id: int, request: Request):
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -647,9 +652,10 @@ async def upload_server_icon(
             result = avatars.upload_server_icon(
                 server_id=sid, image_data=file_data, content_type=file.content_type
             )
-        except ValueError as e:
+        except ValueError:
             raise HTTPException(
-                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Internal server error"}},
             )
         except Exception as e:
             logger.error(f"Failed to upload icon for server {sid}: {e}", exc_info=True)
@@ -674,7 +680,8 @@ async def upload_server_icon(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
     finally:
         # Always drop cached icon state so a re-upload is reflected.
@@ -800,5 +807,6 @@ async def delete_server_icon(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

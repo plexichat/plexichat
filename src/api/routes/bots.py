@@ -259,15 +259,15 @@ async def request_bot(
             reason=body.reason,
         )
         return _bot_request_to_response(req)
-    except BotRequestExistsError as e:
+    except BotRequestExistsError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
-    except BotAlreadyApprovedError as e:
+    except BotAlreadyApprovedError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
     except Exception:
         logger.exception("Failed to request bot")
@@ -299,10 +299,10 @@ async def remove_approved_bot(
             application_id=int(application_id),
             user_id=current_user.user_id,
         )
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except InstallationNotFoundError:
         pass
@@ -433,15 +433,15 @@ async def approve_bot(
             bot_name=body.bot_name,
         )
         return _approved_bot_to_response(bot)
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
-    except BotAlreadyApprovedError as e:
+    except BotAlreadyApprovedError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Internal server error"}},
         )
     except BotLimitError as e:
         raise HTTPException(
@@ -449,7 +449,7 @@ async def approve_bot(
             detail={
                 "error": {
                     "code": 400,
-                    "message": str(e),
+                    "message": "Bot limit reached",
                     "max_allowed": e.max_allowed,
                     "current": e.current,
                 }
@@ -458,12 +458,18 @@ async def approve_bot(
     except LicenseFeatureError as e:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail={"error": {"code": 402, "message": str(e), "feature": e.feature}},
+            detail={
+                "error": {
+                    "code": 402,
+                    "message": "Feature requires valid license",
+                    "feature": e.feature,
+                }
+            },
         )
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
     except Exception:
         logger.exception("Failed to approve bot")
@@ -500,15 +506,15 @@ async def review_bot_request(
             review_reason=body.review_reason,
         )
         return _bot_request_to_response(req)
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
-    except BotRequestError as e:
+    except BotRequestError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
     except Exception:
         logger.exception("Failed to review bot request")
@@ -607,15 +613,15 @@ async def update_bot_profile(
             nsfw=profile.nsfw,
             private=profile.private,
         )
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
-    except ApplicationAccessDeniedError as e:
+    except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Internal server error"}},
         )
     except Exception:
         logger.exception("Failed to update bot profile")
@@ -742,10 +748,10 @@ async def revoke_authorized_app(
             token_id=token_id,
             user_id=current_user.user_id,
         )
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Internal server error"}},
         )
     except Exception:
         logger.exception("Failed to revoke authorized app")
