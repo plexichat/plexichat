@@ -53,10 +53,10 @@ async def save_last_chat(
             else 0,
         )
         return {"success": True, "last_chat": result}
-    except PermissionError as e:
-        raise_forbidden(str(e))
-    except Exception as e:
-        logger.error(f"Failed to save last chat for user {current_user.user_id}: {e}")
+    except PermissionError:
+        raise_forbidden("Access denied")
+    except Exception:
+        logger.error("Failed to save last chat", exc_info=True)
         raise_internal("Failed to save last chat state")
 
 

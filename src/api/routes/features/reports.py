@@ -67,12 +67,44 @@ def _check_enhanced_report_rate_limit(user_id: int) -> None:
 
 
 def _is_safe_url(url: str) -> bool:
-    """Return True only for http(s) URLs with a network location."""
+    """Return True only for public http(s) URLs.
+
+    Evidence links are later fetched or rendered by trusted moderation tools;
+    reject loopback, link-local, private, multicast, and metadata addresses to
+    avoid turning report submission into an SSRF primitive.
+    """
     try:
+        import ipaddress
+        import socket
         from urllib.parse import urlparse
 
-        parsed = urlparse(url)
-        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+        parsed = urlparse(url.strip())
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return False
+        if parsed.username or parsed.password:
+            return False
+        host = parsed.hostname.rstrip(".")
+        try:
+            addresses = [ipaddress.ip_address(host)]
+        except ValueError:
+            try:
+                addresses = [
+                    ipaddress.ip_address(info[4][0])
+                    for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+                ]
+            except OSError:
+                return False
+        return bool(addresses) and all(
+            not (
+                addr.is_private
+                or addr.is_loopback
+                or addr.is_link_local
+                or addr.is_multicast
+                or addr.is_reserved
+                or addr.is_unspecified
+            )
+            for addr in addresses
+        )
     except Exception:
         return False
 
@@ -166,8 +198,8 @@ async def submit_enhanced_report(
         if messaging:
             try:
                 msg = messaging.get_message(current_user.user_id, target_id)
-            except Exception as e:
-                logger.warning(f"Failed to fetch message {target_id} for report: {e}")
+            except Exception:
+                logger.warning("Failed to fetch message %s for report", target_id)
         if not msg:
             raise_bad_request("Message not found")
         reported_user_id = msg.author_id
@@ -242,7 +274,7 @@ async def submit_enhanced_report(
             "status": "open",
             "priority": body.priority,
         }
-    except Exception as e:
+    except Exception:
         # The partial unique index closes the check-then-insert race. If a
         # concurrent request won the insert, return that existing report as an
         # idempotent success rather than exposing a database error.
@@ -261,7 +293,7 @@ async def submit_enhanced_report(
                 "priority": body.priority,
                 "message": "Report already submitted",
             }
-        logger.error(f"Failed to submit enhanced report: {e}")
+        logger.error("Failed to submit enhanced report", exc_info=True)
         raise_internal("Internal server error")
 
 
@@ -341,8 +373,8 @@ async def update_report_status(
             tuple(params),
         )
         return {"success": True, "report_id": str(rid), "status": body.status}
-    except Exception as e:
-        logger.error(f"Failed to update report status: {e}")
+    except Exception:
+        logger.error("Failed to update report status", exc_info=True)
         raise_internal("Internal server error")
 
 
@@ -368,7 +400,36 @@ async def get_report_details(
     if not row:
         raise_not_found("Report not found")
 
-    data = dict(row)
+    if isinstance(row, dict):
+        data = row
+    else:
+        columns = (
+            "id",
+            "reporter_id",
+            "report_type",
+            "target_id",
+            "channel_id",
+            "server_id",
+            "reason",
+            "category",
+            "details",
+            "evidence_ids",
+            "message_content",
+            "reported_user_id",
+            "status",
+            "priority",
+            "created_at",
+            "updated_at",
+            "admin_notes",
+            "reviewed_by",
+            "reviewed_at",
+            "action_taken",
+            "resolution",
+            "resolved_by",
+            "escalated_at",
+            "assigned_to",
+        )
+        data = dict(zip(columns, row))
     is_reporter = data.get("reporter_id") == current_user.user_id
     is_admin = db.fetch_one(
         "SELECT id FROM admin_users WHERE id = ?", (current_user.user_id,)

@@ -302,6 +302,6 @@ async def update_own_profile(
             result = svc.get_profile(current_user.user_id)
 
         return {"success": True, "profile": result}
-    except ValueError as e:
-        logger.debug(f"Profile validation failed for {current_user.user_id}: {e}")
-        raise_bad_request(_safe_validation_message(e))
+    except ValueError as exc:
+        logger.debug("Profile validation failed for %s", current_user.user_id)
+        raise_bad_request(_safe_validation_message(exc))

@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from typing import Optional
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 import utils.logger as logger
 import src.api as api
@@ -60,13 +63,38 @@ def _validate_voice_metadata(
     if duration_ms > MAX_DURATION_MS:
         raise_bad_request("Voice message exceeds 10 minute maximum duration")
 
-    lowered = url.strip().lower()
+    candidate = url.strip()
+    lowered = candidate.lower()
     if lowered.startswith(("javascript:", "data:", "file:", "blob:")):
         raise_bad_request("Invalid storage URL")
-    if not (
-        lowered.startswith(ALLOWED_URL_SCHEMES) or url.startswith(ALLOWED_URL_PREFIXES)
+    if candidate.startswith(ALLOWED_URL_PREFIXES):
+        return
+    parsed = urlparse(candidate)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise_bad_request("Invalid storage URL")
+    if parsed.username or parsed.password:
+        raise_bad_request("Invalid storage URL")
+    try:
+        addresses = [
+            ipaddress.ip_address(info[4][0])
+            for info in socket.getaddrinfo(
+                parsed.hostname, None, type=socket.SOCK_STREAM
+            )
+        ]
+    except (OSError, ValueError):
+        raise_bad_request("Invalid storage URL")
+    if not addresses or any(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+        for address in addresses
     ):
         raise_bad_request("Invalid storage URL")
+    # External URLs are accepted only after DNS/IP safety checks. This keeps
+    # legacy JSON clients working while preventing loopback/private targets.
 
 
 class VoiceMessageRequest(BaseModel):
@@ -152,8 +180,8 @@ async def send_voice_message(
                 logger.error(f"Failed to send voice message via messaging: {e}")
 
         return {"success": True, "voice_message": result}
-    except ValueError as e:
-        raise_bad_request(str(e))
+    except ValueError:
+        raise_bad_request("Invalid voice message data")
     except PermissionError:
         # M6 FIX: authorization failures are 403 with a static message,
         # never a 500 echoing the exception text.
@@ -291,8 +319,8 @@ async def upload_voice_message(
             except Exception as e:
                 logger.error(f"Failed to send voice message via messaging: {e}")
         return {"success": True, "voice_message": result}
-    except ValueError as e:
-        raise_bad_request(str(e))
+    except ValueError:
+        raise_bad_request("Invalid voice message data")
     except PermissionError:
         # M6 FIX: static 403 instead of raise_internal(str(e)).
         raise_forbidden("Not a participant in this conversation")

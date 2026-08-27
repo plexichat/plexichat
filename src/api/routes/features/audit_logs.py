@@ -75,7 +75,20 @@ async def get_user_audit_logs(
         rows = db.fetch_all(query, tuple(params))
         entries = []
         for row in rows:
-            data = dict(row)
+            if isinstance(row, dict):
+                data = row
+            else:
+                data = {
+                    "id": row[0],
+                    "server_id": row[1],
+                    "user_id": row[2],
+                    "action": row[3],
+                    "target_type": row[4],
+                    "target_id": row[5],
+                    "changes": row[6],
+                    "reason": row[7],
+                    "created_at": row[8],
+                }
             entries.append(
                 {
                     "id": data.get("id"),
@@ -90,6 +103,6 @@ async def get_user_audit_logs(
                 }
             )
         return {"entries": entries}
-    except Exception as e:
-        logger.error(f"Failed to get user audit logs: {e}")
+    except Exception:
+        logger.error("Failed to get user audit logs", exc_info=True)
         raise_internal("Internal server error")

@@ -207,8 +207,8 @@ async def apply_onboarding_preset(
             description=preset["description"],
             enabled=True,
         )
-    except Exception as e:
-        logger.debug(f"Failed to set welcome screen from preset: {e}")
+    except Exception:
+        logger.debug("Failed to set welcome screen from preset", exc_info=True)
 
     created_steps = []
     for step_template in preset["steps"]:
@@ -226,13 +226,15 @@ async def apply_onboarding_preset(
             created_steps.append(
                 {"id": str(step.id), "title": step.title, "type": step.step_type.value}
             )
-        except Exception as e:
-            logger.warning(f"Failed to create onboarding step from preset: {e}")
+        except Exception:
+            logger.warning(
+                "Failed to create onboarding step from preset", exc_info=True
+            )
             created_steps.append(
                 {
                     "title": step_template["title"],
                     "type": step_template["type"],
-                    "error": str(e),
+                    "error": "Unable to create onboarding step",
                 }
             )
 

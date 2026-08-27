@@ -2,6 +2,8 @@ from typing import NoReturn
 
 from fastapi import HTTPException
 
+import utils.logger as logger
+
 
 def raise_bad_request(message: str) -> NoReturn:
     raise HTTPException(
@@ -28,16 +30,38 @@ def raise_internal(message: str = "Internal server error") -> NoReturn:
 
 
 def parse_id(value: str, field: str = "ID") -> int:
-    try:
-        return int(value)
-    except ValueError:
+    """Parse a positive decimal identifier without accepting coercion traps."""
+    if isinstance(value, bool):
         raise_bad_request(f"Invalid {field}")
+    text = str(value).strip()
+    if not text.isdecimal():
+        raise_bad_request(f"Invalid {field}")
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError, OverflowError):
+        raise_bad_request(f"Invalid {field}")
+    if parsed <= 0:
+        raise_bad_request(f"Invalid {field}")
+    return parsed
 
 
 def call_or_raise(func, *args, **kwargs):
+    """Invoke a service and expose only client-safe exception messages."""
     try:
         return func(*args, **kwargs)
-    except ValueError as e:
-        raise_bad_request(str(e))
-    except PermissionError as e:
-        raise_forbidden(str(e))
+    except ValueError as exc:
+        logger.debug(
+            "Feature validation failed in %s: %s",
+            getattr(func, "__name__", "service"),
+            exc,
+        )
+        raise_bad_request("Invalid request")
+    except PermissionError as exc:
+        logger.debug(
+            "Feature authorization failed in %s: %s",
+            getattr(func, "__name__", "service"),
+            exc,
+        )
+        if "participant" in str(exc).lower():
+            raise_forbidden("Not a participant in this conversation")
+        raise_forbidden("Access denied")

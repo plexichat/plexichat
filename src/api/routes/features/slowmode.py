@@ -177,10 +177,10 @@ async def set_thread_slowmode(
             tid, body.interval_ms, current_user.user_id, can_manage
         )
         return {"success": True, "slowmode": result}
-    except PermissionError as e:
-        raise_forbidden(str(e))
-    except ValueError as e:
-        raise_bad_request(str(e))
+    except PermissionError:
+        raise_forbidden("Access denied")
+    except ValueError:
+        raise_bad_request("Invalid slowmode configuration")
 
 
 @router.get(
