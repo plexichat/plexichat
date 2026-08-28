@@ -45,10 +45,14 @@ class ChannelOpsMixin(VoiceProtocol):
 
         settings = self._get_channel_settings(channel_id)
         user_limit = settings.get("user_limit", 0)
+        can_override_limit = False
         if user_limit > 0:
             current_count = self._get_channel_user_count(channel_id)
             if current_count >= user_limit:
-                if not self._check_permission(user_id, server_id, "voice.move_members"):
+                can_override_limit = self._check_permission(
+                    user_id, server_id, "voice.move_members"
+                )
+                if not can_override_limit:
                     raise ChannelFullError(
                         f"Channel is full ({current_count}/{user_limit})",
                         limit=user_limit,
@@ -58,12 +62,39 @@ class ChannelOpsMixin(VoiceProtocol):
         now = self._get_timestamp()
         suppress = channel["channel_type"] == "stage"
 
-        self._db.execute(
-            """INSERT INTO voice_states
-               (user_id, channel_id, server_id, suppress, joined_at, last_activity)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (user_id, channel_id, server_id, 1 if suppress else 0, now, now),
-        )
+        # M4: the capacity check above is a fast-path hint only. Two
+        # concurrent joins could both read ``count < limit`` and then both
+        # INSERT, overflowing the user limit. Enforce the bound atomically:
+        # the INSERT itself only proceeds when the channel still has room,
+        # so the check and the write can never race apart.
+        if user_limit > 0 and not can_override_limit:
+            cursor = self._db.execute(
+                """INSERT INTO voice_states
+                   (user_id, channel_id, server_id, suppress, joined_at, last_activity)
+                   SELECT ?, ?, ?, ?, ?, ?
+                   WHERE (SELECT COUNT(*) FROM voice_states WHERE channel_id = ?) < ?""",
+                (
+                    user_id,
+                    channel_id,
+                    server_id,
+                    1 if suppress else 0,
+                    now,
+                    now,
+                    channel_id,
+                    user_limit,
+                ),
+            )
+            if getattr(cursor, "rowcount", 1) == 0:
+                raise ChannelFullError(
+                    "Channel is full", limit=user_limit, current=user_limit
+                )
+        else:
+            self._db.execute(
+                """INSERT INTO voice_states
+                   (user_id, channel_id, server_id, suppress, joined_at, last_activity)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (user_id, channel_id, server_id, 1 if suppress else 0, now, now),
+            )
 
         logger.debug(f"User {user_id} joined voice channel {channel_id}")
 

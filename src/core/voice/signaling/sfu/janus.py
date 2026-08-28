@@ -60,6 +60,7 @@ class JanusAdapter(SFUAdapter):
             str, Dict[str, int]
         ] = {}  # room_id -> {peer_id -> handle_id}
         self._producer_kinds: Dict[str, MediaKind] = {}  # producer_id -> MediaKind
+        self._producer_peers: Dict[str, str] = {}  # producer_id -> peer_id
         self._janus_recordings: Dict[
             str, Dict[str, Any]
         ] = {}  # room_id -> recording info
@@ -297,6 +298,7 @@ class JanusAdapter(SFUAdapter):
             ]
             for pid in stale_kinds:
                 self._producer_kinds.pop(pid, None)
+                self._producer_peers.pop(pid, None)
 
         del self._janus_sessions[room_id]
         if room_id in self._janus_handles:
@@ -395,6 +397,7 @@ class JanusAdapter(SFUAdapter):
         ]
         for pid in stale_kinds:
             self._producer_kinds.pop(pid, None)
+            self._producer_peers.pop(pid, None)
 
         logger.debug(f"Peer {peer_id} left Janus room {room_id}")
         return True
@@ -464,6 +467,12 @@ class JanusAdapter(SFUAdapter):
         producer_id = f"{peer_id}_{kind.value}_{int(time.time() * 1000)}"
 
         self._producer_kinds[producer_id] = kind
+        # H5: record the exact producing peer id at publish time so subscriber
+        # feed resolution never has to guess from the id string. Producer ids
+        # embed "standard" peer ids (``user_<id>_<kind>_<ts>``) whose first
+        # underscore-delimited segment is just "user", so the old
+        # ``split("_")[0]`` approach mapped every peer to the same bogus feed.
+        self._producer_peers[producer_id] = peer_id
 
         return SFUProducer(
             id=producer_id,
@@ -493,9 +502,15 @@ class JanusAdapter(SFUAdapter):
 
         room_num = stable_numeric_id(room_id, "room")
 
-        # Parse producer_id to get feed ID
-        parts = producer_id.split("_")
-        feed_peer = parts[0] if parts else producer_id
+        # Resolve the producing peer's identity for the subscriber feed.
+        # Prefer the exact peer id recorded at publish time; fall back to
+        # stripping the ``_<kind>_<ts>`` suffix for producers created before
+        # the mapping existed (peer ids may themselves contain underscores,
+        # e.g. ``user_5``, so the last two fields are dropped, not the first).
+        feed_peer = self._producer_peers.get(producer_id)
+        if not feed_peer:
+            parts = producer_id.split("_")
+            feed_peer = "_".join(parts[:-2]) if len(parts) >= 3 else producer_id
         feed_num = stable_numeric_id(feed_peer, "peer")
 
         # Join as subscriber
@@ -589,6 +604,7 @@ class JanusAdapter(SFUAdapter):
         # L1 (Agent 34): closed producers must drop their kind bookkeeping or
         # the map grows unbounded.
         self._producer_kinds.pop(producer_id, None)
+        self._producer_peers.pop(producer_id, None)
         return True
 
     async def get_room_info(self, room_id: str) -> Optional[RoomInfo]:
@@ -740,6 +756,7 @@ class JanusAdapter(SFUAdapter):
         self._janus_sessions.clear()
         self._janus_handles.clear()
         self._producer_kinds.clear()
+        self._producer_peers.clear()
         self._janus_recordings.clear()
         self._janus_recording_roots.clear()
 

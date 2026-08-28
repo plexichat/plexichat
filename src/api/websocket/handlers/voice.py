@@ -85,6 +85,10 @@ class VoiceHandler:
             )
         except Exception as e:
             logger.warning(f"Voice state update failed: {e}")
+            # M1: surface the failure instead of silently reporting success;
+            # the client must be able to distinguish a failed update from an
+            # accepted one.
+            return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
 
         return None, None, None
 
@@ -128,6 +132,11 @@ class VoiceHandler:
             )
         except Exception as e:
             logger.warning(f"Voice connect failed: {e}")
+            # M1: report the failure via a close code so the client never
+            # mistakes a failed join for a success (the previous bare
+            # ``(None, None, None)`` swallow left a stale DB voice_state
+            # claiming the user had joined).
+            return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
 
         return None, None, None
 
@@ -172,6 +181,7 @@ class VoiceHandler:
                 )
         except Exception as e:
             logger.warning(f"Voice disconnect failed: {e}")
+            return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
 
         return None, None, None
 
@@ -234,6 +244,8 @@ class VoiceHandler:
             )
         except Exception as e:
             logger.warning(f"Voice SDP offer failed: {e}")
+            # M1: negative ack - a failed offer must never look like success.
+            return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
 
         return None, None, None
 
@@ -258,6 +270,7 @@ class VoiceHandler:
             pass
         except Exception as e:
             logger.warning(f"Voice SDP answer failed: {e}")
+            return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
 
         return None, None, None
 
@@ -302,6 +315,8 @@ class VoiceHandler:
             )
         except Exception as e:
             logger.warning(f"Voice ICE candidate failed: {e}")
+            # M1: negative ack on failure.
+            return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
 
         return None, None, None
 
@@ -357,6 +372,7 @@ class VoiceHandler:
                 )
         except Exception as e:
             logger.warning(f"Voice speaking failed: {e}")
+            return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
 
         return None, None, None
 
@@ -392,6 +408,7 @@ class VoiceHandler:
             )
         except Exception as e:
             logger.warning(f"Voice quality failed: {e}")
+            return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
 
         return None, None, None
 

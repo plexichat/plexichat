@@ -72,6 +72,22 @@ class ConnectionManagementMixin:
 
         require_permission(user_id, server_id, "voice.connect", channel_id)
 
+    def get_ice_servers(self, user_id: int) -> List[Any]:
+        """
+        Build the ICE server list for a user WITHOUT minting a session or
+        media token.
+
+        The legacy pattern routed ``GET /voice/ice-servers`` through
+        ``get_voice_server_info(user_id, 0)``: the sentinel channel made
+        ``get_voice_channel(0)`` return None, which raised NotConnectedError
+        that the route's blanket ``except`` swallowed, so the endpoint ALWAYS
+        fell back to public STUN defaults and configured TURN credentials
+        were never delivered there. This method returns exactly what a
+        pre-join ICE bootstrap needs: the configured STUN/TURN servers.
+        """
+        ice_builder: Any = self._ice_builder
+        return ice_builder.build(user_id)
+
     def get_voice_server_info(self, user_id: int, channel_id: int) -> VoiceServerInfo:
         """
         Get voice server connection info including TURN credentials.
@@ -83,16 +99,13 @@ class ConnectionManagementMixin:
         Returns:
             VoiceServerInfo with connection details
         """
-        from ..turn import ICEServerBuilder
-
         # SECURITY (Agent 34 M6): issuing sessions/tokens/TURN credentials to
         # view-only members let anyone who could *see* a channel obtain
         # media-plane credentials. Require voice.connect for credential
         # issuance (unknown channels are skipped — see helper docstring).
         self._require_connect_permission(user_id, channel_id)
 
-        ice_builder: ICEServerBuilder = self._ice_builder
-        ice_servers = ice_builder.build(user_id)
+        ice_servers = self._ice_builder.build(user_id)
 
         session_id = self._generate_session_id()
 

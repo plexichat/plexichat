@@ -56,6 +56,11 @@ class ICEMixin:
             )
             return False
 
+        # ``parse_ice_candidate`` raises on malformed input, so reaching this
+        # point means we hold a VALID candidate — that is the signal to flip
+        # the connection state. (The old ``len(...) >= 1`` check was a
+        # tautology: the candidate had just been appended above, so the
+        # condition could never be false; it only looked like a gate.)
         ice_candidate = parse_ice_candidate(candidate, sdp_mid, sdp_mline_index)
 
         self._ice_manager.add_candidate(
@@ -64,10 +69,7 @@ class ICEMixin:
         connection.ice_candidates.append(ice_candidate)
         connection.last_activity = self._get_timestamp()
 
-        if (
-            len(connection.ice_candidates) >= 1
-            and connection.state == SignalingState.CONNECTING
-        ):
+        if connection.state == SignalingState.CONNECTING:
             connection.state = SignalingState.CONNECTED
             logger.debug(f"User {user_id} voice connection established")
 

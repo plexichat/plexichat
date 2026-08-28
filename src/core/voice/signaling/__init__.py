@@ -22,6 +22,7 @@ from .models import (
     SDPType,
     SDPMessage,
     ICECandidate,
+    ICEServer,
     TURNCredentials,
     VoiceServerInfo,
     ConnectionQuality,
@@ -78,6 +79,7 @@ __all__ = [
     "setup",
     # Core functions
     "get_voice_server_info",
+    "get_ice_servers",
     "create_voice_connection",
     "handle_sdp_offer",
     "handle_sdp_offer_async",
@@ -171,6 +173,11 @@ def _get_manager():
 def get_voice_server_info(user_id: int, channel_id: int) -> VoiceServerInfo:
     """Get voice server connection info including TURN credentials."""
     return _get_manager().get_voice_server_info(user_id, channel_id)
+
+
+def get_ice_servers(user_id: int) -> List[ICEServer]:
+    """Get the configured ICE server list for a user (no session minted)."""
+    return _get_manager().get_ice_servers(user_id)
 
 
 def create_voice_connection(user_id: int, channel_id: int) -> VoiceServerInfo:

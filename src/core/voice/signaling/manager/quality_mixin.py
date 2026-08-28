@@ -50,7 +50,12 @@ class BandwidthEstimator:
                 await asyncio.sleep(self._check_interval)
                 now = time.time()
                 for key, metrics in list(self._quality_data.items()):
+                    # H6: prune stale entries instead of skipping them so the
+                    # shared dict (and the mirror ``_degraded`` map) cannot
+                    # grow unboundedly for peers that stopped reporting.
                     if now - metrics.get("_ts", now) > 30:
+                        self._quality_data.pop(key, None)
+                        self._degraded.pop(key, None)
                         continue
                     channel_id, peer_id = key
                     channel_id_str = str(channel_id)
@@ -58,6 +63,11 @@ class BandwidthEstimator:
                     jitter = metrics.get("jitter", 0) or 0
                     degraded = packet_loss > 5.0 or jitter > 100.0
                     was_degraded = self._degraded.get(key, False)
+                    # SFU peers are keyed ``user_<id>`` (see sdp_mixin), so the
+                    # adapter's connection map is ``voice_<cid>:user_<id>``.
+                    # Passing the bare numeric id used to miss every lookup,
+                    # silently disabling simulcast degradation.
+                    sfu_peer = f"user_{peer_id}"
                     if degraded and not was_degraded:
                         logger.info(
                             f"BandwidthEstimator: degrading channel_id={channel_id_str}, "
@@ -66,7 +76,7 @@ class BandwidthEstimator:
                         try:
                             await self._sfu.set_preferred_layers(
                                 f"voice_{channel_id_str}",
-                                str(peer_id),
+                                sfu_peer,
                                 "",
                                 0,
                                 0,
@@ -84,7 +94,7 @@ class BandwidthEstimator:
                         try:
                             await self._sfu.set_preferred_layers(
                                 f"voice_{channel_id_str}",
-                                str(peer_id),
+                                sfu_peer,
                                 "",
                                 2,
                                 2,
