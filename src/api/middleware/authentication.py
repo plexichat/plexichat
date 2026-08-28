@@ -126,17 +126,23 @@ class AuthenticationMiddleware:
                 for candidate in admin_paths
             )
 
+            # M3: these paths must follow the CONFIGURABLE api_prefix. The old
+            # hardcoded /api/v1 literals stopped matching as soon as an
+            # operator changed api_prefix, silently locking users out of
+            # login/register (or, worse, turning the endpoint list into a
+            # permissive no-op if the prefix was renamed). Prefix-independent
+            # health/docs entries stay literal.
             public_endpoints = [
-                "/api/v1/auth/login",
-                "/api/v1/auth/register",
-                "/api/v1/auth/verify-email",
-                "/api/v1/auth/resend-verification",
-                "/api/v1/status",
-                "/api/v1/health",
-                "/api/v1/capabilities",
-                "/api/v1/version",
-                "/api/v1/auth/password-requirements",
-                "/api/v1/telemetry/csp-report",
+                f"{api_prefix}/auth/login",
+                f"{api_prefix}/auth/register",
+                f"{api_prefix}/auth/verify-email",
+                f"{api_prefix}/auth/resend-verification",
+                f"{api_prefix}/status",
+                f"{api_prefix}/health",
+                f"{api_prefix}/capabilities",
+                f"{api_prefix}/version",
+                f"{api_prefix}/auth/password-requirements",
+                f"{api_prefix}/telemetry/csp-report",
                 "/health",
                 "/status",
                 "/docs",
@@ -159,7 +165,7 @@ class AuthenticationMiddleware:
             path_parts = path.split("/")
             is_webhook_execute = (
                 scope.get("method") == "POST"
-                and path.startswith("/api/v1/webhooks/")
+                and path.startswith(f"{api_prefix}/webhooks/")
                 and len(path_parts) == 6
                 and path_parts[-1] != "regenerate-token"
             )
@@ -167,15 +173,15 @@ class AuthenticationMiddleware:
             is_public_endpoint = (
                 path in public_endpoints
                 or is_docs_path
-                or path.startswith("/api/v1/auth/password-requirements")
+                or path.startswith(f"{api_prefix}/auth/password-requirements")
                 or is_webhook_execute
             )
 
             if (
                 not is_admin_path
                 and not is_public_endpoint
-                and not path.startswith("/api/v1/avatars/")
-                and path.startswith("/api/v1/")
+                and not path.startswith(f"{api_prefix}/avatars/")
+                and path.startswith(api_prefix)
             ):
                 auth = api.get_auth()
                 if auth:
@@ -367,7 +373,18 @@ class AuthenticationMiddleware:
                 # authenticated this way must present the custom
                 # ``X-Plexichat-Request`` marker header (a cross-origin
                 # attacker cannot add it without passing CORS preflight).
-                csrf_ok = request.headers.get("X-Plexichat-Request") == "1"
+                #
+                # M2 defense-in-depth: the browser-set ``Sec-Fetch-Site``
+                # header cannot be forged by a cross-origin page, so a
+                # cross-site fetch carrying our cookie is a CSRF attempt even
+                # if a CORS misconfiguration let the marker header through.
+                # Non-browser clients omit Sec-Fetch-Site entirely; for those,
+                # the marker-header requirement still applies.
+                sec_fetch_site = request.headers.get("Sec-Fetch-Site")
+                if sec_fetch_site == "cross-site":
+                    csrf_ok = False
+                else:
+                    csrf_ok = request.headers.get("X-Plexichat-Request") == "1"
                 cookie_token = request.cookies.get("plexichat_token")
                 if cookie_token:
                     mutating = scope.get("method") in ("POST", "PUT", "PATCH", "DELETE")

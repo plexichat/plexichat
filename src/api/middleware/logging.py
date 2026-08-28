@@ -128,9 +128,18 @@ class LoggingMiddleware:
         method = scope.get("method", "UNKNOWN")
         path = scope.get("path", "/")
 
-        # Get client IP
-        client = scope.get("client")
-        client_ip = client[0] if client else "unknown"
+        # Get client IP. M1: use the trusted-proxy-aware extractor so the IP
+        # logged here matches what authentication/rate-limiting record (raw
+        # ``scope["client"]`` logs the reverse-proxy address instead).
+        try:
+            from typing import Any, Dict, cast
+
+            from src.utils.net import get_client_ip
+
+            client_ip = get_client_ip(cast(Dict[str, Any], scope)) or "unknown"
+        except Exception:
+            client = scope.get("client")
+            client_ip = client[0] if client else "unknown"
 
         # Check if we should log this request
         should_log = path not in SKIP_PATHS
@@ -221,10 +230,13 @@ class LoggingMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         except Exception as e:
-            # Log error with timing
+            # Log error with timing. M1: log the exception CLASS only - the
+            # full ``str(e)`` may embed sensitive request details, and the
+            # real traceback is already written by the error handler.
             end_time = time.perf_counter()
             duration_ms = (end_time - start_time) * 1000
             _log_error(
-                f"{method} {path} - ERROR - {duration_ms:.2f}ms - {client_ip} - {str(e)}"
+                f"{method} {path} - ERROR - {duration_ms:.2f}ms - {client_ip} - "
+                f"{type(e).__name__}"
             )
             raise

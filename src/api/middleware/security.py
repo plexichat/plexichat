@@ -50,6 +50,13 @@ class SecurityHeadersMiddleware:
                         b"Permissions-Policy",
                         b"camera=(), microphone=(), geolocation=(), payment=(), usb=()",
                     ),
+                    # L1: HSTS is only honored by browsers over HTTPS, so
+                    # emitting it unconditionally is safe (plain-HTTP responses
+                    # ignore the header).
+                    (
+                        b"Strict-Transport-Security",
+                        b"max-age=31536000; includeSubDomains",
+                    ),
                 ]
                 if is_api and not is_media and not is_help:
                     # Strict CSP for API responses. They should never

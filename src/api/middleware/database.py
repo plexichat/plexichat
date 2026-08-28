@@ -40,5 +40,17 @@ class DatabaseMiddleware:
                     else:
                         if db.in_transaction or db.transaction_depth > 0:
                             db.rollback()
-            except Exception:
-                pass
+            except Exception as e:
+                # L3: a persistently failing rollback/close was completely
+                # invisible (bare ``except: pass``). Surface it so the
+                # operator can see leaked connections and dangling
+                # transactions instead of debugging mystery locks later.
+                try:
+                    import utils.logger as logger
+
+                    logger.warning(
+                        f"DatabaseMiddleware cleanup failed for {scope.get('path', '?')}: "
+                        f"{type(e).__name__}: {e}"
+                    )
+                except Exception:
+                    pass

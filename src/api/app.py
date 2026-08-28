@@ -59,6 +59,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         create_rate_limit_middleware,
     )
     from .middleware.database import DatabaseMiddleware
+    from .middleware.ip_blocking import IPBlockingMiddleware
+    from .middleware.logging import LoggingMiddleware
 
     config = get_api_config()
     # Debug CORS config
@@ -459,6 +461,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         allow_headers=config.cors_allow_headers,
         expose_headers=config.cors_expose_headers,
     )
+
+    # H3: IP blacklisting was implemented but NEVER registered, so blacklisted
+    # IPs were not blocked at the perimeter at all. Registered outermost so a
+    # blacklisted peer is rejected before any CORS/rate-limit/DB work runs.
+    app.add_middleware(IPBlockingMiddleware)
+
+    # M1: request logging middleware was dead code - never registered. Added
+    # outermost so timing covers the full stack (CORS preflights included).
+    app.add_middleware(LoggingMiddleware)
 
     setup_exception_handlers(app)
 

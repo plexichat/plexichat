@@ -81,6 +81,22 @@ def _sanitize_error_message(code: int, message: str, debug: bool) -> str:
     return safe_message
 
 
+def _safe_error_message(exc: Exception, status_code: int) -> str:
+    """Return a client-safe message for a mapped exception.
+
+    Project-owned exceptions (``src.*`` modules) format their own messages
+    for clients. Third-party exceptions whose class name merely matches an
+    ``ERROR_MAPPINGS`` suffix (e.g. a library's ``*ValidationError``) can
+    embed internal details - SQL fragments, filesystem paths, config values -
+    in ``str(exc)``; echoing those verbatim (M6) leaks internals. Such
+    exceptions get a generic message keyed to the status code instead.
+    """
+    module = type(exc).__module__
+    if status_code >= 500 or not module.startswith("src."):
+        return "Internal server error" if status_code >= 500 else "Invalid request"
+    return str(exc)
+
+
 def _merge_error_headers(
     cors_headers: Dict[str, str], exc_headers: Optional[Mapping[str, str]]
 ) -> Dict[str, str]:
@@ -256,7 +272,8 @@ class ErrorHandlingMiddleware:
             except Exception:
                 pass
 
-            message = str(exc)
+            # M6: never echo third-party exception strings verbatim.
+            message = _safe_error_message(exc, status_code)
 
             # Check for self-test debug mode (uses centralized validation)
             include_traceback = False
@@ -387,7 +404,9 @@ def setup_exception_handlers(app: FastAPI):
     async def general_exception_handler(request: Request, exc: Exception):
         """Handle all other exceptions."""
         status_code = get_status_code_for_exception(exc)
-        message = str(exc) if status_code != 500 else "Internal server error"
+        # M6: project exceptions may carry client-facing messages; anything
+        # else must not leak internal detail strings.
+        message = _safe_error_message(exc, status_code)
         headers = _get_cors_headers(request)
 
         return JSONResponse(
