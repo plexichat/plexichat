@@ -46,7 +46,10 @@ class ReactionPermissionsMixin(ReactionProtocol):
         conv_row = self._db.fetch_one(
             "SELECT metadata FROM msg_conversations WHERE id = ?", (conversation_id,)
         )
-        if conv_row and conv_row.get("metadata"):
+        # L7: mirror _is_participant's explicit key-presence guard so a row
+        # whose metadata column is NULL/missing is treated identically there
+        # and here, instead of relying on dict.get() alone.
+        if conv_row and "metadata" in conv_row.keys() and conv_row["metadata"]:
             try:
                 metadata = (
                     json.loads(conv_row["metadata"])
@@ -75,7 +78,7 @@ class ReactionPermissionsMixin(ReactionProtocol):
                         ):
                             continue
                         participant_ids.append(member_id)
-            except (json.JSONDecodeError, TypeError) as e:
+            except (json.JSONDecodeError, TypeError, AttributeError) as e:
                 logger.debug(
                     f"Failed to parse conversation metadata for reactions: {e}"
                 )

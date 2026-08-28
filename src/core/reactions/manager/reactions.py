@@ -347,7 +347,9 @@ class ReactionOpsMixin(ReactionProtocol):
         if blocked_users:
             placeholders = ",".join("?" * len(blocked_users))
             query += f" AND r.user_id NOT IN ({placeholders})"
-            params.extend(list(blocked_users))
+            # L6: iterate in sorted order so parameter ordering is
+            # deterministic across runs (sets have arbitrary iteration order).
+            params.extend(sorted(blocked_users))
 
         query += """ GROUP BY r.emoji, r.is_custom, r.custom_emoji_id, e.url
                      ORDER BY MIN(r.created_at)"""
@@ -412,7 +414,8 @@ class ReactionOpsMixin(ReactionProtocol):
             query += " AND user_id NOT IN ({})".format(
                 ",".join("?" * len(blocked_users))
             )
-            params.extend(blocked_users)
+            # L6: deterministic parameter order (sets iterate arbitrarily).
+            params.extend(sorted(blocked_users))
 
         if after_user_id:
             query += " AND user_id > ?"
@@ -481,7 +484,8 @@ class ReactionOpsMixin(ReactionProtocol):
         if blocked_users:
             blocked_placeholders = ",".join("?" * len(blocked_users))
             query += f" AND r.user_id NOT IN ({blocked_placeholders})"
-            params.extend(list(blocked_users))
+            # L6: deterministic parameter order (sets iterate arbitrarily).
+            params.extend(sorted(blocked_users))
 
         query += " GROUP BY r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url ORDER BY r.message_id, MIN(r.created_at)"
 

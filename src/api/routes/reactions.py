@@ -534,6 +534,14 @@ async def remove_reaction(
                         }
                     },
                 )
+            elif "Invalid" in exc_name:
+                # M5: removing a malformed/legacy-now-invalid emoji is a CLIENT
+                # error, mirroring the PUT handler's Invalid mapping instead of
+                # falling through to a 500 with exc_info logging.
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid emoji"}},
+                )
 
             logger.error(
                 f"Failed to remove reaction from message {mid} for user {current_user.user_id}: {e}",

@@ -13,6 +13,11 @@ from .emojis import EmojiOpsMixin
 
 
 class ReactionBase(BaseManager):
+    # Provided by EmojiOpsMixin (mixed into ReactionManager); declared here so
+    # construction can invoke it without static-analysis errors.
+    def _migrate_emoji_table(self) -> None:
+        return None
+
     def __init__(
         self,
         db,
@@ -28,6 +33,16 @@ class ReactionBase(BaseManager):
         self._relationships = relationships_module
         self._media = media_module
         self._config = self._load_config()
+        # M2: the custom-emoji schema migration was DEFINED but never invoked,
+        # so a table created before the url/size/width/height/created_by/
+        # available columns existed never gained them, and every INSERT with
+        # the new columns failed at runtime. Run it once at construction; it
+        # is idempotent (per-column ALTERs are individually caught) and
+        # safe on fresh installs (missing table short-circuits).
+        try:
+            self._migrate_emoji_table()
+        except Exception as e:
+            logger.warning(f"Failed to migrate react_custom_emoji table: {e}")
         logger.info("Reaction module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
