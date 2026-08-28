@@ -340,22 +340,33 @@ async def update_report_status(
     # interpolated column names (bandit B608).
     is_review = body.status in ("investigating", "resolved", "dismissed", "escalated")
 
+    # F-BUG-3: reopening a report must CLEAR the prior review/resolution
+    # metadata — otherwise a report set back to "open" still displays as
+    # reviewed/resolved by the previous admin. "open" is the only status that
+    # resets the lifecycle fields; every other transition keeps them.
+    is_reopen = body.status == "open"
+
     params = [
         body.status,
         now,
         body.priority,  # None -> keep existing
         int(body.assigned_to) if body.assigned_to else None,
         body.admin_notes,  # None -> keep existing
-        body.resolution,  # None -> keep existing
-        now if body.resolution else None,  # resolved_at
-        current_user.user_id if body.resolution else None,  # resolved_by
+        None if is_reopen else body.resolution,  # resolution cleared on reopen
+        None if is_reopen else (now if body.resolution else None),  # resolved_at
+        (
+            None if is_reopen else (current_user.user_id if body.resolution else None)
+        ),  # resolved_by
         now if body.status == "escalated" else None,  # escalated_at
-        now if is_review else None,  # reviewed_at
-        current_user.user_id if is_review else None,  # reviewed_by
+        None if is_reopen else (now if is_review else None),  # reviewed_at
+        (
+            None if is_reopen else (current_user.user_id if is_review else None)
+        ),  # reviewed_by
         rid,
     ]
 
     try:
+        reopen_flag = 1 if is_reopen else 0
         db.execute(
             """UPDATE reports
                SET status = ?,
@@ -363,14 +374,32 @@ async def update_report_status(
                    priority = COALESCE(?, priority),
                    assigned_to = COALESCE(?, assigned_to),
                    admin_notes = COALESCE(?, admin_notes),
-                   resolution = COALESCE(?, resolution),
-                   resolved_at = COALESCE(?, resolved_at),
-                   resolved_by = COALESCE(?, resolved_by),
+                   resolution = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, resolution) END,
+                   resolved_at = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, resolved_at) END,
+                   resolved_by = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, resolved_by) END,
                    escalated_at = COALESCE(?, escalated_at),
-                   reviewed_at = COALESCE(?, reviewed_at),
-                   reviewed_by = COALESCE(?, reviewed_by)
+                   reviewed_at = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, reviewed_at) END,
+                   reviewed_by = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, reviewed_by) END
                WHERE id = ?""",
-            tuple(params),
+            (
+                body.status,
+                now,
+                body.priority,
+                int(body.assigned_to) if body.assigned_to else None,
+                body.admin_notes,
+                reopen_flag,
+                params[5],
+                reopen_flag,
+                params[6],
+                reopen_flag,
+                params[7],
+                params[8],
+                reopen_flag,
+                params[9],
+                reopen_flag,
+                params[10],
+                rid,
+            ),
         )
         return {"success": True, "report_id": str(rid), "status": body.status}
     except Exception:

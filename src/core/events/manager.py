@@ -67,6 +67,10 @@ class EventManager:
         # subscriber dict so reads stay consistent with concurrent
         # ``dispatch`` increments from FastAPI's sync threadpool.
         self._dropped_events = 0
+        # Observable idle-eviction counter: subscribers removed by the
+        # idle-TTL sweep (B2) were previously only DEBUG-logged, hiding
+        # listener loss from operators. Exposed via ``get_loss_metrics``.
+        self._evicted_subscribers = 0
         # Cross-worker event publishing: worker_id is used to tag
         # each published event so sibling workers can ignore their
         # own messages (avoids infinite echo loop).
@@ -305,12 +309,24 @@ class EventManager:
         if now - self._last_prune < max(1, self._SUBSCRIBER_IDLE_TTL_SEC // 4):
             return
         cutoff = now - self._SUBSCRIBER_IDLE_TTL_SEC
-        stale = [cb for cb, ts in list(self._last_used.items()) if ts < cutoff]
+        # Only REGULAR subscribers are eligible; critical callbacks must keep
+        # their ``_last_used`` entry (B3) so cap eviction's ``min(_last_used)``
+        # selection and the merged-pool bookkeeping stay consistent even when
+        # a critical subscriber is idle for longer than the TTL.
+        stale = [
+            cb
+            for cb, ts in list(self._last_used.items())
+            if ts < cutoff and cb not in self._critical_subscribers
+        ]
         for cb in stale:
             self._subscribers.pop(cb, None)
             self._last_used.pop(cb, None)
         if stale:
-            logger.debug(f"Evicted {len(stale)} idle event subscribers")
+            self._evicted_subscribers += len(stale)
+            logger.warning(
+                f"Evicted {len(stale)} idle event subscribers "
+                f"(total idle evictions: {self._evicted_subscribers})"
+            )
         self._last_prune = now
 
     # === Dispatch ===
@@ -560,12 +576,14 @@ class EventManager:
                 # "uninitialised" apart from "initialised but empty".
                 return {
                     "dropped_events": self._dropped_events,
+                    "evicted_subscribers": self._evicted_subscribers,
                     "subscribers": len(self._subscribers),
                     "critical_subscribers": critical_count,
                     "queue": None,
                 }
             return {
                 "dropped_events": self._dropped_events,
+                "evicted_subscribers": self._evicted_subscribers,
                 "subscribers": len(self._subscribers),
                 "critical_subscribers": critical_count,
                 "queue": {

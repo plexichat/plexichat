@@ -72,21 +72,26 @@ class GatewayDispatcher:
             event: Event to dispatch
             user_ids: Target user IDs
         """
-        if self._loop:
+        # C7: prefer the current thread's running loop, then the captured
+        # per-connection loop. asyncio.get_event_loop() outside a running loop
+        # is deprecated on 3.12+ and the previous except-pass silently DROPPED
+        # events whenever neither loop was available (e.g. startup ordering
+        # before set_event_loop).
+        loop: Optional[asyncio.AbstractEventLoop] = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = self._loop
+        if loop is not None and not loop.is_closed():
             asyncio.run_coroutine_threadsafe(
                 self.dispatch_event(event, user_ids),
-                self._loop,
+                loop,
             )
-        else:
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.run_coroutine_threadsafe(
-                        self.dispatch_event(event, user_ids),
-                        loop,
-                    )
-            except RuntimeError:
-                pass
+            return
+        logger.warning(
+            f"GatewayDispatcher: no running event loop to dispatch "
+            f"{event.event_type.value} to {len(user_ids)} users; event dropped"
+        )
 
     async def dispatch_event(
         self,

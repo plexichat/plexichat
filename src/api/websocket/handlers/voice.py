@@ -324,6 +324,17 @@ class VoiceHandler:
             if not channel_id:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
+            # D8: the authoritative voice_state.channel_id is an int while the
+            # client-supplied value arrives as a string; a raw comparison
+            # always fails and speaking updates would never dispatch. Coerce
+            # before comparing.
+            try:
+                channel_id = int(channel_id)
+            except (TypeError, ValueError):
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+            if channel_id <= 0:
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
             if not connection.user_id:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 

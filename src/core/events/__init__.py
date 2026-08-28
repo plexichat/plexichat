@@ -111,6 +111,20 @@ _manager = None
 _setup_complete = False
 
 
+def __getattr__(name: str):
+    """PEP 562 module attribute fallback.
+
+    ``event_manager`` is a public alias consumed by observability routes
+    (e.g. ``src/api/routes/health.py`` reads
+    ``events_module.event_manager.get_loss_metrics()``). Before ``setup()``
+    the manager is ``None`` so callers can distinguish "not initialized" from
+    a live-but-empty manager.
+    """
+    if name == "event_manager":
+        return _manager
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def setup(
     relationships_module=None,
     servers_module=None,

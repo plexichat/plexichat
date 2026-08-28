@@ -435,7 +435,10 @@ def _row_to_message_report(row) -> MessageReport:
             evidence_urls=_safe_get(10),
             priority=_safe_get(11, "medium"),
             status=ReportStatus(_safe_get(12, "pending")),
-            reported_at=row[13] if len(row) > 13 else row[11],
+            # F-BUG-1: the short-row fallback used index 11, which is PRIORITY
+            # (not a timestamp) — short rows yielded garbage reported_at values.
+            # A missing timestamp is now None/0 rather than a misread column.
+            reported_at=row[13] if len(row) > 13 else 0,
             reviewed_at=_safe_get(14),
             reviewed_by=_safe_get(15),
             admin_notes=_safe_get(16),
@@ -670,7 +673,9 @@ def _row_to_user_report(row) -> UserReport:
             evidence_urls=_safe_get(7),
             priority=_safe_get(8, "medium"),
             status=ReportStatus(_safe_get(9, "pending")),
-            reported_at=row[10] if len(row) > 10 else row[8],
+            # F-BUG-1: short-row fallback used index 8, which is PRIORITY (not
+            # a timestamp); a missing reported_at is now 0 instead of garbage.
+            reported_at=row[10] if len(row) > 10 else 0,
             reviewed_at=_safe_get(11),
             reviewed_by=_safe_get(12),
             admin_notes=_safe_get(13),

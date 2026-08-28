@@ -22,6 +22,7 @@ loop at schedule time).
 
 import asyncio
 import os
+import queue
 import shutil
 import tempfile
 import threading
@@ -155,7 +156,15 @@ def _resolve_local_recording_path(
     except Exception:
         return None
     if call_id is not None:
-        if not safe_path.name.startswith(f"call_{int(call_id)}."):
+        # M27: multi-segment recordings are stored as
+        # ``call_<id>_track_<n>.<ext>`` (when ffmpeg combining fails). The
+        # previous ``call_<id>.`` prefix check rejected every track file, so
+        # consent-interrupted segmented calls were NEVER transcribed. Accept
+        # both the single-file ``call_<id>.`` form and the ``call_<id>_track_``
+        # form so the first available segment resolves.
+        name = safe_path.name
+        prefix = f"call_{int(call_id)}"
+        if not (name.startswith(prefix + ".") or name.startswith(prefix + "_track_")):
             return None
     return str(safe_path)
 
@@ -405,6 +414,31 @@ async def transcribe_call(
             logger.info(f"transcription: call {call_id} was not recorded; skip.")
             return None
 
+        # L28: enforce the documented ``max_audio_minutes`` soft cap (previously
+        # configured but NEVER read, so unbounded audio reached providers).
+        # Skip transcription when the call's recorded duration exceeds the cap;
+        # a missing/unknown duration is allowed through (fail open on data
+        # availability, not on policy).
+        max_audio_minutes = transcription_cfg.get("max_audio_minutes")
+        if max_audio_minutes is not None:
+            try:
+                cap_seconds = float(max_audio_minutes) * 60.0
+            except (TypeError, ValueError):
+                cap_seconds = 0.0
+            if cap_seconds > 0:
+                duration_seconds = getattr(call, "duration_seconds", None) or 0
+                try:
+                    duration_seconds = float(duration_seconds)
+                except (TypeError, ValueError):
+                    duration_seconds = 0.0
+                if duration_seconds > cap_seconds:
+                    logger.warning(
+                        f"transcription: call {call_id} duration "
+                        f"{duration_seconds:.0f}s exceeds max_audio_minutes "
+                        f"({max_audio_minutes}); skip."
+                    )
+                    return None
+
         # Load the linked artifact BEFORE the consent gate: its persisted
         # participant ID roster (distinct identities observed on the call)
         # makes the unanimity check churn-proof.
@@ -509,15 +543,21 @@ async def transcribe_call(
 # Bounded in-process queue used when no asyncio loop is running at schedule time
 # (e.g. a synchronous lifecycle hook). A background task drains it once a loop
 # starts; this keeps the API non-blocking in both sync and async contexts.
+#
+# M26: implemented as a stdlib ``queue.Queue`` (not ``asyncio.Queue``) so the
+# queue is thread-safe for ``put_nowait`` from arbitrary sync threads and is
+# created WITHOUT a running loop (asyncio.Queue must be bound to a loop and is
+# not thread-safe for puts). The async drainer polls it.
 _QUEUE = None
 _QUEUE_DRAINING = False
 _QUEUE_LOCK = threading.Lock()
+_QUEUE_MAX = 512
 
 
 def _get_queue():
     global _QUEUE
     if _QUEUE is None:
-        _QUEUE = asyncio.Queue()
+        _QUEUE = queue.Queue(maxsize=_QUEUE_MAX)
     return _QUEUE
 
 
@@ -525,13 +565,17 @@ async def _drain_queue() -> None:
     """Process any queued transcription jobs. Runs while the loop is alive."""
     try:
         while True:
-            job = await _get_queue().get()
+            # Poll the thread-safe stdlib queue; never block the loop on a
+            # blocking ``queue.get()``.
+            job = _get_queue().get_nowait()
             try:
                 await transcribe_call(job["call_id"], job["db"], job["config"])
             except Exception as exc:  # noqa: BLE001 - never crash the drainer
                 logger.error(f"transcription: queued job failed: {exc}")
             finally:
                 _get_queue().task_done()
+    except queue.Empty:
+        pass
     except asyncio.CancelledError:  # pragma: no cover - shutdown
         return
     finally:
@@ -546,8 +590,8 @@ def schedule_transcribe_call(
     """Schedule :func:`transcribe_call` without blocking the caller.
 
     Uses ``asyncio.create_task`` when a loop is running; otherwise enqueues the
-    job on the in-process queue so a later ``ensure_drainer`` call (wired into
-    the app startup) can process it.
+    job on the in-process bounded queue so a later ``ensure_drainer`` call
+    (wired into the app startup) can process it.
     """
     transcription_cfg = (
         config_arg if config_arg is not None else _transcription_config()
@@ -561,8 +605,17 @@ def schedule_transcribe_call(
         logger.debug("No running loop; enqueuing transcription job")
         pass
 
-    # No running loop: defer to the bounded queue.
-    _get_queue().put_nowait({"call_id": call_id, "db": db, "config": transcription_cfg})
+    # No running loop: defer to the bounded queue. A full queue means the
+    # drainer is backed up; drop the job with a warning instead of growing
+    # memory without bound (the DB row remains, so a later sweep can retry).
+    q = _get_queue()
+    try:
+        q.put_nowait({"call_id": call_id, "db": db, "config": transcription_cfg})
+    except queue.Full:
+        logger.warning(
+            f"transcription: queue full ({_QUEUE_MAX}); dropped job for call {call_id}"
+        )
+        return
     ensure_transcription_drainer()
 
 

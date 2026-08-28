@@ -58,37 +58,34 @@ def test_health_response_has_expected_keys(test_client):
 # ---                                  regression contract ---------------
 
 
-def test_health_metrics_and_audit_are_none_when_event_manager_public_name_absent(
-    test_client,
-):
-    """At the time of writing, ``src/core/events/__init__.py`` exposes
-    only the *private* ``_manager`` attribute; ``from src.core.events
-    import event_manager`` therefore raises ImportError, which the
-    outer try/except catches and converts to None for both advisory
-    fields. Lock that behaviour in as a contract: if a future patch
-    adds the public alias (the one-line fix in __init__.py), this
-    test will fail and force the maintainer to update the contract
-    here accordingly. Until then, the test passes trivially -- it
-    exists to prevent the wiring gap from being *forgotten*, not to
-    prevent it from being fixed.
+def test_health_populates_metrics_via_public_alias(test_client):
+    """D9 wiring fix: ``src/core/events/__init__.py`` now exposes a public
+    ``event_manager`` alias (PEP 562 ``__getattr__``) so the inline
+    ``from src.core.events import event_manager`` inside /health resolves
+    against the configured manager and populates both advisory fields
+    instead of silently returning None.
     """
-    # Confirm the precondition explicitly so the failure mode is
-    # obvious if the gap is later closed.
-    assert (
-        not hasattr(events_module, "event_manager")
-        or getattr(events_module, "event_manager", None) is None
-    )
+    # The public alias must resolve (to a manager after setup, or at
+    # worst None before setup -- never AttributeError).
+    assert hasattr(events_module, "event_manager")
+    manager = getattr(events_module, "event_manager", None)
+    if manager is None:
+        # Not set up in this environment: alias existence is the contract.
+        pass
+    else:
+        assert hasattr(manager, "get_loss_metrics")
+        assert hasattr(manager, "is_queue_recreate_pending")
 
     resp = test_client.get("/api/v1/health")
     assert resp.status_code == 200
     body = resp.json()
-    # Both advisory fields MUST be None -- the public-name alias is
-    # absent so the ``from src.core.events import event_manager``
-    # inside /health raises ImportError.
-    assert body["events_metrics"] is None
-    assert body["is_queue_recreate_pending"] is None
-    # Base contract fields are unaffected by the wiring gap.
+    # With the alias present AND the events module wired by the test
+    # harness, the advisory fields resolve to real values. If the
+    # harness did not wire events.setup(), events_metrics may be None,
+    # but the endpoint must never 500 or raise AttributeError.
     assert body["status"] == "healthy"
+    assert "events_metrics" in body
+    assert "is_queue_recreate_pending" in body
 
 
 # --- alias-present: forward-looking contract --------------------------

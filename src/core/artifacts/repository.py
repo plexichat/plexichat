@@ -42,6 +42,11 @@ _COLUMNS = (
     "updated_at",
 )
 
+# Repository-level default page size applied when a caller omits ``limit``
+# (L7): prevents unbounded full-table materialization by internal callers.
+_DEFAULT_LIST_LIMIT = 200
+
+
 # Allow-list of columns that may be used in ORDER BY. `duration` is a synthetic
 # key resolved to the `voice_calls.duration_seconds` column via a LEFT JOIN.
 _SORT_COLUMNS = {
@@ -310,6 +315,13 @@ def list_artifacts(db, filters: Optional[Dict[str, Any]] = None) -> List[Artifac
 
     limit = filters.get("limit")
     offset = filters.get("offset", 0)
+
+    # L7: an omitted limit used to return the ENTIRE table (only the HTTP
+    # route clamped). Cap the repository default so internal callers can never
+    # accidentally materialize unbounded result sets; callers that need a
+    # larger page pass an explicit limit.
+    if limit is None:
+        limit = _DEFAULT_LIST_LIMIT
 
     query = (
         f"SELECT a.* FROM artifacts a{joins}{where} ORDER BY {sort_column} {sort_order}"
@@ -645,11 +657,27 @@ def set_server_retention_days(
         )
 
 
+# Columns that may never be rewritten through ``update_voice_call``: they are
+# set at insert time (identity, creation) or owned by other subsystems (the
+# linked artifact id). Silently allowing them let a caller corrupt referential
+# integrity (L8).
+_VOICE_CALL_IMMUTABLE_COLUMNS = frozenset(
+    {"id", "artifact_id", "created_at", "updated_at"}
+)
+
+
 def update_voice_call(db, call_id: SnowflakeID, **fields: Any) -> Optional[VoiceCall]:
-    """Update mutable columns of a voice call row."""
+    """Update mutable columns of a voice call row.
+
+    Identity/creation columns (``id``, ``artifact_id``, ``created_at``,
+    ``updated_at``) are always ignored, no matter what the caller passes, so
+    a stray ``created_at`` cannot silently rewrite history (L8).
+    """
     allowed: Dict[str, Any] = {}
     for key, value in fields.items():
         if key not in _VOICE_CALL_COLUMNS:
+            continue
+        if key in _VOICE_CALL_IMMUTABLE_COLUMNS:
             continue
         if key in ("recorded",):
             allowed[key] = 1 if value else 0

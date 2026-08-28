@@ -43,7 +43,10 @@ def _emit(
             exclude_user_ids=exclude_user_ids,
         )
     except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"gateway_emit: failed to dispatch {event_type.value}: {e}")
+        # C1: a serialization or routing bug in ANY emitter was previously
+        # invisible at default log levels (DEBUG). Surface it at WARNING so
+        # broken emissions are detectable while staying non-raising.
+        logger.warning(f"gateway_emit: failed to dispatch {event_type.value}: {e}")
 
 
 # --------------------------------------------------------------------------

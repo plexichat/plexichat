@@ -23,8 +23,26 @@ from typing import Optional
 
 router = APIRouter(tags=["Avatars"])
 
-# Local in-memory cache for checksums to avoid DB hits for ETags
+# Local in-memory cache for checksums to avoid DB hits for ETags.
+# M5: previously unbounded plain dicts — enumerating /users/{id} or
+# /servers/{id} grew them without limit. Both caches are now capped at a few
+# thousand entries with simple insertion-ordered eviction (dict preserves
+# insertion order), so probing arbitrary ids cannot leak memory.
 _avatar_checksum_cache = {}  # {uid: checksum}
+_icon_checksum_cache = {}  # {sid: checksum}
+_MAX_CHECKSUM_CACHE_ENTRIES = 4096
+
+
+def _cache_set_checksum(cache: dict, key: int, checksum: str) -> None:
+    """Insert into a checksum cache, evicting the oldest entry at the cap."""
+    if len(cache) >= _MAX_CHECKSUM_CACHE_ENTRIES:
+        # Evict the first-inserted entry (dicts preserve insertion order).
+        try:
+            oldest = next(iter(cache))
+            cache.pop(oldest, None)
+        except StopIteration:
+            pass
+    cache[key] = checksum
 
 
 def _invalidate_user_avatar_cache(user_id: int) -> None:
@@ -49,6 +67,7 @@ def _invalidate_user_avatar_cache(user_id: int) -> None:
 def _invalidate_server_icon_cache(server_id: int) -> None:
     """Drop all cached server-icon state so a re-upload/deletion is reflected."""
     _icon_checksum_cache.pop(server_id, None)
+
     try:
         from src.core.database import invalidate_pattern
 
@@ -104,7 +123,7 @@ async def get_user_avatar(user_id: int, request: Request):
             try:
                 checksum = avatars.get_user_avatar_checksum(uid)
                 if checksum:
-                    _avatar_checksum_cache[uid] = checksum
+                    _cache_set_checksum(_avatar_checksum_cache, uid, checksum)
             except Exception:
                 pass
 
@@ -184,7 +203,8 @@ async def get_user_avatar(user_id: int, request: Request):
         avatar_data, content_type, checksum = result
 
         # Update local checksum cache
-        _avatar_checksum_cache[uid] = checksum
+        if checksum:
+            _cache_set_checksum(_avatar_checksum_cache, uid, checksum)
 
         return Response(
             content=avatar_data,
@@ -426,7 +446,7 @@ async def get_server_icon(server_id: int, request: Request):
             try:
                 checksum = avatars.get_server_icon_checksum(sid)
                 if checksum:
-                    _icon_checksum_cache[sid] = checksum
+                    _cache_set_checksum(_icon_checksum_cache, sid, checksum)
             except Exception:
                 pass
 
@@ -501,7 +521,8 @@ async def get_server_icon(server_id: int, request: Request):
         icon_data, content_type, checksum = result
 
         # Update local checksum cache
-        _icon_checksum_cache[sid] = checksum
+        if checksum:
+            _cache_set_checksum(_icon_checksum_cache, sid, checksum)
 
         return Response(
             content=icon_data,

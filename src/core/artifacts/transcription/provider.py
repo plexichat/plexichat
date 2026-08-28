@@ -190,6 +190,7 @@ class LocalWhisperProvider(TranscriptionProvider):
         self._module_name: Optional[str] = _find_whisper_module()
         self._diarization_module: Optional[str] = None
         self._diarizer: Any = None
+        self._diarization_failed: bool = False
         self._availability: Optional[bool] = None
         self._model_lock = threading.Lock()
 
@@ -259,9 +260,15 @@ class LocalWhisperProvider(TranscriptionProvider):
     def _ensure_diarizer(self) -> Any:
         if self._diarizer is not None or self._diarization_module is not None:
             return self._diarizer
+        if self._diarization_failed:
+            # L30: a failed module discovery / import used to retry network
+            # and import work on EVERY call (e.g. pyannote discovery when no
+            # HF token is configured). Memoize the failure so transcription
+            # runs with "unknown" speakers instead of repeatedly probing.
+            return None
         module_name = _find_diarization_module()
         if module_name is None:
-            self._diarizer = None
+            self._diarization_failed = True
             return None
         try:
             import importlib
@@ -276,6 +283,7 @@ class LocalWhisperProvider(TranscriptionProvider):
             self._diarization_module = module_name
         except Exception:
             self._diarizer = None
+            self._diarization_failed = True
         return self._diarizer
 
     async def transcribe(

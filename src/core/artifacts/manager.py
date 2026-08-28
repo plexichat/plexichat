@@ -528,7 +528,16 @@ class ArtifactManager(BaseManager):
             "max_artifact_size_mb", 200
         )
         max_size_bytes = max_size_mb * 1024 * 1024
-        if attachment.get("size", 0) > max_size_bytes:
+        # L4: ``size`` may arrive as a string (form/JSON coercion); a raw
+        # comparison would raise TypeError and surface as a 500. Coerce
+        # safely; unparseable values are treated as 0 so only the actual
+        # byte count can trip the limit.
+        raw_size = attachment.get("size", 0)
+        try:
+            declared_size = int(raw_size or 0)
+        except (TypeError, ValueError):
+            declared_size = 0
+        if declared_size > max_size_bytes:
             raise ValueError(f"Attachment exceeds maximum size of {max_size_mb} MB")
 
         payload: Dict[str, Any] = {

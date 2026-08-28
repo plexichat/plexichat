@@ -183,7 +183,10 @@ async def test_sum_relay_delivers_to_authorized_subscribers_excludes_actor(
         frame = other_conn.sent[0]
         assert frame["op"] == int(GatewayOpcode.SUM_OP)
         assert str(frame["d"]["workbook_id"]) == str(workbook_id)
-        assert frame["d"]["actor_id"] == owner.id
+        # actor_id may arrive as int or string depending on the wire layer;
+        # normalize before comparing (snowflake ids exceed 2^53, so the
+        # server serializes them as strings on the wire).
+        assert str(frame["d"]["actor_id"]) == str(owner.id)
         assert frame["d"]["op"]["operation_id"] == "op-relay"
         assert owner_conn.sent == []
         assert intruder_conn.sent == []

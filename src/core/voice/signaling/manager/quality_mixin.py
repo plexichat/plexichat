@@ -167,9 +167,32 @@ class QualityMixin:
                     thresholds = QUALITY_BITRATE_THRESHOLDS.get(level)
                     if thresholds:
                         entry["bitrate"] = thresholds["max"]
+
+        # M8: client-supplied metrics are UNVALIDATED — negative or absurd
+        # floats were accepted verbatim and fed the shared BandwidthEstimator,
+        # letting one peer poison degradation decisions for the whole channel.
+        # Clamp every numeric metric to a sane, non-negative range; garbage
+        # values degrade to a neutral default rather than being stored.
         for k in ("bitrate", "packet_loss", "jitter", "round_trip_time", "score"):
-            if k in metrics:
-                entry[k] = metrics[k]
+            if k not in metrics:
+                continue
+            raw = metrics[k]
+            try:
+                num = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if num != num or num in (float("inf"), float("-inf")):
+                continue  # NaN / infinity: drop
+            if k == "packet_loss":
+                entry[k] = max(0.0, min(num, 100.0))
+            elif k == "jitter":
+                entry[k] = max(0.0, min(num, 10000.0))
+            elif k == "round_trip_time":
+                entry[k] = max(0.0, min(num, 600000.0))
+            elif k == "score":
+                entry[k] = max(0.0, min(num, 100.0))
+            else:  # bitrate
+                entry[k] = max(0, min(int(num), 100_000_000))
         self._quality_data[(cid, pid)] = entry
 
         if pid in self._connections:

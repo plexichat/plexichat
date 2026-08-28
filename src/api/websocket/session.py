@@ -32,10 +32,23 @@ class Session:
     max_replay_events: int = 100
 
     def add_replay_event(self, event: Dict[str, Any]) -> None:
-        """Add an event to the replay buffer."""
+        """Add an event to the replay buffer.
+
+        The buffer is bounded (``max_replay_events``): once full, the oldest
+        entry is evicted so a long disconnect can never miss more than the
+        window. Eviction is logged at WARNING (previously silent) so replay
+        gaps caused by buffer overflow are observable rather than invisible.
+        """
         self.replay_events.append(event)
         if len(self.replay_events) > self.max_replay_events:
             self.replay_events.pop(0)
+            if not getattr(self, "_replay_overflow_warned", False):
+                self._replay_overflow_warned = True
+                logger.warning(
+                    f"Session {self.session_id}: replay buffer overflow "
+                    f"(max {self.max_replay_events}); oldest events evicted "
+                    f"and unrecoverable on resume"
+                )
 
     def get_replay_events(self, after_sequence: int) -> List[Dict[str, Any]]:
         """Get events after a specific sequence number."""

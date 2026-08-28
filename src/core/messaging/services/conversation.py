@@ -123,9 +123,31 @@ class ConversationService(BaseService):
         for uid in [user_id, recipient_id]:
             self._participant_svc.add_participant(conv_id, uid, ParticipantRole.MEMBER)
 
-        # Create DM lookup
+        # Create DM lookup. Two users creating the same DM concurrently both
+        # miss the lookup read above and both insert; the UNIQUE(user1,user2)
+        # constraint makes the loser raise here. H4: previously that escaped
+        # as an unhandled IntegrityError -> HTTP 500 instead of returning the
+        # winner's conversation. Re-query on a unique collision and return the
+        # existing DM (the fresh conversation row is a harmless orphan that
+        # the winner's lookup now supersedes).
         lookup_id = self._generate_id()
-        self._repo.create_dm_lookup(lookup_id, user_id, recipient_id, conv_id)
+        try:
+            self._repo.create_dm_lookup(lookup_id, user_id, recipient_id, conv_id)
+        except Exception as exc:
+            lowered = str(exc).lower()
+            if "unique" in lowered or "integrity" in lowered:
+                existing_id = self._repo.get_dm_lookup(user_id, recipient_id)
+                if existing_id and valkey_available():
+                    cache_set(cache_key, existing_id, ttl=3600)
+                if existing_id is not None:
+                    conv = self.get_conversation(existing_id, user_id)
+                    if conv:
+                        logger.debug(
+                            f"DM {existing_id} already existed; returning winner's "
+                            f"conversation for {user_id}/{recipient_id}"
+                        )
+                        return conv
+            raise
 
         logger.debug(
             f"Created DM conversation {conv_id} between {user_id} and {recipient_id}"

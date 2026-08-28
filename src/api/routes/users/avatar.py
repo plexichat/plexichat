@@ -64,6 +64,21 @@ class AvatarMixin:
                         f"Cache invalidation failed for user {current_user.user_id}: {ce}"
                     )
 
+                # H1: also drop the avatars route's in-process checksum cache so
+                # clients stop receiving 304 for the old avatar after re-upload
+                # (the Valkey invalidation above never touches that local dict).
+                try:
+                    from src.api.routes.avatars import (
+                        _invalidate_user_avatar_cache,
+                    )
+
+                    _invalidate_user_avatar_cache(current_user.user_id)
+                except Exception as ie:
+                    logger.debug(
+                        f"Local avatar checksum invalidation failed "
+                        f"for user {current_user.user_id}: {ie}"
+                    )
+
                 try:
                     from src.core.events.gateway_emit import emit_user_update
 

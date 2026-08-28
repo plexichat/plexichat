@@ -137,13 +137,27 @@ class Connection:
                     await self.websocket.send_json(data)
             return True
         except Exception:
+            # C6: a partially-failed compressed send leaves the shared zlib
+            # context mid-stream; reusing it would emit a corrupt deflate
+            # stream and desync the client decompressor on every subsequent
+            # binary frame. Reset the context so the next frame starts from a
+            # clean deflate boundary (the client falls back to a reconnect on
+            # persistent failures).
+            if self.compress:
+                self._zlib_context = zlib.compressobj()
             return False
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
-        """Close the connection."""
+        """Close the connection.
+
+        Acquires ``_send_lock`` so a final in-flight frame cannot interleave
+        AFTER the close frame (C5): without the lock, ``close()`` could race
+        a concurrent ``send_json`` and emit a frame past the close handshake.
+        """
         self.set_disconnecting()
         try:
-            await self.websocket.close(code, reason)
+            async with self._send_lock:
+                await self.websocket.close(code, reason)
         except Exception:
             pass
         self.set_disconnected()

@@ -293,7 +293,13 @@ async def _handle_cross_worker_message(raw_message: str) -> None:
         return
 
     source_worker = payload.get("sw", "")
-    if source_worker == _get_worker_id():
+    # Echo protection (B5): only skip our own published events. Events tagged
+    # with an empty or "unknown" worker id (published before set_worker_id /
+    # before session-manager identity assignment) can never be assumed to be
+    # our own echo — dropping them on multi-worker deployments silently
+    # discards sibling delivery during the pre-identity window.
+    own_id = _get_worker_id()
+    if source_worker and source_worker != "unknown" and source_worker == own_id:
         return
 
     event_type: str = payload.get("t", "")

@@ -336,7 +336,26 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             else:
                 effective_cap = max_body_size
             content_length = request.headers.get("content-length")
-            if content_length and int(content_length) > effective_cap:
+            # L2: a malformed Content-Length (non-numeric) previously crashed
+            # int() -> 500. Treat unparseable lengths as unknown and defer to
+            # the byte-counting wrapper, which enforces the same cap on the
+            # actual body regardless.
+            declared_length = None
+            if content_length:
+                try:
+                    declared_length = int(content_length)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Rejecting malformed Content-Length header %r", content_length
+                    )
+                    return Response(
+                        content=(
+                            '{"error":{"code":400,"message":"Invalid Content-Length"}}'
+                        ),
+                        status_code=400,
+                        media_type="application/json",
+                    )
+            if declared_length is not None and declared_length > effective_cap:
                 return Response(
                     content=(
                         '{"error":{"code":413,"message":"Request body too large",'

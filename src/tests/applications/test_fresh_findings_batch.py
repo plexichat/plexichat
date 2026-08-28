@@ -269,7 +269,6 @@ class TestHashReportDismissStatus:
 
     def test_dismiss_sets_dismissed_status(self):
         from unittest.mock import MagicMock as MockDB
-        import time as _time
 
         db = MockDB()
         db.fetch_one.return_value = {"hash_value": "abc123"}
