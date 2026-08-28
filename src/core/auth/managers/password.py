@@ -93,7 +93,31 @@ class PasswordMixin(AuthManagerProtocol):
                 self._get_timestamp() + 3600 * 1000,
             ),
         )
-        self.email_sender.send(email, "Reset Password", f"Token: {token}")
+        # L8: deliver a deep link (the client pre-fills ?token=) instead of a
+        # bare token that users would otherwise paste into a form - pasted
+        # URLs/tokens linger in history and referrers. The token stays in the
+        # email as a fallback for clients that cannot open links.
+        import utils.config as config_util
+
+        reset_cfg = {}
+        try:
+            reset_cfg = (config_util.get("authentication", {}) or {}).get(
+                "reset_password", {}
+            ) or {}
+        except Exception:
+            pass
+        reset_path = str(reset_cfg.get("path") or "/reset-password").lstrip("/")
+        client_url = str(reset_cfg.get("client_url") or "").rstrip("/")
+        reset_url = (
+            f"{client_url}/{reset_path}?token={token}"
+            if client_url
+            else f"/{reset_path}?token={token}"
+        )
+        self.email_sender.send(
+            email,
+            "Reset Password",
+            f"Reset your password: {reset_url}\n\nToken (fallback): {token}",
+        )
         return True
 
     def reset_password(self, token: str, new_password: str) -> bool:

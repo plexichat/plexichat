@@ -68,6 +68,10 @@ class TwoFactorInvalidError(AuthError):
     pass
 
 
+class InvalidPermissionError(AuthError):
+    """Raised when a permission key/value is invalid."""
+
+
 class PermissionDeniedError(AuthError):
     """Raised when user lacks required permission."""
 

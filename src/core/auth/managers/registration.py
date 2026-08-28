@@ -131,23 +131,38 @@ class RegistrationMixin(AuthManagerProtocol):
         password_hash = self.crypto.hash_password(password)
         require_ver = accounts_config.get("require_email_verification", False)
 
-        self._db.execute(
-            "INSERT INTO auth_users (id, account_type, username, email_index, email_encrypted, password_hash, permissions, created_at, updated_at, email_verified, age_verified, date_of_birth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                user_id,
-                AccountType.USER.value,
-                username,
-                email_index,
-                email_encrypted,
-                password_hash,
-                permissions_to_json(DEFAULT_USER_PERMISSIONS),
-                now,
-                now,
-                1 if not require_ver else 0,
-                age_verified,
-                stored_dob,
-            ),
-        )
+        # M4: the SELECT checks above are a fast path only - two concurrent
+        # registrations can both pass them. The DB constraints (UNIQUE on
+        # username / email index) are the real backstop; surface the race as
+        # a 409-style UserExistsError instead of an unhandled IntegrityError
+        # that bubbles up as a 500.
+        try:
+            self._db.execute(
+                "INSERT INTO auth_users (id, account_type, username, email_index, email_encrypted, password_hash, permissions, created_at, updated_at, email_verified, age_verified, date_of_birth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    user_id,
+                    AccountType.USER.value,
+                    username,
+                    email_index,
+                    email_encrypted,
+                    password_hash,
+                    permissions_to_json(DEFAULT_USER_PERMISSIONS),
+                    now,
+                    now,
+                    1 if not require_ver else 0,
+                    age_verified,
+                    stored_dob,
+                ),
+            )
+        except Exception as e:
+            import sqlite3
+
+            is_unique_violation = isinstance(e, sqlite3.IntegrityError) and (
+                "UNIQUE" in str(e).upper() or "auth_users.username" in str(e)
+            )
+            if is_unique_violation:
+                raise UserExistsError("Registration failed", "username_or_email")
+            raise
 
         if ip_address:
             self._track_ip(user_id, ip_address)

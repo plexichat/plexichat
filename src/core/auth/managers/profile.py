@@ -6,10 +6,12 @@ import utils.logger as logger
 from ..exceptions import (
     UserNotFoundError,
     InvalidUsernameError,
+    InvalidEmailError,
+    InvalidPermissionError,
 )
 from ..models import User, AccountType
 from ..permissions import permissions_to_json, permissions_from_json
-from ..passwords import validate_username
+from ..passwords import validate_username, validate_email
 from src.core.database import cached, invalidate_pattern
 
 
@@ -56,6 +58,11 @@ class ProfileMixin(AuthManagerProtocol):
 
         email_changed = False
         if email:
+            # M4: the registration path validates email format; profile updates
+            # previously skipped it entirely and relied on the DB constraint
+            # for uniqueness, so a malformed address was accepted/stored.
+            if not validate_email(email):
+                raise InvalidEmailError("Invalid email")
             current_for_email = self.get_user(user_id)
             if not current_for_email:
                 raise UserNotFoundError("User not found")
@@ -76,6 +83,17 @@ class ProfileMixin(AuthManagerProtocol):
                 )
                 params.extend([email_index, email_encrypted, 0])
         if permissions is not None:
+            # M5 defense-in-depth: ``update_user`` is the single write path for
+            # a user's permission dict, so it must never persist a wildcard or
+            # an unknown key - any caller that slips one through (a future
+            # route, a bug) would grant capabilities nobody intended.
+            from ..permissions import PERMISSIONS
+
+            for key, value in permissions.items():
+                if key == "*" or key not in PERMISSIONS:
+                    raise InvalidPermissionError(f"Unknown permission: {key}")
+                if not isinstance(value, bool):
+                    raise InvalidPermissionError(f"Permission {key} must be a boolean")
             updates.append("permissions = ?")
             params.append(permissions_to_json(permissions))
 

@@ -114,6 +114,15 @@ def get_authentication_defaults(home_dir: Path) -> Dict[str, Any]:
             "extend_on_activity": True,
             "extend_threshold_hours": 24,
         },
+        "reset_password": {
+            # Password-reset emails deliver a deep link instead of a bare
+            # token. Set client_url to the web client's base origin (e.g.
+            # https://chat.example.com) so the link is fully qualified;
+            # without it the link is relative to the web root, which still
+            # avoids requiring users to paste raw tokens into a form.
+            "client_url": "",
+            "path": "/reset-password",
+        },
         "security": {
             "max_failed_attempts": 5,
             "lockout_duration_minutes": 15,

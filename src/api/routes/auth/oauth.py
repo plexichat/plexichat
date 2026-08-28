@@ -470,6 +470,7 @@ async def oauth_callback(
                         "error": {"code": 401, "message": "Failed to get access token"}
                     },
                 )
+
         except httpx.HTTPStatusError as e:
             logger.error(
                 f"Token exchange failed with {provider}: {e.response.status_code} - {e.response.text}"
@@ -484,6 +485,42 @@ async def oauth_callback(
                 status_code=401,
                 detail={"error": {"code": 401, "message": "Token exchange failed"}},
             )
+
+        # M6: the nonce we sent to the IdP must be checked against the ID
+        # token it returns, otherwise the nonce is decoration with no
+        # consumer. OIDC binds the nonce to the authorization session, so a
+        # stolen/misrouted authorization code can no longer be exchanged into
+        # a session minted for a different browser. The JWT arrives over the
+        # TLS channel straight from the IdP's token endpoint, so the nonce
+        # claim is read without a JWKS round-trip (signature verification is
+        # not what the nonce protects against here). Placed OUTSIDE the token
+        # exchange try/except so an HTTPException is not remapped to a generic
+        # token-exchange failure.
+        id_token = token_result.get("id_token")
+        nonce_sent = getattr(state_record, "nonce_value", None)
+        if id_token and nonce_sent:
+            import base64
+            import json as _json
+
+            try:
+                payload = id_token.split(".")[1]
+                padding = "=" * (-len(payload) % 4)
+                claims = _json.loads(base64.urlsafe_b64decode(payload + padding))
+            except Exception as e:
+                logger.error(f"Failed to decode id_token from {provider}: {e}")
+                raise HTTPException(
+                    status_code=401,
+                    detail={"error": {"code": 401, "message": "Invalid id_token"}},
+                )
+            if claims.get("nonce") != nonce_sent:
+                logger.warning(
+                    f"OAuth nonce mismatch for {provider} from "
+                    f"{getattr(request, 'client', None)}"
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={"error": {"code": 401, "message": "OAuth nonce mismatch"}},
+                )
 
         user_info_headers = {"Authorization": f"Bearer {access_token}"}
         try:
