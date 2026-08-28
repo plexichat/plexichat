@@ -13,10 +13,10 @@ from .emojis import EmojiOpsMixin
 
 
 class ReactionBase(BaseManager):
-    # Provided by EmojiOpsMixin (mixed into ReactionManager); declared here so
-    # construction can invoke it without static-analysis errors.
-    def _migrate_emoji_table(self) -> None:
-        return None
+    # NOTE: ``_migrate_emoji_table`` is intentionally NOT declared here. The
+    # real implementation lives in EmojiOpsMixin; a stub in this class would
+    # shadow it via C3 MRO (ReactionBase precedes EmojiOpsMixin in
+    # ReactionManager's bases), silently disabling the legacy-table migration.
 
     def __init__(
         self,
@@ -40,7 +40,10 @@ class ReactionBase(BaseManager):
         # is idempotent (per-column ALTERs are individually caught) and
         # safe on fresh installs (missing table short-circuits).
         try:
-            self._migrate_emoji_table()
+            # Resolved via getattr so static analysis of ReactionBase stays
+            # clean while the EmojiOpsMixin implementation (the only real
+            # one) is what actually runs at runtime.
+            getattr(self, "_migrate_emoji_table")()
         except Exception as e:
             logger.warning(f"Failed to migrate react_custom_emoji table: {e}")
         logger.info("Reaction module initialized")
