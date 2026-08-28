@@ -59,6 +59,7 @@ _PERMISSION_EXC = (
 _INVALID_EXC = (
     srv.InvalidServerNameError,
     srv.InvalidChannelNameError,
+    srv.InvalidChannelSettingError,
     srv.InvalidRoleNameError,
     srv.InvalidEventTimeError,
     srv.InvalidPermissionKeyError,

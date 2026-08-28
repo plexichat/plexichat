@@ -84,8 +84,14 @@ async def create_server(
         )
 
     try:
+        # L4: the client sends icon_url on creation (api/servers.js) but it
+        # was silently dropped here; create_server supports it. Pass it
+        # through so a newly created server keeps its chosen icon.
         server = servers_mod.create_server(
-            owner_id=current_user.user_id, name=body.name, description=body.description
+            owner_id=current_user.user_id,
+            name=body.name,
+            description=body.description,
+            icon_url=body.icon_url,
         )
         invalidate_user_servers(current_user.user_id)
         return _server_to_response(server)

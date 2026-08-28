@@ -11,6 +11,7 @@ from ..exceptions import (
     ChannelNotFoundError,
     CategoryNotFoundError,
     InvalidChannelNameError,
+    InvalidChannelSettingError,
     ServerAccessDeniedError,
     ServerNotFoundError,
 )
@@ -332,6 +333,13 @@ class ChannelHandler:
             changes["nsfw"] = {"old": channel.nsfw, "new": nsfw}
 
         if slowmode_seconds is not None:
+            # L1: the route schema caps slowmode 0..21600, but internal
+            # callers bypass the schema entirely - enforce the same bound at
+            # the handler so no entry point can persist an out-of-range value.
+            if not (0 <= slowmode_seconds <= 21600):
+                raise InvalidChannelSettingError(
+                    "slowmode_seconds must be between 0 and 21600"
+                )
             updates.append("slowmode_seconds = ?")
             params.append(slowmode_seconds)
             changes["slowmode_seconds"] = {
@@ -418,6 +426,31 @@ class ChannelHandler:
                 )
         except Exception as e:
             logger.warning(f"Thread cascade skipped for channel {channel_id}: {e}")
+
+        # L3: tombstoning the channel used to orphan its permission-override
+        # rows AND its messaging conversation (whose messages remain readable
+        # through the orphaned conversation id). Clean both up now.
+        try:
+            self.db.execute(
+                "DELETE FROM srv_channel_overrides WHERE channel_id = ?",
+                (channel_id,),
+            )
+        except Exception as e:
+            logger.warning(
+                f"Channel override cleanup failed for channel {channel_id}: {e}"
+            )
+        conversation_id = getattr(channel, "conversation_id", None)
+        if conversation_id:
+            try:
+                self.db.execute(
+                    "UPDATE msg_conversations SET deleted = 1 "
+                    "WHERE id = ? AND deleted = 0",
+                    (conversation_id,),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Conversation cleanup failed for channel {channel_id}: {e}"
+                )
 
         self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
         if valkey_available():

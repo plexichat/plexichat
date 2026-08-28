@@ -13,6 +13,7 @@ from ..exceptions import (
     DefaultRoleError,
     MemberNotFoundError,
     InvalidRoleNameError,
+    ServerLimitReachedError,
 )
 from src.core.database import cached
 from ..permission_utils import (
@@ -66,6 +67,21 @@ class RoleHandler:
         # administrator.
         editor_perms = self.get_permissions(user_id, server_id)
         check_permissions_grantable(editor_perms, permissions)
+
+        # L2: the configured per-server role cap was never consulted on the
+        # creation path, so a server could grow unbounded roles.
+        max_roles = self.manager._config.get("max_roles_per_server", 250)
+        count_row = self.db.fetch_one(
+            "SELECT COUNT(*) as count FROM srv_roles "
+            "WHERE server_id = ? AND deleted = 0",
+            (server_id,),
+        )
+        role_count = count_row["count"] if count_row else 0
+        if role_count >= max_roles:
+            raise ServerLimitReachedError(
+                f"Server has reached the maximum of {max_roles} roles",
+                limit=max_roles,
+            )
 
         pos_row = self.db.fetch_one(
             "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM srv_roles WHERE server_id = ? AND deleted = 0",

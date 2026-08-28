@@ -157,6 +157,10 @@ class ServerLimitReachedError(ServerError):
         self.limit = limit
 
 
+class InvalidChannelSettingError(ServerError):
+    """A channel setting value is outside its allowed range."""
+
+
 class InvalidChannelNameError(ServerError):
     """Channel name is invalid."""
 

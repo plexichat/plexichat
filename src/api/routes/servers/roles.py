@@ -183,6 +183,11 @@ async def create_role(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Internal server error"}},
             )
+        elif "Limit" in exc_name:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Role limit reached"}},
+            )
 
         logger.error(f"Failed to create role in server {server_id}: {e}", exc_info=True)
         raise HTTPException(
