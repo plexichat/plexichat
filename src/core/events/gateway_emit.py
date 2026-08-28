@@ -194,6 +194,34 @@ def emit_channel_pins_update(
 
 
 # --------------------------------------------------------------------------
+# Servers / guilds
+# --------------------------------------------------------------------------
+def emit_guild_update(
+    server_id: int,
+    *,
+    name: Optional[str] = None,
+    owner_id: Optional[int] = None,
+    icon: Optional[str] = None,
+) -> None:
+    """Notify connected clients that a server's details changed (icon, name...).
+
+    ``create_guild_update`` existed but was never dispatched anywhere, so
+    server icon/name changes were silently invisible to connected clients
+    until they re-fetched (stale icons in every open session).
+    """
+    data: Dict[str, Any] = {"id": str(server_id)}
+    # ``is not None`` (not truthiness) so callers can explicitly clear a
+    # field (e.g. ``icon=""`` when a server icon is deleted).
+    if name is not None:
+        data["name"] = name
+    if owner_id is not None:
+        data["owner_id"] = str(owner_id)
+    if icon is not None:
+        data["icon"] = icon
+    _emit(EventType.GUILD_UPDATE, data, server_id=server_id)
+
+
+# --------------------------------------------------------------------------
 # Server roles
 # --------------------------------------------------------------------------
 def emit_guild_role_create(server_id: int, role: Dict[str, Any]) -> None:

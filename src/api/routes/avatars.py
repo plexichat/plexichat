@@ -290,9 +290,11 @@ async def upload_my_avatar(
                 content_type=file.content_type,
             )
         except ValueError:
+            # M1: invalid image data is a CLIENT error - report it as such
+            # instead of a misleading "Internal server error" 400.
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Internal server error"}},
+                detail={"error": {"code": 400, "message": "Invalid image file"}},
             )
         except Exception as e:
             logger.error(
@@ -301,7 +303,7 @@ async def upload_my_avatar(
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Upload failed: {str(e)}"}},
+                detail={"error": {"code": 500, "message": "Upload failed"}},
             )
 
         # Invalidate user cache
@@ -314,6 +316,23 @@ async def upload_my_avatar(
                 f"Failed to invalidate cache for user {current_user.user_id} after avatar upload: {e}"
             )
         _invalidate_user_avatar_cache(current_user.user_id)
+
+        # H2 parity: the composer path (POST /users/@me/avatar) emits
+        # USER_UPDATE so open sessions refresh; this sibling endpoint must
+        # behave identically instead of leaving stale avatars everywhere.
+        try:
+            from src.core.events.gateway_emit import emit_user_update
+
+            emit_user_update(
+                {
+                    "id": current_user.user_id,
+                    "username": "",
+                    "avatar_url": result["url"],
+                },
+                exclude_user_id=current_user.user_id,
+            )
+        except Exception as ge:
+            logger.debug(f"emit_user_update (avatar upload) failed: {ge}")
 
         return AvatarUploadResponse(
             success=True,
@@ -382,6 +401,21 @@ async def delete_my_avatar(
                 f"Failed to invalidate cache for user {current_user.user_id} after avatar deletion: {e}"
             )
         _invalidate_user_avatar_cache(current_user.user_id)
+
+        # H2 parity: connected sessions must learn the avatar was removed.
+        try:
+            from src.core.events.gateway_emit import emit_user_update
+
+            emit_user_update(
+                {
+                    "id": current_user.user_id,
+                    "username": "",
+                    "avatar_url": "",
+                },
+                exclude_user_id=current_user.user_id,
+            )
+        except Exception as ge:
+            logger.debug(f"emit_user_update (avatar delete) failed: {ge}")
 
         return SuccessResponse(success=deleted, message=None)
     except HTTPException:
@@ -674,16 +708,28 @@ async def upload_server_icon(
                 server_id=sid, image_data=file_data, content_type=file.content_type
             )
         except ValueError:
+            # M1: invalid image data is a CLIENT error - report it as such
+            # instead of a misleading "Internal server error" 400.
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Internal server error"}},
+                detail={"error": {"code": 400, "message": "Invalid image file"}},
             )
         except Exception as e:
             logger.error(f"Failed to upload icon for server {sid}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Upload failed: {str(e)}"}},
+                detail={"error": {"code": 500, "message": "Upload failed"}},
             )
+
+        # H2: propagate the new icon to connected clients immediately so
+        # every open session reflects the change (no stale icons until
+        # re-fetch). The sibling /servers/{id}/icon endpoint emits too.
+        try:
+            from src.core.events.gateway_emit import emit_guild_update
+
+            emit_guild_update(sid, icon=result["url"])
+        except Exception as ge:
+            logger.debug(f"emit_guild_update (icon upload) failed: {ge}")
 
         return IconUploadResponse(
             success=True,
@@ -818,6 +864,15 @@ async def delete_server_icon(
                 f"Failed to invalidate cache for server {sid} after icon deletion: {e}"
             )
         _invalidate_server_icon_cache(sid)
+
+        # H2: icon removal must also reach connected clients immediately,
+        # otherwise sessions keep showing the deleted icon until re-fetch.
+        try:
+            from src.core.events.gateway_emit import emit_guild_update
+
+            emit_guild_update(sid, icon="")
+        except Exception as ge:
+            logger.debug(f"emit_guild_update (icon delete) failed: {ge}")
 
         return SuccessResponse(success=deleted, message=None)
     except HTTPException:

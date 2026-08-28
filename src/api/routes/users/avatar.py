@@ -102,9 +102,12 @@ class AvatarMixin:
                     animated=result["animated"],
                 )
             except ValueError:
+                # M1: invalid image data is a client error; use the same
+                # message as the sibling /avatars/users/@me endpoint so the
+                # two upload paths behave identically.
                 raise HTTPException(
                     status_code=400,
-                    detail={"error": {"code": 400, "message": "Invalid request"}},
+                    detail={"error": {"code": 400, "message": "Invalid image file"}},
                 )
             except Exception as e:
                 logger.error(

@@ -136,6 +136,40 @@ class AvatarProcessingMixin(AvatarProtocol):
                     img.seek(0)
                     is_animated = False
 
+            if is_animated and original_format == "WEBP":
+                # M2: animated WebP needed a resize - keep ALL frames instead
+                # of collapsing to the first one.
+                frames = []
+                durations = []
+
+                try:
+                    for frame_num in range(n_frames):
+                        img.seek(frame_num)
+                        frame = img.copy()
+                        frame = frame.resize(
+                            (new_width, new_height), Image.Resampling.LANCZOS
+                        )
+                        frames.append(frame)
+                        durations.append(img.info.get("duration", 100))
+
+                    output = io.BytesIO()
+                    frames[0].save(
+                        output,
+                        format="WEBP",
+                        save_all=True,
+                        append_images=frames[1:],
+                        duration=durations,
+                        loop=img.info.get("loop", 0),
+                        quality=90,
+                    )
+                    return output.getvalue(), new_width, new_height, True
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to process animated WebP: {e}, using first frame"
+                    )
+                    img.seek(0)
+                    is_animated = False
+
             # Resize static image
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
             width, height = new_width, new_height
@@ -144,12 +178,66 @@ class AvatarProcessingMixin(AvatarProtocol):
         output = io.BytesIO()
 
         if content_type == "image/gif" and is_animated:
-            img.save(output, format="GIF")
+            # M2: Pillow only writes ONE frame unless save_all + append_images
+            # are given, so an animated GIF that needed no resize previously
+            # lost every frame after the first. Re-encode all frames.
+            img.seek(0)
+            frames = []
+            durations = []
+            for frame_num in range(n_frames):
+                img.seek(frame_num)
+                # Copying the frame keeps its palette + transparency info,
+                # so transparent regions survive the re-encode.
+                frames.append(img.copy())
+                durations.append(img.info.get("duration", 100))
+            try:
+                frames[0].save(
+                    output,
+                    format="GIF",
+                    save_all=True,
+                    append_images=frames[1:],
+                    duration=durations,
+                    loop=img.info.get("loop", 0),
+                )
+                return output.getvalue(), width, height, True
+            except Exception as e:
+                logger.warning(f"Failed to save animated GIF: {e}, using first frame")
+                img.seek(0)
+                is_animated = False
+        elif content_type == "image/gif":
+            # M4: a static GIF keeps its container (and any transparency)
+            # instead of being silently re-encoded to lossy JPEG. Palette
+            # transparency is preserved via the GIF disposal of the info dict.
+            img.save(output, format="GIF", save_all=False)
         elif content_type == "image/png" or img.mode == "RGBA":
             img.save(output, format="PNG", optimize=True)
             content_type = "image/png"
         elif content_type == "image/webp":
-            img.save(output, format="WEBP", quality=90)
+            if is_animated and n_frames > 1:
+                # M2: animated WebP must also keep all frames.
+                img.seek(0)
+                frames = []
+                for frame_num in range(n_frames):
+                    img.seek(frame_num)
+                    frames.append(img.copy())
+                try:
+                    frames[0].save(
+                        output,
+                        format="WEBP",
+                        save_all=True,
+                        append_images=frames[1:],
+                        duration=[img.info.get("duration", 100)] * n_frames,
+                        loop=img.info.get("loop", 0),
+                        quality=90,
+                    )
+                    return output.getvalue(), width, height, True
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to save animated WebP: {e}, using first frame"
+                    )
+                    img.seek(0)
+            else:
+                img.save(output, format="WEBP", quality=90)
         else:
             # Convert to RGB for JPEG
             if img.mode in ("RGBA", "P"):
