@@ -21,6 +21,30 @@ from .progress import ProgressBar
 logger = logging.getLogger(__name__)
 
 
+def _migration_status_cache_key(manager: "MigrationManager") -> str:
+    """Scope the status cache to the database instance (M8).
+
+    The default key (``migration_status:Core:MigrationManager``) is shared
+    across every manager in every worker, so a migration applied by worker
+    A leaves workers B/C serving a stale status for up to the TTL. Embedding
+    the database identity keeps instances isolated; the ``migration_status:*``
+    invalidation pattern still matches because the key keeps the same prefix.
+    """
+    import os
+
+    cfg = getattr(manager.db, "config", None) or {}
+    db_type = getattr(manager.db, "type", None) or str(cfg.get("type", "unknown"))
+    if db_type == "sqlite":
+        path = os.path.abspath(os.path.expanduser(str(cfg.get("path", ""))))
+        scope = f"sqlite:{path}"
+    else:
+        pg = cfg.get("postgres", {}) or {}
+        scope = (
+            f"postgres:{pg.get('host', '')}:{pg.get('port', '')}:{pg.get('dbname', '')}"
+        )
+    return f"migration_status:{scope}:status"
+
+
 class Migration:
     """Represents a single migration with metadata."""
 
@@ -408,7 +432,7 @@ class MigrationManager:
             logger.error(f"Rollback of migration {version} failed: {str(e)}")
             raise
 
-    @cached(ttl=15, prefix="migration_status")
+    @cached(ttl=15, prefix="migration_status", key_builder=_migration_status_cache_key)
     def get_migration_status(self) -> Dict[str, Any]:
         """
         Get current migration status (cached for 15s to reduce admin dashboard DB load).

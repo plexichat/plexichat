@@ -69,7 +69,14 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
 
         reverse = self._get_pending_request(recipient_id, sender_id)
         if reverse:
-            return self.accept_friend_request(sender_id, reverse["id"])
+            accepted = self.accept_friend_request(sender_id, reverse["id"])
+            # L4: accept_friend_request invalidates both users' caches today,
+            # but the outer contract is that THIS method invalidates on every
+            # successful send. Do not depend on accept's internals - invalidate
+            # explicitly so the guarantee holds even if accept's invalidation
+            # ever changes.
+            self._invalidate_all_relationships_cache(sender_id, recipient_id)
+            return accepted
 
         def create_request() -> SnowflakeIDType:
             now = self._get_timestamp()
@@ -120,17 +127,20 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
                 )
                 reverse = self._get_pending_request(recipient_id, sender_id)
                 if reverse:
-                    return self.accept_friend_request(sender_id, reverse["id"])
+                    accepted = self.accept_friend_request(sender_id, reverse["id"])
+                    # L4: same explicit invalidation as the pre-check path.
+                    self._invalidate_all_relationships_cache(sender_id, recipient_id)
+                    return accepted
                 raise FriendRequestExistsError("Friend request already exists")
             raise
 
         self._invalidate_all_relationships_cache(sender_id, recipient_id)
-
         logger.debug(
             f"Friend request {request_id} sent from {sender_id} to {recipient_id}"
         )
         result = self.get_friend_request(request_id)
-        assert result is not None
+        if result is None:
+            raise FriendRequestNotFoundError("Friend request not found after creation")
         return result
 
     def accept_friend_request(
@@ -199,7 +209,10 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
 
         logger.debug(f"Friend request {request_id} accepted")
         result = self.get_friend_request(request_id)
-        assert result is not None
+        if result is None:
+            raise FriendRequestNotFoundError(
+                "Friend request not found after acceptance"
+            )
         return result
 
     def decline_friend_request(
@@ -233,7 +246,8 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
 
         logger.debug(f"Friend request {request_id} declined")
         result = self.get_friend_request(request_id)
-        assert result is not None
+        if result is None:
+            raise FriendRequestNotFoundError("Friend request not found after decline")
         return result
 
     def cancel_friend_request(
@@ -267,7 +281,10 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
 
         logger.debug(f"Friend request {request_id} cancelled")
         result = self.get_friend_request(request_id)
-        assert result is not None
+        if result is None:
+            raise FriendRequestNotFoundError(
+                "Friend request not found after cancellation"
+            )
         return result
 
     def get_friend_request(

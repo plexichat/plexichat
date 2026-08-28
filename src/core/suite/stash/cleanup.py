@@ -79,36 +79,55 @@ class StashCleanupJob:
                 time.sleep(min(step, interval - slept))
                 slept += step
 
+    def _resolve_manager(self):
+        """Return the Stash manager to run a cleanup pass against.
+
+        Prefers the bootstrapped singleton: it already carries the media and
+        servers modules, which the retention purge needs to resolve and
+        permanently delete referenced media objects. Falls back to a
+        directly-constructed manager only when the domain has not been
+        initialised, and wires the media module into that fallback when it
+        is available. Without media the purge cannot delete referenced
+        objects and soft-deleted items would be retained forever, so that
+        degraded state is logged loudly instead of being silent.
+        """
+        from src.core.suite import stash as stash_domain
+
+        try:
+            return stash_domain.get_manager()
+        except RuntimeError:
+            pass
+
+        media = None
+        try:
+            from src.core import media as media_domain
+
+            media = media_domain._get_manager()
+        except Exception:
+            media = None
+        if media is None:
+            logger.warning(
+                "Stash cleanup fallback manager has no media module wired: "
+                "referenced media objects will NOT be purged and soft-deleted "
+                "items with media references will be retained past their "
+                "retention window. Wire stash.setup(db, media=...) so the "
+                "retention purge can delete media objects."
+            )
+        from src.core.suite.stash import StashManager
+
+        return StashManager(self._db, media=media)
+
     def run_once(self) -> Dict[str, int]:
         """Run one cleanup cycle; returns counts of removed rows."""
         purged = 0
         expired = 0
         try:
-            from src.core.suite import stash as stash_domain
-
-            # Prefer the bootstrapped singleton: it already carries the media
-            # and servers modules, which the retention purge needs to resolve
-            # and permanently delete referenced media objects. Fall back to a
-            # directly-constructed manager (without media) only when the domain
-            # has not been initialised, so isolated callers still work.
-            try:
-                manager = stash_domain.get_manager()
-            except RuntimeError:
-                from src.core.suite.stash import StashManager
-
-                manager = StashManager(self._db)
+            manager = self._resolve_manager()
             purged = manager.purge_deleted_items(self._retention_days())
         except Exception as exc:
             logger.error(f"Stash deleted-item purge failed: {exc}")
         try:
-            from src.core.suite import stash as stash_domain
-
-            try:
-                manager = stash_domain.get_manager()
-            except RuntimeError:
-                from src.core.suite.stash import StashManager
-
-                manager = StashManager(self._db)
+            manager = self._resolve_manager()
             expired = manager.cleanup_expired_tickets()
         except Exception as exc:
             logger.error(f"Stash ticket cleanup failed: {exc}")

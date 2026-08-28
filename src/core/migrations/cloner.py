@@ -7,6 +7,7 @@ while maintaining integrity, handling sequences, and coordinating with the
 migration system.
 """
 
+import hashlib
 import os
 import time
 from typing import List, Dict, Any, Optional
@@ -103,8 +104,18 @@ class DataCloner:
             rows = self.source.fetch_all(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             )
-            # Filter out internal/tracking tables that shouldn't be cloned directly or are handled specially
-            exclude = {"migration_lock", "migration_uptime"}
+            # Filter out internal/tracking tables that shouldn't be cloned
+            # directly or are handled specially. The migration tracking rows
+            # (history/logs/override tokens) must never be overwritten by
+            # source records: the target's freshly-created history would be
+            # clobbered with the source's failed/running records.
+            exclude = {
+                "migration_lock",
+                "migration_uptime",
+                "migrations_history",
+                "migration_logs",
+                "emergency_override_tokens",
+            }
             self._table_list = [
                 row["name"] for row in rows if row["name"] not in exclude
             ]
@@ -153,6 +164,12 @@ class DataCloner:
         count_row = self.source.fetch_one(f"SELECT COUNT(*) as count FROM {table_name}")
         total_rows = count_row["count"] if count_row else 0
 
+        # Deterministic paging key: LIMIT/OFFSET without ORDER BY is
+        # nondeterministic, so rows can be skipped or duplicated across
+        # pages when the source changes mid-clone. Prefer ``id`` (present
+        # on virtually every app table), falling back to the first column.
+        order_col = self._quote_ident("id" if "id" in column_names else column_names[0])
+
         if total_rows == 0:
             logger.info(f"Table {table_name} is empty, skipping data copy.")
             return {"rows": 0, "status": "empty"}
@@ -184,7 +201,7 @@ class DataCloner:
             offset = 0
             while offset < total_rows:
                 batch = self.source.fetch_all(
-                    f"SELECT * FROM {table_name} LIMIT ? OFFSET ?",
+                    f"SELECT * FROM {table_name} ORDER BY {order_col} LIMIT ? OFFSET ?",
                     (self.batch_size, offset),
                 )
 
@@ -255,17 +272,31 @@ class DataCloner:
         logger.info(f"Starting cloning of {len(tables)} tables...")
 
         # For Postgres, we should disable triggers during mass insert for performance
-        # and to avoid FK issues if we're not inserting in perfect dependency order
+        # and to avoid FK issues if we're not inserting in perfect dependency order.
+        # ``session_replication_role`` requires superuser; a non-superuser clone
+        # must not abort, so the SET is best-effort (FK checks simply stay
+        # active and the table order governs dependency handling).
+        self._replica_role_set = False
         if self.target.type == "postgres":
-            # This requires superuser or table ownership
-            self.target.execute("SET session_replication_role = 'replica';")
+            try:
+                self.target.execute("SET session_replication_role = 'replica';")
+                self._replica_role_set = True
+            except Exception as e:
+                logger.warning(
+                    "Could not set session_replication_role (non-superuser?): %s. "
+                    "Cloning with FK checks active.",
+                    e,
+                )
 
         try:
             for table in tables:
                 self.clone_table(table)
         finally:
-            if self.target.type == "postgres":
-                self.target.execute("SET session_replication_role = 'origin';")
+            if self.target.type == "postgres" and self._replica_role_set:
+                try:
+                    self.target.execute("SET session_replication_role = 'origin';")
+                except Exception as e:
+                    logger.warning("Failed to restore session_replication_role: %s", e)
 
         # Specialized module initialization
         self._initialize_postgres_modules()
@@ -308,14 +339,60 @@ class DataCloner:
         # 2. Voice settings (if applicable)
         # Any other modules that have custom initialization logic should go here
 
+    def _quote_ident(self, ident: str) -> str:
+        """Quote an identifier for the target dialect."""
+        return f'"{ident}"' if self.target.type == "postgres" else f"`{ident}`"
+
+    def _content_signature(self, db, table: str, limit: int = 50_000) -> Optional[str]:
+        """Deterministic digest of up to ``limit`` rows in key order.
+
+        Row counts alone cannot catch content drift - SQLite's dynamic
+        typing can land TEXT values lossily while counts still match - so
+        verification hashes normalized values too. The digest is bounded
+        (first 50k rows by default) to keep huge tables cheap.
+
+        Returns None when the table is empty (an empty table matches any
+        empty table).
+        """
+        first = db.fetch_one(f"SELECT * FROM {table} LIMIT 1")
+        if not first:
+            return None
+        column_names = list(first.keys())
+        order_key = "id" if "id" in column_names else column_names[0]
+        quote = '"' if db.type == "postgres" else "`"
+        order_col = f"{quote}{order_key}{quote}"
+        digest = hashlib.sha256()
+        seen = 0
+        offset = 0
+        while seen < limit:
+            batch = db.fetch_all(
+                f"SELECT * FROM {table} ORDER BY {order_col} LIMIT ? OFFSET ?",
+                (1000, offset),
+            )
+            if not batch:
+                break
+            for row in batch:
+                if seen >= limit:
+                    break
+                digest.update(
+                    repr(tuple(row[c] for c in column_names)).encode("utf-8", "replace")
+                )
+                seen += 1
+            offset += 1000
+        return digest.hexdigest()
+
     def verify_counts(self) -> Dict[str, Any]:
         """
-        Verify that row counts match between source and target for all cloned tables.
+        Verify that row counts (and content) match between source and target.
+
+        Each table's row count is compared in full; additionally the first
+        ``_content_signature`` rows are hashed on both sides so lossy value
+        landing (SQLite dynamic typing) cannot pass a count-only check.
 
         Returns:
             Verification results
         """
-        logger.info("Verifying row counts...")
+        logger.info("Verifying row counts and content...")
         mismatches = []
         verified_count = 0
 
@@ -326,10 +403,17 @@ class DataCloner:
             t_count = self.target.fetch_one(f"SELECT COUNT(*) as count FROM {table}")[
                 "count"
             ]
+            s_sig = self._content_signature(self.source, table)
+            t_sig = self._content_signature(self.target, table)
 
-            if s_count != t_count:
+            if s_count != t_count or s_sig != t_sig:
                 mismatches.append(
-                    {"table": table, "source": s_count, "target": t_count}
+                    {
+                        "table": table,
+                        "source": s_count,
+                        "target": t_count,
+                        "content_match": s_sig == t_sig,
+                    }
                 )
             else:
                 verified_count += 1
@@ -345,11 +429,12 @@ class DataCloner:
             logger.info(f"Verification SUCCESS: All {verified_count} tables match.")
         else:
             logger.error(
-                f"Verification FAILED: {len(mismatches)} tables have row count mismatches!"
+                f"Verification FAILED: {len(mismatches)} tables have mismatches!"
             )
             for m in mismatches:
                 logger.error(
-                    f"  {m['table']}: Source={m['source']}, Target={m['target']}"
+                    f"  {m['table']}: Source={m['source']}, Target={m['target']}, "
+                    f"content_match={m.get('content_match')}"
                 )
 
         return result

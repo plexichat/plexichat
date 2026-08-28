@@ -623,7 +623,15 @@ class PollManager(BaseManager):
         if not poll:
             raise PollNotFoundError("Poll not found")
 
-        if poll.created_by != user_id:
+        # Normalize both sides to int (F10): SQLite returns ints while the
+        # postgres driver returns strings, and a direct != comparison would
+        # deny legitimate creators on postgres (fail-closed). Mirrors the
+        # defensive int() cast used by get_voters.
+        try:
+            is_creator = int(poll.created_by) == int(user_id)
+        except (TypeError, ValueError):
+            is_creator = False
+        if not is_creator:
             raise PermissionDeniedError("Only poll creator can close the poll")
 
         if poll.is_ended:
@@ -812,7 +820,13 @@ class PollManager(BaseManager):
         if not poll:
             raise PollNotFoundError("Poll not found")
 
-        if poll.created_by != user_id:
+        # F10: normalize both sides to int (see close_poll) so the creator
+        # check holds on both SQLite and postgres drivers.
+        try:
+            is_creator = int(poll.created_by) == int(user_id)
+        except (TypeError, ValueError):
+            is_creator = False
+        if not is_creator:
             raise PermissionDeniedError("Only poll creator can delete the poll")
 
         self._db.execute("DELETE FROM poll_votes WHERE poll_id = ?", (poll_id,))

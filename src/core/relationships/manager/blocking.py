@@ -13,6 +13,7 @@ from ..exceptions import (
     AlreadyBlockedError,
     CannotBlockSelfError,
     NotBlockedError,
+    RelationshipValidationError,
     UserNotFoundError,
 )
 from .helpers import RelationshipHelpersMixin
@@ -81,7 +82,8 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
 
         logger.debug(f"User {blocker_id} blocked user {blocked_id}")
         result = self.get_block(block_id)
-        assert result is not None
+        if result is None:
+            raise RelationshipValidationError("Block record not found after creation")
         return result
 
     def unblock_user(self, blocker_id: SnowflakeID, blocked_id: SnowflakeID) -> bool:
