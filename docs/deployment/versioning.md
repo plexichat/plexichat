@@ -184,7 +184,7 @@ cp /opt/plexichat/config/config.yaml config/
 cp /opt/plexichat/data/plexichat.db data/
 
 # Install dependencies
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 pip install --require-hashes -r requirements.txt
 

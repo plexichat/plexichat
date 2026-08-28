@@ -64,7 +64,7 @@ docker compose ps
 Expected output:
 ```
 NAME       IMAGE           STATUS           PORTS
-db         postgres:16     Up 2 min (healthy)   5432/tcp
+db         postgres:18-alpine     Up 2 min (healthy)   5432/tcp
 valkey     valkey/valkey:9.1.1-alpine    Up 2 min (healthy)   6379/tcp
 rustfs     rustfs/rustfs:latest    Up 2 min (healthy)   9000/tcp, 9001/tcp
 backend    plexichat:dev   Up 1 min (healthy)   0.0.0.0:8000->8000/tcp

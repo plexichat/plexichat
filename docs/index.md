@@ -66,5 +66,6 @@ This portal documents the Plexichat backend: the REST API, the WebSocket gateway
 
 - REST API base: `{{BASE_URL}}`
 - WebSocket gateway: `{{WEBSOCKET_URL}}`
-- Health check: `/health`
+- Readiness probe: `GET /api/v1/ready` (pure liveness, returns as soon as HTTP is bound)
+- Health check: `GET /api/v1/health` (deep check covering DB, events, cross-worker listener)
 - Version endpoints: `/api/v1/version`, `/api/v1/version/negotiate`, `/api/v1/status`

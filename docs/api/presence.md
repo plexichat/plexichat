@@ -86,9 +86,10 @@ Authorization: Bearer <token>
 
 ### Notes
 
-- Returns `offline` status if user not found
-- Returns `offline` if user's presence is not visible to requester
-- `invisible` users appear as `offline` to others
+- Returns `404 User not found` if the target user does not exist
+- Returns `404 User not found` if the target user's presence is not visible to the requester (you must be the user, a friend, or share a server)
+- A `404` here does **not** mean the user is offline; it means you cannot view their presence
+- `invisible` users appear as `offline` to viewers who can read their presence
 
 ## Presence Object
 

@@ -91,6 +91,52 @@ Authorization: Bearer <token>
 - 403 Access denied: No permission to view
 - 404 Webhook not found: Webhook doesn't exist
 
+## PATCH /webhooks/{webhook_id}
+
+Edit a webhook.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+- `name` (string, optional): New webhook name
+- `channel_id` (string, optional): Move the webhook to another channel
+
+### Response (200 OK)
+
+Returns the updated `WebhookResponse` object.
+
+### Error Responses
+
+- 400 Invalid webhook ID or name too long
+- 403 Permission denied
+- 404 Webhook or channel not found
+
+## POST /webhooks/{webhook_id}/regenerate-token
+
+Rotate the webhook token. The old token is invalidated and the updated webhook
+(with the new token) is returned.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+Returns the updated `WebhookResponse` object with the new token.
+
+### Error Responses
+
+- 400 Invalid webhook ID
+- 403 Permission denied
+- 404 Webhook not found
+
 ## DELETE /webhooks/{webhook_id}
 
 Delete a webhook.

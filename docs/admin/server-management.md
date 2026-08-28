@@ -86,7 +86,7 @@ Server member list shows:
 6. Confirm action
 7. Member is banned from server
 
-**Required Permissions**: `servers.ban`
+**Required Permissions**: `admin.moderation.bans` (the `servers.ban` scope does not exist; server member bans are managed under admin moderation)
 
 ### Unbanning Members
 
@@ -97,7 +97,7 @@ Server member list shows:
 5. Confirm action
 6. Member ban is removed
 
-**Required Permissions**: `servers.ban`
+**Required Permissions**: `admin.moderation.bans`
 
 ## Server Moderation
 
@@ -122,7 +122,7 @@ View and handle moderation items:
 5. Add notes if needed
 6. Confirm action
 
-**Required Permissions**: `reports.resolve`
+**Required Permissions**: `reports.action` (the `reports.resolve` scope does not exist; use `reports.action`)
 
 ## Server Analytics
 

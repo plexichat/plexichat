@@ -36,6 +36,29 @@ The backend defines gateway opcodes in `src/api/websocket/opcodes.py`.
 | `40` | `TYPING_START` |
 | `41` | `TYPING_STOP` |
 
+## Encryption Ratchet Opcodes
+
+| Value | Name | Purpose |
+|------|------|---------|
+| `50` | `RATCHET_UPDATE` | channel encryption ratchet key update |
+
+## Real-Time Fabric Opcodes
+
+Artifacts are collaborative canvases (whiteboards, live code editors).
+Sums are collaborative PlexiSum workbooks. Both families use the same
+subscribe/op/sync shape.
+
+| Value | Name | Purpose |
+|------|------|---------|
+| `60` | `ARTIFACT_SUBSCRIBE` | subscribe to an artifact's live updates |
+| `61` | `ARTIFACT_UNSUBSCRIBE` | unsubscribe from an artifact |
+| `62` | `ARTIFACT_OP` | apply an operation to an artifact |
+| `63` | `ARTIFACT_SYNC` | request/receive full artifact state sync |
+| `64` | `SUM_SUBSCRIBE` | subscribe to a PlexiSum workbook |
+| `65` | `SUM_UNSUBSCRIBE` | unsubscribe from a workbook |
+| `66` | `SUM_OP` | apply an operation to a workbook |
+| `67` | `SUM_SYNC` | request/receive full workbook state sync |
+
 ## Usage Notes
 
 - clients primarily send `IDENTIFY`, `HEARTBEAT`, `RESUME`, and optional state-change opcodes

@@ -59,6 +59,14 @@ Configuration: See `servers` section in [Default Configuration Reference](defaul
 
 Configuration: See `messaging` section in [Default Configuration Reference](default-config.md) | API: [Messages Routes](api/messages.md) | [Reactions Routes](api/reactions.md)
 
+### Message Tools
+
+- **Bookmarks**: save messages for later; per-user list, optional conversation filter
+- **Message forwarding**: copy a message into another conversation you can post in
+- **Scheduled messages**: queue a message for delivery at a future timestamp; list and cancel pending sends
+
+API: [Features Routes](api/features.md)
+
 ---
 
 ## Real-Time Communication
@@ -86,7 +94,7 @@ API: [Presence Routes](api/presence.md)
 ### Voice
 
 - WebRTC-based voice channels with ICE server discovery
-- SFU (Selective Forwarding Unit) backend: mediasoup (default) or Janus
+- SFU (Selective Forwarding Unit) backend: aiortc (built-in default), with optional mediasoup or Janus
 - STUN/TURN server configuration for NAT traversal
 - Voice connection metadata and signaling via gateway
 

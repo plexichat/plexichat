@@ -56,7 +56,7 @@ git clone https://gitlab.plexichat.com/plexichat/plexichat.git
   - User avatars and server icons
   - Auto-moderation with built-in content filtering
 - **Voice & Video**:
-  - High-performance WebRTC signaling via Mediasoup or Janus
+  - WebRTC voice/video via the built-in aiortc SFU (default), with optional Mediasoup or Janus backends
   - Stage channels with speaker management
   - Screen sharing and video call support
 - **Reliability & Maintenance**:

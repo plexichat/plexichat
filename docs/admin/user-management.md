@@ -87,7 +87,7 @@ Lock a user account to prevent login:
 3. Confirm action
 4. User must change password on next login
 
-**Required Permissions**: `users.force_password_change`
+**Required Permissions**: `users.force_username_change` (there is no `users.force_password_change` scope; forced account/credential changes use the same scope as forced username changes)
 
 ## Account Deletion
 

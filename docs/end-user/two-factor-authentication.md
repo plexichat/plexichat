@@ -142,15 +142,13 @@ You can control how long you stay logged in:
    - 30 days
 3. Enable **Extend session on activity** to automatically extend your session when you're active
 
-## Trusted Devices
+## Sessions
 
-You can skip 2FA on trusted devices for 30 days:
-
-1. Go to **Settings > Sessions**
-2. Under **Trusted Devices**, enable **Remember this device**
-3. On your next login from this device, you won't need to enter a 2FA code
-
-**Important:** Only enable this on personal devices you trust. Never enable on public or shared computers.
+Session duration is configurable (7 days by default, up to 30 days), and
+**Extend session on activity** keeps active sessions alive. There is currently
+no "trusted devices" feature that skips 2FA on a remembered device — you will
+need a 2FA code (or a backup code) at each login. Only use the session settings
+on personal devices; never on public or shared computers.
 
 ## Troubleshooting
 

@@ -7,17 +7,17 @@ Plexichat applies multiple layers of request protection to keep the API stable u
 The server defines these baseline limits in the `rate_limiting` config section:
 
 **Global limits** (applied to the entire server):
-- 100 requests per 60 seconds, burst of 50
+- 25000 requests per 60 seconds, burst of 5000
 
 **Per-user limits** (applied per authenticated user):
-- 120 requests per 60 seconds, burst of 20
-- 3600 requests per hour
-- 50000 requests per day
+- 10000 requests per 60 seconds, burst of 2500
+- 300000 requests per hour
+- 5000000 requests per day
 
 **Per-IP limits** (applied per client IP):
-- 60 requests per 60 seconds, burst of 10
-- 1800 requests per hour
-- 10000 requests per day
+- 5000 requests per 60 seconds, burst of 1500
+- 150000 requests per hour
+- 1000000 requests per day
 
 **Multipliers**:
 - Bot multiplier: 1.5x (bots get 1.5x user limits, not 0.5x -- this ensures bots can process events for all their subscribers)

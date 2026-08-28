@@ -20,7 +20,9 @@ Choose the Selective Forwarding Unit backend for handling voice/video streams.
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "mediasoup"
+  # sfu_backend defaults to "aiortc". Opt into "mediasoup" or "janus"
+  # only if you deploy the corresponding SFU server.
+  sfu_backend: "aiortc"
 ```
 
 ### Deployment Considerations

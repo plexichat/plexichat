@@ -191,6 +191,35 @@ curl -X DELETE http://localhost:8000/api/v1/channels/123456789012345678/messages
 - 403 Permission denied: Not author and no manage permission
 - 404 Message not found: Message doesn't exist
 
+## POST /channels/{channel_id}/messages/bulk-delete
+
+Delete up to 100 messages at once. Requires manage-messages permission.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+```json
+{
+  "message_ids": ["234567890123456789", "345678901234567890"]
+}
+```
+
+- `message_ids` (array, required, max 100): Message IDs to delete
+
+### Response (200 OK)
+
+Returns the bulk deletion result (per-ID success/failure detail).
+
+### Error Responses
+
+- 400 Too many messages: Cannot bulk-delete more than 100 messages
+- 403 Permission denied: Missing manage messages permission
+
 ---
 
 ## Pinned Messages
@@ -299,6 +328,25 @@ Authorization: Bearer <token>
 }
 ```
 
+## GET /channels/{channel_id}/messages/last-read
+
+Get your last read position in a channel.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "channel_id": "123456789012345678",
+  "last_read_message_id": "234567890123456789"
+}
+```
+
 ## GET /users/@me/unread
 
 Get unread message counts for all conversations.
@@ -367,7 +415,10 @@ Authorization: Bearer <token>
   "delivery_count": 15,
   "read_count": 5,
   "read": true,
-  "read_by": ["janedoe", "bobsmith"],
+  "read_by": [
+    {"id": "123456789012345678", "username": "janedoe", "avatar_url": "https://cdn.example.com/avatars/456.png"},
+    {"id": "234567890123456789", "username": "bobsmith", "avatar_url": null}
+  ],
   "reactions": []
 }
 ```
@@ -389,7 +440,7 @@ Authorization: Bearer <token>
 - `delivery_count` (int): Number of users who received the message
 - `read_count` (int): Number of users who read the message
 - `read` (bool): Whether current user has read it
-- `read_by` (array): List of usernames who read it (sender only)
+- `read_by` (array): List of `ReaderInfo` objects (`id`, `username`, `avatar_url`) for users who read the message (sender only)
 - `reactions` (array): Reaction data
 
 ## Attachment Object

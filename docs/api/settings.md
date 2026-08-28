@@ -154,6 +154,47 @@ These are commonly used setting keys (not enforced, just conventions):
 - `locale` (Language preference): "en-US", "es-ES"
 - `timezone` (User timezone): "America/New_York"
 
+## PUT /api/v1/users/@me/settings/bulk
+
+Update multiple settings at once. The batch is capped (entry count and total
+payload size) and committed atomically: either every standard setting lands or
+none does.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+A JSON object of key-value pairs:
+
+```json
+{
+  "theme": "dark",
+  "compact_mode": "true"
+}
+```
+
+### Response (200 OK)
+
+```json
+{
+  "success": true,
+  "updated": 2,
+  "failed": 0,
+  "failures": {}
+}
+```
+
+### Response Fields
+
+- `success` (bool): Whether all updates succeeded
+- `updated` (int): Number of settings updated
+- `failed` (int): Number of settings that failed to update
+- `failures` (object): Per-key failure reasons
+
 ---
 
 ## Related Endpoints

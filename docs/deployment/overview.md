@@ -56,7 +56,7 @@ flowchart TB
 
 ## Key Components
 
-1. **Backend Server** (`plexichat`): Python 3.11+ / FastAPI application providing REST API and WebSocket gateway
+1. **Backend Server** (`plexichat`): Python 3.14+ / FastAPI application providing REST API and WebSocket gateway
 2. **Client Interface** (`plexichat-client`): Modern Vite web application served via Nginx
 3. **Shared Utilities** (`common_utils`): Internal helpers bundled at `plexichat/src/utils/common_utils/`, used only by the server. The web client lives in a separate JavaScript repository and does not share this Python package.
 4. **Database**: PostgreSQL (recommended) or SQLite (development only)

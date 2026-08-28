@@ -13,6 +13,7 @@ The media routes cover moderation reporting, upload-session management, compress
 - `DELETE /media/upload/session/{session_id}`
 - `GET /media/compression/status`
 - `GET /api/v1/media/attachments/{filename}`
+- `GET /media/proxy?url={url}` — proxy an external image (JPEG/PNG/GIF/WebP only) through the server; blocked or invalid URLs return `400`
 
 ## Purpose
 

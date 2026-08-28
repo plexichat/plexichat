@@ -12,14 +12,13 @@ The RBAC system allows you to:
 
 ## Permission Model
 
-Permissions are checked via **wildcard-hierarchy matching**. A permission scope like `users.*` grants access to all sub-permissions (`users.read`, `users.edit`, `users.delete`). The wildcard `*` alone grants full super-admin access.
+Permissions are checked via **hierarchy matching** against the real scopes defined in `src/core/admin/permissions.py` (`PERMISSION_SCOPES`). A platform-wide wildcard `*` exists internally as a super-admin marker, but you **cannot assign `*` or broad wildcards such as `users.*` through the role endpoints** — the server rejects them with `400` when you create or update a role (see `src/api/routes/admin/roles.py`). Only the wildcard families that exist explicitly in `PERMISSION_SCOPES` are valid (for example `automod.*`, `reports.*`, `tickets.*`, `blocked_users.*`, `blocked_hashes.*`).
 
 Permission checking follows this order:
-1. If a role has `"*": true`, all checks pass immediately (super admin)
+1. If a role is the internal super-admin role, all checks pass immediately
 2. Exact match is checked first (e.g., `users.read`)
-3. Parent wildcard match is checked (e.g., `users.*` grants `users.read`, `users.edit`)
-4. Top-level wildcard `*` grants everything
-5. Explicit `false` values deny only that specific scope (not its sub-scopes)
+3. A defined family wildcard is checked (e.g., `reports.*` grants `reports.read` and `reports.action`)
+4. Explicit `false` values deny only that specific scope (not its sub-scopes)
 
 ## Admin Role Hierarchy
 
@@ -42,7 +41,7 @@ System roles (created by the system) have fixed high positions and cannot be del
 - Can manage other admins and roles
 - Can modify system configuration
 - Can approve/reject sensitive actions
-- **Permission**: `{"*": true}`
+- **Permission**: internal super-admin marker (not assignable via the role API)
 - **Position**: 100
 
 ### Support Admin
@@ -85,7 +84,6 @@ System roles (created by the system) have fixed high positions and cannot be del
 - **Permissions**:
   ```json
   {
-    "*": false,
     "users.read": true,
     "servers.read": true,
     "metrics.read": true,
@@ -108,7 +106,6 @@ System roles (created by the system) have fixed high positions and cannot be del
 | `users.notes` | View/edit internal admin notes |
 | `users.lock` | Lock/unlock user accounts |
 | `users.force_username_change` | Force username changes |
-| `users.force_password_change` | Force password changes |
 
 
 
@@ -118,6 +115,7 @@ System roles (created by the system) have fixed high positions and cannot be del
 | `servers.read` | View server information |
 | `servers.edit` | Edit server settings |
 | `servers.delete` | Delete servers |
+| `servers.transfer` | Transfer server ownership |
 
 ### Moderation
 | Scope | Description |
@@ -127,9 +125,10 @@ System roles (created by the system) have fixed high positions and cannot be del
 | `automod.edit` | Edit automod rules |
 | `reports.*` | Full report access |
 | `reports.read` | View reports |
-| `reports.resolve` | Resolve reports |
+| `reports.action` | Take action on reports |
 | `blocked_users.*` | Full blocked user access |
 | `blocked_hashes.*` | Full blocked hash access |
+| `admin.moderation.bans` | Manage banned/blocked users |
 
 ### System & Dashboard
 | Scope | Description |
@@ -142,13 +141,26 @@ System roles (created by the system) have fixed high positions and cannot be del
 ### Admin Management
 | Scope | Description |
 |-------|-------------|
-| `admin.users` | Manage admin user accounts (create/delete/toggle) |
 | `admin.read` | View admin accounts |
 | `admin.edit` | Edit admin accounts |
 | `admin.roles` | Full role management (list, create, update, delete, assign) |
-| `admin.roles.read` | View roles |
-| `admin.roles.assign` | Assign/revoke roles to/from admins |
 | `admin.approvals` | Manage approval workflows |
+| `admin.audit.read` | View audit logs |
+| `admin.migrations.execute` | Execute database migrations |
+| `admin.data.reindex` | Reindex search data |
+| `admin.dashboard.tuning` | Tune dashboard limits |
+| `admin.license.manage` | Manage licenses |
+| `admin.artifacts.manage` | Manage artifacts |
+| `admin.plexijoin.manage` | Manage PlexiJoin |
+| `admin.security.tokens` | Manage security tokens |
+| `admin.security.sessions` | Manage sessions |
+| `admin.security.ipblock` | Manage IP blocks |
+| `admin.security.logout_all` | Force logout of all sessions |
+| `admin.security.usernames` | Manage username changes |
+| `admin.moderation.config` | Configure moderation |
+| `admin.moderation.rules` | Manage automod rules |
+| `admin.moderation.hashes` | Manage blocked hashes |
+| `admin.telemetry.reset` | Reset telemetry |
 
 ## Configuration
 

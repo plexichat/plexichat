@@ -40,7 +40,7 @@ ws.onopen = () => {
         browser: 'chrome',
         device: 'desktop'
       },
-      intents: 4607  // Default non-privileged intents (GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES)
+      intents: 3178237  // Default non-privileged intents (includes ARTIFACTS | SUMS)
     }
   }));
 };
@@ -188,7 +188,9 @@ const DEFAULT_INTENTS =
   Intents.GUILD_MESSAGE_TYPING |
   Intents.DIRECT_MESSAGES |
   Intents.DIRECT_MESSAGE_REACTIONS |
-  Intents.DIRECT_MESSAGE_TYPING;  // = 4607
+  Intents.DIRECT_MESSAGE_TYPING |
+  Intents.ARTIFACTS |
+  Intents.SUMS;  // = 3178237
 ```
 
 ### Privileged Intents

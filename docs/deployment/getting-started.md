@@ -50,7 +50,7 @@ For detailed requirements, see [System Requirements](requirements.md).
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y python3.11 python3.11-pip python3.11-venv git build-essential
+sudo apt install -y python3.14 python3.14-pip python3.14-venv git build-essential
 
 # Install PostgreSQL (if using PostgreSQL)
 sudo apt install -y postgresql postgresql-contrib
@@ -71,7 +71,7 @@ cd plexichat
 ### Step 3: Create Virtual Environment
 
 ```bash
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 ```
 
@@ -212,7 +212,7 @@ services:
       - plexichat_network
 
   postgres:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     container_name: plexichat_postgres
     environment:
       - POSTGRES_USER=plexichat

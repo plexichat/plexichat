@@ -282,6 +282,103 @@ The multiplier affects rate limit windows - higher multipliers allow more reques
 
 ---
 
+## Message Tools (Feature Expansion)
+
+These endpoints are mounted under `/features` by `src/api/routes/features/__init__.py`.
+
+### POST /features/bookmarks
+
+Bookmark a message.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+- `message_id` (string, required): ID of the message to bookmark
+- `conversation_id` (string, required): ID of the conversation
+- `label` (string, optional, Max 100 chars): Optional label
+
+### Response (200 OK)
+
+```json
+{
+  "success": true,
+  "bookmark": { "id": "123456789012345678" }
+}
+```
+
+### Error Responses
+
+- 400 Invalid bookmark request
+- 401 Not authenticated
+
+### DELETE /features/bookmarks/{message_id}
+
+Remove a bookmark. Returns `{"success": true}`.
+
+### GET /features/bookmarks
+
+List your bookmarks.
+
+### Query Parameters
+
+- `conversation_id` (string, optional): Filter by conversation
+- `limit` (int, optional, 1-100, default 50): Max results
+
+### Response (200 OK)
+
+```json
+{
+  "bookmarks": [ { "id": "...", "message_id": "...", "label": null, "created_at": 1704067200 } ]
+}
+```
+
+### POST /features/forward
+
+Forward a message to another conversation you can post in.
+
+### Request Body
+
+- `message_id` (string, required): ID of the message to forward
+- `target_conversation_id` (string, required): Target conversation ID
+
+### Response (200 OK)
+
+Returns the created forwarded-message record.
+
+### POST /features/scheduled-messages
+
+Schedule a message for future delivery.
+
+### Request Body
+
+- `conversation_id` (string, required): Target conversation ID
+- `content` (string, required, 1-4000 chars): Message content
+- `scheduled_at` (int, required): Timestamp (ms) when to send
+
+### Response (200 OK)
+
+```json
+{
+  "success": true,
+  "scheduled_message": { "id": "...", "scheduled_at": 1735689600000 }
+}
+```
+
+### GET /features/scheduled-messages
+
+List your scheduled messages. Query parameters: `conversation_id` (optional), `status` (optional), `limit` (optional).
+
+### DELETE /features/scheduled-messages/{scheduled_id}
+
+Cancel a pending scheduled message. Returns `{"success": true}`.
+
+---
+
 ## Related Endpoints
 
 - [Users](users.md) - User profile management
