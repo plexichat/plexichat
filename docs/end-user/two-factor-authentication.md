@@ -1,237 +1,166 @@
-# Two-Factor Authentication (2FA) Guide
+# Two-factor authentication (2FA)
 
-Two-Factor Authentication (2FA) adds an extra layer of security to your Plexichat account. Even if someone steals your password, they cannot access your account without your 2FA code.
+Use two-factor authentication to add a second verification step to your Plexichat account. Even if someone learns your password, they cannot sign in without your authenticator code or backup code.
 
-## What is 2FA?
+Plexichat supports Time-based One-Time Password (TOTP) 2FA compatible with Google Authenticator, Authy, and other TOTP apps. Implementation is in `src/core/auth/totp.py` and `src/core/auth/managers/twofactor.py`.
 
-2FA requires two different types of verification:
+## How 2FA works
 
-1. **Something you know** (your password)
-2. **Something you have** (your phone or authenticator app)
+Plexichat uses TOTP with these defaults (from `authentication.totp` config):
 
-## Setting Up 2FA
+- Digits: 6
+- Interval: 30 seconds
+- Window: 1 (accepts one interval of clock drift)
+- Backup codes: 10 codes in `XXXX-XXXX` format (8 hex characters plus a dash). Codes are hashed with SHA-256 for storage.
+- Replay protection: 90-second cache keyed by user, code, purpose, and actor.
 
-### Step 1: Open Security Settings
+## Set up 2FA
 
-1. Click on your avatar in the top-right corner
-2. Select **Settings** from the dropdown menu
-3. In the left sidebar, click on **Security** under User Settings
+You must be signed in.
 
-### Step 2: Enable 2FA
+### 1. Start setup
 
-1. In the Security section, find the **Two-Factor Authentication** card
-2. Click the **Enable 2FA** button
-3. A QR code will appear on your screen
+Go to **Settings > Security** and click **Enable 2FA**. The server verifies your password without creating a new session and returns:
 
-### Step 3: Add to Your Authenticator App
+- `secret` — base32 TOTP secret (encrypted at rest)
+- `qr_uri` — `otpauth://` URI for the QR code
+- `backup_codes` — 10 one-time codes
 
-You'll need an authenticator app that supports TOTP (Time-based One-Time Password). Popular options include:
+Endpoint: `POST /api/v1/auth/2fa/enable` with `{"password": "..."}`. Returns `409` if 2FA is already enabled.
 
-- **[Google Authenticator](https://play.google.com/store/apps/details?id=com.google.android.apps.authenticator2)** (Android) / [iOS](https://apps.apple.com/app/google-authenticator/id388497605)
-- **[Microsoft Authenticator](https://play.google.com/store/apps/details?id=com.azure.authenticator)** (Android) / [iOS](https://apps.apple.com/app/microsoft-authenticator/id983156458)
-- **[Authy](https://authy.com)** (Android, iOS, Desktop)
-- **[FreeOTP](https://freeotp.github.io)** (Android, iOS)
-- **[AndOTP](https://github.com/andOTP/andOTP)** (Android)
+### 2. Add to your authenticator app
 
-**To add your account:**
+Scan the QR code or enter the secret manually:
 
-1. Open your authenticator app
-2. Tap the **+** or **Add Account** button
-3. Select **Scan QR code** (or **Enter manually** if preferred)
-4. Point your camera at the QR code on your screen
-5. Your app will now show a 6-digit code that changes every 30 seconds
+1. Open your authenticator app.
+2. Tap **Add account** or **+**.
+3. Choose **Scan QR code** and point your camera at the code. If you cannot scan, choose **Enter key** and paste the secret.
+4. The app shows a 6-digit code that changes every 30 seconds.
 
-**Manual Entry Option:**
+### 3. Confirm setup
 
-If you can't scan the QR code, you can enter the code manually:
+Enter the current 6-digit code and submit.
 
-1. In your authenticator app, choose **Enter manually** or **Enter key**
-2. Copy the code shown under "Or enter this code manually" in Plexichat
-3. Paste it into your authenticator app
-4. The app will generate codes for your Plexichat account
+- Endpoint: `POST /api/v1/auth/2fa/confirm` with `{"code": "123456"}`. Rate limit: 5 requests per 60 seconds.
+- The server checks the code with replay protection (`setup:{user_id}`) and a per-user limit of 5 attempts per 300 seconds. Too many attempts returns `429`.
+- On success, the server sets `totp_enabled = 1` and you can use 2FA at next sign-in.
 
-### Step 4: Confirm Setup
+### 4. Save your backup codes
 
-1. Enter the 6-digit code from your authenticator app into the **Enter code from your app to confirm** field
-2. Click **Confirm & Enable 2FA**
-3. If the code is correct, 2FA will be enabled on your account
+Copy the 10 backup codes shown after setup. Store them in your password manager or a secure offline location. Each code can be used once. The server stores SHA-256 hashes, not plaintext.
 
-### Step 5: Save Your Backup Codes
+If you lose your authenticator app and have no backup codes, contact your server administrator.
 
-After enabling 2FA, you'll see a list of **Backup Codes**:
+## Sign in with 2FA
 
-1. Copy or write down each backup code
-2. Store them in a safe place (password manager, safe, or secure note)
-3. Each backup code can only be used once
-4. Use these codes if you lose access to your authenticator app
+1. Enter your username and password at `POST /api/v1/auth/login`.
+2. If 2FA is enabled, the server returns `two_factor_required` with a `challenge_token` and `methods: ["totp", "backup_code"]`. The challenge expires in 300 seconds and is bound to the IP and user agent that created it.
+3. Submit the code at `POST /api/v1/auth/2fa` with `{"challenge_token": "...", "code": "123456"}`. Rate limit: 5 requests per 60 seconds.
 
-**Important:** If you lose your authenticator app and don't have your backup codes, you may lose access to your account.
+The server verifies:
 
-## Logging In with 2FA
+- The challenge exists, is unused, and matches the stored hash.
+- IP and user-agent blind indexes match (if present).
+- The per-user limit (5 attempts per 300 seconds) and per-challenge limit (3 attempts) are not exceeded.
+- The TOTP code (with replay cache) or a backup code. A valid backup code is consumed atomically; the remaining hashes are updated.
 
-Once 2FA is enabled, logging in requires an extra step:
+On success, the server creates a new session and returns a session token. The response also sets the `HttpOnly` session cookie.
 
-1. Enter your username and password as usual
-2. After entering your password, you'll be prompted for a 2FA code
-3. Open your authenticator app and find the 6-digit code for Plexichat
-4. Enter the code to complete login
+Passkey sign-in also requires 2FA when `totp_enabled` is true. A successful WebAuthn verification returns `two_factor_required` and you complete the same `POST /api/v1/auth/2fa` step.
 
-**Note:** The code changes every 30 seconds. If it's about to change, wait for the new code before entering it.
+## Manage 2FA
 
-## Disabling 2FA
+### Check status
 
-If you need to disable 2FA:
+- `GET /api/v1/auth/2fa/status` returns `{"enabled": true|false, "backup_codes_remaining": number}`.
 
-1. Go to **Settings > Security**
-2. In the Two-Factor Authentication section, click **Disable 2FA**
-3. Enter your password
-4. Enter a 2FA code from your authenticator app
-5. Click **Disable 2FA**
+### Disable 2FA
 
-**Warning:** Disabling 2FA reduces your account security. Only disable if absolutely necessary.
+1. Go to **Settings > Security**.
+2. Click **Disable 2FA**.
+3. Enter your password and a current 6-digit code.
 
-## Managing Active Sessions
+- Endpoint: `POST /api/v1/auth/2fa/disable` with `{"password": "...", "code": "..."}`. Rate limit: 5 requests per 60 seconds.
+- The server verifies the password and the TOTP code (separate replay key `disable:{user_id}`).
+- On success, the server clears `totp_secret_encrypted` and `backup_codes_hash`, sets `totp_enabled = 0`, and revokes all other sessions for your account. Your current session stays active.
+- Requires per-user rate limit of 5 attempts per 300 seconds.
 
-You can view and manage all devices logged into your Plexichat account.
+### Regenerate backup codes
 
-### View Active Sessions
+Use `regenerate_backup_codes(user_id, password)` (exposed to authenticated callers as needed). It verifies your password, generates 10 new codes, invalidates old codes, and returns the new ones. Store the new codes immediately.
 
-1. Go to **Settings > Sessions**
-2. Scroll to the **Active Sessions** section
-3. You'll see a list of all devices currently logged in, including:
-   - Device name (e.g., "Chrome on Windows", "Safari on iPhone")
-   - Last active time
-   - Location (if available)
-   - Whether it's your current session
+## Manage active sessions
 
-### Revoke a Single Session
+2FA and sessions are related but separate. Use sessions to review where you are signed in.
 
-To log out a specific device:
+### View active sessions
 
-1. Find the session you want to revoke
-2. Click the **Revoke** button next to that session
-3. Confirm the action when prompted
-4. That device will be immediately logged out
+- Go to **Settings > Sessions** or call `GET /api/v1/auth/sessions`.
+- You see device info, IP address, user agent, creation time, expiry, last activity, and whether it is the current session.
 
-### Revoke All Other Sessions
+### Revoke a single session
 
-To log out all devices except your current one:
+- In the UI, click **Revoke** next to the session.
+- API: `DELETE /api/v1/auth/sessions/{session_id}`.
 
-1. Go to **Settings > Sessions**
-2. Scroll to the **Active Sessions** section
-3. Click the **Revoke All Other Sessions** button
-4. Confirm the action when prompted
-5. All other devices will be logged out immediately
+### Revoke all other sessions
 
-**When to use this:**
-- If you lost a device
-- If you suspect unauthorized access
-- After using a public computer
-- If you want to secure your account
+- In the UI, click **Revoke all other sessions**.
+- API: `POST /api/v1/auth/sessions/revoke-all` with `{"except_current": true}`. Use `false` to revoke the current session too; the server clears the cookie in that case.
 
-## Session Duration Settings
+## Session duration
 
-You can control how long you stay logged in:
+Sessions are controlled by `authentication.sessions`:
 
-1. Go to **Settings > Sessions**
-2. Under **Session Settings**, select your preferred duration:
-   - 24 hours
-   - 3 days
-   - 7 days (default)
-   - 14 days
-   - 30 days
-3. Enable **Extend session on activity** to automatically extend your session when you're active
+- `expire_hours` — default 720 hours (30 days).
+- `extend_on_activity` — default `true`.
+- `extend_threshold_hours` — default 24 hours. The server extends `expires_at` when you are within this window of expiry, or on every activity if set to `0`.
+- `max_per_user` — default 10 concurrent sessions.
 
-## Sessions
+## Trusted devices
 
-Session duration is configurable (7 days by default, up to 30 days), and
-**Extend session on activity** keeps active sessions alive. There is currently
-no "trusted devices" feature that skips 2FA on a remembered device — you will
-need a 2FA code (or a backup code) at each login. Only use the session settings
-on personal devices; never on public or shared computers.
+You can mark a device as **trusted** so it skips the 2FA prompt at sign-in. Trust is stored server-side against the device fingerprint your client sends; a missing fingerprint is never trusted.
 
-## Troubleshooting
+- List devices (trusted status included): `GET /api/v1/auth/devices`
+- Trust a device: `POST /api/v1/auth/devices/trust` with `{"fingerprint": "..."}` — only devices you have signed in from can be trusted
+- Remove trust: `POST /api/v1/auth/devices/untrust` with `{"fingerprint": "..."}`
+- Forget a device entirely (revokes its sessions): `DELETE /api/v1/auth/devices/{device_id}`
 
-### Lost Authenticator App
+If 2FA is disabled, all trusted flags stop mattering (the challenge is gone anyway). Revoking a device also revokes every session created from it. Only mark devices trusted on hardware you control.
 
-If you lose access to your authenticator app:
+## Troubleshoot
 
-1. Use one of your backup codes to log in
-2. Go to **Settings > Security**
-3. Disable 2FA
-4. Re-enable 2FA with a new authenticator app
-5. Save your new backup codes
+### Lost authenticator app
 
-### Backup Codes Not Working
+1. Sign in with a backup code at the 2FA prompt.
+2. Go to **Settings > Security**, disable 2FA, and set it up again with a new app.
+3. Save the new backup codes.
 
-If your backup codes aren't working:
+### Backup codes not working
 
-- Make sure you're entering the code exactly as shown (no spaces)
-- Each backup code can only be used once
-- If you've used all your backup codes, contact your server administrator
+- Enter the code exactly as shown, with or without the dash; verification is case-insensitive and ignores the dash.
+- Each code can be used once.
+- If you have used all codes, disable and re-enable 2FA to generate new ones, or contact your administrator.
 
-### 2FA Code Not Accepted
+### 2FA code not accepted
 
-If your 2FA code is rejected:
+- Wait for the next 30-second interval and try the fresh code.
+- Ensure your device clock is synchronized automatically.
+- Check that you scanned the correct secret.
 
-- Make sure the code hasn't expired (codes change every 30 seconds)
-- Check that your device's time is set correctly (automatic time sync is recommended)
-- Try refreshing the code in your authenticator app
-- If using manual entry, verify the secret key was entered correctly
+### Locked out
 
-### Can't Access Account Without 2FA
+If you have no authenticator and no backup codes, contact your server administrator. They cannot recover your TOTP secret (it is encrypted) but can help with account recovery according to server policy.
 
-If you're locked out of your account and don't have backup codes:
+## Security best practices
 
-- Contact your server administrator
-- They may be able to help you recover your account through other verification methods
-- This is why saving backup codes is critical
+- Lock your phone and authenticator app with biometrics or a PIN.
+- Do not share QR codes or backup codes.
+- Store backup codes in a password manager and a secure offline copy. Never share them.
+- If your device is lost or stolen, revoke its sessions immediately at **Settings > Sessions**.
+- Do not enable long session durations on public or shared computers.
 
-## Security Best Practices
+## Related documentation
 
-### Protect Your Authenticator App
-
-- Set a lock screen on your phone
-- Enable biometric authentication (fingerprint, Face ID) on your authenticator app
-- Don't share screenshots of your QR code or backup codes
-- If your phone is lost or stolen, revoke your sessions immediately
-
-### Backup Codes
-
-- Store backup codes in a password manager
-- Keep a physical copy in a safe location
-- Never share backup codes with anyone
-- Generate new backup codes if you suspect they've been compromised
-
-### Trusted Devices
-
-- Only enable trusted device on personal devices
-- Don't enable on public computers or devices you don't control
-- Revoke trusted devices if you sell or give away a device
-
-## Additional Resources
-
-### Password Security
-
-For guidance on creating strong passwords, see the [Password Guidance](password-guidance.md) document.
-
-### Passkeys (Passwordless Authentication)
-
-For an even more secure and convenient authentication method, consider using [Passkeys](passkeys.md). Passkeys use biometric authentication or device PINs instead of passwords and provide phishing-resistant security.
-
-### Account Security
-
-- Use a unique password for Plexichat
-- Enable 2FA on all your important accounts
-- Review your active sessions regularly
-- Be cautious of phishing attempts
-
-### Support
-
-If you need help with 2FA or account security:
-- Contact your server administrator
-- Check your server's support documentation
-
----
-
-*Last updated: 2026*
+- [Password guidance](./password-guidance.md)
+- [Passkeys](./passkeys.md)
