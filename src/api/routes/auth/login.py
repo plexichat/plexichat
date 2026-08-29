@@ -47,10 +47,18 @@ async def login(
     ip_address = get_client_ip(request)
     user_agent = request.headers.get("User-Agent")
 
+    # Trusted-device support: the client may send a stable fingerprint so the
+    # server can recognize a previously trusted device and skip the 2FA
+    # challenge. Server-side trust only — no client claim is honored by itself.
+    device_info = None
+    if body.device_fingerprint:
+        device_info = {"fingerprint": body.device_fingerprint}
+
     try:
         result = auth.login(
             username=body.username,
             password=body.password,
+            device_info=device_info,
             ip_address=ip_address,
             user_agent=user_agent,
         )
