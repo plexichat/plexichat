@@ -31,6 +31,15 @@ class LoginRequest(BaseModel):
 
     username: str = Field(..., description="Username or email")
     password: str = Field(..., description="Password")
+    device_fingerprint: Optional[str] = Field(
+        None,
+        min_length=8,
+        max_length=256,
+        description=(
+            "Stable client device fingerprint. Required for trusted-device "
+            "(2FA skip) support; devices can be marked trusted via /auth/devices/trust."
+        ),
+    )
 
 
 class TwoFactorRequest(BaseModel):

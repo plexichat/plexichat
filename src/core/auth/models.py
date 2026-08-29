@@ -47,6 +47,8 @@ class AuditEventType(Enum):
     TWO_FACTOR_BACKUP_REGENERATED = "2fa_backup_regenerated"
     SESSION_REVOKED = "session_revoked"
     DEVICE_REVOKED = "device_revoked"
+    DEVICE_TRUSTED = "device_trusted"
+    DEVICE_UNTRUSTED = "device_untrusted"
     BOT_CREATED = "bot_created"
     BOT_DELETED = "bot_deleted"
     BOT_TOKEN_REGENERATED = "bot_token_regenerated"
@@ -173,8 +175,10 @@ class Device:
     fingerprint: str
     name: Optional[str]
     device_type: Optional[str]
-    first_seen_at: int
-    last_seen_at: int
+    trusted: bool = False
+    trusted_at: Optional[int] = None
+    first_seen_at: int = 0
+    last_seen_at: int = 0
 
 
 @dataclass

@@ -5,6 +5,8 @@ Adds blind indexes for encrypted fields and improved integrity.
 
 from src.core.database.core.schema_splitter import split_sql_statements
 
+import utils.logger as logger
+
 SCHEMA_SQLITE = """
 -- Users table
 CREATE TABLE IF NOT EXISTS auth_users (
@@ -95,6 +97,8 @@ CREATE TABLE IF NOT EXISTS auth_devices (
     name_encrypted TEXT,
     device_type_encrypted TEXT,
     fingerprint_encrypted TEXT,
+    trusted INTEGER DEFAULT 0,
+    trusted_at INTEGER,
     first_seen_at INTEGER NOT NULL,
     last_seen_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
@@ -377,6 +381,49 @@ def ensure_failed_logins_table(db) -> None:
         db.execute(converted)
 
 
+# Trusted-device trust flag: databases created before the flag existed get the
+# columns added lazily here (single source of truth, same pattern as the
+# failed-logins table).
+_TRUSTED_DEVICES_DDL = (
+    """
+    ALTER TABLE auth_devices ADD COLUMN trusted INTEGER DEFAULT 0
+    """,
+    """
+    ALTER TABLE auth_devices ADD COLUMN trusted_at INTEGER
+    """,
+)
+
+
+def ensure_trusted_devices_columns(db) -> None:
+    """Add the trusted-device columns when they do not exist yet.
+
+    ALTER TABLE has no IF NOT EXISTS in SQLite/Postgres, so probe the table
+    definition and only issue the ALTER when the column is missing.
+    """
+    try:
+        rows = db.fetch_all(
+            "SELECT name FROM pragma_table_info('auth_devices') AS t"
+            if hasattr(db, "dialect") and getattr(db, "dialect", None) == "postgres"
+            else "PRAGMA table_info(auth_devices)"
+        )
+        existing = {r["name"] for r in rows}
+    except Exception:
+        # Cannot introspect (unusual driver): attempt the ALTERs and ignore
+        # duplicate-column failures.
+        existing = set()
+
+    for sql in _TRUSTED_DEVICES_DDL:
+        column = "trusted_at" if "trusted_at" in sql else "trusted"
+        if column in existing:
+            continue
+        try:
+            converted = db.convert_schema(sql) if hasattr(db, "convert_schema") else sql
+            db.execute(converted)
+        except Exception:
+            # Column already exists (race or fresh schema); safe to ignore.
+            logger.debug("trusted-device column already present", exc_info=True)
+
+
 _WS_TICKETS_DDL = (
     """
     CREATE TABLE IF NOT EXISTS auth_ws_tickets (
@@ -412,4 +459,5 @@ def create_tables(db) -> None:
         )
         db.execute(converted)
     ensure_failed_logins_table(db)
+    ensure_trusted_devices_columns(db)
     ensure_ws_tickets_table(db)

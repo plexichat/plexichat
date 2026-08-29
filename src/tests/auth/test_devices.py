@@ -240,3 +240,123 @@ class TestDevices:
         device = next(d for d in devices if d.fingerprint == fp)
 
         assert device.device_type == "mobile"
+
+
+class TestTrustedDevices:
+    """Trusted-device (2FA skip) tests."""
+
+    def _mgr(self, auth_manager):
+        """The fixture returns the auth module; tests need the manager instance."""
+        from src.core.auth._lazy import _get_auth_manager
+
+        return _get_auth_manager().get_instance()
+
+    def _register_and_login_with_device(self, auth_manager, username: str, fp: str):
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username=username,
+                email=f"{username}@example.com",
+                password="TestPass123!",
+            )
+        with patch.object(encryption, "verify_password", return_value=True):
+            auth_manager.login(
+                username, "TestPass123!", device_info={"fingerprint": fp}
+            )
+        return user
+
+    def test_trust_unknown_fingerprint_is_noop(self, db, auth_manager):
+        """Trusting a fingerprint never seen before must not create trust."""
+        user = self._register_and_login_with_device(
+            auth_manager, "trust_unknown", "known_fp"
+        )
+        assert auth_manager.trust_device(user.id, "never_seen_fp_123") is False
+        assert auth_manager.is_trusted_device(user.id, "never_seen_fp_123") is False
+
+    def test_trust_then_login_skips_2fa(self, db, auth_manager):
+        """A trusted device with TOTP enabled must log in directly (no challenge)."""
+        from src.utils import encryption
+
+        user = self._register_and_login_with_device(
+            auth_manager, "trust_skip", "trusted_fp"
+        )
+
+        # Enable TOTP directly (setup + confirm path needs a valid code; flip the
+        # flags the same way confirm_2fa would after a successful verification).
+        self._mgr(auth_manager)._db.execute(
+            "UPDATE auth_users SET totp_enabled = 1, totp_secret_encrypted = ? WHERE id = ?",
+            ("x" * 32, user.id),
+        )
+
+        # Before trusting: login requires 2FA.
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "trust_skip", "TestPass123!", device_info={"fingerprint": "trusted_fp"}
+            )
+        assert result.status.value == "2fa_required"
+
+        # Mark the device trusted, then login again: no challenge, direct session.
+        assert auth_manager.trust_device(user.id, "trusted_fp") is True
+        with patch.object(encryption, "verify_password", return_value=True):
+            result2 = auth_manager.login(
+                "trust_skip", "TestPass123!", device_info={"fingerprint": "trusted_fp"}
+            )
+        assert result2.status.value == "success"
+        assert result2.token
+
+    def test_missing_fingerprint_never_trusted(self, db, auth_manager):
+        """Login without a fingerprint must still require 2FA even if some
+        device is trusted (an attacker stripping the header gains nothing)."""
+        from src.utils import encryption
+
+        user = self._register_and_login_with_device(
+            auth_manager, "trust_nofp", "nofp_device"
+        )
+        self._mgr(auth_manager)._db.execute(
+            "UPDATE auth_users SET totp_enabled = 1, totp_secret_encrypted = ? WHERE id = ?",
+            ("x" * 32, user.id),
+        )
+        assert auth_manager.trust_device(user.id, "nofp_device") is True
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login("trust_nofp", "TestPass123!")
+        assert result.status.value == "2fa_required"
+
+    def test_untrust_device_restores_2fa(self, db, auth_manager):
+        """Untrusting a device returns it to challenge-required behavior."""
+        from src.utils import encryption
+
+        user = self._register_and_login_with_device(
+            auth_manager, "trust_untrust", "untrust_fp"
+        )
+        self._mgr(auth_manager)._db.execute(
+            "UPDATE auth_users SET totp_enabled = 1, totp_secret_encrypted = ? WHERE id = ?",
+            ("x" * 32, user.id),
+        )
+
+        assert auth_manager.trust_device(user.id, "untrust_fp") is True
+        assert auth_manager.is_trusted_device(user.id, "untrust_fp") is True
+        assert auth_manager.untrust_device(user.id, "untrust_fp") is True
+        assert auth_manager.is_trusted_device(user.id, "untrust_fp") is False
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "trust_untrust",
+                "TestPass123!",
+                device_info={"fingerprint": "untrust_fp"},
+            )
+        assert result.status.value == "2fa_required"
+
+    def test_trust_is_per_user_scoped(self, db, auth_manager):
+        """User B must not inherit trust from user A's device fingerprint."""
+        user_a = self._register_and_login_with_device(
+            auth_manager, "trust_owner", "shared_fp"
+        )
+        user_b = self._register_and_login_with_device(
+            auth_manager, "trust_other", "other_fp"
+        )
+
+        assert auth_manager.trust_device(user_a.id, "shared_fp") is True
+        assert auth_manager.is_trusted_device(user_a.id, "shared_fp") is True
+        assert auth_manager.is_trusted_device(user_b.id, "shared_fp") is False

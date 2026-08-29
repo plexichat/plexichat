@@ -75,6 +75,30 @@ class SessionMixin(AuthManagerProtocol):
             self._track_ip(user_id, ip_address)
 
         if row["totp_enabled"]:
+            # Trusted-device 2FA skip: a device this account has explicitly
+            # marked trusted bypasses the challenge. SECURITY: the check is on
+            # the tracked device fingerprint (server-side), not on any client
+            # claim, and a missing fingerprint can never match.
+            fp = (device_info or {}).get("fingerprint")
+            if fp and self.is_trusted_device(user_id, fp):
+                session = self._create_session(
+                    user_id, device_id, ip_address, user_agent
+                )
+                self._db.execute(
+                    "UPDATE auth_users SET failed_login_attempts = 0, last_login_at = ? WHERE id = ?",
+                    (self._get_timestamp(), user_id),
+                )
+                self._clear_failed_login_state(user_id)
+                self._log_audit(
+                    AuditEventType.LOGIN_SUCCESS, user_id, True, ip_address, device_id
+                )
+                user = self.get_user(user_id)
+                return AuthResult(
+                    status=AuthStatus.SUCCESS,
+                    token=session.token,
+                    user=user,
+                    session=session,
+                )
             challenge = self._create_2fa_challenge(
                 user_id, device_id, ip_address, user_agent
             )
@@ -181,6 +205,30 @@ class SessionMixin(AuthManagerProtocol):
             self._track_ip(user_id, ip_address)
 
         if row["totp_enabled"]:
+            # Trusted-device 2FA skip: a device this account has explicitly
+            # marked trusted bypasses the challenge. SECURITY: the check is on
+            # the tracked device fingerprint (server-side), not on any client
+            # claim, and a missing fingerprint can never match.
+            fp = (device_info or {}).get("fingerprint")
+            if fp and self.is_trusted_device(user_id, fp):
+                session = self._create_session(
+                    user_id, device_id, ip_address, user_agent
+                )
+                self._db.execute(
+                    "UPDATE auth_users SET failed_login_attempts = 0, last_login_at = ? WHERE id = ?",
+                    (self._get_timestamp(), user_id),
+                )
+                self._clear_failed_login_state(user_id)
+                self._log_audit(
+                    AuditEventType.LOGIN_SUCCESS, user_id, True, ip_address, device_id
+                )
+                user = self.get_user(user_id)
+                return AuthResult(
+                    status=AuthStatus.SUCCESS,
+                    token=session.token,
+                    user=user,
+                    session=session,
+                )
             challenge = self._create_2fa_challenge(
                 user_id, device_id, ip_address, user_agent
             )

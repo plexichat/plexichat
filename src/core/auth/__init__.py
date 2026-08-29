@@ -152,6 +152,9 @@ from .devices import (
     get_devices,
     rename_device,
     revoke_device,
+    is_trusted_device,
+    trust_device,
+    untrust_device,
 )
 from .ip_blacklist import (
     block_ip,
@@ -338,6 +341,9 @@ __all__ = [
     "is_api_access_token_required",
     # Devices
     "get_devices",
+    "is_trusted_device",
+    "trust_device",
+    "untrust_device",
     "rename_device",
     "revoke_device",
     # IP Blacklist
