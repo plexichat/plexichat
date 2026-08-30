@@ -1,128 +1,157 @@
-# Core Modules
+# Core modules
 
-Business logic modules for the Plexichat server.
+Business logic for the Plexichat server. Each core package owns its data models, validation, and storage, and is initialized once at startup via `src.server.initializer`.
 
 ## Structure
 
-Each module is organized as a package with consistent structure:
+Each module follows a consistent layout:
 
 ```
 module/
-+-- __init__.py      # Module initialization and exports
-+-- manager.py       # Main business logic
-+-- models.py        # Data models (dataclasses)
-+-- schema.py        # Validation schemas
-+-- exceptions.py    # Module-specific exceptions
-+-- README.md        # Module documentation
+  __init__.py       # Initialization and public exports
+  manager.py        # Business logic
+  models.py         # Dataclasses
+  schema.py         # Validation schemas
+  exceptions.py     # Module-specific exceptions
+  README.md         # Module documentation
 ```
 
 ## Modules
 
 ### Authentication (`auth/`)
-User authentication, session management, and authorization.
-- Registration and login
-- Password hashing (Argon2)
-- Token and session management
-- Session management
-- Two-factor authentication (TOTP)
-- Permission system
+
+Handles authentication and authorization:
+
+- Registration and login.
+- Password hashing with Argon2.
+- Token and session management.
+- Two-factor authentication (TOTP).
+- Permission checks.
 
 ### Database (`database/`)
-Database abstraction layer supporting SQLite and PostgreSQL.
-- Connection management
-- Query execution
-- Caching (Redis and in-memory)
-- Transaction support
+
+Provides the storage abstraction for SQLite and PostgreSQL:
+
+- Connection management.
+- Query execution and transactions.
+- Caching (Redis/Valkey and in-memory).
 
 ### Messaging (`messaging/`)
-Message handling and conversation management.
-- Message CRUD operations
-- Conversation management
-- Attachment handling
-- Message encryption
-- Read receipts
+
+Manages messages and conversations:
+
+- Message create, read, update, delete.
+- Conversation membership.
+- Attachment handling and encryption.
+- Read receipts.
 
 ### Servers (`servers/`)
-Server/guild management.
-- Server CRUD
-- Channel management
-- Member management
-- Role and permission system
-- Invite system
+
+Manages guilds and channels:
+
+- Server create, read, update, delete.
+- Channel create, read, update, delete.
+- Member, role, and permission management.
+- Invites and bans.
 
 ### Presence (`presence/`)
-User presence and status tracking.
-- Online/offline status
-- Custom status messages
-- Activity tracking
-- Visibility rules
+
+Tracks user presence:
+
+- Online, offline, idle, and do-not-disturb status.
+- Custom status and activity.
+- Typing indicators.
+- Visibility rules for friends and shared servers.
 
 ### Relationships (`relationships/`)
-Friend and block management.
-- Friend requests
-- Friend list
-- Block list
-- Relationship status
+
+Manages friends and blocks:
+
+- Friend requests and friend lists.
+- Block lists.
+- Relationship status resolution.
 
 ### Reactions (`reactions/`)
-Message reaction system.
-- Add/remove reactions
-- Reaction counts
-- User reaction tracking
+
+Handles message reactions:
+
+- Add and remove reactions.
+- Reaction counts.
+- Per-user reaction tracking.
 
 ### Webhooks (`webhooks/`)
-Webhook integration system.
-- Webhook CRUD
-- Webhook execution
-- Token validation
+
+Integrates webhooks:
+
+- Webhook create, read, update, delete.
+- Execution and token validation.
 
 ### Media (`media/`)
-File upload and processing.
-- File storage (local/S3)
-- Image processing
-- Video metadata extraction
-- Content deduplication
+
+Handles file uploads:
+
+- Local or S3 storage.
+- Image processing and video metadata extraction.
+- Content deduplication.
 
 ### Events (`events/`)
-Event system for real-time updates.
-- Event types
-- Event routing
-- Payload generation
+
+Defines the real-time event system:
+
+- `EventType` values including `RATCHET_UPDATE` and `ARTIFACT_*` (`ARTIFACT_CREATE`, `ARTIFACT_UPDATE`, `ARTIFACT_DELETE`, `ARTIFACT_OP`) and PlexiSum types (`WORKBOOK_UPDATE`, `SUM_OPERATION`, `SUM_PRESENCE`).
+- `GatewayIntent` flags including `ARTIFACTS` (`1 << 20`) and `SUMS` (`1 << 21`). Both are in `GatewayIntent.default_intents()` and `GatewayIntent.all_intents()` (see `src/core/events/types.py`).
+- Event routing and intent filtering (see `src/api/websocket/intents.py`).
+- Payload generation and dispatch queue.
 
 ### Features (`features/`)
-User feature flags and badges.
-- User tiers
-- Badge management
-- Rate limit multipliers
+
+Manages entitlements:
+
+- User tiers and feature flags.
+- Badges.
+- Rate-limit multipliers.
 
 ### Settings (`settings/`)
-User settings sync.
-- Key-value storage
-- Cloud sync
 
-### Additional Modules
+Syncs user settings:
+
+- Key-value storage.
+- Cloud sync.
+
+### Additional modules
 
 | Module | Description |
 |--------|-------------|
-| `admin/` | Admin operations |
+| `admin/` | Administrative operations |
 | `applications/` | Bot applications and OAuth |
-| `automod/` | Auto-moderation |
-| `avatars/` | Avatar storage |
+| `artifacts/` | Collaborative artifacts (whiteboards, live editors) and the `artifact_ops` log. Real-time fabric uses opcodes `60`–`63`. |
+| `automod/` | Auto-moderation rules and actions |
+| `avatars/` | Avatar storage for users and servers |
 | `embeds/` | Rich embed handling |
 | `notifications/` | Push notifications |
-| `polls/` | Message polls |
-| `ratelimit/` | Rate limiting |
+| `polls/` | Message polls and expiry sweep |
+| `ratelimit/` | Rate-limiting core |
 | `search/` | Message search |
-| `soundboard/` | Soundboard sounds |
+| `soundboard/` | Soundboard sounds per server |
 | `stickers/` | Sticker management |
-| `telemetry/` | Usage telemetry |
+| `suite/stash/` | PlexiStash file stash |
+| `suite/sum/` | PlexiSum workbooks. Real-time fabric uses opcodes `64`–`67` and intent `SUMS` (`1 << 21`). |
+| `telemetry/` | Client usage telemetry |
 | `threads/` | Thread channels |
 | `tls/` | TLS configuration |
-| `voice/` | Voice channel signaling |
+| `voice/` | Voice channel signaling (opcodes `4`, `20`–`26`) |
 
-## Module Initialization
+## Real-time gateway
 
-Modules are initialized in `main.py`:
+The WebSocket gateway at `/gateway` (not under `/api/v1`) exposes the intents and opcodes defined in this package:
+
+- Opcodes: `RATCHET_UPDATE` (`50`), `ARTIFACT_SUBSCRIBE` (`60`), `ARTIFACT_UNSUBSCRIBE` (`61`), `ARTIFACT_OP` (`62`), `ARTIFACT_SYNC` (`63`), `SUM_SUBSCRIBE` (`64`), `SUM_UNSUBSCRIBE` (`65`), `SUM_OP` (`66`), `SUM_SYNC` (`67`). See `src/api/websocket/opcodes.py`.
+- Intents: `ARTIFACTS` (`1 << 20`) gates artifact events; `SUMS` (`1 << 21`) gates PlexiSum events.
+- REST probes: `GET /api/v1/health` and `GET /api/v1/ready` (`GET /health` proxies to the former). See `src/api/routes/health.py`.
+
+## Module initialization
+
+Initialize modules from the server lifecycle:
 
 ```python
 from src.core import auth, messaging, servers
@@ -132,13 +161,24 @@ messaging.setup(db, config)
 servers.setup(db, config)
 ```
 
-## Accessing Modules
+Initialize in the order `src.server.initializer.initialize_modules` defines, then create the app with `src.bootstrap.app.create_application`.
 
-Use the API module's getter functions:
+## Access modules
+
+After initialization, use the API getters:
 
 ```python
 import src.api as api
 
 auth = api.get_auth()
 messaging = api.get_messaging()
+servers = api.get_servers()
+presence = api.get_presence()
 ```
+
+## Related
+
+- `src/api/websocket/README.md` — Gateway endpoint, opcodes, and intents.
+- `src/api/websocket/handlers/README.md` — Per-opcode handler details.
+- `src/bootstrap/README.md` — Startup helpers that wire these modules into FastAPI.
+- `src/cli/README.md` — CLI that runs the startup sequence.
