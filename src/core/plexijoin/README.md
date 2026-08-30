@@ -1,66 +1,165 @@
-# PlexiJoin - Federation Module
+# PlexiJoin federation
 
-Server-to-server federation for Plexichat. Enables inter-instance connections, join-request approval, and federated messaging between independent instances.
+PlexiJoin provides server-to-server federation for Plexichat. Use it to create inter-instance links, approve join requests, and exchange HMAC-signed messages between independent instances.
 
-## Components
+## Overview
 
-### PlexiJoinManager (`manager.py`)
-Central orchestrator for federation operations:
+PlexiJoin manages outbound connections, inbound join requests, traffic accounting, and health checks. All cross-instance traffic is authenticated with HMAC-SHA256 signatures over a shared key that you exchange out-of-band.
 
-Outbound connections:
-- **`list_connections(status=None, page=1, per_page=50)`** - Paginated list (rows carry a decrypted `shared_key`)
-- **`get_connection(connection_id)`** - One connection with decrypted `shared_key`, or `None`
-- **`create_connection(remote_instance_id, remote_url, shared_key, note, admin_id, ...)`** - Create an outbound connection (`status="pending"`)
-- **`generate_shared_key()`** - Cryptographically secure shared key for a new link
-- **`delete_connection(connection_id, admin_id, ...)`** - Break and delete a connection
-- **`test_connection(connection_id)`** *(async)* - Health-probe the remote; SSRF-validates `remote_url` first; success ACTIVATES a pending/broken connection, failure marks an active connection broken
-- **`activate_connection(connection_id)`** - Idempotent transition to `active`
+Key concepts:
 
-Federation transport:
-- **`send_join_request(connection_id)`** *(async)* - POST this instance's HMAC-signed join request to the remote's `/api/v1/federation/join-request`
-- **`send_message(connection_id, message_type, payload)`** *(async)* - POST an HMAC-signed message envelope to the remote's `/api/v1/federation/message`; records outbound traffic on success
+- **Connection** — An outbound link to a remote instance with a symmetric shared key. Lifecycle: `pending` → `active` → `broken`.
+- **Join request** — An HMAC-signed request from a remote instance that requires admin approval.
+- **Shared key** — A symmetric secret you generate and share out-of-band before federation traffic can flow.
 
-Inbound requests:
-- **`submit_inbound_request(remote_instance_id, remote_url, requested_by, note)`** - Record a verified inbound join request (`status="pending"`); called only by the HMAC-authenticated inbound endpoint
-- **`approve_request(request_id, admin_id, ...)`** / **`deny_request(request_id, admin_id, ...)`** - ATOMIC conditional updates (`WHERE id = ? AND status = 'pending'`) so concurrent reviewers cannot both win; approving also activates any matching pending outbound connection
+## Architecture
 
-Status & analytics:
-- **`get_status_summary()`**, **`get_traffic_data(hours=24)`**, **`record_traffic(connection_id, direction, message_count)`**
+| Component | File | Description |
+|-----------|------|-------------|
+| `PlexiJoinManager` | `manager.py` | Orchestrates connections, requests, transport, and analytics. |
+| Schema | `schema.py` | Defines `plexijoin_connections`, `plexijoin_inbound_requests`, `plexijoin_traffic_log`, and `plexijoin_replay_nonces`. |
 
-Validation:
-- **`validate_remote_url(url)`** / **`RemoteURLBlockedError`** - SSRF hygiene: https scheme required, private/reserved IP resolution rejected (shared `URLValidator` from `src/utils/security.py`)
+## Before you begin
 
-### Schema (`schema.py`)
-SQL table definitions: `plexijoin_connections`, `plexijoin_inbound_requests`, `plexijoin_traffic_log`.
+- Ensure the encryption service is available. The manager encrypts shared keys at rest.
+- Ensure admin logging is configured if you need audit trails for connection changes.
+- Remote URLs must use `https` and resolve to a public IP. Private or reserved IPs are rejected.
 
-## HTTP Surface
+## Manage outbound connections
 
-Admin management (host-restricted, admin-token + `admin.plexijoin.manage` permission, license-gated):
-- `GET  /api/v1/admin/plexijoin/connections[/{id}]`
-- `POST /api/v1/admin/plexijoin/connections`
-- `DELETE /api/v1/admin/plexijoin/connections/{id}`
-- `POST /api/v1/admin/plexijoin/connections/{id}/test`
-- `GET  /api/v1/admin/plexijoin/requests`
-- `POST /api/v1/admin/plexijoin/requests/{id}/approve` | `/deny`
-- `GET  /api/v1/admin/plexijoin/status` | `/traffic`
+### Create a connection
 
-Client contract (`src/api/routes/join.py`, consumed by the web client's
-`join.js`; same host restriction + admin permission gates):
-- `GET  /api/v1/Join/list` - `{Joins: [...]}` keyed on `Join_id`
-- `POST /api/v1/Join/request` - `{remote_url}` creates a pending connection and sends our signed join request
-- `POST /api/v1/Join/{id}/message` - `{message_type, payload}` over an active Join
-- `POST /api/v1/Join/{id}/break` - break a Join
-- `POST /api/v1/Join/{id}/approve` - `{selected_servers}` approve an inbound request
-- `POST /api/v1/Join/{id}/reject` - reject an inbound request
+```python
+from src.core.plexijoin import PlexiJoinManager
 
-Cross-instance inbound transport (HMAC-SHA256 signed via the
-`x-plexijoin-signature` header; no JWT — the signature is the credential):
-- `POST /api/v1/federation/join-request` - verified requests become pending inbound rows
-- `POST /api/v1/federation/message` - verified messages are acknowledged and accounted as inbound traffic
-- `POST /api/v1/federation/artifact-op` | `/artifact-event` - artifact realtime fabric relay
+manager = PlexiJoinManager(db, admin_logger=logger, encryption_service=enc)
 
-## Key Concepts
+key = manager.generate_shared_key()
+conn = manager.create_connection(
+    remote_instance_id="remote-01",
+    remote_url="https://remote.example.com",
+    shared_key=key,
+    note="Primary peer",
+    admin_id=1,
+)
+# conn["status"] == "pending"
+```
 
-- **Connection** - An instance-scoped outbound link with a symmetric shared key (`pending` -> `active` -> `broken`)
-- **Join Request** - HMAC-signed request from a remote instance, recorded for admin approval
-- **Trust bootstrap** - The shared key is exchanged out-of-band; both sides create connections with the same key before federation traffic flows
+Share `key` with the remote instance out-of-band. Both sides must store the same key.
+
+### List and get connections
+
+```python
+# Paginated list; each row includes a decrypted shared_key
+page = manager.list_connections(status="active", page=1, per_page=50)
+
+conn = manager.get_connection(connection_id=1)
+if conn is None:
+    print("Not found")
+```
+
+### Test and activate a connection
+
+```python
+# Health-probes remote_url; validates the URL for SSRF before the request.
+# On success, transitions pending or broken connections to active.
+# On failure, marks an active connection as broken.
+result = await manager.test_connection(1)
+
+# Idempotent activation
+manager.activate_connection(1)
+```
+
+### Delete a connection
+
+```python
+manager.delete_connection(connection_id=1, admin_id=1)
+```
+
+## Send federation traffic
+
+```python
+# Send a signed join request to the remote /api/v1/federation/join-request
+await manager.send_join_request(connection_id=1)
+
+# Send a signed message envelope to /api/v1/federation/message
+# Records outbound traffic on success; requires status == "active".
+await manager.send_message(
+    connection_id=1,
+    message_type="chat.message",
+    payload={"text": "Hello from instance A"},
+)
+```
+
+All outbound POSTs include `x-plexijoin-signature`, `x-plexijoin-timestamp`, and `x-plexijoin-nonce` headers. The signature is `HMAC-SHA256(shared_key, body + timestamp + nonce)`.
+
+## Handle inbound requests
+
+`submit_inbound_request` is called only by the HMAC-authenticated inbound endpoint after signature verification.
+
+```python
+# Record a verified inbound request
+req = manager.submit_inbound_request(
+    remote_instance_id="remote-01",
+    remote_url="https://remote.example.com",
+    requested_by="admin@remote",
+)
+
+# Atomic approve or deny (WHERE status = 'pending' prevents concurrent double-approval)
+manager.approve_request(request_id=1, admin_id=1)
+manager.deny_request(request_id=1, admin_id=1)
+
+# Approving also activates any matching pending outbound connection to the same remote.
+```
+
+List inbound requests with `list_requests(status=None, page=1, per_page=50)`.
+
+## Monitor federation health
+
+```python
+summary = manager.get_status_summary()
+# {"active_connections": 2, "broken_connections": 0, "pending_requests": 1, "messages_today": 42}
+
+traffic = manager.get_traffic_data(hours=24)
+manager.record_traffic(connection_id=1, direction="outbound", message_count=1)
+```
+
+## Validate remote URLs
+
+```python
+from src.core.plexijoin import validate_remote_url, RemoteURLBlockedError
+
+try:
+    validate_remote_url("https://remote.example.com")
+except RemoteURLBlockedError as e:
+    print(f"Blocked: {e}")
+```
+
+The validator requires `https` and uses `src.utils.security.URLValidator` to reject private or reserved IPs.
+
+## HTTP endpoints
+
+These routes are registered in the API layer. Admin routes require host restriction, an admin token, and the `admin.plexijoin.manage` permission. Federation routes use HMAC signatures, not JWT.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/admin/plexijoin/connections` | List connections |
+| `GET` | `/api/v1/admin/plexijoin/connections/{id}` | Get one connection |
+| `POST` | `/api/v1/admin/plexijoin/connections` | Create a connection |
+| `DELETE` | `/api/v1/admin/plexijoin/connections/{id}` | Delete a connection |
+| `POST` | `/api/v1/admin/plexijoin/connections/{id}/test` | Test connectivity |
+| `GET` | `/api/v1/admin/plexijoin/requests` | List inbound requests |
+| `POST` | `/api/v1/admin/plexijoin/requests/{id}/approve` | Approve a request |
+| `POST` | `/api/v1/admin/plexijoin/requests/{id}/deny` | Deny a request |
+| `GET` | `/api/v1/admin/plexijoin/status` | Health summary |
+| `GET` | `/api/v1/admin/plexijoin/traffic` | Traffic data |
+| `POST` | `/api/v1/federation/join-request` | Inbound join request (HMAC) |
+| `POST` | `/api/v1/federation/message` | Inbound message (HMAC) |
+| `POST` | `/api/v1/federation/artifact-op` | Artifact operation relay |
+| `POST` | `/api/v1/federation/artifact-event` | Artifact event relay |
+
+## Replay protection
+
+The manager stores single-use nonces in `plexijoin_replay_nonces` and validates timestamps within a 300-second clock skew. Use `consume_replay_nonce(connection_id, nonce, timestamp)` to atomically claim a nonce for inbound verification.
+
+Note: Keep `shared_key` values confidential. They are encrypted at rest but travel as the HMAC secret for every federation request.
