@@ -9,6 +9,7 @@ from .dashboard import router as dashboard_router
 from .tickets import router as tickets_router
 from .users import router as users_router
 from .security import router as security_router
+from .device_trust import router as device_trust_router
 from .moderation import router as moderation_router
 from .telemetry import router as telemetry_router
 from .logs import router as logs_router
@@ -40,6 +41,7 @@ router.include_router(dashboard_router)
 router.include_router(tickets_router)
 router.include_router(users_router)
 router.include_router(security_router)
+router.include_router(device_trust_router)
 router.include_router(moderation_router)
 router.include_router(telemetry_router)
 router.include_router(logs_router)
