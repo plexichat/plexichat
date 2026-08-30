@@ -360,3 +360,206 @@ class TestTrustedDevices:
         assert auth_manager.trust_device(user_a.id, "shared_fp") is True
         assert auth_manager.is_trusted_device(user_a.id, "shared_fp") is True
         assert auth_manager.is_trusted_device(user_b.id, "shared_fp") is False
+
+
+class TestTrustedDeviceSessionDurations:
+    """Per-device-trust session TTLs: trusted devices may get longer-lived
+    sessions than the default, configured via
+    ``sessions.trusted_expire_hours`` / ``trusted_extend_threshold_hours``."""
+
+    def _mgr(self, auth_manager):
+        from src.core.auth._lazy import _get_auth_manager
+
+        return _get_auth_manager().get_instance()
+
+    def _register_and_login_with_device(self, auth_manager, username: str, fp: str):
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username=username,
+                email=f"{username}@example.com",
+                password="TestPass123!",
+            )
+        with patch.object(encryption, "verify_password", return_value=True):
+            auth_manager.login(
+                username, "TestPass123!", device_info={"fingerprint": fp}
+            )
+        return user
+
+    def _set_session_config(self, auth_manager, **overrides):
+        """Patch the sessions config block in-place on the live manager."""
+        mgr = self._mgr(auth_manager)
+        cfg = dict(mgr._config.get("sessions", {}))
+        cfg.update(overrides)
+        mgr._config["sessions"] = cfg
+        return cfg
+
+    def _session_row(self, mgr, token: str):
+        """Resolve the auth_sessions row behind a session token."""
+        from src.core.auth.tokens import parse_token
+
+        parsed = parse_token(token)
+        return mgr._db.fetch_one(
+            "SELECT * FROM auth_sessions WHERE id = ?", (parsed["id"],)
+        )
+
+    def test_trusted_device_gets_longer_session(self, db, auth_manager):
+        """A session created on a trusted device uses trusted_expire_hours."""
+        from src.utils import encryption
+
+        user = self._register_and_login_with_device(
+            auth_manager, "dur_trust", "dur_trusted_fp"
+        )
+        mgr = self._mgr(auth_manager)
+        self._set_session_config(
+            auth_manager, expire_hours=24, trusted_expire_hours=720
+        )
+        assert auth_manager.trust_device(user.id, "dur_trusted_fp") is True
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "dur_trust",
+                "TestPass123!",
+                device_info={"fingerprint": "dur_trusted_fp"},
+            )
+        assert result.status.value == "success"
+        row = self._session_row(mgr, result.token)
+        expected = mgr._get_timestamp() + (720 * 3600 * 1000)
+        # Allow a small clock skew between create and assertion.
+        assert abs(row["expires_at"] - expected) < 5000
+
+    def test_untrusted_device_uses_default_duration(self, db, auth_manager):
+        """Sessions on untrusted devices must not get the trusted TTL."""
+        from src.utils import encryption
+
+        user = self._register_and_login_with_device(
+            auth_manager, "dur_untrust", "dur_untrusted_fp"
+        )
+        mgr = self._mgr(auth_manager)
+        self._set_session_config(
+            auth_manager, expire_hours=24, trusted_expire_hours=720
+        )
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "dur_untrust",
+                "TestPass123!",
+                device_info={"fingerprint": "dur_untrusted_fp"},
+            )
+        assert result.status.value == "success"
+        row = self._session_row(mgr, result.token)
+        expected = mgr._get_timestamp() + (24 * 3600 * 1000)
+        assert abs(row["expires_at"] - expected) < 5000
+
+    def test_disabled_override_falls_back_to_default(self, db, auth_manager):
+        """trusted_expire_hours=None disables the override entirely."""
+        from src.utils import encryption
+
+        user = self._register_and_login_with_device(
+            auth_manager, "dur_off", "dur_off_fp"
+        )
+        mgr = self._mgr(auth_manager)
+        self._set_session_config(
+            auth_manager, expire_hours=24, trusted_expire_hours=None
+        )
+        assert auth_manager.trust_device(user.id, "dur_off_fp") is True
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "dur_off",
+                "TestPass123!",
+                device_info={"fingerprint": "dur_off_fp"},
+            )
+        assert result.status.value == "success"
+        row = self._session_row(mgr, result.token)
+        expected = mgr._get_timestamp() + (24 * 3600 * 1000)
+        assert abs(row["expires_at"] - expected) < 5000
+
+    def test_extend_uses_trusted_duration(self, db, auth_manager):
+        """Extend-on-activity re-arms a trusted session to the trusted TTL."""
+        from src.utils import encryption
+
+        user = self._register_and_login_with_device(
+            auth_manager, "dur_extend", "dur_extend_fp"
+        )
+        mgr = self._mgr(auth_manager)
+        self._set_session_config(
+            auth_manager,
+            expire_hours=24,
+            trusted_expire_hours=720,
+            extend_on_activity=True,
+            extend_threshold_hours=24,
+            trusted_extend_threshold_hours=168,
+        )
+        assert auth_manager.trust_device(user.id, "dur_extend_fp") is True
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "dur_extend",
+                "TestPass123!",
+                device_info={"fingerprint": "dur_extend_fp"},
+            )
+        assert result.status.value == "success"
+
+        # Simulate a session near expiry, then verify: it must re-arm to the
+        # trusted duration (720h), not the default (24h).
+        now = mgr._get_timestamp()
+        parsed = None
+        from src.core.auth.tokens import parse_token
+
+        parsed = parse_token(result.token)
+        near_expiry = now + (12 * 3600 * 1000)  # within the 168h threshold
+        mgr._db.execute(
+            "UPDATE auth_sessions SET expires_at = ? WHERE id = ?",
+            (near_expiry, parsed["id"]),
+        )
+
+        info = mgr.verify_token(result.token)
+        assert info.valid is True
+        row = mgr._db.fetch_one(
+            "SELECT * FROM auth_sessions WHERE id = ?", (parsed["id"],)
+        )
+        expected = mgr._get_timestamp() + (720 * 3600 * 1000)
+        assert abs(row["expires_at"] - expected) < 5000
+
+    def test_extend_untrusted_uses_default_duration(self, db, auth_manager):
+        """Untrusted sessions re-arm to the default TTL on activity."""
+        from src.utils import encryption
+        from src.core.auth.tokens import parse_token
+
+        user = self._register_and_login_with_device(
+            auth_manager, "dur_ext_un", "dur_ext_un_fp"
+        )
+        mgr = self._mgr(auth_manager)
+        self._set_session_config(
+            auth_manager,
+            expire_hours=24,
+            trusted_expire_hours=720,
+            extend_on_activity=True,
+            extend_threshold_hours=24,
+        )
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "dur_ext_un",
+                "TestPass123!",
+                device_info={"fingerprint": "dur_ext_un_fp"},
+            )
+        assert result.status.value == "success"
+
+        now = mgr._get_timestamp()
+        parsed = parse_token(result.token)
+        near_expiry = now + (12 * 3600 * 1000)
+        mgr._db.execute(
+            "UPDATE auth_sessions SET expires_at = ? WHERE id = ?",
+            (near_expiry, parsed["id"]),
+        )
+
+        info = mgr.verify_token(result.token)
+        assert info.valid is True
+        row = mgr._db.fetch_one(
+            "SELECT * FROM auth_sessions WHERE id = ?", (parsed["id"],)
+        )
+        expected = mgr._get_timestamp() + (24 * 3600 * 1000)
+        assert abs(row["expires_at"] - expected) < 5000

@@ -113,6 +113,18 @@ def get_authentication_defaults(home_dir: Path) -> Dict[str, Any]:
             "max_per_user": 10,
             "extend_on_activity": True,
             "extend_threshold_hours": 24,
+            # Per-device-trust session durations. Sessions created on a
+            # trusted device (see auth_devices.trusted) may live longer than
+            # the default: trusted devices already passed 2FA at trust time,
+            # so longer-lived sessions carry less risk there. Set
+            # trusted_expire_hours to null (or omit it) to disable the
+            # override and always use expire_hours.
+            "trusted_expire_hours": 720,
+            # When extend_on_activity re-arms expiry, trusted-device sessions
+            # extend to this duration instead of expire_hours (same null
+            # semantics). Falls back to trusted_expire_hours, then
+            # expire_hours.
+            "trusted_extend_threshold_hours": 168,
         },
         "reset_password": {
             # Password-reset emails deliver a deep link instead of a bare

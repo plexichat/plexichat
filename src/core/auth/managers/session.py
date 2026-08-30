@@ -422,6 +422,37 @@ class SessionMixin(AuthManagerProtocol):
 
         invalidate_pattern("user_data:*")
 
+    def _session_expire_hours(
+        self,
+        user_id: int,
+        device_id: Optional[int],
+        sessions_config: Dict,
+    ) -> int:
+        """Resolve the session TTL, honoring per-trust durations.
+
+        Sessions on a trusted device (see auth_devices.trusted) use
+        ``trusted_expire_hours`` when configured; untrusted or unknown-device
+        sessions always use ``expire_hours``. A null/absent override disables
+        the trusted duration entirely, making the feature opt-in per deploy.
+        """
+        if (
+            device_id
+            and sessions_config.get("trusted_expire_hours") is not None
+            and self._device_is_trusted_by_id(user_id, device_id)
+        ):
+            return int(sessions_config["trusted_expire_hours"])
+        return int(sessions_config.get("expire_hours", 720))
+
+    def _device_is_trusted_by_id(self, user_id: int, device_id: int) -> bool:
+        """Trust lookup keyed by the session's tracked device id (server-side
+        row), never by a client-supplied fingerprint."""
+        self._ensure_trusted_device_columns()
+        row = self._db.fetch_one(
+            "SELECT trusted FROM auth_devices WHERE id = ? AND user_id = ?",
+            (device_id, user_id),
+        )
+        return bool(row and row.get("trusted"))
+
     def _create_session(
         self,
         user_id: int,
@@ -432,7 +463,7 @@ class SessionMixin(AuthManagerProtocol):
         sid = self._generate_id()
         now = self._get_timestamp()
         sessions_config = self._config.get("sessions", {})
-        expire_hours = sessions_config.get("expire_hours", 720)
+        expire_hours = self._session_expire_hours(user_id, device_id, sessions_config)
         expires = now + (expire_hours * 3600 * 1000)
         token, token_hash = create_session_token(sid)
 
@@ -595,12 +626,38 @@ class SessionMixin(AuthManagerProtocol):
                 extend_threshold_hours = sessions_config.get(
                     "extend_threshold_hours", 24
                 )
+                # Trusted-device sessions re-arm to their own (longer)
+                # duration with their own threshold. Fallback chain:
+                # trusted_extend_threshold_hours -> trusted_expire_hours ->
+                # the untrusted defaults.
+                trusted = bool(
+                    row.get("device_id")
+                    and self._device_is_trusted_by_id(row["user_id"], row["device_id"])
+                )
+                if trusted:
+                    if (
+                        sessions_config.get("trusted_extend_threshold_hours")
+                        is not None
+                    ):
+                        extend_threshold_hours = int(
+                            sessions_config["trusted_extend_threshold_hours"]
+                        )
+                    elif sessions_config.get("trusted_expire_hours") is not None:
+                        extend_threshold_hours = int(
+                            sessions_config["trusted_expire_hours"]
+                        )
                 extend_threshold = extend_threshold_hours * 3600 * 1000
                 if (
                     extend_threshold_hours == 0
                     or (row["expires_at"] - now) <= extend_threshold
                 ):
-                    expire_hours = sessions_config.get("expire_hours", 720)
+                    if (
+                        trusted
+                        and sessions_config.get("trusted_expire_hours") is not None
+                    ):
+                        expire_hours = int(sessions_config["trusted_expire_hours"])
+                    else:
+                        expire_hours = sessions_config.get("expire_hours", 720)
                     new_expires = now + (expire_hours * 3600 * 1000)
                     updates.append("expires_at = ?")
                     params.append(new_expires)

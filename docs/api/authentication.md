@@ -131,6 +131,16 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
 | `403` | Account locked or email not verified |
 
 > **Trusted devices:** when 2FA is enabled and the request carries the fingerprint of a device the user previously marked trusted, the server skips the 2FA challenge and returns a session directly. A missing fingerprint is never trusted.
+>
+> **Session duration:** sessions created on a trusted device may live longer than the default. Configure via the `sessions` block:
+>
+> | Key | Default | Meaning |
+> |---|---|---|
+> | `expire_hours` | `168` | Session TTL for untrusted/unknown devices |
+> | `trusted_expire_hours` | `720` | Session TTL for trusted devices; set to `null` to disable and always use `expire_hours` |
+> | `extend_on_activity` | `true` | Re-arm session expiry on activity |
+> | `extend_threshold_hours` | `24` | Re-arm threshold for untrusted sessions |
+> | `trusted_extend_threshold_hours` | `168` | Re-arm threshold for trusted sessions (falls back to `trusted_expire_hours`, then `extend_threshold_hours`) |
 
 ## Manage devices
 
