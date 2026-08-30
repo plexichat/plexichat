@@ -1,82 +1,137 @@
-# managers/ — AuthManager Mixin Layout
+# Auth managers
 
-## File Layout
+This directory contains the `AuthManager` composition class and its mixins. Use `AuthManager` to handle registration, sessions, two-factor authentication (2FA), passwords, bots, API tokens, profiles, devices, IP blocking, auditing, OAuth, account deletion, and passkeys. `AuthManager` composes all mixins into one public class so you call a single API.
 
-| File              | Mixin / Class       | Responsibility |
-|-------------------|---------------------|----------------|
-| `base.py`         | `AuthManager`       | Composition class + shared helpers (`__init__`, `_log_audit`, `_track_ip`, `_track_device`, `_encrypt_ua`, `_ua_index`, serialization, config access, `_ensure_system_user`, `_get_timestamp`) |
-| `registration.py` | `RegistrationMixin` | `register`, `verify_email`, `resend_verification`, `_send_verification_email` |
-| `session.py`      | `SessionMixin`      | `login`, `create_session_for_user`, `verify_token`, `_verify_session_token`, `_verify_bot_token`, `refresh_session`, `logout`, `logout_all`, `logout_all_users`, `get_sessions`, `revoke_session`, `_create_session`, `_handle_failed_login` |
-| `twofactor.py`    | `TwoFactorMixin`    | `_create_2fa_challenge`, `complete_2fa`, `setup_2fa`, `confirm_2fa`, `disable_2fa`, `regenerate_backup_codes`, `get_2fa_status` |
-| `password.py`     | `PasswordMixin`     | `change_password`, `request_password_reset`, `reset_password`, `validate_password` |
-| `bot.py`          | `BotMixin`          | `create_bot`, `get_bot`, `get_user_bots`, `regenerate_bot_token`, `update_bot_permissions`, `disable_bot`, `enable_bot`, `delete_bot` |
-| `api_token.py`    | `ApiTokenMixin`     | All `api_access_token` methods + `verify_api_access_token`, event recording, scopes |
-| `profile.py`      | `ProfileMixin`      | `update_user`, `get_user`, `get_user_by_username`, `get_user_profiles_bulk`, `get_users_bulk`, `grant_permission`, `_get_user_data_cached`, `_dict_to_user` |
-| `device.py`       | `DeviceMixin`       | `get_devices`, `rename_device`, `revoke_device` |
-| `ip_blacklist.py` | `IpBlacklistMixin`  | `block_ip`, `unblock_ip`, `is_ip_blocked`, `get_blocked_ips` |
-| `audit.py`        | `AuditMixin`        | `get_login_history`, `get_security_events` |
-| `oauth.py`        | `OAuthMixin`        | `has_capability`, `require_capability`, `oauth_login` |
-| `deletion.py`     | `DeletionMixin`     | `schedule_account_deletion`, `cancel_account_deletion`, `delay_account_deletion`, `force_purge_account` |
-| `passkey.py`      | `PasskeyMixin`      | All passkey methods (thin delegation to `.passkeys` manager) |
+## File layout
 
-## Public API
+Each file defines one mixin or the composition class. Do not import mixins directly.
 
-The public API is unchanged:
+| File | Mixin or class | Responsibility |
+| --- | --- | --- |
+| `base.py` | `AuthManager` | Compose all mixins and provide shared helpers (`__init__`, `_log_audit`, `_track_ip`, `_track_device`, `_encrypt_ua`, `_ua_index`, serialization, config access, `_ensure_system_user`, `_get_timestamp`) |
+| `registration.py` | `RegistrationMixin` | Register users, verify email, resend verification |
+| `session.py` | `SessionMixin` | Log in, create sessions, verify tokens, refresh or revoke sessions, handle failed logins |
+| `twofactor.py` | `TwoFactorMixin` | Create 2FA challenges and manage setup, confirmation, disable, and backup codes |
+| `password.py` | `PasswordMixin` | Change passwords, request and reset passwords, validate password strength |
+| `bot.py` | `BotMixin` | Create, fetch, list, update, disable, enable, and delete bots and bot tokens |
+| `api_token.py` | `ApiTokenMixin` | Create and verify API access tokens, manage scopes, record events |
+| `profile.py` | `ProfileMixin` | Update and fetch user profiles, manage permissions, cache user data |
+| `device.py` | `DeviceMixin` | List, rename, and revoke devices |
+| `ip_blacklist.py` | `IpBlacklistMixin` | Block, unblock, and query blocked IP addresses |
+| `audit.py` | `AuditMixin` | Query login history and security events |
+| `oauth.py` | `OAuthMixin` | Check capabilities and handle OAuth login (`has_capability`, `require_capability`, `oauth_login`) |
+| `deletion.py` | `DeletionMixin` | Schedule, cancel, delay, and purge account deletions |
+| `passkey.py` | `PasskeyMixin` | Delegate passkey operations to `PasskeyManager` |
+| `protocol.py` | `AuthManagerProtocol` | Declare cross-mixin attributes for static type checking |
 
-```python
-from src.core.auth.manager import AuthManager  # still works
-from src.core import auth                      # still works
-```
+## Before you begin
 
-## Usage
+You need:
+
+- A connected database instance (`Database`).
+- An optional email sender for verification emails.
+- `authentication` and `encryption` keys in your config.
+
+`AuthManager` depends on:
+
+- `src.core.base.BaseManager` — Provides `self._db`, `_generate_id()`, and `_user_exists()`.
+- `src.utils.encryption.EncryptionManager` — Hashes passwords with Argon2, encrypts data, and creates blind indexes.
+- `src.core.auth.models` — Defines `User`, `Session`, `TokenInfo`, `AuthResult`, `AuthStatus`, `AccountType`, and `AuditEventType`.
+- `src.core.auth.exceptions` — Defines all exceptions listed in [Handle errors](#handle-errors).
+- `src.core.auth.permissions` — Defines scopes in `PERMISSIONS` (`src/core/auth/permissions.py:42`) and helpers `has_permission`, `validate_permissions`, `merge_permissions`. Wildcard scopes such as `messages.*` are supported; the server-role layer rejects wildcards (`roles.py:201`).
+- `src.core.auth.blacklist.BlacklistManager` — Blocks IPs.
+- `src.core.auth.deletion_log.DeletionLog` — Tracks account deletion events.
+- `src.core.auth.passkeys.PasskeyManager` — Implements WebAuthn/FIDO2.
+- `src.core.auth.tokens` — Creates, parses, and verifies session and bot tokens.
+- `src.core.database` — Provides the `cached` decorator and `invalidate_pattern` for cache management.
+
+## Use AuthManager
+
+### 1. Create the manager
 
 ```python
 from src.core.auth.manager import AuthManager
 
 auth_mgr = AuthManager(db, email_sender=smtp_sender)
+```
 
-# Registration
+`AuthManager.__init__` sets `self._db`, `self.crypto` (`EncryptionManager` with Argon2 settings), `self._config`, `self.blacklist` (`BlacklistManager`), `self.deletion_log`, and `self.passkeys` (`PasskeyManager`), then ensures the system user exists.
+
+### 2. Register and verify a user
+
+```python
 result = auth_mgr.register(username="alice", email="alice@example.com", password="SecurePass123!")
-# Returns AuthResult with status=AuthStatus.SUCCESS and user/user token
+# result is an AuthResult with status == AuthStatus.SUCCESS
+auth_mgr.verify_email(user_id=result.user.id, token="email-token")
+```
 
-# Login
-result = auth_mgr.login(username="alice", password="SecurePass123!",
-                        device_info={"fingerprint": "abc123", "type": "mobile"},
-                        ip_address="192.168.1.1")
-# Returns AuthResult — if 2FA enabled, status=TWO_FACTOR_REQUIRED with challenge_token
+### 3. Log in and verify a token
 
-# Token verification
+```python
+result = auth_mgr.login(
+    username="alice",
+    password="SecurePass123!",
+    device_info={"fingerprint": "abc123", "type": "mobile"},
+    ip_address="192.168.1.1",
+)
+# If 2FA is enabled, result.status == AuthStatus.TWO_FACTOR_REQUIRED and result contains a challenge_token
+
 info = auth_mgr.verify_token("session_token_here", ip_address="192.168.1.1")
-# Returns TokenInfo with account_id, permissions, rate_limit_tier, etc.
+# info is a TokenInfo with account_id, permissions, and rate_limit_tier
+```
 
-# Session management
+OAuth login respects 2FA. If the user has TOTP enabled, `oauth_login` returns `TWO_FACTOR_REQUIRED` instead of a session. PKCE is enforced at the API layer: `GET /api/v1/auth/oauth/{provider}/login` requires `code_challenge` with `code_challenge_method=S256` (`src/api/routes/auth/oauth.py:122`).
+
+### 4. Manage sessions and passwords
+
+```python
 sessions = auth_mgr.get_sessions(user_id=42)
-auth_mgr.revoke_session(user_id=42, session_id=session.id)
+auth_mgr.revoke_session(user_id=42, session_id=sessions[0].id)
 
-# Password reset
 auth_mgr.request_password_reset(email="alice@example.com")
 auth_mgr.reset_password(user_id=42, reset_token="token", new_password="NewSecurePass456!")
 ```
 
-## Error Handling
-
-All auth operations raise domain-specific exceptions from `src.core.auth.exceptions`:
-
-- `InvalidCredentialsError` — Wrong username/email or password (login, registration with existing username).
-- `AccountLockedError` — Account locked due to failed attempts or scheduled deletion.
-- `EmailNotVerifiedError` — Login attempted when email verification is required but not completed.
-- `TokenExpiredError` — Session or bot token has expired.
-- `TokenInvalidError` — Token is malformed, revoked, or fails binding checks (IP/User-Agent mismatch).
-- `TwoFactorInvalidError` — Invalid 2FA code or backup code provided.
-- `UserExistsError` — Registration with an already-taken username or email.
-- `UserNotFoundError` — User lookup by ID or username returned no results.
-- `WeakPasswordError` — Password does not meet strength requirements.
-- `InvalidUsernameError` — Username violates formatting rules.
-- `InvalidEmailError` — Email fails validation.
-- `PermissionDeniedError` — User lacks required capability for an OAuth operation.
-- `BotLimitExceededError` — User has reached the maximum number of bots.
+### 5. Check capabilities
 
 ```python
+from src.core.auth.exceptions import PermissionDeniedError
+
+# Check without raising
+if auth_mgr.has_capability(token_info, "messages.send"):
+    print("Can send messages")
+
+# Require or raise PermissionDeniedError
+auth_mgr.require_capability(token_info, "servers.manage")
+```
+
+Available scopes are defined in `PERMISSIONS` (`src/core/auth/permissions.py:42`) and include `messages.*`, `conversations.*`, `servers.*`, `channels.*`, `roles.*`, `voice.*`, `video.*`, `account.*`, `bots.*`, `moderation.*`, and `admin.*`. Default user and bot grants are `DEFAULT_USER_PERMISSIONS` and `DEFAULT_BOT_PERMISSIONS`.
+
+## Handle errors
+
+All operations raise domain-specific exceptions from `src.core.auth.exceptions`. Catch the specific error you want to handle:
+
+| Exception | When it occurs |
+| --- | --- |
+| `InvalidCredentialsError` | You provide a wrong username, email, or password |
+| `AccountLockedError` | The account is locked due to failed attempts or scheduled deletion. Check `e.locked_until`. |
+| `EmailNotVerifiedError` | You attempt to log in before verifying email |
+| `TokenExpiredError` | The session or bot token has expired |
+| `TokenInvalidError` | The token is malformed, revoked, or fails binding checks (IP or User-Agent mismatch). Also raised as `TokenInvalidError("Token verification rate limit exceeded")` when you hit the rate limit. |
+| `TwoFactorInvalidError` | You provide an invalid 2FA code or backup code |
+| `UserExistsError` | You register with a taken username or email |
+| `UserNotFoundError` | User lookup returns no results |
+| `WeakPasswordError` | The password does not meet strength requirements |
+| `InvalidUsernameError` | The username violates format rules |
+| `InvalidEmailError` | The email fails validation |
+| `PermissionDeniedError` | The user lacks the required capability for an operation |
+| `BotLimitExceededError` | The user has reached the maximum number of bots |
+
+Example:
+
+```python
+from src.core.auth.exceptions import InvalidCredentialsError, AccountLockedError, EmailNotVerifiedError
+
 try:
     result = auth_mgr.login(username, password)
 except InvalidCredentialsError:
@@ -87,11 +142,9 @@ except EmailNotVerifiedError:
     print("Please verify your email first")
 ```
 
-Token verification may also raise `TokenInvalidError("Token verification rate limit exceeded")` when the rate-limit threshold is hit.
+## Understand composition order
 
-## Composition Order (MRO)
-
-The `AuthManager` class in `base.py` inherits from `BaseManager` then all mixins:
+`AuthManager` in `base.py` inherits from `BaseManager` and then all mixins. The method resolution order (MRO) is:
 
 ```
 AuthManager -> BaseManager -> RegistrationMixin -> SessionMixin ->
@@ -100,30 +153,22 @@ ProfileMixin -> DeviceMixin -> IpBlacklistMixin -> AuditMixin ->
 OAuthMixin -> DeletionMixin -> PasskeyMixin
 ```
 
-Shared helpers (`_log_audit`, `_track_ip`, `_track_device`, etc.) are defined
-directly on `AuthManager` in `base.py`, so they take priority in MRO over any
-mixin definitions.
+Shared helpers (`_log_audit`, `_track_ip`, `_track_device`, `_encrypt_ua`, `_ua_index`, `_get_timestamp`, and others) live on `AuthManager` in `base.py`, so they take priority over any mixin definitions.
 
-## Dependencies
+## Follow design rules
 
-- `src.core.base.BaseManager` — Provides `_db`, `_generate_id()`, `_user_exists()`.
-- `src.utils.encryption.EncryptionManager` — Password hashing/verification, data encryption, blind indexing.
-- `src.core.auth.models` — `User`, `Session`, `TokenInfo`, `AuthResult`, `AuthStatus`, `AccountType`, `AuditEventType`.
-- `src.core.auth.exceptions` — All domain-specific exception classes listed above.
-- `src.core.auth.blacklist` — `BlacklistManager` for IP-based blocking.
-- `src.core.auth.deletion_log` — Account deletion event tracking.
-- `src.core.auth.passkeys` — `PasskeyManager` for WebAuthn/FIDO2 support.
-- `src.core.auth.tokens` — Session/bot token creation, parsing, and hash verification.
-- `src.core.auth.permissions` — JSON-based permission parsing.
-- `src.core.database` — `cached` decorator and `invalidate_pattern` for cache management.
-
-## Design Rules
-
-- Each mixin accesses `self._db`, `self._config`, `self.crypto`, etc. from the
-  base class — these are set in `AuthManager.__init__` before mixin methods run.
-- Mixin methods freely call other mixin methods via `self` (e.g.,
-  `SessionMixin.login` calls `self._create_2fa_challenge()` from TwoFactorMixin).
-- No mixin imports another mixin — all composition happens in `base.py`.
+- Access shared state through `self._db`, `self._config`, `self.crypto`, `self.blacklist`, `self.deletion_log`, and `self.passkeys` (all set in `AuthManager.__init__`). Do not re-initialize them in mixins.
+- Call any mixin method through `self` (for example, `SessionMixin.login` calls `self._create_2fa_challenge()` from `TwoFactorMixin`).
+- Do not import one mixin from another. Compose all mixins only in `base.py`.
+- Declare cross-mixin attributes in `protocol.py` (`AuthManagerProtocol`) so type checkers can resolve them without suppression comments.
 - Each mixin imports only what it needs from the parent `auth` package.
+- For server roles, do not send wildcard permissions such as `*` or `messages.*`. The roles API rejects them with `InvalidPermissionKey` (`src/api/routes/servers/roles.py:201`); use explicit scopes from `PERMISSIONS`.
 
+## Public API
 
+The public API does not change when you use mixins. Import `AuthManager` from the same locations:
+
+```python
+from src.core.auth.manager import AuthManager
+from src.core import auth
+```
