@@ -101,6 +101,8 @@ from .automod import (
     AutomodConfigUpdateRequest,
 )
 
+from .device_trust import DeviceTrustOverviewResponse
+
 __all__ = [
     # Admin Auth
     "AdminLoginRequest",
@@ -187,4 +189,5 @@ __all__ = [
     "AutomodRuleUpdateRequest",
     "AutomodConfigResponse",
     "AutomodConfigUpdateRequest",
+    "DeviceTrustOverviewResponse",
 ]
