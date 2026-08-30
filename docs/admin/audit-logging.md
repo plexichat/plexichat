@@ -1,21 +1,19 @@
-# Audit Logging
+# Audit logging
 
-Plexichat provides comprehensive audit logging for all admin actions, supporting both file-based and database logging for complete audit trails and compliance requirements.
+Plexichat records every admin action in an audit trail that you can query, filter, and export. Use this guide to configure logging, understand the schema, and retrieve logs for compliance.
 
-## Overview
+## Before you begin
 
-The audit logging system captures:
-- All admin authentication events (login, logout, failed attempts)
-- User management actions (create, edit, delete, lock)
-- Server management actions
-- Configuration changes
-- Role assignments and permission changes
-- Approval workflow actions
-- System operations
+Verify that you have:
 
-## Configuration
+* An admin account with the `admin.audit.read` permission. See [RBAC](rbac.md).
+* Access to `admin_ui.audit` settings in your configuration file or admin panel.
 
-Audit logging is configured in the `admin_ui.audit` section:
+Audit logging is implemented in `src/core/admin/logging.py` and `src/core/admin/permissions.py:459`. The query and export API is in `src/api/routes/admin/audit.py`.
+
+## Configure audit logging
+
+Configure audit logging under `admin_ui.audit` in `config.yaml`:
 
 ```yaml
 admin_ui:
@@ -26,16 +24,22 @@ admin_ui:
     retention_days: 365
 ```
 
-### Configuration Options
+### Configuration options
 
-- `log_to_file`: Enable logging to file system logs
-- `log_to_database`: Enable logging to admin_audit_log database table
-- `sensitive_actions_always_db`: Always log sensitive actions to database regardless of config
-- `retention_days`: Number of days to retain audit logs (for database cleanup)
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `log_to_file` | boolean | `true` | Write audit entries to the file logger (`admin` logger). |
+| `log_to_database` | boolean | `true` | Write audit entries to the `admin_audit_log` table. |
+| `sensitive_actions_always_db` | boolean | `true` | Always write sensitive actions to the database, even if `log_to_database` is `false`. |
+| `retention_days` | integer | `365` | How long to retain database rows before cleanup. |
 
-## Database Schema
+Sensitive actions that always go to the database include `users.force_purge`, `users.delete`, `servers.delete`, and `config.modify`. See `src/core/admin/permissions.py:489`.
 
-The `admin_audit_log` table stores audit entries:
+Note: The file logger uses the standard Python `logging` package. Configure rotation with `logging.max_bytes`, `logging.backup_count`, and `logging.rotate` at the top level of your config.
+
+## Understand the database schema
+
+The `admin_audit_log` table stores one row per admin action:
 
 ```sql
 CREATE TABLE admin_audit_log (
@@ -44,65 +48,122 @@ CREATE TABLE admin_audit_log (
     action VARCHAR(100) NOT NULL,
     target_type VARCHAR(50),
     target_id INTEGER,
+    target_user_id INTEGER,
     details TEXT,
     ip_address VARCHAR(45),
     user_agent TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'success',
     created_at INTEGER NOT NULL
-)
+);
 ```
 
-## Logged Actions
+* `created_at` is a Unix timestamp in **milliseconds**.
+* `status` is `success`, `failed`, or `pending_approval`.
+* `target_type` describes what was acted on, for example `user`, `server`, or `approval`.
+* `target_user_id` is populated when the entry relates to a user, either from `metadata.target_user_id` or from `target_type = 'user'`.
+
+The write path is in `src/core/admin/logging.py:124` and handles both the legacy schema without `target_user_id` and the current schema with it.
+
+## Review logged actions
+
+The system logs the following families of actions:
 
 ### Authentication
-- `login` - Successful admin login
-- `login_failed` - Failed login attempt
-- `logout` - Admin logout
-- `otp_setup` - OTP 2FA setup
-- `otp_verify` - OTP verification
-- `password_change` - Password change
 
-### User Management
-- `user.create` - User account creation
-- `user.edit` - User profile edit
-- `user.delete` - User account deletion
-- `user.force_purge` - Immediate user purge
-- `user.lock` - User account lock
-- `user.unlock` - User account unlock
-- `user.tier_change` - User tier modification
-- `user.badge_add` - Badge assignment
-- `user.badge_remove` - Badge removal
+`login`, `login_failed`, `logout`, `otp_setup`, `otp_verify`, `password_change`
 
-### Server Management
-- `server.create` - Server creation
-- `server.edit` - Server settings edit
-- `server.delete` - Server deletion
-- `server.ban` - User ban from server
+### User management
 
-### Admin Management
-- `admin.create` - Admin account creation
-- `admin.edit` - Admin account edit
-- `admin.delete` - Admin account deletion
-- `role.assign` - Role assignment
-- `role.revoke` - Role revocation
-- `force_password_change` - Forced password change
+`user.create`, `user.edit`, `user.delete`, `user.force_purge`, `user.lock`, `user.unlock`, `user.tier_change`, `user.badge_add`, `user.badge_remove`, `users.force_username_change`
 
-### System Operations
-- `config.modify` - Configuration changes
-- `migration.run` - Database migration execution
-- `system.restart` - System restart
+### Server management
 
-## Viewing Audit Logs
+`server.create`, `server.edit`, `server.delete`, `server.ban`
 
-### Via Admin Panel
-1. Navigate to the Audit Log section
-2. Filter by date range, admin, action type, or status
-3. View detailed information for each entry
-4. Export logs for compliance reporting
+### Admin and RBAC
 
-### Via Database Query
+`admin.create`, `admin.edit`, `admin.delete`, `role.assign`, `role.revoke`, `force_password_change`, `admin.approvals`
+
+### System operations
+
+`config.modify`, `migration.run`, `migration.rollback`, `system.restart`, `approval_request:*`, `approval_approve`, `approval_reject`
+
+## Query audit logs
+
+### Using the admin API
+
+You need `admin.audit.read` to call these endpoints. They are defined in `src/api/routes/admin/audit.py:34`.
+
+List logs with filters:
+
+```http
+GET /api/v1/admin/audit/logs?admin_id=123&action_family=user&status=success&page=1&per_page=50
+```
+
+Query parameters:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `action_family` | string | Prefix filter on `action`, for example `user`, `login`, or `approval`. |
+| `status` | string | Filter by `success` or `failed`. |
+| `admin_id` | integer | Filter by the acting admin. |
+| `target_type` | string | Filter by `user`, `server`, `admin`, or `approval`. |
+| `date_from` | integer | Start timestamp in milliseconds. |
+| `date_to` | integer | End timestamp in milliseconds. |
+| `page` | integer | Page number, starting at `1`. Default `1`. |
+| `per_page` | integer | Items per page, `1` to `200`. Default `50`. |
+
+Example response:
+
+```json
+{
+  "logs": [
+    {
+      "id": 987654321,
+      "admin_id": 123,
+      "action": "user.delete",
+      "target_type": "user",
+      "target_id": 456,
+      "details": "Reason: spam account",
+      "ip_address": "203.0.113.10",
+      "status": "success",
+      "created_at": 1704067200000,
+      "timestamp": "2024-01-01T00:00:00"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "per_page": 50,
+  "pages": 1
+}
+```
+
+Get today's summary statistics:
+
+```http
+GET /api/v1/admin/audit/logs/stats
+```
+
+Export logs as CSV or JSON:
+
+```http
+GET /api/v1/admin/audit/logs/export?format=csv&action_family=user&date_from=1704067200000
+GET /api/v1/admin/audit/logs/export?format=json&status=failed
+```
+
+The export endpoint is defined in `src/api/routes/admin/audit.py:209` and returns `text/csv` or `application/json` with a `Content-Disposition: attachment` header.
+
+### Using the admin panel
+
+1. Go to **Audit Log**.
+2. Filter by date range, admin, action family, target type, or status.
+3. Open an entry to view details, IP address, and user agent.
+4. Click **Export** to download CSV or JSON for compliance reporting.
+
+### Using SQL
+
 ```sql
-SELECT 
+SELECT
     id,
     admin_id,
     action,
@@ -111,87 +172,90 @@ SELECT
     details,
     ip_address,
     status,
-    datetime(created_at/1000, 'unixepoch') as created_at
+    datetime(created_at / 1000, 'unixepoch') AS created_at
 FROM admin_audit_log
 WHERE created_at > ?
 ORDER BY created_at DESC
 LIMIT 100;
 ```
 
-### Via API
-```bash
-GET /api/v1/admin/audit-log?admin_id=123&action=user.delete&hours=24
-```
+Replace `?` with the start timestamp in milliseconds.
 
-## Log Retention
+## Manage retention
 
-### File Logs
+### File logs
+
 File logs are managed by the system logger:
-- Automatic rotation based on file size
-- Compression of old logs
-- Configurable retention period
 
-### Database Logs
-Database logs can be cleaned up based on retention policy:
+* Rotate based on `logging.max_bytes` and `logging.backup_count`.
+* Compress old logs when `logging.zip_logs` is `true`.
+
+### Database logs
+
+Delete rows older than your retention period:
+
 ```sql
-DELETE FROM admin_audit_log 
-WHERE created_at < ?
+DELETE FROM admin_audit_log
+WHERE created_at < ?;
 ```
 
-The `?` parameter should be the timestamp for `retention_days` ago.
+Set `?` to the cutoff timestamp: `now_ms - (retention_days * 24 * 60 * 60 * 1000)`. The configured default is 365 days.
 
-## Compliance Features
+Caution: Deleting audit rows is irreversible. Export data before you run cleanup jobs if you need an archive.
 
-### Immutable Logs
-- Audit logs cannot be modified by admins
-- Database logs are protected by permission system
-- File logs are written with append-only access
+## Meet compliance requirements
 
-### Complete Trail
-- All sensitive actions are logged
-- IP addresses and user agents captured
-- Timestamps with millisecond precision
-- Success/failure status tracking
+### Immutable logs
 
-### Export Capabilities
-- CSV export for analysis
-- JSON export for integration
-- PDF export for reporting
+* Admins cannot modify rows in `admin_audit_log` through the API.
+* The table is protected by the `admin.audit.read` permission.
+* File logs are append-only. Use write-once storage for critical deployments.
 
-## Security Considerations
+### Complete trail
 
-1. **Log Access**: Restrict audit log access to authorized admins only
-2. **Log Integrity**: Use write-once storage for critical logs
-3. **Log Backup**: Regular backups of audit logs
-4. **Log Monitoring**: Alert on suspicious patterns in logs
-5. **Log Retention**: Follow regulatory requirements for retention
+Every sensitive action records the admin ID, action, target, timestamp with millisecond precision, IP address, user agent, and success or failure status. See `src/core/admin/logging.py:18` for the `AdminLogEntry` structure.
 
-## Best Practices
+### Exports
 
-1. **Enable Dual Logging**: Use both file and database logging for redundancy
-2. **Regular Review**: Schedule regular audit log reviews
-3. **Alert Configuration**: Set up alerts for critical actions
-4. **Backup Strategy**: Implement regular backup of audit logs
-5. **Access Control**: Limit who can view and manage audit logs
+Use the export endpoints for analysis and reporting:
 
-## Troubleshooting
+* **CSV** — Open in spreadsheets or SIEM tools.
+* **JSON** — Integrate with external compliance systems.
 
-### Logs Not Appearing
-- Check if audit logging is enabled in configuration
-- Verify database connection is working
-- Check file system permissions for log directory
+## Follow security best practices
 
-### Missing Sensitive Actions
-- Ensure `sensitive_actions_always_db` is enabled
-- Check that the action is in the sensitive actions list
-- Verify the admin has appropriate permissions
+* Restrict `admin.audit.read` to a small set of admins. See [RBAC](rbac.md).
+* Back up audit logs regularly and store backups securely.
+* Alert on suspicious patterns, such as repeated `login_failed` or `users.force_purge` actions.
+* Keep `sensitive_actions_always_db` enabled so destructive actions are always recorded.
 
-### Database Growing Too Large
-- Review and adjust `retention_days` setting
-- Implement regular cleanup jobs
-- Consider archiving old logs to separate storage
+## Troubleshoot audit logging
 
-### Performance Impact
-- Monitor database performance with high log volume
-- Consider indexing strategy for audit_log table
-- Evaluate async logging for high-traffic systems
+### Logs do not appear
+
+* Check that `admin_ui.audit.log_to_file` or `log_to_database` is `true`.
+* Verify the database is reachable. The API returns `503` when the database is unavailable.
+* Check file system permissions for the log directory, which defaults to `~/.plexichat/logs`.
+
+### Sensitive actions are missing
+
+* Confirm `sensitive_actions_always_db` is `true`.
+* Verify the action is in the sensitive list in `src/core/admin/permissions.py:498`.
+
+### Database grows too large
+
+* Reduce `retention_days` or run more frequent cleanup jobs.
+* Export and archive old rows to separate storage before deleting.
+* Add an index on `created_at` or `action` if query latency increases.
+
+### Performance is affected
+
+* Monitor slow queries with `database.monitoring.slow_query_threshold_ms`.
+* Consider asynchronous logging for high-traffic deployments.
+* Limit `per_page` to `50` or fewer when you query frequently.
+
+## Related documentation
+
+* [RBAC](rbac.md) — Permission required to read audit logs (`admin.audit.read`).
+* [Approval workflows](approval-workflows.md) — Approval actions appear in the audit trail.
+* [Configuration overview](../configuration.md) — Where and how to set `admin_ui.audit`.

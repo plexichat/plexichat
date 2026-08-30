@@ -1,19 +1,19 @@
-# Approval Workflows
+# Approval workflows
 
-Plexichat's approval workflow system provides multi-admin approval for sensitive operations, ensuring critical actions require consensus before execution.
+Require multiple admins to approve sensitive operations before they execute. Use approval workflows to add a consensus step for destructive actions, keep an audit trail of decisions, and handle timeouts for stale requests.
 
-## Overview
+## Before you begin
 
-Approval workflows require multiple admins to approve sensitive actions before they can be executed, providing:
-- Additional security layer for critical operations
-- Audit trail of approval decisions
-- Configurable approval requirements
-- Timeout handling for stale requests
-- Comment-based discussion on pending approvals
+You need:
 
-## Configuration
+* An admin account with `admin.approvals` permission. See [RBAC](rbac.md).
+* `admin_ui.approval_workflows.enabled` set to `true` in your configuration.
 
-Approval workflows are configured in the `admin_ui.approval_workflows` section:
+All enforcement logic is in `src/core/admin/permissions.py:213` and `src/core/admin/logging.py:300`.
+
+## Configure approval workflows
+
+Configure workflows under `admin_ui.approval_workflows` in `config.yaml`:
 
 ```yaml
 admin_ui:
@@ -26,54 +26,83 @@ admin_ui:
       - servers.delete
     approval_required_admins: 2
     approval_timeout_hours: 48
+    auto_approve_after_hours: 72
 ```
 
-### Configuration Options
+### Configuration options
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `enabled` | Enable or disable approval workflows | `true` |
-| `single_admin_bypass` | Allow single admin to approve if they're the only admin | `true` |
-| `require_approval_for` | List of actions requiring approval | `[users.force_purge, users.delete, servers.delete]` |
-| `approval_required_admins` | Number of admins required to approve | `2` |
-| `approval_timeout_hours` | Hours before approval request expires | `48` |
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Enable or disable approval workflows. |
+| `single_admin_bypass` | boolean | `true` | Bypass approval when only one admin exists. |
+| `require_approval_for` | array of strings | `["users.force_purge", "users.delete", "servers.delete"]` | Actions that require approval. |
+| `approval_required_admins` | integer | `2` | How many distinct admins must approve. |
+| `approval_timeout_hours` | integer | `48` | Hours before a pending request expires. |
+| `auto_approve_after_hours` | integer | `72` | Hours after which the system can auto-approve, if that feature is enabled in your deployment. |
 
-## Actions Requiring Approval
+You can add any action from the approval list in `src/core/admin/permissions.py:122` to `require_approval_for`, including `config.security`, `admin.roles`, `migrations.run`, `search.reindex`, and `artifacts.force_delete`.
+
+## Understand actions that require approval
 
 By default, the following actions require approval:
 
-- `users.force_purge` - Immediate user account purge
-- `users.delete` - User account deletion
-- `servers.delete` - Server deletion
+* `users.force_purge` — Immediately purge a user account.
+* `users.delete` — Delete a user account.
+* `servers.delete` — Delete a server.
 
-You can add more actions to the `require_approval_for` list in the configuration.
+To require approval for additional sensitive operations, add them to `require_approval_for`. For example, to require approval before modifying security configuration:
 
-## Approval Process
+```yaml
+admin_ui:
+  approval_workflows:
+    require_approval_for:
+      - users.force_purge
+      - users.delete
+      - servers.delete
+      - config.security
+      - admin.roles
+```
 
-### 1. Request Creation
+## Review the approval lifecycle
+
+### 1. Request creation
+
 When an admin attempts a sensitive action:
-1. System checks if action requires approval
-2. If yes, creates an approval request in `admin_approvals` table
-3. Notifies other admins of pending approval
-4. Action is not executed until approved
-5. If `single_admin_bypass` is enabled and only one admin exists, approval is bypassed
 
-### 2. Discussion & Voting
-Other admins can:
-- **Approve** - Add their approval to the request
-- **Reject** - Reject the request with a reason
-- **Comment** - Add comments to facilitate discussion
-- **Cancel** - Cancel their own request or (as super admin) any pending request
+1. The system checks whether `enabled` is `true` and whether the action is in `require_approval_for`.
+2. If `single_admin_bypass` is `true` and only one row exists in `admin_users`, the action bypasses approval and executes immediately. See `src/core/admin/permissions.py:238`.
+3. Otherwise, the system inserts a row into `admin_approvals` with `status = 'pending'` and notifies other admins.
+4. Super-admin holders of `*` bypass approval checks. See `src/core/admin/permissions.py:250`.
+
+The original action does not execute until the request reaches `approved`.
+
+### 2. Discussion and voting
+
+Admins with `admin.approvals` can:
+
+* **Approve** the request.
+* **Reject** the request with a reason.
+* **Comment** on the request to discuss evidence.
+* **Cancel** their own request, or any pending request if they are a super admin.
+
+The system enforces these rules:
+
+* An admin cannot approve their own request.
+* Each admin can approve a request only once.
+* A rejected or expired request cannot be approved.
 
 ### 3. Execution
-Once required approvals are reached:
-- System status changes to `approved`
-- The original action can then be executed
-- Logs the completion with approval details
 
-## Database Schema
+After `current_approvals` reaches `required_approvals`:
 
-### admin_approvals
+* The row status changes to `approved`.
+* The original action becomes eligible to execute.
+* The decision is written to `admin_audit_log`.
+
+## Review the database schema
+
+### admin_approvals table
+
 ```sql
 CREATE TABLE admin_approvals (
     id INTEGER PRIMARY KEY,
@@ -91,10 +120,15 @@ CREATE TABLE admin_approvals (
     expires_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
-)
+);
 ```
 
-### admin_approval_comments
+* `expires_at` and `created_at` are Unix timestamps in milliseconds.
+* `approved_by` stores a JSON array of admin IDs that approved.
+* `status` is `pending`, `approved`, `rejected`, `expired`, or `cancelled`.
+
+### admin_approval_comments table
+
 ```sql
 CREATE TABLE admin_approval_comments (
     id INTEGER PRIMARY KEY,
@@ -102,24 +136,19 @@ CREATE TABLE admin_approval_comments (
     admin_id INTEGER NOT NULL,
     comment TEXT NOT NULL,
     created_at INTEGER NOT NULL
-)
+);
 ```
 
-## Approval States
+## Use the approval API
 
-| State | Description |
-|-------|-------------|
-| `pending` | Awaiting approvals |
-| `approved` | Sufficient approvals received |
-| `rejected` | Request rejected by an admin |
-| `expired` | Request timed out |
-| `cancelled` | Request cancelled by requester or super admin |
+All approval endpoints require the `admin.approvals` permission unless noted. Host restrictions from `admin_ui.host_restriction` also apply.
 
-## API Endpoints
+### Create an approval request
 
-### Create Approval Request
-```bash
+```http
 POST /api/v1/admin/approvals/request
+Content-Type: application/json
+
 {
   "action_type": "users.force_purge",
   "target_type": "user",
@@ -128,103 +157,122 @@ POST /api/v1/admin/approvals/request
 }
 ```
 
-### List Approvals (with optional filters)
-```bash
-# All pending approvals
+The system creates this request automatically when you call a sensitive endpoint that requires approval.
+
+### List approvals
+
+```http
 GET /api/v1/admin/approvals?status=pending
-
-# Approvals for a specific action
 GET /api/v1/admin/approvals?action_type=users.force_purge
-
-# Combined filtering
 GET /api/v1/admin/approvals?status=pending&action_type=users.force_purge
 ```
 
-### Get Approval Details
-```bash
+### Get approval details
+
+```http
 GET /api/v1/admin/approvals/{approval_id}
 ```
 
-### Approve Request
-```bash
+### Approve a request
+
+```http
 POST /api/v1/admin/approvals/{approval_id}/approve
 ```
 
-### Reject Request
-```bash
+### Reject a request
+
+```http
 POST /api/v1/admin/approvals/{approval_id}/reject
+Content-Type: application/json
+
 {
   "decision": "reject",
   "reason": "Insufficient evidence for purge"
 }
 ```
 
-### Cancel Request
-```bash
+### Cancel a request
+
+```http
 DELETE /api/v1/admin/approvals/{approval_id}
 ```
 
-Only the original requester or a super admin can cancel a pending request.
+You can cancel a pending request if you are the original requester or a super admin (position 100).
 
-### Add Comment to Approval
-```bash
+### Comment on a request
+
+```http
 POST /api/v1/admin/approvals/{approval_id}/comments
+Content-Type: application/json
+
 {
-  "comment": "I've reviewed the evidence and it looks legitimate"
+  "comment": "I reviewed the evidence and it looks legitimate."
 }
 ```
 
-### Get Approval Comments
-```bash
+Get comments:
+
+```http
 GET /api/v1/admin/approvals/{approval_id}/comments
 ```
 
-## Single Admin Bypass
+## Handle single-admin deployments
 
-When `single_admin_bypass` is enabled and there's only one admin in the system:
-- Approval requirements are automatically bypassed
-- Actions execute immediately
-- Still logged for audit purposes
-- Warning logged indicating bypass occurred
+When `single_admin_bypass` is `true` and only one admin exists in `admin_users`:
 
-This ensures system operability while maintaining security for multi-admin deployments.
+* Approval is bypassed automatically.
+* The action executes immediately.
+* The bypass is logged for audit purposes with a warning.
 
-## Security Considerations
+This keeps single-admin deployments operable. For multi-admin deployments, keep `single_admin_bypass` enabled only if you want the first admin to operate without waiting during initial setup. Disable it once a second admin exists if you require consensus for every sensitive action.
 
-1. **Approval Permissions**: Only admins with `admin.approvals` permission can view/manage approvals
-2. **Self-Approval Prevention**: Admins cannot approve their own requests
-3. **Duplicate Approval Prevention**: Each admin can only approve once per request
-4. **Timeout Handling**: Expired requests are auto-rejected on check
-5. **Audit Trail**: All approval actions are logged to the admin audit log
-6. **Hierarchy Enforcement**: Super admin privileges are required to cancel other admin's requests
+## Understand security enforcement
 
-## Best Practices
+| Rule | How it is enforced |
+|---|---|
+| View and manage approvals | Requires `admin.approvals`. See `src/core/admin/permissions.py:87` in `PERMISSION_SCOPES`. |
+| No self-approval | The requester cannot count toward `current_approvals`. |
+| One approval per admin | `approved_by` tracks distinct admin IDs. |
+| Timeout handling | Requests with `expires_at` in the past transition to `expired` on the next check. |
+| Hierarchy for cancellation | Only the requester or an admin at position 100 can cancel another admin's request. |
+| Audit trail | Every request, approval, rejection, cancellation, and expiration writes to `admin_audit_log`. |
 
-1. **Clear Action Descriptions**: Provide detailed context when requesting approval
-2. **Timely Review**: Respond to approval requests promptly
-3. **Use Comments**: Document approval/rejection reasoning with comments
-4. **Regular Cleanup**: Review and clean up expired/approved requests
-5. **Appropriate Thresholds**: Set approval requirements based on risk level
-6. **Review Expired Requests**: Consider re-submitting if a request times out
+## Follow best practices
 
-## Troubleshooting
+* Provide clear `action_details` so reviewers can decide quickly.
+* Respond to pending requests promptly. The default timeout is 48 hours.
+* Use comments to document the reason for each approval or rejection.
+* Review expired and approved rows regularly and clean them up.
+* Set `approval_required_admins` and `approval_timeout_hours` based on the risk of the action.
 
-### Approval Request Not Created
-- Check if approval workflows are enabled in config
-- Verify the action is in the `require_approval_for` list
-- Ensure admin has `admin.approvals` permission
+## Troubleshoot approval workflows
 
-### Approvals Not Counting
-- Verify the approving admin hasn't already approved this request
-- Ensure request is still in `pending` status
-- Check the admin is not the original requester (self-approval blocked)
+### The approval request is not created
 
-### Action Not Executing After Approval
-- Check that sufficient approvals have been received
-- Verify request status changed to `approved`
-- The original action must be separately triggered after approval
+* Check that `admin_ui.approval_workflows.enabled` is `true`.
+* Verify the action is in `require_approval_for`.
+* Confirm the acting admin has the underlying permission for the action (for example, `users.delete`), and if the caller is checking `admin.approvals` explicitly, verify that as well.
+* Check `single_admin_bypass`: with one admin, requests are intentionally not created.
 
-### Requests Timing Out
-- Review the `approval_timeout_hours` setting (default: 48 hours)
-- Ensure admins are notified of pending requests
-- Consider increasing timeout for complex reviews
+### Approvals are not counting
+
+* Confirm the approving admin is not the original requester.
+* Verify the request is still `pending`.
+* Check that the same admin has not already approved that `approval_id`.
+
+### The action does not execute after approval
+
+* Verify `current_approvals` equals `required_approvals` and `status` is `approved`.
+* Call the original action endpoint again after approval. Approval unblocks the action; it does not execute it automatically.
+
+### Requests expire too quickly
+
+* Increase `approval_timeout_hours`.
+* Check that admins are notified. Configure `admin_ui.notifications.email_on_approval_required` or `admin_ui.notifications.webhook_url`.
+* Review `auto_approve_after_hours` if your deployment uses auto-approval.
+
+## Related documentation
+
+* [RBAC](rbac.md) — How roles and hierarchy control who can approve.
+* [Audit logging](audit-logging.md) — How approval decisions appear in the audit trail.
+* [Configuration overview](../configuration.md) — Where to set `admin_ui.approval_workflows`.

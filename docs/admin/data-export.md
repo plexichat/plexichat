@@ -1,119 +1,98 @@
-# Data Export (DSAR)
+# Data export (DSAR)
 
-Plexichat provides comprehensive Data Subject Access Request (DSAR) functionality, implementing GDPR Article 20 - Right to Portability. This allows users to request a complete export of their personal data.
+Provide users with a machine-readable export of their personal data in response to Data Subject Access Requests (DSARs), per GDPR Article 20 (right to data portability). This guide covers the workflow, configuration, APIs, and security considerations.
 
-## Overview
+## Before you begin
 
-The DSAR system enables users to request and download all their personal data in a machine-readable format. The system supports both JSON and ZIP export formats, with a complete audit trail and admin oversight throughout the process.
+You need:
 
-## Workflow
+* An admin account with `data_export.read` to view requests and `data_export.process` to approve, deny, or generate exports. See `src/core/admin/permissions.py:89`.
+* Access to `dsar` settings in your configuration file.
+
+The data-export admin API is in `src/api/routes/admin/data_export.py`. The full set of valid permission scopes is in `src/core/admin/permissions.py:42`.
+
+## Understand the workflow
 
 ```
-User Request → Admin Review → Harvester Processing → User Download
-     │              │                │                  │
-     ▼              ▼                ▼                  ▼
-  Password       Approve/         Generate         Download
-  verified       Deny              Export            Link
+User submits request → Admin reviews → Harvester processes → User downloads
+       (password)        Approve/Deny      Generate file       Time-limited link
 ```
 
-### Step 1: User Request
-Users submit a data export request via their account settings. The request requires password verification to ensure the user is authenticated and authorized to request the data.
+### 1. User submits a request
 
-### Step 2: Admin Review
-Admins review pending requests in the Admin Panel under Data Export. They can:
-- View request details and history
-- Approve or deny requests (if `require_admin_review` is enabled)
-- Manually trigger export generation
+The user sends a POST to `/api/v1/users/@me/data-export` with their password and optional format. The system verifies the password and enforces rate limiting (one request per 24 hours).
 
-### Step 3: Harvester Processing
-The DSAR Harvester is a background worker that:
-- Processes approved requests in batches
-- Collects all user data from the database
-- Generates export files in the requested format
-- Updates request status and prepares for download
+### 2. Admin reviews the request
 
-### Step 4: User Download
-Once the export is ready, users receive a download link valid for the configured retention period (default: 7 days).
+If `dsar.require_admin_review` is `true` (the default), the request stays in `pending` until an admin approves it. Admins review pending requests in the admin panel or by calling `GET /api/v1/admin/data-export`.
 
-## Configuration
+### 3. Harvester processes the request
 
-DSAR is configured in the `dsar` section of the configuration file:
+The DSAR harvester is a background worker that picks up approved requests in batches, collects the user's data, and writes an export file. It runs on a configurable interval and at startup if `dsar.harvester.boot_check_enabled` is `true`.
+
+### 4. User downloads the export
+
+When the export is ready, the status becomes `ready` and the user can fetch a download link. Links expire after `dsar.retention_days` (default 7 days).
+
+## Configure data export
+
+Configure DSAR under `dsar` in `config.yaml`:
 
 ```yaml
 dsar:
-  # Enable/disable the DSAR system
   enabled: true
-
-  # Require admin review before generating exports
   require_admin_review: true
-
-  # Default export format when not specified
   default_format: "json"
-
-  # Supported export formats
   export_formats:
     - json
     - zip
-
-  # Maximum export size in MB (approximate)
   max_export_size_mb: 500
-
-  # How long download links remain valid (days)
   retention_days: 7
-
-  # How long pending requests survive without action (days)
   pending_expiry_days: 30
-
-  # Audit logging configuration
   audit_log:
     file_path: "~/.plexichat/data/dsar_audit_log.jsonl"
     hash_chain_enabled: true
     halt_on_invalid_audit: true
-
-  # Harvester worker configuration
   harvester:
-    # How often the harvester runs (hours)
     interval_hours: 24
-    # Run harvester check on server startup
     boot_check_enabled: true
-    # Number of requests to process per batch
     batch_size: 20
 ```
 
-### Configuration Options
+### Configuration options
 
 | Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | boolean | `true` | Enable/disable the entire DSAR system |
-| `require_admin_review` | boolean | `true` | Require admin approval before export generation |
-| `default_format` | string | `"json"` | Default export format when user doesn't specify |
-| `export_formats` | array | `["json", "zip"]` | Supported export format options |
-| `max_export_size_mb` | integer | `500` | Approximate maximum export size |
-| `retention_days` | integer | `7` | Days until download links expire |
-| `pending_expiry_days` | integer | `30` | Days until unprocessed requests expire |
-| `harvester.interval_hours` | integer | `24` | Harvester check frequency |
-| `harvester.boot_check_enabled` | boolean | `true` | Run harvester on server startup |
-| `harvester.batch_size` | integer | `20` | Requests per harvester batch |
-| `audit_log.hash_chain_enabled` | boolean | `true` | Hash-chain the DSAR audit log |
-| `audit_log.halt_on_invalid_audit` | boolean | `true` | Halt harvester if chain verification fails |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Enable or disable the entire DSAR system. |
+| `require_admin_review` | boolean | `true` | Require admin approval before the harvester processes a request. If `false`, pending requests are auto-approved. |
+| `default_format` | string | `"json"` | Format to use when the user does not specify one. |
+| `export_formats` | array | `["json", "zip"]` | Allowed export formats. |
+| `max_export_size_mb` | integer | `500` | Approximate maximum size of a generated export. |
+| `retention_days` | integer | `7` | Days a download link remains valid after the export is ready. |
+| `pending_expiry_days` | integer | `30` | Days a pending request survives without action before it expires. |
+| `harvester.interval_hours` | integer | `24` | How often the harvester checks for work, in hours. |
+| `harvester.boot_check_enabled` | boolean | `true` | Run a harvester and audit-log integrity check at server startup. |
+| `harvester.batch_size` | integer | `20` | How many approved requests to process per batch, oldest first. |
+| `audit_log.file_path` | string | `"~/.plexichat/data/dsar_audit_log.jsonl"` | Path to the hash-chained DSAR audit log. |
+| `audit_log.hash_chain_enabled` | boolean | `true` | Include the hash of the previous entry in each audit record. |
+| `audit_log.halt_on_invalid_audit` | boolean | `true` | Halt the harvester at startup if hash-chain verification fails. |
 
-## User-Facing API Endpoints
+## Use the user-facing API
 
-### Request Data Export
-```
+### Request an export
+
+```http
 POST /api/v1/users/@me/data-export
-```
-Submit a new data export request. Requires password verification.
+Content-Type: application/json
 
-**Request Body:**
-```json
 {
   "password": "user_password",
   "format": "json"
 }
 ```
 
-**Response:**
+Response:
+
 ```json
 {
   "success": true,
@@ -121,13 +100,16 @@ Submit a new data export request. Requires password verification.
 }
 ```
 
-### List Export Requests
-```
+The request body requires password re-verification. The optional `format` must be one of `dsar.export_formats`.
+
+### List your export requests
+
+```http
 GET /api/v1/users/@me/data-export
 ```
-Get all data export requests for the current user.
 
-**Response:**
+Response:
+
 ```json
 {
   "requests": [
@@ -145,38 +127,48 @@ Get all data export requests for the current user.
 }
 ```
 
-### Get Request Status
-```
+### Get request status
+
+```http
 GET /api/v1/users/@me/data-export/{request_id}
 ```
-Get the status of a specific export request.
 
-### Download Export
-```
+### Download an export
+
+```http
 GET /api/v1/users/@me/data-export/{request_id}/download
 ```
-Get the download URL for a ready export. Returns 400 if not ready, 410 if expired.
 
-### Cancel Request
-```
+The server returns `400` if the export is not `ready` and `410` if the link has expired.
+
+### Cancel a request
+
+```http
 DELETE /api/v1/users/@me/data-export/{request_id}
 ```
-Cancel a pending or approved request. Cannot cancel if already generating or ready.
 
-## Admin API Endpoints
+You can cancel a request while it is `pending` or `approved`. You cannot cancel it once it is `generating` or `ready`.
 
-### List All Requests
-```
+## Use the admin API
+
+All admin DSAR endpoints are defined in `src/api/routes/admin/data_export.py:6`. Required permissions are `data_export.read` or `data_export.process`.
+
+### List all requests
+
+```http
 GET /api/v1/admin/data-export?status=pending&limit=50&offset=0
 ```
-List all DSAR requests with optional filtering. Requires `data_export.read` permission.
 
-**Query Parameters:**
-- `status`: Filter by status (`pending`, `approved`, `generating`, `ready`, `failed`, `expired`, `cancelled`)
-- `limit`: Maximum number of results (default: 50)
-- `offset`: Pagination offset
+Query parameters:
 
-**Response:**
+| Parameter | Type | Description |
+|---|---|---|
+| `status` | string | Filter by `pending`, `approved`, `generating`, `ready`, `failed`, `expired`, or `cancelled`. |
+| `limit` | integer | Maximum results to return. Default `50`. |
+| `offset` | integer | Pagination offset. Default `0`. |
+
+Response:
+
 ```json
 {
   "items": [
@@ -188,163 +180,126 @@ List all DSAR requests with optional filtering. Requires `data_export.read` perm
       "completed_at": null,
       "expires_at": null,
       "format": "json",
-      "file_size_bytes": null,
-      "checksum": null
+      "file_size_bytes": null
     }
   ],
-  "has_more": false,
-  "total": null
+  "has_more": false
 }
 ```
 
-### Get Request Details
-```
+Note: Rows from `dsar_requests` are never serialized verbatim. Columns such as `storage_path` are excluded by `REQUEST_RESPONSE_COLUMNS` in `src/api/routes/admin/data_export.py:38` to avoid leaking filesystem layout.
+
+### Get request details
+
+```http
 GET /api/v1/admin/data-export/{request_id}
 ```
-View detailed information about a specific request. Requires `data_export.read` permission.
 
-### Approve Request
-```
+Requires `data_export.read`.
+
+### Approve a request
+
+```http
 POST /api/v1/admin/data-export/{request_id}/approve
 ```
-Approve a pending DSAR request, allowing the harvester to process it. Requires `data_export.process` permission.
 
-### Deny Request
-```
+Requires `data_export.process`.
+
+### Deny a request
+
+```http
 POST /api/v1/admin/data-export/{request_id}/deny
-```
-Deny a pending request. Requires `data_export.process` permission.
+Content-Type: application/json
 
-**Request Body:**
-```json
 {
   "reason": "Reason for denial"
 }
 ```
 
-### Generate Export
-```
+Requires `data_export.process`. `reason` must be 1 to 500 characters.
+
+### Generate an export manually
+
+```http
 POST /api/v1/admin/data-export/{request_id}/generate
 ```
-Manually trigger export generation for an approved request. Useful if the harvester is disabled or for immediate processing. Requires `data_export.process` permission.
 
-## Request Statuses
+Requires `data_export.process`. Use this when the harvester is disabled or you need immediate processing. It runs `generate_manual` in a worker thread. See `src/api/routes/admin/data_export.py:177`.
+
+## Understand request statuses
 
 | Status | Description |
-|--------|-------------|
-| `pending` | Awaiting admin approval (if required) |
-| `approved` | Approved, awaiting harvester processing |
-| `generating` | Export file being generated |
-| `ready` | Export available for download |
-| `failed` | Export generation failed |
-| `expired` | Download link has expired |
-| `cancelled` | Request cancelled by user |
+|---|---|
+| `pending` | Awaiting admin approval, if `require_admin_review` is `true`. |
+| `approved` | Approved and waiting for the harvester or a manual generate call. |
+| `generating` | The harvester is building the export file. |
+| `ready` | The file is ready for download until `expires_at`. |
+| `failed` | Generation failed. Check `error_message`. |
+| `expired` | The download window elapsed. |
+| `cancelled` | The user cancelled the request. |
 
-## Harvester Worker
+## Understand the harvester worker
 
-The DSAR Harvester is a background worker analogous to the Account Reaper but for data exports instead of deletions.
+The harvester is analogous to the account reaper but for exports.
 
-### Processing Logic
+1. **Startup check.** If `harvester.boot_check_enabled` is `true`, the worker verifies the DSAR audit log hash chain at startup. If verification fails and `halt_on_invalid_audit` is `true`, the worker halts.
+2. **Batch selection.** The worker selects the oldest `approved` rows first, up to `harvester.batch_size`. If `require_admin_review` is `false`, it auto-approves `pending` rows.
+3. **Data collection.** For each request, the worker sets `status = 'generating'`, collects data through the DSAR collector, writes the file (JSON or ZIP), stores `file_size_bytes` and `checksum`, and sets `status = 'ready'` with `expires_at = now + retention_days`.
+4. **Cleanup.** Rows that are `ready` but past `expires_at` transition to `expired`.
+5. **Error handling.** A failure sets `status = 'failed'` with an `error_message`. The worker continues to the next request.
 
-1. **Startup Check**: On server startup (if `boot_check_enabled`), the harvester verifies the audit log integrity and halts if the chain is invalid (configurable via `halt_on_invalid_audit`).
+## Follow security best practices
 
-2. **Batch Processing**: The harvester processes requests in batches of `batch_size`, selecting the oldest approved requests first.
+### Authentication and authorization
 
-3. **Admin Review Mode**: If `require_admin_review` is true, only `approved` requests are processed. If false, pending requests are auto-approved.
+* Require password re-verification for every user request. This prevents extraction from a briefly unattended session.
+* Enforce the built-in rate limit of one request per 24 hours per user.
+* Grant `data_export.read` and `data_export.process` only to admins who need them.
 
-4. **Data Collection**: For each request, the harvester:
-   - Updates status to `generating`
-   - Collects all user data via the DataCollector
-   - Generates export file (JSON or ZIP)
-   - Updates status to `ready` with expiration time
+### Download link security
 
-5. **Cleanup**: Expired requests (status `ready` with expired `expires_at`) are marked as `expired`.
+* Links expire after `retention_days`. Default is 7 days.
+* Export file paths are stored as plaintext in the `storage_path` column and are not encrypted at rest. Access control on the database and download endpoints protects them. At-rest encryption for export files is available only if `media.encrypt_at_rest` wrapping is enabled at the storage layer.
+* Each export includes a SHA-256 checksum for integrity verification.
 
-### Error Handling
+### Audit logging
 
-Failed requests are marked with status `failed` and the error message stored. The harvester continues processing remaining requests even if one fails.
+The DSAR system maintains a hash-chained audit log at `dsar.audit_log.file_path`:
 
-## Security Considerations
+* Each entry includes the hash of the previous entry, so tampering is detectable.
+* Logged events include `REQUESTED`, `APPROVED`, `DENIED`, `GENERATING`, `READY`, `FAILED`, `DOWNLOADED`, and `EXPIRED`.
+* There is no automated S3 backup of this file. Back up `~/.plexichat/data/dsar_audit_log.jsonl` yourself if you need redundancy.
+* If hash-chain verification fails at startup and `halt_on_invalid_audit` is `true`, the harvester does not start. Investigate before you set `halt_on_invalid_audit` to `false`.
 
-### Authentication and Authorization
+## Troubleshoot data export
 
-1. **Password Re-verification**: Users must provide their password when requesting a data export. This prevents unauthorized data extraction if someone gains temporary access to an authenticated session.
+### The user cannot submit a request
 
-2. **Rate Limiting**: Users are limited to 1 request per 24 hours to prevent abuse.
+* Verify `dsar.enabled` is `true`.
+* Check whether the user submitted a request within the last 24 hours.
+* Confirm the password is correct and password verification is not failing due to account lock.
 
-3. **Admin Permissions**: Admin operations require specific permissions:
-   - `data_export.read`: View requests and details
-   - `data_export.process`: Approve, deny, generate exports
+### Exports are not processing
 
-### Download Link Security
+* Check server logs to verify the harvester is running.
+* Verify `dsar.harvester.interval_hours` is set as expected.
+* If `require_admin_review` is `true`, verify the request is `approved`. Pending requests do not run.
+* Look for `failed` requests in the admin panel and inspect `error_message`.
 
-1. **Time-Limited Links**: Download links expire after `retention_days` (default: 7 days).
+### The download link expired
 
-2. **File Path Storage**: Export file paths are stored as PLAINTEXT in the database (`storage_path` column). They are never encrypted; access to the database and download endpoints is what protects them. At-rest encryption of export files is available only if the optional `media.encrypt_at_rest` storage wrapper is enabled.
+* Increase `dsar.retention_days` if users need a longer window.
+* Call `POST /api/v1/admin/data-export/{request_id}/generate` to build a new export after you approve the request again, if applicable.
 
-3. **Checksum Verification**: Each export includes a SHA-256 checksum for integrity verification.
+### The harvester halted on audit error
 
-### Audit Logging
+* Do not set `halt_on_invalid_audit` to `false` until you investigate.
+* Check the integrity of `dsar.audit_log.file_path`.
+* Restore your own backup of the audit log if you keep one. No automated backup exists.
+* After you resolve the issue, restart the server to let the harvester run again.
 
-The DSAR system maintains a hash-chained audit log for compliance:
+## Related documentation
 
-1. **Hash Chain**: Each audit entry includes the hash of the previous entry, making tampering detectable.
-
-2. **Logged Events**: All state transitions are logged:
-   - `REQUESTED`: User submitted a request
-   - `APPROVED`: Admin approved the request
-   - `DENIED`: Admin denied the request
-   - `GENERATING`: Harvester started processing
-   - `READY`: Export file generated
-   - `FAILED`: Generation failed
-   - `DOWNLOADED`: User downloaded the export
-   - `EXPIRED`: Download link expired
-
-3. **No Automated Backup**: There is currently NO automated S3 backup of audit logs. Operators must arrange their own backup of `~/.plexichat/data/dsar_audit_log.jsonl` if redundancy is required.
-
-4. **Integrity Halt**: If hash chain verification fails at startup and `halt_on_invalid_audit` is true, the harvester will not start.
-
-### Admin Oversight
-
-1. **Manual Generation**: Admins can manually trigger export generation if the automated harvester is delayed or disabled.
-
-2. **Request Denial**: Admins can deny requests with a reason, providing accountability.
-
-3. **Complete Visibility**: Admins can view all requests across all users for compliance reporting.
-
-## Best Practices
-
-1. **Enable Admin Review**: Keep `require_admin_review` enabled for production deployments to maintain oversight.
-
-2. **Monitor Pending Queue**: Regularly check for pending requests that may be approaching `pending_expiry_days`.
-
-3. **Review Audit Logs**: Periodically review the DSAR audit log for any anomalies.
-
-4. **Set Appropriate Retention**: Balance user convenience with storage costs when setting `retention_days`.
-
-5. **Audit Log Backups**: No `backup_to_s3` feature exists; back up the audit log file yourself (see "No Automated Backup" above).
-
-6. **Configure Alerting**: Set up monitoring for the harvester to detect processing failures or shutdowns.
-
-## Troubleshooting
-
-### User Cannot Request Export
-- Verify DSAR is enabled: `dsar.enabled: true`
-- Check rate limiting: User may have made a request within 24 hours
-- Confirm password verification is working
-
-### Exports Not Processing
-- Verify harvester is running in server logs
-- Check `dsar.harvester.interval_hours` configuration
-- If `require_admin_review` is true, ensure requests are being approved
-- Check for failed requests in the admin panel
-
-### Download Link Expired
-- Increase `dsar.retention_days` for longer download windows
-- Admin can use Generate endpoint to create a new export
-
-### Harvester Halted on Audit Error
-- This is a critical security feature preventing potential data tampering
-- Investigate the audit log integrity issue
-- Restore your own backup of the audit log file if you keep one (no automated S3 backup exists)
-- After resolution, set `halt_on_invalid_audit: false` to restart (only after thorough investigation)
+* [RBAC](rbac.md) — Permissions `data_export.read` and `data_export.process`.
+* [Audit logging](audit-logging.md) — General admin audit trail in `admin_audit_log`.
+* [Configuration overview](../configuration.md) — Where to set the `dsar` block.

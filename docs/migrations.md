@@ -1,87 +1,152 @@
-# Migration Management CLI
+# Migration management
 
-The Plexichat server includes a built-in migration management tool accessible via the main application entry point.
+Plexichat tracks database schema changes with a built-in migration system. The system applies migrations in order, records their status, and supports dry runs, validation, and guarded rollbacks.
 
-## Running Migrations
+## Before you begin
 
-To apply all pending database migrations, run the following command from the project root:
+You need a running database and a valid configuration file. Migrations run automatically on startup when `database.migrations.auto_migrate` is `true` (the default). For manual control, disable auto-migration and run the CLI.
+
+## Run migrations
+
+To apply all pending migrations, run the following command from the project root:
 
 ```bash
 python main.py migrate-db
 ```
 
-This command will:
-1. Detect your configuration.
-2. Connect to the database.
-3. Display the current migration status (number of applied and pending migrations).
-4. Run all pending migrations.
-5. Exit with a status code indicating success (0) or failure (1).
+This command does the following:
 
-## Idempotency and Safety
+1.  Loads configuration from `config/config.yaml` (or the path you pass with `--config`).
+2.  Connects to the database.
+3.  Prints the current status (number of applied and pending migrations).
+4.  Applies all pending migrations in version order.
+5.  Exits with status `0` on success or `1` on failure.
 
-The migration system is designed to be idempotent:
-- All migrations include checks (`IF EXISTS` or column existence verification) before altering or dropping columns.
-- The `run_migrations` function handles transaction management automatically. If a migration fails, it will roll back and stop further execution.
-- Migrations track their application state in a dedicated `schema_migrations` table.
-- Duplicate migration attempts are safely ignored (already-applied migrations are skipped).
-
-## Irreversible Migrations
-
-Some migrations are marked as **irreversible** and cannot be rolled back via the `down()` function:
-
-- **Migration 029** (Drop unencrypted columns): Drops original `description` and `topic` columns after encrypted data migration is verified.
-- **Migration 027** (Migrate encrypted data): Transforms data between columns -- once run, original column data is no longer source of truth.
-
-**To rollback an irreversible migration:**
-1. Restore the database from a backup taken *before* the migration was applied
-   (use `docker exec plexichat-backup-1 /scripts/backup.sh restore-db <snapshot>`
-   if using the restic backup container).
-2. Manually remove the migration record from the `schema_migrations` table.
-3. Re-apply any dependent migrations that reference the restored schema.
-
-**Emergency override (not recommended):**
-If a migration must be skipped (e.g., it blocks startup due to a schema mismatch), you can manually delete its record from `schema_migrations` and the system will skip it. However, this may cause data inconsistencies -- always prefer a proper backup restore.
-
-## Dry-Run Mode
-
-The migration system supports a dry-run mode for validation before making changes:
+Alternatively, you can use the module CLI:
 
 ```bash
-# Check migration status only (no changes applied)
+python -m src.core.migrations.cli apply_migrations
+python -m src.core.migrations.cli list_migrations
+python -m src.core.migrations.cli validate_migrations
+```
+
+## How tracking works
+
+The system records migration state in the database, not in the filesystem.
+
+| Table | Purpose |
+|---|---|
+| `migrations_history` | One row per migration version with status (`completed`, `running`, `failed`, `rolled_back`), checksum, timing, and metadata. |
+| `migration_logs` | Per-migration log entries (`level`, `message`, `timestamp`). |
+| `migration_uptime` | Uptime sessions used to enforce the irreversible-migration delay. A new session starts once per process per database. |
+| `emergency_override_tokens` | Single-use tokens that bypass the irreversible delay. Tokens are stored as SHA-256 hashes. |
+| `migration_lock` | Advisory lock that prevents concurrent migration runs. |
+
+The authoritative migration files live in `src/core/migrations/migrations/`:
+
+*   `000_initial_schema.py` — Creates all tables by calling each domain `create_tables(db)` function. See [Migration reference](migration-reference.md).
+*   `001_selftest_noop.py` — No-op migration that the self-test suite uses to verify apply and rollback.
+
+Duplicate runs are safe. The manager skips already-applied versions and resumes from the first pending migration.
+
+## Idempotency and safety
+
+*   Schema creators use `CREATE TABLE IF NOT EXISTS` and the migration runner validates checksums. If a file changes after it was recorded, the run is blocked unless you consume a valid emergency override token (`EMERGENCY_MIGRATION_OVERRIDE`).
+*   `MigrationManager.apply_all_pending()` acquires the migration lock before running. A second concurrent run fails with a lock error.
+*   If a migration fails, the system records `failed` status, invalidates the cached status, and stops. Fix the cause and re-run `python main.py migrate-db` to resume.
+*   `down()` rollbacks are only available for migrations that implement `down(db)`. Migration `000` rollback is destructive and refused unless `MIGRATIONS_ALLOW_DESTRUCTIVE_ROLLBACK=1` is set.
+
+## Irreversible migrations
+
+A migration can declare itself irreversible in its docstring metadata:
+
+```python
+"""
+MIGRATION_METADATA:
+{"irreversible": true, "depends_on": ["000"]}
+"""
+```
+
+For irreversible migrations, `MigrationTracker.can_run_irreversible_migration()` enforces an uptime gate:
+
+*   If the migration declares `depends_on`, uptime is measured since the last dependency was applied.
+*   If it declares no dependencies, uptime is measured since the most recently completed migration.
+*   If there is no completed migration, the run is refused.
+
+The required delay comes from `database.migrations.irreversible_migration_delay_days` (default `7` days). The tracker sums `migration_uptime.uptime_seconds` for sessions that started at or after the reference timestamp and adds the live elapsed time of the current session.
+
+To bypass the delay in an emergency, generate a single-use token from the admin API (`POST /api/v1/admin/migrations/emergency-override`) and set it as `EMERGENCY_MIGRATION_OVERRIDE` in the environment. The token is consumed on first successful validation and cannot be replayed.
+
+To recover from an irreversible migration that should not have run:
+
+1.  Restore the database from a backup taken before the migration.
+2.  Verify the restored state with `python -m src.core.migrations.cli validate_migrations`.
+3.  Re-apply any expected pending migrations.
+
+Do not manually delete rows from `migrations_history` to skip a migration. This causes checksum and ordering errors.
+
+## Dry-run mode
+
+Validate migrations without changing the database or the tracking tables:
+
+```bash
 python main.py migrate-db --dry-run
 ```
 
 In dry-run mode:
-- The system displays which migrations would be applied.
-- No schema or data changes are executed.
-- Returns exit code 0 if all migrations are up-to-date, 1 if migrations are pending.
 
-## Uptime Delay Configuration
+*   The system lists which migrations would be applied.
+*   No schema changes are committed and no tracker rows are written.
+*   The process exits with `0` on success.
 
-For high-risk migrations (like encryption migrations), you can configure a minimum uptime delay to ensure the server has been running long enough before applying changes:
+Use `--dry-run` in CI and before production deploys.
+
+## Configuration
+
+Configure migrations under `database.migrations` in `config.yaml`:
 
 ```yaml
-migrations:
-  minimum_uptime_hours: 24  # Wait 24 hours before applying high-risk migrations
+database:
+  migrations:
+    auto_migrate: true
+    migration_dir: "~/.plexichat/migrations"
+    irreversible_migration_delay_days: 7
 ```
 
-This prevents automatic application of destructive changes on a freshly restarted server where the previous stable version hasn't been verified.
+| Field | Default | Description |
+|---|---|---|
+| `auto_migrate` | `true` | Apply pending migrations on startup. Set to `false` for blue-green deploys where you run migrations manually. |
+| `migration_dir` | `~/.plexichat/migrations` | Directory that contains migration files. The manager creates it if it does not exist. |
+| `irreversible_migration_delay_days` | `7` | Required uptime before an irreversible migration can run. The admin API converts this to hours (`days * 24`). |
+
+Do not use `migrations.minimum_uptime_hours`. The correct key is `database.migrations.irreversible_migration_delay_days`.
+
+## Check status and logs
+
+*   CLI: `python -m src.core.migrations.cli list_migrations` and `validate_migrations`.
+*   Admin API: `GET /api/v1/admin/migrations` and `GET /api/v1/admin/migrations/status` (requires `admin.migrations.execute` and host restriction).
+*   Python: `from src.core.migrations import get_status; get_status(db)`.
+
+Each migration's logs are available through `MigrationTracker.get_migration_logs(version)` and the admin detail endpoint `GET /api/v1/admin/migrations/{version}`.
 
 ## Troubleshooting
 
-If you encounter issues during migration:
-- **Check the logs**: Detailed output is available in the `logs/` directory.
-- **Resume after failure**: Run `python main.py migrate-db` again -- already-applied migrations are skipped, and pending migrations resume from where they left off.
-- **Missing columns/Indexes**: If a migration fails because a column or index already exists (or doesn't exist), the migration scripts use `IF EXISTS` / `IF NOT EXISTS` clauses where possible. If you encounter an unhandled case, check whether the migration was partially applied.
-- **Manual intervention**: For SQLite databases, column drops require table recreation. If a migration fails mid-recreation, you may need to manually recover the `_new` table or restore from backup.
-- **PostgreSQL specifics**: Column drops use `ALTER TABLE ... DROP COLUMN IF EXISTS`. Index recreation is automatic (indexes are not dropped by column drops).
+*   **Logs** — Check `logs/` and the `migration_logs` table. The CLI also prints a summary with `applied_count` and `failed_count`.
+*   **Lock errors** — `Could not acquire migration lock` means another migration is running. Wait for it to finish or clear a stale lock.
+*   **Checksum mismatch** — The file was modified after it was recorded. Restore the original file or consume a valid emergency override token. See `src/core/migrations/manager.py:539`.
+*   **SQLite column drops** — Handled with table recreation in the migration. If a run fails mid-recreation, restore from backup.
+*   **PostgreSQL column drops** — Use `ALTER TABLE ... DROP COLUMN IF EXISTS`. Indexes are recreated automatically on SQLite only where needed.
+*   **Status looks stale** — The manager caches `get_migration_status()` for 15 seconds with a per-database key. The cache is invalidated after apply or rollback. See `src/core/migrations/manager.py:435`.
 
-## Best Practices
+## Best practices
 
-1. **Always backup before running migrations** -- especially for irreversible migrations.
-   Run `docker exec plexichat-backup-1 /scripts/backup.sh run` to create a restic
-   snapshot immediately before migrating.
-2. **Test migrations in a staging environment first** before applying to production.
-3. **Run migrations during maintenance windows** for large or high-risk migrations.
-4. **Monitor logs** after migration to ensure data integrity.
-5. **Do not skip migrations** unless absolutely necessary and you understand the schema implications.
+*   Back up the database before running migrations, especially before any irreversible migration. For example, `docker exec plexichat-backup-1 /scripts/backup.sh run`.
+*   Test migrations in a staging environment that mirrors production.
+*   Run migrations during a maintenance window for high-risk changes.
+*   Monitor logs after migration and run `validate_migrations` to confirm checksums.
+
+## Related documentation
+
+*   [Migration reference](migration-reference.md) — Authoritative list of migrations and schema modules.
+*   [Database configuration](deployment/configuration/config-database.md) — Connection pool and monitoring.
+*   [Admin migrations API](api/templates/admin/migrations.html) — UI for listing and running migrations.

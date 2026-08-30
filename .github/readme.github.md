@@ -1,15 +1,17 @@
-# GitHub Actions — Plexichat Mirror & PR Relay
+# GitHub workflows for the Plexichat mirror
 
-This directory contains the GitHub Actions workflows that power the Plexichat
-GitHub mirror at `github.com/plexichat/plexichat`. The mirror is **read-only** —
-all real work happens on `gitlab.plexichat.com`.
+This directory contains the GitHub Actions workflows that power the read-only mirror at `github.com/plexichat/plexichat`. The source of truth is `gitlab.plexichat.com`.
 
-## Architecture Overview
+## Before you begin
+
+You need maintainer access to configure secrets and environments. Contributors do not need extra setup to open pull requests.
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     github.com/plexichat/plexichat               │
-│                         (Read-only Mirror)                      │
+│                         (read-only mirror)                      │
 │                                                                 │
 │  Contributors open PRs against `dev` ──────────────┐            │
 │                                                     ▼            │
@@ -31,111 +33,87 @@ all real work happens on `gitlab.plexichat.com`.
 
 ## Workflows
 
-### `pr-checks.yml` — CI Checks
+### `pr-checks.yml` — CI checks
 
-Mirrors the GitLab CI pipelines for both server and client.
+This workflow mirrors the GitLab CI pipelines for server and client. It runs on `pull_request_target` against `dev`.
 
-| Job | What it runs | Mirror of |
+| Job | Command | GitLab counterpart |
 |---|---|---|
-| `server-lint` | pre-commit (ruff, pyright, bandit, detect-secrets) | GitLab `lint:pre-commit` |
-| `server-security` | pip-audit + safety (dependency scanning) | GitLab `security:dependency_scanning` |
-| `server-test` | `python main.py self-test` | GitLab `test:self_test` |
-| `client-lint` | pre-commit (eslint, htmlhint, stylelint, vite-build) | GitLab `lint:pre-commit` |
-| `client-security` | npm audit | GitLab `security:npm_audit` |
-| `client-build` | Vite production build | GitLab `build:vite` |
+| `server-lint` | `pre-commit` with `ruff`, `pyright`, `bandit`, `detect-secrets` | `lint:pre-commit` |
+| `server-security` | `pip-audit` and `safety` | `security:dependency_scanning` |
+| `server-test` | `python main.py self-test` | `test:self_test` |
+| `client-lint` | `pre-commit` with `eslint`, `htmlhint`, `stylelint`, `vite build` | `lint:pre-commit` |
+| `client-security` | `npm audit` | `security:npm_audit` |
+| `client-build` | Vite production build | `build:vite` |
 
-Triggers: `pull_request_target` on PRs against `dev`.
+### `relay-pr.yml` — Relay a pull request to GitLab
 
-### `relay-pr.yml` — PR Relay to GitLab
+This workflow creates a GitLab merge request from a GitHub pull request. It runs only after `pr-checks.yml` succeeds.
 
-Relays a fork PR from GitHub to GitLab as a Merge Request.
+1. Gather metadata from the GitHub API (no secrets).
+2. Push to GitLab and create the merge request (requires `gitlab-relay` environment approval for first-time contributors).
+3. Report the result as a comment on the GitHub pull request.
 
-**Flow:**
-1. `gather-metadata` — captures PR metadata via GitHub API (no secrets)
-2. `relay-to-gitlab` — gated by `gitlab-relay` environment (approval required for first-timers)
-3. `report-status` — comments on the GitHub PR with success/failure
+Trigger: `workflow_run` on `PR Checks` completion.
 
-Triggers: `workflow_run` on `PR Checks` completion (only if CI passed).
+### `mirror-sync.yml` — Sync GitLab to GitHub
 
-### `mirror-sync.yml` — Mirror Sync
+This workflow keeps the mirror up to date. It fetches `dev` and `master` plus tags from GitLab and force-pushes to GitHub.
 
-Keeps the GitHub mirror in sync with GitLab.
+Triggers: hourly cron and manual dispatch.
 
-- Fetches `dev` and `master` from GitLab
-- Force-pushes to GitHub (mirror is read-only on GitHub)
-- Syncs all version tags
+## Set up the mirror
 
-Triggers: Every hour (cron) + manual dispatch.
+Complete these steps in order.
 
-## Setup Instructions
+### 1. Add GitHub secrets
 
-### 1. GitHub Secrets
-
-Add these in **GitHub → Settings → Secrets and variables → Actions**:
+Go to **GitHub → Settings → Secrets and variables → Actions** and add:
 
 | Secret | Scope | Used by |
 |---|---|---|
-| `GITLAB_TOKEN` | `write_repository` (push to `contrib/*`) + `api` (create MR) | `relay-pr.yml` |
+| `GITLAB_TOKEN` | `write_repository` (push to `contrib/*`) and `api` (create MR) | `relay-pr.yml` |
 | `GITLAB_MIRROR_TOKEN` | `read_repository` only | `mirror-sync.yml` |
-| `GITLAB_PROJECT_ID` | N/A (numeric project ID or `group%2Fproject`) | `relay-pr.yml` |
+| `GITLAB_PROJECT_ID` | Numeric ID or `group%2Fproject` | `relay-pr.yml` |
 
-### 2. GitHub Environment
+### 2. Create the `gitlab-relay` environment
 
-Create an environment in **GitHub → Settings → Environments**:
+1. Go to **GitHub → Settings → Environments**.
+2. Create an environment named `gitlab-relay`.
+3. Add deployment protection rules and required reviewers so that first-time contributors need maintainer approval before the relay job runs.
 
-- **Name:** `gitlab-relay`
-- **Deployment protection rules:** Require approval for first-time contributors
-- **Required reviewers:** Add maintainers
-
-This gates the `relay-pr.yml`'s `relay-to-gitlab` job — first-time contributors
-can't trigger a GitLab MR without a maintainer approving the deploy.
-
-### 3. GitLab Access Tokens
+### 3. Create GitLab access tokens
 
 Create these in **GitLab → Settings → Access Tokens**:
 
-#### `GITLAB_TOKEN` (least-privilege: push contrib/*, create MR)
+**`GITLAB_TOKEN` (for `relay-pr.yml`):**
 
 ```
 Name: github-relay
 Scopes: api, write_repository
-Roles: Developer (or custom with limited branch protection)
+Role: Developer (or a custom role limited to contrib/*)
 ```
 
-A custom role that can:
-- Push to branches matching `contrib/*`
-- Create merge requests targeting `dev`
-- CANNOT push to `dev`, `master`, or protected branches
+This token can push to `contrib/*` and create merge requests against `dev`. It cannot push to `dev`, `master`, or other protected branches.
 
-#### `GITLAB_MIRROR_TOKEN` (read-only)
+**`GITLAB_MIRROR_TOKEN` (for `mirror-sync.yml`):**
 
 ```
 Name: github-mirror
 Scopes: read_repository
 ```
 
-### 4. Branch Protection (GitHub)
+### 4. Configure branch protection
 
-In **GitHub → Settings → Branches**:
+1. Go to **GitHub → Settings → Branches**.
+2. Protect `dev` and `master`.
+3. Require the `PR Checks` status checks.
+4. Block direct pushes to `dev` and `master`.
 
-- Protect `dev` and `master`
-- Require status checks to pass before merging: `PR Checks`
-- Do NOT allow direct pushes to `dev` or `master`
+## Security considerations
 
-## Security
-
-1. **No untrusted code in relay workflow.** `relay-pr.yml` never checks out or
-   executes fork code — it only reads structured GitHub API data.
-
-2. **Two separate GitLab tokens** enforce least-privilege: one for PR relay,
-   one for mirror sync (read-only). Tags are managed exclusively on GitLab.
-
-3. **Environment gating.** First-time contributors' PRs are paused until a
-   maintainer approves the `gitlab-relay` deployment.
-
-4. **JSON injection prevention.** The GitLab MR payload is built with
-   `jq --arg`, not string interpolation. PR bodies are passed via artifacts,
-   not through `$GITHUB_OUTPUT`.
-
-5. **See `pr-checks.yml` header** for the security tradeoff discussion around
-   running CI on fork code with `pull_request_target`.
+* The relay workflow never checks out or executes fork code. It reads only structured GitHub API data.
+* Two separate tokens enforce least privilege: a read-only token for mirroring and a scoped token for relaying.
+* The `gitlab-relay` environment gates first-time contributors behind maintainer approval.
+* JSON payloads for the GitLab API use `jq --arg` instead of string interpolation, and pull request bodies travel via artifacts rather than `GITHUB_OUTPUT`.
+* `pr-checks.yml` uses `pull_request_target`. Review its header comment for the trade-off discussion before you change trigger types.

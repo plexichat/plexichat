@@ -1,25 +1,41 @@
-# Bot Development Guide
+# Bot development
 
-This guide covers creating, hosting, and deploying Plexichat bots.
+Build automated accounts that interact with Plexichat through the REST API and the WebSocket gateway.
 
 ## Overview
 
-A Plexichat bot is an automated user account that can interact with servers and channels via the API and WebSocket gateway. Bots can:
-- Send and receive messages
-- Manage servers and channels
-- Respond to commands and interactions
-- Automate moderation tasks
-- Integrate with external services
+A bot is an automated user account that can:
 
-## Creating a Bot Application
+- Send and receive messages.
+- Manage servers and channels.
+- Handle interactions and commands.
+- Automate moderation tasks.
+- Integrate with external services.
 
-### Step 1: Create Application
+The gateway is at `/gateway` (`src/api/websocket/gateway.py:261`). In development, connect to `ws://localhost:8000/gateway`. In production, use `wss://your-host/gateway`.
+
+All REST endpoints in this guide are prefixed with `/api/v1` unless noted. The API prefix defaults to `/api/v1` (`src/config_defaults.py:131`).
+
+Errors use the standard envelope (`src/api/schemas/common.py:58`):
+
+```json
+{
+  "error": {
+    "code": 400,
+    "message": "Bot already exists for this application"
+  }
+}
+```
+
+## Create a bot application
+
+### Step 1: Create the application
 
 Create an application to represent your bot:
 
 ```http
 POST /api/v1/applications
-Authorization: Bearer your_user_token
+Authorization: Bearer YOUR_USER_TOKEN
 Content-Type: application/json
 
 {
@@ -30,7 +46,8 @@ Content-Type: application/json
 }
 ```
 
-Response (`ApplicationResponse`):
+Response `200 OK` (`ApplicationResponse`):
+
 ```json
 {
   "id": "123456789012345678",
@@ -48,29 +65,24 @@ Response (`ApplicationResponse`):
 ```
 
 Notes:
-- **No `client_secret` is returned** by create. Secrets are managed separately via
-  `POST /api/v1/applications/{application_id}/regenerate-secret` (returns `{"secret": ...}`).
-- `redirect_uris` are request-only fields on create/update; they are **not** echoed back
-  in the response.
-- **No bot account is created automatically** — `bot_id` starts as `null` and `bot` is
-  `false` until you explicitly create the bot in the next step.
 
-### Step 2: Create Bot Account
+- No `client_secret` is returned on create. Manage secrets with `POST /api/v1/applications/{application_id}/regenerate-secret`, which returns `{"secret": "..."}`.
+- `redirect_uris` are request-only fields on create and update; the server does not echo them in the response.
+- No bot account is created automatically. `bot_id` is `null` and `bot` is `false` until you create the bot in the next step.
 
-A bot account must be created explicitly. On success the application's `bot_id`
-(the bot's user ID) is set. Creating a second bot for the same application fails
-with HTTP 400 ("A bot already exists for this application").
+### Step 2: Create the bot account
 
-### Step 3: Generate Bot Token
+Create the bot user for the application. On success, `bot_id` is set to the bot's user ID. Creating a second bot for the same application returns `400` with `{"error":{"code":400,"message":"A bot already exists for this application"}}`.
 
-Generate a token for the bot to authenticate:
+### Step 3: Generate a bot token
 
 ```http
 POST /api/v1/applications/{application_id}/bot
-Authorization: Bearer your_user_token
+Authorization: Bearer YOUR_USER_TOKEN
 ```
 
 Response:
+
 ```json
 {
   "token": "bot_token_here",
@@ -78,42 +90,38 @@ Response:
 }
 ```
 
-**Important:** Store the bot token securely. It grants full access to the bot account.
+Store the token securely. It grants full access to the bot account.
 
-## Bot Authentication
+## Authenticate a bot
 
-Bots authenticate using the bot token:
+Send the bot token with the `Bot` prefix:
 
 ```http
 Authorization: Bot bot_token_here
 ```
 
-Note the "Bot " prefix before the token.
+User sessions use `Bearer <token>`; bots use `Bot <token>`.
 
-## WebSocket vs Webhooks
+## Choose a delivery method
 
-Bots can receive events via WebSocket gateway or webhooks.
+### Use the WebSocket gateway when you need real-time events
 
-### WebSocket Gateway
+Choose the gateway when you need low latency, full event access, or the ability to send messages at any time.
 
-**Use WebSocket when:**
-- You need real-time event delivery
-- You need to send messages immediately
-- You need low latency
-- You have a persistent connection
+**Pros**
 
-**Pros:**
-- Real-time events
-- Low latency
-- Full event access
-- Can send messages anytime
+- Real-time dispatch of all subscribed events.
+- Low latency.
+- Bidirectional communication.
 
-**Cons:**
-- Requires persistent connection
-- More complex implementation
-- Higher resource usage
+**Cons**
 
-**Example:**
+- Requires a persistent connection.
+- More complex state management.
+- Higher resource usage.
+
+**Example**
+
 ```javascript
 const ws = new WebSocket('ws://localhost:8000/gateway');
 
@@ -127,41 +135,21 @@ ws.onopen = () => {
         browser: 'my-bot',
         device: 'server'
       },
-      intents: 513  // GUILDS | GUILD_MESSAGES
+      intents: 3178237 // See Intents section; includes GUILDS | GUILD_MESSAGES | ARTIFACTS | SUMS
     }
   }));
 };
 ```
 
-### Webhooks
+The gateway path is `/gateway`, not `/ws` (`src/api/websocket/gateway.py:261`). The dev and preview proxies forward `/api` and `/gateway` to the API server.
 
-**Use Webhooks when:**
-- You only need specific events
-- You want serverless deployment
-- You have intermittent connectivity
-- You prefer simpler implementation
+### Use webhooks when you want serverless delivery
 
-**Pros:**
-- No persistent connection needed
-- Serverless-friendly
-- Simpler implementation
-- Lower resource usage
+Choose webhooks when you need specific events without a persistent connection.
 
-**Cons:**
-- Higher latency
-- Limited event types
-- Cannot send messages via webhook
-- Requires external endpoint
+Inbound channel and server webhooks (posting messages *into* Plexichat) are implemented. See [Webhooks API](../api/webhooks.md).
 
-**Example:**
-Application webhook delivery (server → your endpoint) is **NOT IMPLEMENTED**.
-There is no `POST /api/v1/applications/{application_id}/webhooks` creation route
-today. The database tables for application webhook deliveries already exist, but
-no HTTP API currently creates or manages these webhooks — treat this as roadmap,
-not an available feature.
-
-Inbound channel/server webhooks (posting messages *into* Plexichat from external
-services) are a separate, implemented feature — see [Webhooks API](../api/webhooks.md).
+Outbound application webhook delivery (Plexichat → your endpoint) is **not implemented**. There is no `POST /api/v1/applications/{application_id}/webhooks` creation route. Database tables for deliveries exist, but no HTTP API creates or manages them. Treat this as roadmap.
 
 ```http
 POST /api/v1/applications/{application_id}/webhooks   # NOT IMPLEMENTED
@@ -173,9 +161,38 @@ Content-Type: application/json
 }
 ```
 
-## Bot Intents
+## Configure intents
 
-Bots must specify which events they want to receive:
+Intents declare which events your bot receives. Calculate the bitfield as a bitwise OR of the values you need.
+
+| Bit | Value | Name | Description |
+|---|---|---|---|
+| 0 | `1 << 0` | `GUILDS` | Server create, update, delete |
+| 1 | `1 << 1` | `GUILD_MEMBERS` | Member add, update, remove (privileged) |
+| 2 | `1 << 2` | `GUILD_BANS` | Bans |
+| 3 | `1 << 3` | `GUILD_EMOJIS` | Emoji updates |
+| 4 | `1 << 4` | `GUILD_INTEGRATIONS` | Integrations |
+| 5 | `1 << 5` | `GUILD_WEBHOOKS` | Webhook updates |
+| 6 | `1 << 6` | `GUILD_INVITES` | Invites |
+| 7 | `1 << 7` | `GUILD_VOICE_STATES` | Voice state updates |
+| 8 | `1 << 8` | `GUILD_PRESENCES` | Presence updates (privileged) |
+| 9 | `1 << 9` | `GUILD_MESSAGES` | Messages in servers |
+| 10 | `1 << 10` | `GUILD_MESSAGE_REACTIONS` | Reactions |
+| 11 | `1 << 11` | `GUILD_MESSAGE_TYPING` | Typing indicators |
+| 12 | `1 << 12` | `DIRECT_MESSAGES` | Direct messages |
+| 13 | `1 << 13` | `DIRECT_MESSAGE_REACTIONS` | DM reactions |
+| 14 | `1 << 14` | `DIRECT_MESSAGE_TYPING` | DM typing |
+| 15 | `1 << 15` | `MESSAGE_CONTENT` | Message content (privileged) |
+| 16 | `1 << 16` | `SCHEDULED_EVENTS` | Scheduled events |
+| 17 | `1 << 17` | `THREADS` | Threads |
+| 18 | `1 << 18` | `AUTOMOD` | Auto-moderation events |
+| 19 | `1 << 19` | `AUDIT_LOG` | Audit log entries |
+| 20 | `1 << 20` | `ARTIFACTS` | Artifact fabric events (`src/core/events/types.py:120`) |
+| 21 | `1 << 21` | `SUMS` | PlexiSum workbook events (`src/core/events/types.py:120`) |
+
+Privileged intents require approval: `GUILD_MEMBERS` (`2`), `GUILD_PRESENCES` (`256`), and `MESSAGE_CONTENT` (`32768`). Request them from the server administrator.
+
+Default intents include `ARTIFACTS` and `SUMS` in addition to the core guild and message intents. Example default bitmask `3178237` covers `GUILDS | GUILD_MESSAGES | ARTIFACTS | SUMS` and related baseline events.
 
 ```javascript
 const Intents = {
@@ -198,29 +215,56 @@ const Intents = {
   SCHEDULED_EVENTS: 1 << 16,
   THREADS: 1 << 17,
   AUTOMOD: 1 << 18,
-  AUDIT_LOG: 1 << 19
+  AUDIT_LOG: 1 << 19,
+  ARTIFACTS: 1 << 20,
+  SUMS: 1 << 21
 };
 
-// Example: Guilds + Messages
-const intents = Intents.GUILDS | Intents.GUILD_MESSAGES;
+const intents = Intents.GUILDS | Intents.GUILD_MESSAGES | Intents.ARTIFACTS | Intents.SUMS;
 ```
 
-**Privileged Intents:**
-- `GUILD_MEMBERS` (2) - Requires approval
-- `GUILD_PRESENCES` (256) - Requires approval
-- `MESSAGE_CONTENT` (32768) - Requires approval
+## Handle gateway opcodes
 
-Request privileged intents from your server administrator.
+The gateway uses the opcodes in `src/api/websocket/opcodes.py:40`.
 
-## Slash Commands
+| Opcode | Name | Direction |
+|---|---|---|
+| `0` | `DISPATCH` | Server → client |
+| `1` | `HEARTBEAT` | Client → server |
+| `2` | `IDENTIFY` | Client → server |
+| `3` | `PRESENCE_UPDATE` | Client → server |
+| `4` | `VOICE_STATE_UPDATE` | Client → server |
+| `6` | `RESUME` | Client → server |
+| `7` | `RECONNECT` | Server → client |
+| `8` | `REQUEST_GUILD_MEMBERS` | Client → server |
+| `9` | `INVALID_SESSION` | Server → client |
+| `10` | `HELLO` | Server → client |
+| `11` | `HEARTBEAT_ACK` | Server → client |
+| `20` | `VOICE_CONNECT` | Voice signaling |
+| `21` | `VOICE_DISCONNECT` | Voice signaling |
+| `22` | `VOICE_SDP_OFFER` | Voice signaling |
+| `23` | `VOICE_SDP_ANSWER` | Voice signaling |
+| `24` | `VOICE_ICE_CANDIDATE` | Voice signaling |
+| `25` | `VOICE_SPEAKING` | Voice signaling |
+| `26` | `VOICE_QUALITY` | Voice signaling |
+| `30` | `INTERACTION_CREATE` | Dispatch for interactions |
+| `40` | `TYPING_START` | Typing |
+| `41` | `TYPING_STOP` | Typing |
+| `50` | `RATCHET_UPDATE` | Channel ratchet |
+| `60` | `ARTIFACT_SUBSCRIBE` | Artifact fabric |
+| `61` | `ARTIFACT_UNSUBSCRIBE` | Artifact fabric |
+| `62` | `ARTIFACT_OP` | Artifact fabric |
+| `63` | `ARTIFACT_SYNC` | Artifact fabric |
+| `64` | `SUM_SUBSCRIBE` | PlexiSum fabric |
+| `65` | `SUM_UNSUBSCRIBE` | PlexiSum fabric |
+| `66` | `SUM_OP` | PlexiSum fabric |
+| `67` | `SUM_SYNC` | PlexiSum fabric |
 
-> **NOT IMPLEMENTED — ROADMAP:** Slash-command *management* does not exist yet.
-> There are no `POST /api/v1/applications/{application_id}/commands` (or similar)
-> routes for registering, listing, or updating commands. The interaction-handling
-> half below (the callback route and response types) **is** implemented and
-> documented for when command registration ships.
+## Work with slash commands
 
-### Creating a Command (Roadmap)
+> **Not implemented (roadmap):** Command management does not exist yet. There are no `POST /api/v1/applications/{application_id}/commands` routes for registering, listing, or updating commands. The interaction-handling path below is implemented.
+
+### Create a command (roadmap)
 
 ```http
 POST /api/v1/applications/{application_id}/commands   # NOT IMPLEMENTED
@@ -233,75 +277,32 @@ Content-Type: application/json
 }
 ```
 
-Command types:
-- `1` - Chat input (slash command)
-- `2` - User context menu
-- `3` - Message context menu
+Command types: `1` chat input (slash command), `2` user context menu, `3` message context menu.
 
-### Command Options (Roadmap)
+Option types: `3` string, `4` integer, `5` boolean, `6` user, `7` channel, `8` role, `9` mentionable.
 
-```http
-POST /api/v1/applications/{application_id}/commands   # NOT IMPLEMENTED
-Content-Type: application/json
+### Handle interactions (implemented)
 
-{
-  "name": "ban",
-  "description": "Ban a user",
-  "type": 1,
-  "options": [
-    {
-      "name": "user",
-      "description": "User to ban",
-      "type": 6,
-      "required": true
-    },
-    {
-      "name": "reason",
-      "description": "Reason for ban",
-      "type": 3,
-      "required": false
-    }
-  ]
-}
-```
-
-Option types:
-- `3` - String
-- `4` - Integer
-- `5` - Boolean
-- `6` - User
-- `7` - Channel
-- `8` - Role
-- `9` - Mentionable
-
-### Handling Interactions (Implemented)
-
-When an interaction is dispatched to your bot (gateway event
-`INTERACTION_CREATE`, op `30`), respond via the interactions callback route:
+Interactions arrive as gateway dispatches with `op: 30` and `t: "INTERACTION_CREATE"`. Respond through the callback route:
 
 ```javascript
 ws.onmessage = (event) => {
   const payload = JSON.parse(event.data);
-
   if (payload.op === 30 && payload.t === 'INTERACTION_CREATE') {
     const interaction = payload.d;
-
-    if (interaction.type === 1) { // Application command
+    if (interaction.type === 1) {
       handleCommand(interaction);
     }
   }
 };
 
 async function handleCommand(interaction) {
-  const { name, options } = interaction.data;
-
+  const { name } = interaction.data;
   if (name === 'ping') {
     await respondToInteraction(interaction.token, {
       application_id: interaction.application_id,
-      type: 4,  // Channel message with source
-      data: {
-        content: 'Pong!'
-      }
+      type: 4, // Channel message with source
+      data: { content: 'Pong!' }
     });
   }
 }
@@ -309,34 +310,21 @@ async function handleCommand(interaction) {
 async function respondToInteraction(interactionToken, response) {
   await fetch(`/api/v1/applications/interactions/${interactionToken}/callback`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(response)
   });
 }
 ```
 
-The callback endpoint is
-`POST /api/v1/applications/interactions/{interaction_token}/callback` and returns
-HTTP 204 on success. The JSON body must include the interaction's
-`application_id`; the server verifies that it matches the token before accepting
-the response. Callback attempts are also rate limited per interaction token.
-Error responses: `400` invalid response, `404` unknown token or application
-binding, `409` interaction already responded to, `410` interaction expired, and
-`429` callback rate limit exceeded.
+- Endpoint: `POST /api/v1/applications/interactions/{interaction_token}/callback`
+- Success: `204 No Content`. The body must include `application_id`; the server verifies it matches the token and rate-limits per interaction token.
+- Error responses: `400` invalid response, `404` unknown token or application binding, `409` already responded, `410` expired, `429` rate limited. All use `{"error":{"code":...,"message":"..."}}`.
 
-### Interaction Response Types
+Interaction response types: `1` pong, `4` channel message with source, `5` deferred channel message, `6` deferred update message, `7` update message.
 
-- `1` - Pong (acknowledge without response)
-- `4` - Channel message with source (reply in channel)
-- `5` - Deferred channel message (show loading, edit later)
-- `6` - Deferred update message (edit original message)
-- `7` - Update message (edit original message)
+## Send message components
 
-## Message Components
-
-Components allow interactive UI elements in messages.
+Components are interactive UI elements in messages.
 
 ### Buttons
 
@@ -349,18 +337,8 @@ await respondToInteraction(interaction.token, {
       {
         type: 1,
         components: [
-          {
-            type: 2,
-            label: 'Option A',
-            style: 1,
-            custom_id: 'option_a'
-          },
-          {
-            type: 2,
-            label: 'Option B',
-            style: 2,
-            custom_id: 'option_b'
-          }
+          { type: 2, label: 'Option A', style: 1, custom_id: 'option_a' },
+          { type: 2, label: 'Option B', style: 2, custom_id: 'option_b' }
         ]
       }
     ]
@@ -368,14 +346,9 @@ await respondToInteraction(interaction.token, {
 });
 ```
 
-Button styles:
-- `1` - Primary (blue)
-- `2` - Secondary (gray)
-- `3` - Success (green)
-- `4` - Danger (red)
-- `5` - Link (gray, opens URL)
+Button styles: `1` primary, `2` secondary, `3` success, `4` danger, `5` link.
 
-### Select Menus
+### Select menus
 
 ```javascript
 await respondToInteraction(interaction.token, {
@@ -390,16 +363,8 @@ await respondToInteraction(interaction.token, {
             type: 3,
             custom_id: 'role_select',
             options: [
-              {
-                label: 'Moderator',
-                value: 'mod_role_id',
-                description: 'Can moderate messages'
-              },
-              {
-                label: 'Member',
-                value: 'member_role_id',
-                description: 'Regular member'
-              }
+              { label: 'Moderator', value: 'mod_role_id', description: 'Can moderate messages' },
+              { label: 'Member', value: 'member_role_id', description: 'Regular member' }
             ]
           }
         ]
@@ -409,51 +374,225 @@ await respondToInteraction(interaction.token, {
 });
 ```
 
-## Rate Limiting
+## Handle rate limits
 
-Bots are subject to rate limits to prevent abuse.
+The API and gateway enforce rate limits to prevent abuse.
 
-### Global Rate Limits
+| Scope | Limit | Window | Burst |
+|---|---|---|---|
+| Global | 25,000 | 60 seconds | 5,000 |
+| User | 10,000 | 60 seconds | 2,500 |
+| IP | 5,000 | 60 seconds | 1,500 |
+| Hourly (user) | 300,000 | 3,600 seconds | — |
+| Daily (user) | 5,000,000 | 86,400 seconds | — |
 
-- **Identify**: 1 per 5 seconds per token
-- **Resume**: No limit
-- **Other gateway payloads**: 120 per 60 seconds
+Defaults are from `src/config_defaults.py:273`. Do not rely on hard-coded values in older docs. Override them in `config.yaml` and in Nginx if you change them.
 
-### API Rate Limits
+Gateway-specific limits:
 
-API endpoints have individual rate limits. Check the `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers.
+- Identify: 1 per 5 seconds per token.
+- Resume: no limit.
+- Other gateway payloads: 120 per 60 seconds (`src/config_defaults.py:168`).
+- Bot requests: multiplied by `1.5` (`src/config_defaults.py:304`).
 
-### Handling Rate Limits
+Check `X-RateLimit-Remaining` and `X-RateLimit-Reset`. When you receive `429`, read `Retry-After` and retry after that delay. Error bodies use `{"error":{"code":429,"message":"Too many requests"}}`.
 
 ```javascript
 async function requestWithRetry(url, options) {
   while (true) {
     const response = await fetch(url, options);
-
     if (response.status === 429) {
       const retryAfter = response.headers.get('Retry-After');
-      const delay = (parseInt(retryAfter) || 5) * 1000;
-      await new Promise(resolve => setTimeout(resolve, delay));
+      const delay = (parseInt(retryAfter, 10) || 5) * 1000;
+      await new Promise((resolve) => setTimeout(resolve, delay));
       continue;
     }
-
     return response;
   }
 }
 ```
 
-## Bot Hosting
+## Install and manage bots on servers
 
-### Self-Hosted
+Bots must be approved by a server administrator before they can join a server. The flow is request → review → approved installation.
 
-Run your bot on your own server:
+### Approval workflow
+
+1. A user discovers a bot in the directory.
+2. The user requests the bot for a server.
+3. An admin reviews and approves or denies the request.
+4. The server installs the bot and shows it in the approved list with a BOT tag.
+
+### Manage bots as an admin
+
+**Approve a bot**
+
+```http
+POST /api/v1/bots/servers/{server_id}/approve
+Authorization: Bearer YOUR_TOKEN
+Content-Type: application/json
+
+{
+  "application_id": "123456789012345678",
+  "permissions": "0",
+  "bot_name": "My Utility Bot"
+}
+```
+
+**List approved bots**
+
+```http
+GET /api/v1/bots/servers/{server_id}/approved
+Authorization: Bearer YOUR_TOKEN
+```
+
+**Remove an approved bot**
+
+```http
+DELETE /api/v1/bots/servers/{server_id}/approved/{application_id}
+Authorization: Bearer YOUR_TOKEN
+```
+
+### Request a bot as a user
+
+**Request a bot**
+
+```http
+POST /api/v1/bots/servers/{server_id}/request
+Authorization: Bearer YOUR_TOKEN
+Content-Type: application/json
+
+{
+  "application_id": "123456789012345678",
+  "reason": "This bot would help with moderation"
+}
+```
+
+**Review a request (admin)**
+
+```http
+PUT /api/v1/bots/servers/{server_id}/requests/{request_id}
+Authorization: Bearer YOUR_TOKEN
+Content-Type: application/json
+
+{
+  "approve": true,
+  "review_reason": "Approved, looks useful"
+}
+```
+
+**View pending requests**
+
+```http
+GET /api/v1/bots/servers/{server_id}/requests?status_filter=pending
+Authorization: Bearer YOUR_TOKEN
+```
+
+### Browse the bot directory
+
+```http
+GET /api/v1/bots/directory?limit=50&offset=0
+GET /api/v1/bots/directory?server_id={server_id}&limit=50&offset=0
+```
+
+Use `server_id` to filter out bots already installed on that server.
+
+### Manage bot profiles
+
+**Get a profile**
+
+```http
+GET /api/v1/bots/profiles/{application_id}
+```
+
+**Update a profile**
+
+```http
+PUT /api/v1/bots/profiles/{application_id}
+Authorization: Bearer YOUR_TOKEN
+Content-Type: application/json
+
+{
+  "short_description": "A moderation bot with auto-flagging",
+  "website_url": "https://mybot.example.com",
+  "support_url": "https://discord.gg/mybotsupport",
+  "tags": ["moderation", "automod", "security"],
+  "nsfw": false,
+  "private": false
+}
+```
+
+### Manage authorized OAuth applications
+
+**List authorized apps**
+
+```http
+GET /api/v1/bots/authorized-apps
+Authorization: Bearer YOUR_TOKEN
+```
+
+**Revoke an app**
+
+```http
+DELETE /api/v1/bots/authorized-apps/{token_id}
+Authorization: Bearer YOUR_TOKEN
+```
+
+### Admin panel
+
+Server admins can manage bots at `/admin`:
+
+1. Open `/admin` and go to the **Bots** tab.
+2. Check totals for bots, approved installations, and pending requests.
+3. Browse applications with approval counts.
+4. Review pending requests.
+
+### Licensing and limits
+
+| Feature | Free tier | Premium tier |
+|---|---|---|
+| Max approved bots per server | 10 | 50 |
+| Custom (non-curated) bots | Disabled | Enabled |
+| Bot directory access | Read-only | Full access |
+| Bot profile management | Limited | Full |
+
+Limits are from `src/config_defaults.py:724` (`bots.max_per_server`, `bots.max_per_server_premium`).
+
+## Use OAuth 2.0 (roadmap)
+
+> **Not implemented:** Plexichat does not act as an OAuth 2.0 authorization server today. There is no `/oauth2/authorize` endpoint, so the classic `scope=bot&permissions=...` URL cannot be used. See [OAuth integration](../client-development/oauth-integration.md).
+
+For reference, the planned (unimplemented) URL shape is:
+
+```
+https://your-server.com/oauth2/authorize?   # NOT IMPLEMENTED
+  client_id=YOUR_APPLICATION_ID&
+  redirect_uri=https://your-bot.com/callback&
+  response_type=code&
+  scope=bot&
+  permissions=8&
+  state=RANDOM_STATE
+```
+
+The only live OAuth routes are inbound provider sign-in flows for user login. They use PKCE `S256` and an exact `redirect_uri` allow-list:
+
+```http
+GET /api/v1/auth/oauth/{provider}/login?redirect_uri=...&code_challenge=...&code_challenge_method=S256
+POST /api/v1/auth/oauth/{provider}/callback
+```
+
+Provide `code_challenge` (43–128 `A-Z a-z 0-9 - . _ ~` characters) with `code_challenge_method=S256` at initiation, and `code_verifier` at callback. The server sets an `HttpOnly` cookie `plexichat_oauth_state` and rejects mismatched `state` (`src/api/routes/auth/oauth.py:91`). See [Authentication API](../api/authentication.md#sign-in-with-oauth).
+
+## Host a bot
+
+### Run on your own server
 
 ```javascript
 const { PlexiBot } = require('plexichat-bot');
 
 const bot = new PlexiBot({
   token: 'Bot bot_token_here',
-  intents: 513
+  intents: 3178237
 });
 
 bot.on('MESSAGE_CREATE', async (message) => {
@@ -465,28 +604,22 @@ bot.on('MESSAGE_CREATE', async (message) => {
 bot.start();
 ```
 
-**Deployment Options:**
-- VPS (DigitalOcean, Linode, Vultr)
-- Dedicated server
-- Home server (with port forwarding)
+Deployment options: VPS (DigitalOcean, Linode, Vultr), dedicated server, or a home server with port forwarding.
 
-### Cloud Platforms
+### Deploy to a cloud platform
 
-Deploy to serverless platforms:
+**AWS Lambda**
 
-**AWS Lambda:**
 ```javascript
 exports.handler = async (event) => {
   const interaction = JSON.parse(event.body);
   // Handle interaction
-  return {
-    statusCode: 200,
-    body: JSON.stringify(response)
-  };
+  return { statusCode: 200, body: JSON.stringify(response) };
 };
 ```
 
-**Google Cloud Functions:**
+**Google Cloud Functions**
+
 ```javascript
 exports.webhook = (req, res) => {
   const interaction = req.body;
@@ -495,7 +628,8 @@ exports.webhook = (req, res) => {
 };
 ```
 
-**Vercel:**
+**Vercel**
+
 ```javascript
 export default async function handler(req, res) {
   const interaction = req.body;
@@ -504,9 +638,7 @@ export default async function handler(req, res) {
 }
 ```
 
-### Docker
-
-Containerize your bot:
+### Use Docker
 
 ```dockerfile
 FROM node:18-alpine
@@ -528,215 +660,27 @@ services:
     restart: unless-stopped
 ```
 
-## Bot Installation & Approval Workflow
+## Test a bot
 
-Bots must be approved by a server administrator before they can interact with a server. This two-step process ensures bot security and prevents unauthorized installations.
-
-### Approval Workflow
-
-1. **User discovers a bot** via the bot directory or external link
-2. **User requests the bot** on a server (or an admin directly approves it)
-3. **Admin reviews the request** and approves or denies it
-4. **Once approved**, the bot is automatically installed on the server
-5. **Bot appears** in the server's approved bots list with a BOT tag
-
-### Server Bot Management (Admin)
-
-Navigate to **Server Settings > Bots** to manage bots:
-
-**Approve a Bot:**
-```http
-POST /api/v1/bots/servers/{server_id}/approve
-Authorization: Bearer your_token
-Content-Type: application/json
-
-{
-  "application_id": 123456789,
-  "permissions": "0",
-  "bot_name": "My Utility Bot"
-}
-```
-
-**List Approved Bots:**
-```http
-GET /api/v1/bots/servers/{server_id}/approved
-Authorization: Bearer your_token
-```
-
-**Remove an Approved Bot:**
-```http
-DELETE /api/v1/bots/servers/{server_id}/approved/{application_id}
-Authorization: Bearer your_token
-```
-
-### Bot Request Flow (Users)
-
-Users can request that a bot be added to a server:
-
-**Request a Bot:**
-```http
-POST /api/v1/bots/servers/{server_id}/request
-Authorization: Bearer your_token
-Content-Type: application/json
-
-{
-  "application_id": 123456789,
-  "reason": "This bot would help with moderation"
-}
-```
-
-**Admin Reviews Request:**
-```http
-PUT /api/v1/bots/servers/{server_id}/requests/{request_id}
-Authorization: Bearer your_token
-Content-Type: application/json
-
-{
-  "approve": true,
-  "review_reason": "Approved, looks useful"
-}
-```
-
-**View Pending Requests:**
-```http
-GET /api/v1/bots/servers/{server_id}/requests?status_filter=pending
-Authorization: Bearer your_token
-```
-
-### Bot Directory
-
-Browse available bots:
-```http
-GET /api/v1/bots/directory?limit=50&offset=0
-```
-
-Optionally filter out already-installed bots for a server:
-```http
-GET /api/v1/bots/directory?server_id={server_id}&limit=50&offset=0
-```
-
-### Bot Profiles
-
-Bot owners can customize their bot's public profile:
-
-**Get Profile:**
-```http
-GET /api/v1/bots/profiles/{application_id}
-```
-
-**Update Profile:**
-```http
-PUT /api/v1/bots/profiles/{application_id}
-Authorization: Bearer your_token
-Content-Type: application/json
-
-{
-  "short_description": "A moderation bot with auto-flagging",
-  "website_url": "https://mybot.example.com",
-  "support_url": "https://discord.gg/mybotsupport",
-  "tags": ["moderation", "automod", "security"],
-  "nsfw": false,
-  "private": false
-}
-```
-
-### Authorized Applications
-
-Users can view and revoke OAuth2 applications they've authorized:
-
-**List Authorized Apps:**
-```http
-GET /api/v1/bots/authorized-apps
-Authorization: Bearer your_token
-```
-
-**Revoke an App:**
-```http
-DELETE /api/v1/bots/authorized-apps/{token_id}
-Authorization: Bearer your_token
-```
-
-### Admin Panel
-
-Server administrators can manage bots across all servers via the admin dashboard:
-
-1. Log into the admin panel at `/admin`
-2. Navigate to the **Bots** tab
-3. View statistics: total bots, approved installations, pending requests
-4. Browse all applications with their approval counts
-5. Review and manage pending bot requests
-
-### Licensing & Limits
-
-Bot features are gated by the instance license:
-
-| Feature | Free Tier | Premium Tier |
-|---|---|---|
-| Max approved bots per server | 10 | 50 |
-| Custom (non-curated) bots | Disabled | Enabled |
-| Bot directory access | Read-only | Full access |
-| Bot profile management | Limited | Full |
-
-## Bot Authorization via OAuth2
-
-> **NOT IMPLEMENTED — ROADMAP:** Plexichat does not currently act as an OAuth2
-> authorization server. There is no `/oauth2/authorize` endpoint, so the classic
-> "add bot to server" authorization URL (`scope=bot&permissions=...`) **cannot be
-> used**. See [oauth-integration.md](../client-development/oauth-integration.md).
->
-> The implemented way to install a bot on a server is the request/approval
-> workflow described in
-> [Bot Installation & Approval Workflow](#bot-installation--approval-workflow)
-> above.
-
-For reference, the planned (unimplemented) URL shape is:
-
-```
-https://your-server.com/oauth2/authorize?   # NOT IMPLEMENTED
-  client_id=your_application_id&
-  redirect_uri=https://your-bot.com/callback&
-  response_type=code&
-  scope=bot&
-  permissions=8&
-  state=random_state_string
-```
-
-### Handling OAuth Callback
-
-The only live OAuth routes are *inbound* provider sign-in flows, which are for
-user login, not bot installation:
-
-```http
-POST /api/v1/auth/oauth/{provider}/callback?code=authorization_code&state=state_token
-```
-
-Plexichat handles the code-to-token exchange with the provider internally and
-creates a user session. No additional token exchange is required on your end.
-See [Authentication API](../api/authentication.md#oauth-sign-in).
-
-## Testing
-
-### Local Testing
-
-Test your bot against a local Plexichat server:
+### Test locally
 
 ```bash
-# Start local server
+# Start a local server
 cd plexichat
 python main.py
 
-# Run your bot
+# In another terminal, run your bot
 node bot.js
 ```
 
-### Unit Testing
+Your bot connects to `ws://localhost:8000/gateway` with `Authorization: Bot <token>` in the IDENTIFY payload.
 
-Test bot logic in isolation:
+### Write unit tests
 
 ```javascript
 const { expect } = require('chai');
 
-describe('Bot Commands', () => {
+describe('Bot commands', () => {
   it('should respond to ping', async () => {
     const response = await handlePingCommand();
     expect(response.content).to.equal('Pong!');
@@ -744,24 +688,20 @@ describe('Bot Commands', () => {
 });
 ```
 
-### Integration Testing
-
-Test bot against test server:
+### Write integration tests
 
 ```javascript
-describe('Bot Integration', () => {
-  it('should send message', async () => {
+describe('Bot integration', () => {
+  it('should send a message', async () => {
     const message = await bot.sendMessage(testChannelId, 'Test');
     expect(message.content).to.equal('Test');
   });
 });
 ```
 
-## Deployment
+## Deploy to production
 
-### Environment Variables
-
-Store sensitive configuration in environment variables:
+### Configure environment variables
 
 ```bash
 BOT_TOKEN=bot_token_here
@@ -770,11 +710,12 @@ CLIENT_SECRET=client_secret
 REDIRECT_URI=https://your-bot.com/callback
 ```
 
-### Process Management
+Never commit secrets to version control.
 
-Use process managers for production:
+### Manage the process
 
-**PM2:**
+**PM2**
+
 ```bash
 npm install -g pm2
 pm2 start bot.js --name my-bot
@@ -782,7 +723,8 @@ pm2 startup
 pm2 save
 ```
 
-**Systemd:**
+**systemd**
+
 ```ini
 [Unit]
 Description=Plexichat Bot
@@ -800,11 +742,8 @@ Environment=BOT_TOKEN=bot_token_here
 WantedBy=multi-user.target
 ```
 
-### Monitoring
+### Monitor health
 
-Monitor your bot health:
-
-**Health Checks:**
 ```javascript
 app.get('/health', (req, res) => {
   res.json({
@@ -815,66 +754,49 @@ app.get('/health', (req, res) => {
 });
 ```
 
-**Logging:**
-```javascript
-const winston = require('winston');
+Use structured logging and expose metrics for uptime, gateway disconnects, and `429` counts.
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.json(),
-  transports: [
-    new winston.transports.File({ filename: 'error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'combined.log' })
-  ]
-});
-```
+## Follow best practices
 
-## Best Practices
+**Security**
 
-### Security
+- Store tokens in environment variables.
+- Validate all user input.
+- Enforce rate limits.
+- Use HTTPS for any webhook endpoint.
+- Rotate tokens periodically.
 
-- Never commit bot tokens to version control
-- Use environment variables for secrets
-- Validate all user input
-- Implement rate limiting
-- Use HTTPS for webhooks
-- Rotate tokens periodically
+**Performance**
 
-### Performance
+- Cache frequently accessed data.
+- Paginate large datasets.
+- Use connection pooling.
+- Use `async`/`await` correctly.
 
-- Cache frequently accessed data
-- Use pagination for large datasets
-- Implement connection pooling
-- Optimize database queries
-- Use async/await properly
+**Reliability**
 
-### Reliability
+- Implement reconnection logic for the gateway.
+- Handle errors with the `{"error":{"code":...,"message":"..."}}` envelope.
+- Use exponential backoff for retries.
+- Monitor uptime and alert on failures.
 
-- Implement reconnection logic
-- Handle errors gracefully
-- Use exponential backoff for retries
-- Monitor bot uptime
-- Set up alerts for failures
+**User experience**
 
-### User Experience
+- Return helpful error messages.
+- Use slash commands for structured input.
+- Implement autocomplete where available.
+- Respond to interactions within three seconds or defer with type `5`.
 
-- Provide helpful error messages
-- Use slash commands for structured input
-- Implement autocomplete for commands
-- Provide usage instructions
-- Respond quickly to interactions
-
-## Example Bot
+## Example bot
 
 ```javascript
 const { PlexiBot } = require('plexichat-bot');
 
 const bot = new PlexiBot({
   token: process.env.BOT_TOKEN,
-  intents: 513  // GUILDS | GUILD_MESSAGES
+  intents: 3178237
 });
 
-// Register slash commands
 bot.registerCommand({
   name: 'hello',
   description: 'Say hello',
@@ -883,21 +805,19 @@ bot.registerCommand({
   }
 });
 
-// Message handler
 bot.on('MESSAGE_CREATE', async (message) => {
   if (message.content === '!ping') {
     await bot.sendMessage(message.channel_id, 'Pong!');
   }
 });
 
-// Start bot
 bot.start();
 ```
 
-## Resources
+## Related documentation
 
-- [API Reference](../api/index.md)
-- [WebSocket Guide](../client-development/websocket.md)
-- [OAuth Scopes](../oauth-scopes.md)
-- [Rate Limits](../rate-limits.md)
-- [Error Codes](../errors.md)
+- [API reference](../api/index.md)
+- [WebSocket guide](../client-development/websocket.md)
+- [OAuth scopes](../oauth-scopes.md) — regrouped by `PERMISSION_SCOPES` (`src/core/admin/permissions.py:42`)
+- [Rate limits](../rate-limits.md) — defaults from `src/config_defaults.py:273`
+- [Error codes](../errors.md) — envelope is `{"error":{"code":...,"message":"..."}}`

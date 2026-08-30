@@ -1,71 +1,81 @@
-# Plexichat Backend Documentation
+# Plexichat backend documentation
 
 This portal documents the Plexichat backend: the REST API, the WebSocket gateway, common response shapes, and integration guidance.
 
-## Documentation Surfaces
+## Documentation surfaces
 
-- Narrative Docs (this portal) -- guides, configuration, and reference at `/docs/api`
-- OpenAPI Explorer -- interactive request builder at `/docs`
-- API Reference (ReDoc) -- readable schema reference at `/redoc`
-- Schema JSON -- raw OpenAPI spec at `/openapi.json`
+*   **Narrative docs** (this portal) — Guides, configuration, and reference at `/docs/api`.
+*   **OpenAPI explorer** — Interactive request builder at `/docs`.
+*   **API reference (ReDoc)** — Readable schema reference at `/redoc`.
+*   **Schema JSON** — Raw OpenAPI spec at `/openapi.json`.
 
-## Quick Links
+The docs path is configurable through `docs.path` (default `/docs/api`) and `api.docs_url` (default `/docs`).
 
-### Getting Started
+## Quick links
 
-- [Getting Started](getting-started.md) -- authenticate, make your first API requests, and connect to the WebSocket gateway
-- [Features](features.md) -- overview of all Plexichat feature areas
-- [Data Types](data-types.md) -- Snowflake IDs, timestamps, and common data formats
-- [Permissions](end-user/permissions.md) -- permission categories and individual permission reference
+### Get started
+
+*   [Get started](getting-started.md) — Authenticate, make your first API requests, and connect to the WebSocket gateway.
+*   [Features](features.md) — Overview of all Plexichat feature areas.
+*   [Data types](data-types.md) — Snowflake IDs, timestamps, and common data formats.
+*   [Permissions](end-user/permissions.md) — Permission categories and individual permission reference.
 
 ### Configuration
 
-- [Configuration Overview](configuration.md) -- how config files are discovered and loaded
-- [Default Configuration Reference](default-config.md) -- complete config reference with all defaults
-- [Authentication](deployment/configuration/config-authentication.md) -- password policies, sessions, 2FA, OAuth, account deletion, age gate
-- [Database](deployment/configuration/config-database.md) -- PostgreSQL/SQLite setup, connection pooling, migrations
-- [Valkey](deployment/configuration/config-valkey.md) -- caching, session storage, connection pooling
-- [Media](deployment/configuration/config-media.md) -- file uploads, storage backends, processing, security
-- [Voice](deployment/configuration/config-voice.md) -- WebRTC signaling, SFU backends, STUN/TURN
-- [WebSocket](deployment/configuration/config-websocket.md) -- gateway settings, compression, rate limits, origins
-- [Search](deployment/configuration/config-search.md) -- search backends, indexing, result limits
-- [Rate Limiting](deployment/configuration/config-rate-limiting.md) -- global, user, IP, bot, and webhook rate limits
-- [API & Server](deployment/configuration/config-api.md) -- CORS, trusted proxies, debug mode, TLS
-- [Email](deployment/configuration/config-email.md) -- SMTP setup for email verification and password reset
-- [Embeds & URL Preview](deployment/configuration/config-embeds.md) -- embed limits and URL preview configuration
+*   [Configuration overview](configuration.md) — How config files are discovered and loaded.
+*   [Default configuration reference](default-config.md) — Complete config reference with all defaults from `src/config_defaults.py`.
+*   [Authentication](deployment/configuration/config-authentication.md) — Password policies, sessions, 2FA, OAuth, account deletion, and age gate.
+*   [Database](deployment/configuration/config-database.md) — PostgreSQL and SQLite setup, connection pooling, and migrations.
+*   [Valkey](deployment/configuration/config-valkey.md) — Caching, session storage, and connection pooling.
+*   [Media](deployment/configuration/config-media.md) — File uploads, storage backends, processing, and security.
+*   [Voice](deployment/configuration/config-voice.md) — WebRTC signaling, SFU backends, and STUN/TURN.
+*   [WebSocket](deployment/configuration/config-websocket.md) — Gateway settings, compression, rate limits, and allowed origins.
+*   [Search](deployment/configuration/config-search.md) — Search backends, indexing, and result limits.
+*   [Rate limiting](deployment/configuration/config-rate-limiting.md) — Global, user, IP, bot, and webhook rate limits. Defaults are defined in `src/config_defaults.py:273`.
+*   [API and server](deployment/configuration/config-api.md) — CORS, trusted proxies, debug mode, and TLS.
+*   [Email](deployment/configuration/config-email.md) — SMTP setup for verification and password reset.
+*   [Embeds and URL preview](deployment/configuration/config-embeds.md) — Embed limits and URL preview configuration.
+*   [Static client](deployment/configuration/config-static-client.md) — Serve the Vite build from the backend with GitLab releases and SHA-256 verification.
 
 ### Licensing
 
-- [Licensing](deployment/licensing.md) -- license file setup, env var configuration, hot-swapping, feature gating
+*   [Licensing](deployment/licensing.md) — License file setup, environment variable configuration, hot-swapping, and feature gating.
 
-### Deployment & Operations
+### Deployment and operations
 
-- [Deployment](deployment/index.md) -- installation, security hardening, scaling, monitoring, backup
-- **[Docker Deployment](deployment/docker/index.md)** -- quick start, configuration, development, production setup, troubleshooting
-- [Versioning and Updates](deployment/versioning.md) -- version scheme, update procedures, rollback strategies
-- [SQLite to PostgreSQL Migration](./deployment/postgres-migration.md) -- automated migration guide
-- [Security Best Practices](security.md) -- authentication security, encryption, production checklist
-- [Performance Tuning](performance.md) -- subsystem optimization and scaling recommendations
-- [Access Tokens](admin/index.md#access-tokens) -- optional API access-token gate for closed deployments (in Admin Guide)
-- [Data Export (DSAR)](admin/data-export.md) -- GDPR Article 20 right-to-portability exports (in Admin Guide)
-- [Rate Limits](rate-limits.md) -- rate limit tiers and 429 response handling
-- [Errors](errors.md) -- error response format and common error codes
-- [OAuth Scopes](oauth-scopes.md) -- OAuth scope reference for bot and application permissions
+*   [Deployment](deployment/index.md) — Installation, security hardening, scaling, monitoring, and backup.
+*   **[Docker deployment](deployment/docker/index.md)** — Quick start, configuration, development, production setup, and troubleshooting.
+*   [Versioning and updates](deployment/versioning.md) — Version scheme `a.1.0-131`, update procedures, and rollback strategies.
+*   [SQLite to PostgreSQL migration](./deployment/postgres-migration.md) — Automated migration guide.
+*   [Security best practices](security.md) — Authentication security, encryption, and production checklist.
+*   [Performance tuning](performance.md) — Subsystem optimization and scaling recommendations.
+*   [Access tokens](admin/index.md#access-tokens) — Optional API access-token gate for closed deployments.
+*   [Data export (DSAR)](admin/data-export.md) — GDPR Article 20 right-to-portability exports.
+*   [Rate limits](rate-limits.md) — Rate limit tiers and `429` response handling.
+*   [Errors](errors.md) — Error response format and common error codes.
+*   [OAuth scopes](oauth-scopes.md) — OAuth scope reference for bot and application permissions.
 
-### API & WebSocket Reference
+### API and WebSocket reference
 
-- [API Reference](api/index.md) -- route-group overviews for every API module
-- [WebSocket Gateway](websocket/index.md) -- connection flow, events, intents, and opcodes
+*   [API reference](api/index.md) — Route-group overviews for every API module.
+*   [WebSocket gateway](websocket/index.md) — Connection flow, events, intents, and opcodes.
 
-### End-User & Developer Guides
+### End-user and developer guides
 
-- [End-User Guide](end-user/index.md) -- getting started for regular users
-- [Client Development](client-development/index.md) -- guide for client, bot, and integration developers
+*   [End-user guide](end-user/index.md) — Guide for regular users.
+*   [Client development](client-development/index.md) — Guide for client, bot, and integration developers.
 
-## Runtime Endpoints
+## Runtime endpoints
 
-- REST API base: `{{BASE_URL}}`
-- WebSocket gateway: `{{WEBSOCKET_URL}}`
-- Readiness probe: `GET /api/v1/ready` (pure liveness, returns as soon as HTTP is bound)
-- Health check: `GET /api/v1/health` (deep check covering DB, events, cross-worker listener)
-- Version endpoints: `/api/v1/version`, `/api/v1/version/negotiate`, `/api/v1/status`
+| Endpoint | Method | Description |
+| --- | --- | --- |
+| `{{BASE_URL}}` | — | REST API base (default `http://localhost:8000/api/v1`). |
+| `{{WEBSOCKET_URL}}` | — | WebSocket gateway (default `ws://localhost:8000/gateway`). |
+| `/api/v1/ready` | `GET` | Readiness probe. Returns as soon as HTTP is bound. |
+| `/api/v1/health` | `GET` | Health check. Covers database, events, and cross-worker listener. |
+| `/api/v1/version` | `GET` | Current server version and minimum supported client version. |
+| `/api/v1/version/negotiate` | `POST` | Version compatibility check for a given `client_version`. |
+| `/api/v1/status` | `GET` | Server state, version, and uptime. |
+| `/api/v1/capabilities` | `GET` | Public constants without authentication. |
+
+Version endpoints are implemented in `src/api/routes/version.py:64` and use the version utility in `src/utils/common_utils/utils/version/__init__.py:1`.

@@ -1,224 +1,227 @@
-# Getting Started with Plexichat Admin
+# Get started with Plexichat administration
 
-This guide helps you get started with administering a Plexichat deployment.
+This guide helps you set up your Plexichat deployment for administration. It covers initial access, required configuration, and the first tasks to complete after installation.
 
-## Initial Setup
+## Before you begin
 
-### 1. Access the Admin Panel
+Make sure you have:
 
-The admin panel is typically accessible at:
+* A running Plexichat server. See the [Deployment guide](../deployment/index.md).
+* The initial admin credentials created during setup.
+* An authenticator app for 2FA (for example, Authy or Google Authenticator), if `admin_ui.require_otp` is `true`.
+
+Configuration is discovered in this order:
+
+1. `./config/config.yaml`
+2. `~/.plexichat/config/config.yaml`
+3. Built-in defaults in `src/config_defaults.py`
+
+If no file exists, the server starts with built-in defaults and logs a warning. See [Configuration overview](../configuration.md) for details.
+
+## Access the admin panel
+
+1. Open `https://YOUR_DOMAIN/admin` in your browser. Replace `YOUR_DOMAIN` with your deployment host. The path is controlled by `admin_ui.path` and defaults to `/admin`.
+2. Sign in with the initial admin credentials.
+3. If prompted, set up 2FA. Scan the QR code with your authenticator app and enter the code to verify. Store your backup codes in a secure location.
+
+Note: If `admin_ui.host_restriction.enabled` is `true`, you can only reach the panel from hosts listed in `admin_ui.host_restriction.allowed_hosts`.
+
+## Configure basic settings
+
+After your first sign-in, configure the following settings. You can change them in `config.yaml` under `admin_ui` or, where available, in **Settings** in the admin panel.
+
+### Security settings
+
+Update `admin_ui.security` and related keys:
+
+```yaml
+admin_ui:
+  require_otp: true
+  force_password_change_first_login: true
+  session_timeout_minutes: 480
+  security:
+    password_policy:
+      min_length: 12
+      require_uppercase: true
+      require_lowercase: true
+      require_numbers: true
+      require_special_chars: true
+      prevent_common_passwords: true
+    session:
+      max_concurrent_sessions: 3
+      timeout_idle_minutes: 30
 ```
-https://your-domain.com/admin
+
+Also review host and network protections:
+
+```yaml
+admin_ui:
+  host_restriction:
+    enabled: true
+    allowed_hosts: ["127.0.0.1", "localhost", "::1", "admin.yourdomain.com"]
+  rate_limit:
+    max_attempts: 5
+    window_seconds: 300
+    lockout_seconds: 900
 ```
 
-Or your configured admin path from settings.
+Global API rate limits are defined separately in `src/config_defaults.py:273`:
 
-### 2. Initial Login
+* Global: 25,000 requests per 60 seconds, burst 5,000
+* Per user: 10,000 requests per 60 seconds, burst 2,500
+* Per IP: 5,000 requests per 60 seconds, burst 1,500
 
-On first login:
-1. Use the initial admin credentials provided during setup
-2. You'll be prompted to set up Two-Factor Authentication (2FA)
-3. Complete OTP setup using your authenticator app
-4. Store your backup codes securely
+### RBAC settings
 
-### 3. Configure Basic Settings
+```yaml
+admin_ui:
+  rbac:
+    enabled: true
+    default_role: "super_admin"
+```
 
-Navigate to Settings and configure:
+See [RBAC](rbac.md) for role hierarchy, permission scopes, and wildcard restrictions.
 
-#### Security Settings
-- Enable/disable 2FA requirement
-- Set password policies
-- Configure session timeouts
-- Set up host restrictions
+### Audit settings
 
-#### RBAC Settings
-- Enable/disable RBAC
-- Set default admin role
-- Configure approval workflows
+```yaml
+admin_ui:
+  audit:
+    log_to_file: true
+    log_to_database: true
+    sensitive_actions_always_db: true
+    retention_days: 365
+```
 
-#### Audit Settings
-- Enable file/database logging
-- Set log retention period
-- Configure sensitive action logging
+See [Audit logging](audit-logging.md) for the `admin_audit_log` schema and retention guidance.
 
-## First-Time Configuration
+## Complete first-time configuration
 
 ### Enable RBAC
 
-1. Go to Settings -> RBAC
-2. Enable RBAC system
-3. Review default roles
-4. Create custom roles if needed
-5. Assign appropriate roles to admins
+1. Go to **Settings > RBAC**.
+2. Verify that RBAC is enabled.
+3. Review the built-in roles (super admin, support admin, moderation admin, read-only admin).
+4. Create custom roles if your organization needs them.
+5. Assign roles to each admin. You can only assign roles at or below your own highest role position.
 
-### Configure Approval Workflows
+### Configure approval workflows
 
-1. Go to Settings -> Approval Workflows
-2. Enable approval workflows
-3. Select actions requiring approval
-4. Set approval requirements
-5. Configure timeout settings
+1. Go to **Settings > Approval Workflows**.
+2. Enable approval workflows.
+3. Choose which actions require approval. The default is `users.force_purge`, `users.delete`, and `servers.delete`.
+4. Set `approval_required_admins` (default `2`) and `approval_timeout_hours` (default `48`).
+5. Decide whether to enable `single_admin_bypass` for single-admin deployments.
 
-### Set Up Audit Logging
+See [Approval workflows](approval-workflows.md) for the full configuration reference.
 
-1. Go to Settings -> Audit Logging
-2. Enable dual logging (file + database)
-3. Set retention period
-4. Configure sensitive action logging
-5. Test logging functionality
+### Set up audit logging
 
-## Common First Tasks
+1. Go to **Settings > Audit Logging**.
+2. Enable both file and database logging for redundancy.
+3. Set the retention period to meet your compliance requirements.
+4. Verify that sensitive actions are always written to the database.
+5. Send a test action and confirm it appears in the audit log.
 
-### Create Additional Admins
+## Perform common first tasks
 
-1. Navigate to Admin Management
-2. Click "Create Admin"
-3. Fill in admin details
-4. Assign appropriate role
-5. Admin will need to set up 2FA on first login
+### Create an admin account
 
-### Review System Status
+1. Go to **Admin Management**.
+2. Click **Create admin**.
+3. Enter the account details and assign a role.
+4. Tell the new admin to set up 2FA on first sign-in.
 
-1. Check Dashboard overview
-2. Review system metrics
-3. Check for any alerts
-4. Verify database status
-5. Review recent activity
+You can also manage roles through the API. See [RBAC](rbac.md#role-assignment) for examples.
 
-### Configure Notifications
+### Review system status
 
-1. Go to Settings -> Notifications
-2. Configure email settings
-3. Set up webhook notifications
-4. Configure alert thresholds
-5. Test notification delivery
+1. Open the **Dashboard**.
+2. Check active users, total users, and scheduled deletions.
+3. Review metrics, endpoint performance, and database query statistics under **Metrics**.
+4. Check for alerts and verify database and Valkey connectivity.
 
-## Understanding the Dashboard
+Health endpoints for monitoring:
 
-### Overview Section
-- Active users count
-- Total users count
-- Scheduled deletions
-- System performance metrics
+* `GET /health`
+* `GET /api/v1/ready` — defined in `health.py:18`
+* `GET /api/v1/status`
 
-### Metrics Section
-- Real-time performance charts
-- Historical data trends
-- Endpoint performance
-- Database query statistics
+### Configure notifications
 
-### User Management
-- User search and filtering
-- User profile editing
-- Account status management
-- Internal notes system
+1. Go to **Settings > Notifications**.
+2. Configure SMTP settings under `email` if you want email on critical actions.
+3. Set `admin_ui.notifications.webhook_url` if you use webhook notifications.
+4. Configure alert thresholds and test delivery.
 
-### Server Management
-- Server overview
-- Server configuration
-- Member management
-- Server moderation
+## Understand the dashboard
 
-## Basic Operations
+### Overview section
 
-### Managing Users
+Displays active users, total users, scheduled deletions, and system performance metrics.
 
-#### View User Profile
-1. Go to User Management
-2. Search for user by ID or username
-3. Click on user to view profile
-4. Review user information and activity
+### Metrics section
 
-#### Edit User Profile
-1. Open user profile
-2. Click "Edit Profile"
-3. Make necessary changes
-4. Save changes
-5. Action is logged to audit trail
+Displays real-time charts, historical trends, endpoint latency, and database statistics.
 
-#### Lock User Account
-1. Open user profile
-2. Click "Lock Account"
-3. Provide reason for lock
-4. Confirm action
-5. User cannot login while locked
+### User management
 
-### Managing Servers
+Search for users, edit profiles, manage account status, and add internal notes.
 
-#### View Server Details
-1. Go to Server Management
-2. Select server from list
-3. Review server information
-4. Check member count and activity
+### Server management
 
-#### Edit Server Settings
-1. Open server details
-2. Click "Edit Settings"
-3. Modify server configuration
-4. Save changes
-5. Changes take effect immediately
+View servers, edit settings, manage members, and handle moderation. Channel configuration uses `channel_type` as documented in `servers.py:85`.
 
-## Security Best Practices
+## Follow security best practices
 
-### Immediate Actions
-1. Enable 2FA for all admin accounts
-2. Set strong password policies
-3. Configure host restrictions
-4. Enable audit logging
-5. Review default admin credentials
+Do the following immediately after setup:
 
-### Ongoing Practices
-1. Regularly review audit logs
-2. Monitor failed login attempts
-3. Keep software updated
-4. Review admin access regularly
-5. Backup configuration and data
+* Require 2FA for every admin account.
+* Enforce a strong password policy.
+* Configure host restrictions to limit where the panel is reachable.
+* Enable dual audit logging (file and database).
+* Rotate the initial admin credentials.
 
-## Troubleshooting Common Issues
+On an ongoing basis:
 
-### Cannot Access Admin Panel
-- Check if admin panel is enabled in configuration
-- Verify host restrictions allow your IP
-- Check if you're using the correct URL
-- Clear browser cache and cookies
-- Try different browser
+* Review audit logs regularly.
+* Monitor failed sign-in attempts.
+* Update Plexichat and its dependencies.
+* Review admin roles and remove access promptly when staff changes.
+* Back up configuration and the database. Postgres 18 and Valkey 9.1.1 are the versions referenced in the current deployment defaults, running on Python 3.14.
 
-### 2FA Setup Issues
-- Ensure your device time is synchronized
-- Try different authenticator app
-- Verify you're entering the correct code
-- Use backup codes if needed
-- Contact system administrator if issues persist
+## Troubleshoot common issues
 
-### Permission Denied Errors
-- Check your assigned roles
-- Verify you have required permissions
-- Contact super admin for role changes
-- Check if approval workflow is blocking action
-- Review audit logs for details
+### You cannot access the admin panel
 
-## Next Steps
+* Verify `admin_ui.enabled` is `true`.
+* Check `admin_ui.host_restriction.allowed_hosts` includes your IP or hostname.
+* Confirm you use the correct path from `admin_ui.path`.
+* Clear browser cache and cookies, or try a different browser.
+* Check health: `GET /api/v1/ready`.
 
-1. **Complete Initial Setup** - Finish all configuration steps
-2. **Create Admin Accounts** - Set up additional admins as needed
-3. **Configure Roles** - Create custom roles for your organization
-4. **Set Up Monitoring** - Configure alerts and notifications
-5. **Review Documentation** - Read detailed guides for specific features
+### 2FA setup fails
 
-## Getting Help
+* Verify your device clock is synchronized.
+* Try a different authenticator app.
+* Confirm you enter the current code before it expires.
+* Use a backup code if available.
 
-- **Documentation**: Check the [Admin Documentation](index.md) for detailed guides
-- **Audit Logs**: Review audit logs for error details
-- **System Logs**: Check system logs for technical issues
-- **Support**: Contact your system administrator or support team
+### You see "Permission denied"
 
-## Configuration Reference
+* Check your assigned roles and their permissions in **Admin Management**.
+* Verify `admin_ui.rbac.enabled` is `true`.
+* Check whether an approval workflow blocks the action. See [Approval workflows](approval-workflows.md).
+* Review `admin_audit_log` for the failure reason.
 
-### Minimum Recommended Configuration
+## Configuration reference
+
+The following is a recommended minimum configuration for `admin_ui`:
 
 ```yaml
 admin_ui:
   enabled: true
+  path: "/admin"
   require_otp: true
   force_password_change_first_login: true
   rbac:
@@ -226,12 +229,17 @@ admin_ui:
     default_role: "support_admin"
   approval_workflows:
     enabled: true
+    single_admin_bypass: true
     require_approval_for:
       - users.force_purge
       - users.delete
+      - servers.delete
+    approval_required_admins: 2
+    approval_timeout_hours: 48
   audit:
     log_to_file: true
     log_to_database: true
+    sensitive_actions_always_db: true
     retention_days: 365
   security:
     password_policy:
@@ -241,3 +249,11 @@ admin_ui:
       require_numbers: true
       require_special_chars: true
 ```
+
+For all defaults, see `src/config_defaults.py:539`.
+
+## Next steps
+
+* Learn how to control access in [RBAC](rbac.md).
+* Require multi-admin approval for sensitive actions in [Approval workflows](approval-workflows.md).
+* Read [Audit logging](audit-logging.md) to query and export compliance data.

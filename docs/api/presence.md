@@ -1,48 +1,38 @@
 # Presence API
 
-Endpoints for managing user presence and status.
+Manage and read user presence. Use presence to show online status and custom status text.
 
-**Base URL**: `https://api.plexichat.com/api/v1`
+**Base URL**
+
+`https://api.plexichat.com/api/v1`
 
 For development, use `http://localhost:8000/api/v1`.
 
-All endpoints in this document are prefixed with `/api/v1/` unless otherwise specified.
+All endpoints in this document are prefixed with `/api/v1` unless noted. All endpoints require `Authorization: Bearer <token>`.
 
-## PUT /users/@me/presence
+## Update your presence
 
-Update the current user's presence status.
+### `PUT /users/@me/presence`
 
-### Headers
+Update the authenticated user's presence. This sets online status and, optionally, custom status text and emoji. The update is broadcast via `PRESENCE_UPDATE` to friends and members of shared servers, excluding users who block or are blocked by you.
 
-```
-Authorization: Bearer <token>
-```
+**Request body**
 
-### Request Body
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `status` | string | Required | Online status. One of `online`, `idle`, `dnd`, `invisible`, `offline`. |
+| `custom_status` | string | Optional | Custom status text. Up to 128 characters. Pass `""` to clear. Omit the field to keep the existing custom status. |
+| `custom_emoji` | string | Optional | Custom status emoji. Omit to keep the existing emoji. |
 
-- `status` (string, required, Valid status): Online status
-- `custom_status` (string, optional, Max 128 chars): Custom status text
-- `custom_emoji` (string, optional): Custom status emoji
+Notes:
 
-### Status Values
+- An emoji-only status is valid (empty `custom_status` with non-empty `custom_emoji` is persisted). Only when both text and emoji are empty or omitted is the custom status cleared.
+- A `status`-only update (common in the UI) does not clear an existing custom status; include `custom_status` or `custom_emoji` only when you intend to change it.
+- `invisible` users appear as `offline` with no custom status or emoji to all viewers, including in the broadcast event. The server persists `invisible` but scrubs it on read and broadcast.
 
-- online: User is online
-- idle: User is idle/away
-- dnd: Do not disturb
-- invisible: Appear offline to others
-- offline: Go offline
+**Response `200 OK`**
 
-### Example Request
-
-```json
-{
-  "status": "online",
-  "custom_status": "Working on Plexichat",
-  "custom_emoji": ":computer:"
-}
-```
-
-### Response (200 OK)
+Returns a `Presence` object.
 
 ```json
 {
@@ -54,44 +44,31 @@ Authorization: Bearer <token>
 }
 ```
 
-### Error Responses
+**Error responses**
 
-- 400 Invalid status: Status value not recognized
+| Code | Condition |
+|------|-----------|
+| 400 | Invalid `status` value |
+| 401 | Invalid or expired token |
+| 500 | Internal server error or presence module not available |
 
-## GET /users/{user_id}/presence
+## Get a user's presence
 
-Get a user's presence status.
+### `GET /users/{user_id}/presence`
 
-### Headers
+Get a user's presence. The server enforces a visibility gate: you can read presence only when you are the target user, a friend of the target, or share at least one server with the target. Otherwise the server returns `404`.
 
-```
-Authorization: Bearer <token>
-```
+This is intentional. A `404` does not mean the user is offline; it means you do not have permission to view their presence.
 
-### Path Parameters
+**Path parameters**
 
-- `user_id` (string): User's snowflake ID
+| Name | Type | Description |
+|------|------|-------------|
+| `user_id` | integer | User Snowflake ID. |
 
-### Response (200 OK)
+**Response `200 OK`**
 
-```json
-{
-  "user_id": "123456789012345678",
-  "status": "online",
-  "custom_status": "Working on Plexichat",
-  "custom_emoji": ":computer:",
-  "last_seen": 1704067200
-}
-```
-
-### Notes
-
-- Returns `404 User not found` if the target user does not exist
-- Returns `404 User not found` if the target user's presence is not visible to the requester (you must be the user, a friend, or share a server)
-- A `404` here does **not** mean the user is offline; it means you cannot view their presence
-- `invisible` users appear as `offline` to viewers who can read their presence
-
-## Presence Object
+Returns a `Presence` object. If the user has never been online, `last_seen` is `null`. Invisible users are returned as `offline` with `custom_status` and `custom_emoji` set to `null`.
 
 ```json
 {
@@ -103,8 +80,43 @@ Authorization: Bearer <token>
 }
 ```
 
-- `user_id` (string): User's snowflake ID
-- `status` (string): Current status
-- `custom_status` (string?): Custom status text
-- `custom_emoji` (string?): Custom status emoji
-- `last_seen` (int?): Unix timestamp of last activity
+**Error responses**
+
+| Code | Condition |
+|------|-----------|
+| 401 | Invalid or expired token |
+| 404 | User not found or you do not have permission to view their presence (not self, not a friend, and no shared server). Also returned when the target has blocked you or you have blocked the target. |
+| 500 | Internal server error or presence module not available |
+
+**Visibility rules**
+
+The check is implemented in `_can_view_presence` (`plexichat/src/api/routes/presence.py:314`) and `_get_presence_targets` (`plexichat/src/api/routes/presence.py:89`):
+
+- Allowed viewers: self, friends (`get_friend_ids`), or members of any shared server (`get_all_shared_member_ids`).
+- Blocked users are excluded from presence targets and cannot view presence, even if they share a server.
+- The underlying read uses `get_visible_presence(viewer_id, target_id)`, which already scrubs `invisible` to `offline`.
+
+## Presence object
+
+```json
+{
+  "user_id": "123456789012345678",
+  "status": "online",
+  "custom_status": "Working on Plexichat",
+  "custom_emoji": ":computer:",
+  "last_seen": 1704067200
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_id` | string (Snowflake ID) | User ID. |
+| `status` | string | Current status: `online`, `idle`, `dnd`, `invisible`, or `offline`. Viewers see `invisible` as `offline`. |
+| `custom_status` | string or null | Custom status text, or `null` if none. Invisible users return `null`. |
+| `custom_emoji` | string or null | Custom status emoji, or `null` if none. Invisible users return `null`. |
+| `last_seen` | integer or null | Last activity Unix timestamp. `null` when the user has never been seen (stored `0` is mapped to `null`). Invisible users may still expose a valid `last_seen` depending on server policy; do not use it to infer invisibility. |
+
+## Related
+
+- [WebSocket Events](../websocket/events.md) — `PRESENCE_UPDATE` event.
+

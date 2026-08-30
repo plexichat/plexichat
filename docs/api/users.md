@@ -1,25 +1,26 @@
 # Users API
 
-Endpoints for user profile management.
+Manage user profiles, Direct Messages, and GDPR data exports.
 
 **Base URL**: `https://api.plexichat.com/api/v1`
 
 For development, use `http://localhost:8000/api/v1`.
 
-All endpoints in this document are prefixed with `/api/v1/users/` unless otherwise specified.
+All endpoints in this document are mounted under `/users` (`plexichat/src/api/routes/__init__.py:65`). Full paths are shown as `/api/v1/users/...`.
 
-## GET /api/v1/users/@me
+All endpoints require `Authorization: Bearer <token>` unless noted.
 
-Get the current authenticated user's profile.
+## Get the current user
 
-### Example Request
-
-```bash
-curl -X GET http://localhost:8000/api/v1/users/@me \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+GET /api/v1/users/@me
 ```
 
-### Response (200 OK)
+Returns the private profile for the authenticated user or bot. This endpoint is cached for 60 seconds.
+
+### Response
+
+`200 OK` (`UserResponse` in `plexichat/src/api/schemas/auth.py`)
 
 ```json
 {
@@ -30,27 +31,109 @@ curl -X GET http://localhost:8000/api/v1/users/@me \
   "created_at": 1704067200,
   "email_verified": true,
   "totp_enabled": false,
-  "age_verified": false
+  "age_verified": false,
+  "badges": ["early_supporter"],
+  "deletion_status": "active",
+  "deletion_at": null
 }
 ```
 
-### Response Fields
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Snowflake ID. |
+| `username` | string | Username. |
+| `email` | string? | Email (private). `null` for bots. |
+| `avatar_url` | string? | Avatar URL or `null`. |
+| `created_at` | integer | Unix timestamp of account creation. |
+| `email_verified` | boolean | Whether the email is verified. |
+| `totp_enabled` | boolean | Whether 2FA is enabled. |
+| `age_verified` | boolean | Whether age is verified. |
+| `badges` | array | Badge identifiers. |
+| `deletion_status` | string | Account deletion state. |
+| `deletion_at` | integer? | Deletion scheduling timestamp. |
 
-- `id` (string): User's snowflake ID
-- `username` (string): Username
-- `email` (string): Email address (private)
-- `avatar_url` (string?): Avatar URL
-- `created_at` (int): Unix timestamp of account creation
-- `email_verified` (bool): Email verification status
-- `totp_enabled` (bool): 2FA enabled status
-- `age_verified` (bool): Age verification status
-- `badges` (array): Array of user badge identifiers
+Bots are returned with `email: null`, `email_verified: false`, and `badges: []` (`plexichat/src/api/routes/users/profile.py:44`).
 
-## GET /api/v1/users/@me/messaging-settings
+### Errors
 
-Get current authenticated user's messaging preferences.
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid token. |
+| `404` | User or bot not found. |
+| `500` | Auth module unavailable or internal error. |
 
-### Response (200 OK)
+## Update the current user
+
+```
+PATCH /api/v1/users/@me
+```
+
+Updates the current user's profile.
+
+### Request body
+
+`UserUpdateRequest` — all fields are optional.
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `username` | string | 3–32 characters | New username. Must be unique. |
+| `email` | string | Valid email | New email. Requires current password (see below). |
+| `password` | string | Min 8 characters, must meet password policy | New password. Requires `current_password`. |
+| `current_password` | string | — | Required when changing `password` or `email`. |
+| `bio` | string | — | Profile bio. |
+| `pronouns` | string | — | Pronouns. |
+| `location` | string | — | Location. |
+| `timezone` | string | — | Timezone. |
+| `banner_url` | string | — | Banner URL. |
+| `social_links` | object | — | Social link map. |
+| `avatar_url` | string | Must be `/api/v1/avatars/users/{user_id}` and match an uploaded avatar | Change avatar reference (upload the image first with `POST /users/@me/avatar`). |
+
+#### Password and email changes
+
+- To change `password`, you must send `current_password`. The server calls `auth.change_password` and returns `403 Incorrect current password` on failure. The `password` fields are removed before the generic profile update.
+- To change `email`, you must also send `current_password` unless you already verified a password in the same request (for example, when changing both `password` and `email` together). The server verifies with `auth.verify_user_password` and the auth manager resets `email_verified` to `false` so the new address must be verified (`plexichat/src/api/routes/users/profile.py:145`).
+
+#### Avatar URL validation
+
+`avatar_url` is not a free-form URL. It must be the canonical path `/api/v1/avatars/users/{user_id}` and the user must have an uploaded avatar row (`avatars.get_user_avatar`). Arbitrary external URLs are rejected with `400` (`plexichat/src/api/routes/users/profile.py:300`).
+
+### Example request
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/users/@me \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"newusername"}'
+```
+
+### Response
+
+`200 OK` — the updated private user object.
+
+On success, the server invalidates `user_data:*{user_id}*` and emits a gateway event (`emit_user_update`) to other sessions.
+
+### Errors
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Invalid `username`, `email`, or `avatar_url`; or invalid profile field value. |
+| `400` | Missing `current_password` when changing `password` or `email`. |
+| `403` | Incorrect `current_password`. |
+| `409` | Username or email already in use (`UserExistsError`). |
+| `404` | User not found. |
+| `500` | Internal error. |
+
+## Get messaging settings
+
+```
+GET /api/v1/users/@me/messaging-settings
+```
+
+Returns messaging preferences for the current user.
+
+### Response
+
+`200 OK` (`MessagingSettingsResponse`)
 
 ```json
 {
@@ -66,21 +149,21 @@ Get current authenticated user's messaging preferences.
 }
 ```
 
-## PATCH /api/v1/users/@me/messaging-settings
+## Update messaging settings
 
-Update current authenticated user's messaging preferences.
+```
+PATCH /api/v1/users/@me/messaging-settings
+```
 
-### Request Body
+Updates messaging preferences. All fields are optional.
 
-All fields optional.
-
-- `read_receipts_enabled` (bool): Send read receipts to others
-- `typing_indicators_enabled` (bool): Show your typing status
-- `compact_messages_enabled` (bool): Enable message grouping
-- `allow_dms_from` (string): "everyone", "friends", or "none"
-- `auto_create_dms` (bool): Automatically create conversations
-
-### Example Request
+| Field | Type | Allowed values |
+|-------|------|----------------|
+| `read_receipts_enabled` | boolean | `true`, `false` |
+| `typing_indicators_enabled` | boolean | `true`, `false` |
+| `compact_messages_enabled` | boolean | `true`, `false` |
+| `allow_dms_from` | string | `everyone`, `friends`, `none` |
+| `auto_create_dms` | boolean | `true`, `false` |
 
 ```json
 {
@@ -89,48 +172,15 @@ All fields optional.
 }
 ```
 
-### Response (200 OK)
+**Response**: `200 OK` with the updated messaging settings.
 
-Returns updated messaging settings object.
+## Upload an avatar
 
-## PATCH /users/@me
-
-Update the current user's profile.
-
-### Request Body
-
-- `username` (string, optional, 3-32 characters): New username
-- `email` (string, optional, Valid email): New email
-- `password` (string, optional, Min 8 characters): New password
-- `current_password` (string, optional): Required if changing password
-
-### Example Request
-
-```bash
-curl -X PATCH http://localhost:8000/api/v1/users/@me \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "newusername"
-  }'
+```
+POST /api/v1/users/@me/avatar
 ```
 
-### Response (200 OK)
-
-Returns the updated user object.
-
-### Error Responses
-
-- 400 Invalid input: Validation failed
-- 400 Weak password: Password doesn't meet requirements
-- 400 Missing current_password: Required for password change
-- 409 Already exists: Username or email taken
-
-## POST /api/v1/users/@me/avatar
-
-Upload a new avatar for the current user.
-
-### Example Request
+Uploads a new avatar image.
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/users/@me/avatar \
@@ -138,7 +188,9 @@ curl -X POST http://localhost:8000/api/v1/users/@me/avatar \
   -F "file=@/path/to/avatar.png"
 ```
 
-### Response (200 OK)
+### Response
+
+`200 OK`
 
 ```json
 {
@@ -151,24 +203,23 @@ curl -X POST http://localhost:8000/api/v1/users/@me/avatar \
 }
 ```
 
-### Error Responses
+### Errors
 
-- 400 Invalid file type: File must be an image
-- 400 File too large: Exceeds size limit
+| Status | Condition |
+|--------|-----------|
+| `400` | Invalid file type or file too large. |
+| `401` | Not authenticated. |
+| `500` | Internal error. |
 
-## GET /api/v1/users/@me/notes
-
-Get or create the personal notes channel for the current user.
-
-Personal notes are a single-user conversation for storing private notes that sync across devices.
-
-### Headers
+## Notes channel
 
 ```
-Authorization: Bearer <token>
+GET /api/v1/users/@me/notes
 ```
 
-### Response (200 OK)
+Gets or creates the personal notes channel — a single-user conversation that syncs across devices.
+
+**Response** `200 OK`
 
 ```json
 {
@@ -180,17 +231,17 @@ Authorization: Bearer <token>
 }
 ```
 
-## GET /api/v1/users/@me/channels
+## DM channels
 
-Get all DM channels for the current user.
-
-### Headers
+### List DM channels
 
 ```
-Authorization: Bearer <token>
+GET /api/v1/users/@me/channels
 ```
 
-### Response (200 OK)
+Returns all DM channels for the current user.
+
+**Response** `200 OK` (`DMChannelResponse[]`)
 
 ```json
 [
@@ -207,29 +258,19 @@ Authorization: Bearer <token>
 ]
 ```
 
-### Response Fields
-
-- `id` (string): DM channel's snowflake ID
-- `type` (string): Always "dm"
-- `recipient_id` (string): Other user's ID
-- `recipient` (object): Recipient user info
-- `last_message_id` (string?): ID of last message
-
-## POST /api/v1/users/@me/channels
-
-Create or get a DM channel with a user.
-
-### Headers
+### Create a DM channel
 
 ```
-Authorization: Bearer <token>
+POST /api/v1/users/@me/channels
 ```
 
-### Request Body
+Creates or returns an existing DM channel with another user.
 
-- `recipient_id` (string, required): Target user's snowflake ID
+**Request body**:
 
-### Example Request
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `recipient_id` | string | Yes | Target user's snowflake ID. |
 
 ```json
 {
@@ -237,43 +278,34 @@ Authorization: Bearer <token>
 }
 ```
 
-### Response (200 OK)
+**Response** `200 OK` with the `DMChannelResponse`.
 
-```json
-{
-  "id": "123456789012345678",
-  "type": "dm",
-  "recipient_id": "234567890123456789",
-  "recipient": {
-    "id": "234567890123456789",
-    "username": "janedoe"
-  }
-}
+**Errors**:
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Missing or invalid `recipient_id`. |
+| `403` | Cannot message this user (blocked). |
+| `404` | Recipient not found. |
+
+## Search for a user
+
+```
+GET /api/v1/users/search?username=johndoe
 ```
 
-### Error Responses
+Searches by exact username (case-insensitive).
 
-- 400 recipient_id required: Missing recipient_id
-- 400 Invalid recipient ID: ID format invalid
-- 403 Cannot message: User has blocked you
-- 404 User not found: Recipient doesn't exist
-
-## GET /api/v1/users/search
-
-Search for a user by username.
-
-### Query Parameters
-
-- `username` (string, required): Username to search for (exact match, case-insensitive)
-
-### Example Request
+| Query parameter | Type | Required | Description |
+|-----------------|------|----------|-------------|
+| `username` | string | Yes | Username to search for. |
 
 ```bash
 curl -X GET "http://localhost:8000/api/v1/users/search?username=johndoe" \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
-### Response (200 OK)
+**Response** `200 OK`
 
 ```json
 {
@@ -284,50 +316,270 @@ curl -X GET "http://localhost:8000/api/v1/users/search?username=johndoe" \
 }
 ```
 
-### Error Responses
+**Errors**:
 
-- 400 Username required: Missing username parameter
-- 404 User not found: No user with that username
+| Status | Condition |
+|--------|-----------|
+| `400` | Missing `username` or invalid format. |
+| `401` | Not authenticated. |
+| `404` | No user with that username. |
 
-## GET /api/v1/users/{user_id}
-
-Get public profile information for a user.
-
-### Headers
+## Get a user by ID
 
 ```
-Authorization: Bearer <token>
+GET /api/v1/users/{user_id}
 ```
 
-### Path Parameters
+Returns the public profile for any user. Cached for 60 seconds.
 
-- `user_id` (string): User's snowflake ID
+| Path parameter | Type | Description |
+|----------------|------|-------------|
+| `user_id` | string | Snowflake ID. Non-numeric or out-of-range IDs return `400` or `404`. |
 
-### Response (200 OK)
+**Response** `200 OK` (`UserPublicResponse`)
 
 ```json
 {
   "id": "123456789012345678",
   "username": "johndoe",
   "avatar_url": "https://cdn.example.com/avatars/123.png",
-  "created_at": 1704067200
+  "created_at": 1704067200,
+  "badges": []
 }
 ```
 
+**Errors**:
 
+| Status | Condition |
+|--------|-----------|
+| `400` | Invalid user ID format. |
+| `404` | User not found or ID out of 64-bit range. |
 
-### Error Responses
+## Schedule account deletion
 
-- 400 Invalid user ID: ID format invalid
-- 404 User not found: User doesn't exist
+```
+DELETE /api/v1/users/@me
+```
 
----
+Schedules the current account for deletion. Requires password and optionally a TOTP code.
 
-## User Objects
+**Request body** (`UserDeletionRequest`):
 
-### Full User Object (Private)
+```json
+{
+  "password": "correct horse battery staple",
+  "code": "123456"
+}
+```
 
-Returned for the authenticated user (`/api/v1/users/@me`).
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `password` | string | Yes | Current password. |
+| `code` | string | No | TOTP code when 2FA is enabled. |
+
+**Response** `200 OK`
+
+```json
+{
+  "success": true
+}
+```
+
+**Errors**:
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Invalid password or 2FA code. |
+| `401` | Not authenticated. |
+| `500` | Internal error. |
+
+## Data exports (DSAR - GDPR Article 20)
+
+Endpoints for the right to data portability. All paths are under `/users/@me/data-export` (`plexichat/src/api/routes/users/composer.py:182`). Each request is rate-limited to one per 24 hours per user.
+
+The server verifies the password by checking the `password_hash` directly from `auth_users` when the `User` object doesn't carry it, so the verification works without a prior login in the same process (`plexichat/src/api/routes/users/dsar.py:50`). Password verification uses `src.utils.encryption.verify_password`.
+
+### Request a data export
+
+```
+POST /api/v1/users/@me/data-export
+```
+
+Starts a new export job.
+
+**Request body** (`DSARRequestBody` in `plexichat/src/api/schemas/dsar.py:9`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `password` | string | Yes | Current password for verification. |
+| `format` | string | No | `json` (default) or `zip`. |
+
+```json
+{
+  "password": "correct horse battery staple",
+  "format": "zip"
+}
+```
+
+**Behavior**:
+
+1. Verifies the password. On failure, returns `403 Incorrect password`.
+2. Checks the rate limit with key `dsar:user:{user_id}` — one request per 86,400 seconds (`plexichat/src/api/routes/users/dsar.py:75`). If exceeded, returns `429` with `Data export request limit exceeded. Please wait 24 hours between requests.`
+3. Calls `dsar.request_data_export(user_id, format)` and logs the request.
+
+**Response** `200 OK`
+
+```json
+{
+  "success": true,
+  "message": "Data export request submitted successfully"
+}
+```
+
+**Errors**:
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Invalid request body. |
+| `401` | Not authenticated. |
+| `403` | Incorrect password. |
+| `429` | Rate limit exceeded (1 per 24 hours). |
+| `500` | Auth module unavailable or internal error. |
+
+### List data export requests
+
+```
+GET /api/v1/users/@me/data-export
+```
+
+Lists all export requests for the current user.
+
+**Response** `200 OK` (`DSARRequestListResponse`)
+
+```json
+{
+  "requests": [
+    {
+      "id": 1,
+      "status": "ready",
+      "requested_at": 1704067200,
+      "completed_at": 1704070800,
+      "expires_at": 1704675600,
+      "format": "json",
+      "file_size_bytes": 123456,
+      "checksum": "a1b2c3..."
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | integer | Request ID. |
+| `status` | string | `pending`, `approved`, `generating`, `ready`, `downloaded`, `cancelled`, `expired`, `failed`. |
+| `requested_at` | integer | Unix timestamp when requested. |
+| `completed_at` | integer? | When generation finished. |
+| `expires_at` | integer? | When the download expires. |
+| `format` | string | `json` or `zip`. |
+| `file_size_bytes` | integer? | Export file size. |
+| `checksum` | string? | SHA-256 checksum of the file. |
+
+### Get a data export request
+
+```
+GET /api/v1/users/@me/data-export/{request_id}
+```
+
+Returns one request by ID. `request_id` must be an integer string; non-numeric values return `400 Invalid request ID`.
+
+**Response** `200 OK` (`DSARRequestResponse`) — same shape as one entry in the list above.
+
+**Errors**:
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Invalid request ID format. |
+| `401` | Not authenticated. |
+| `404` | Request not found (or not owned by the current user). |
+
+### Cancel a data export request
+
+```
+DELETE /api/v1/users/@me/data-export/{request_id}
+```
+
+Cancels a pending, approved, or generating request. The generation worker's conditional status updates ensure a cancelled row isn't resurrected by an in-flight generation (`plexichat/src/api/routes/users/dsar.py:235`).
+
+**Errors**:
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Request is not in `pending`, `approved`, or `generating` (`Only pending, approved or generating requests can be cancelled`). |
+| `400` | Invalid request ID format. |
+| `401` | Not authenticated. |
+| `404` | Request not found. |
+
+**Response** `200 OK`
+
+```json
+{
+  "success": true,
+  "message": "Data export request cancelled"
+}
+```
+
+### Download a data export
+
+```
+GET /api/v1/users/@me/data-export/{request_id}/download
+```
+
+Streams the export file. This endpoint uses `StreamingResponse` and has no JSON `response_model` (`plexichat/src/api/routes/users/composer.py:238`).
+
+**Preconditions**:
+
+- The request status must be `ready` or `downloaded`. The manager deliberately allows `downloaded` so you can download again within the retention window (`plexichat/src/api/routes/users/dsar.py:296`).
+- The `expires_at` timestamp must be in the future. Expired requests return `410 Download link has expired`.
+- The storage path must exist. The server constructs an `ExportFormatGenerator` with the live DB handle so the `database` storage backend works (`plexichat/src/api/routes/users/dsar.py:346`). If the stream can't be opened, the server returns `500 Failed to read export from storage`.
+
+**Response** `200 OK` — binary stream.
+
+| Header | Description |
+|--------|-------------|
+| `Content-Disposition` | `attachment; filename="dsar_export_{id}.{format}"` |
+| `Content-Length` | File size in bytes (string). |
+| `Content-Type` | `application/zip` for `zip`, `application/json` for `json`. |
+| `X-DSAR-Checksum` | SHA-256 checksum of the file. |
+| `X-DSAR-Request-Id` | Request ID. |
+
+Example:
+
+```bash
+curl -OJ http://localhost:8000/api/v1/users/@me/data-export/123/download \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**One-shot marker behavior**:
+
+The server marks the export as `downloaded` only after all bytes have been sent (`plexichat/src/api/routes/users/dsar.py:382`). If the client disconnects mid-stream, the generator is closed with `GeneratorExit`, the `mark_export_downloaded` call is skipped, and the export stays re-downloadable. Failures to mark downloaded are logged at `WARNING` but don't fail the download.
+
+**Errors**:
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Export is not in `ready` or `downloaded` (`Export is not available for download`). |
+| `400` | Invalid request ID format. |
+| `401` | Not authenticated. |
+| `404` | Request not found or export file not found. |
+| `404` | Export file path not available. |
+| `410` | Download link has expired. |
+| `500` | Failed to read export from storage or internal error. |
+
+## User objects
+
+### Private user object
+
+Returned for `GET /users/@me`:
 
 ```json
 {
@@ -343,9 +595,9 @@ Returned for the authenticated user (`/api/v1/users/@me`).
 }
 ```
 
-### Public User Object
+### Public user object
 
-Returned for other users (`/api/v1/users/{user_id}`).
+Returned for `GET /users/{user_id}` and `GET /users/search`:
 
 ```json
 {
@@ -357,9 +609,7 @@ Returned for other users (`/api/v1/users/{user_id}`).
 }
 ```
 
----
+## Related endpoints
 
-## Related Endpoints
-
-- [User Settings](settings.md) - Cloud-synced user preferences
-- [Authentication](authentication.md) - Login, registration, and 2FA
+- [User Settings](settings.md) — Cloud-synced preferences, including bulk updates
+- [Authentication](authentication.md) — Login, registration, and 2FA

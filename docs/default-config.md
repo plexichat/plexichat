@@ -1,17 +1,21 @@
-# Default Configuration Reference
+# Default configuration reference
 
-This document provides a comprehensive reference for all configuration options in Plexichat. Each setting shows its actual default value as used by the application when no configuration file is present. Values are taken directly from the built-in defaults defined in `config_defaults.py`.
+This document lists the default configuration that Plexichat uses when no
+configuration file is present. Values come from `src/config_defaults.py`,
+`src/config_defaults_authentication.py`, and
+`src/config_defaults_artifacts.py`.
 
-## Complete Default Configuration
+Use this file as your starting point. Copy it to `config/config.yaml` or
+`~/.plexichat/config/config.yaml` and edit the values for your deployment.
 
-Copy this complete configuration file as your starting point. Save it as `config/config.yaml` in your project directory or `~/.plexichat/config/config.yaml` in your home directory, then modify the values according to your deployment requirements.
+> **Important:** Use the exact key names shown here. The server ignores
+> unknown keys.
 
-**Important:** The key names below are the exact keys the application reads. Do not rename keys or the application will not recognize them. For detailed guidance on what each section controls, see the linked configuration guides.
+## Complete default configuration
 
 ```yaml
-# Plexichat Default Configuration
-# Copy this file to config/config.yaml or ~/.plexichat/config/config.yaml
-# Modify values according to your deployment needs
+# Plexichat default configuration
+# Copy to config/config.yaml or ~/.plexichat/config/config.yaml
 application:
   name: Plexichat
   version: a.1.0-131
@@ -19,7 +23,6 @@ application:
 server:
   host: 127.0.0.1
   port: 8000
-  workers: 1
   reload: false
 logging:
   level: DEBUG
@@ -31,6 +34,7 @@ logging:
 database:
   type: sqlite
   path: /root/.plexichat/data/plexichat.db
+  disposable: false
   postgres:
     host: ${POSTGRES_HOST:-localhost}
     port: 5432
@@ -42,6 +46,11 @@ database:
     min_connections: 5
     max_connections: 100
     connect_timeout: 10
+    cache_size_kb: -32000
+    mmap_size: 268435456
+    journal_size_limit: 67108864
+    temp_store: MEMORY
+    idle_reclaim_seconds: 5.0
   monitoring:
     slow_query_threshold_ms: 1000
     alert_on_slow_queries: true
@@ -52,14 +61,14 @@ database:
 valkey:
   enabled: false
   host: ${VALKEY_HOST:-localhost}
-  port: ${VALKEY_PORT:-6379}
+  port: 6379
   password: ${VALKEY_PASSWORD:-}
-  db: ${VALKEY_DB:-0}
+  db: 0
   ssl: false
   key_prefix: 'plexichat:'
   connection_pool:
-    max_connections: ${VALKEY_CONNECTION_POOL:-50}
     timeout: 5
+    max_connections: 50
   ttl:
     session: 1800
     presence: 300
@@ -80,6 +89,8 @@ authentication:
     audit_log:
       file_path: /root/.plexichat/data/deletion_log.jsonl
       hash_chain_enabled: true
+      backup_to_s3: true
+      s3_backup_path: audit/deletions/log_backup.jsonl
       halt_on_invalid_audit: true
       rotate_on_broken_chain: false
     reaper:
@@ -109,6 +120,8 @@ authentication:
     audit_log:
       file_path: /root/.plexichat/data/dsar_audit_log.jsonl
       hash_chain_enabled: true
+      backup_to_s3: true
+      s3_backup_path: audit/dsar/log_backup.jsonl
       halt_on_invalid_audit: true
       rotate_on_broken_chain: false
     harvester:
@@ -125,17 +138,24 @@ authentication:
     max_per_user: 10
     extend_on_activity: true
     extend_threshold_hours: 24
+  reset_password:
+    client_url: ""
+    path: /reset-password
   security:
     max_failed_attempts: 5
     lockout_duration_minutes: 15
+    lockout_min_distinct_ips: 2
+    failed_login_window_minutes: 15
     token_cache_ttl: 30
     token_verify_rate_limit: 100
     token_binding: false
+    session_cookie_secure: true
   totp:
     issuer: Plexichat
     digits: 6
     interval: 30
     backup_code_count: 10
+    backup_code_length: 8
   password:
     min_length: 12
     max_length: 128
@@ -183,11 +203,15 @@ api:
   - X-Requested-With
   - Accept
   - Origin
+  - X-API-Access-Token
+  - X-Plexichat-Request
+  - X-RateLimit-Bypass
   trusted_proxies: []
   trust_x_forwarded_for: false
   docs_url: /docs
   redoc_url: /redoc
   openapi_url: /openapi.json
+  max_worker_threads: 16
 websocket:
   heartbeat_interval_ms: 45000
   session_timeout_ms: 60000
@@ -302,32 +326,32 @@ media:
 rate_limiting:
   enabled: true
   global:
-    requests: 200
+    requests: 25000
     window_seconds: 60.0
-    burst: 100
+    burst: 5000
   user:
-    requests: 200
+    requests: 10000
     window_seconds: 60.0
-    burst: 40
-    hourly_limit: 7200
-    daily_limit: 100000
+    burst: 2500
+    hourly_limit: 300000
+    daily_limit: 5000000
   ip:
-    requests: 100
+    requests: 5000
     window_seconds: 60.0
-    burst: 20
-    hourly_limit: 3600
-    daily_limit: 25000
+    burst: 1500
+    hourly_limit: 150000
+    daily_limit: 1000000
   routes:
     static_client_html:
-      requests: 60
+      requests: 300
       window_seconds: 60.0
-      burst: 20
-      hourly_limit: 1200
+      burst: 100
+      hourly_limit: 6000
     static_client_assets:
-      requests: 1000
+      requests: 5000
       window_seconds: 60.0
-      burst: 200
-      hourly_limit: 36000
+      burst: 1000
+      hourly_limit: 180000
   bot_multiplier: 1.5
   webhook_multiplier: 1.0
   admin_bypass: true
@@ -413,7 +437,7 @@ user_features:
     max_per_hour: 200
 voice:
   enabled: true
-  sfu_backend: mediasoup
+  sfu_backend: aiortc
   mediasoup_url: https://localhost:4443
   janus_url: http://localhost:8088/janus
   stun_urls:
@@ -444,6 +468,7 @@ oauth:
   nonce_token_bytes: 32
   cleanup_on_verify: true
   max_states_per_ip: 10
+  state_cookie_required: true
   pkce_enabled: true
   pkce:
     verifier_length: 64
@@ -500,6 +525,9 @@ selftest:
   capture_stack_traces: true
   retry_on_failure: true
   enable_admin_tests: true
+  require_disposable_db: true
+  journal_path: /root/.plexichat/data/selftest_artifact_journal.json
+  retry_non_idempotent: false
   excluded_endpoints:
   - /api/v1/auth/logout
   - /api/v1/admin/logout
@@ -564,6 +592,7 @@ tls:
   auto_generate_self_signed: false
   cert_path: /root/.plexichat/certs/server.crt
   key_path: /root/.plexichat/certs/server.key
+  hostname: localhost
   cert_days: 365
 email:
   smtp_host: localhost
@@ -595,6 +624,7 @@ emojis:
   - image/webp
 stickers:
   max_packs_per_server: 50
+  max_packs_per_user: 100
   max_stickers_per_pack: 100
   max_sticker_size: 524288
   max_sticker_name_length: 32
@@ -622,10 +652,14 @@ webhooks:
   max_webhooks_per_server: 50
   max_message_length: 2000
   max_embeds_per_message: 10
+  rate_limit_per_minute: 30
+  delivery_interval_seconds: 30
 automod:
   enabled: true
   exempt_owners: true
   exempt_admins: true
+  fail_closed: true
+  default_alert_channel_id: null
   rules:
     caps:
       enabled: true
@@ -654,10 +688,22 @@ applications:
 artifacts:
   enabled: true
   default_retention_days: null
+  evaluation:
+    enabled: false
+    ttl_days: 30
   allow_per_server_override: true
   max_artifact_size_mb: 200
-  editor:
+  plexiscribe:
     enabled: true
+    licensed_feature: plexiscribe
+    max_document_size_mb: 100
+    max_participants: 50
+    native_format_version: 1
+  plexiscript:
+    enabled: true
+    licensed_feature: plexiscript
+    max_file_size_kb: 2048
+    max_participants: 50
     allowed_languages:
     - python
     - javascript
@@ -670,6 +716,27 @@ artifacts:
     - yaml
     - html
     - css
+    - cpp
+    - c
+    - java
+    - ruby
+    - php
+    - bash
+    - lua
+    - swift
+    - kotlin
+    - scala
+    - r
+    - dart
+    - graphql
+    - dockerfile
+    - makefile
+    - toml
+    - ini
+    - protobuf
+    - xml
+    - csv
+    - conf
     max_file_size_mb: 50
   whiteboard:
     enabled: false
@@ -794,8 +861,6 @@ embeds:
     - http
     - https
 telemetry:
-  # Privacy stance: telemetry is OPT-IN. It stays disabled unless explicitly
-  # enabled in config.yaml.
   enabled: false
   rate_limit:
     max_per_minute: 10
@@ -859,44 +924,39 @@ static_client:
   invite_redirect: true
 ```
 
----
+## Configuration file locations
 
-## Configuration File Locations
+Plexichat searches for a configuration file in this order. It uses the first
+file it finds:
 
-Plexichat looks for configuration files in the following order (first found wins):
+1. The path you pass with `--config /path/to/config.yaml`.
+2. The path in the `PLEXICHAT_CONFIG` environment variable.
+3. `./config/config.yaml` relative to the project root.
+4. `~/.plexichat/config/config.yaml`.
+5. Built-in defaults from `src/config_defaults.py` if no file exists.
 
-1. `--config /path/to/config.yaml` (command line argument)
-2. `PLEXICHAT_CONFIG=/path/to/config.yaml` (environment variable)
-3. `./config/config.yaml` (relative to application directory)
-4. `~/.plexichat/config/config.yaml` (user home directory)
-5. Built-in defaults (from `config_defaults.py`)
+If no file is present, the server starts with the defaults shown above and
+logs a warning.
 
-If no file is present, the server runs with the defaults shown above and logs a warning.
-
-## Quick Start Example
+## Quick start example
 
 ```yaml
 application:
   name: Plexichat
   environment: production
-
 server:
   host: 0.0.0.0
   port: 8000
-  workers: 4
-
 database:
   type: postgres
   postgres:
     host: "${POSTGRES_HOST:-localhost}"
     password: "${POSTGRES_PASSWORD:-}"
     sslmode: require
-
 valkey:
   enabled: true
   host: "${VALKEY_HOST:-localhost}"
   password: "${VALKEY_PASSWORD:-}"
-
 authentication:
   accounts:
     allow_registration: true
@@ -907,19 +967,15 @@ authentication:
     lockout_duration_minutes: 15
 ```
 
----
+## Related documentation
 
-## Related Documentation
-
-- [Configuration Overview](configuration.md) - Discovery, interpolation, and module-specific guides
-- [Authentication Configuration](deployment/configuration/config-authentication.md) - Password policies, 2FA, sessions, account deletion
-- [Database Configuration](deployment/configuration/config-database.md) - PostgreSQL/SQLite setup, connection pooling, scaling
-- [Valkey Configuration](deployment/configuration/config-valkey.md) - Caching, session storage, connection pooling
-- [Media Configuration](deployment/configuration/config-media.md) - Storage backends, file limits, processing, security
-- [Voice Configuration](deployment/configuration/config-voice.md) - SFU backends, STUN/TURN, NAT traversal
-- [WebSocket Configuration](deployment/configuration/config-websocket.md) - Gateway, compression, rate limits
-- [Search Configuration](deployment/configuration/config-search.md) - Search backends, indexing, discovery
-- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) - Global, user, IP, route-level limits
-- [API & Server Configuration](deployment/configuration/config-api.md) - CORS, proxies, debug mode, docs paths
-
-
+* [Configuration overview](deployment/configuration/configuration.md) - Discovery, interpolation, and module guides
+* [Authentication configuration](deployment/configuration/config-authentication.md)
+* [Database configuration](deployment/configuration/config-database.md)
+* [Valkey configuration](deployment/configuration/config-valkey.md)
+* [Media configuration](deployment/configuration/config-media.md)
+* [Voice configuration](deployment/configuration/config-voice.md)
+* [WebSocket configuration](deployment/configuration/config-websocket.md)
+* [Search configuration](deployment/configuration/config-search.md)
+* [Rate limiting configuration](deployment/configuration/config-rate-limiting.md)
+* [API and server configuration](deployment/configuration/config-api.md) - CORS, proxies, and docs paths

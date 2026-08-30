@@ -1,81 +1,131 @@
-# Data Types
+# Data types
 
-Common data types used throughout the Plexichat API.
+Common data types used in the Plexichat REST and gateway APIs.
 
 ## Snowflake ID
 
-All IDs in Plexichat are snowflake IDs - 64-bit integers represented as strings in JSON.
+Every ID in Plexichat is a Snowflake: a 64-bit integer serialized as a string in JSON so that JavaScript clients do not lose precision.
 
 ```json
-{
-  "id": "123456789012345678"
-}
+{ "id": "123456789012345678" }
 ```
 
-### Structure
+### Layout
 
-- `63-22` (Timestamp): Milliseconds since epoch
-- `21-17` (Datacenter ID): Datacenter identifier
-- `16-12` (Worker ID): Worker process identifier
-- `11-0` (Sequence): Sequence number
+Plexichat uses a Twitter-style Snowflake. The format is defined in `plexichat/src/utils/encryption/core/snowflake.py`.
+
+```
+ 63  62                  22 21     17 16     12 11          0
++----+---------------------+---------+---------+-------------+
+| 0  | 41-bit timestamp    | 5-bit   | 5-bit   | 12-bit      |
+|    | (ms since epoch)    | datacenter | worker | sequence  |
++----+---------------------+---------+---------+-------------+
+```
+
+| Bits | Field | Description |
+| --- | --- | --- |
+| 63 | Unused | Always `0`. Keeps the value positive in signed 64-bit systems. |
+| 62–22 | Timestamp | Milliseconds since the Plexichat epoch. 41 bits. |
+| 21–17 | Datacenter ID | Datacenter identifier. 5 bits, `0`–`31`. |
+| 16–12 | Worker ID | Worker or process identifier. 5 bits, `0`–`31`. |
+| 11–0 | Sequence | Per-millisecond sequence number. 12 bits, `0`–`4095`. |
 
 ### Epoch
 
-Plexichat uses January 1, 2024 00:00:00 UTC as the epoch.
+Plexichat uses `2024-01-01T00:00:00Z` as the epoch, which is `1704067200000` milliseconds since the Unix epoch.
 
-### Extracting Timestamp
+### Worker and datacenter IDs
+
+You do not need to configure these values for a single-machine deployment. The generator derives them automatically:
+
+1.  It checks `PLEXICHAT_WORKER_ID` and `PLEXICHAT_DATACENTER_ID` (each `0`–`31`, or any integer taken modulo 32).
+2.  If the variables are not set, it hashes the hostname and mixes in the process ID so that two processes on the same host still get different worker IDs.
+
+For distributed or multi-worker deployments, set `PLEXICHAT_WORKER_ID` and `PLEXICHAT_DATACENTER_ID` explicitly for each worker so that IDs remain unique across hosts.
+
+### Extracting the timestamp
+
+Use the epoch and a right-shift of 22 bits.
 
 ```python
-EPOCH = 1704067200000  # 2024-01-01 00:00:00 UTC in ms
+EPOCH = 1704067200000  # 2024-01-01T00:00:00Z in ms
 
-def snowflake_to_timestamp(snowflake_id):
-    timestamp_ms = (int(snowflake_id) >> 22) + EPOCH
-    return timestamp_ms / 1000  # Unix timestamp in seconds
+def snowflake_to_timestamp_ms(snowflake_id: str) -> int:
+    return (int(snowflake_id) >> 22) + EPOCH
+
+def snowflake_to_unix_seconds(snowflake_id: str) -> float:
+    return snowflake_to_timestamp_ms(snowflake_id) / 1000
 ```
 
 ```javascript
 const EPOCH = 1704067200000n;
 
-function snowflakeToTimestamp(snowflakeId) {
-    const timestamp = (BigInt(snowflakeId) >> 22n) + EPOCH;
-    return Number(timestamp) / 1000;
+function snowflakeToTimestampMs(snowflakeId) {
+  return (BigInt(snowflakeId) >> 22n) + EPOCH;
+}
+
+function snowflakeToUnixSeconds(snowflakeId) {
+  return Number(snowflakeToTimestampMs(snowflakeId)) / 1000;
+}
+```
+
+### Parsing all fields
+
+The generator in `snowflake.py:parse` decodes an ID as:
+
+```python
+{
+  "timestamp": (snowflake_id >> 22) + epoch,      # ms since Unix epoch
+  "datacenter_id": (snowflake_id >> 17) & 0x1F,
+  "worker_id": (snowflake_id >> 12) & 0x1F,
+  "sequence": snowflake_id & 0xFFF,
 }
 ```
 
 ## Timestamps
 
-All timestamps are Unix timestamps in seconds (integer).
+Plexichat uses two timestamp encodings. Check the field you are reading.
 
-```json
-{
-  "created_at": 1704067200,
-  "edited_at": 1704067300
-}
-```
+| Context | Encoding | Example |
+| --- | --- | --- |
+| REST API (`created_at`, `edited_at` in most JSON responses) | Unix time in **seconds** (integer) | `1704067200` |
+| Gateway live events (`created_at`, `edited_at` in `MESSAGE_CREATE` etc.) | Unix time in **milliseconds** (integer) | `1705314600000` |
 
-### Converting Timestamps
+The Snowflake timestamp is also in milliseconds since the Plexichat epoch (so milliseconds since the Unix epoch after you add `1704067200000`).
+
+### Converting REST timestamps
 
 ```python
-from datetime import datetime
+from datetime import datetime, timezone
 
-# Unix timestamp to datetime
-dt = datetime.fromtimestamp(1704067200)
+# Unix seconds → datetime
+dt = datetime.fromtimestamp(1704067200, tz=timezone.utc)
 
-# datetime to Unix timestamp
+# datetime → Unix seconds
 timestamp = int(dt.timestamp())
 ```
 
 ```javascript
-// Unix timestamp to Date
+// Unix seconds → Date
 const date = new Date(1704067200 * 1000);
 
-// Date to Unix timestamp
+// Date → Unix seconds
 const timestamp = Math.floor(date.getTime() / 1000);
 ```
 
-## Nullable Fields
+### Converting gateway timestamps
 
-Optional fields may be `null` or omitted:
+```javascript
+// Gateway milliseconds → Date
+const date = new Date(1705314600000);
+
+// Date → gateway milliseconds
+const ms = date.getTime();
+```
+
+## Nullable fields
+
+Optional fields can be `null` or omitted. In field tables, nullable fields are marked with `?`.
 
 ```json
 {
@@ -84,27 +134,27 @@ Optional fields may be `null` or omitted:
 }
 ```
 
-In documentation, nullable fields are marked with `?`:
-
-- `avatar_url` (string?): Avatar URL (nullable)
+- `avatar_url` (`string?`): Avatar URL, or `null` if not set.
 
 ## Pagination
 
-List endpoints support cursor-based pagination using snowflake IDs.
+List endpoints use cursor-based pagination with Snowflake IDs.
 
-### Query Parameters
+### Query parameters
 
-- `limit` (int): Maximum items to return (1-100)
-- `before` (string): Get items with ID less than this
-- `after` (string): Get items with ID greater than this
-
-### Example
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `limit` | `int` | Number of items to return (`1`–`100`). |
+| `before` | `string` | Return items with an ID less than this Snowflake. |
+| `after` | `string` | Return items with an ID greater than this Snowflake. |
 
 ```
 GET /channels/123/messages?limit=50&before=234567890123456789
 ```
 
-### Pagination Strategy
+### Pagination strategy
+
+Fetch pages until the server returns an empty array. Use the last item's `id` as the next `before` cursor.
 
 ```python
 def fetch_all_messages(channel_id):
@@ -128,65 +178,56 @@ def fetch_all_messages(channel_id):
 
 ```javascript
 async function fetchAllMessages(channelId) {
-    const messages = [];
-    let before = null;
+  const messages = [];
+  let before = null;
 
-    while (true) {
-        const params = { limit: 100 };
-        if (before) params.before = before;
+  while (true) {
+    const params = { limit: 100 };
+    if (before) params.before = before;
 
-        const batch = await api.getMessages(channelId, params);
-        if (!batch.length) break;
+    const batch = await api.getMessages(channelId, params);
+    if (!batch.length) break;
 
-        messages.push(...batch);
-        before = batch[batch.length - 1].id;
-    }
+    messages.push(...batch);
+    before = batch[batch.length - 1].id;
+  }
 
-    return messages;
+  return messages;
 }
 ```
 
-## Version String
+## Version string
 
-Plexichat uses a stage-based versioning scheme:
+Plexichat uses a stage-based version scheme:
 
 ```
 [stage].[major].[minor]-[build]
 ```
 
-- `stage` (a, b, c, r): Alpha, Beta, Candidate, Release
-- `major` (1+): Major version (breaking changes)
-- `minor` (0+): Minor version (new features)
-- `build` (1+): Build number
+| Component | Values | Description |
+| --- | --- | --- |
+| `stage` | `a`, `b`, `c`, `r` | Alpha, Beta, Candidate, Release. |
+| `major` | `1`+ | Breaking changes. |
+| `minor` | `0`+ | New features. |
+| `build` | `1`+ | Build number within the stage. |
 
-### Examples
+Examples: `a.1.0-1` (Alpha 1.0, build 1), `b.2.3-15` (Beta 2.3, build 15), `r.1.0-1` (Release 1.0, build 1).
 
-- `a.1.0-1` - Alpha 1.0, build 1
-- `b.2.3-15` - Beta 2.3, build 15
-- `r.1.0-1` - Release 1.0, build 1
-
-### Comparison
-
-Versions are compared by: stage -> major -> minor -> build
+Versions sort by `stage`, then `major`, `minor`, then `build`:
 
 ```python
 # a.1.0-1 < a.1.0-2 < a.1.1-1 < a.2.0-1 < b.1.0-1 < r.1.0-1
 ```
 
-## Boolean Values
+## Boolean values
 
-Boolean values in JSON:
+Booleans are JSON booleans:
 
 ```json
-{
-  "nsfw": false,
-  "pinned": true
-}
+{ "nsfw": false, "pinned": true }
 ```
 
 ## Arrays
-
-Arrays are represented as JSON arrays:
 
 ```json
 {
@@ -198,8 +239,6 @@ Arrays are represented as JSON arrays:
 
 ## Objects
 
-Nested objects are represented as JSON objects:
-
 ```json
 {
   "user": {
@@ -209,9 +248,9 @@ Nested objects are represented as JSON objects:
 }
 ```
 
-## Common Object Types
+## Common object types
 
-### User Object
+### User object
 
 ```json
 {
@@ -222,7 +261,9 @@ Nested objects are represented as JSON objects:
 }
 ```
 
-### Server Object
+`created_at` is Unix time in seconds. For the precise creation time, decode the Snowflake ID.
+
+### Server object
 
 ```json
 {
@@ -236,7 +277,7 @@ Nested objects are represented as JSON objects:
 }
 ```
 
-### Channel Object
+### Channel object
 
 ```json
 {
@@ -252,7 +293,7 @@ Nested objects are represented as JSON objects:
 }
 ```
 
-### Message Object
+### Message object
 
 ```json
 {
@@ -268,25 +309,33 @@ Nested objects are represented as JSON objects:
 }
 ```
 
-## Presence Status Values
+Gateway live events for messages use the same fields plus `author_username`, `author_avatar_url`, and millisecond timestamps. See the [WebSocket gateway guide](client-development/websocket.md#message-events).
 
-- online: User is online
-- idle: User is idle/away
-- dnd: Do not disturb
-- invisible: Appear offline (only for self)
-- offline: User is offline
+## Presence status values
 
-## Relationship Status Values
+| Value | Description |
+| --- | --- |
+| `online` | User is online. |
+| `idle` | User is idle or away. |
+| `dnd` | Do not disturb. |
+| `invisible` | Appear offline. Only valid for the current user. |
+| `offline` | User is offline. |
 
-- friend: Mutual friendship
-- pending_incoming: Incoming friend request
-- pending_outgoing: Outgoing friend request
-- blocked: User is blocked
+## Relationship status values
 
-## Channel Types
+| Value | Description |
+| --- | --- |
+| `friend` | Mutual friendship. |
+| `pending_incoming` | Incoming friend request. |
+| `pending_outgoing` | Outgoing friend request. |
+| `blocked` | User is blocked. |
 
-- text: Text channel for messages
-- voice: Voice channel for audio
-- category: Category for organizing channels
-- dm: Direct message channel
-- notes: Personal notes channel
+## Channel types
+
+| Type | Description |
+| --- | --- |
+| `text` | Text channel for messages. |
+| `voice` | Voice channel for audio. |
+| `category` | Category for organizing channels. |
+| `dm` | Direct message channel. |
+| `notes` | Personal notes channel. |

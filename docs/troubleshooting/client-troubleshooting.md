@@ -1,348 +1,263 @@
-# Client-Side Troubleshooting
+# Troubleshoot client issues
 
-This guide covers common issues and debugging techniques for Plexichat web clients.
+This guide helps you diagnose and fix common Plexichat web client issues, including browser debugging, network configuration, and gateway errors.
 
-## Browser Console Debugging
+## Debug in the browser console
 
-### Opening Developer Tools
+### Open Developer Tools
 
-**Chrome/Edge:**
-- Press F12 or Ctrl+Shift+I (Windows), Cmd+Option+I (Mac)
-- Right-click page -> Inspect
+**Chrome or Edge:**
+
+*   Press `F12` or `Ctrl+Shift+I` (Windows) or `Cmd+Option+I` (macOS).
+*   Right-click the page and select **Inspect**.
 
 **Firefox:**
-- Press F12 or Ctrl+Shift+I (Windows), Cmd+Option+I (Mac)
-- Right-click page -> Inspect Element
+
+*   Press `F12` or `Ctrl+Shift+I` (Windows) or `Cmd+Option+I` (macOS).
+*   Right-click the page and select **Inspect Element**.
 
 **Safari:**
-- Enable Develop menu in Safari > Preferences > Advanced
-- Press Cmd+Option+I
 
-### Console Logs
+*   Enable the Develop menu in **Safari > Preferences > Advanced**.
+*   Press `Cmd+Option+I`.
 
-The console shows JavaScript errors and warnings. Look for:
+### Review console logs
 
-- Red errors: Critical issues preventing functionality
-- Yellow warnings: Non-critical issues that may affect behavior
-- Blue info: General information
+Look for:
 
-**Common Console Errors:**
+*   Red errors – Critical issues that block functionality.
+*   Yellow warnings – Non-critical issues that might affect behavior.
+*   Blue info – General information.
+
+**Common errors:**
 
 ```
 Uncaught ReferenceError: variable is not defined
 ```
-A variable or function was used before being defined. Check for typos or loading order issues.
+
+You used a variable or function before defining it. Check for typos or loading order issues.
 
 ```
 Failed to fetch
 ```
-Network request failed. Check network connectivity and CORS settings.
+
+The network request failed. Check connectivity and CORS settings.
 
 ```
 WebSocket connection failed
 ```
-WebSocket could not connect. Check gateway URL and firewall rules.
 
-### Network Tab Analysis
+The gateway WebSocket failed to connect. Check the gateway URL and firewall rules. See [Gateway connection](../websocket/connection.md).
 
-The Network tab shows all HTTP requests and WebSocket connections.
+### Analyze the Network tab
 
-**Analyzing Failed Requests:**
-1. Open Network tab
-2. Filter by "Failed" status (red)
-3. Click failed request to see details:
-   - Request URL and method
-   - Request headers
-   - Request payload
-   - Response status and headers
-   - Response body
+**To analyze failed requests:**
 
-**WebSocket Connection Analysis:**
-1. Filter by "WS" (WebSocket)
-2. Click the gateway connection
-3. View frames sent and received
-4. Check connection status (101 = successful, others = failed)
+1.  Open the **Network** tab.
+2.  Filter by failed status (red).
+3.  Click the failed request and review:
+    *   Request URL and method
+    *   Request headers and payload
+    *   Response status, headers, and body
 
-### Performance Profiling
+**To analyze a WebSocket connection:**
 
-**Recording Performance:**
-1. Open Performance tab
-2. Click Record
-3. Perform the action causing slowness
-4. Click Stop
-5. Analyze the timeline:
-   - Long tasks (red bars > 50ms)
-   - Script execution time
-   - Rendering and painting
-   - Network activity
+1.  Filter by `WS` (WebSocket).
+2.  Click the gateway connection.
+3.  Review sent and received frames.
+4.  Check the connection status (`101` means success).
 
-**Memory Profiling:**
-1. Open Memory tab
-2. Select "Heap snapshot"
-3. Click Take snapshot
-4. Perform actions
-5. Take another snapshot
-6. Compare snapshots to find memory leaks
+### Profile performance
 
-## Network and Firewall Issues
+**To record performance:**
 
-### Required Ports
+1.  Open the **Performance** tab.
+2.  Click **Record**.
+3.  Reproduce the slow action.
+4.  Click **Stop**.
+5.  Review the timeline for long tasks (red bars over 50 ms), script execution, rendering, and network activity.
 
-Plexichat requires the following ports:
+**To profile memory:**
 
-- **8000**: API server and WebSocket gateway (HTTP/WS)
-- **443**: HTTPS and secure WebSocket (WSS) in production
-- **8443**: Default client port (if using separate client deployment)
+1.  Open the **Memory** tab.
+2.  Select **Heap snapshot** and click **Take snapshot**.
+3.  Perform actions.
+4.  Take another snapshot and compare to find leaks.
 
-### Firewall Configuration
+## Fix network and firewall issues
+
+### Check required ports
+
+Plexichat uses these ports:
+
+*   `8000` – API server and WebSocket gateway (`HTTP`/`WS`).
+*   `443` – `HTTPS` and secure WebSocket (`WSS`) in production.
+*   `8443` – Default client port if you deploy the client separately.
+
+### Configure the firewall
 
 **Windows Firewall:**
+
 ```powershell
-# Allow outbound connections to Plexichat server
+# Allow outbound connections to the Plexichat server
 New-NetFirewallRule -DisplayName "Plexichat" -Direction Outbound -Program "chrome.exe" -RemoteAddress "api.plexichat.com" -Action Allow
 ```
 
 **Linux (ufw):**
+
 ```bash
 sudo ufw allow 8000/tcp
 sudo ufw allow 443/tcp
 ```
 
-**Corporate Firewalls:**
-Ensure your network allows:
-- Outbound HTTPS to your Plexichat server
-- WebSocket connections (Upgrade header)
-- Long-lived connections (no aggressive timeout)
+**Corporate firewalls:** Allow outbound `HTTPS` to your Plexichat server, WebSocket `Upgrade` headers, and long-lived connections without aggressive timeouts.
 
-### Proxy Configuration
+### Configure a proxy
 
-If behind a proxy, configure your browser or client:
+If you are behind a proxy, configure the browser or client:
 
-**Environment Variables:**
+**Environment variables:**
+
 ```bash
 export HTTP_PROXY=http://proxy.example.com:8080
 export HTTPS_PROXY=http://proxy.example.com:8080
 export NO_PROXY=localhost,127.0.0.1
 ```
 
-**Browser Proxy Settings:**
-- Chrome/Edge: Settings > System > Open proxy settings
-- Firefox: Settings > Network Settings > Manual proxy configuration
+**Browser proxy settings:**
 
-### TLS/SSL Issues
+*   Chrome or Edge: **Settings > System > Open proxy settings**.
+*   Firefox: **Settings > Network Settings > Manual proxy configuration**.
 
-**Self-Signed Certificates:**
-If using a self-signed certificate:
-1. Open the server URL in a browser
-2. Accept the security warning
-3. The certificate will be trusted for that session
+### Fix TLS and SSL issues
 
-**Certificate Errors:**
-- Check certificate validity (not expired)
-- Verify certificate matches domain name
-- Ensure intermediate certificates are installed
+**Self-signed certificates:**
 
-## Common Error Codes
+1.  Open the server URL in a browser.
+2.  Accept the security warning.
+3.  The browser trusts the certificate for that session.
 
-### HTTP Error Codes
+**Certificate errors:** Check that the certificate is not expired, matches the domain, and includes intermediate certificates.
 
-**400 Bad Request**
-- Invalid request format
-- Missing required fields
-- Check request body against API schema
+## Review common error codes
 
-**401 Unauthorized**
-- Missing or invalid token
-- Token expired
-- Re-authenticate and obtain new token
+### HTTP error codes
 
-**403 Forbidden**
-- Insufficient permissions
-- Account suspended
-- Contact server administrator
+| Code | Meaning | Action |
+|------|---------|--------|
+| `400` | Bad request – Invalid format or missing fields. | Check the request body against the API schema. |
+| `401` | Unauthorized – Missing or invalid token. | Re-authenticate and get a new token. |
+| `403` | Forbidden – Insufficient permissions or suspended account. | Verify roles or contact an administrator. |
+| `404` | Not found – Resource does not exist or URL is incorrect. | Check the endpoint path. |
+| `429` | Too many requests – Rate limit exceeded. | Check the `Retry-After` header and use exponential backoff. |
+| `500` | Internal server error. | Check server logs or contact an administrator. |
+| `502` | Bad gateway – Server temporarily unavailable. | Retry after a delay. |
+| `503` | Service unavailable – Maintenance or overload. | Retry later. |
 
-**404 Not Found**
-- Resource does not exist
-- Incorrect URL
-- Check endpoint path
+### WebSocket close codes
 
-**429 Too Many Requests**
-- Rate limit exceeded
-- Check Retry-After header
-- Implement exponential backoff
+Close codes are defined in `src/api/websocket/opcodes.py` (`GatewayCloseCode`). Whether you can resume is defined by `RESUMABLE_CLOSE_CODES` and `is_resumable()` in the same file.
 
-**500 Internal Server Error**
-- Server error
-- Check server logs
-- Contact server administrator
+| Code | Name | Meaning | Resumable | Action |
+|------|------|---------|-----------|--------|
+| `1000` | `NORMAL_CLOSURE` | Clean disconnect. | No | No action needed. |
+| `1001` | `GOING_AWAY` | Server is going away. | No | Reconnect with a new session. |
+| `4000` | `UNKNOWN_ERROR` | Generic internal error. | Yes | Resume with `RESUME` (`op: 6`). If resume fails, send `IDENTIFY`. |
+| `4001` | `UNKNOWN_OPCODE` | You sent an unrecognized opcode. | Yes | Fix the opcode and resume. |
+| `4002` | `DECODE_ERROR` | Invalid JSON or payload encoding. | Yes | Fix the message format and resume. |
+| `4003` | `NOT_AUTHENTICATED` | You sent a message before `IDENTIFY`. | Yes | Send `IDENTIFY` (`op: 2`) or resume. |
+| `4004` | `AUTHENTICATION_FAILED` | Token is invalid or rejected. | No | Do not resume. Re-authenticate and send a fresh `IDENTIFY`. |
+| `4005` | `ALREADY_AUTHENTICATED` | You already sent `IDENTIFY` on this session. | Yes | Resume instead of re-identifying. |
+| `4007` | `INVALID_SEQ` | Resume sequence is invalid. | Yes | Resume with the correct `seq` from the last `DISPATCH`. |
+| `4008` | `RATE_LIMITED` | Gateway rate limit exceeded. | Yes | Back off before resuming. Do not reconnect in a tight loop. |
+| `4009` | `SESSION_TIMED_OUT` | Session expired while disconnected. | Yes | Resume if the session is still in the resume window; otherwise the server replies with `INVALID_SESSION` (`op: 9`, `d: false`) and you must re-identify. |
+| `4010` | `INVALID_SHARD` | Invalid shard requested. | No | Fix the shard configuration. |
+| `4011` | `SHARDING_REQUIRED` | Server requires sharding. | No | Implement sharding. |
+| `4012` | `INVALID_API_VERSION` | Unsupported API or gateway version. | No | Update the client. |
+| `4013` | `INVALID_INTENTS` | Malformed or unsupported `intents` bitmask. See [Gateway intents](../websocket/intents.md). | No | Fix the `intents` value (must be an integer `0`–`4194303`). |
+| `4014` | `DISALLOWED_INTENTS` | Privileged intents not permitted. | No | Remove `GUILD_MEMBERS`, `GUILD_PRESENCES`, or `MESSAGE_CONTENT`, or request approval. |
+| `4015` | `VERSION_OUTDATED` | Client version is too old. | No | Update the client. |
+| `4016` | `SERVER_MAINTENANCE` | Server is entering maintenance mode. | No | Reconnect after maintenance. |
+| `4017` | `SERVER_SHUTDOWN` | Server is shutting down intentionally. | No | Reconnect when the server is available. |
 
-**502 Bad Gateway**
-- Server temporarily unavailable
-- Retry after delay
-- Check server status
+**How to handle a close:**
 
-**503 Service Unavailable**
-- Server maintenance or overload
-- Check status page
-- Retry later
+1.  Record the close code, reason, and the last opcode and sequence number.
+2.  If the code is resumable, reconnect, wait for `HELLO` (`op: 10`), and send `RESUME` (`op: 6`) with `token`, `session_id`, and `seq`. See [Gateway connection](../websocket/connection.md#resume-a-session).
+3.  If the code is not resumable, get a new token if needed and send `IDENTIFY` (`op: 2`) to start a new session.
+4.  If the server replies with `INVALID_SESSION` (`op: 9`) and `d: false`, the session is not resumable. Send a fresh `IDENTIFY`.
+5.  Always back off when rate-limited (`4008` or `429`).
 
-### WebSocket Close Codes
+For the full list and the resumable check, see [Gateway close codes](../websocket/close-codes.md).
 
-**1000 Normal Closure**
-- Clean disconnect
-- Expected behavior
+## Diagnose common failure modes
 
-**1001 Going Away**
-- Server shutting down
-- Reconnect after delay
+### Database connection failures
 
-**4000 Unknown Error**
-- Unexpected server error
-- Resumable with op:6 Resume
+**Symptoms:** Login fails with a database error, you cannot load servers or messages, or the server returns `500` errors.
 
-**4001 Unknown Opcode**
-- Invalid opcode sent
-- Check client implementation
+**To troubleshoot:**
 
-**4002 Decode Error**
-- Invalid JSON or encoding
-- Check message format
+1.  Check server logs for database errors.
+2.  Verify the database is running.
+3.  Check the database connection string in your config.
+4.  Test connectivity:
 
-**4003 Not Authenticated**
-- Sent message before IDENTIFY
-- Send IDENTIFY first
+    ```bash
+    psql -h localhost -U plexichat -d plexichat
+    ```
 
-**4004 Authentication Failed**
-- Invalid token
-- Re-authenticate
+### Valkey connection failures
 
-**4005 Already Authenticated**
-- Already sent IDENTIFY
-- Resume instead
+**Symptoms:** Slow performance, session issues, or caching not working.
 
-**4007 Invalid Seq**
-- Invalid sequence number
-- Use correct sequence from events
+**To troubleshoot:**
 
-**4008 Rate Limited**
-- Too many messages
-- Slow down message rate
+1.  Check that Valkey is running:
 
-**4009 Session Timed Out**
-- Missed heartbeats
-- Improve heartbeat handling
+    ```bash
+    redis-cli ping
+    ```
 
-**4010 Invalid Shard**
-- Invalid sharding info
-- Check shard configuration
+2.  Verify the Valkey connection in your config.
+3.  Check Valkey logs and test connectivity from the server.
 
-**4011 Sharding Required**
-- Server requires sharding
-- Implement sharding
+### Rate limiting
 
-**4012 Invalid API Version**
-- Unsupported API version
-- Update client
+**Symptoms:** `429` errors, blocked requests, or slow API responses.
 
-**4013 Invalid Intents**
-- Invalid intent value
-- Check intent calculation
+**To troubleshoot:**
 
-**4014 Disallowed Intents**
-- Privileged intent not allowed
-- Remove privileged intents or get approval
+1.  Check the `Retry-After` header.
+2.  Implement exponential backoff.
+3.  Reduce request frequency and use caching.
 
-**4015 Version Outdated**
-- Client version too old
-- Update client
+### Authentication failures
 
-**4016 Server Maintenance**
-- Server entering maintenance
-- Reconnect after maintenance
+**Symptoms:** `401` errors, cannot log in, or token rejected.
 
-**4017 Server Shutdown**
-- Server is shutting down
-- Reconnect when server back online
+**To troubleshoot:**
 
-## Common Failure Modes
+1.  Verify the token is valid and not expired.
+2.  Re-authenticate.
+3.  Check two-factor authentication and account status.
 
-### Database Connection Failures
+### Permission errors
 
-**Symptoms:**
-- Login fails with database error
-- Cannot load servers or messages
-- Server returns 500 errors
+**Symptoms:** `403` errors or access denied messages.
 
-**Troubleshooting:**
-1. Check server logs for database errors
-2. Verify database is running
-3. Check database connection string in config
-4. Test database connectivity:
-   ```bash
-   psql -h localhost -U plexichat -d plexichat
-   ```
+**To troubleshoot:**
 
-### Valkey Connection Failures
+1.  Check user roles and permissions.
+2.  Verify whether the channel is private.
+3.  Contact a server administrator.
 
-**Symptoms:**
-- Slow performance
-- Session issues
-- Caching not working
+## Use debugging techniques
 
-**Troubleshooting:**
-1. Check Valkey is running:
-   ```bash
-   redis-cli ping
-   ```
-2. Verify Valkey connection in config
-3. Check Valkey logs
-4. Test Valkey connectivity from server
+### Enable debug logging
 
-### Rate Limiting
+**Client-side:**
 
-**Symptoms:**
-- 429 errors
-- Requests blocked
-- Slow API responses
-
-**Troubleshooting:**
-1. Check Retry-After header
-2. Implement exponential backoff
-3. Reduce request frequency
-4. Use caching to reduce API calls
-
-### Authentication Failures
-
-**Symptoms:**
-- 401 errors
-- Cannot login
-- Token rejected
-
-**Troubleshooting:**
-1. Verify token is valid
-2. Check token expiration
-3. Re-authenticate
-4. Verify 2FA if enabled
-5. Check account status (not suspended)
-
-### Permission Errors
-
-**Symptoms:**
-- 403 errors
-- Cannot perform actions
-- Access denied messages
-
-**Troubleshooting:**
-1. Check user roles
-2. Verify role permissions
-3. Contact server administrator
-4. Check if channel is private
-
-## Debugging Techniques
-
-### Enabling Debug Logging
-
-**Client-Side:**
 ```javascript
 // Enable verbose logging
 localStorage.setItem('plexichat_debug', 'true');
@@ -351,36 +266,34 @@ localStorage.setItem('plexichat_debug', 'true');
 console.log('Debug mode:', localStorage.getItem('plexichat_debug'));
 ```
 
-**Server-Side:**
+**Server-side:**
+
 ```yaml
 # config/config.yaml
 logging:
   level: DEBUG
 ```
 
-### Capturing WebSocket Traffic
+### Capture WebSocket traffic
 
-**Browser:**
-1. Open Network tab
-2. Filter by WS
-3. Click gateway connection
-4. View Messages tab
-5. Copy frames for analysis
+**In the browser:**
 
-**Programmatic:**
+1.  Open the **Network** tab.
+2.  Filter by `WS`.
+3.  Click the gateway connection.
+4.  Open the **Messages** tab and copy frames for analysis.
+
+**Programmatically:**
+
 ```javascript
 const ws = new WebSocket('ws://localhost:8000/gateway');
 
 ws.addEventListener('message', (event) => {
   console.log('Received:', JSON.parse(event.data));
 });
-
-ws.addEventListener('send', (event) => {
-  console.log('Sent:', event.data);
-});
 ```
 
-### API Request Logging
+### Log API requests
 
 ```javascript
 // Intercept fetch calls
@@ -391,133 +304,78 @@ window.fetch = function(...args) {
 };
 ```
 
-### Stack Trace Analysis
+### Analyze stack traces
 
-When an error occurs, examine the stack trace:
+When an error occurs:
 
-1. Identify the error location
-2. Look for your code in the stack
-3. Check the line causing the error
-4. Verify variable values at that point
-5. Check for null/undefined values
+1.  Find the error location.
+2.  Look for your code in the stack.
+3.  Check the line that caused the error and the variable values at that point.
+4.  Check for `null` or `undefined` values.
 
-### Reproducing Issues
+### Reproduce the issue
 
-**Steps to Reproduce:**
-1. Clear browser cache and cookies
-2. Open in incognito/private mode
-3. Disable browser extensions
-4. Try different browser
-5. Check if issue is reproducible
+1.  Clear browser cache and cookies.
+2.  Open the site in incognito or private mode.
+3.  Disable browser extensions.
+4.  Try a different browser.
 
-**Isolating the Issue:**
-- If works in incognito: Cache or extension issue
-- If works in different browser: Browser-specific issue
-- If fails everywhere: Server or network issue
+*   If the issue disappears in incognito, it is likely a cache or extension issue.
+*   If it disappears in a different browser, it is likely browser-specific.
+*   If it fails everywhere, it is likely a server or network issue.
 
-## IndexedDB Issues
+## Fix IndexedDB issues
 
-### Clearing IndexedDB
+### Clear IndexedDB
 
-**Browser Console:**
+**In the browser console:**
+
 ```javascript
 indexedDB.deleteDatabase('PlexichatCache');
 ```
 
-**Browser Settings:**
-- Chrome: Settings > Privacy > Clear browsing data > Advanced > IndexedDB
-- Firefox: Options > Privacy & Security > Cookies and Site Data > Manage Data
+**In browser settings:**
 
-### IndexedDB Corruption
+*   Chrome: **Settings > Privacy > Clear browsing data > Advanced > IndexedDB**.
+*   Firefox: **Options > Privacy & Security > Cookies and Site Data > Manage Data**.
 
-**Symptoms:**
-- Messages not loading
-- Cache errors in console
-- Infinite loading states
+### Handle corruption
 
-**Troubleshooting:**
-1. Clear IndexedDB
-2. Reload page
-3. Re-authenticate
-4. Cache will rebuild from API
+**Symptoms:** Messages do not load, cache errors in the console, or infinite loading states.
 
-### IndexedDB Quota Exceeded
+**To fix:** Clear IndexedDB, reload the page, and re-authenticate. The cache rebuilds from the API.
 
-**Symptoms:**
-- QuotaExceededError
-- Cannot save messages
-- Cache failures
+### Handle quota exceeded
 
-**Troubleshooting:**
-1. Clear old cache data
-2. Reduce cache size
-3. Implement cache eviction policy
-4. Use compression for cached data
+**Symptoms:** `QuotaExceededError`, cannot save messages, or cache failures.
 
-## Performance Issues
+**To fix:** Clear old cache data, reduce cache size, implement cache eviction, or compress cached data.
 
-### Slow Message Loading
+## Fix performance issues
 
-**Causes:**
-- Too many messages in cache
-- Large message history
-- Slow API response
+### Slow message loading
 
-**Solutions:**
-1. Implement pagination
-2. Limit cache size
-3. Lazy load messages
-4. Use virtual scrolling
+**Causes:** Too many cached messages, large history, or slow API responses.
 
-### High Memory Usage
+**To fix:** Implement pagination, limit cache size, lazy-load messages, or use virtual scrolling.
 
-**Causes:**
-- Memory leaks
-- Large cached data
-- Unclosed connections
+### High memory usage
 
-**Solutions:**
-1. Profile memory usage
-2. Clear cache periodically
-3. Close unused connections
-4. Implement garbage collection
+**Causes:** Memory leaks, large cached data, or unclosed connections.
 
-### Slow UI Rendering
+**To fix:** Profile memory, clear the cache periodically, close unused connections, and allow garbage collection.
 
-**Causes:**
-- Too many DOM elements
-- Inefficient rendering
-- Large message lists
+### Slow UI rendering
 
-**Solutions:**
-1. Use virtual scrolling
-2. Implement lazy rendering
-3. Debounce scroll events
-4. Optimize CSS selectors
+**Causes:** Too many DOM elements, inefficient rendering, or large message lists.
 
-## Getting Help
+**To fix:** Use virtual scrolling, implement lazy rendering, debounce scroll events, and optimize CSS selectors.
+
+## Get help
 
 If you cannot resolve an issue:
 
-1. **Collect Information:**
-   - Browser and version
-   - Operating system
-   - Error messages from console
-   - Network tab screenshots
-   - Steps to reproduce
-
-2. **Check Documentation:**
-   - [API Reference](../api/index.md)
-   - [WebSocket Guide](../client-development/websocket.md)
-   - [Deployment Guide](../deployment/index.md)
-
-3. **Contact Support:**
-   - Server administrator for server issues
-   - Community forums for client issues
-   - GitHub issues for bug reports
-
-4. **Provide Context:**
-   - What you were trying to do
-   - What happened instead
-   - What you expected to happen
-   - Any error messages or screenshots
+1.  **Collect information:** Browser and version, operating system, console errors, Network tab screenshots, and steps to reproduce.
+2.  **Check documentation:** [API Reference](../api/index.md), [WebSocket gateway](../websocket/README.md), and [Deployment guide](../deployment/index.md).
+3.  **Contact support:** Your server administrator for server issues, community forums for client issues, or GitHub issues for bug reports.
+4.  **Provide context:** What you tried to do, what happened, what you expected, and any error messages or screenshots.

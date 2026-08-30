@@ -1,323 +1,294 @@
-# User Management
+# Manage users in the admin panel
 
-This guide covers user account management operations in the Plexichat admin panel.
+This guide describes how to manage user accounts in the Plexichat admin panel.
 
 ## Overview
 
-The user management system allows admins to:
-- View and search user accounts
-- Edit user profiles and settings
-- Manage user account status
-- Handle scheduled deletions
-- Add internal admin notes
-- Manage user tiers and badges
+The admin panel lets operators with the appropriate role manage the user lifecycle:
 
-## Viewing Users
+- Search and view user accounts.
+- Edit profiles and account settings.
+- Lock and unlock accounts.
+- Force username changes.
+- Handle scheduled deletions, grace periods, and immediate purges.
+- Manage tiers and badges.
+- Add internal admin notes.
 
-### User Search
+All changes are written to the audit log. Some destructive actions require approval.
+See `admin_ui.approval_workflows` in `src/config_defaults.py`.
 
-Navigate to User Management and use the search functionality:
-- **By User ID**: Enter exact snowflake ID
-- **By Username**: Partial or exact username match
-- **By Email**: Email address search
-- **By Status**: Filter by account status
+## Before you begin
 
-### User Profile
+You need an admin session authenticated at `<admin-base>` (default `/api/v1/admin`) and a role that contains the permission listed for each action. See [Admin permissions](../admin/rbac.md) and `src/core/admin/permissions.py:42` for the full `PERMISSION_SCOPES` list.
 
-Click on any user to view their complete profile including:
+Common scopes:
+
+| Scope | Purpose |
+|---|---|
+| `users.read` | View users and activity reports |
+| `users.edit` | Edit profiles, cancel or delay deletions |
+| `users.lock` | Lock and unlock accounts |
+| `users.force_username_change` | Force username changes and credential resets |
+| `users.tier` | Change account tiers |
+| `users.badges` | Add or remove badges |
+| `users.notes` | Add, view, and edit internal notes |
+| `users.delete` | Delete accounts immediately |
+| `users.force_purge` | Immediately purge scheduled deletions |
+
+Caution: Do not document `users.force_password_change`. This scope does not exist. Use `users.force_username_change` for forced account and credential changes. The role API rejects wildcard scopes such as `*` or `users.*` with `400` (`src/api/routes/admin/roles.py:201`).
+
+## Search and view users
+
+### Search for a user
+
+1. Go to **User Management**.
+2. Use the search box to filter by:
+   - User ID (exact Snowflake ID)
+   - Username (partial or exact match)
+   - Email address
+   - Account status
+
+The search endpoint is `GET <admin-base>/users/search`.
+
+### View a user profile
+
+Select a user to view:
+
 - Basic information (username, ID, email)
 - Account status and tier
 - Registration date and last activity
-- Associated servers and roles
+- Server memberships and roles
 - Internal admin notes
-- Account deletion status
+- Scheduled deletion status, if any
 
-## User Account Operations
+The profile endpoint is `GET <admin-base>/users/{user_id}`.
 
-### Editing User Profiles
+## Edit user profiles
 
-1. Open user profile
-2. Click "Edit Profile"
-3. Modify allowed fields:
-   - Display name
-   - Email address
-   - Bio/description
-   - Profile settings
-4. Save changes
-5. Action is logged to audit trail
+1. Open the user profile.
+2. Click **Edit Profile**.
+3. Update allowed fields such as display name, email, bio, and profile settings.
+4. Click **Save**.
 
-**Required Permissions**: `users.edit`
+Required permission: `users.edit`.
 
-### Locking User Accounts
+The API endpoint is `PATCH` or `PUT` on the user resource as exposed by the admin users router (`src/api/routes/admin/users/__init__.py`).
 
-Lock a user account to prevent login:
+## Lock and unlock accounts
 
-1. Open user profile
-2. Click "Lock Account"
-3. Provide reason for lock
-4. Confirm action
-5. User cannot login while locked
+### Lock an account
 
-**Required Permissions**: `users.lock`
+Locking prevents login without deleting data.
 
-### Unlocking User Accounts
+1. Open the user profile.
+2. Click **Lock Account**.
+3. Enter a reason for the lock.
+4. Confirm the action.
 
-1. Open locked user profile
-2. Click "Unlock Account"
-3. Confirm action
-4. User can login again
+Required permission: `users.lock`. The action is `POST <admin-base>/security/lock-user`.
 
-**Required Permissions**: `users.lock`
+### Unlock an account
 
-### Forcing Username Changes
+1. Open the locked user profile.
+2. Click **Unlock Account**.
+3. Confirm the action.
 
-1. Open user profile
-2. Click "Force Username Change"
-3. Enter new username
-4. Provide reason
-5. Confirm action
-6. User must choose new username on next login
+Required permission: `users.lock`. The action is `POST <admin-base>/security/unlock-user`.
 
-**Required Permissions**: `users.force_username_change`
+## Force a username change
 
-### Forcing Password Changes
+1. Open the user profile.
+2. Click **Force Username Change**.
+3. Enter the new username and a reason.
+4. Confirm the action.
 
-1. Open user profile
-2. Click "Force Password Change"
-3. Confirm action
-4. User must change password on next login
+The user is prompted to choose a new username on next login.
 
-**Required Permissions**: `users.force_username_change` (there is no `users.force_password_change` scope; forced account/credential changes use the same scope as forced username changes)
+Required permission: `users.force_username_change`.
 
-## Account Deletion
+Endpoint: `POST <admin-base>/users/{user_id}/force-username-change`.
 
-### Scheduled Deletion
+Note: There is no `users.force_password_change` scope. The admin password change for managed admins is `POST <admin-base>/auth/force-password-change/{target_admin_id}`.
 
-Users can request account deletion, which starts a grace period:
+## Handle scheduled deletions
 
-1. User requests deletion
-2. Account enters "scheduled deletion" state
-3. Grace period begins (default 30 days)
-4. User can cancel during grace period
-5. After grace period, account is permanently deleted
+When a user requests deletion, the account enters a scheduled deletion state with a grace period (default 30 days).
 
-**Admin Actions for Scheduled Deletions**:
+### Cancel a scheduled deletion
 
-#### Cancel Deletion
-1. Go to Deletions tab
-2. Find user in scheduled deletions list
-3. Click "Cancel"
-4. Confirm action
-5. Account is restored to active status
+1. Go to the **Deletions** tab.
+2. Find the user in the scheduled deletions list (`GET <admin-base>/users/scheduled-deletions`).
+3. Click **Cancel**.
+4. Confirm the action.
 
-**Required Permissions**: `users.edit`
+The account returns to active status.
 
-#### Extend Grace Period
-1. Go to Deletions tab
-2. Find user in scheduled deletions list
-3. Click "Delay"
-4. Select new deletion date
-5. Confirm action
-6. Grace period is extended
+Required permission: `users.edit`.
 
-**Required Permissions**: `users.edit`
+Endpoint: `POST <admin-base>/users/{user_id}/cancel-deletion`.
 
-#### Force Purge (Immediate Deletion)
-**WARNING: DANGEROUS OPERATION** - This cannot be undone!
+### Extend the grace period
 
-1. Go to Deletions tab
-2. Find user in scheduled deletions list
-3. Click "Purge"
-4. Confirm warning
-5. Type "DELETE" to confirm
-6. Account and all data are immediately deleted
+1. Go to the **Deletions** tab.
+2. Find the user.
+3. Click **Delay**.
+4. Select a new deletion date.
+5. Confirm the action.
 
-**Required Permissions**: `users.force_purge` (typically requires approval)
+Required permission: `users.edit`.
 
-### Direct Account Deletion
+Endpoint: `POST <admin-base>/users/{user_id}/delay-deletion`.
 
-Delete a user account immediately:
+### Force purge an account
 
-1. Open user profile
-2. Click "Delete Account"
-3. Provide reason
-4. Confirm action
-5. Account is deleted immediately
+Caution: This action immediately and irreversibly deletes the account and all data.
 
-**Required Permissions**: `users.delete` (typically requires approval)
+1. Go to the **Deletions** tab.
+2. Find the user.
+3. Click **Purge**.
+4. Confirm the warning and type `DELETE`.
 
-## User Tiers
+Required permission: `users.force_purge`. This action typically requires approval from two admins (`admin_ui.approval_workflows.require_approval_for` includes `users.force_purge`).
 
-### Viewing User Tiers
+Endpoint: `POST <admin-base>/users/{user_id}/force-purge`.
 
-User tiers determine account capabilities and limits:
-- **Free**: Basic features with limits
-- **Premium**: Enhanced features
-- **Enterprise**: Full feature access
+### Delete an account directly
 
-### Modifying User Tiers
+1. Open the user profile.
+2. Click **Delete Account**.
+3. Enter a reason.
+4. Confirm the action.
 
-1. Open user profile
-2. Click "Change Tier"
-3. Select new tier
-4. Provide reason
-5. Confirm action
-6. User's capabilities are updated
+Required permission: `users.delete` (typically requires approval).
 
-**Required Permissions**: `users.tier`
+## Manage tiers and badges
 
-## User Badges
+### View tiers
 
-### Viewing Badges
+Tiers determine capabilities and limits. The current tiers are `standard`, `alpha`, `premium`, and `staff` as defined in `src/config_defaults.py:331`. The `available_badges` list is also defined there.
 
-Badges are displayed on user profiles and indicate:
-- Special status (moderator, contributor, etc.)
-- Achievements
-- Event participation
-- Custom badges
+### Change a tier
 
-### Assigning Badges
+1. Open the user profile.
+2. Click **Change Tier**.
+3. Select the new tier.
+4. Enter a reason.
+5. Confirm the action.
 
-1. Open user profile
-2. Click "Add Badge"
-3. Select badge from available list
-4. Add optional notes
-5. Confirm action
+Required permission: `users.tier`.
 
-**Required Permissions**: `users.badges`
+Endpoint: `PUT <admin-base>/users/{user_id}/tier`.
 
-### Removing Badges
+### View badges
 
-1. Open user profile
-2. Find badge in user's badges list
-3. Click "Remove"
-4. Confirm action
+Badges indicate special status, achievements, or event participation and are rendered on the user profile.
 
-**Required Permissions**: `users.badges`
+### Add a badge
 
-## Internal Admin Notes
+1. Open the user profile.
+2. Click **Add Badge**.
+3. Select a badge from the allow-list.
+4. Add optional notes.
+5. Confirm the action.
 
-### Adding Notes
+Required permission: `users.badges`.
 
-Add private notes visible only to admins:
+Endpoint: `POST <admin-base>/users/{user_id}/badges/{badge}`.
 
-1. Open user profile
-2. Click "Add Note"
-3. Enter note content
-4. Select note category (optional)
-5. Save note
-6. Note is visible to all admins with `users.notes` permission
+### Remove a badge
 
-**Required Permissions**: `users.notes`
+1. Find the badge in the user's badge list.
+2. Click **Remove**.
+3. Confirm the action.
 
-### Viewing Notes
+Required permission: `users.badges`.
 
-Notes are displayed in the user profile with:
-- Note content
-- Author and timestamp
-- Note category
-- Edit history
+Endpoint: `DELETE <admin-base>/users/{user_id}/badges/{badge}`.
 
-### Editing Notes
+## Use internal admin notes
 
-1. Find note in user's notes section
-2. Click "Edit"
-3. Modify content
-4. Save changes
-5. Previous version is preserved
+Notes are private to admins and never shown to the user.
 
-**Required Permissions**: `users.notes`
+### Add a note
 
-## Bulk Operations
+1. Open the user profile.
+2. Click **Add Note**.
+3. Enter the content and optionally select a category.
+4. Click **Save**.
 
-### Bulk User Actions
+Required permission: `users.notes`.
 
-Perform actions on multiple users:
+Endpoint: `POST <admin-base>/users/{user_id}/notes`.
 
-1. Go to User Management
-2. Select users using checkboxes
-3. Choose action from bulk actions menu:
-   - Lock accounts
-   - Unlock accounts
-   - Change tier
-   - Add badges
-   - Send notifications
-4. Configure action parameters
-5. Confirm action
+### View notes
 
-**Required Permissions**: Depends on action selected
+Notes are displayed in the profile with content, author, timestamp, category, and edit history.
 
-### Bulk Import
+Endpoint: `GET <admin-base>/users/{user_id}/notes`.
 
-Import users from CSV file:
+### Edit a note
 
-1. Go to User Management
-2. Click "Import Users"
-3. Upload CSV file with required columns
-4. Map CSV columns to user fields
-5. Review import preview
-6. Confirm import
-7. Users are created with specified settings
+1. Find the note.
+2. Click **Edit**.
+3. Update the content.
+4. Save your changes.
 
-**Required Permissions**: `users.create`
+The previous version is preserved in the audit trail.
 
-## User Activity Monitoring
+Required permission: `users.notes`.
 
-### Viewing User Activity
+## Run bulk operations
 
-User profiles show:
-- Last login time
-- Last activity timestamp
-- Recent messages
-- Server memberships
-- Account changes history
+### Apply bulk actions
 
-### Activity Reports
+1. Go to **User Management**.
+2. Select users with the checkboxes.
+3. Choose an action from the bulk actions menu: lock, unlock, change tier, add badges, or send notifications.
+4. Configure the parameters.
+5. Confirm the action.
 
-Generate activity reports:
-1. Go to User Management
-2. Click "Activity Reports"
-3. Select date range
-4. Choose report type:
-   - Login activity
-   - Message activity
-   - Server activity
-   - Account changes
-5. Generate report
-6. Export if needed
+Required permission: Depends on the selected action.
 
-**Required Permissions**: `users.read`
+### Import users from CSV
+
+1. Go to **User Management**.
+2. Click **Import Users**.
+3. Upload a CSV file with the required columns.
+4. Map the CSV columns to user fields.
+5. Review the preview.
+6. Confirm the import.
+
+Required permission: `users.create` (if enabled in your deployment).
+
+## Monitor activity
+
+### View user activity
+
+Profiles show last login, last activity, recent messages, server memberships, and a history of account changes.
+
+### Generate activity reports
+
+1. Go to **User Management**.
+2. Click **Activity Reports**.
+3. Select a date range.
+4. Choose a report type: login activity, message activity, server activity, or account changes.
+5. Generate and optionally export the report.
+
+Required permission: `users.read`.
 
 ## Troubleshooting
 
-### User Cannot Login
-- Check if account is locked
-- Verify account is not in deletion process
-- Check if user needs password change
-- Review audit logs for login attempts
+| Symptom | Check |
+|---|---|
+| User cannot log in | Verify the account is not locked, not in scheduled deletion, and not pending a forced password or username change. Review audit logs and `POST <admin-base>/security/lock-user` history. |
+| User not found in search | Verify the Snowflake ID, check for typos, and confirm the account has not been purged. |
+| Cannot modify a user | Confirm you have the required scope, that the approval workflow is not blocking the action, and that the target is not a protected system account. |
+| Changes do not appear | Refresh the profile, check server logs, and verify the API response was `200`. Some changes require the user to re-authenticate. |
 
-### User Not Found in Search
-- Verify search criteria
-- Check if user ID is correct
-- User may have been deleted
-- Check for typos in username
+## Best practices
 
-### Cannot Modify User
-- Verify you have required permissions
-- Check if approval workflow is blocking action
-- User may be protected (system account)
-- Check audit logs for specific error
-
-### Changes Not Applying
-- Refresh user profile
-- Check for system errors in logs
-- Verify action completed successfully
-- User may need to re-login for some changes
-
-## Best Practices
-
-1. **Document Actions**: Always provide reasons for account changes
-2. **Use Notes**: Add internal notes for important user information
-3. **Regular Reviews**: Periodically review locked and scheduled deletion accounts
-4. **Communication**: Notify users of significant account changes
-5. **Backup**: Export user data before deletion if needed
+- Always provide a reason when you change an account. Reasons are stored in the audit log.
+- Add an internal note for context that other admins need.
+- Regularly review locked accounts and scheduled deletions.
+- Notify users of significant changes when appropriate.
+- Export user data before deletion if retention policies require it. Use the DSAR endpoints under `GET <admin-base>/data-export`.

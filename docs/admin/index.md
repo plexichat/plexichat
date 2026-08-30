@@ -1,56 +1,100 @@
-# Plexichat Admin Documentation
+# Admin documentation
 
-Welcome to the Plexichat Admin Documentation. This section provides comprehensive guidance for system administrators managing Plexichat deployments.
+This section contains documentation for administrators who manage Plexichat deployments. Use these guides to configure access control, monitor the system, and maintain compliance.
 
-## Quick Navigation
+## Before you begin
 
-- [Getting Started](getting-started.md) - Initial admin setup and configuration
-- [RBAC System](rbac.md) - Role-based access control and permissions
-- [Audit Logging](audit-logging.md) - Comprehensive audit trail and compliance
-- [Approval Workflows](approval-workflows.md) - Multi-admin approval for sensitive actions
-- [Security Best Practices](security.md) - Admin security guidelines
-- [User Management](user-management.md) - Managing users and accounts
-- [Server Management](server-management.md) - Server administration
-- [Operations](operations.md) - Daily operations and maintenance procedures
-- [Troubleshooting](troubleshooting.md) - Common issues and solutions
+You need the following to use the admin panel:
 
-## Related Documentation
+* An admin account created during initial Plexichat setup.
+* Access to the admin path, which defaults to `/admin`.
+* Two-factor authentication (2FA) configured, if `admin_ui.require_otp` is enabled.
+* Network access that satisfies `admin_ui.host_restriction`, if that setting is enabled.
 
-- [Versioning and Updates](../deployment/versioning.md) - Version scheme and update procedures
-- [Deployment Guide](../deployment/index.md) - Installation and deployment
-- [Database Migrations](../migrations.md) - Migration system guide
+## Admin guides
 
-## Overview
+| Guide | Description |
+|---|---|
+| [Get started](getting-started.md) | Set up your first admin account and configure core settings. |
+| [Role-based access control (RBAC)](rbac.md) | Create roles, assign permissions, and enforce hierarchy. |
+| [Approval workflows](approval-workflows.md) | Require multi-admin approval for sensitive operations. |
+| [Audit logging](audit-logging.md) | Query and export the audit trail for compliance. |
+| [Data export (DSAR)](data-export.md) | Manage GDPR data subject access requests. |
+| [Security best practices](security.md) | Harden authentication, sessions, and access control. |
+| [User management](user-management.md) | Manage user lifecycles and account states. |
+| [Server management](server-management.md) | Manage servers, members, and moderation. |
+| [Operations](operations.md) | Run day-to-day maintenance tasks. |
+| [Troubleshooting](troubleshooting.md) | Diagnose and resolve common issues. |
 
-Plexichat provides a comprehensive admin panel with role-based access control, audit logging, and approval workflows to ensure secure and compliant system administration.
+## Related documentation
 
-### Key Features
+* [Configuration overview](../configuration.md) — How Plexichat discovers and merges `config.yaml`.
+* [Deployment guide](../deployment/index.md) — Install and deploy Plexichat.
+* [Default configuration reference](../default-config.md) — Complete list of configuration defaults.
+* [Database configuration](../deployment/configuration/config-database.md) — PostgreSQL, pooling, and migrations.
 
-- **Role-Based Access Control (RBAC)**: Granular permissions for different admin roles
-- **Audit Logging**: Comprehensive logging of all admin actions to both files and database
-- **Approval Workflows**: Multi-admin approval for sensitive operations
-- **Security Features**: 2FA, password policies, session management
-- **Real-time Monitoring**: Dashboard with live metrics and historical data
-- **User Management**: Full user lifecycle management including scheduled deletions
+## About the admin panel
 
-## Accessing the Admin Panel
+The admin panel is a server-rendered UI and a set of REST endpoints under `/api/v1/admin`. It provides:
 
-The admin panel is accessible at `/admin` (or your configured admin path) and requires:
+* **Role-based access control.** Define granular permissions for each admin role. See [RBAC](rbac.md).
+* **Audit logging.** Write every admin action to file and database logs. See [Audit logging](audit-logging.md).
+* **Approval workflows.** Require multiple admins to approve sensitive actions before they execute. See [Approval workflows](approval-workflows.md).
+* **Security controls.** Enforce 2FA, password policies, session limits, host restrictions, and rate limits.
+* **Monitoring.** View live metrics, historical data, and recent activity from the dashboard.
 
-1. Valid admin credentials
-2. Two-factor authentication (if enabled)
-3. Host restriction compliance (if configured)
-4. Appropriate permissions for the requested actions
+### How to access the panel
 
-## Security Considerations
+1. Open `https://YOUR_DOMAIN/admin` in your browser. Replace `YOUR_DOMAIN` with your deployment host.
+2. Sign in with your admin credentials.
+3. Complete the OTP challenge if prompted.
 
-- Always use strong, unique passwords for admin accounts
-- Enable 2FA for all admin accounts
-- Regularly review audit logs for suspicious activity
-- Follow the principle of least privilege when assigning roles
-- Keep admin sessions secure and log out when finished
-- Regularly update admin passwords per your security policy
+The API prefix is `/api/v1` by default. This is controlled by `api.api_prefix` in your configuration. Health and readiness endpoints for monitoring are:
 
-## Support
+* `GET /health`
+* `GET /api/v1/ready` — readiness check defined in `health.py:18`
+* `GET /api/v1/status` — detailed status
+* `GET /gateway` — WebSocket gateway defined in `gateway.py:261`
 
-For issues not covered in this documentation, please refer to the main [Plexichat Documentation](../index.md) or contact your system administrator.
+## Configuration overview
+
+Admin features are configured under `admin_ui` in your configuration file. The server looks for configuration in this order:
+
+1. `./config/config.yaml`
+2. `~/.plexichat/config/config.yaml`
+3. Built-in defaults in `src/config_defaults.py`
+
+If no file is present, the server runs with built-in defaults and logs a warning. For details, see [Configuration overview](../configuration.md).
+
+Common `admin_ui` settings include:
+
+```yaml
+admin_ui:
+  enabled: true
+  path: "/admin"
+  require_otp: true
+  rbac:
+    enabled: true
+    default_role: "super_admin"
+  approval_workflows:
+    enabled: true
+  audit:
+    log_to_file: true
+    log_to_database: true
+```
+
+For the full list of defaults, see `src/config_defaults.py:539`.
+
+## Security recommendations
+
+* Use strong, unique passwords and require 2FA for all admin accounts.
+* Grant the minimum permissions each admin needs. Follow the principle of least privilege.
+* Review `admin_audit_log` regularly for suspicious activity.
+* Log out when you finish an admin session and limit concurrent sessions with `admin_ui.security.session.max_concurrent_sessions`.
+* Keep Plexichat updated and review audit logs after configuration changes.
+
+## Next steps
+
+* If this is your first time administering Plexichat, start with [Get started](getting-started.md).
+* To restrict what each admin can do, see [RBAC](rbac.md).
+* To trace who did what and when, see [Audit logging](audit-logging.md).
