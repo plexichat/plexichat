@@ -1,19 +1,10 @@
-# Search Configuration
+# Search configuration
 
-This guide covers search configuration for deploying Plexichat in production. Search settings control how messages, servers, and users are indexed and queried. Proper configuration ensures fast, relevant search results while managing resource consumption.
+This guide describes how to configure search for Plexichat. Search settings control how the server indexes and queries messages, servers, and users. All defaults in this guide come from `src/config_defaults.py:431`.
 
-## Configuration Location
+## Before you begin
 
-All search settings are nested under the `search` key in your configuration file:
-
-```yaml
-search:
-  # All search settings go here
-```
-
-## Core Settings
-
-### Configuration
+You configure search under the `search` key in `config.yaml`.
 
 ```yaml
 search:
@@ -24,45 +15,50 @@ search:
   write_time_indexing: true
 ```
 
-### Deployment Considerations
+## Configure core search
 
-**Search Enabled (true default)**
+```yaml
+search:
+  enabled: true
+  backend: "sqlite_fts5"
+  result_limit: 100
+  batch_size: 100
+  write_time_indexing: true
+```
 
-- When enabled, messages and content are indexed as they are created, making them immediately searchable.
-- **Standard Deployment**: Keep enabled. Search is a core feature users expect.
-- **Resource-Constrained**: Disable (`enabled: false`) on very small servers where indexing overhead is unacceptable. All search endpoints will return empty results.
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | When `true`, the server indexes messages as they are created. When `false`, search endpoints return empty results. |
+| `backend` | `sqlite_fts5` | Search backend. The default uses SQLite FTS5 virtual tables. |
+| `result_limit` | `100` | Maximum results per query. Higher values increase memory use and response time. |
+| `batch_size` | `100` | Number of documents indexed per batch during initial or background reindexing. |
+| `write_time_indexing` | `true` | When `true`, the server indexes new messages immediately. |
 
-**Backend ("sqlite_fts5" default)**
+Do not use the stale value `sqlite` for `backend`. The correct backend name is `sqlite_fts5` as defined in `src/config_defaults.py:433`. It provides better ranking and performance than plain SQLite.
 
-- The key is `backend`, and the default value is `"sqlite_fts5"`, not `"sqlite"`. The FTS5 variant uses SQLite's full-text search extension for significantly better search performance and relevance ranking.
-- **sqlite_fts5**: Built-in, zero-dependency, uses SQLite's FTS5 virtual tables. Appropriate for most deployments up to ~1M messages. No additional infrastructure required.
-- **Custom Backends**: The search module supports a pluggable backend architecture. Future backends may include Elasticsearch or Meilisearch for large-scale deployments.
+### Enable search
 
-**Result Limit (100 default)**
+Keep search enabled in most deployments. Disable it only on very small servers where the indexing overhead is unacceptable.
 
-- Maximum number of search results returned per query. Higher values increase memory usage and response time for broad queries.
-- **Standard Deployment**: 100 results is appropriate for most use cases. Users rarely paginate beyond the first page of results.
-- **Large Archives**: Can increase to 200-500 for deployments with extensive message history where users need deep search.
-- **Performance**: Decrease to 50 if search queries are slow on your hardware.
+### Backend
 
-**Batch Size (100 default)**
+`sqlite_fts5` is built in and requires no extra infrastructure. It handles most deployments up to about one million messages. The search module has a pluggable architecture for future backends such as Elasticsearch or Meilisearch.
 
-- Number of documents indexed per batch during initial indexing and background reindexing operations. Larger batches index faster but consume more memory.
-- **Standard Deployment**: 100 is a safe balance between indexing speed and memory usage.
-- **High-Memory Servers**: Increase to 500-1000 for faster initial indexing when deploying with large existing message databases.
-- **Low-Memory Servers**: Decrease to 25-50 to reduce peak memory usage during indexing.
+### Result limit
 
-**Write-Time Indexing (true default)**
+The default `100` is appropriate because users rarely go beyond the first page. Increase it to `200`–`500` for archives where users need deep search, or decrease it to `50` if queries are slow on your hardware.
 
-- When enabled, new messages are indexed immediately upon creation. This ensures search results are always up-to-date.
-- **Standard Deployment**: Keep enabled. Users expect newly sent messages to appear in search immediately.
-- **High-Write Deployments**: If your server handles very high message throughput (>100 msg/sec), consider disabling write-time indexing and relying on periodic batch indexing to reduce write amplification on the database.
+### Batch size
 
----
+The default `100` balances indexing speed and memory use. Increase it to `500`–`1000` on high-memory servers to speed up initial indexing, or decrease it to `25`–`50` on low-memory servers.
 
-## Server Discovery
+### Write-time indexing
 
-### Configuration
+Keep `write_time_indexing` enabled so that new messages appear in search immediately. Disable it only on high-write deployments that exceed about 100 messages per second, and rely on periodic batch indexing instead.
+
+## Configure server discovery
+
+Discovery controls the public server directory.
 
 ```yaml
 search:
@@ -73,38 +69,32 @@ search:
     bump_cooldown_hours: 4
 ```
 
-### Deployment Considerations
+| Field | Default | Description |
+|---|---|---|
+| `discovery.enabled` | `true` | When `true`, servers can appear in the discovery directory. When `false`, no servers appear regardless of individual server settings. |
+| `discovery.min_members_for_listing` | `10` | Minimum members required before a server appears in discovery. |
+| `discovery.max_tags` | `10` | Maximum tags a server owner can assign for categorization. |
+| `discovery.bump_cooldown_hours` | `4` | Hours a server owner must wait before they can bump the server to a more prominent position. |
 
-**Discovery Enabled (true default)**
+Do not use the stale key `discovery.min_members`. The correct key is `discovery.min_members_for_listing` as defined in `src/config_defaults.py:439`.
 
-- Controls whether servers can be listed in the public server discovery directory. When disabled, no servers appear in discovery regardless of their individual settings.
-- **Public Communities**: Keep enabled to allow users to find and join public servers.
-- **Private Deployments**: Disable if Plexichat is deployed for a single organization where server discovery is not needed.
+### Discovery enabled
 
-**Minimum Members for Listing (10 default)**
+Keep discovery enabled for public communities so users can find servers. Disable it for single-organization deployments where a public directory is unnecessary.
 
-- Servers must have at least this many members before they appear in discovery. This prevents spam servers from flooding the directory.
-- **Standard Deployment**: 10 members ensures only established communities are visible.
-- **New Communities**: Consider reducing to 5 to help new servers gain visibility.
-- **Large Platforms**: Increase to 25-50 for high-traffic deployments to ensure only substantial communities appear.
+### Minimum members for listing
 
-**Maximum Tags (10 default)**
+The default `10` prevents spam servers from flooding the directory. Reduce it to `5` to help new communities gain visibility, or increase it to `25`–`50` for large platforms.
 
-- Maximum number of tags a server owner can assign to their server for discovery categorization. Tags help users find servers matching their interests.
-- **Standard Deployment**: 10 tags provides good categorization without tag spam.
-- **Minimal**: Reduce to 5 for simpler categorization schemes.
-- **Detailed**: Increase to 15-20 for large directories where fine-grained tagging improves discoverability.
+### Maximum tags
 
-**Bump Cooldown (4 hours default)**
+The default `10` provides good categorization without tag spam. Reduce it to `5` for a simpler scheme or increase it to `15`–`20` for large directories that need fine-grained filtering.
 
-- How long a server owner must wait before they can "bump" their server in the discovery listing (moving it to a more prominent position).
-- **Standard Deployment**: 4 hours prevents discovery spam while allowing active owners to maintain visibility.
-- **High-Traffic**: Increase to 8-12 hours when the directory has many servers competing for attention.
-- **Small Directories**: Can reduce to 1-2 hours when there are few servers and bump frequency doesn't degrade the experience.
+### Bump cooldown
 
----
+The default `4` hours prevents directory spam while letting active owners maintain visibility. Increase it to `8`–`12` hours for directories with many competing servers, or reduce it to `1`–`2` hours for small directories.
 
-## Complete Production Example
+## Complete example
 
 ```yaml
 search:
@@ -120,17 +110,8 @@ search:
     bump_cooldown_hours: 4
 ```
 
----
+## Related documentation
 
-## Key Name Accuracy
-
-- ``backend: "sqlite"`` (`backend: "sqlite_fts5"`): Uses the FTS5 variant for full-text search
-- ``discovery.min_members`` (`discovery.min_members_for_listing`): Full key name includes "for_listing"
-
----
-
-## Related Documentation
-
-- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
-- [Database Configuration](deployment/configuration/config-database.md) - SQLite/PostgreSQL setup for search indexes
-- [Performance Tuning](../../performance.md) - Optimizing search for large datasets
+*   [Default configuration reference](../../default-config.md) — Complete configuration reference.
+*   [Database configuration](config-database.md) — SQLite and PostgreSQL setup for search indexes.
+*   [Performance tuning](../../performance.md) — Optimizing search for large datasets.

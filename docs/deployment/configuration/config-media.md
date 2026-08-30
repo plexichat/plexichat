@@ -1,163 +1,73 @@
-# Media Configuration
+# Media configuration
 
-This guide covers media configuration for deploying Plexichat in production. Media settings control file uploads, storage backends, image processing, and security features like malware scanning. Proper configuration is essential for managing storage costs, ensuring security, and providing good user experience.
+This guide describes how to configure media handling for Plexichat. Media settings control file uploads, storage backends, image processing, and malware scanning. All defaults in this guide come from `src/config_defaults.py:184`.
 
-## Configuration Location
+## Before you begin
 
-All media settings are nested under the `media` key in your configuration file:
-
-```yaml
-media:
-  # All media settings go here
-```
-
-## Storage Backend Selection
-
-Choose between local filesystem, S3-compatible storage, or database storage for uploaded files.
-
-### Configuration
+You configure media under the `media` key in `config.yaml`.
 
 ```yaml
 media:
   storage_backend: "local"
+  local_path: "~/.plexichat/media"
+  local_url: "/media"
 ```
 
-### Deployment Considerations
+Defaults use `~/.plexichat` as the home directory. See `src/config_defaults.py:46` for the `home_dir` definition.
 
-**Why Storage Choice Matters**
+## Choose a storage backend
 
-The storage backend determines scalability, cost structure, performance characteristics, and backup requirements. This is a critical infrastructure decision that affects operational complexity and total cost of ownership. See [Deployment Guide](deployment.md#backup-and-recovery) for backup strategies.
+```yaml
+media:
+  storage_backend: "local"  # "local", "s3", or "database"
+```
 
-**Local Storage**
+| Backend | When to use it | Key trade-offs |
+|---|---|---|
+| `local` | Development, testing, single-server deployments with fewer than 1,000 users, or when you prioritize operational simplicity | No extra infrastructure, but no horizontal scaling and no built-in redundancy |
+| `s3` | Any production or multi-server deployment, high-availability requirements, or large storage needs | Scales and supports CDN integration, but requires credentials and network connectivity |
+| `database` | Very small deployments with fewer than 100 users where external storage is unavailable | Backs up with the database, but increases database size and performs poorly for large files |
 
-**When to Use**
+S3-compatible options include AWS S3, Google Cloud Storage, Azure Blob Storage, RustFS, Wasabi, and Backblaze B2.
 
-- Development and testing environments
-- Small deployments with fewer than 1,000 users
-- Single-server deployments without horizontal scaling
-- Scenarios where operational simplicity is prioritized
+See the [Deployment guide](deployment.md#backup-and-recovery) for backup strategies for each backend.
 
-**Advantages**
+## Configure local storage
 
-- Zero additional infrastructure requirements
-- Simple configuration and maintenance
-- No ongoing costs (beyond disk space)
-- Fast local file access
-
-**Limitations**
-
-- Cannot scale horizontally (files are tied to specific server)
-- Disk space is finite and requires monitoring
-- No built-in redundancy or high availability
-- Backup requires separate strategy
-
-**Operational Notes**
-
-- Place media directory on a filesystem with sufficient space and I/O performance
-- Monitor disk usage and implement cleanup policies for old files
-- Consider using SSDs for better performance
-- Implement regular backups of the media directory
-
-**S3-Compatible Storage**
-
-**When to Use**
-
-- Production deployments of any scale
-- Multi-server deployments requiring shared storage
-- High-availability requirements
-- Deployments with large media storage needs
-
-**Advantages**
-
-- Virtually unlimited storage scalability
-- Built-in redundancy and high availability
-- Geographic distribution options
-- Cost-effective for large datasets with infrequent access tiers
-- CDN integration for improved performance
-
-**Limitations**
-
-- Additional infrastructure and cost
-- Requires network connectivity (latency vs local storage)
-- Vendor lock-in considerations
-- Requires API credentials management
-
-**S3-Compatible Services**
-
-- AWS S3
-- Google Cloud Storage
-- Azure Blob Storage
-- RustFS (self-hosted S3-compatible)
-- Wasabi, Backblaze B2, and other S3-compatible providers
-
-**Database Storage**
-
-**When to Use**
-
-- Very small deployments (<100 users)
-- Deployments where external storage is not available
-- Scenarios requiring transactional consistency with database
-
-**Advantages**
-
-- Single backup strategy (database backup covers media)
-- Transactional consistency
-- No additional infrastructure
-
-**Limitations**
-
-- Significantly increases database size
-- Poor performance for large files
-- Database backup/restore slower
-- Not recommended for production
-
----
-
-## Local Storage Configuration
-
-Settings for filesystem-based media storage.
-
-### Configuration
+Local storage writes files to the filesystem. Use it for development or single-server deployments.
 
 ```yaml
 media:
   storage_backend: "local"
-  local:
-    path: "data/media"
-    url_prefix: "/media"
+  local_path: "~/.plexichat/media"
+  local_url: "/media"
 ```
 
-### Deployment Considerations
+| Field | Default | Description |
+|---|---|---|
+| `local_path` | `~/.plexichat/media` | Filesystem path where the server stores media. The value comes from `home_dir / "media"` in `src/config_defaults.py:191`. |
+| `local_url` | `/media` | URL prefix where the server serves media. |
 
-**File Path**
+Do not use the stale nested keys `media.local.path` or `media.local.url_prefix`. The correct flat keys are `media.local_path` and `media.local_url` as defined in `src/config_defaults.py:191`.
 
-- **Default**: `data/media` relative to application directory
-- **Production Recommendation**: Use an absolute path to a dedicated data directory (e.g., `/var/lib/plexichat/media`)
-- **Permissions**: Ensure the application user has read/write permissions to the directory
-- **Filesystem**: Place on a filesystem with good I/O performance (SSD preferred)
+For production, use an absolute path such as `/var/lib/plexichat/media` and ensure the application user has read and write permissions. Place the directory on a filesystem with sufficient space and I/O performance, preferably SSD, and monitor disk usage. Configure your reverse proxy to serve `local_url` with caching headers. Back up the directory separately from the database.
 
-**URL Prefix**
+Additional directory keys are available under `media` :
 
-- **Default**: `/media` is the URL path for serving files
-- **Custom**: Change if you need a different path (e.g., `/files`, `/uploads`)
-- **Reverse Proxy**: Configure your reverse proxy (nginx, Apache) to serve this path
-- **CDN**: Point this to a CDN URL if using CDN for media delivery
+```yaml
+media:
+  data_dir: "~/.plexichat/data"
+  logs_dir: "~/.plexichat/logs"
+  media_dir: "~/.plexichat/media"
+  temp_dir: "~/.plexichat/temp"
+  encrypt_at_rest: true
+```
 
-**Operational Notes**
+`encrypt_at_rest` is `true` by default.
 
-- Ensure sufficient disk space for expected media storage
-- Monitor disk usage and implement cleanup policies
-- Consider separating media onto its own disk or mount point
-- Implement regular backups of the media directory
-- Configure reverse proxy to serve static files efficiently (with caching headers)
+## Configure S3-compatible storage
 
----
-
-## S3 Configuration
-
-Settings for S3-compatible object storage.
-
-### Configuration
+S3 storage is the recommended backend for production.
 
 ```yaml
 media:
@@ -170,39 +80,20 @@ media:
   s3_public_url: "${S3_PUBLIC_URL:-}"
 ```
 
-**Note**: The S3 config keys use the prefix `s3_` directly under `media` (e.g., `s3_bucket`, `s3_access_key`), not nested under a `s3:` mapping. This matches the actual server config structure.
+Do not nest these keys under `media.s3`. The correct keys are flat under `media` with the `s3_` prefix, as defined in `src/config_defaults.py:193`.
 
-### Deployment Considerations
+| Field | Default | Description |
+|---|---|---|
+| `s3_bucket` | `""` | Bucket name. Use a globally unique, descriptive name. |
+| `s3_access_key` | `""` | Access key ID. Use environment variables or a secrets manager. |
+| `s3_secret_key` | `""` | Secret access key. Never commit it to version control. |
+| `s3_region` | `us-east-1` | Bucket region. Choose the region closest to your users. |
+| `s3_endpoint` | `""` | Custom endpoint URL. Leave empty for AWS S3. Set to your RustFS or Wasabi URL for other providers. |
+| `s3_public_url` | `""` | Public URL or CDN URL for serving files. Leave empty to use the bucket URL. |
 
-**Bucket Configuration**
+For AWS deployments, consider IAM roles instead of access keys. If you serve media through a CDN, set `s3_public_url` to your CloudFront distribution or custom domain.
 
-- **Bucket Name**: Must be globally unique across S3. Use a descriptive name.
-- **Region**: Choose region closest to your users for best performance
-- **Public Access**: Configure bucket policy to allow public read access for media files
-- **Versioning**: Consider enabling for recovery from accidental deletions
-- **Lifecycle Rules**: Configure to move old files to cheaper storage tiers
-
-**Access Credentials**
-
-- **Access Key ID**: AWS access key or equivalent for S3-compatible service
-- **Secret Access Key**: AWS secret key or equivalent (keep secure)
-- **Security**: Never commit credentials to version control. Use environment variables or secrets management
-- **IAM Roles**: For AWS deployments, consider using IAM roles instead of access keys
-
-**Endpoint URL**
-
-- **AWS S3**: Leave empty to use default AWS endpoint
-- **RustFS**: Specify your RustFS server URL (e.g., `https://rustfs.example.com`)
-- **Other Providers**: Specify custom endpoint for S3-compatible services (Wasabi, Backblaze B2, etc.)
-
-**Public URL**
-
-- **Default**: Files are served from S3 bucket URL
-- **CloudFront**: Specify CloudFront distribution URL for CDN delivery
-- **Custom Domain**: Specify custom domain if using CNAME to S3 bucket
-- **Benefits**: CDN reduces latency, reduces S3 costs, provides better performance
-
-**S3 Bucket Policy Example**
+Example bucket policy for public read access:
 
 ```json
 {
@@ -219,86 +110,61 @@ media:
 }
 ```
 
-**Operational Notes**
+Enable server-side encryption, configure CORS if you serve directly to browsers, and set lifecycle rules to move old files to cheaper storage tiers.
 
-- Enable server-side encryption for sensitive data
-- Configure CORS if serving directly to browsers
-- Monitor S3 costs and implement lifecycle policies
-- Use appropriate storage classes (Standard, Intelligent-Tiering, Glacier) based on access patterns
-- Consider enabling S3 Transfer Acceleration for faster uploads
+## Configure database storage
 
----
+Database storage keeps small files in the database and serves them from the API.
 
-## File Limits
+```yaml
+media:
+  database_url: "/api/v1/media/blob"
+  database_max_size: 524288  # 512 KB
+  auto_route_to_database:
+    enabled: true
+    max_size: 524288
+    content_types:
+      - "text/plain"
+      - "application/json"
+      - "text/markdown"
+      - "text/csv"
+```
 
-Configure maximum file sizes and storage quotas.
+Files larger than `database_max_size` or with a content type not listed in `auto_route_to_database.content_types` use the configured `storage_backend` instead.
 
-### Configuration
+## Configure file size limits
+
+Set per-type size limits under `media.size_limits`. There is no single `media.max_file_size` key.
 
 ```yaml
 media:
   size_limits:
-    image: 10485760        # 10MB
-    video: 104857600       # 100MB
-    audio: 52428800        # 50MB
-    document: 26214400     # 25MB
-    icon: 2097152          # 2MB
-    avatar: 5242880        # 5MB
-    other: 10485760        # 10MB
+    image: 10485760      # 10 MB
+    video: 104857600     # 100 MB
+    audio: 52428800      # 50 MB
+    document: 26214400   # 25 MB
+    icon: 2097152        # 2 MB
+    avatar: 5242880      # 5 MB
+    other: 10485760      # 10 MB
 ```
 
-**Note**: Per-type size limits are configured under `media.size_limits`, not as a single `max_file_size` key. Each media category has its own limit. The `max_file_size` and `max_total_size_per_user` keys do not exist in the server config.
+| Category | Default | Typical adjustment |
+|---|---|---|
+| `image` | `10485760` (10 MB) | Increase for photography communities, decrease for bandwidth-constrained servers |
+| `video` | `104857600` (100 MB) | Videos use the most bandwidth. Consider CDN integration before increasing. |
+| `audio` | `52428800` (50 MB) |  |
+| `document` | `26214400` (25 MB) |  |
+| `icon` | `2097152` (2 MB) |  |
+| `avatar` | `5242880` (5 MB) |  |
+| `other` | `10485760` (10 MB) | Fallback for uncategorized types |
 
-### Deployment Considerations
+There is no `media.max_total_size_per_user` key in `src/config_defaults.py`. Enforce per-user quotas at the application or reverse-proxy layer if you need them.
 
-**Maximum File Size**
+Monitor storage cost with this formula: `users * avg_storage_per_user * cost_per_gb = monthly_cost`. For example, S3 Standard is about $0.023 per GB per month.
 
-- **Default**: 104857600 bytes (100MB)
-- **Small Deployment**: 50MB (52428800) for bandwidth-constrained environments
-- **Standard Deployment**: 100MB is appropriate for most applications
-- **Large Deployment**: 500MB (524288000) for media-heavy applications
-- **Unlimited**: Not recommended due to abuse potential and storage costs
+## Configure allowed file types
 
-**Rationale**: File size limits prevent abuse, manage storage costs, and ensure reasonable upload times. Too restrictive limits user experience. Too permissive increases costs and abuse risk.
-
-**Maximum Total Size Per User**
-
-- **Default**: 10737418240 bytes (10GB)
-- **Small Deployment**: 1GB (1073741824) for limited storage
-- **Standard Deployment**: 10GB is appropriate for most users
-- **Large Deployment**: 50GB (53687091200) for media-heavy applications
-- **Unlimited**: Not recommended due to unlimited cost exposure
-
-**Rationale**: Per-user quotas ensure fair resource allocation and prevent storage exhaustion by individual users. Calculate based on:
-- Expected average media usage per user
-- Available storage capacity
-- Cost considerations
-- User expectations
-
-**Cost Implications**
-
-- **AWS S3 Standard**: ~$0.023/GB/month
-- **Google Cloud Storage**: ~$0.020/GB/month
-- **RustFS**: Cost of your storage hardware
-- **Formula**: `users * avg_storage_per_user * cost_per_gb = monthly_cost`
-
-Consider [Database Configuration](deployment/configuration/config-database.md) for database storage costs as part of total TCO.
-
-**Operational Notes**
-
-- Monitor storage usage per user and overall
-- Implement cleanup policies for old or unused files
-- Consider tiered storage based on user tiers (paid vs free)
-- Provide users with visibility into their storage usage
-- Implement storage overage policies or upgrade paths
-
----
-
-## Allowed File Types
-
-Configure which MIME types are accepted for uploads.
-
-### Configuration
+Restrict uploads by MIME type. Category keys are singular, not plural.
 
 ```yaml
 media:
@@ -309,131 +175,46 @@ media:
     document: ["application/pdf", "text/plain", "application/zip", "text/markdown", "application/json"]
 ```
 
-**Note**: The category keys are singular (`image`, `video`, `audio`, `document`), not plural. This matches the server's `allowed_types` structure in `config_defaults.py`.
+Do not use plural keys such as `images` or `videos`. The correct keys are `image`, `video`, `audio`, and `document` as defined in `src/config_defaults.py:220`.
 
-### Deployment Considerations
+Validate MIME types on upload by inspecting file contents, not just extensions. If you allow documents or archives, enable malware scanning. Keep image processing libraries patched against exploits such as ImageTragick.
 
-**Why Type Restrictions Matter**
+## Configure image processing
 
-Restricting file types prevents abuse, reduces security risks, and ensures compatibility with media processing pipelines.
-
-**Images**
-
-- **Default**: JPEG, PNG, GIF, WebP cover most use cases
-- **Additions**: Consider adding SVG for vector graphics (security implications)
-- **Removals**: Remove formats with poor browser support
-- **Security**: Image formats can contain exploits (ImageTragick). Keep updated with security patches.
-
-**Videos**
-
-- **Default**: MP4, WebP cover most modern browsers
-- **Additions**: Consider adding MOV for Apple devices
-- **Processing**: Video processing is resource-intensive. Monitor server load.
-- **Bandwidth**: Videos consume significant bandwidth. Consider CDN integration.
-
-**Audio**
-
-- **Default**: MP3, OGG, WAV cover most use cases
-- **Additions**: Consider adding FLAC for lossless audio
-- **Processing**: Audio processing is less intensive than video
-- **Bandwidth**: Audio files are typically smaller than videos
-
-**Documents**
-
-- **Default**: PDF, plain text are safe choices
-- **Additions**: Consider adding DOCX, XLSX with caution (security risks)
-- **Security**: Office documents can contain macros. Use malware scanning.
-- **Processing**: Document preview may require additional libraries.
-
-**Security Considerations**
-
-- Validate MIME types on upload (not just file extension)
-- Use magic number detection to identify actual file types
-- Scan uploaded files for malware if enabling document types (see Malware Scanning section below)
-- Consider sandboxing file processing operations
-- See [Security Best Practices](security.md) for general security guidance
-
-**Operational Notes**
-
-- Review allowed types periodically for security updates
-- Monitor upload failures due to type restrictions
-- Provide clear error messages when file type is rejected
-- Consider implementing file type conversion on the server
-
----
-
-## Image Processing
-
-Configure automatic image resizing and thumbnail generation.
-
-### Configuration
+The server resizes images and generates thumbnails automatically.
 
 ```yaml
 media:
+  thumbnail_sizes: [64, 128, 256, 512]
+  image_quality: 85
+  image_optimize: true
   image_processing:
     max_dimension: 16384
     max_pixels: 178956970
     max_thumbnail_requests_per_minute: 60
-  thumbnail_sizes: [64, 128, 256, 512]
-  image_quality: 85
-  image_optimize: true
+  video_processing:
+    ffprobe_timeout: 30
+    max_size_for_metadata: 524288000
 ```
 
-**Note**: Image processing config is under `media.image_processing`, not `media.processing`. The keys `resize_images`, `max_image_width`, `max_image_height`, `compress_videos`, and `thumbnail_size` do not exist in the server config. Thumbnail sizes are a list under `thumbnail_sizes`.
+| Field | Default | Description |
+|---|---|---|
+| `thumbnail_sizes` | `[64, 128, 256, 512]` | Thumbnail edge lengths in pixels. Defined at `src/config_defaults.py:232`. |
+| `image_quality` | `85` | JPEG/WebP quality from `1` to `100`. |
+| `image_optimize` | `true` | When `true`, the server optimizes images on upload. |
+| `image_processing.max_dimension` | `16384` | Maximum width or height in pixels before the server rejects the image. |
+| `image_processing.max_pixels` | `178956970` | Maximum total pixels before the server rejects the image. |
+| `image_processing.max_thumbnail_requests_per_minute` | `60` | Rate limit for thumbnail generation per user. |
+| `video_processing.ffprobe_timeout` | `30` | Timeout in seconds for `ffprobe` metadata extraction. |
+| `video_processing.max_size_for_metadata` | `524288000` (500 MB) | Maximum file size for which the server extracts video metadata. |
 
-### Deployment Considerations
+Do not use the stale keys `media.processing`, `media.processing.resize_images`, `media.processing.max_image_width`, `media.processing.max_image_height`, `media.processing.compress_videos`, or `media.processing.thumbnail_size`. The correct structure is `media.image_processing` and the top-level `media.thumbnail_sizes` list as defined in `src/config_defaults.py:232`.
 
-**Why Image Processing Matters**
+Image processing is CPU-intensive. Monitor processing time and consider background workers if uploads block.
 
-Automatic resizing ensures consistent image sizes, reduces storage costs, and improves loading performance. However, it adds CPU load and processing time.
+## Configure malware scanning
 
-**Resize Images**
-
-- **Enable** for production to normalize image sizes and reduce storage
-- **Disable** if you want to preserve original image quality
-- **Performance**: Image processing is CPU-intensive. Monitor server load.
-- **Quality**: Resizing may reduce image quality. Balance with user expectations.
-
-**Maximum Image Dimensions**
-
-- **Default**: 4096x4096 pixels (4K resolution)
-- **Standard Deployment**: 4096 is appropriate for high-quality displays
-- **Mobile-First**: Reduce to 2048 for mobile-focused applications
-- **High-Quality**: Increase to 8192 for photography applications
-
-**Rationale**: Maximum dimensions prevent storage of excessively large images while maintaining quality for most use cases. Larger images consume more storage and bandwidth.
-
-**Thumbnail Size**
-
-- **Default**: 300 pixels square
-- **Standard Deployment**: 300 is appropriate for most UI elements
-- **High-DPI**: Increase to 600 for retina displays
-- **Low-Bandwidth**: Reduce to 150 for bandwidth-constrained environments
-
-**Rationale**: Thumbnails provide fast-loading previews. Size depends on your UI design and bandwidth considerations.
-
-**Video Compression**
-
-- **Default**: Disabled due to high CPU usage
-- **Enable** only if you have significant video upload volume
-- **Requirements**: Requires FFmpeg installation and significant CPU resources
-- **Trade-off**: Reduces storage and bandwidth but increases upload processing time
-
-**Operational Notes**
-
-- Image processing requires sufficient CPU resources
-- Monitor processing queue length and processing time
-- Consider using background workers for processing to avoid blocking uploads
-- Test image processing with various file types and sizes
-- Consider implementing progressive image loading for better UX
-
----
-
-## Malware Scanning
-
-Configure ClamAV integration for virus scanning.
-
-### Configuration
+The server can scan uploads with ClamAV over TCP.
 
 ```yaml
 media:
@@ -442,95 +223,28 @@ media:
   scanner_port: 3310
 ```
 
-**Note**: The malware scanning config uses `scanner_enabled`, `scanner_host`, and `scanner_port` (not `malware_scanning.enabled` or `clamav_socket`). The scanner defaults to connecting to ClamAV on localhost:3310 (TCP), not a Unix socket.
+| Field | Default | Description |
+|---|---|---|
+| `scanner_enabled` | `false` | When `true`, the server scans uploads with ClamAV. |
+| `scanner_host` | `localhost` | Hostname of the ClamAV daemon. |
+| `scanner_port` | `3310` | TCP port of the ClamAV daemon. |
 
-**Docker Deployment**: When deploying via docker-compose, set these via environment variables — the config loader picks them up automatically:
+Do not use the stale keys `media.malware_scanning.enabled` or `media.malware_scanning.clamav_socket`. The correct keys are `media.scanner_enabled`, `media.scanner_host`, and `media.scanner_port` as defined in `src/config_defaults.py:246`. The server connects over TCP to `localhost:3310`, not a Unix socket.
 
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `SCANNER_ENABLED` | `false` | Enable ClamAV scanning (`true`/`false`/`1`/`0`/`yes`/`no`) |
-| `SCANNER_HOST` | `localhost` | ClamAV daemon hostname |
-| `SCANNER_PORT` | `3310` | ClamAV daemon TCP port |
+For Docker deployments, set the environment variables `SCANNER_ENABLED`, `SCANNER_HOST`, and `SCANNER_PORT`. The `docker-compose` stack includes a `clamav` service with a 4 GB RAM limit, automatic signature updates, and third-party signatures through the `clamav-unofficial-sigs` sidecar.
 
-The docker-compose stack includes a pre-configured `clamav` service with 4 GB RAM limit, automatic signature updates, and third-party signature databases via `clamav-unofficial-sigs` sidecar (Sanesecurity, FOXHOLE, URLhaus, Linux Malware Detect, interServer).
+To install ClamAV natively:
 
-### Deployment Considerations
+1.  Install the packages for your distribution. For example, on Ubuntu or Debian, run `sudo apt-get install clamav clamav-daemon`.
+2.  Configure `clamd` to listen on TCP port `3310`.
+3.  Start the daemon with `sudo systemctl start clamav-daemon`.
+4.  Update definitions with `sudo freshclam`.
 
-**Why Malware Scanning Matters**
+Scanning adds 1–5 seconds per file. Monitor ClamAV health and test with the EICAR test file.
 
-Malware scanning protects your users and infrastructure from malicious file uploads. This is particularly important for document types and executables.
+## Configure media rate limiting
 
-**When to Enable**
-
-- **Required For**: Applications accepting documents, archives, or executables
-- **Recommended For**: Public-facing applications with open registration
-- **Optional For**: Applications with trusted user base or limited file types
-- **Not Required For**: Image-only applications (images have lower malware risk)
-
-**ClamAV Socket**
-
-- **Default**: `/var/run/clamav/clamd.ctl` is the standard ClamAV socket path
-- **TCP Socket**: Can also use TCP socket (e.g., `tcp://localhost:3310`)
-- **Installation**: Requires ClamAV installation and configuration
-- **Performance**: Scanning adds processing time to uploads
-
-**Operational Requirements**
-
-**Option A — Docker (recommended):**
-The docker-compose stack includes a pre-configured `clamav` service. Backend connects automatically via `SCANNER_HOST=clamav`. No manual setup required.
-
-**Option B — Native install:**
-1. Install ClamAV:
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install clamav clamav-daemon
-
-   # CentOS/RHEL
-   sudo yum install clamav clamav-server
-   ```
-
-2. Configure ClamAV daemon (clamd):
-   - Edit `/etc/clamav/clamd.conf` or `/etc/clamd.d/scan.conf`
-   - Set `LocalSocket /var/run/clamav/clamd.ctl`
-   - Set `TCPSocket 3310` (if using TCP)
-   - Enable `ScanOnAccess` if desired
-
-3. Start ClamAV daemon:
-   ```bash
-   sudo systemctl start clamav-daemon
-   sudo systemctl enable clamav-daemon
-   ```
-
-4. Update virus definitions:
-   ```bash
-   sudo freshclam
-   ```
-
-**Unofficial signatures (optional):**
-For improved detection rates (Sanesecurity, FOXHOLE, URLhaus, etc.), install the [clamav-unofficial-sigs](https://github.com/extremeshok/clamav-unofficial-sigs) updater. Note this increases ClamAV RAM usage. In Docker, this runs as an automatic sidecar.
-
-**Performance Impact**
-
-- **Scanning Time**: Adds 1-5 seconds per file depending on file size
-- **CPU Usage**: Moderate CPU usage during scanning
-- **Throughput**: May limit upload rate if many concurrent uploads
-- **Recommendation**: Use background processing for scanning to avoid blocking uploads
-
-**Operational Notes**
-
-- Schedule regular virus definition updates (freshclam)
-- Monitor ClamAV daemon health and performance
-- Test scanning with EICAR test file to verify functionality
-- Implement quarantine for infected files
-- Provide clear error messages when files are rejected
-
----
-
-## Rate Limiting
-
-Configure rate limits for media operations.
-
-### Configuration
+Rate limiting for media controls upload volume per user.
 
 ```yaml
 media:
@@ -538,49 +252,21 @@ media:
     enabled: true
     uploads_per_minute: 10
     uploads_per_hour: 100
-    max_total_size_per_day: 536870912  # 512MB
+    max_total_size_per_day: 536870912  # 512 MB
 ```
 
-**Note**: The media rate limit config includes `uploads_per_hour` and `max_total_size_per_day`, not `thumbnails_per_minute`. Thumbnail rate limiting is handled separately under `image_processing.max_thumbnail_requests_per_minute`.
+| Field | Default | Description |
+|---|---|---|
+| `rate_limit.enabled` | `true` | When `true`, the server enforces media rate limits. |
+| `rate_limit.uploads_per_minute` | `10` | Maximum uploads per minute per user. |
+| `rate_limit.uploads_per_hour` | `100` | Maximum uploads per hour per user. |
+| `rate_limit.max_total_size_per_day` | `536870912` (512 MB) | Maximum total bytes a user can upload per day. |
 
-### Deployment Considerations
+Thumbnail generation has its own limit at `media.image_processing.max_thumbnail_requests_per_minute` (`60` per minute). Do not use the stale key `media.rate_limit.thumbnails_per_minute`. See `src/config_defaults.py:253` for the correct structure.
 
-**Why Rate Limiting Matters**
+## Configure the external proxy
 
-Rate limiting prevents abuse, manages server load, and ensures fair resource allocation. Without limits, malicious users could exhaust resources through rapid uploads.
-
-**Uploads Per Minute**
-
-- **Default**: 10 uploads per minute per user
-- **Standard Deployment**: 10 is appropriate for most applications
-- **High-Volume**: Increase to 30 for media-heavy applications
-- **Low-Volume**: Reduce to 5 for bandwidth-constrained environments
-- **Abuse Prevention**: Lower limits reduce impact of abuse attempts
-
-**Thumbnails Per Minute**
-
-- **Default**: 30 thumbnail generations per minute per user
-- **Standard Deployment**: 30 is appropriate (thumbnails are smaller/faster)
-- **High-Volume**: Increase to 100 for applications with many images
-- **Low-Volume**: Reduce to 10 for CPU-constrained environments
-
-**Rationale**: Thumbnail generation is CPU-intensive. Rate limiting prevents CPU exhaustion from rapid thumbnail generation requests.
-
-**Operational Notes**
-
-- Monitor rate limit violations for abuse patterns
-- Adjust limits based on server capacity and user behavior
-- Consider implementing tiered limits based on user roles
-- Provide clear error messages when rate limits are exceeded
-- Monitor CPU usage during peak upload periods
-
----
-
-## External Proxy
-
-Configure proxying of external URLs through your server.
-
-### Configuration
+The server can proxy external URLs to hide user IP addresses and apply caching.
 
 ```yaml
 media:
@@ -590,134 +276,18 @@ media:
   proxy_buffer_size: 65536
 ```
 
-**Note**: The external proxy config uses `proxy_enabled`, `proxy_cache_ttl`, `proxy_max_size`, and `proxy_buffer_size` (not `external_proxy.enabled` or `timeout_seconds`). The proxy is enabled by default and caches responses for 24 hours.
+| Field | Default | Description |
+|---|---|---|
+| `proxy_enabled` | `true` | When `true`, the server proxies external URL fetches. |
+| `proxy_cache_ttl` | `86400` (24 hours) | Cache lifetime for proxied responses. |
+| `proxy_max_size` | `10485760` (10 MB) | Maximum size of a proxied response. |
+| `proxy_buffer_size` | `65536` (64 KB) | Buffer size for proxy streaming. |
 
-### Deployment Considerations
+Do not use the stale keys `media.external_proxy.enabled` or `media.external_proxy.timeout_seconds`. The correct keys are `media.proxy_enabled`, `media.proxy_cache_ttl`, `media.proxy_max_size`, and `media.proxy_buffer_size` as defined in `src/config_defaults.py:249`.
 
-**Why External Proxying Matters**
+## Related documentation
 
-When users share external URLs (e.g., in messages), the server may need to fetch metadata or content. Proxying through your server prevents IP address leakage and provides security benefits.
-
-**When to Enable**
-
-- **Required For**: URL preview features (fetching OpenGraph metadata)
-- **Recommended For**: Applications where user privacy is critical
-- **Optional For**: Applications where IP disclosure is acceptable
-- **Not Required For**: Applications without external URL features
-
-**Security Benefits**
-
-- **IP Protection**: Hides users' IP addresses from external servers
-- **SSRF Prevention**: Prevents Server-Side Request Forgery attacks
-- **Content Filtering**: Allows filtering of malicious external content
-- **Rate Limiting**: Apply rate limits to external fetches
-
-**Performance Considerations**
-
-- **Latency**: Adds network latency for external URL fetches
-- **Bandwidth**: Increases your server's bandwidth usage
-- **Timeout**: Configure appropriate timeout to prevent hanging requests
-- **Caching**: Implement caching for frequently accessed external content
-
-**Operational Notes**
-
-- Monitor proxy usage for abuse patterns
-- Implement allowlist/denylist for external domains
-- Configure appropriate timeout based on expected response times
-- Consider implementing caching to reduce external requests
-- Monitor bandwidth usage from proxy traffic
-
----
-
-## CDN Integration
-
-For production deployments, consider integrating a CDN for media delivery.
-
-### Configuration
-
-CDN integration is typically configured through the `public_url` setting in S3 configuration or reverse proxy configuration for local storage.
-
-### Deployment Considerations
-
-**Why CDN Matters**
-
-CDNs significantly improve performance for geographically distributed users by serving content from edge locations closer to users.
-
-**CDN Options**
-
-- **CloudFront**: AWS CDN, integrates well with S3
-- **Cloudflare**: Global CDN with DDoS protection
-- **Fastly**: High-performance CDN with edge computing
-- **BunnyCDN**: Cost-effective CDN with good performance
-- **Akamai**: Enterprise-grade CDN
-
-**Configuration Steps**
-
-1. **For S3 Storage**: Set `public_url` to CDN distribution URL
-2. **For Local Storage**: Configure reverse proxy to cache media files
-3. **Cache Headers**: Configure appropriate cache headers for media files
-4. **Invalidation**: Implement cache invalidation for updated/deleted files
-
-**Cache Headers**
-
-- **Static Images**: Cache for 1 year (immutable content)
-- **User Uploads**: Cache for 1 day to 1 week (may be deleted)
-- **Thumbnails**: Cache for 1 day to 1 week
-- **Example Header**: `Cache-Control: public, max-age=31536000, immutable`
-
-**Operational Notes**
-
-- Monitor CDN cache hit rates
-- Implement cache invalidation when files are updated or deleted
-- Consider using signed URLs for private content
-- Monitor CDN costs and optimize cache strategies
-- Test CDN delivery from multiple geographic locations
-
----
-
-## Backup and Recovery
-
-### Local Storage Backups
-
-**Strategy**
-
-- Include media directory in regular filesystem backups
-- Use incremental backups to reduce backup size and time
-- Consider snapshot-based backups for point-in-time recovery
-
-**Procedure**
-
-```bash
-# Using rsync for incremental backup
-rsync -av --progress /var/lib/plexichat/media/ /backup/media/
-
-# Using tar for full backup
-tar -czf /backup/media-$(date +%Y%m%d).tar.gz /var/lib/plexichat/media/
-```
-
-### S3 Backups
-
-**Strategy**
-
-- S3 provides built-in durability (99.999999999%)
-- Enable versioning for recovery from accidental deletions
-- Use Cross-Region Replication for disaster recovery
-- Implement lifecycle policies for cost optimization
-
-**Procedure**
-
-S3 backups are automatic, but configure:
-
-1. **Versioning**: Enable in bucket settings
-2. **Lifecycle Rules**: Move old versions to Glacier after X days
-3. **Cross-Region Replication**: Replicate to secondary region for DR
-4. **Backup to Glacier**: Archive old files to Glacier for long-term retention
-
----
-
-## Related Documentation
-
-- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
-- [Deployment Guide](../getting-started.md) - Deployment and CDN integration
-- [Security Best Practices](../../security.md) - File upload security
-- [Voice Configuration](config-voice.md) - Voice/video file handling
+*   [Default configuration reference](../../default-config.md) — Complete configuration reference.
+*   [Deployment guide](../getting-started.md) — Deployment and CDN integration.
+*   [Security best practices](../../security.md) — File upload security.
+*   [Voice configuration](config-voice.md) — Voice and video file handling.

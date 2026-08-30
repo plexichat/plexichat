@@ -1,419 +1,505 @@
 # Troubleshooting
 
-Common Docker issues and solutions.
+Fix common Docker issues.
 
-## Services Won't Start
+## Services do not start
 
-### Error: "port already in use"
+### Error: `port already in use`
 
 **Message:**
+
 ```
 Error response from daemon: Ports are not available: exposing port TCP 0.0.0.0:8000 -> 0.0.0.0:8000: listen tcp 0.0.0.0:8000: bind: address already in use
 ```
 
-**Cause:** Another process is using port 8000, 80, or 443
+**Cause:** Another process already uses 8000, 80, 443, or 30000–30100/UDP (the backend voice range at `plexichat/docker-compose.yml:205`).
 
 **Fix:**
 
-Find process using port:
+Find the process that uses the port:
+
 ```bash
-lsof -i :8000  # Which process uses 8000?
+lsof -i :8000
+lsof -i :443
+lsof -i UDP:30000
 ```
 
-Option 1 - Stop other process:
+Choose one option:
+
+**Option 1 - Stop the conflicting process:**
+
 ```bash
 kill -9 <PID>
+docker compose up -d
 ```
 
-Option 2 - Change ports in docker-compose.yml:
+**Option 2 - Change the host port in `plexichat/docker-compose.yml:205`:**
+
 ```yaml
 backend:
   ports:
-    - "8001:8000"  # Use 8001 instead
+    - "8001:8000"          # Use 8001 on the host
+    - "30001-30101:30000-30100/udp"
 
 client:
   ports:
-    - "8080:80"    # Use 8080 for HTTP
-    - "8443:443"   # Use 8443 for HTTPS
+    - "8080:80"            # Use 8080 for HTTP
+    - "8443:443"           # Use 8443 for HTTPS
 ```
 
 Then restart:
+
 ```bash
 docker compose down
-docker compose up
+docker compose up -d
 ```
 
-### Error: "no such volume"
+**Note:** When you scale the backend (`docker compose up --scale backend=4`), remove the `ports` section on `backend` entirely. Multiple containers cannot bind the same host port.
+
+### Error: `no such volume`
 
 **Message:**
+
 ```
 Error response from daemon: volume "plexichat_postgres_data" not found
 ```
 
-**Cause:** Volumes were deleted or corrupted
+**Cause:** Volumes were deleted or corrupted.
 
 **Fix:**
 
-Create volumes:
+Recreate the stack and volumes:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+Or create volumes manually:
+
 ```bash
 docker volume create plexichat_postgres_data
 docker volume create plexichat_valkey_data
 docker volume create plexichat_rustfs_data
 ```
 
-Or remove and recreate:
-```bash
-docker compose down -v
-docker compose up
-```
+## Backend does not start
 
-## Backend Won't Start
+### Backend stuck in `starting`
 
-### Backend stuck in "starting" state
-
-**Cause:** Migrations taking too long or database not responding
+**Cause:** Migrations are still running or the database is not ready.
 
 **Fix:**
 
 Check logs:
+
 ```bash
 docker compose logs -f backend --tail 100
 ```
 
 Wait for:
+
 ```
 INFO: Application startup complete
 ```
 
-If stuck, it's usually:
-1. Database not ready - wait longer or restart db
-2. Corrupted database - restore from backup
-3. Insufficient memory - increase Docker memory limit
+If the backend stays in `starting` for more than 60 seconds:
 
-### Error: "Cannot connect to database"
+1. Database not ready - Wait longer or restart it:
+
+   ```bash
+   docker compose restart db
+   ```
+
+2. Corrupted database - Restore from a restic snapshot (`docker compose exec backup /scripts/backup.sh list`).
+3. Insufficient memory - Increase Docker memory to at least 4 GB.
+
+### Error: `Cannot connect to database`
 
 **Message:**
+
 ```
 ERROR: Failed to connect to database at db:5432
 ```
 
-**Cause:** PostgreSQL not running or not ready
+**Cause:** PostgreSQL is not running or not yet healthy.
 
 **Fix:**
 
 Check database status:
+
 ```bash
 docker compose ps db
 ```
 
-Should be:
+Expected:
+
 ```
-STATUS: Up X minutes (healthy)
+STATUS: Up 2 minutes (healthy)
 ```
 
-If not healthy:
+If not healthy, restart it:
+
 ```bash
 docker compose restart db
 ```
 
-If still fails, check database logs:
+Then check database logs:
+
 ```bash
 docker compose logs db --tail 50
 ```
 
-### Error: "Could not connect to Valkey"
+The health check runs `pg_isready -U ${POSTGRES_USER}` (`plexichat/docker-compose.yml:36`).
+
+### Error: `Could not connect to Valkey`
 
 **Message:**
+
 ```
 ERROR: Failed to connect to valkey at valkey:6379
 ```
 
-**Cause:** Valkey service not running or wrong password
+**Cause:** Valkey is not running or the password is wrong. Valkey fails fast if `VALKEY_PASSWORD` is empty (`plexichat/docker-compose.yml:49`).
 
 **Fix:**
 
-Verify Valkey is running:
+Verify Valkey is healthy:
+
 ```bash
-docker compose exec valkey redis-cli ping
+docker compose ps valkey
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli ping'
 ```
 
-Should return `PONG`
+Expected: `PONG` (`plexichat/docker-compose.yml:55`).
 
-If failed, restart:
+If it fails, restart Valkey:
+
 ```bash
 docker compose restart valkey
 ```
 
-Check password:
+Verify the password in `.env` matches the Compose interpolation:
+
 ```bash
-grep VALKEY_PASSWORD .env
+grep VALKEY_PASSWORD plexichat/.env
 ```
 
-Ensure it matches in docker-compose.yml
-
-### Error: "RustFS bucket creation failed"
+### Error: `RustFS bucket creation failed`
 
 **Message:**
+
 ```
 ERROR: Failed to create bucket plexichat-media in RustFS
 ```
 
-**Cause:** RustFS not ready or bucket already exists
+**Cause:** RustFS is not yet healthy or the bucket already exists. RustFS is internal-only (`expose: 9000/9001` at `plexichat/docker-compose.yml:91`) with health check `curl -f http://127.0.0.1:9000/health` (`plexichat/docker-compose.yml:95`).
 
 **Fix:**
 
-Check RustFS:
+Check that RustFS is healthy before `rustfs-init` runs:
+
 ```bash
-curl http://localhost:9000/health
+docker compose ps rustfs
+docker compose logs rustfs --tail 50
 ```
 
-Manually create bucket and set public read:
+`rustfs-init` retries until `rc alias set` succeeds (`plexichat/docker-compose.yml:108`). If you need to run it manually:
+
 ```bash
+docker compose exec rustfs sh -c 'curl -sf http://127.0.0.1:9000/health && echo ok'
 docker compose run --rm --entrypoint /bin/sh rustfs-init -c \
-  'rc alias set local http://rustfs:9000 "$S3_ACCESS_KEY" "$S3_SECRET_KEY" && \
-   rc mb local/plexichat-media --ignore-existing || true && \
-   rc anonymous set download local/plexichat-media'
+  'rc alias set local http://rustfs:9000 "$S3_ACCESS_KEY" "$S3_SECRET_KEY" && rc mb local/$S3_BUCKET || true'
 ```
 
-## Database Issues
+Do not expose RustFS ports to the host unless you need direct debugging. If you do, add a temporary `ports` override as described in [index.md](index.md#access-points).
 
-### PostgreSQL won't start
+## Database issues
+
+### PostgreSQL does not start
 
 **Log:**
+
 ```
 FATAL: could not create shared memory segment: No space left on device
 ```
 
-**Cause:** Disk full or /dev/shm full
+**Cause:** Disk or `/dev/shm` is full.
 
 **Fix:**
 
-Check disk space:
+Check the volume and disk usage:
+
 ```bash
-docker volume inspect plexichat_postgres_data | grep Mountpoint
-# Then: df -h <mountpoint>
+docker volume inspect plexichat_postgres_data
+df -h
+docker system df
 ```
 
-Clean up:
+Clean up and restart:
+
 ```bash
 docker system prune -a
 docker compose down -v
-# Free up disk space if needed
-docker compose up
+# Free disk space on the host if needed
+docker compose up -d
 ```
 
-### Connection refused
+### Connection refused inside the backend
 
 **Message:**
+
 ```
 psycopg2.OperationalError: could not connect to server: Connection refused
 ```
 
-**Cause:** PostgreSQL crashed or wrong connection string
+**Cause:** PostgreSQL crashed or the connection settings are wrong.
 
 **Fix:**
 
-Restart database:
+Restart the database:
+
 ```bash
 docker compose restart db
 ```
 
-Check connection settings:
+Verify connection settings inside the backend:
+
 ```bash
 docker compose exec backend env | grep POSTGRES
 ```
 
-Should show:
+Expected:
+
 ```
 POSTGRES_HOST=db
 POSTGRES_PORT=5432
 POSTGRES_USER=plexichat
 ```
 
-### Database locked / slow queries
+### Database locked or slow queries
 
 **Log:**
+
 ```
 WARNING: Query took 15.3s - possible database lock
 ```
 
-**Cause:** Long-running transaction or missing indexes
+**Cause:** Long-running transaction or missing index.
 
 **Fix:**
 
-Check active queries:
+List active queries:
+
 ```bash
 docker compose exec db psql -U plexichat -d plexichat -c \
   "SELECT pid, query, query_start FROM pg_stat_activity WHERE state='active';"
 ```
 
-Kill stuck query:
+Terminate a stuck query if safe:
+
 ```bash
 docker compose exec db psql -U plexichat -d plexichat -c \
-  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid != pg_backend_pid();"
+  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid != pg_backend_pid() AND state='active' AND query_start < now() - interval '5 minutes';"
 ```
 
-Check for missing indexes:
+Check backend logs for slow query warnings:
+
 ```bash
-docker compose logs backend | grep "slow"
+docker compose logs backend | grep -i "slow"
 ```
 
-## Connection Pool Exhaustion
+## Connection pool exhaustion
 
-### Error: "No available connections"
+### Error: `No available connections`
 
 **Message:**
+
 ```
 ERROR: Failed to acquire database connection after 10 seconds
 ```
 
-**Cause:** All connections in pool are in use
+**Cause:** All connections in the pool are in use.
 
 **Fix:**
 
 Check pool settings:
+
 ```bash
 docker compose exec backend env | grep DB_POOL
 ```
 
-Increase max connections:
-```bash
-# Edit .env
-DB_POOL_MAX_CONNECTIONS=100
+Increase the maximum connections in `plexichat/.env` (see `plexichat/.env.example:28`):
 
-# Restart
+```bash
+DB_POOL_MAX_CONNECTIONS=100
+```
+
+Then restart:
+
+```bash
 docker compose restart backend
 ```
 
-See [Connection Pooling](connection-pooling.md) for guidance.
+See [Connection pooling](connection-pooling.md).
 
-### Error: "Connection timeout"
+### Error: `Connection timeout`
 
 **Message:**
+
 ```
 WARN: Waiting for database connection... (5s)
 ```
 
-**Cause:** Network latency or database overloaded
+**Cause:** Network latency or database overload.
 
 **Fix:**
 
-Increase timeout:
+Increase the timeout:
+
 ```bash
+# In plexichat/.env
 DB_POOL_CONNECT_TIMEOUT=15
-docker compose restart backend
 ```
 
-Check database load:
+Restart and check load:
+
 ```bash
-docker stats plexichat-db-1
+docker compose restart backend
+docker stats --no-stream
 ```
 
-If high CPU/memory, restart:
+If `db` CPU or memory is high, restart it:
+
 ```bash
 docker compose restart db
 ```
 
-## API / WebSocket Issues
+## API and WebSocket issues
 
 ### HTTP 502 Bad Gateway
 
 **Message:**
+
 ```
 502 Bad Gateway
 ```
 
-**Cause:** Backend container died or not responding to reverse proxy
+**Cause:** Backend is not healthy or Nginx cannot reach `backend:8000` (`plexichat-client/docker/nginx/default.conf:53`).
 
 **Fix:**
 
-Check backend status:
+Check backend health:
+
 ```bash
 docker compose ps backend
+curl -sf http://localhost:8000/api/v1/ready
+curl -sf http://localhost:8000/api/v1/health | jq .
 ```
 
-Should be `healthy`
+If not `healthy`, restart:
 
-If not, restart:
 ```bash
 docker compose restart backend
-```
-
-Check logs:
-```bash
 docker compose logs backend --tail 50
 ```
 
-### WebSocket connection failed
+### WebSocket connection fails
 
 **Message:**
+
 ```
 WebSocket: connection refused
 ```
 
-**Cause:** Backend WebSocket gateway not ready or network issue
+**Cause:** Backend gateway is not ready or Nginx WebSocket proxy is misconfigured (`plexichat-client/docker/nginx/default.conf:90`).
 
 **Fix:**
 
-Test WebSocket:
+Test directly against the backend:
+
 ```bash
 curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
   http://localhost:8000/gateway
 ```
 
-Should return HTTP 101 (Switching Protocols)
+Expected: `101 Switching Protocols`.
 
-If failed, backend not responding:
+Test through Nginx:
+
+```bash
+curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  https://localhost/gateway -k
+```
+
+If the direct test succeeds but the Nginx test fails, verify `client` is `healthy` and check Nginx logs:
+
+```bash
+docker compose logs client --tail 50
+```
+
+Otherwise restart the backend:
+
 ```bash
 docker compose restart backend
 ```
 
 ### CORS errors
 
-**Browser Console:**
+**Browser console:**
+
 ```
 Access to XMLHttpRequest from origin 'http://localhost' has been blocked by CORS policy
 ```
 
-**Cause:** Frontend and backend on different origins (not in same docker network)
+**Cause:** Frontend origin is not in the API `cors_origins` allow list.
 
 **Fix:**
 
-Check CORS config:
+Check the runtime CORS config:
+
 ```bash
 docker compose exec backend grep -A 10 "cors" config/docker-config.yaml
 ```
 
-Ensure frontend origin is in allowed list:
+Or inspect the API config endpoint:
+
+```bash
+curl -sf http://localhost:8000/api/v1/health | jq .
+```
+
+Ensure the frontend origin is allowed. For example in `plexichat/config/docker-config.yaml:1`:
+
 ```yaml
 api:
   cors_origins:
     - http://localhost
     - https://localhost
+    - https://yourdomain.com
 ```
 
-## Memory & Performance
+## Memory and performance
 
-### Container OOM killed
+### Container was OOM killed
 
 **Message:**
+
 ```
 Killed signal: SIGKILL (exit 137)
 ```
 
-**Cause:** Container ran out of memory
+**Cause:** Container exceeded its memory limit. ClamAV baseline is ~1.2 GB and peaks at ~2.4 GB during signature reloads.
 
 **Fix:**
 
-Check memory usage:
+Check usage:
+
 ```bash
 docker stats --no-stream
 ```
 
-Increase Docker memory limit (in Docker Desktop settings):
-Settings > Resources > Memory: 4GB -> 6GB or 8GB
+Increase Docker memory in Docker Desktop (Settings > Resources > Memory) to at least 6–8 GB when ClamAV is enabled, or set limits:
 
-Or set limits in compose:
 ```yaml
 backend:
   deploy:
@@ -426,163 +512,178 @@ backend:
 
 ### High CPU usage
 
-**Cause:** Inefficient queries, infinite loops, or high load
+**Cause:** Inefficient queries, tight loops, or high load.
 
 **Fix:**
 
-Monitor CPU:
+Monitor:
+
 ```bash
 docker stats --no-stream
+docker compose logs backend | grep -i ERROR
 ```
 
-Check logs for errors:
-```bash
-docker compose logs backend | grep ERROR
-```
+If CPU stays high, restart the backend:
 
-If CPU stuck, restart:
 ```bash
 docker compose restart backend
 ```
 
-## Disk Space Issues
+## Disk space issues
 
-### Error: "No space left on device"
+### Error: `No space left on device`
 
-**Cause:** Docker volumes or images filled disk
+**Cause:** Docker volumes or images fill the disk.
 
 **Fix:**
 
-Check disk:
+Check usage:
+
 ```bash
 df -h
+docker system df
 ```
 
-Clean up Docker:
-```bash
-docker system df  # See what's using space
+Clean up:
 
-docker system prune -a  # Remove unused images/volumes
-```
-
-Remove old images:
 ```bash
+docker system prune -a
 docker image prune -a
 ```
 
-## Build Issues
+If you must wipe all Compose data:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+## Build issues
 
 ### Docker build fails
 
 **Message:**
+
 ```
 ERROR: failed to solve with frontend dockerfile.v0
 ```
 
-**Cause:** Dependency issue, network error, or invalid Dockerfile
+**Cause:** Dependency, network, or Dockerfile syntax error. The backend image uses `python:3.14.6-slim-trixie` (`plexichat/Dockerfile:1`).
 
 **Fix:**
 
 Rebuild without cache:
+
 ```bash
 docker compose build --no-cache backend
 ```
 
-Check Dockerfile syntax:
+Validate the Dockerfile:
+
 ```bash
-docker buildx build --file Dockerfile --tag test:latest .
+docker buildx build --file plexichat/Dockerfile --tag test:latest plexichat
 ```
 
-## Configuration Issues
+## Configuration issues
 
-### Error: "Invalid environment variable"
+### Error: `Invalid environment variable`
 
 **Message:**
+
 ```
 ERROR: configuration error: invalid DB_POOL_MAX_CONNECTIONS value
 ```
 
-**Cause:** Invalid value type in .env
+**Cause:** Invalid value type in `plexichat/.env`.
 
 **Fix:**
 
-Check .env file:
+Check the value:
+
 ```bash
-cat .env | grep DB_POOL
+grep DB_POOL plexichat/.env
 ```
 
-Should be integers:
+It must be an integer:
+
 ```
-DB_POOL_MAX_CONNECTIONS=100  # Correct
+DB_POOL_MAX_CONNECTIONS=100   # Correct
 DB_POOL_MAX_CONNECTIONS=100x  # Wrong
 ```
 
-Fix and restart:
+Fix it and restart:
+
 ```bash
 docker compose restart backend
 ```
 
-### Services can't find each other
+### Services cannot resolve each other
 
 **Message:**
+
 ```
 ERROR: name resolution failed: getaddrinfo EAI_NONAME
 ```
 
-**Cause:** Services not on same network
+**Cause:** Services are not on the same Docker network.
 
 **Fix:**
 
-Check networks:
+Inspect networks:
+
 ```bash
 docker network ls
-```
-
-Verify services are on same network:
-```bash
 docker compose config | grep -A 20 "networks:"
 ```
 
-Services should be on the shared `plexichat_default` network
+All core services use the default `plexichat_default` bridge network. Do not add custom `networks` blocks unless you attach every service to the same network.
 
-## Recovery Procedures
+## Recovery procedures
 
 ### Full reset
 
-Remove everything and start fresh:
+Remove everything and start fresh (deletes all data):
+
 ```bash
 docker compose down -v
 docker system prune -a
-docker compose up
+docker compose up -d
 ```
 
 ### Restore from backup
 
 ```bash
-# Stop services
-docker compose stop
+# List available snapshots
+docker compose exec backup /scripts/backup.sh list
 
-# Restore database
-cat backup.sql | docker compose exec -T db psql -U plexichat plexichat
+# Stop writers if you restore the database
+docker compose stop backend
+
+# Restore the database from the latest snapshot
+docker compose exec backup /scripts/backup.sh restore-db latest
+
+# Or restore files to a temporary location
+docker compose exec backup /scripts/backup.sh restore latest /tmp/restore
 
 # Restart
-docker compose up
+docker compose up -d
 ```
 
-### Rollback to previous version
+### Roll back to a previous version
 
 ```bash
-git checkout HEAD~1  # Previous commit
+git checkout HEAD~1
 docker compose build --no-cache
 docker compose down
-docker compose up
+docker compose up -d
 ```
 
-## Getting Help
+## Get help
 
-### Collect debug info
+### Collect debug information
 
-Create diagnostic bundle:
+Create a diagnostic bundle (remove secrets before sharing):
+
 ```bash
 docker compose logs --tail 500 > logs.txt
 docker compose ps -a >> logs.txt
@@ -590,35 +691,35 @@ docker stats --no-stream >> logs.txt
 docker system df >> logs.txt
 ```
 
-Share `logs.txt` (without secrets!)
-
 ### Enable debug logging
 
 ```bash
-LOG_LEVEL=DEBUG docker compose up
+LOG_LEVEL=DEBUG docker compose up -d
+docker compose logs -f backend
 ```
-
-More verbose output for debugging.
 
 ### Check Docker daemon logs
 
-macOS:
+**macOS:**
+
 ```bash
 tail -f ~/Library/Containers/com.docker.docker/Data/log/vm/dockerd.log
 ```
 
-Linux:
+**Linux:**
+
 ```bash
 journalctl -xu docker.service
 ```
 
-Windows:
+**Windows:**
+
 ```
 %LOCALAPPDATA%\Docker\log\vm\dockerd.log
 ```
 
-## Next Steps
+## Next steps
 
-- [Configuration](configuration.md) - Configuration help
-- [Production Setup](production-setup.md) - Production issues
-- [Healthchecks](healthchecks.md) - Service health
+- [Configuration](configuration.md) - Configuration reference.
+- [Production setup](production-setup.md) - Production hardening.
+- [Health checks](healthchecks.md) - Service health details.

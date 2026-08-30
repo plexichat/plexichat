@@ -1,445 +1,201 @@
-# Versioning and Updates
+# Versioning and updates
 
-This guide explains Plexichat's versioning scheme and how to update your deployment to new versions.
+This guide describes the versioning scheme for Plexichat and how to update a deployment.
 
-## Versioning Scheme
+## Version scheme
 
-Plexichat uses a stage-based versioning scheme:
+Plexichat uses a stage-based version string with the format:
 
 ```
 [stage].[major].[minor]-[build]
 ```
 
+Valid stages are `a`, `b`, `c`, and `r`. The regular expression enforced by the server is `^([abcr])\.(\d+)\.(\d+)-(\d+)$`. Strings are lowercased and trimmed before validation, and strings that contain `\r`, `\n`, or `\x00` are rejected.
+
 ### Components
 
-- `stage` (a, b, c, r): Alpha, Beta, Candidate, Release
-- `major` (1+): Major version (breaking changes)
-- `minor` (0+): Minor version (new features)
-- `build` (1+): Build number
+- `stage` — Release stage: `a` (alpha), `b` (beta), `c` (candidate), `r` (release).
+- `major` — Major version, minimum 1. Incremented for breaking changes.
+- `minor` — Minor version, minimum 0. Incremented for new features.
+- `build` — Build number, minimum 1. Resets to 1 when `minor` is incremented or when the stage changes.
 
-### Stage Meanings
+### Stage order
 
-- **a (Alpha)**: Early development, unstable, may have breaking changes
-- **b (Beta)**: Feature complete, testing phase, relatively stable
-- **c (Candidate)**: Release candidate, stable, ready for production testing
-- **r (Release)**: Stable release, recommended for production
+The server compares versions in the order `stage` > `major` > `minor` > `build`. Stage priority is `a` < `b` < `c` < `r`. A version with a higher stage is always newer than a version with a lower stage, regardless of numeric components.
+
+For example:
+
+```
+a.1.0-1 < a.1.0-2 < a.1.1-1 < b.1.0-1 < c.1.0-1 < r.1.0-1
+```
+
+An `r.1.0-1` server is newer than `a.99.99-999`.
 
 ### Examples
 
-- `a.1.0-1` - Alpha 1.0, build 1
-- `b.2.3-15` - Beta 2.3, build 15
-- `r.1.0-1` - Release 1.0, build 1
+- `a.1.0-1` — Alpha 1.0, build 1
+- `b.2.3-15` — Beta 2.3, build 15
+- `r.1.0-1` — Release 1.0, build 1
 
-### Version Comparison
+## Check your version
 
-Versions are compared by: stage -> major -> minor -> build
+The API prefix is `/api/v1` by default.
 
-```
-a.1.0-1 < a.1.0-2 < a.1.1-1 < a.2.0-1 < b.1.0-1 < r.1.0-1
-```
-
-Stage priority: a < b < c < r
-
-## Checking Your Version
-
-You can check your current Plexichat version via:
-
-### API Endpoint
+### Get server version
 
 ```bash
 curl https://your-server.com/api/v1/version
 ```
 
-Response:
+Response (`ServerVersionResponse` in `src/api/schemas/version.py:34`):
+
 ```json
 {
-  "version": "a.1.0-51",
-  "minimum_client_version": "a.1.0-0"
+  "version": {
+    "stage": "a",
+    "major": 1,
+    "minor": 0,
+    "build": 51,
+    "string": "a.1.0-51"
+  },
+  "min_supported_version": {
+    "stage": "a",
+    "major": 1,
+    "minor": 0,
+    "build": 1,
+    "string": "a.1.0-1"
+  },
+  "api_version": "v1"
 }
 ```
 
-### Admin Panel
+- `version` is a `VersionInfo` object with `stage`, `major`, `minor`, `build`, and `string` (`src/api/schemas/version.py:19`).
+- `min_supported_version` is `null` if no minimum is configured.
+- `api_version` is the API prefix version, currently `v1`.
 
-The version is displayed in the admin panel dashboard and footer.
+Other endpoints:
 
-### Server Logs
+- `POST /api/v1/version/negotiate` — Check whether a client version is compatible. Send `{"client_version": "a.1.0-1"}`. Returns `compatible`, `update_required`, and `update_recommended`, or HTTP 400 for an invalid format and HTTP 426 when an update is required (`src/api/routes/version.py:94`).
+- `GET /api/v1/status` — Get server state, uptime, and maintenance information (`src/api/routes/version.py:230`).
 
-The version is logged on server startup.
+You can also view the version in the admin panel and in the server logs at startup.
 
-## Update Strategy
+## When to update
 
-### When to Update
+- Use `a` and `b` builds only in test environments.
+- Use `c` (candidate) in staging.
+- Use `r` (release) in production.
 
-- **Alpha/Beta**: Only for testing environments, not production
-- **Candidate**: Good for staging environments
-- **Release**: Safe for production deployments
+Choose an update channel based on your stability needs:
 
-### Update Channels
+- **Stable** — `r.x.x-x` only.
+- **Testing** — `c.x.x-x` and `r.x.x-x`.
+- **Development** — All stages.
 
-Choose a channel based on your stability requirements:
+## Update
 
-- **Stable**: Only release versions (r.x.x-x)
-- **Testing**: Release candidates and releases (c.x.x-x, r.x.x-x)
-- **Development**: All versions including alpha/beta
+### Before you update
 
-## Update Procedure
+1. Review the release notes for the target version.
+2. Review the changelog for breaking changes.
+3. Test the update in a staging environment that mirrors production.
+4. Create a database backup and back up `config/config.yaml`.
+5. Document your current version string.
 
-### Pre-Update Checklist
+### Update methods
 
-Before updating, complete these steps:
-
-- [ ] Review the release notes for the target version
-- [ ] Check for breaking changes in the version changelog
-- [ ] Test the update in a staging environment first
-- [ ] Create a full database backup
-- [ ] Backup your configuration files
-- [ ] Backup media files (if using local storage)
-- [ ] Document your current version
-- [ ] Schedule a maintenance window if needed
-
-### Backup Procedure
+#### Git update
 
 ```bash
-# Database backup (PostgreSQL)
-pg_dump -h localhost -U plexichat plexichat | gzip > /backups/plexichat-pre-update-$(date +%Y%m%d).sql.gz
-
-# Database backup (SQLite)
-cp data/plexichat.db /backups/plexichat-pre-update-$(date +%Y%m%d).db
-
-# Configuration backup
-cp config/config.yaml /backups/config-pre-update-$(date +%Y%m%d).yaml
-
-# Media backup (if using local storage)
-rsync -av ~/.plexichat/media/ /backups/media-pre-update-$(date +%Y%m%d)/
-```
-
-### Update Methods
-
-#### Method 1: Git Update (Recommended for Development)
-
-```bash
-# Stop the service
 sudo systemctl stop plexichat
-
-# Navigate to installation directory
 cd /opt/plexichat
-
-# Stash any local changes
 git stash
-
-# Pull latest code
 git pull origin main
-
-# Update dependencies
 source .venv/bin/activate
 pip install --upgrade pip
 pip install --require-hashes -r requirements.txt
-
-# Run database migrations
 python -m src.core.migrations.cli apply_migrations
-
-# Start the service
 sudo systemctl start plexichat
-
-# Verify the update
 curl https://your-server.com/api/v1/version
 ```
 
-#### Method 2: Docker Update
+#### Docker update
 
 ```bash
-# Pull new image
 docker pull plexichat:latest
-
-# Stop containers
 docker compose down
-
-# Update compose file if needed
-# (check for new environment variables or configuration changes)
-
-# Start containers
+# Update your compose file if the release notes list new variables.
 docker compose up -d
-
-# Run migrations
 docker compose exec plexichat python -m src.core.migrations.cli apply_migrations
-
-# Verify the update
 docker compose exec plexichat curl http://localhost:8000/api/v1/version
 ```
 
-#### Method 3: Manual Update
+### After you update
+
+Verify the update:
+
+1. Check the version endpoint.
+2. Check `GET /health` and `GET /api/v1/status`.
+3. Log in to the admin panel and check for errors.
+4. Send a test message and verify file uploads and WebSocket connectivity.
+
+## Roll back
+
+If an update fails, restore the previous code and, if needed, the database backup you created before the update.
 
 ```bash
-# Download new release
-wget https://releases.plexichat.com/plexichat-r.1.0-1.tar.gz
-
-# Extract
-tar -xzf plexichat-r.1.0-1.tar.gz
-cd plexichat-r.1.0-1
-
-# Copy configuration from old installation
-cp /opt/plexichat/config/config.yaml config/
-
-# Copy database (if using SQLite)
-cp /opt/plexichat/data/plexichat.db data/
-
-# Install dependencies
-python3.14 -m venv .venv
-source .venv/bin/activate
-pip install --require-hashes -r requirements.txt
-
-# Run migrations
-python -m src.core.migrations.cli apply_migrations
-
-# Update service configuration
-sudo systemctl edit plexichat
-# Update ExecStart path to new installation
-
-# Start service
-sudo systemctl start plexichat
-```
-
-### Post-Update Verification
-
-After updating, verify:
-
-1. **Version Check**
-   ```bash
-   curl https://your-server.com/api/v1/version
-   ```
-
-2. **Health Check**
-   ```bash
-   curl https://your-server.com/health
-   ```
-
-3. **Database Connectivity**
-   ```bash
-   curl https://your-server.com/api/v1/status
-   ```
-
-4. **Admin Panel Access**
-   - Log in to admin panel
-   - Check dashboard for errors
-   - Verify user counts and metrics
-
-5. **Functionality Tests**
-   - Test user login
-   - Test message sending
-   - Test file uploads
-   - Test WebSocket connection
-
-## Rollback Procedure
-
-If the update causes issues, rollback to the previous version:
-
-### Git Rollback
-
-```bash
-# Stop service
+# Git example
 sudo systemctl stop plexichat
-
-# Rollback to previous commit
 git log --oneline -10
 git checkout <previous-commit-hash>
-
-# Restore database if needed
 cp /backups/plexichat-pre-update-YYYYMMDD.db data/plexichat.db
-
-# Start service
 sudo systemctl start plexichat
 ```
 
-### Docker Rollback
+For Docker, set the image tag in your compose file to the previous version and run `docker compose up -d`. Restore the database from your backup if required.
+
+## Database migrations
+
+Plexichat applies pending migrations on startup in version order. Failed migrations prevent startup.
+
+To manage migrations manually:
 
 ```bash
-# Stop containers
-docker compose down
-
-# Use previous image tag
-# Edit compose file to use previous tag
-# e.g., image: plexichat:r.1.0-50
-
-# Start containers
-docker compose up -d
-
-# Restore database if needed
-docker compose exec postgres psql -U plexichat plexichat < /backups/plexichat-pre-update-YYYYMMDD.sql
-```
-
-## Database Migrations
-
-### Automatic Migrations
-
-Plexichat automatically runs pending database migrations on startup:
-
-- Migrations are applied in version order
-- Migration status is tracked in the database
-- Failed migrations prevent server startup
-
-### Manual Migration Control
-
-For more control over migrations:
-
-```bash
-# Check pending migrations
+# List pending migrations
 python -m src.core.migrations.cli list_migrations
 
-# Apply pending migrations (applies all unapplied migrations in order)
+# Apply pending migrations
 python -m src.core.migrations.cli apply_migrations
 
-# Rollback migration (if reversible)
-python -m src.core.migrations.cli rollback_migration <revision>
-
-# Dry-run migration
+# Preview without applying
 python -m src.core.migrations.cli apply_migrations --dry-run
+
+# Roll back a reversible migration
+python -m src.core.migrations.cli rollback_migration <revision>
 ```
 
-### Irreversible Migrations
+Some migrations are irreversible. They require the confirmation phrase `THE DATABASE IS BACKED UP` and respect the `irreversible_migration_delay_days` setting (default 7 days).
 
-Some migrations are irreversible (drop columns/tables):
+## Configuration changes
 
-- These require a confirmation phrase: "THE DATABASE IS BACKED UP"
-- They have a configurable delay period (default 7 days)
-- Use the admin panel to run these migrations
-- See [Migrations Guide](../migrations.md) for details
-
-## Configuration Changes
-
-### Checking for New Configuration Options
-
-After an update, check for new configuration options:
-
-1. Review the [Default Configuration Reference](../default-config.md)
-2. Compare with your current `config/config.yaml`
-3. Add new options with appropriate values
-4. Remove deprecated options
-
-### Environment Variables
-
-New versions may introduce new environment variables:
-
-- Check release notes for new variables
-- Update your `.env` file or systemd service
-- Restart the service after changes
-
-## Breaking Changes
-
-### Identifying Breaking Changes
-
-Breaking changes are documented in:
-
-- Release notes
-- Migration documentation
-- API changelog
-
-### Common Breaking Changes
-
-- Database schema changes
-- API endpoint changes
-- Configuration structure changes
-- Dependency version changes
-
-### Handling Breaking Changes
-
-1. Review breaking change documentation
-2. Update your configuration accordingly
-3. Update any custom integrations
-4. Test thoroughly in staging
-5. Plan for potential downtime
-
-## Update Best Practices
-
-### Regular Updates
-
-- Stay within 2-3 versions of the latest release
-- Test updates in staging before production
-- Keep backups before every update
-- Monitor release notes for important changes
-
-### Production Updates
-
-- Only use release versions (r.x.x-x)
-- Schedule updates during low-traffic periods
-- Have a rollback plan ready
-- Notify users of scheduled maintenance
-
-### Testing Updates
-
-- Use a staging environment that mirrors production
-- Test all critical functionality
-- Verify integrations work correctly
-- Check performance metrics
-
-## Monitoring After Update
-
-After updating, monitor:
-
-- Error rates in logs
-- Database performance
-- API response times
-- WebSocket connection stability
-- User-reported issues
+After you update, compare your `config/config.yaml` with the default configuration reference. Add new options and remove deprecated options. Check the release notes for new environment variables and restart the service after you change them.
 
 ## Troubleshooting
 
-### Update Fails
+### Update fails
 
-**Symptoms**: Update process fails partway through
+Check the error logs, verify network connectivity and disk space, and verify database connectivity.
 
-**Solutions**:
-- Check error logs for specific failure
-- Verify network connectivity
-- Ensure sufficient disk space
-- Check database connectivity
-- Try the update again
+### Migration fails
 
-### Migration Fails
+Check migration logs, verify that the database user has the required permissions, and verify that your backup is accessible.
 
-**Symptoms**: Database migration fails
+### Service does not start after update
 
-**Solutions**:
-- Check migration logs in admin panel
-- Verify database backup is accessible
-- Ensure database user has required permissions
-- Check for schema conflicts
-- Contact support if needed
+Check `journalctl -u plexichat -n 100`, validate `config.yaml` syntax, verify that required environment variables are set, and verify database connectivity. Roll back if you cannot resolve the issue.
 
-### Service Won't Start After Update
+## Related documentation
 
-**Symptoms**: Service fails to start after update
-
-**Solutions**:
-- Check service logs: `journalctl -u plexichat -n 100`
-- Verify configuration syntax
-- Check for missing environment variables
-- Verify database connectivity
-- Rollback if necessary
-
-### Performance Degradation After Update
-
-**Symptoms**: Slower performance after update
-
-**Solutions**:
-- Check database query performance
-- Review new configuration options
-- Check for new background processes
-- Monitor resource utilization
-- Report performance issues
-
-## Support
-
-For update-related issues:
-
-1. Check the troubleshooting section above
-2. Review release notes and migration documentation
-3. Search existing issues in the project tracker
-4. Contact support with version details and error logs
-
-## Related Documentation
-
-- [Deployment Guide](./getting-started.md) - Initial deployment setup
-- [Migrations Guide](../migrations.md) - Database migration details
-- [Migration Reference](../migration-reference.md) - Detailed migration reference
-- [Security Best Practices](../security.md) - Security considerations for updates
-- [Performance Tuning](../performance.md) - Performance optimization
+- [Deployment guide](./getting-started.md)
+- [Migrations guide](../migrations.md)
+- [Security best practices](../security.md)

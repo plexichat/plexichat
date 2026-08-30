@@ -1,182 +1,186 @@
-# Docker Deployment Guide
+# Docker deployment guide
 
-This section covers running Plexichat in Docker: local development, production deployment, scaling, and troubleshooting.
+This section describes how to run Plexichat with Docker and Docker Compose.
 
-## Quick Navigation
+## Quick navigation
 
-- [Quick Start](quick-start.md) - Get Plexichat running in 5 minutes
-- [Configuration](configuration.md) - Environment variables and .env file setup
-- [Development Workflow](development-workflow.md) - Hot reload, testing, debugging
-- [Production Setup](production-setup.md) - Security, TLS, scaling, Proxmox deployment
-- [Connection Pooling](connection-pooling.md) - Database connection tuning
-- [Healthchecks](healthchecks.md) - Service health monitoring
-- [Troubleshooting](troubleshooting.md) - Common issues and solutions
-- [Architecture](architecture.md) - System design, networks, data flows
+- [Quick start](quick-start.md) - Run Plexichat locally in 5 minutes.
+- [Configuration](configuration.md) - Configure environment variables and the `.env` file.
+- [Development workflow](development-workflow.md) - Use hot reload, tests, and debugging.
+- [Production setup](production-setup.md) - Harden, configure TLS, and scale the deployment.
+- [Connection pooling](connection-pooling.md) - Tune database connection pools.
+- [Health checks](healthchecks.md) - Monitor service health.
+- [Troubleshooting](troubleshooting.md) - Diagnose and fix common issues.
+- [Architecture](architecture.md) - Understand networks, services, and data flows.
 
 ## What is Plexichat in Docker?
 
-Plexichat is a multi-container application stack:
+Plexichat runs as a multi-container stack:
 
-- **Backend** (FastAPI) - REST API, WebSocket gateway, business logic
-- **Database** (PostgreSQL) - User data, messages, servers
- - **Cache** (Valkey) - Sessions, rate limiting, WebSocket state
-- **Storage** (RustFS) - Media files (avatars, attachments)
-- **Frontend** (Nginx + Vite) - Web client, reverse proxy, TLS termination
+- **Backend** (FastAPI, Python 3.14) - REST API, WebSocket gateway, and business logic.
+- **Database** (PostgreSQL 18) - Stores users, messages, and servers.
+- **Cache** (Valkey 9.1) - Stores sessions, rate-limit state, and WebSocket presence.
+- **Storage** (RustFS 1.0) - Stores media files such as avatars and attachments.
+- **Frontend** (Nginx + Vite) - Serves the web client and terminates TLS.
+- **Scanner** (ClamAV 1.5) - Scans uploads for malware on TCP 3310 (internal).
+- **Backup** (restic) - Creates encrypted, deduplicated snapshots.
 
-All services run in isolated containers with automatic health monitoring and dependency management.
+All services share a single Docker bridge network (`plexichat_default`) and include health checks and dependency conditions.
 
-## System Requirements
+## System requirements
 
-- Docker 20.10+
-- Docker Compose 2.0+
-- 4GB RAM minimum (8GB recommended)
-- 10GB free disk space
-- Linux, macOS, or Windows (with Docker Desktop)
+- Docker 20.10 or later
+- Docker Compose 2.0 or later
+- 4 GB RAM minimum, 8 GB recommended
+- 10 GB free disk space
+- Linux, macOS, or Windows with Docker Desktop
 
-## Startup Options
+## Start the stack
 
-### Development (Local)
+Start in the foreground for development:
+
 ```bash
 docker compose up
 ```
-All services start with fresh debug-style `.env` defaults; adjust `LOG_LEVEL`
-in `.env` for verbose logging.
 
-### Production (Self-hosted)
+Start in the background for self-hosted production:
+
 ```bash
 docker compose up -d
 ```
-Services start in the background with the `.env` settings you configure.
 
-### Testing (CI)
-Set `NO_STRICT_CONFIG=false` and run the backend test-suite against a scratch
-database; the packaged `up` stack targets Postgres/Valkey/RustFS/ClamAV and is
-not needed for isolated unit tests.
+Run backend tests against an isolated database without the full stack:
 
-> Note: the compose stack no longer uses `--profile` flags. Whether a service
-> starts is controlled purely by its presence in `docker-compose.yml` and the
-> standard `.env` variables, so pinned versions (see below) and LOG_LEVEL are
-> set there rather than through a provider footprint flag.
+```bash
+NO_STRICT_CONFIG=false python -m pytest
+```
 
-## Status Checking
+The Compose file (`plexichat/docker-compose.yml:1`) does not use `--profile` flags for core services. A service starts when it is present in `docker-compose.yml` and its `.env` variables are set. Optional services (search, AI moderation) use profiles; see `docker/README.md`.
 
-View service status and health:
+## Check service health
+
+List service status and health:
+
 ```bash
 docker compose ps
 ```
 
-Expected output shows all services with `healthy` status.
+All services report `healthy` when ready. Check logs for a specific service:
 
-Check specific service logs:
 ```bash
 docker compose logs -f backend
 docker compose logs -f db
 ```
 
-## Common Commands
+## Common commands
 
-Start all services:
-```bash
-docker compose up
+| Action | Command |
+|--------|---------|
+| Start all services | `docker compose up` |
+| Start in background | `docker compose up -d` |
+| View logs | `docker compose logs -f <service>` |
+| Run a command in the backend | `docker compose exec backend python main.py self-test` |
+| Stop all services | `docker compose down` |
+| Remove volumes and delete all data | `docker compose down -v` |
+
+## Access points
+
+Only the following ports are published to the host by default (`plexichat/docker-compose.yml:205`, `plexichat/docker-compose.yml:236`):
+
+| Service | Host port | Container port | URL | Purpose |
+|---------|-----------|----------------|-----|---------|
+| Frontend (Nginx) | 80 | 80 | http://localhost | Web client (redirects to HTTPS) |
+| Frontend (Nginx) | 443 | 443 | https://localhost | Web client with TLS |
+| Backend API | 8000 | 8000 | http://localhost:8000 | REST API and docs |
+| Backend voice | 30000–30100/UDP | 30000–30100/UDP | — | Voice media (SFU) |
+| PostgreSQL | — | 5432 | Internal `db:5432` | Database; access with `docker compose exec db psql` |
+| Valkey | — | 6379 | Internal `valkey:6379` | Cache; access with `docker compose exec valkey redis-cli` |
+| RustFS S3 API | — | 9000 | Internal `rustfs:9000` | S3 API; not published by default |
+| RustFS console | — | 9001 | Internal `rustfs:9001` | Console; publish with a `ports` override if needed |
+| ClamAV | — | 3310 | Internal `clamav:3310` | Scanner daemon |
+
+To expose RustFS on the host for direct debugging, add a temporary override:
+
+```yaml
+# docker-compose.override.yml
+services:
+  rustfs:
+    ports:
+      - "9000:9000"
+      - "9001:9001"
 ```
 
-Run in background:
-```bash
-docker compose up -d
-```
+Direct backend access:
 
-View logs:
-```bash
-docker compose logs -f <service>
-```
+- REST: `http://localhost:8000/api/v1`
+- Swagger UI: `http://localhost:8000/docs` (or `https://localhost/docs` through Nginx)
+- ReDoc: `http://localhost:8000/redoc`
+- OpenAPI spec: `http://localhost:8000/openapi.json`
+- Readiness probe: `http://localhost:8000/api/v1/ready`
+- Deep health: `http://localhost:8000/api/v1/health`
+- WebSocket gateway: `ws://localhost:8000/gateway` (through Nginx: `wss://localhost/gateway`)
 
-Execute commands in a container:
-```bash
-docker compose exec backend python main.py self-test
-```
+## First-time setup
 
-Stop all services:
-```bash
-docker compose down
-```
+1. Generate a secure `.env` file with the [environment generator](/docs/api/deployment/env-generator) and save it as `.env` in `plexichat/`. See `.env.example:1` for all variables.
+2. Start the stack:
 
-Remove volumes (wipes all data):
-```bash
-docker compose down -v
-```
+   ```bash
+   BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d
+   ```
 
-## Access Points
+   To deploy a pinned version:
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| Backend API | http://localhost:8000/api/v1 | REST endpoints |
-| API Docs | http://localhost:8000/docs | Interactive OpenAPI explorer |
-| WebSocket | ws://localhost:8000/gateway | Real-time messaging |
-| Frontend | http://localhost | Web client |
-| RustFS Console | http://localhost:9001 | Object storage management |
-| Valkey | localhost:6379 | Cache (Valkey CLI) |
-| PostgreSQL | localhost:5432 | Database (CLI tools) |
+   ```bash
+   BACKEND_VERSION=a.1.0-131 CLIENT_VERSION=a.1.0-117 docker compose up -d
+   ```
 
-## First-Time Setup
+3. Wait until `docker compose ps` shows `healthy` for `db`, `valkey`, `rustfs`, `clamav`, `backend`, and `client`.
+4. Open `https://localhost` (accept the self-signed certificate on first run) or `http://localhost:8000/docs` for the API.
 
-1. Generate secure `.env` using the [Environment Generator](/docs/api/deployment/env-generator)
-2. Save as `.env` in your Plexichat directory
-3. Run: `BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d`
-4. Wait for all services to report `healthy`
-5. Access frontend at http://localhost
+For detailed steps, see [Quick start](quick-start.md).
 
-For versioned deployment:
-```bash
-BACKEND_VERSION=a.1.0-131 CLIENT_VERSION=a.1.0-117 docker compose up -d
-```
+## Startup times
 
-See [Quick Start](quick-start.md) for detailed steps.
+- First build: 2–3 minutes (downloads base images and installs Python 3.14 dependencies from `plexichat/Dockerfile:1`).
+- Subsequent starts: 10–30 seconds.
+- Database initialization: 5–10 seconds on first run.
+- Backend `healthy` (migrations and module initialization): 15–30 seconds.
 
-## Performance Notes
+## Security considerations
 
-- First build: 2-3 minutes (downloads base images, compiles dependencies)
-- Subsequent starts: 10-30 seconds (dependent on service startup times)
-- Database initialization: ~5-10 seconds on first run
-- Backend healthy: 15-30 seconds (migrations, module initialization)
+- Development `.env` examples use placeholder passwords. Do not use them in production.
+- Production requires strong, unique values for `POSTGRES_PASSWORD`, `VALKEY_PASSWORD`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, and `BACKUP_RESTIC_PASSWORD` (`plexichat/.env.example:17`, `plexichat/docker-compose.yml:32`).
+- Self-signed certificates are generated in the `certs` volume on first boot (`plexichat/docker-compose.yml:118`). Replace them with Let's Encrypt certificates for production.
+- All services communicate over the internal `plexichat_default` network. Only `client` (80/443) and `backend` (8000/TCP, 30000–30100/UDP) publish host ports by default.
 
-## Security Considerations
+See [Production setup](production-setup.md#security) for hardening steps.
 
-- **Development**: Uses placeholder passwords (changeme) - NOT FOR PRODUCTION
-- **Production**: Use strong secrets in `.env` file, never commit sensitive data
-- **TLS**: Self-signed certificates generated automatically for HTTPS
-- **Network Isolation**: All services share a single internal Docker network; only the client's 80/443 (and optional backend 8000 + RustFS 9000/9001) are published
+## Data persistence
 
-See [Production Setup](production-setup.md#security) for hardening guidelines.
+All data lives in named Docker volumes:
 
-## Data Persistence
-
-All data is stored in named Docker volumes:
-
-- `postgres_data` - PostgreSQL database
-- `valkey_data` - Valkey cache
-- `rustfs_data` - Media files (RustFS)
-- `plexichat_home` - Application state (config, keyrings, media)
+- `postgres_data` - PostgreSQL data
+- `valkey_data` - Valkey append-only file
+- `rustfs_data` - Media objects
+- `plexichat_home` - Application state at `/root/.plexichat` (config, keyrings, logs)
 - `certs` - TLS certificates
-- `backup_repo` - restic backup repository
+- `backup_repo` - Restic repository
 - `clamav_db` - ClamAV signature database
+- `meilisearch_data`, `elasticsearch_data` - Search indexes (when enabled)
 
-Volumes survive container restarts but are deleted with `docker compose down -v`.
+Volumes persist across container restarts. `docker compose down -v` deletes them.
 
 ## Networking
 
-`docker-compose.yml` creates a single default bridge network. All services
-communicate by service name over that network (e.g., `backend` reaches `db`
-as `http://db:5432`, and the `client` nginx reaches the API as
-`http://backend:8000`). Only the `client` service publishes host ports
-(80, 443) by default; `backend` (8000, 30000-30100/UDP) and `rustfs`
-(9000, 9001) also publish host ports in single-instance setups.
+`plexichat/docker-compose.yml` creates a single default bridge network. Services reach each other by service name, for example `backend` reaches `db` at `db:5432` and `valkey` at `valkey:6379`. The `client` Nginx reaches the API at `http://backend:8000` (`plexichat-client/docker/nginx/default.conf:53`) and load-balances WebSocket connections with `ip_hash` (`plexichat-client/docker/nginx/default.conf:12`).
 
-## Next Steps
+When you scale the backend (`docker compose up --scale backend=4`), remove the `ports` mapping on `backend` (`plexichat/docker-compose.yml:205`) and rely on Nginx at `:443`.
 
-- [Quick Start](quick-start.md) - Get running immediately
-- [Development Workflow](development-workflow.md) - Hot reload and testing
-- [Production Setup](production-setup.md) - Deploy to production
+## Next steps
 
-Still have questions? See [Troubleshooting](troubleshooting.md).
+- [Quick start](quick-start.md) - Run the stack now.
+- [Development workflow](development-workflow.md) - Develop with hot reload.
+- [Production setup](production-setup.md) - Deploy to production.
 
-
+If you encounter issues, see [Troubleshooting](troubleshooting.md).
