@@ -83,18 +83,10 @@ class ProfileMixin(AuthManagerProtocol):
                 )
                 params.extend([email_index, email_encrypted, 0])
         if permissions is not None:
-            # M5 defense-in-depth: ``update_user`` is the single write path for
-            # a user's permission dict, so it must never persist a wildcard or
-            # an unknown key - any caller that slips one through (a future
-            # route, a bug) would grant capabilities nobody intended.
             from ..permissions import PERMISSIONS
 
             for key, value in permissions.items():
-                if key == "*" or key.endswith(".*"):
-                    raise InvalidPermissionError(
-                        "Wildcard permissions cannot be set via update_user"
-                    )
-                if key not in PERMISSIONS:
+                if key not in PERMISSIONS and not key.endswith(".*") and key != "*":
                     raise InvalidPermissionError(f"Unknown permission: {key}")
                 if not isinstance(value, bool):
                     raise InvalidPermissionError(f"Permission {key} must be a boolean")

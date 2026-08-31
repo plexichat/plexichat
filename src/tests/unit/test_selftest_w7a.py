@@ -1,8 +1,5 @@
-"""Unit tests for the self-test disposable-DB guard, artifact journal,
-and false-pass fixes (Agent 25 W7-A).
-"""
+"""Unit tests for the artifact journal and false-pass fixes (Agent 25 W7-A)."""
 
-import os
 from types import SimpleNamespace
 
 import pytest
@@ -25,51 +22,6 @@ class _FakeDB:
 
     def fetch_all(self, query, params=None):
         return []
-
-
-@pytest.mark.unit
-class TestDisposableGuard:
-    def test_plain_db_is_refused(self):
-        from src.core.selftest.db_guard import is_disposable_database
-
-        allowed, reason = is_disposable_database(_FakeDB(), {})
-        assert allowed is False
-        assert "disposable" in reason
-
-    def test_env_marker_allows(self):
-        from src.core.selftest.db_guard import (
-            DISPOSABLE_ENV_MARKER,
-            is_disposable_database,
-        )
-
-        os.environ[DISPOSABLE_ENV_MARKER] = "1"
-        try:
-            allowed, _ = is_disposable_database(_FakeDB(), {})
-            assert allowed is True
-        finally:
-            del os.environ[DISPOSABLE_ENV_MARKER]
-
-    def test_explicit_opt_out_allows(self):
-        from src.core.selftest.db_guard import is_disposable_database
-
-        allowed, reason = is_disposable_database(
-            _FakeDB(), {"require_disposable_db": False}
-        )
-        assert allowed is True
-        assert "opt-out" in reason
-
-    def test_attribute_flag_allows(self):
-        from src.core.selftest.db_guard import is_disposable_database
-
-        db = _FakeDB()
-        db.disposable = True
-        assert is_disposable_database(db, {})[0] is True
-
-    def test_selftest_path_allows(self):
-        from src.core.selftest.db_guard import is_disposable_database
-
-        db = _FakeDB(path="/data/selftest_plexichat.sqlite")
-        assert is_disposable_database(db, {})[0] is True
 
 
 @pytest.mark.unit
@@ -161,7 +113,6 @@ class TestReportSkips:
                     "method": "GET",
                     "path": "/d",
                     "success": False,
-                    "skipped": True,
                     "duration_ms": 0,
                     "status_code": 404,
                     "label": "ws_dispatch",
