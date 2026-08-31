@@ -1,10 +1,18 @@
 # Admin routes
 
-This directory contains administrative endpoints mounted at `/api/v1/admin` (the `/admin` path prefix is configurable through `admin_ui.path` in `config.yaml`). All endpoints require elevated permissions and are audited.
+This package contains administrative API endpoints mounted at
+`/api/v1/admin`. The `/admin` path prefix is configurable through
+`admin_ui.path` in `config.yaml`. All endpoints require elevated
+permissions and are audited.
 
 ## Overview
 
-Admin routes handle server management, moderation, user administration, and system configuration. The package is assembled in `src.api.routes.admin.__init__.py`, which includes each sub-router into a single `APIRouter` that `src.api.routes.create_api_router()` mounts at the configured admin path. Common error responses (`400`, `401`, `403`) are defined once on the parent router.
+Admin routes handle server management, moderation, user administration,
+and system configuration. The package is assembled in
+`src/api/routes/admin/__init__.py`, which includes each sub-router into a
+single `APIRouter` that `src.api.routes.create_api_router()` mounts at the
+configured admin path. Common error responses (`400`, `401`, `403`) are
+defined once on the parent router.
 
 ## Route modules
 
@@ -35,17 +43,27 @@ Admin routes handle server management, moderation, user administration, and syst
 
 ## Authentication
 
-Most admin routes use the same bearer and cookie authentication as the main API, with additional authorization checks (admin role or session). The admin login flow in `auth.py` manages its own session table (`admin_sessions`) and sets `request.state.admin_id` for subsequent requests. The rate limiter recognizes `request.state.admin_id` as an admin bypass even when `request.state.user` is not set.
+Most admin routes use the same bearer and cookie authentication as the
+main API, with additional authorization checks (admin role or session).
+The admin login flow in `auth.py` manages its own session table
+(`admin_sessions`) and sets `request.state.admin_id` for subsequent
+requests. The rate limiter recognizes `request.state.admin_id` as an admin
+bypass even when `request.state.user` is not set.
 
 ## Authorization and auditing
 
-*   Write operations typically require a completed two-factor verification and an IP allowlist check when configured.
-*   State-changing operations are audit-logged. You can query and export these entries through `audit.py`.
-*   Bulk operations and sensitive actions have stricter rate limits than read operations.
+- Write operations typically require a completed two-factor verification
+  and an IP allowlist check when configured.
+- State-changing operations are audit-logged. You can query and export
+  these entries through `audit.py`.
+- Bulk operations and sensitive actions have stricter rate limits than
+  read operations.
 
 ## Rate limiting
 
-Rate limits for admin endpoints are enforced by the shared `src.core.ratelimit` engine. The exact limits depend on server configuration; typical defaults are:
+Rate limits for admin endpoints are enforced by the shared
+`src.core.ratelimit` engine. The exact limits depend on server
+configuration. Typical defaults are:
 
 | Operation type | Limit |
 |----------------|-------|
@@ -53,25 +71,31 @@ Rate limits for admin endpoints are enforced by the shared `src.core.ratelimit` 
 | Write | 30 requests per minute |
 | Bulk | 5 requests per minute |
 
-Admin sessions identified by `request.state.admin_id` bypass per-user limits when the rate limiter detects an admin principal.
+Admin sessions identified by `request.state.admin_id` bypass per-user
+limits when the rate limiter detects an admin principal.
 
 ## Add a new admin route
 
-1.  Create a new module in this directory (for example, `widgets.py`) that defines `router = APIRouter()`.
-2.  Add handlers to the router with standard FastAPI decorators and Pydantic response models.
-3.  Include the router in `src.api.routes.admin.__init__.py`:
+1. Create a new module in this directory (for example, `widgets.py`) that
+   defines `router = APIRouter()`.
+2. Add handlers to the router with standard FastAPI decorators and Pydantic
+   response models.
+3. Include the router in `src/api/routes/admin/__init__.py`:
 
-    ```python
-    from .widgets import router as widgets_router
-    router.include_router(widgets_router)
-    ```
+   ```python
+   from .widgets import router as widgets_router
+   router.include_router(widgets_router)
+   ```
 
-4.  If the route needs new schemas, add them under `src.api.schemas.admin`.
-5.  Add authorization checks (admin role, two-factor, or IP allowlist) as required by the operation.
+4. If the route needs new schemas, add them under `src.api.schemas.admin`.
+5. Add authorization checks (admin role, two-factor, or IP allowlist) as
+   required by the operation.
 
 ## Related documentation
 
-*   `../README.md` — full route table for non-admin endpoints
-*   `users/README.md` — user administration sub-package and its mixin architecture
-*   `../../middleware/README.md` — authentication, rate limiting, and error handling
-*   `../../../core/admin` — underlying admin business logic
+- `../README.md` — full route table for non-admin endpoints
+- `users/README.md` — user administration sub-package and its mixin
+  architecture
+- `../../middleware/README.md` — authentication, rate limiting, and error
+  handling
+- `../../../core/admin` — underlying admin business logic
