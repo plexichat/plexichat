@@ -24,7 +24,7 @@ class AuthStatus(Enum):
     """Authentication result status."""
 
     SUCCESS = "success"
-    TWO_FACTOR_REQUIRED = "2fa_required"
+    TWO_FACTOR_REQUIRED = "two_factor_required"
     VERIFICATION_REQUIRED = "verification_required"
     FAILED = "failed"
 

@@ -86,7 +86,11 @@ class ProfileMixin(AuthManagerProtocol):
             from ..permissions import PERMISSIONS
 
             for key, value in permissions.items():
-                if key not in PERMISSIONS and not key.endswith(".*") and key != "*":
+                if key == "*" or key.endswith(".*"):
+                    raise InvalidPermissionError(
+                        f"Wildcard permissions are not accepted: {key}"
+                    )
+                if key not in PERMISSIONS:
                     raise InvalidPermissionError(f"Unknown permission: {key}")
                 if not isinstance(value, bool):
                     raise InvalidPermissionError(f"Permission {key} must be a boolean")

@@ -29,7 +29,9 @@ router = APIRouter()
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_device_trust_admin_overview(request: Request):
+async def get_device_trust_admin_overview(
+    request: Request,
+) -> DeviceTrustOverviewResponse:
     """Admin snapshot: device trust + effective session durations per user."""
     check_host_restriction(request)
     require_admin_permission(request, "admin.security.devices")

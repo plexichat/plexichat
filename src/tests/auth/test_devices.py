@@ -294,7 +294,7 @@ class TestTrustedDevices:
             result = auth_manager.login(
                 "trust_skip", "TestPass123!", device_info={"fingerprint": "trusted_fp"}
             )
-        assert result.status.value == "2fa_required"
+        assert result.status.value == "two_factor_required"
 
         # Mark the device trusted, then login again: no challenge, direct session.
         assert auth_manager.trust_device(user.id, "trusted_fp") is True
@@ -321,7 +321,7 @@ class TestTrustedDevices:
 
         with patch.object(encryption, "verify_password", return_value=True):
             result = auth_manager.login("trust_nofp", "TestPass123!")
-        assert result.status.value == "2fa_required"
+        assert result.status.value == "two_factor_required"
 
     def test_untrust_device_restores_2fa(self, db, auth_manager):
         """Untrusting a device returns it to challenge-required behavior."""
@@ -346,7 +346,7 @@ class TestTrustedDevices:
                 "TestPass123!",
                 device_info={"fingerprint": "untrust_fp"},
             )
-        assert result.status.value == "2fa_required"
+        assert result.status.value == "two_factor_required"
 
     def test_trust_is_per_user_scoped(self, db, auth_manager):
         """User B must not inherit trust from user A's device fingerprint."""

@@ -308,7 +308,7 @@ def require_approved_request(action_type: str) -> Optional[int]:
 
 def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> str:
     """Load an admin UI template."""
-    allowed_templates = ["login.html", "dashboard.html", "migrations.html"]
+    allowed_templates = ["login.html", "dashboard.html"]
     if template_name not in allowed_templates:
         return "<h1>Access Denied</h1>"
 
