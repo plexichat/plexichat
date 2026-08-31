@@ -11,7 +11,7 @@ import src.api as api
 import utils.logger as logger
 
 from ..context import SelfTestContext
-from ..db_guard import destructive_phase_allowed, sanitize_error
+from ..db_guard import sanitize_error
 
 
 class CleanupService:
@@ -49,16 +49,6 @@ class CleanupService:
                         sanitize_error(e),
                     )
 
-            # Whole-table wipes destroy EVERY row in the target tables. They
-            # are refused unless the database is flagged disposable — a
-            # misconfigured production boot with self-test enabled must not
-            # be able to destroy live data.
-            wipe_allowed = destructive_phase_allowed(self.ctx, "pre_test_table_wipe")
-
-            # Sum workbooks own external .plexisum blobs, so their purge must
-            # happen before this SQL transaction starts. The domain manager
-            # deliberately rejects nested lifecycle transactions to prevent
-            # deleting blobs and then rolling back their metadata.
             rows = db.fetch_all(
                 "SELECT id, username FROM auth_users WHERE username LIKE 'selftest_%'"
             )
@@ -69,8 +59,6 @@ class CleanupService:
             db.begin_transaction()
 
             for tbl in ["media_upload_sessions", "plexijoin_traffic_log"]:
-                if not wipe_allowed:
-                    break
                 try:
                     db.execute(f"DELETE FROM {tbl}")
                 except Exception:
@@ -103,12 +91,6 @@ class CleanupService:
                 "plexijoin_traffic_log",
             ]
             for tbl in truncate_tables:
-                if not wipe_allowed:
-                    logger.warning(
-                        f"Skipping whole-table wipe of {tbl}: database not "
-                        "flagged disposable"
-                    )
-                    continue
                 try:
                     db.execute(f"DELETE FROM {tbl}")
                 except Exception:
