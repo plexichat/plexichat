@@ -92,7 +92,7 @@ class ProfileMixin(AuthManagerProtocol):
             for key, value in permissions.items():
                 if key == "*" or key.endswith(".*"):
                     raise InvalidPermissionError(
-                        f"Wildcard permissions cannot be set via update_user"
+                        "Wildcard permissions cannot be set via update_user"
                     )
                 if key not in PERMISSIONS:
                     raise InvalidPermissionError(f"Unknown permission: {key}")

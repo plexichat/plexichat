@@ -604,15 +604,24 @@ class TestSoundPermissions:
 
     def test_cannot_play_from_other_server(self, soundboard_manager, test_db):
         """Cannot play sound from server not member of."""
+        # Use a server ID unlikely to collide with other suites that share
+        # the same database fixture; the soundboard manager's membership gate
+        # must reject a user that has never been inserted as a member.
+        server_id = 800_000 + hash(id(soundboard_manager)) % 10_000
         test_db.execute(
-            "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
+            "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (?, 'Test', 1, 1000, 1000)",
+            (server_id,),
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (?, ?, 1, 1000, 1000)",
+            (
+                server_id,
+                server_id,
+            ),
         )
 
         sound = soundboard_manager.upload_sound(
-            1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
+            1, server_id, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
 
         can_play = soundboard_manager.can_play_sound(2, sound.id)
