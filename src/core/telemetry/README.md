@@ -1,25 +1,25 @@
-# Telemetry Module
+# Telemetry module
 
 Collects and aggregates anonymized response time telemetry data from clients.
 
 ## Overview
 
-This module enables **opt-in** client-side telemetry collection for monitoring API performance. Clients can submit response time measurements which are aggregated for admin dashboards. Telemetry is **disabled by default**: it only runs when `telemetry.enabled` is explicitly set to `true` in configuration.
+This module enables **opt-in** client-side telemetry collection for monitoring API performance. Clients can submit response time measurements which are aggregated for admin dashboards. Telemetry is **disabled by default**; it only runs when `telemetry.enabled` is explicitly set to `true` in configuration.
 
 ## Features
 
-- **Opt-In Only**: Disabled unless explicitly enabled in config; users must opt in via client settings
-- **Anonymized Collection**: Client identifiers are salted SHA-256 digests (never raw user IDs); no PII is stored
-- **Batch Submissions**: Clients can batch up to 100 entries per request
-- **Rate Limiting**: Prevents abuse with configurable rate limits (`telemetry.rate_limit.max_per_minute`)
-- **Cardinality Protection**: Client endpoints are allowlisted against registered route templates; unrecognized endpoints collapse into an `_other` overflow bucket, distinct endpoint keys are capped (`telemetry.max_distinct_endpoints`), and total stored rows are hard-capped (`telemetry.max_total_rows`) with a rejection counter exposed via `get_cardinality_stats()`
-- **Aggregation**: Calculates percentiles (p50, p95, p99), averages, and error rates; percentile sampling is bounded in SQL (`telemetry.percentile_sample_rows`)
-- **Time-Series Data**: Historical data bucketed by configurable intervals
-- **Auto-Cleanup**: A background retention sweep deletes data older than `telemetry.retention_days` on every application start (lifespan task)
+- **Opt-in only**: Disabled unless explicitly enabled in config; users must opt in via client settings.
+- **Anonymized collection**: Client identifiers are salted SHA-256 digests (never raw user IDs); no PII is stored.
+- **Batch submissions**: Clients can batch up to 100 entries per request.
+- **Rate limiting**: Prevents abuse with configurable rate limits (`telemetry.rate_limit.max_per_minute`).
+- **Cardinality protection**: Client endpoints are allowlisted against registered route templates; unrecognized endpoints collapse into an `_other` overflow bucket, distinct endpoint keys are capped (`telemetry.max_distinct_endpoints`), and total stored rows are hard-capped (`telemetry.max_total_rows`) with a rejection counter exposed via `get_cardinality_stats()`.
+- **Aggregation**: Calculates percentiles (p50, p95, p99), averages, and error rates; percentile sampling is bounded in SQL (`telemetry.percentile_sample_rows`).
+- **Time-series data**: Historical data bucketed by configurable intervals.
+- **Auto-cleanup**: A background retention sweep deletes data older than `telemetry.retention_days` on every application start (lifespan task).
 
 ## Usage
 
-### Setup (in main.py)
+### Setup (in `main.py`)
 
 ```python
 from src.core import telemetry
@@ -30,7 +30,7 @@ db.connect()
 telemetry.setup(db)
 ```
 
-### Submitting Telemetry (from API route)
+### Submitting telemetry (from API route)
 
 ```python
 from src.core import telemetry
@@ -47,7 +47,7 @@ entries = [
 accepted = telemetry.submit_response_times(entries, client_id="abc123")
 ```
 
-### Getting Statistics (for admin dashboard)
+### Getting statistics (for admin dashboard)
 
 ```python
 from src.core import telemetry
@@ -59,7 +59,7 @@ for stat in stats:
     print(f"{stat.method} {stat.endpoint}: avg={stat.avg_response_time_ms:.2f}ms, p95={stat.p95_response_time_ms:.2f}ms")
 ```
 
-### Getting Time-Series History
+### Getting time-series history
 
 ```python
 history = telemetry.get_response_time_history(
@@ -86,7 +86,7 @@ telemetry:
   client_hash_salt: "<random per-install secret>"
 ```
 
-## Database Schema
+## Database schema
 
 ```sql
 CREATE TABLE telemetry_response_times (
@@ -100,7 +100,7 @@ CREATE TABLE telemetry_response_times (
 );
 ```
 
-## API Endpoint
+## API endpoint
 
 `POST /api/v1/telemetry/response-times`
 
@@ -108,8 +108,8 @@ See `src/api/routes/telemetry.py` for the API implementation.
 
 ## Privacy
 
-- Client IDs are salted SHA-256 hashes of the **user ID** (salted per install via `telemetry.client_hash_salt`); raw user IDs are never stored
-- No personally identifiable information is stored
-- Telemetry is disabled unless explicitly enabled; users must opt in via client settings
-- Data is automatically cleaned up by a background retention sweep after `retention_days`
-- Entries submitted without a timestamp default to server-receive time
+- Client IDs are salted SHA-256 hashes of the **user ID** (salted per install via `telemetry.client_hash_salt`); raw user IDs are never stored.
+- No personally identifiable information is stored.
+- Telemetry is disabled unless explicitly enabled; users must opt in via client settings.
+- Data is automatically cleaned up by a background retention sweep after `retention_days`.
+- Entries submitted without a timestamp default to server-receive time.
