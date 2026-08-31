@@ -41,7 +41,12 @@ router.include_router(dashboard_router)
 router.include_router(tickets_router)
 router.include_router(users_router)
 router.include_router(security_router)
-router.include_router(device_trust_router, prefix="/device-trust/overview")
+
+# Device-trust overview is mounted via sub-router so the full path is
+# ``/admin/device-trust/overview``. The sub-router owns the handler; this
+# inclusion supplies the ``/device-trust`` prefix.
+router.include_router(device_trust_router, prefix="/device-trust")
+
 router.include_router(moderation_router)
 router.include_router(telemetry_router)
 router.include_router(logs_router)

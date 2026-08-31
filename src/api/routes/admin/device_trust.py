@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 @router.get(
-    "/device-trust/overview",
+    "/overview",
     response_model=DeviceTrustOverviewResponse,
     responses={
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
