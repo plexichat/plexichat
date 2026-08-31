@@ -1,11 +1,11 @@
-"""
-Default configuration for the Plexichat Server.
-This file provides the baseline settings used when no configuration file is found.
+"""Default configuration for the Plexichat server.
+
+Provides the baseline settings used when no configuration file is found.
 """
 
 import secrets
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 try:
     from .config_defaults_artifacts import get_artifacts_defaults
@@ -17,11 +17,8 @@ except ImportError:  # pragma: no cover - direct/script import fallback
 _artifacts_defaults = get_artifacts_defaults
 _authentication_defaults = get_authentication_defaults
 
-# Version should be updated in main.py, this is a fallback
 DEFAULT_VERSION = "a.1.0-131"
 
-# License feature flags used by the Artifacts system.
-# Checked at runtime via utils.licensing.has_feature(<name>).
 ARTIFACTS_LICENSE_FEATURES = {
     "artifacts": "Master artifacts feature (any artifact type).",
     "artifacts_whiteboard": "Licensed multi-user live whiteboard artifacts.",
@@ -34,8 +31,7 @@ ARTIFACTS_LICENSE_FEATURES = {
 
 
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
-    """
-    Returns the default configuration dictionary for Plexichat.
+    """Return the default configuration dictionary for Plexichat.
 
     Args:
         version: The current application version string.
@@ -54,21 +50,15 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         "server": {"host": "127.0.0.1", "port": 8000, "reload": False},
         "logging": {
             "level": "DEBUG",
-            "max_bytes": 10485760,  # 10MB
+            "max_bytes": 10485760,
             "backup_count": 5,
             "zip_logs": True,
             "rotate": True,
-            # SECURITY WARNING: Set to False in production to avoid leaking sensitive info
             "include_exception_details": False,
         },
         "database": {
             "type": "sqlite",
             "path": str(home_dir / "data" / "plexichat.db"),
-            # Explicit flag that this database is disposable (test/CI target).
-            # Self-test destructive phases (whole-table wipes, migration
-            # rollbacks) REFUSE to run unless this is set, the
-            # PLEXICHAT_DISPOSABLE_DB=1 env marker is present, or the
-            # persistent disposable marker row exists.
             "disposable": False,
             "postgres": {
                 "host": "${POSTGRES_HOST:-localhost}",
@@ -82,20 +72,10 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "min_connections": 5,
                 "max_connections": 100,
                 "connect_timeout": 10,
-                # Per-connection SQLite memory knobs (KB of page cache,
-                # mmap size in bytes, WAL journal cap in bytes). Production
-                # defaults keep the cache large for hot deployments; tests
-                # override these to tiny values so thousands of per-test
-                # pools stay lean.
                 "cache_size_kb": -32000,
                 "mmap_size": 268435456,
                 "journal_size_limit": 67108864,
                 "temp_store": "MEMORY",
-                # Checked-out connections idle longer than this (seconds) are
-                # reclaimed when the pool is exhausted (or on a periodic reap)
-                # instead of blocking callers for the full connect timeout.
-                # This self-heals connections leaked into worker-thread
-                # thread-local storage by AnyIO ``run_in_threadpool`` queries.
                 "idle_reclaim_seconds": 5.0,
             },
             "monitoring": {
@@ -157,8 +137,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "docs_url": "/docs",
             "redoc_url": "/redoc",
             "openapi_url": "/openapi.json",
-            # Cap on the AnyIO default thread limiter used by run_in_threadpool
-            # (default 16, not anyio's oversubscribed 40).
             "max_worker_threads": 16,
         },
         "websocket": {
@@ -166,8 +144,8 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "session_timeout_ms": 60000,
             "max_connections_per_user": 5,
             "rate_limit_per_minute": 120,
-            "max_message_size": 65536,  # 64KB
-            "max_decompressed_size": 262144,  # 256KB
+            "max_message_size": 65536,
+            "max_decompressed_size": 262144,
             "compression_enabled": True,
             "allowed_origins": [],
         },
@@ -176,7 +154,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "encrypt_attachments": True,
             "max_message_length": 4000,
             "max_group_participants": 100,
-            "max_attachment_size": 10485760,  # 10MB
+            "max_attachment_size": 10485760,
             "max_attachments_per_message": 10,
             "dm_auto_create": True,
             "message_preview_length": 100,
@@ -186,7 +164,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "logs_dir": str(home_dir / "logs"),
             "media_dir": str(home_dir / "media"),
             "temp_dir": str(home_dir / "temp"),
-            "storage_backend": "local",  # "local", "s3", or "database"
+            "storage_backend": "local",
             "encrypt_at_rest": True,
             "local_path": str(home_dir / "media"),
             "local_url": "/media",
@@ -197,7 +175,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "s3_endpoint": "${S3_ENDPOINT:-}",
             "s3_public_url": "${S3_PUBLIC_URL:-}",
             "database_url": "/api/v1/media/blob",
-            "database_max_size": 524288,  # 512KB
+            "database_max_size": 524288,
             "auto_route_to_database": {
                 "enabled": True,
                 "max_size": 524288,
@@ -254,7 +232,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "enabled": True,
                 "uploads_per_minute": 10,
                 "uploads_per_hour": 100,
-                "max_total_size_per_day": 536870912,  # 512MB
+                "max_total_size_per_day": 536870912,
             },
             "phash": {
                 "enabled": True,
@@ -447,10 +425,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "nonce_token_bytes": 32,
             "cleanup_on_verify": True,
             "max_states_per_ip": 10,
-            # Login-CSRF defense: bind the OAuth state to the browser via an
-            # HttpOnly cookie and require it at the callback. Split-origin
-            # deployments (static client on a different site than the API)
-            # may set this to false, at the cost of the binding.
             "state_cookie_required": True,
             "pkce_enabled": True,
             "pkce": {
@@ -473,13 +447,10 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "aes_gcm": {"key_length": 32, "nonce_length": 12, "tag_length": 16},
             "snowflake": {
                 "epoch": "2024-01-01T00:00:00Z",
-                # Worker/datacenter IDs are 5-bit (0-31). ``None`` auto-derives
-                # from the environment/machine (PLEXICHAT_WORKER_ID /
-                # PLEXICHAT_DATACENTER_ID) instead.
                 "worker_id": None,
                 "datacenter_id": None,
             },
-            "key_rotation_days": 180,  # 6 months, configurable via encryption.key_rotation_days
+            "key_rotation_days": 180,
             "hsm": {
                 "enabled": False,
                 "library_path": "/usr/lib/softhsm/libsofthsm2.so",
@@ -509,31 +480,15 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "exit_on_failure": False,
             "capture_stack_traces": True,
             "retry_on_failure": True,
-            # Controls whether admin-only endpoints are tested during self-test.
-            # When False, admin endpoints are skipped entirely and the test user
-            # is NOT granted admin permissions. Set to True to test admin routes
-            # (requires admin-level permissions on the test user).
             "enable_admin_tests": True,
-            # Destructive self-test phases (whole-table wipes, migration
-            # rollback tests) are REFUSED unless the target database is
-            # flagged disposable. Operators may explicitly disable the
-            # guard, but refusal results then still fail nothing silently:
-            # disabling shifts responsibility entirely to the operator.
             "require_disposable_db": True,
-            # Persistent journal of privileged test artifacts (wildcard
-            # grants, elevated accounts). Reconciled on the next run so a
-            # crashed suite cannot leave escalated state behind.
             "journal_path": str(home_dir / "data" / "selftest_artifact_journal.json"),
-            # Retry re-executes requests on transient failure. Non-idempotent
-            # methods (POST/PATCH) duplicate side effects, so they are only
-            # retried when an Idempotency-Key can be honoured — disabled by
-            # default; enable only against servers that dedupe by that key.
             "retry_non_idempotent": False,
             "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],
             "test_user": {
                 "username": "selftest_admin",
                 "email": "selftest@plexichat.com",
-                "password": None,  # pragma: allowlist secret
+                "password": None,
             },
         },
         "admin_ui": {
@@ -657,24 +612,14 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "max_webhooks_per_server": 50,
             "max_message_length": 2000,
             "max_embeds_per_message": 10,
-            # Per-webhook execution rate limit. The public execute endpoint
-            # is unauthenticated (token-only), so a sane default is enabled
-            # out of the box; set to 0 to disable.
             "rate_limit_per_minute": 30,
-            # Background retry-delivery sweep: seconds between passes over the
-            # webhook_retry_queue. Set to 0 to disable the worker entirely.
             "delivery_interval_seconds": 30,
         },
         "automod": {
             "enabled": True,
             "exempt_owners": True,
             "exempt_admins": True,
-            # Fail closed on internal automod errors: block/quarantine the
-            # message instead of silently delivering it when a rule phase
-            # raises unexpectedly.
             "fail_closed": True,
-            # Global fallback alert channel (server scope uses the server's
-            # system_channel_id) for automod moderator alerts.
             "default_alert_channel_id": None,
             "rules": {
                 "caps": {
@@ -714,13 +659,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "requests_per_minute": 60,
             },
         },
-        # License gating (checked via utils.licensing.has_feature):
-        #   - the whole "artifacts" block is gated by the "artifacts" feature
-        #   - "artifacts.whiteboard" (and its licensed_feature key) is gated
-        #     by the "artifacts_whiteboard" feature
-        #   - "artifacts.voice.transcription" is gated by the
-        #     "voice_transcription" feature
-        # See ARTIFACTS_LICENSE_FEATURES for the full documented set.
         "artifacts": _artifacts_defaults(home_dir),
         "bots": {
             "enabled": True,
@@ -828,16 +766,12 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "temporary_storage_hours": 24,
         },
         "telemetry": {
-            # Privacy stance: telemetry is OPT-IN. It stays disabled unless
-            # explicitly enabled in config.yaml.
             "enabled": False,
             "rate_limit": {"max_per_minute": 10},
             "retention_days": 30,
-            # Cardinality bounds for client-supplied endpoint strings.
             "max_distinct_endpoints": 500,
             "max_total_rows": 100000,
             "percentile_sample_rows": 25000,
-            # Per-install salt used to hash client identifiers.
             "client_hash_salt": secrets.token_hex(16),
         },
         "static_client": {

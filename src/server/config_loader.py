@@ -1,14 +1,29 @@
+"""Configuration loader with environment variable overrides.
+
+Reads the YAML/JSON config file, deep-merges it with programmatic defaults,
+and applies environment-variable overrides for database, monitoring, media,
+Valkey, and search settings.
+"""
+
 import os
 import urllib.parse
 from pathlib import Path
 from typing import Optional
 
-import utils.logger as logger
 import utils.config as config
+import utils.logger as logger
 
 
 def _as_bool(raw: str) -> bool:
-    """Coerce an env-var string to a boolean (``true``/``1``/``yes``)."""
+    """Coerce an environment variable string to a boolean.
+
+    Args:
+        raw: The raw string value. Truthy values are ``"true"``, ``"1"``,
+            and ``"yes"`` (case-insensitive).
+
+    Returns:
+        ``True`` if the string matches a truthy value, ``False`` otherwise.
+    """
     return raw.lower() in ("true", "1", "yes")
 
 
@@ -21,11 +36,21 @@ def _apply_int(
     min_value: Optional[int] = None,
     max_value: Optional[int] = None,
 ) -> bool:
-    """Assign ``raw`` coerced to ``int`` into ``target[key]``.
+    """Assign an integer value from an environment variable into a target dict.
 
-    Unset/falsy values are ignored so the existing default is preserved.
-    Unparseable or out-of-range values log a warning and are ignored.
-    Returns ``True`` when a value was actually assigned.
+    Args:
+        target: The dictionary to update.
+        key: The key to set in *target*.
+        raw: The raw string from ``os.getenv()``. If ``None`` or empty, the
+            call is a no-op.
+        env_name: The environment variable name, used for log messages.
+        min_value: Optional lower bound (inclusive). Values below this are
+            rejected.
+        max_value: Optional upper bound (inclusive). Values above this are
+            rejected.
+
+    Returns:
+        ``True`` if a value was assigned, ``False`` otherwise.
     """
     if not raw:
         return False
@@ -45,10 +70,17 @@ def _apply_int(
 
 
 def _apply_float(target: dict, key: str, raw: Optional[str], env_name: str) -> bool:
-    """Assign ``raw`` coerced to ``float`` into ``target[key]``.
+    """Assign a float value from an environment variable into a target dict.
 
-    Unset/falsy values are ignored; unparseable values log a warning.
-    Returns ``True`` when a value was actually assigned.
+    Args:
+        target: The dictionary to update.
+        key: The key to set in *target*.
+        raw: The raw string from ``os.getenv()``. If ``None`` or empty, the
+            call is a no-op.
+        env_name: The environment variable name, used for log messages.
+
+    Returns:
+        ``True`` if a value was assigned, ``False`` otherwise.
     """
     if not raw:
         return False
@@ -61,10 +93,16 @@ def _apply_float(target: dict, key: str, raw: Optional[str], env_name: str) -> b
 
 
 def _apply_bool(target: dict, key: str, raw: Optional[str]) -> bool:
-    """Assign ``raw`` coerced to ``bool`` into ``target[key]``.
+    """Assign a boolean value from an environment variable into a target dict.
 
-    Unset/falsy values are ignored. Returns ``True`` when a value was
-    actually assigned.
+    Args:
+        target: The dictionary to update.
+        key: The key to set in *target*.
+        raw: The raw string from ``os.getenv()``. If ``None`` or empty, the
+            call is a no-op.
+
+    Returns:
+        ``True`` if a value was assigned, ``False`` otherwise.
     """
     if not raw:
         return False
@@ -73,6 +111,12 @@ def _apply_bool(target: dict, key: str, raw: Optional[str]) -> bool:
 
 
 def _apply_env_overrides() -> None:
+    """Apply environment-variable overrides to the in-memory configuration.
+
+    Reads ``DATABASE_URL``, ``POSTGRES_*``, ``DB_POOL_*``, ``MONITORING_*``,
+    ``LOG_LEVEL``, ``SCANNER_*``, ``VALKEY_*``, and ``SEARCH_*`` environment
+    variables and patches the corresponding config sections.
+    """
     db_config = config.get("database", {})
 
     database_url = os.getenv("DATABASE_URL")
@@ -293,16 +337,9 @@ def _apply_env_overrides() -> None:
 
     valkey_enabled = os.getenv("VALKEY_ENABLED")
     if valkey_enabled is not None:
-        # Booleans can't ride the ${VAR:-default} interpolation (it yields a
-        # string, and "false" would be truthy), so the flag is the one value
-        # applied here, mirroring MONITORING_ENABLED / SCANNER_ENABLED.
         valkey_config["enabled"] = _as_bool(valkey_enabled)
         valkey_changed = True
 
-    # Port/db/max_connections are declared as ints in the defaults (matching
-    # what config files and the valkey client expect), so they can't ride
-    # ${VAR:-default} interpolation either. Apply env overrides with the same
-    # int coercion used for SCANNER_PORT / postgres ports above.
     valkey_changed |= _apply_int(
         valkey_config,
         "port",
@@ -325,11 +362,6 @@ def _apply_env_overrides() -> None:
             "VALKEY_CONNECTION_POOL",
         )
 
-    # Only persist when an override was actually applied: the write is
-    # atomic and thread-safe now, but an unconditional rewrite of the
-    # home config on every boot is wasteful and churns the file.
-
-    # --- Search backend overrides (low-resource default: postgres/sqlite, optional meilisearch/elastic) ---
     search_config = config.get("search", {}) or {}
     search_changed = False
     backend_env = os.getenv("SEARCH_BACKEND")
@@ -343,7 +375,6 @@ def _apply_env_overrides() -> None:
             "elasticsearch",
             "es",
         ):
-            # normalize
             if be == "sqlite":
                 be = "sqlite_fts5"
             if be == "es":
@@ -378,7 +409,6 @@ def _apply_env_overrides() -> None:
     if wti_raw is not None:
         search_config["write_time_indexing"] = _as_bool(wti_raw)
         search_changed = True
-    # Per-backend envs
     meili_host = os.getenv("SEARCH_MEILISEARCH_HOST") or os.getenv("MEILISEARCH_HOST")
     meili_key = os.getenv("SEARCH_MEILISEARCH_API_KEY") or os.getenv(
         "MEILISEARCH_API_KEY"
@@ -396,7 +426,6 @@ def _apply_env_overrides() -> None:
     )
     if es_hosts:
         es = search_config.setdefault("elasticsearch", {})
-        # comma separated list
         hosts = [h.strip() for h in es_hosts.split(",") if h.strip()]
         if hosts:
             es["hosts"] = hosts
@@ -409,8 +438,27 @@ def _apply_env_overrides() -> None:
 
 
 def setup_config(
-    project_root: str, default_config: dict, config_path_arg: Optional[str] = None
+    project_root: str,
+    default_config: dict,
+    config_path_arg: Optional[str] = None,
 ) -> str:
+    """Initialize configuration from file and environment.
+
+    Searches for an existing ``config.yaml`` in the home directory first,
+    then the project directory. If neither exists, the home-directory path
+    is used as the default. After loading the file, environment-variable
+    overrides are applied.
+
+    Args:
+        project_root: Absolute path to the project root directory.
+        default_config: The default configuration dictionary (typically
+            produced by ``config_defaults.get_default_config``).
+        config_path_arg: Optional explicit path to a config file. When
+            provided, this path takes precedence over the search order.
+
+    Returns:
+        The resolved path to the config file that was loaded.
+    """
     config_paths = [
         (
             str(Path.home() / ".plexichat" / "config" / "config.yaml"),
