@@ -1,0 +1,7 @@
+version: 2
+updates:
+  - package-ecosystem: "npm" # Change to your package manager (pip, bundler, cargo, etc.)
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "dev" # Dependabot will scan 'dev' and target the PR back to 'dev'
