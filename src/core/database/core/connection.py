@@ -73,9 +73,8 @@ class DatabaseConnectionMixin:
         """
         if self.type != "sqlite":
             return
-        if (
-            getattr(self, "transaction_depth", 0) > 0
-            or getattr(self, "in_transaction", False)
+        if getattr(self, "transaction_depth", 0) > 0 or getattr(
+            self, "in_transaction", False
         ):
             return
         conn = getattr(self._local, "connection", None)

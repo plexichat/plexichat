@@ -25,7 +25,7 @@ If you believe the sign-out was a mistake, contact your server administrator.
 - **Maximum sessions:** `authentication.sessions.max_per_user` (default 10). When you exceed the limit, the oldest sessions are revoked.
 - **Activity extension:** If `authentication.sessions.extend_on_activity` is `true` (default), `last_activity` updates after 60 seconds of inactivity and `expires_at` extends when you are within `extend_threshold_hours` (default 24 hours) of expiry. Set `extend_threshold_hours` to `0` to extend on every activity.
 - **Cookies and CSRF:** Browser sessions use an `HttpOnly` cookie. Refresh via cookie requires the `X-Plexichat-Request: 1` header to prevent CSRF.
-- **No trusted-device bypass.** Plexichat does not have a trusted-device feature that skips 2FA. Every sign-in that requires 2FA needs a TOTP or backup code.
+- **Trusted devices (2FA skip).** A device fingerprint you explicitly marked trusted via `POST /api/v1/auth/devices/trust` can sign in without re-entering a TOTP code. Trust is stored server-side on the device row, never in any client-controlled value, and a missing or unknown fingerprint can never match. Revoke trust any time with `POST /api/v1/auth/devices/untrust`; revoking the device also removes its 2FA skip.
 
 ## For administrators
 

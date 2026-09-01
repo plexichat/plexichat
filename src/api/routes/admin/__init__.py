@@ -3,13 +3,16 @@ Admin API router - combines modular routes.
 """
 
 from fastapi import APIRouter
+from src.api.schemas.admin import DeviceTrustOverviewResponse
 from src.api.schemas.common import ErrorResponse
+
 from .auth import router as auth_router
 from .dashboard import router as dashboard_router
 from .tickets import router as tickets_router
 from .users import router as users_router
 from .security import router as security_router
-from .device_trust import router as device_trust_router
+from .device_trust import router as device_trust_router  # noqa: F401 (re-exported)
+from .device_trust import get_device_trust_admin_overview
 from .moderation import router as moderation_router
 from .telemetry import router as telemetry_router
 from .logs import router as logs_router
@@ -47,9 +50,6 @@ router.include_router(security_router)
 # ``/admin/device-trust/overview``). Registering the route directly (instead
 # of a prefixed include_router) keeps the path visible to route introspection
 # tests and keeps the handler owning its own scope guard.
-from .device_trust import get_device_trust_admin_overview
-from src.api.schemas.admin import DeviceTrustOverviewResponse
-
 router.get(
     "/device-trust/overview",
     response_model=DeviceTrustOverviewResponse,

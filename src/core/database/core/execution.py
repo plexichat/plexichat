@@ -354,9 +354,10 @@ class DatabaseExecutionMixin:
         # fetch_one()/fetch_all() AFTER the rows are consumed — releasing a
         # connection under a live read cursor lets another thread's statement
         # reset the statement underneath it (IndexError in fetchone).
-        if not upper_query.startswith(
-            ("SELECT", "PRAGMA", "WITH", "EXPLAIN")
-        ) and "RETURNING" not in upper_query:
+        if (
+            not upper_query.startswith(("SELECT", "PRAGMA", "WITH", "EXPLAIN"))
+            and "RETURNING" not in upper_query
+        ):
             self._release_conn()
 
         return cursor
