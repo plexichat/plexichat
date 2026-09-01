@@ -301,8 +301,13 @@ class TestCombiningCharacters:
 
     @given(
         st.text(
-            alphabet=st.characters()
-            | st.sampled_from([chr(c) for c in range(0x0300, 0x0310)]),
+            # Draw from combining marks plus ordinary letters so every example
+            # actually contains combining marks (the old union-with-filter
+            # strategy almost never produced one).
+            alphabet=st.sampled_from(
+                [chr(c) for c in range(0x0300, 0x0370)]
+                + list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+            ),
             min_size=1,
             max_size=20,
         ).filter(lambda x: any(0x0300 <= ord(c) <= 0x036F for c in x))
