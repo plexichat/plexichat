@@ -26,6 +26,8 @@ class _DatabaseTransactionProtocol(Protocol):
 
     def _is_no_transaction(self, e: Exception) -> bool: ...
 
+    def _release_conn(self) -> None: ...
+
 
 class DatabaseTransactionMixin:
     def _invalidate_query_cache(self) -> None:
@@ -103,6 +105,9 @@ class DatabaseTransactionMixin:
             self.transaction_depth = 0
             self.in_transaction = False
             self._touch_pool(conn, in_transaction=False)
+            # Transaction complete: return the connection to the pool so
+            # concurrent threads are not starved by per-thread hoarding.
+            self._release_conn()
         elif self.transaction_depth == 0:
             pass
         else:
@@ -150,6 +155,8 @@ class DatabaseTransactionMixin:
             self.transaction_depth = 0
             self.in_transaction = False
             self._touch_pool(conn, in_transaction=False)
+            # Transaction aborted: return the connection to the pool.
+            self._release_conn()
         else:
             conn.rollback()
             self.in_transaction = False

@@ -101,6 +101,8 @@ class _DatabaseExecutionProtocol(Protocol):
 
     def _mark_pool_in_flight(self, conn: Any, in_flight: bool) -> None: ...
 
+    def _release_conn(self) -> None: ...
+
     def execute(
         self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True
     ) -> DbCursor: ...
@@ -344,6 +346,19 @@ class DatabaseExecutionMixin:
             # the statement-retry handler above.
             self._commit_strict(conn, f"execute: {query[:100]}")
 
+        # Release the pooled connection between statements (SQLite) so a
+        # cores-sized pool is not starved by per-thread hoarding. ONLY for
+        # non-SELECT statements: their cursors never fetch rows, and
+        # rowcount/lastrowid are computed at execute() time, so the cursor
+        # stays valid after the connection is returned. SELECTs release in
+        # fetch_one()/fetch_all() AFTER the rows are consumed — releasing a
+        # connection under a live read cursor lets another thread's statement
+        # reset the statement underneath it (IndexError in fetchone).
+        if not upper_query.startswith(
+            ("SELECT", "PRAGMA", "WITH", "EXPLAIN")
+        ) and "RETURNING" not in upper_query:
+            self._release_conn()
+
         return cursor
 
     def execute_many(
@@ -425,6 +440,10 @@ class DatabaseExecutionMixin:
             # Own error domain: commit failures propagate and must never be
             # silently discarded or retried by re-running the statement.
             self._commit_strict(conn, f"execute_many: {query[:100]}")
+
+        # See execute(): return the connection to the pool between statements.
+        self._release_conn()
+
         return cursor
 
     def _is_connection_error(
@@ -545,9 +564,14 @@ class DatabaseExecutionMixin:
                 # Do NOT cache this error result — the underlying issue may
                 # be transient, and caching None would mask real data.
                 cursor.close()
+                self._release_conn()
                 return final_result
 
         cursor.close()
+
+        # Rows consumed — the connection is safe to return to the pool now
+        # (see execute(): releasing under a live read cursor is unsafe).
+        self._release_conn()
 
         self._cache_put(cache_key, final_result, self._query_cache_ttl)
 
@@ -588,11 +612,15 @@ class DatabaseExecutionMixin:
                 # Do NOT cache this error result — the underlying issue may
                 # be transient, and caching an empty list would mask real data.
                 cursor.close()
+                self._release_conn()
                 return final_results
         else:
             final_results = []
 
         cursor.close()
+
+        # Rows consumed — the connection is safe to return to the pool now.
+        self._release_conn()
 
         self._cache_put(cache_key, final_results, self._query_cache_ttl)
 

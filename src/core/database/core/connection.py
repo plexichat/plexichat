@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import uuid
@@ -50,8 +51,52 @@ class _DatabaseConnectionProtocol(Protocol):
 
     def _touch_pool(self, conn: Any, in_transaction: bool = False) -> None: ...
 
+    def _release_conn(self) -> None: ...
+
 
 class DatabaseConnectionMixin:
+    def _release_conn(self: _DatabaseConnectionProtocol) -> None:
+        """Return the thread-local SQLite connection to the pool.
+
+        Called after each auto-committed statement (and after a transaction's
+        final COMMIT/ROLLBACK) so a checked-out connection is held only for
+        the duration of one statement/transaction instead of being hoarded in
+        thread-local storage for the thread's lifetime. Hoarding is what
+        starves a cores-sized pool: N concurrent threads would permanently
+        pin N connections no matter how briefly each actually uses it.
+
+        The next statement transparently re-acquires a connection (usually
+        the same one — the pool hands back its most recently returned
+        connection), so there is no reconnect cost; only the pool checkout
+        bookkeeping runs per statement. No-op for PostgreSQL (its driver
+        pools per-connection already) and inside open transactions.
+        """
+        if self.type != "sqlite":
+            return
+        if (
+            getattr(self, "transaction_depth", 0) > 0
+            or getattr(self, "in_transaction", False)
+        ):
+            return
+        conn = getattr(self._local, "connection", None)
+        if conn is None:
+            return
+        # A raw ``BEGIN`` executed through execute() (bypassing the
+        # transaction API) leaves an open transaction on the connection; the
+        # pool must not hand that connection to another thread.
+        if getattr(conn, "in_transaction", False):
+            return
+        self._local.connection = None
+        self._local.last_valid_check = 0
+        self._local.last_validation = 0
+        # NOTE: ``_local.last_insert_rowid`` is intentionally NOT cleared:
+        # it is captured at INSERT time (execution.py) and read afterwards by
+        # fetch_last_insert_id() even though the connection was returned.
+        try:
+            self.engine.close_connection(conn, self._pool, {"close": False})
+        except Exception:
+            logger.debug("Failed to return connection to pool", exc_info=True)
+
     def get_pool_stats(self: _DatabaseConnectionProtocol) -> Dict[str, Any]:
         engine_stats = self.engine.get_pool_stats(self._pool)
         return self.monitor.get_pool_stats(engine_stats)
@@ -199,7 +244,7 @@ class DatabaseConnectionMixin:
                     pass
                 self._local.connection = None
 
-            logger.info("Acquiring new database connection")
+            logger.debug("Acquiring new database connection")
 
             start_time = time.time()
             if self.type == "postgres" and isinstance(self.engine, PostgresEngine):
@@ -230,7 +275,13 @@ class DatabaseConnectionMixin:
                 if not self._pool:
                     pool_config = self.config.get("connection_pool", {})
                     min_conn = pool_config.get("min_connections", 2)
-                    max_conn = pool_config.get("max_connections", 16)
+                    # Cores-sized default: one reader per core plus one for
+                    # the writer. WAL mode allows many concurrent readers
+                    # while writes serialize via the busy_timeout pragma, and
+                    # per-statement checkout/release (_release_conn) means
+                    # this pool serves any number of request threads.
+                    default_max = max(2, os.cpu_count() or 4) + 1
+                    max_conn = pool_config.get("max_connections", default_max)
                     self._pool = self.engine.create_pool(min_conn, max_conn)
                 pool_config = self.config.get("connection_pool", {})
                 connect_timeout = pool_config.get("connect_timeout", 10)
@@ -273,7 +324,7 @@ class DatabaseConnectionMixin:
             )
             self._touch_pool(conn, in_transaction=bool(self.in_transaction))
 
-            logger.info(
+            logger.debug(
                 "Connected to "
                 + ("PostgreSQL" if self.type == "postgres" else "SQLite")
             )
