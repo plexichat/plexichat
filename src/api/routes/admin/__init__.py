@@ -42,10 +42,26 @@ router.include_router(tickets_router)
 router.include_router(users_router)
 router.include_router(security_router)
 
-# Device-trust overview is mounted via sub-router so the full path is
-# ``/admin/device-trust/overview``. The sub-router owns the handler; this
-# inclusion supplies the ``/device-trust`` prefix.
-router.include_router(device_trust_router, prefix="/device-trust")
+# Device-trust overview is registered directly on the admin router with the
+# full path ``/device-trust/overview`` (mounted under ``/admin`` this yields
+# ``/admin/device-trust/overview``). Registering the route directly (instead
+# of a prefixed include_router) keeps the path visible to route introspection
+# tests and keeps the handler owning its own scope guard.
+from .device_trust import get_device_trust_admin_overview
+from src.api.schemas.admin import DeviceTrustOverviewResponse
+
+router.get(
+    "/device-trust/overview",
+    response_model=DeviceTrustOverviewResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {
+            "model": ErrorResponse,
+            "description": "Missing admin.security.devices scope",
+        },
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)(get_device_trust_admin_overview)
 
 router.include_router(moderation_router)
 router.include_router(telemetry_router)
