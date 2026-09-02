@@ -173,6 +173,23 @@ search.remove_from_index(message_id=123)
 search.reindex_conversation(conversation_id=456)
 ```
 
+### Reindex page size (memory bound)
+
+The reindex streams messages in bounded pages: one page is fetched,
+decrypted, indexed, and released before the next page is selected, so
+plaintext for at most one page exists in memory at any time. Page size is
+configured with the `search.reindex_page_size` key (default 200):
+
+```yaml
+search:
+  reindex_page_size: 200  # rows per streaming page; lower = less memory
+```
+
+A full reindex (`reindex_all(force=True)`) also accepts an explicit
+`page_size` argument and an optional `should_cancel` callback so a running
+rebuild can stop cleanly at the page boundary (exposed as
+`POST /api/v1/admin/search/reindex/cancel`).
+
 Integrate with the messaging module to keep the index consistent:
 
 ```python

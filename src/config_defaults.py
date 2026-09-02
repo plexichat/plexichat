@@ -412,6 +412,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "result_limit": 100,
             "batch_size": 100,
             "write_time_indexing": True,
+            "reindex_page_size": 200,
             "discovery": {
                 "enabled": True,
                 "min_members_for_listing": 10,
