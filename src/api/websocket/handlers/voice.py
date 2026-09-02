@@ -266,8 +266,19 @@ class VoiceHandler:
             if not answer:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
-            # SDP answers are handled by the SFU, no need to process here
-            pass
+            # SECURITY-correctness (audit: SFU/media path dead): apply the
+            # client's answer to its SFU peer connection so the aiortc DTLS
+            # handshake can actually complete and media can flow.
+            from src.core.voice import signaling as signaling_module
+
+            mgr = getattr(signaling_module, "_manager", None)
+            if mgr is not None:
+                conn = mgr._connections.get(connection.user_id)
+                room_id = getattr(conn, "sfu_room_id", None)
+                peer_id = getattr(conn, "sfu_peer_id", None)
+                if room_id and peer_id:
+                    sfu = mgr._get_sfu()
+                    await sfu.apply_remote_answer(room_id, peer_id, answer)
         except Exception as e:
             logger.warning(f"Voice SDP answer failed: {e}")
             return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)

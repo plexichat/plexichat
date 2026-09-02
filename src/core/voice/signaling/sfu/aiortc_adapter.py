@@ -307,6 +307,61 @@ class AiortcAdapter(SFUAdapter):
                             f"Could not remove ghost sender on {peer.peer_id}: {e}"
                         )
 
+    async def apply_remote_offer(
+        self,
+        room_id: str,
+        peer_id: str,
+        offer_sdp: str,
+    ) -> Dict[str, Any]:
+        """Feed the client's offer into the peer's aiortc connection.
+
+        SECURITY-correctness (audit finding: SFU/media path dead):
+        without setRemoteDescription the aiortc peer never learns the
+        remote ICE/DTLS parameters, the handshake cannot complete, and
+        no media flows despite the signaling layer reporting success.
+        """
+        peer = self._rooms.get(room_id, {}).get(peer_id)
+        if peer is None:
+            raise SFUConnectionError(f"Peer {peer_id} not in room {room_id}")
+        try:
+            from aiortc import RTCSessionDescription
+
+            remote = RTCSessionDescription(sdp=offer_sdp, type="offer")
+        except Exception as e:
+            raise SFUConnectionError(f"Invalid offer SDP: {e}") from e
+        try:
+            await peer.pc.setRemoteDescription(remote)
+        except Exception as e:
+            raise SFUConnectionError(f"Failed to apply remote offer: {e}") from e
+        local = peer.pc.localDescription
+        if local is not None and local.sdp:
+            return {"sdp": local.sdp, "type": local.type}
+        return {}
+
+    async def apply_remote_answer(
+        self,
+        room_id: str,
+        peer_id: str,
+        answer_sdp: str,
+    ) -> bool:
+        """Apply the client's answer so the aiortc DTLS handshake can run."""
+        peer = self._rooms.get(room_id, {}).get(peer_id)
+        if peer is None:
+            return False
+        try:
+            from aiortc import RTCSessionDescription
+
+            remote = RTCSessionDescription(sdp=answer_sdp, type="answer")
+        except Exception as e:
+            logger.warning(f"Invalid answer SDP for {peer_id}: {e}")
+            return False
+        try:
+            await peer.pc.setRemoteDescription(remote)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to apply remote answer for {peer_id}: {e}")
+            return False
+
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """Remove a peer from a room."""
         if room_id not in self._rooms:

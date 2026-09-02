@@ -173,6 +173,39 @@ class SFUAdapter(ABC):
         """
         return True
 
+    async def apply_remote_offer(
+        self,
+        room_id: str,
+        peer_id: str,
+        offer_sdp: str,
+    ) -> Dict[str, Any]:
+        """
+        Apply the client's WebRTC offer to the peer's connection.
+
+        For aiortc this MUST call ``setRemoteDescription`` so the peer's
+        DTLS/ICE state machine knows the remote side; without it the
+        negotiated description never completes and no media can flow.
+        Adapters that negotiate out-of-band (mediasoup) may ignore the SDP.
+
+        Returns a dict with the peer's local description ("sdp", "type")
+        where applicable.
+        """
+        return {}
+
+    async def apply_remote_answer(
+        self,
+        room_id: str,
+        peer_id: str,
+        answer_sdp: str,
+    ) -> bool:
+        """
+        Apply the client's SDP answer to the peer's connection.
+
+        For aiortc this completes DTLS handshake setup. No-op for
+        out-of-band SFUs.
+        """
+        return True
+
     @abstractmethod
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """

@@ -226,17 +226,6 @@ class SDPMixin:
         room_info = await sfu.join_room(room_id, peer_id)
         router_caps = room_info.get("routerRtpCapabilities", {})
 
-        logger.debug(f"Creating send transport for peer {peer_id}")
-        transport = await sfu.create_transport(
-            room_id, peer_id, TransportDirection.SEND
-        )
-
-        connection = self._connections.get(user_id)
-        if connection:
-            connection.transport_id = transport.id
-            connection.sfu_room_id = room_id
-            connection.sfu_peer_id = peer_id
-
         logger.debug(f"Completing join for peer {peer_id}")
         await sfu.complete_join(
             room_id,
@@ -245,7 +234,43 @@ class SDPMixin:
             display_name=f"User {user_id}",
         )
 
-        answer_sdp = self._build_sdp_from_transport(offer_sdp, transport, session_id)
+        # SECURITY-correctness (audit: SFU/media path dead): the client's
+        # offer MUST reach the SFU's peer connection so ICE/DTLS parameters
+        # are negotiated for real. For aiortc this calls
+        # setRemoteDescription; out-of-band SFUs (mediasoup) ignore it and
+        # we fall back to transport-derived SDP below.
+        pc_local: Dict[str, Any] = {}
+        transport = None
+        try:
+            pc_local = await sfu.apply_remote_offer(room_id, peer_id, offer_sdp)
+        except Exception as e:
+            logger.warning(f"apply_remote_offer failed, using transport fallback: {e}")
+
+        if not pc_local:
+            logger.debug(f"Creating send transport for peer {peer_id}")
+            transport = await sfu.create_transport(
+                room_id, peer_id, TransportDirection.SEND
+            )
+
+            connection = self._connections.get(user_id)
+            if connection:
+                connection.transport_id = transport.id
+                connection.sfu_room_id = room_id
+                connection.sfu_peer_id = peer_id
+
+            answer_sdp = self._build_sdp_from_transport(
+                offer_sdp, transport, session_id
+            )
+            return answer_sdp
+
+        connection = self._connections.get(user_id)
+        if connection:
+            connection.sfu_room_id = room_id
+            connection.sfu_peer_id = peer_id
+
+        # The aiortc peer produced a REAL local description from a complete
+        # negotiation: use it verbatim instead of synthesizing SDP.
+        answer_sdp = pc_local["sdp"]
 
         return answer_sdp
 
