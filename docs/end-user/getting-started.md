@@ -18,6 +18,16 @@ If registration is closed, you need an invite link from an administrator or an e
 
 If you are locked out after too many failed attempts, wait for the lockout period to expire before you try again.
 
+## First boot: the built-in admin account
+
+A fresh server creates the built-in `admin` account automatically. The
+generated password is printed **once** to the server console and is never
+stored in plaintext on disk or in logs. Save it when it appears, log in,
+change the password, and enable 2FA. Headless installs can opt in to a
+secure `0600` credential file by setting `PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1`
+before first boot — see
+[Admin security](../admin/security.md#bootstrap-administrator-credentials).
+
 ## Set up your profile
 
 After your first login, update your profile:

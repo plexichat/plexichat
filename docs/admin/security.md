@@ -4,6 +4,40 @@ This guide describes security best practices for Plexichat administrators. Apply
 
 ## Secure authentication
 
+### Bootstrap administrator credentials
+
+On the very first start of a fresh installation, Plexichat creates the
+built-in `admin` account with a randomly generated password. That plaintext
+password is shown **exactly once**, printed to the server console (stdout) at
+the moment of generation:
+
+```text
+============================================================
+PLEXICHAT FIRST BOOT: generated admin credentials
+  Username: admin
+  Password: <generated password>
+  Store this password NOW - it is not shown again and
+  is not written to disk unless you opted in via
+  PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1.
+============================================================
+```
+
+By design the password is **never persisted to disk in plaintext**: it exists
+only in the Argon2id hash inside the database and wherever the operator saved
+it. It is also never written to log files — logs at most reference the
+credential file path, never credential contents.
+
+Headless installs that cannot capture console output may explicitly set
+`PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1` in the environment before first boot to
+opt in to a `~/.plexichat/admin_credentials.txt` file. The file is written
+with mode `0600` via an atomic create-and-replace, and a failed write is
+fatal (startup refuses to continue) so the password can never be silently
+lost or exposed through a permissive fallback. Delete the file after noting
+the credentials.
+
+Whichever way you capture it, change the generated password immediately
+after first login and enable 2FA when prompted.
+
 ### Enforce password policies
 
 Configure strong password policies:

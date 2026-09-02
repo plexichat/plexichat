@@ -79,6 +79,17 @@ authentication:
 *   `token_binding` — When `true`, sessions are bound to the client IP. This prevents token theft from a different network but breaks for users with rotating IPs (mobile, VPNs). Enable only on controlled networks.
 *   `token_cache_ttl` — How long verified tokens stay cached. Lower values improve security but add database load. `30` seconds is a good balance.
 
+### Bootstrap administrator credentials
+
+The first-boot `admin` password is generated server-side and printed once to
+the operator console. Plaintext bootstrap credentials are never written to
+disk or log files by default; only the Argon2id hash is stored. Headless
+deployments may set `PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1` to opt in to a
+mode-`0600` credential file created atomically under `~/.plexichat/` — a
+failed secure write aborts startup rather than degrading. See
+[Admin security](admin/security.md#bootstrap-administrator-credentials) for
+the full lifecycle (capture, rotate on first login, enable 2FA).
+
 ### Two-factor authentication
 
 Plexichat supports TOTP-based 2FA:

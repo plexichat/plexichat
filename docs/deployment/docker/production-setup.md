@@ -29,6 +29,23 @@ curl -sf http://localhost:8000/api/v1/ready
 curl -sf http://localhost:8000/api/v1/health | jq .
 ```
 
+### Capture the bootstrap admin password
+
+On the first start of a fresh install the backend prints the generated
+`admin` password **once** to the container console:
+
+```bash
+docker compose logs backend | grep -A 6 "FIRST BOOT"
+```
+
+The plaintext password is never written to disk or log files by default —
+only the console line above and the Argon2id hash exist. If console capture
+is not possible, set `PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1` in `.env` before
+first boot; the credentials are then written `0600` (atomically) to
+`~/.plexichat/admin_credentials.txt`, and startup fails hard if that secure
+write cannot be completed. Store the password, delete any file, change the
+password on first login, and set up 2FA.
+
 ## Security hardening
 
 ### 1. Use strong secrets
