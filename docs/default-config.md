@@ -34,7 +34,6 @@ logging:
 database:
   type: sqlite
   path: /root/.plexichat/data/plexichat.db
-  disposable: false
   postgres:
     host: ${POSTGRES_HOST:-localhost}
     port: 5432
@@ -525,7 +524,6 @@ selftest:
   capture_stack_traces: true
   retry_on_failure: true
   enable_admin_tests: true
-  require_disposable_db: true
   journal_path: /root/.plexichat/data/selftest_artifact_journal.json
   retry_non_idempotent: false
   excluded_endpoints:

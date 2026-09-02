@@ -123,7 +123,7 @@ Run a comprehensive connectivity check that covers authentication, messaging, se
 docker compose exec backend python main.py self-test
 ```
 
-This exercises real endpoints. It refuses to run destructive phases unless the target database is marked disposable.
+This exercises real endpoints. It is non-destructive: cleanup only removes rows owned by its own `selftest_%` test accounts, so it is safe to run against a live deployment.
 
 ## Database operations
 

@@ -59,7 +59,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         "database": {
             "type": "sqlite",
             "path": str(home_dir / "data" / "plexichat.db"),
-            "disposable": False,
             "postgres": {
                 "host": "${POSTGRES_HOST:-localhost}",
                 "port": 5432,
@@ -482,7 +481,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "capture_stack_traces": True,
             "retry_on_failure": True,
             "enable_admin_tests": True,
-            "require_disposable_db": True,
             "journal_path": str(home_dir / "data" / "selftest_artifact_journal.json"),
             "retry_non_idempotent": False,
             "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],

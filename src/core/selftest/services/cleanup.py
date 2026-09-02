@@ -1,8 +1,12 @@
 """
 Cleanup service for SelfTestRunner.
 
-Pre-test SQL truncation, recursive user/server deletion,
-API-based cleanup, and SQL fallback.
+NON-DESTRUCTIVE BY DESIGN: the self-test is a routine status check that
+may run against a live deployment, so it may only ever remove rows it
+provably owns (accounts named ``selftest_%`` and resources created by
+this run and recorded in the context). Whole-table DELETEs, truncation,
+and migration rollbacks against shared data are categorically forbidden
+here — cleanup is scoped per selftest user and per run-tracked resource.
 """
 
 from typing import Any
@@ -21,7 +25,14 @@ class CleanupService:
         self.ctx = ctx
 
     def pre_test_cleanup(self) -> None:
-        logger.info("Performing pre-test cleanup...")
+        """Remove leftovers from previous selftest runs. NEVER touches shared data.
+
+        Only rows owned by ``selftest_%`` accounts (and their selftest-owned
+        servers) are deleted. There are deliberately NO whole-table DELETEs:
+        the self-test must be safe to run against a live deployment at any
+        time.
+        """
+        logger.info("Performing pre-test cleanup (selftest-owned rows only)...")
         db = api.get_db()
         if not db:
             return
@@ -32,7 +43,8 @@ class CleanupService:
 
             # Reconcile privileged artifacts left behind by a previously
             # crashed run (wildcard grants, elevated accounts) BEFORE any
-            # other work, then clear the journal.
+            # other work, then clear the journal. The journal's SQL is
+            # scoped to selftest_% accounts, so live users are untouched.
             journal = getattr(self.ctx, "journal", None)
             if journal is not None:
                 try:
@@ -58,44 +70,6 @@ class CleanupService:
 
             db.begin_transaction()
 
-            for tbl in ["media_upload_sessions", "plexijoin_traffic_log"]:
-                try:
-                    db.execute(f"DELETE FROM {tbl}")
-                except Exception:
-                    pass
-
-            truncate_tables = [
-                "notif_notifications",
-                "user_reports",
-                "media_hash_reports",
-                "message_reports",
-                "feedback",
-                "media_blocked_hashes",
-                "media_blocked_users",
-                "app_bot_requests",
-                "auth_api_access_tokens",
-                "auth_api_access_token_scopes",
-                "poll_polls",
-                "poll_options",
-                "poll_votes",
-                "poll_voters",
-                "thread_threads",
-                "thread_members",
-                "sticker_stickers",
-                "sticker_packs",
-                "admin_role_assignments",
-                "admin_approvals",
-                "username_blacklist",
-                "plexijoin_connections",
-                "plexijoin_inbound_requests",
-                "plexijoin_traffic_log",
-            ]
-            for tbl in truncate_tables:
-                try:
-                    db.execute(f"DELETE FROM {tbl}")
-                except Exception:
-                    pass
-
             try:
                 orphan_srv_rows = db.fetch_all(
                     "SELECT s.id, s.owner_id FROM srv_servers s "
@@ -111,6 +85,8 @@ class CleanupService:
                     )
             except Exception:
                 pass
+            # NOTE: no whole-table DELETEs here. The self-test runs on live
+            # deployments; only selftest_%-owned rows may ever be removed.
 
             rows = db.fetch_all(
                 "SELECT id, username FROM auth_users WHERE username LIKE 'selftest_%'"

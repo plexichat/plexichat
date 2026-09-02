@@ -1,48 +1,39 @@
-"""Self-test DB guard and error sanitization utilities.
+"""Self-test safety guard and error sanitization utilities.
 
-The disposable-DB guard prevents the self-test suite from running
-destructive operations (whole-table wipes, migration rollbacks) against
-a live/production database. It must be consulted by every service that
-performs side-effecting SQL before executing it.
+The self-test is a routine, non-destructive status check. It may run
+against a live deployment at any time and must never perform destructive
+operations (whole-table wipes, migration rollbacks, deletion of data not
+owned by ``selftest_%`` accounts). Cleanup functions in the selftest
+package must therefore scope every DELETE/UPDATE to selftest-owned rows;
+there is deliberately no "disposable database" escape hatch.
 """
 
-import os
-from typing import Any, Tuple
+import re
+from typing import Any
 
 
-DISPOSABLE_ENV_MARKER = "PLEXICHAT_SELFTEST_DISPOSABLE_DB"
+# Statements that would destroy shared data if executed unscoped. Cleanup
+# code paths are checked against this denylist in tests to keep the
+# self-test permanently non-destructive.
+_FORBIDDEN_PATTERNS = (
+    re.compile(r"DELETE\s+FROM\s+\w+\s*$", re.IGNORECASE),  # unscoped whole-table
+    re.compile(r"DROP\s+TABLE", re.IGNORECASE),
+    re.compile(r"TRUNCATE", re.IGNORECASE),
+)
 
 
-def is_disposable_database(db: Any, config: dict) -> Tuple[bool, str]:
-    """Return (allowed, reason) for whether the self-test suite may use db.
+def assert_non_destructive(statement: str) -> None:
+    """Raise if a statement is an unscoped whole-table wipe.
 
-    The suite is allowed to run destructive operations only when:
-
-    * The process is explicitly marked disposable via the
-      ``PLEXICHAT_SELFTEST_DISPOSABLE_DB`` environment variable, or
-    * The caller opts out via ``config['require_disposable_db'] = False``, or
-    * The db instance carries a ``disposable`` attribute that is truthy, or
-    * The db path matches the selftest scratch-path convention
-      (``/data/selftest_*``).
-
-    Every service-layer method that performs side-effecting SQL (whole-table
-    wipes, migration apply/rollback, privilege grants) MUST call this
-    before executing and refuse with a clear error when it returns False.
+    Used by selftest cleanup code (and its tests) to guarantee the suite
+    can never destroy shared data on a live deployment.
     """
-    if config.get("require_disposable_db") is False:
-        return True, "opt-out of disposable-DB guard"
-
-    if getattr(db, "disposable", False):
-        return True, "db marked disposable by attribute"
-
-    if os.environ.get(DISPOSABLE_ENV_MARKER):
-        return True, "env marker set"
-
-    db_path = getattr(getattr(db, "config", {}), "get", lambda *_: "")("path", "")
-    if db_path and db_path.startswith("/data/selftest_"):
-        return True, "selftest scratch path"
-
-    return False, "db is not a disposable selftest database"
+    normalized = " ".join(statement.split())
+    for pattern in _FORBIDDEN_PATTERNS:
+        if pattern.search(normalized):
+            raise ValueError(
+                f"Self-test cleanup refuses destructive statement: {normalized[:120]}"
+            )
 
 
 def sanitize_error(value: Any, limit: int = 200) -> str:
@@ -58,8 +49,6 @@ def sanitize_error(value: Any, limit: int = 200) -> str:
         try:
             text = str(value)
         except Exception:
-            return "<unprintable error>"
+            text = repr(value)
     text = " ".join(text.split())
-    if len(text) > limit:
-        text = text[:limit] + "...[truncated]"
-    return text
+    return text[:limit]

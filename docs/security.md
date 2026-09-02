@@ -410,7 +410,7 @@ selftest:
 *   Self-test is production-safe. It uses long, randomly generated passwords and only creates and deletes its own test users (`selftest_admin` / `selftest_admin_other`). It never touches real admin accounts. All test resources are cleaned up through API calls. See `src/config_defaults.py:506`.
 *   `exit_on_failure: false` prevents shutdown on self-test failure, which avoids denial-of-service.
 *   `capture_stack_traces: true` is useful in development. Set it to `false` in production to avoid revealing implementation details.
-*   Destructive phases (whole-table wipes, migration rollback tests) refuse to run unless the database is flagged disposable (`database.disposable` or `PLEXICHAT_DISPOSABLE_DB=1`). See `src/core/database/core/manager.py:112`.
+*   Self-test cleanup is strictly non-destructive: it only removes rows owned by its `selftest_%` accounts and resources recorded by the current run. There are no whole-table wipes and no disposable-database escape hatch; the suite is safe to run on a live deployment at any time. See `src/core/selftest/services/cleanup.py`.
 
 ## Sensitive information handling
 

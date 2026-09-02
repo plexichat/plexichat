@@ -7,10 +7,8 @@ import pytest
 
 class _FakeDB:
     type = "sqlite"
-    disposable = False
 
-    def __init__(self, path="/tmp/live_production.db"):
-        self.config = {"path": path}
+    def __init__(self):
         self._rows = []
 
     def fetch_one(self, query, params=None):
