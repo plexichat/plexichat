@@ -130,7 +130,42 @@ def _verify_admin_password(
 
 
 def _save_admin_credentials(password: str) -> None:
-    """Save admin credentials to a secure file."""
+    """Hand the generated bootstrap admin password to the operator.
+
+    SECURITY: the plaintext password is NEVER written to disk by default.
+    A plaintext credential file at rest survives reboots, leaks through
+    backups, crash dumps and anything that reads the operator's home
+    directory — it is the classic first-boot credential exposure. Instead
+    the password is printed ONCE to the operator console (stdout) at the
+    moment of generation; it exists nowhere else but the password hash.
+
+    For headless installs that cannot read the console, operators may set
+    PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1 to explicitly opt in to the
+    (0600, atomic-write) credential file. The write path is hardened:
+    mkstemp with 0600 + atomic replace, and any failure is FATAL (raises)
+    so first boot can never silently fall back to an unknown password.
+    """
+    opt_in = os.environ.get("PLEXICHAT_SAVE_ADMIN_CREDENTIALS", "") == "1"
+
+    # Always surface the password exactly once on the console.
+    print(
+        "\n"
+        + "=" * 60
+        + "\nPLEXICHAT FIRST BOOT: generated admin credentials"
+        + "\n  Username: admin"
+        + f"\n  Password: {password}"
+        + "\n  Store this password NOW - it is not shown again and"
+        + "\n  is not written to disk unless you opted in via"
+        + "\n  PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1."
+        + "\n"
+        + "=" * 60
+        + "\n",
+        flush=True,
+    )
+
+    if not opt_in:
+        return
+
     home_dir = Path.home() / ".plexichat"
     creds_file = home_dir / "admin_credentials.txt"
     home_dir.mkdir(parents=True, exist_ok=True)
@@ -177,7 +212,7 @@ Login URL: https://<your-server>:8000/admin
                 os.unlink(temporary_path)
             except OSError:
                 pass
-    logger.warning(f"Admin credentials saved to: {creds_file}")
+    logger.warning(f"Admin credentials file written (operator opt-in): {creds_file}")
 
 
 def _sync_password_to_auth_users(db: Any, username: str, password_hash: str) -> None:

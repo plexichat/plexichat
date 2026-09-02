@@ -174,7 +174,5 @@ class TestCleanupIsNonDestructive:
             capture_output=True,
             text=True,
         )
-        matches = [
-            ln for ln in result.stdout.splitlines() if "__pycache__" not in ln
-        ]
+        matches = [ln for ln in result.stdout.splitlines() if "__pycache__" not in ln]
         assert not matches, f"disposable-DB guard still present: {matches}"
