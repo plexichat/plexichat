@@ -203,9 +203,14 @@ async def get_2fa_status(
         401: {"model": ErrorResponse, "description": "Invalid password"},
         404: {"model": ErrorResponse, "description": "User not found"},
         409: {"model": ErrorResponse, "description": "2FA is already enabled"},
+        429: {"model": ErrorResponse, "description": "Too many requests"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+# Password-verification route: without a limiter an authenticated session
+# could brute-force the account password through this endpoint (Agent 50 F2
+# parity — the other 2FA verify routes carry the same 5/60s budget).
+@(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def enable_2fa(
     body: TwoFactorSetupRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> TwoFactorSetupResponse:
