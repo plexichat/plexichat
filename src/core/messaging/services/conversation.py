@@ -500,6 +500,11 @@ class ConversationService(BaseService):
                     conversation_id, new_owner, ParticipantRole.OWNER
                 )
                 self._repo.update_owner(conversation_id, new_owner)
+                # M14: the per-user conversation cache (conv_data:<user>:<id>)
+                # captures the resolved owner; promoting a new owner without
+                # invalidating it left the NEW owner (and other participants)
+                # reading the stale previous owner until TTL expiry.
+                invalidate_pattern(f"conv_data:*int:{conversation_id}:*")
             else:
                 return self.delete_conversation(user_id, conversation_id)
 
