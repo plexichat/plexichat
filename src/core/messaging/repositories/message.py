@@ -289,10 +289,23 @@ class MessageRepository(BaseRepository[Message]):
         """
         cid = self._get_conv_id(msg_id)
         existing = self._fetch_one(
-            "SELECT content FROM msg_messages WHERE id = ?",
+            "SELECT content, updated_at, edited_at FROM msg_messages WHERE id = ?",
             (msg_id,),
         )
         content_changed = existing is None or existing["content"] != content
+        # Monotonic revision guarantee: the optimistic-lock token is the
+        # stored ``edited_at``/``updated_at`` (ms). A rewrite that lands in
+        # the SAME millisecond as the prior revision would leave the token
+        # unchanged and a stale client token would be accepted as fresh.
+        # Bump the revision to strictly exceed any prior value instead —
+        # every accepted edit must advance the token.
+        if existing is not None:
+            prior_revision = max(
+                int(existing.get("updated_at") or 0),
+                int(existing.get("edited_at") or 0),
+            )
+            if updated_at <= prior_revision:
+                updated_at = prior_revision + 1
         raise_edited = 1 if (content_changed and mark_edited) else 0
         self._execute(
             """UPDATE msg_messages
