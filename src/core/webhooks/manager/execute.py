@@ -20,6 +20,10 @@ from src.core.webhooks.exceptions import (
 from .base import WebhookManagerTrait
 from .constants import MAX_EMBEDS_PER_MESSAGE, USERNAME_OVERRIDE_MAX_LENGTH
 
+# F12 fail-safe default: applied when ``rate_limit_per_minute`` is absent
+# or unparseable so a config regression can never disable limiting.
+DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE = 30
+
 
 class WebhookExecutionMixin(WebhookManagerTrait):
     """Webhook execution (sending messages)."""
@@ -66,11 +70,29 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                 "Message must have content or embeds", ["empty_message"]
             )
 
-        rate_limit = self._config.get("rate_limit_per_minute")
-        try:
-            rate_limit = int(rate_limit) if rate_limit else 0
-        except (TypeError, ValueError):
-            rate_limit = 0
+        # F12: the per-webhook execution rate limit must fail SAFE. An
+        # absent/invalid/unset config previously disabled limiting entirely
+        # (0 = unlimited); a sane default is applied instead so a config
+        # regression can never expose webhooks to unbounded floods. An
+        # explicit 0/negative is an operator opt-out: honored, but logged.
+        rate_limit_raw = self._config.get("rate_limit_per_minute")
+        rate_limit: int
+        explicitly_disabled = False
+        if isinstance(rate_limit_raw, int):
+            rate_limit = rate_limit_raw
+            explicitly_disabled = rate_limit <= 0
+        else:
+            try:
+                rate_limit = int(str(rate_limit_raw))
+            except (TypeError, ValueError):
+                rate_limit = DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
+        if explicitly_disabled:
+            logger.warning(
+                f"Webhook {webhook_id} execution rate limiting is DISABLED "
+                "(explicit rate_limit_per_minute <= 0); this is not recommended."
+            )
+        elif rate_limit <= 0:
+            rate_limit = DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
         if rate_limit > 0:
             from src.core.database.cache import check_rate_limit
 

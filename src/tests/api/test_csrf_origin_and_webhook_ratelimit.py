@@ -121,11 +121,19 @@ class TestWebhookRateLimitFailSafe:
 
     def test_garbage_config_uses_default(self):
         mixin = self._make_mixin("not-a-number")
+        resolved = mixin._config.get("rate_limit_per_minute")
         try:
-            resolved_limit = int(mixin._config.get("rate_limit_per_minute"))
+            resolved_limit = int(resolved)
         except (TypeError, ValueError):
             resolved_limit = DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
         assert resolved_limit == DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
+
+    def test_explicit_zero_is_an_opt_out(self):
+        """An explicit int 0 is an operator opt-out, honored (but logged by
+        the execute path). The fail-safe default is only for absent/garbage
+        config, never an override of an explicit choice."""
+        mixin = self._make_mixin(0)
+        assert int(mixin._config.get("rate_limit_per_minute")) == 0
 
     def test_valid_config_honored(self):
         mixin = self._make_mixin(5)
