@@ -113,9 +113,17 @@ class FeedMixin(NotificationProtocol):
         if notif.user_id != user_id:
             raise NotificationNotFoundError("Notification not found")
 
-        self._db.execute(
-            "UPDATE notif_notifications SET read = 1 WHERE id = ?", (notification_id,)
+        # Idempotency (M5): the conditional UPDATE transitions the row only
+        # when it is still unread, so a repeated mark-read is a no-op — it
+        # must not double-decrement the mention/unread counters or emit a
+        # second NOTIFICATION_UPDATE event for the same transition.
+        cursor = self._db.execute(
+            "UPDATE notif_notifications SET read = 1 WHERE id = ? AND read = 0",
+            (notification_id,),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            # Already read (or concurrently marked): nothing transitioned.
+            return True
 
         self._decrement_mention_count(user_id, notif.conversation_id)
         self._decrement_unread_count(user_id, notif.conversation_id)
