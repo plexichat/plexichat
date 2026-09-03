@@ -383,8 +383,21 @@ class AuthenticationMiddleware:
                 sec_fetch_site = request.headers.get("Sec-Fetch-Site")
                 if sec_fetch_site == "cross-site":
                     csrf_ok = False
+                elif sec_fetch_site in ("same-origin", "same-site", "none"):
+                    # ``same-origin``/``same-site`` cannot be forged by a
+                    # cross-origin page; ``none`` marks direct user agent
+                    # navigation (no fetch initiator).
+                    csrf_ok = True
                 else:
+                    # M2: browsers that do not implement Sec-Fetch-* (or
+                    # non-browser clients) fall through to the marker
+                    # header PLUS an Origin/Referer allowlist check — the
+                    # marker alone is a static, guessable constant, so a
+                    # CORS misconfiguration or header-injecting plugin
+                    # would otherwise complete a cross-site write.
                     csrf_ok = request.headers.get("X-Plexichat-Request") == "1"
+                    if csrf_ok and not self._origin_allowed(request):
+                        csrf_ok = False
                 cookie_token = request.cookies.get("plexichat_token")
                 if cookie_token:
                     mutating = scope.get("method") in ("POST", "PUT", "PATCH", "DELETE")
@@ -445,6 +458,54 @@ class AuthenticationMiddleware:
             send = self._rolling_cookie_send_wrapper(send, cookie_token)
 
         await self.app(scope, receive, send)
+
+    @staticmethod
+    def _origin_allowed(request) -> bool:
+        """Validate the ``Origin``/``Referer`` against the CORS allowlist.
+
+        Part of the M2 CSRF defense: when ``Sec-Fetch-Site`` is unavailable,
+        a mutating cookie-authenticated request must present BOTH the
+        marker header AND an Origin/Referer matching a configured CORS
+        origin. Requests carrying neither header (curl, server-to-server
+        clients using the Authorization header path) are NOT affected —
+        this gate only runs inside the cookie-auth fallback.
+
+        Returns True (allow) when:
+        - no Origin AND no Referer is present (non-browser client), or
+        - either header's scheme+host matches a configured CORS origin.
+        """
+        try:
+            import utils.config as config
+
+            cors_origins = config.get("api", {}).get("cors_origins", []) or []
+        except Exception:
+            cors_origins = []
+        if isinstance(cors_origins, str):
+            cors_origins = [cors_origins]
+
+        origin = request.headers.get("Origin")
+        referer = request.headers.get("Referer")
+        if not origin and not referer:
+            # Non-browser client or privacy-stripping proxy: the marker
+            # header requirement remains the only browser-agnostic gate.
+            return True
+
+        candidates = []
+        if origin:
+            candidates.append(origin.rstrip("/"))
+        if referer:
+            # Referer carries a path; keep scheme+host(+port) only.
+            from urllib.parse import urlsplit
+
+            try:
+                parts = urlsplit(referer)
+                if parts.scheme and parts.netloc:
+                    candidates.append(f"{parts.scheme}://{parts.netloc}".rstrip("/"))
+            except Exception:
+                pass
+
+        allowed = {str(o).rstrip("/") for o in cors_origins if o}
+        return any(c in allowed for c in candidates)
 
     @staticmethod
     def _rolling_cookie_send_wrapper(send: Send, token_value: str) -> Send:
