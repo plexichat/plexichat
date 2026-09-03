@@ -30,6 +30,28 @@ async def _sweep_once() -> None:
         if cleaned:
             logger.info(f"Chunked-upload sweep removed {cleaned} expired session(s)")
 
+    # DM-spam event retention: the events table only feeds 24h statistics,
+    # so rows older than the retention horizon are dead weight that grew
+    # unbounded before this sweep existed (M6). Same bounded cadence, same
+    # fail-open posture as the upload-session sweep.
+    try:
+        from src.core.antispam import get_dm_spam_detector
+
+        detector = get_dm_spam_detector()
+        if detector is not None and hasattr(detector, "prune_old_events"):
+            retention_hours = int(
+                config.get("antispam.event_retention_hours", 168) or 168
+            )
+            pruned = await asyncio.get_event_loop().run_in_executor(
+                None, detector.prune_old_events, retention_hours
+            )
+            if pruned:
+                logger.info(
+                    f"Antispam retention sweep removed {pruned} expired event(s)"
+                )
+    except Exception as e:
+        logger.debug(f"Antispam event retention sweep failed: {e}")
+
 
 async def media_maintenance_sweep_loop() -> None:
     interval_cfg = config.get("media.chunked_upload.cleanup_interval", 300)

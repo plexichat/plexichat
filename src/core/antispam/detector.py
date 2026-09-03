@@ -427,6 +427,30 @@ class DMSpamDetector:
             "top_spammers": top_spammers,
         }
 
+    def prune_old_events(self, retention_hours: int = 168) -> int:
+        """Delete dm_spam_events older than the retention window.
+
+        The events table only serves 24h-window statistics, so anything
+        older than the retention horizon (default 7 days) is dead weight.
+        Without this sweep every blocked attempt grew the table forever
+        (unbounded on a busy instance). Bounded per call via LIMIT-style
+        chunking is unnecessary here: the DELETE is fully indexed by the
+        ``created_at`` column and runs on the maintenance cadence.
+
+        Returns the number of rows removed.
+        """
+        if retention_hours <= 0:
+            return 0
+        cutoff = self._get_timestamp() - int(retention_hours * 3600 * 1000)
+        try:
+            cursor = self._db.execute(
+                "DELETE FROM dm_spam_events WHERE created_at <= ?", (cutoff,)
+            )
+            return int(getattr(cursor, "rowcount", 0) or 0)
+        except Exception as e:
+            logger.warning(f"dm_spam_events retention prune failed: {e}")
+            return 0
+
     def set_filter(
         self,
         user_id: int,
