@@ -311,6 +311,110 @@ class TestExceptionMessageLeakage:
         assert resp.json()["error"]["message"] == "Invalid request"
 
 
+class TestTracebackDisclosureGate:
+    """M5: debug-level detail (raw messages + traceback) requires
+    api.debug AND a valid internal self-test request (localhost peer +
+    constant-time-compared X-Plexichat-Internal-Secret). The flag or the
+    header alone must never unlock detail."""
+
+    def _request(self, host="127.0.0.1", headers=None):
+        request = MagicMock()
+        request.client = SimpleNamespace(host=host)
+        request.headers = headers or {}
+        return request
+
+    def _with_config(self, monkeypatch, debug):
+        monkeypatch.setattr(
+            "src.api.middleware.error_handling.config.get",
+            lambda *a, **k: {"debug": debug},
+        )
+
+    def test_debug_flag_alone_is_not_sufficient(self, monkeypatch):
+        from src.api.middleware.error_handling import _debug_detail_allowed
+
+        self._with_config(monkeypatch, debug=True)
+        # Non-localhost caller with even a guessed secret header.
+        req = self._request(
+            host="203.0.113.50",
+            headers={"X-Plexichat-Internal-Secret": "x" * 64},
+        )
+        with patch("src.api.is_self_test_request", return_value=False):
+            assert _debug_detail_allowed(req) is False
+
+    def test_header_alone_is_not_sufficient(self, monkeypatch):
+        from src.api.middleware.error_handling import _debug_detail_allowed
+
+        self._with_config(monkeypatch, debug=False)
+        req = self._request(host="127.0.0.1")
+        with patch("src.api.is_self_test_request", return_value=True):
+            assert _debug_detail_allowed(req) is False
+
+    def test_localhost_plus_secret_plus_flag_allows(self, monkeypatch):
+        from src.api.middleware.error_handling import _debug_detail_allowed
+
+        self._with_config(monkeypatch, debug=True)
+        req = self._request(host="127.0.0.1")
+        with patch("src.api.is_self_test_request", return_value=True):
+            assert _debug_detail_allowed(req) is True
+
+    def test_config_failure_fails_closed(self, monkeypatch):
+        from src.api.middleware.error_handling import _debug_detail_allowed
+
+        def boom(*a, **k):
+            raise RuntimeError("config unavailable")
+
+        monkeypatch.setattr("src.api.middleware.error_handling.config.get", boom)
+        req = self._request(host="127.0.0.1")
+        with patch("src.api.is_self_test_request", return_value=True):
+            assert _debug_detail_allowed(req) is False
+
+    def test_sanitize_without_debug_detail_redacts_500(self):
+        from src.api.middleware.error_handling import _sanitize_error_message
+
+        raw = "QLite error: no such column sessions.idx (db path /var/lib/...)"
+        assert _sanitize_error_message(500, raw, False, False) == (
+            "Internal server error"
+        )
+        # Legacy two-arg call keeps old behaviour for non-500 routes.
+        assert _sanitize_error_message(500, raw, False) == "Internal server error"
+
+    def test_sanitize_with_debug_detail_passes_raw(self):
+        from src.api.middleware.error_handling import _sanitize_error_message
+
+        raw = "exact internal detail"
+        assert _sanitize_error_message(500, raw, True, True) == raw
+
+    def test_self_test_header_spoof_gets_generic_500(self):
+        """End-to-end: an attacker sending X-Self-Test / debug headers from a
+        normal client must get the generic 500 message, never internals."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.api.middleware.error_handling import setup_exception_handlers
+
+        app = FastAPI()
+        setup_exception_handlers(app)
+
+        @app.get("/boom")
+        async def boom():
+            raise RuntimeError("INTERNAL PATH /var/plexichat/db.sqlite3 leaked")
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(
+            "/boom",
+            headers={
+                "X-Self-Test": "1",
+                "X-Plexichat-SelfTest-Debug": "true",
+                "X-Plexichat-Internal-Secret": "spooged",
+            },
+        )
+        assert resp.status_code == 500
+        body = resp.json()["error"]
+        assert body["message"] == "Internal server error"
+        assert "traceback" not in body
+        assert "/var/plexichat" not in resp.text
+
+
 class TestHstsHeader:
     """L1: responses must carry Strict-Transport-Security."""
 

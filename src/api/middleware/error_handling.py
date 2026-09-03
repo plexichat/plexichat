@@ -68,9 +68,41 @@ def get_status_code_for_exception(exc: Exception) -> int:
     return 500
 
 
-def _sanitize_error_message(code: int, message: str, debug: bool) -> str:
+def _debug_detail_allowed(request: Any) -> bool:
+    """Whether this request may receive DEBUG-LEVEL error detail.
+
+    M5: ``api.debug`` alone is NOT sufficient — it is enabled by default
+    (config_defaults.py) and would otherwise leak raw 5xx exception text
+    to any caller on a deployment that never flipped the flag. Debug
+    detail therefore additionally requires the request to be a valid
+    internal/self-test request: localhost peer AND the constant-time
+    compared ``X-Plexichat-Internal-Secret`` header
+    (``src.api.is_self_test_request``). Both signals fail closed when
+    absent — a spoofed header from a non-localhost peer, or any request
+    when no internal secret is provisioned, gets generic messages only.
+    """
+    try:
+        if not config.get("api", {}).get("debug", False):
+            return False
+    except Exception:
+        return False
+    try:
+        import src.api as api
+
+        return bool(api.is_self_test_request(request))
+    except Exception:
+        return False
+
+
+def _sanitize_error_message(
+    code: int, message: str, debug: bool, debug_detail: Optional[bool] = None
+) -> str:
     safe_message = sanitize_log_message(message)
-    if debug:
+    # ``debug_detail`` is the authoritative gate (api.debug AND
+    # localhost+secret). Legacy ``debug`` alone no longer unlocks raw
+    # internal messages (M5).
+    effective_debug = debug if debug_detail is None else debug_detail
+    if effective_debug:
         return safe_message
     if code >= 500:
         return "Internal server error"
@@ -206,11 +238,7 @@ class ErrorHandlingMiddleware:
                     _get_cors_headers(request), http_exc.headers
                 )
 
-                debug = False
-                try:
-                    debug = config.get("api", {}).get("debug", False)
-                except Exception:
-                    pass
+                debug_detail = _debug_detail_allowed(request)
 
                 detail = http_exc.detail
                 if isinstance(detail, dict) and "error" in detail:
@@ -220,7 +248,7 @@ class ErrorHandlingMiddleware:
                         msg = error.get("message")
                         if msg and isinstance(msg, str):
                             error["message"] = _sanitize_error_message(
-                                http_exc.status_code, msg, debug
+                                http_exc.status_code, msg, debug_detail, debug_detail
                             )
                         detail_dict["error"] = error
 
@@ -235,7 +263,7 @@ class ErrorHandlingMiddleware:
                 response = JSONResponse(
                     status_code=http_exc.status_code,
                     content=format_error_response(
-                        http_exc.status_code, str(detail), debug
+                        http_exc.status_code, str(detail), debug_detail
                     ),
                     headers=headers,
                 )
@@ -266,14 +294,14 @@ class ErrorHandlingMiddleware:
             # Determine status code and message
             status_code = get_status_code_for_exception(exc)
 
-            debug = False
-            try:
-                debug = config.get("api", {}).get("debug", False)
-            except Exception:
-                pass
+            # M5: debug-level detail (raw messages, tracebacks) requires
+            # api.debug AND localhost+secret — never the flag alone.
+            debug_detail = _debug_detail_allowed(request)
 
             # M6: never echo third-party exception strings verbatim.
             message = _safe_error_message(exc, status_code)
+            if not debug_detail:
+                message = _sanitize_error_message(status_code, message, False)
 
             # Check for self-test debug mode (uses centralized validation)
             include_traceback = False
@@ -291,7 +319,7 @@ class ErrorHandlingMiddleware:
             headers = _get_cors_headers(request)
 
             # Create response content
-            content = format_error_response(status_code, message, debug)
+            content = format_error_response(status_code, message, debug_detail)
             if include_traceback:
                 content["error"]["traceback"] = "".join(traceback.format_exc())
 
@@ -311,11 +339,7 @@ def setup_exception_handlers(app: FastAPI):
         """Handle FastAPI HTTP exceptions."""
         headers = _merge_error_headers(_get_cors_headers(request), exc.headers)
 
-        debug = False
-        try:
-            debug = config.get("api", {}).get("debug", False)
-        except Exception:
-            pass
+        debug_detail = _debug_detail_allowed(request)
 
         if isinstance(exc.detail, dict) and "error" in exc.detail:
             detail_dict = cast(Dict[str, Any], exc.detail)
@@ -324,7 +348,7 @@ def setup_exception_handlers(app: FastAPI):
                 msg = error.get("message")
                 if msg and isinstance(msg, str):
                     error["message"] = _sanitize_error_message(
-                        exc.status_code, msg, debug
+                        exc.status_code, msg, debug_detail, debug_detail
                     )
                 detail_dict["error"] = error
             return JSONResponse(
@@ -333,7 +357,9 @@ def setup_exception_handlers(app: FastAPI):
 
         return JSONResponse(
             status_code=exc.status_code,
-            content=format_error_response(exc.status_code, str(exc.detail), debug),
+            content=format_error_response(
+                exc.status_code, str(exc.detail), debug_detail
+            ),
             headers=headers,
         )
 
@@ -343,11 +369,7 @@ def setup_exception_handlers(app: FastAPI):
         detail = exc.detail
         headers = _merge_error_headers(_get_cors_headers(request), exc.headers)
 
-        debug = False
-        try:
-            debug = config.get("api", {}).get("debug", False)
-        except Exception:
-            pass
+        debug_detail = _debug_detail_allowed(request)
 
         if isinstance(detail, dict) and "error" in detail:
             detail_dict = cast(Dict[str, Any], detail)
@@ -356,7 +378,7 @@ def setup_exception_handlers(app: FastAPI):
                 msg = error.get("message")
                 if msg and isinstance(msg, str):
                     error["message"] = _sanitize_error_message(
-                        exc.status_code, msg, debug
+                        exc.status_code, msg, debug_detail, debug_detail
                     )
                 detail_dict["error"] = error
             return JSONResponse(
@@ -365,7 +387,7 @@ def setup_exception_handlers(app: FastAPI):
 
         return JSONResponse(
             status_code=exc.status_code,
-            content=format_error_response(exc.status_code, str(detail), debug),
+            content=format_error_response(exc.status_code, str(detail), debug_detail),
             headers=headers,
         )
 
@@ -426,14 +448,11 @@ def setup_exception_handlers(app: FastAPI):
         @app.exception_handler(JoinApiError)
         async def join_api_error_handler(request: Request, exc: JoinApiError):
             """Render /Join contract errors flat: {"error": {code, message}}."""
-            debug = False
-            try:
-                debug = config.get("api", {}).get("debug", False)
-            except Exception:
-                pass
             return JSONResponse(
                 status_code=exc.status_code,
-                content=format_error_response(exc.status_code, exc.message, debug),
+                content=format_error_response(
+                    exc.status_code, exc.message, _debug_detail_allowed(request)
+                ),
                 headers=_merge_error_headers(_get_cors_headers(request), None),
             )
     except ImportError:  # pragma: no cover
