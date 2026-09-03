@@ -16,6 +16,7 @@ from ..exceptions import (
 from .base import BaseService
 from .participant import ParticipantService
 from src.core.base import SnowflakeID
+from src.core.database.cache.operations import cache_delete
 
 
 class PinService(BaseService):
@@ -67,6 +68,12 @@ class PinService(BaseService):
 
         self._repo.create(pin_id, conversation_id, message_id, user_id, now)
 
+        # The message object cache (msg:obj:{id}) stores the hydrated
+        # Message with its pin state; stale entries made the post-pin
+        # broadcast carry pinned=false for up to an hour (same contract as
+        # the edit/delete paths, which delete before re-hydrating).
+        cache_delete(f"msg:obj:{message_id}")
+
         return True
 
     def unpin_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
@@ -86,6 +93,11 @@ class PinService(BaseService):
             raise MessageNotPinnedError("Message is not pinned")
 
         self._repo.delete(message_id)
+
+        # Mirror the pin path: drop the stale cached message object so the
+        # unpin broadcast reports pinned=false immediately.
+        cache_delete(f"msg:obj:{message_id}")
+
         return True
 
     def get_pinned_messages(

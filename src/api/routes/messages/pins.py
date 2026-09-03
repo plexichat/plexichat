@@ -75,8 +75,7 @@ async def pin_message(
                             get_dispatcher,
                             is_setup as ws_is_setup,
                         )
-                        from src.core.events.models import Event
-                        from src.core.events.types import EventType
+                        from src.core.events import build_message_update
 
                         if ws_is_setup():
                             dispatcher = get_dispatcher()
@@ -108,11 +107,10 @@ async def pin_message(
                                     pass
 
                             if user_ids:
-                                event = Event(
-                                    event_type=EventType.MESSAGE_UPDATE,
-                                    data=response.model_dump(),
-                                    server_id=server_id,
+                                event = build_message_update(
+                                    response.model_dump(),
                                     channel_id=cid,
+                                    server_id=server_id,
                                 )
                                 await dispatcher.dispatch_event(event, user_ids)
                     except Exception as e:
@@ -217,8 +215,7 @@ async def unpin_message(
                             get_dispatcher,
                             is_setup as ws_is_setup,
                         )
-                        from src.core.events.models import Event
-                        from src.core.events.types import EventType
+                        from src.core.events import build_message_update
 
                         if ws_is_setup():
                             dispatcher = get_dispatcher()
@@ -250,11 +247,10 @@ async def unpin_message(
                                     pass
 
                             if user_ids:
-                                event = Event(
-                                    event_type=EventType.MESSAGE_UPDATE,
-                                    data=response.model_dump(),
-                                    server_id=server_id,
+                                event = build_message_update(
+                                    response.model_dump(),
                                     channel_id=cid,
+                                    server_id=server_id,
                                 )
                                 await dispatcher.dispatch_event(event, user_ids)
                     except Exception as e:
