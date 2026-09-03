@@ -2,6 +2,7 @@ from fastapi import HTTPException, UploadFile, Depends
 from starlette.concurrency import run_in_threadpool
 
 import src.api as api
+from src.api.routes.channels.helpers import _get_upload_limit
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.channels import AttachmentUploadResponse
 from src.api.schemas.common import ErrorResponse
@@ -36,6 +37,10 @@ class ChannelAttachmentsMixin(ChannelBase):
                     "description": "No send/upload permission in channel",
                 },
                 404: {"model": ErrorResponse, "description": "Channel not found"},
+                413: {
+                    "model": ErrorResponse,
+                    "description": "File exceeds the account tier upload limit",
+                },
                 500: {"model": ErrorResponse, "description": "Internal server error"},
             },
         )
@@ -78,6 +83,23 @@ class ChannelAttachmentsMixin(ChannelBase):
                 raise HTTPException(
                     status_code=400,
                     detail={"error": {"code": 400, "message": "Invalid channel ID"}},
+                )
+
+            # SECURITY (tier-cap parity): the client pre-checks the tier cap
+            # at file selection, but a crafted client can skip that. Enforce
+            # the same per-user limit server-side BEFORE probing channel
+            # access or spooling the body, so low-tier accounts cannot
+            # bypass their quota with raw HTTP.
+            upload_limit = _get_upload_limit(current_user.user_id)
+            if file.size is not None and file.size > upload_limit:
+                raise HTTPException(
+                    status_code=413,
+                    detail={
+                        "error": {
+                            "code": 413,
+                            "message": "File exceeds the maximum upload size for your account",
+                        }
+                    },
                 )
 
             has_access = False
