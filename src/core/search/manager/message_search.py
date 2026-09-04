@@ -1,8 +1,43 @@
 from typing import List, Optional
 
 from .base import SearchManagerBase
-from ..exceptions import SearchLimitError
+from ..exceptions import InvalidQuerySyntaxError, SearchLimitError
 from ..models import MessageSearchResult, MessageSearchResultPage
+
+# F6: bound pathological queries BEFORE parsing/execution. A multi-megabyte
+# query or a query with thousands of terms burns CPU in the parser and in
+# the backend MATCH/ILIKE expression on every request — the result-limit
+# never gets a chance to apply.
+MAX_QUERY_LENGTH = 256
+MAX_QUERY_TERMS = 16
+
+
+def validate_search_query(query: str, *, has_filters: bool = False) -> None:
+    """Reject malformed, oversized, or empty search queries.
+
+    Shared by the message and user search paths so every endpoint answers
+    the same 400-class error (F16: previously messages and users disagreed
+    on empty-query behavior — one returned empty results, the other fell
+    through to a whole-directory LIKE scan).
+
+    An empty text query is still valid when structured filters carry the
+    request (mentions_user / has_attachments): filter-only search is a
+    real capability, so ``has_filters`` opts out of the empty check only.
+    """
+    if not isinstance(query, str):
+        raise InvalidQuerySyntaxError("Query must be a string")
+    if not query.strip():
+        if has_filters:
+            return
+        raise InvalidQuerySyntaxError("Query must not be empty")
+    if len(query) > MAX_QUERY_LENGTH:
+        raise InvalidQuerySyntaxError(
+            f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters"
+        )
+    if len(query.split()) > MAX_QUERY_TERMS:
+        raise InvalidQuerySyntaxError(
+            f"Query exceeds maximum of {MAX_QUERY_TERMS} terms"
+        )
 
 
 class MessageSearchMixin(SearchManagerBase):
@@ -27,6 +62,11 @@ class MessageSearchMixin(SearchManagerBase):
                 max_allowed=max_limit,
                 requested=limit,
             )
+
+        validate_search_query(
+            query,
+            has_filters=(mentions_user is not None or has_attachments is not None),
+        )
 
         self._check_rate_limit(user_id)
 
@@ -103,6 +143,11 @@ class MessageSearchMixin(SearchManagerBase):
                 max_allowed=max_limit,
                 requested=limit,
             )
+
+        validate_search_query(
+            query,
+            has_filters=(mentions_user is not None or has_attachments is not None),
+        )
 
         self._check_rate_limit(user_id)
 

@@ -3,6 +3,7 @@
 import pytest
 from src.core.search.exceptions import (
     SearchLimitError,
+    SearchQueryError,
     SearchRateLimitError,
 )
 
@@ -16,9 +17,9 @@ class TestSearchErrors:
             search_manager.search_messages(1, "test", limit=20)
 
     def test_search_empty_query(self, search_manager):
-        """Empty search query."""
-        results = search_manager.search_messages(1, "")
-        assert len(results) == 0
+        """F16: empty queries raise the shared 400-class error."""
+        with pytest.raises(SearchQueryError):
+            search_manager.search_messages(1, "")
 
     def test_search_no_access(self, search_manager):
         """Search only accessible conversations."""

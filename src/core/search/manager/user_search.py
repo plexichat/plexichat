@@ -1,6 +1,7 @@
 from typing import List, Optional, Set
 
 from .base import SearchManagerBase
+from .message_search import validate_search_query
 from ..exceptions import SearchLimitError
 from ..models import IndexedUser, UserSearchResult, UserSearchResultPage
 
@@ -119,6 +120,12 @@ class UserSearchMixin(SearchManagerBase):
                 requested=limit,
             )
 
+        # F16: empty/whitespace queries must NOT fall through to the
+        # supplemental directory fallback, whose ``LIKE '%q%'`` degenerates
+        # to a whole-directory scan for an empty needle. Every endpoint now
+        # answers an empty query with the same 400-class error.
+        validate_search_query(query)
+
         self._check_rate_limit(user_id)
 
         results = self._indexer.search_users(query, limit * 2, offset)
@@ -149,6 +156,10 @@ class UserSearchMixin(SearchManagerBase):
                 max_allowed=max_limit,
                 requested=limit,
             )
+
+        # F16: same empty/oversized-query guard as the non-paged path so
+        # both user-search endpoints agree with message search.
+        validate_search_query(query)
 
         self._check_rate_limit(user_id)
 

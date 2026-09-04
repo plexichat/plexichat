@@ -5,6 +5,7 @@ Tests for user search functionality.
 import pytest
 import uuid
 
+from src.core.search.exceptions import SearchQueryError
 from src.core.search.models import UserSearchResult, IndexedUser
 
 
@@ -32,12 +33,12 @@ class TestUserSearchBasic:
         assert isinstance(results, list)
 
     def test_search_users_empty_query(self, db_and_modules):
-        """Test search with empty query."""
+        """F16: empty queries raise the shared 400-class error instead of
+        degenerating into a whole-directory LIKE scan."""
         db, auth, messaging, servers, search = db_and_modules
 
-        results = search.search_users(1, "")
-
-        assert results == []
+        with pytest.raises(SearchQueryError):
+            search.search_users(1, "")
 
     def test_search_users_result_type(self, db_and_modules):
         """Test search results are UserSearchResult."""
