@@ -220,8 +220,10 @@ services:
   client:
     restart: unless-stopped
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat-client}/nginx:${CLIENT_VERSION:-latest}
-    env_file:
-      - .env
+    # F8: no env_file here. The static nginx image reads no environment
+    # variables (its config is baked in and config.js is bind-mounted), so
+    # injecting the shared .env would expose DB/Valkey/S3/restic secrets to
+    # the perimeter service with the largest attack surface for zero benefit.
     depends_on:
       backend:
         condition: service_started
