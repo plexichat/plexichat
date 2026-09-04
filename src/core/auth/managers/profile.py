@@ -25,7 +25,22 @@ class ProfileMixin(AuthManagerProtocol):
         username: Optional[str] = None,
         email: Optional[str] = None,
         permissions: Optional[Dict[str, bool]] = None,
+        allow_wildcards: bool = False,
     ) -> User:
+        """Update user profile fields.
+
+        Args:
+            user_id: ID of the user to update.
+            username: New username (optional).
+            email: New email address (optional).
+            permissions: Replacement permission map (optional).
+            allow_wildcards: Explicit opt-in for privileged callers
+                (admin provisioning, self-test) to persist wildcard keys
+                (``"*"`` and ``"<category>.*"``). Defaults to ``False`` so
+                user-controlled paths can never escalate via wildcards (M5).
+                Even when enabled, wildcards are validated against known
+                permission categories and bot restrictions still apply.
+        """
         updates = []
         params = []
         if username:
@@ -83,17 +98,58 @@ class ProfileMixin(AuthManagerProtocol):
                 )
                 params.extend([email_index, email_encrypted, 0])
         if permissions is not None:
-            from ..permissions import PERMISSIONS
+            from ..permissions import PERMISSIONS, BOT_RESTRICTED_PERMISSIONS
+
+            valid_prefixes = {p.split(".")[0] for p in PERMISSIONS}
+            current_user_for_perms = self.get_user(user_id)
+            is_bot = bool(
+                current_user_for_perms is not None
+                and getattr(current_user_for_perms, "account_type", None)
+                and str(
+                    getattr(current_user_for_perms.account_type, "value", "")
+                    or current_user_for_perms.account_type
+                ).lower()
+                == "bot"
+            )
 
             for key, value in permissions.items():
-                if key == "*" or key.endswith(".*"):
+                is_wildcard = key == "*" or key.endswith(".*")
+                if is_wildcard and not allow_wildcards:
                     raise InvalidPermissionError(
                         f"Wildcard permissions are not accepted: {key}"
                     )
+                if is_wildcard and allow_wildcards:
+                    # Privileged path: still validate shape. "*" grants
+                    # everything; "<category>.*" must name a known category
+                    # so typos like "admin.everything" cannot be persisted.
+                    if key != "*":
+                        prefix = key[:-2]
+                        if not prefix or prefix not in valid_prefixes:
+                            raise InvalidPermissionError(f"Unknown permission: {key}")
+                    if not isinstance(value, bool):
+                        raise InvalidPermissionError(
+                            f"Permission {key} must be a boolean"
+                        )
+                    if is_bot and value:
+                        if key == "*":
+                            raise InvalidPermissionError(
+                                "Bots cannot have permission: *"
+                            )
+                        for restricted in BOT_RESTRICTED_PERMISSIONS:
+                            if restricted == key or restricted.startswith(
+                                key[:-2] + "."
+                            ):
+                                raise InvalidPermissionError(
+                                    f"Bots cannot have permission: {restricted} "
+                                    f"(via {key})"
+                                )
+                    continue
                 if key not in PERMISSIONS:
                     raise InvalidPermissionError(f"Unknown permission: {key}")
                 if not isinstance(value, bool):
                     raise InvalidPermissionError(f"Permission {key} must be a boolean")
+                if is_bot and value and key in BOT_RESTRICTED_PERMISSIONS:
+                    raise InvalidPermissionError(f"Bots cannot have permission: {key}")
             updates.append("permissions = ?")
             params.append(permissions_to_json(permissions))
 
@@ -331,11 +387,21 @@ class ProfileMixin(AuthManagerProtocol):
 
         return result
 
-    def grant_permission(self, user_id: int, permission: str) -> bool:
+    def grant_permission(
+        self, user_id: int, permission: str, allow_wildcards: bool = False
+    ) -> bool:
+        """Grant a single permission to a user.
+
+        Wildcard keys (``"*"``, ``"<category>.*"``) are rejected unless
+        ``allow_wildcards=True`` is passed explicitly by a privileged
+        caller (admin provisioning, self-test). Ordinary callers must
+        leave the default ``False`` so a compromised/compromisable path
+        can never mint admin-equivalent grants.
+        """
         user = self.get_user(user_id)
         if not user:
             return False
         perms = user.permissions.copy()
         perms[permission] = True
-        self.update_user(user_id, permissions=perms)
+        self.update_user(user_id, permissions=perms, allow_wildcards=allow_wildcards)
         return True

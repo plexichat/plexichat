@@ -14,6 +14,7 @@ def update_user(
     username: Optional[str] = None,
     email: Optional[str] = None,
     permissions: Optional[Dict[str, bool]] = None,
+    allow_wildcards: bool = False,
 ) -> User:
     """
     Update user profile information.
@@ -23,6 +24,9 @@ def update_user(
         username: New username (optional)
         email: New email address (optional)
         permissions: New permissions (optional)
+        allow_wildcards: Privileged opt-in to persist "*" / "<cat>.*".
+            Default False (M5 hardening). Only trusted provisioning code
+            may pass True.
 
     Returns:
         Updated User object
@@ -30,7 +34,7 @@ def update_user(
     return (
         _get_auth_manager()
         .get_instance()
-        .update_user(user_id, username, email, permissions)
+        .update_user(user_id, username, email, permissions, allow_wildcards)
     )
 
 

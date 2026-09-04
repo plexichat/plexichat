@@ -71,6 +71,19 @@ def change_password(user_id: int, old_password: str, new_password: str) -> bool:
     )
 
 
+def verify_user_password(user_id: int, password: str) -> bool:
+    """Re-confirm a user's password without creating a session.
+
+    Used by sensitive-action challenges (password/email change, 2FA
+    setup) so they do not mint orphaned sessions via ``login()``.
+    Returns False (never raises) when the user is missing or the
+    password does not match; callers map that to 401/403.
+    """
+    return bool(
+        _get_auth_manager().get_instance().verify_user_password(user_id, password)
+    )
+
+
 def request_password_reset(email: str) -> bool:
     """Request password reset email. Returns False if email not configured."""
     return _get_auth_manager().get_instance().request_password_reset(email)
@@ -204,6 +217,7 @@ def validate_email(email: str) -> bool:
 
 __all__ = [
     "change_password",
+    "verify_user_password",
     "request_password_reset",
     "reset_password",
     "validate_password",

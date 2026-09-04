@@ -407,6 +407,14 @@ def set_admin(db: Any, user_id: int, admin_status: bool) -> bool:
             "UPDATE auth_users SET permissions = ? WHERE id = ?",
             (permissions_to_json(perms), user_id),
         )
+        try:
+            from src.core.database import cache_delete
+
+            invalidate_pattern("token_verify:*")
+            invalidate_pattern("user_data:*")
+            cache_delete(f"user_profile:{user_id}")
+        except Exception:
+            pass
         return True
     except Exception as e:
         logger.error(f"Failed to set admin status: {e}")

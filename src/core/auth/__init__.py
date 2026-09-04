@@ -119,6 +119,7 @@ from .passkeys import (
 )
 from .passwords import (
     change_password,
+    verify_user_password,
     request_password_reset,
     reset_password,
     validate_password,
@@ -313,6 +314,7 @@ __all__ = [
     "rename_passkey",
     # Password
     "change_password",
+    "verify_user_password",
     "request_password_reset",
     "reset_password",
     "validate_password",
