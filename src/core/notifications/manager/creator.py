@@ -291,6 +291,14 @@ class NotificationCreatorMixin(NotificationProtocol):
         if not settings or settings.level == NotificationLevel.NOTHING:
             return False
 
+        # M2: the per-user ``dm_notifications`` preference was stored and
+        # served but never consulted, so a user who disabled DM
+        # notifications still got mentioned in direct messages. There is no
+        # server scope on a DM, so server_id is None exactly there; a global
+        # level of NOTHING above already silenced those users.
+        if server_id is None and not settings.dm_notifications:
+            return False
+
         if mention_type in (MentionType.EVERYONE, MentionType.HERE):
             if settings.suppress_everyone:
                 return False
