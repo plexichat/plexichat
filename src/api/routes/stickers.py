@@ -332,9 +332,9 @@ async def delete_sticker(
     summary="Track sticker usage",
 )
 async def send_sticker_usage(
+    request: Request,
     sticker_id: str,
     message_id: str = Form(...),
-    request: Optional[Request] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Record sticker usage."""
