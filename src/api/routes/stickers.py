@@ -21,7 +21,10 @@ from src.core.stickers.exceptions import (
     PackLimitError,
     PackNotFoundError,
     PermissionDeniedError,
+    StickerNotFoundError,
 )
+from src.core import ratelimit
+from fastapi import Request
 
 # Hard ceiling applied at the HTTP boundary so a single request cannot buffer
 # an unbounded body into memory before the manager's own size check runs.
@@ -305,6 +308,10 @@ async def delete_sticker(
             await _dispatch_stickers_update(server_id, current_user.user_id)
 
         return {"success": True}
+    except StickerNotFoundError:
+        # M2: a concurrent delete between the get and remove must surface
+        # as 404, not the generic 500 from the catch-all below.
+        raise HTTPException(status_code=404, detail="Sticker not found")
     except PermissionDeniedError:
         raise HTTPException(
             status_code=403,
@@ -327,12 +334,33 @@ async def delete_sticker(
 async def send_sticker_usage(
     sticker_id: str,
     message_id: str = Form(...),
+    request: Optional[Request] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Record sticker usage."""
     stickers_mod = api.get_stickers()
     if not stickers_mod:
         raise HTTPException(status_code=500, detail="Stickers module not available")
+
+    # M3: usage tracking performs a DB write per call and was unlimited —
+    # a tight loop amplified writes (plus the notification fan-out). Cap it
+    # with the shared limiter, mirroring the reactions route's budget.
+    rl_result = ratelimit.check_rate_limit(
+        user_id=current_user.user_id,
+        route="POST /stickers/send",
+        is_internal=getattr(request.state, "is_internal", False) if request else False,
+    )
+    if not rl_result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": f"Rate limited. Try again in {rl_result.retry_after}s",
+                }
+            },
+            headers={"Retry-After": str(rl_result.retry_after)},
+        )
 
     try:
         sid = int(sticker_id)
@@ -370,7 +398,12 @@ async def get_sticker_suggestions(
     if not stickers_mod:
         raise HTTPException(status_code=500, detail="Stickers module not available")
 
-    sid = int(server_id) if server_id else None
+    # M1: parse inside the try so a non-numeric server_id answers 400
+    # instead of an unhandled ValueError -> 500.
+    try:
+        sid = int(server_id) if server_id else None
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid server ID")
 
     try:
         suggestions = stickers_mod.get_sticker_suggestions(
