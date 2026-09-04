@@ -7,8 +7,6 @@ composes this mixin, and the module-level helpers are re-exported from
 """
 
 import asyncio
-import hashlib
-import hmac
 import json
 import secrets
 import time
@@ -188,13 +186,17 @@ class ArtifactsEvalMixin:
                         "actor_id": 0,
                     }
                 ).encode("utf-8")
-                op_sig = hmac.new(
-                    shared_key.encode("utf-8"), op_payload, hashlib.sha256
-                ).hexdigest()
+                # Inbound federation auth is HMAC over (body, timestamp,
+                # nonce) with replay-nonce consumption: send all three
+                # headers or verification 401s by design.
+                from src.core.selftest.services.endpoints.federation import (
+                    federation_headers,
+                )
+
                 op_resp = session.post(
                     f"{base}/api/v1/federation/artifact-op",
                     data=op_payload,
-                    headers={"x-plexijoin-signature": op_sig},
+                    headers=federation_headers(shared_key, op_payload),
                     timeout=10,
                 )
                 self._check(
@@ -210,13 +212,10 @@ class ArtifactsEvalMixin:
                         "artifact": {"id": 123456789, "title": "x"},
                     }
                 ).encode("utf-8")
-                ev_sig = hmac.new(
-                    shared_key.encode("utf-8"), ev_payload, hashlib.sha256
-                ).hexdigest()
                 ev_resp = session.post(
                     f"{base}/api/v1/federation/artifact-event",
                     data=ev_payload,
-                    headers={"x-plexijoin-signature": ev_sig},
+                    headers=federation_headers(shared_key, ev_payload),
                     timeout=10,
                 )
                 self._check(

@@ -145,24 +145,46 @@ class CoreMixin(EndpointTesterBase):
                 )
                 form_data["duration_ms"] = "5000"
             else:
-                if "/stickers" in path or "/emojis" in path:
+                if "/soundboard" in path and method == "POST":
+                    # Sound upload takes multipart ``file`` (audio) + ``name``.
+                    # Synthesize a minimal valid WAV (RIFF magic passes the
+                    # media pipeline's container allow-list).
+                    import io as _io
+                    import wave as _wave
+
+                    file_field = "file"
+                    _buf = _io.BytesIO()
+                    with _wave.open(_buf, "wb") as _wf:
+                        _wf.setnchannels(1)
+                        _wf.setsampwidth(2)
+                        _wf.setframerate(8000)
+                        _wf.writeframes(b"\x00\x00" * 800)
+                    files = {
+                        "file": (
+                            "test_sound.wav",
+                            _buf.getvalue(),
+                            "audio/wav",
+                        )
+                    }
+                elif "/stickers" in path or "/emojis" in path:
                     file_field = "image"
                 else:
                     file_field = "file"
-                from PIL import Image
-                import io as _io
+                if files is None:
+                    from PIL import Image
+                    import io as _io
 
-                _img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
-                _buf = _io.BytesIO()
-                _img.save(_buf, format="PNG")
-                png = _buf.getvalue()
-                files = {
-                    file_field: (
-                        "test_file.png",
-                        png,
-                        "image/png",
-                    )
-                }
+                    _img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+                    _buf = _io.BytesIO()
+                    _img.save(_buf, format="PNG")
+                    png = _buf.getvalue()
+                    files = {
+                        file_field: (
+                            "test_file.png",
+                            png,
+                            "image/png",
+                        )
+                    }
 
                 schema = content_types["multipart/form-data"].get("schema", {})
                 props = schema.get("properties", {})
@@ -172,7 +194,11 @@ class CoreMixin(EndpointTesterBase):
                             p_schema, p_name
                         )
 
-                if "/stickers" in path or "/emojis" in path:
+                if (
+                    "/stickers" in path
+                    or "/emojis" in path
+                    or ("/soundboard" in path and method == "POST")
+                ):
                     name_val = form_data.get("name", "")
                     if not name_val or len(str(name_val)) < 2:
                         form_data["name"] = "test_asset_" + secrets.token_hex(4)
@@ -203,7 +229,7 @@ class CoreMixin(EndpointTesterBase):
 
         if (
             json_body
-            and ("/emojis" in path or "/stickers" in path)
+            and ("/emojis" in path or "/stickers" in path or "/soundboard" in path)
             and "search" not in path
         ):
             if "name" not in json_body or not json_body.get("name"):
@@ -302,6 +328,63 @@ class CoreMixin(EndpointTesterBase):
                 except Exception as exc:
                     logger.debug(f"Auto-unblock failed (non-fatal): {exc}")
 
+            # Token rotation (F3): POST /auth/refresh mints a fresh secret
+            # and invalidates the old bearer immediately. A real client must
+            # adopt the rotated token atomically, so the runner does the same
+            # here instead of excluding the endpoint: adopt the new token for
+            # the session that performed the refresh (main or other), then
+            # prove the old token is dead (rotation integrity probe).
+            if success and method == "POST" and url_path.endswith("/auth/refresh"):
+                try:
+                    _refresh_json = resp.json()
+                    _new_token = None
+                    if isinstance(_refresh_json, dict):
+                        _new_token = _refresh_json.get("token") or _refresh_json.get(
+                            "access_token"
+                        )
+                    _old_auth = active_session.headers.get("Authorization")
+                    if _new_token:
+                        active_session.headers.update(
+                            {"Authorization": f"Bearer {_new_token}"}
+                        )
+                        if active_session is self.ctx.session:
+                            self.ctx.token = _new_token
+                        elif active_session is self.ctx.other_session:
+                            self.ctx.other_token = _new_token
+                        # Rotation integrity: the pre-refresh bearer must now
+                        # be rejected. A stale-token accept is a security
+                        # regression (intercepted token stays valid).
+                        if _old_auth and _old_auth != f"Bearer {_new_token}":
+                            _probe = None
+                            try:
+                                _probe = self.ctx.make_session()
+                                _probe.headers.update({"Authorization": _old_auth})
+                                _probe_resp = _probe.get(
+                                    f"{self.ctx.base_url}/api/v1/users/@me",
+                                    timeout=5,
+                                )
+                                self.ctx.results.append(
+                                    {
+                                        "method": "GET",
+                                        "path": "/api/v1/users/@me (stale token after refresh)",
+                                        "status_code": _probe_resp.status_code,
+                                        "duration_ms": 0,
+                                        "success": _probe_resp.status_code == 401,
+                                        "label": "refresh_rotation_integrity",
+                                    }
+                                )
+                            except Exception:
+                                pass
+                            finally:
+                                if _probe is not None:
+                                    try:
+                                        _probe.close()
+                                    except Exception:
+                                        pass
+                            logger.debug("Adopted rotated token after /auth/refresh")
+                except Exception as _refresh_e:
+                    logger.debug(f"Refresh token adoption note: {_refresh_e}")
+
             # Capture webhook ID from auto-loop POST /webhooks so subsequent
             # PATCH /webhooks/{id} and POST execute tests use the right ID.
             # Always capture (even if setup left a stale value) so the latest
@@ -325,6 +408,20 @@ class CoreMixin(EndpointTesterBase):
                 except Exception:
                     pass
 
+            # Capture soundboard sound ID from auto-loop upload so subsequent
+            # GET/PATCH/PUT/play tests address a real sound instead of a
+            # fuzzed id (which 404s by design).
+            if success and method == "POST" and path.endswith("/soundboard"):
+                try:
+                    sound_data = resp.json()
+                    if isinstance(sound_data, dict):
+                        sid = sound_data.get("id")
+                        if sid:
+                            self.ctx.test_soundboard_id = int(sid)
+                            logger.debug(f"Captured soundboard sound id={sid}")
+                except Exception:
+                    pass
+
             # Capture artifact ID from auto-loop POST /artifacts so subsequent
             # GET/PATCH/DELETE /artifacts/{id} tests use a real, existing id.
             if success and method == "POST" and path == "/api/v1/artifacts":
@@ -344,6 +441,11 @@ class CoreMixin(EndpointTesterBase):
                 logger.error(
                     f"FAILED: {method:<6} {path:<40} -> Status {resp.status_code} ({duration:.1f}ms)"
                 )
+                if resp.status_code in (400, 401, 403):
+                    try:
+                        logger.error(f"  Body: {resp.text[:300]}")
+                    except Exception:
+                        pass
                 if resp.status_code == 400:
                     logger.error(f"  Validation Error: {resp.text[:200]}")
                 if traceback_data:

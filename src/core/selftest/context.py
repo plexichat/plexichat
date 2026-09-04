@@ -36,6 +36,7 @@ class SelfTestContext:
         self.test_user_id: Optional[int] = None
         self.test_other_user_id: Optional[int] = None
         self.test_third_user_id: Optional[int] = None
+        self.test_third_username: Optional[str] = None
         self.test_server_id: Optional[int] = None
         self.test_channel_id: Optional[int] = None
         self.test_conversation_id: Optional[int] = None
@@ -58,6 +59,9 @@ class SelfTestContext:
         self.test_application_id: Optional[int] = None
         self.test_bot_id: Optional[int] = None
         self.test_sticker_id: Optional[int] = None
+        self.test_device_id: Optional[int] = None
+        self.test_device_fingerprint: Optional[str] = None
+        self.test_soundboard_id: Optional[int] = None
         self.test_friend_request_id: Optional[int] = None
         self.test_bot_request_id: Optional[int] = None
         self.test_passkey_challenge_id: Optional[str] = None

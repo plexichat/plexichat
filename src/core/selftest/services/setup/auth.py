@@ -196,7 +196,14 @@ class AuthSetupMixin(SetupServiceBase):
 
         resp = self.ctx.session.post(
             f"{self.ctx.base_url}/api/v1/auth/login",
-            json={"username": username, "password": password},
+            json={
+                "username": username,
+                "password": password,
+                # Register a stable device fingerprint so device lifecycle
+                # endpoints (trust/untrust/rename/revoke) have a real
+                # device to address instead of fuzzed ids (404 by design).
+                "device_fingerprint": "selftest-device-01",
+            },
             timeout=10,
         )
 
@@ -211,6 +218,23 @@ class AuthSetupMixin(SetupServiceBase):
             return False
         self.ctx.session.headers.update({"Authorization": f"Bearer {self.ctx.token}"})
         logger.debug("Logged in and token retrieved")
+
+        # Capture the tracked device row for device lifecycle coverage.
+        try:
+            _dev_db = api.get_db()
+            if _dev_db:
+                _dev_row = _dev_db.fetch_one(
+                    "SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ? ORDER BY id DESC LIMIT 1",
+                    (self.ctx.test_user_id, "selftest-device-01"),
+                )
+                if _dev_row:
+                    self.ctx.test_device_id = int(
+                        _dev_row["id"] if isinstance(_dev_row, dict) else _dev_row[0]
+                    )
+                    self.ctx.test_device_fingerprint = "selftest-device-01"
+                    logger.debug(f"Captured test device ID: {self.ctx.test_device_id}")
+        except Exception as _dev_e:
+            logger.debug(f"Device capture note: {_dev_e}")
 
         verify = self.ctx.session.get(
             f"{self.ctx.base_url}/api/v1/users/@me", timeout=5
@@ -286,6 +310,7 @@ class AuthSetupMixin(SetupServiceBase):
                             except Exception:
                                 pass
                         self.ctx.test_third_user_id = third_user_id
+                        self.ctx.test_third_username = third_username
                         logger.debug(
                             f"Registered third user via API: {third_username} (id={third_user_id})"
                         )

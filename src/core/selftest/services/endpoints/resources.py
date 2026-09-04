@@ -22,6 +22,74 @@ class ResourceMixin(EndpointTesterBase):
 
         delete_tests = []
 
+        # Device revoke first: log in on a throwaway fingerprint, then
+        # revoke that device. Revoking only affects sessions created from
+        # it, so the main session is untouched. Covers DELETE
+        # /auth/devices/{device_id} with a real id (fuzzed ids 404).
+        try:
+            import src.api as _api_dev
+
+            _dev_session = self.ctx.make_session()
+            try:
+                _secret = _api_dev.get_internal_secret()
+            except Exception:
+                _secret = None
+            if _secret:
+                _dev_session.headers.update({"X-Plexichat-Internal-Secret": _secret})
+            _login = _dev_session.post(
+                f"{self.ctx.base_url}/api/v1/auth/login",
+                json={
+                    "username": self.ctx.config.get("test_user", {}).get(
+                        "username", "selftest_admin"
+                    ),
+                    "password": self.ctx._test_password,
+                    "device_fingerprint": "selftest-device-delete",
+                },
+                timeout=10,
+            )
+            if _login.status_code in (200, 201):
+                _db = _api_dev.get_db()
+                _did = None
+                if _db:
+                    try:
+                        _drow = _db.fetch_one(
+                            "SELECT id FROM auth_devices WHERE user_id = ? "
+                            "AND fingerprint = ? ORDER BY id DESC LIMIT 1",
+                            (
+                                self.ctx.test_user_id,
+                                "selftest-device-delete",
+                            ),
+                        )
+                        if _drow:
+                            _did = int(
+                                _drow["id"] if isinstance(_drow, dict) else _drow[0]
+                            )
+                    except Exception:
+                        pass
+                _tok = _login.json().get("token") or _login.json().get("access_token")
+                if _did and _tok:
+                    _dev_session.headers.update({"Authorization": f"Bearer {_tok}"})
+                    delete_tests.append(
+                        (
+                            "DELETE",
+                            f"/api/v1/auth/devices/{_did}",
+                            "device",
+                            _dev_session,
+                        )
+                    )
+                else:
+                    try:
+                        _dev_session.close()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    _dev_session.close()
+                except Exception:
+                    pass
+        except Exception as _dev_e:
+            logger.debug(f"Device delete setup note: {_dev_e}")
+
         if self.ctx.test_message_id and self.ctx.test_channel_id:
             delete_tests.append(
                 (
@@ -85,12 +153,15 @@ class ResourceMixin(EndpointTesterBase):
                 )
             )
 
-        for method, path, label in delete_tests:
+        for _entry in delete_tests:
+            if len(_entry) == 4:
+                method, path, label, _sess = _entry
+            else:
+                method, path, label = _entry
+                _sess = self.ctx.session
             start = time.time()
             try:
-                resp = self.ctx.session.request(
-                    method, f"{self.ctx.base_url}{path}", timeout=5
-                )
+                resp = _sess.request(method, f"{self.ctx.base_url}{path}", timeout=5)
                 duration = (time.time() - start) * 1000
                 success = 200 <= resp.status_code < 300
                 self.ctx.results.append(
@@ -129,6 +200,12 @@ class ResourceMixin(EndpointTesterBase):
             if success:
                 if label == "delete_message":
                     self.ctx.test_message_id = None
+                elif label == "delete_device":
+                    self.ctx.test_device_id = None
+                    try:
+                        _sess.close()
+                    except Exception:
+                        pass
                 elif label == "delete_webhook":
                     self.ctx.test_webhook_id = None
                 elif label == "delete_channel":

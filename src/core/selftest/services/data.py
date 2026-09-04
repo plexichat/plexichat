@@ -99,14 +99,11 @@ class DataGenerator:
                     else self.generate_snowflake()
                 )
             elif "/threads/" in path and "/members/" in path:
-                # Threads add-member should target a valid existing user not yet in thread.
-                # Use other_user (already member, idempotent 200) or a fresh test user.
+                # Threads add-member must target a server member. other_user
+                # is a member (idempotent 200); the third user is not, so
+                # prefer the member identity.
                 if self.ctx.test_other_user_id:
-                    # Prefer a third user if available, else other_user (idempotent)
-                    val = str(
-                        getattr(self.ctx, "test_third_user_id", None)
-                        or self.ctx.test_other_user_id
-                    )
+                    val = str(self.ctx.test_other_user_id)
                 else:
                     val = _gen_snowflake()
             elif "/invites/" in path or "reports/users" in path:
@@ -114,6 +111,13 @@ class DataGenerator:
                     str(self.ctx.test_other_user_id)
                     if self.ctx.test_other_user_id
                     else _gen_snowflake()
+                )
+            elif "/blocked-users" in path:
+                # Moderation hierarchy refuses actions against admins; the
+                # main session acts as an admin, so target the non-admin
+                # third user (falls back to a snowflake when absent).
+                val = str(
+                    getattr(self.ctx, "test_third_user_id", None) or _gen_snowflake()
                 )
             else:
                 val = str(self.ctx.test_user_id)
@@ -131,6 +135,8 @@ class DataGenerator:
             val = str(self.ctx.test_ticket_id or _gen_snowflake())
         elif "token" in name_low and ("access" in path or "security" in path):
             val = str(self.ctx.test_access_token_id or _gen_snowflake())
+        elif "device" in name_low and "id" in name_low:
+            val = str(getattr(self.ctx, "test_device_id", None) or _gen_snowflake())
         elif "thread" in name_low:
             val = str(self.ctx.test_thread_id or _gen_snowflake())
         elif "poll" in name_low:
@@ -200,6 +206,8 @@ class DataGenerator:
                 val = "smile"
         elif "sticker" in name_low:
             val = str(self.ctx.test_sticker_id or _gen_snowflake())
+        elif "sound" in name_low:
+            val = str(getattr(self.ctx, "test_soundboard_id", None) or _gen_snowflake())
         elif "application" in name_low or "app_id" in name_low:
             val = str(self.ctx.test_application_id or _gen_snowflake())
         elif "notification" in name_low:
@@ -650,14 +658,44 @@ class DataGenerator:
             if "features" in path and method == "PUT":
                 body["rate_limit_tier"] = "standard"
 
+            if "users/@me/channels" in path and method == "POST":
+                # DM creation needs a real, DM-accepting recipient: the
+                # other test user (self-DMs are 400, random ids 404).
+                if self.ctx.test_other_user_id:
+                    body["recipient_id"] = str(self.ctx.test_other_user_id)
+
+            if "features/bookmarks" in path and method == "POST":
+                # Bookmarking requires access to a real message: point at
+                # the seeded reference message (random ids 403 by design).
+                if self.ctx.test_message_id:
+                    body["message_id"] = str(self.ctx.test_message_id)
+                if self.ctx.test_conversation_id:
+                    body["conversation_id"] = str(self.ctx.test_conversation_id)
+
+            if "auth/devices/trust" in path or "auth/devices/untrust" in path:
+                # Trust operations only succeed for fingerprints this
+                # account authenticated from; use the seeded test device.
+                if getattr(self.ctx, "test_device_fingerprint", None):
+                    body["fingerprint"] = self.ctx.test_device_fingerprint
+
             if "tier" in path and method == "PUT":
                 body["tier"] = "standard"
 
             if "access-tokens" in path and "/rotate" in path and method == "POST":
-                body["token"] = secrets.token_urlsafe(32)
+                # Rotation values are always generated server-side;
+                # caller-supplied values are rejected with 400 by design.
+                # Send an empty body so the endpoint is exercised (200) and
+                # the rotation itself is validated.
+                body.pop("token", None)
 
             if "slowmode" in path and method == "PUT":
                 body["interval_ms"] = 5000
+
+            if "cross-worker-tuning" in path and method == "PATCH":
+                # Runtime tuning constants are bounds-validated server-side
+                # (see _TUNING_BOUNDS); send in-range values so the endpoint
+                # itself (200 + audit) is exercised instead of the validator.
+                body = {"glide_request_timeout_ms": 1000}
 
             if "admin-users" in path and "/toggle-status" in path and method == "POST":
                 if self.ctx.test_other_user_id:
@@ -899,6 +937,9 @@ class DataGenerator:
                     return "ip"
                 if "emoji" in pn and "id" not in pn:
                     return "smile"
+                if "fingerprint" in pn:
+                    # Device fingerprints require min_length=8 server-side.
+                    return "selftest-fp-" + secrets.token_hex(4)
 
             fmt = schema.get("format")
             if fmt == "email":
@@ -912,7 +953,28 @@ class DataGenerator:
             if "id" in title or "snowflake" in title:
                 return str(self.generate_snowflake())
 
-            return "test"
+            value = "test"
+            min_len = schema.get("minLength") or 0
+            try:
+                min_len = int(min_len)
+            except (TypeError, ValueError):
+                min_len = 0
+            if min_len and len(value) < min_len:
+                # Pad to the schema minimum without breaking emails.
+                pad = "a" * (min_len - len(value))
+                if "@" in value:
+                    local, _, domain = value.partition("@")
+                    value = f"{local}{pad}@{domain}"
+                else:
+                    value = f"{value}{pad}"
+            max_len = schema.get("maxLength")
+            try:
+                max_len = int(max_len) if max_len is not None else None
+            except (TypeError, ValueError):
+                max_len = None
+            if max_len and len(value) > max_len:
+                value = value[:max_len]
+            return value
 
         elif type_ in ("integer", "number"):
             if prop_name:
@@ -934,6 +996,26 @@ class DataGenerator:
                         return self.ctx.test_automod_rule_id or 1
                     if "thread" in pn:
                         return self.ctx.test_thread_id or 1
+            # Honor schema bounds for generated numbers (e.g. tuning ranges
+            # like glide_request_timeout_ms [10, 600000]); the old constant
+            # ``1`` tripped every minimum above 1.
+            minimum = schema.get("minimum")
+            maximum = schema.get("maximum")
+            try:
+                minimum = None if minimum is None else int(minimum)
+            except (TypeError, ValueError):
+                minimum = None
+            try:
+                maximum = None if maximum is None else int(maximum)
+            except (TypeError, ValueError):
+                maximum = None
+            if minimum is not None or maximum is not None:
+                if minimum is not None and maximum is not None:
+                    return min(max(1, minimum), maximum)
+                if minimum is not None:
+                    return max(1, minimum)
+                assert maximum is not None  # narrowed: not None by the branch guard
+                return min(1, maximum)
             return 1
 
         elif type_ == "boolean":

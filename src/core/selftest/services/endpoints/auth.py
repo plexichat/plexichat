@@ -271,3 +271,38 @@ class AuthMixin(EndpointTesterBase):
                     logger.debug("Re-authenticated main session after revoke-all")
         except Exception as _reauth_e:
             logger.warning(f"Failed to re-authenticate main session: {_reauth_e}")
+
+    def test_verify_email_contract(self) -> None:
+        """Pin the email-verification negative contract.
+
+        A bogus token must be rejected with 400 (never 2xx, never 500).
+        The positive path requires an SMTP-issued token, which the API
+        suite cannot mint; the rejection contract is the testable surface.
+        """
+        if not self.ctx.standalone_mode:
+            return
+        try:
+            resp = self.ctx.session.post(
+                f"{self.ctx.base_url}/api/v1/auth/verify-email",
+                json={"token": "selftest-bogus-token"},
+                timeout=5,
+            )
+            ok = resp.status_code == 400 and "expired" in resp.text.lower()
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": "/api/v1/auth/verify-email",
+                    "status_code": resp.status_code,
+                    "duration_ms": 0,
+                    "success": ok,
+                    "label": "verify_email_negative",
+                }
+            )
+            if ok:
+                logger.info("Verify-email negative contract PASSED")
+            else:
+                logger.warning(
+                    f"Verify-email negative -> {resp.status_code}: {resp.text[:200]}"
+                )
+        except Exception as e:
+            logger.warning(f"Verify-email negative exception: {e}")

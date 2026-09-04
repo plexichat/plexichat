@@ -155,6 +155,32 @@ class ChannelHandler:
                         "UPDATE srv_channels SET conversation_id = ? WHERE id = ?",
                         (conv.id, channel_id),
                     )
+                    # The creator passed channels.manage and owns this
+                    # channel: seed them as the conversation's first
+                    # participant (OWNER) so they can read/send in the
+                    # channel they just created. Without this, the owner
+                    # can create channels but gets 404/denied on every
+                    # message operation (only joiners were added via the
+                    # member-join path). Uses the participant service
+                    # directly: the manager-level add requires an existing
+                    # owner/admin participant, which cannot exist yet.
+                    try:
+                        from src.core.messaging.exceptions import (
+                            ParticipantExistsError,
+                        )
+                        from src.core.messaging.models import ParticipantRole
+                        from src.core.messaging.services.participant import (
+                            ParticipantService,
+                        )
+
+                        try:
+                            ParticipantService(self.db).add_participant(
+                                conv.id, user_id, ParticipantRole.OWNER
+                            )
+                        except ParticipantExistsError:
+                            pass
+                    except Exception as _part_e:
+                        logger.debug(f"Creator participant seed note: {_part_e}")
             except Exception:
                 if conv and hasattr(self.manager._messaging, "delete_conversation"):
                     try:

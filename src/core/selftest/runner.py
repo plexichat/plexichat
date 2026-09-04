@@ -310,6 +310,53 @@ class SelfTestRunner:
         # (Ed25519 signature of challenge nonce)
         excluded.add("GET:/public/license/export")
 
+        # --- Approval-gated endpoints (covered by dedicated ceremony tests
+        # with real multi-admin approvals instead of the generic fuzzer,
+        # which cannot satisfy single-use approval gates) ---
+        for _ep in [
+            "POST:/api/v1/admin/database/migrations/apply-all",
+            "POST:/api/v1/admin/database/migrations/apply/{version}",
+            "POST:/api/v1/admin/database/migrations/rollback/{version}",
+            "POST:/api/v1/admin/migrations/{version}/run",
+            "POST:/api/v1/admin/migrations/{version}/rollback",
+            "POST:/api/v1/admin/migrations/emergency-override",
+            "POST:/api/v1/admin/search/reindex",
+            "POST:/api/v1/admin/search/reindex/standalone",
+        ]:
+            excluded.add(_ep)
+
+        # --- Stateful lifecycles (covered by dedicated tests that honour
+        # state ordering; the generic fuzzer hits them in arbitrary order) ---
+        for _ep in [
+            # access-token rotate->revoke->unrevoke lifecycle
+            "POST:/api/v1/admin/security/access-tokens/{token_id}/rotate",
+            "POST:/api/v1/admin/security/access-tokens/{token_id}/revoke",
+            "POST:/api/v1/admin/security/access-tokens/{token_id}/unrevoke",
+            # admin DSAR lifecycle (approve/deny/generate need pending rows)
+            "POST:/api/v1/admin/data-export/{request_id}/approve",
+            "POST:/api/v1/admin/data-export/{request_id}/deny",
+            "POST:/api/v1/admin/data-export/{request_id}/generate",
+            "GET:/api/v1/admin/data-export/{request_id}",
+            # email verification (fuzzer token can never be valid; the
+            # rejection contract is pinned by test_verify_email_contract)
+            "POST:/api/v1/auth/verify-email",
+        ]:
+            excluded.add(_ep)
+
+        # --- HMAC-signed federation + /Join contract (covered by dedicated
+        # signed/seeded tests; the generic fuzzer cannot sign) ---
+        for _ep in [
+            "POST:/api/v1/federation/join-request",
+            "POST:/api/v1/federation/message",
+            "POST:/api/v1/Join/request",
+            "POST:/api/v1/Join/{join_id}/message",
+            "POST:/api/v1/Join/{join_id}/break",
+            "POST:/api/v1/Join/{join_id}/approve",
+            "POST:/api/v1/Join/{join_id}/reject",
+            "GET:/api/v1/Join/list",
+        ]:
+            excluded.add(_ep)
+
         # --- Endpoints tested via dedicated standalone methods ---
         for _ep in [
             "POST:/api/v1/admin/database/migrations/apply/{version}",
@@ -543,8 +590,23 @@ class SelfTestRunner:
         #    and password-reset can use the other_user before they are force-purged)
         if self.ctx.standalone_mode:
             self.endpoints.test_auth_endpoints()
+            self.endpoints.test_verify_email_contract()
             self.endpoints.test_migration_endpoints()
             self.endpoints.test_access_token_rotate()
+            self.endpoints.test_approval_gated_actions()
+            self.endpoints.test_federation_inbound()
+            self.endpoints.test_join_contract()
+            # Extended coverage BEFORE delay-deletion/password-reset: the
+            # negative-permission and concurrency probes run as other_user,
+            # and test_delay_deletion / test_password_reset_confirm destroy
+            # (delete / revoke sessions of) that user. Running them first
+            # keeps other_session valid without excluding anything.
+            self.endpoints.test_negative_permissions()
+            self.endpoints.test_pagination_walks()
+            self.endpoints.test_concurrency_threads()
+            self.endpoints.test_entity_lifecycle()
+            self.endpoints.test_websocket_thread_dispatch()
+            self.endpoints.test_oauth_passkeys_federation_stubs()
             self.endpoints.test_delay_deletion()
             self.endpoints.test_password_reset_confirm()
             self.endpoints.test_media_upload_complete()
@@ -562,13 +624,8 @@ class SelfTestRunner:
             self.endpoints.test_interaction_callback()
             self.endpoints.test_suite_domains()
             self.endpoints.test_bulk_delete_messages()
-            # Extended coverage: negative, pagination, concurrency, lifecycle, WS, OAuth
-            self.endpoints.test_negative_permissions()
-            self.endpoints.test_pagination_walks()
-            self.endpoints.test_concurrency_threads()
-            self.endpoints.test_entity_lifecycle()
-            self.endpoints.test_websocket_thread_dispatch()
-            self.endpoints.test_oauth_passkeys_federation_stubs()
+            # Extended coverage ran earlier (before delay-deletion destroyed
+            # other_user); nothing deferred here.
         else:
             logger.info(
                 "Skipping standalone-specific endpoint tests (not in standalone mode)"
