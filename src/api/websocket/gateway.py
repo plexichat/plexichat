@@ -443,6 +443,17 @@ async def _message_loop(
         if data is None:
             continue
 
+        # F6: frames must be JSON objects. A client sending ``[]``, ``42``
+        # or a bare string previously reached ``data.get(...)`` and raised
+        # AttributeError inside the receive loop instead of failing the
+        # protocol handshake cleanly.
+        if not isinstance(data, dict):
+            logger.warning(
+                f"Connection {connection.connection_id}: message is not a JSON object: {data!r:.200}"
+            )
+            await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
+            return
+
         opcode: Optional[Any] = data.get("op")
         payload: Optional[Any] = data.get("d")
 
