@@ -238,7 +238,7 @@ class OpcodeHandler:
             return await self._presence_handler.handle_typing_stop(connection, data)
         elif op == GatewayOpcode.ARTIFACT_SUBSCRIBE:
             return await self._artifact_handler.handle_artifact_subscribe(
-                connection, data
+                connection, data, self._dispatcher
             )
         elif op == GatewayOpcode.ARTIFACT_UNSUBSCRIBE:
             return await self._artifact_handler.handle_artifact_unsubscribe(

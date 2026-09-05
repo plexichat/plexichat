@@ -100,6 +100,7 @@ class ArtifactHandler:
         self,
         connection: Connection,
         data: Optional[Dict[str, Any]],
+        dispatcher: Any = None,
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle ARTIFACT_SUBSCRIBE opcode."""
         if not connection.is_authenticated:
@@ -175,10 +176,27 @@ class ArtifactHandler:
             except Exception as e:
                 logger.debug(f"Failed to load artifact ops for replay: {e}")
 
+        rate_limit_per_minute = getattr(dispatcher, "_rate_limit_per_minute", None)
         try:
-            await send_artifact_sync(connection, artifact_id, snapshot, ops=ops)
+            sent = await send_artifact_sync(
+                connection,
+                artifact_id,
+                snapshot,
+                ops=ops,
+                rate_limit_per_minute=rate_limit_per_minute,
+            )
+            if not sent:
+                # The sync was rejected (rate limit or send failure): do not
+                # leave a half-registered subscription behind that would
+                # silently miss later deltas.
+                self._registry.unsubscribe(
+                    connection.user_id, artifact_id, connection.connection_id
+                )
         except Exception as e:
             logger.debug(f"Failed to send artifact sync: {e}")
+            self._registry.unsubscribe(
+                connection.user_id, artifact_id, connection.connection_id
+            )
 
         return None, None, None
 
@@ -324,7 +342,15 @@ class ArtifactHandler:
         # optimistic local op (OT). Transient ops (seq is None) are skipped.
         if seq is not None:
             try:
-                await send_artifact_ack(connection, artifact_id, op, seq)
+                await send_artifact_ack(
+                    connection,
+                    artifact_id,
+                    op,
+                    seq,
+                    rate_limit_per_minute=getattr(
+                        dispatcher, "_rate_limit_per_minute", None
+                    ),
+                )
             except Exception as e:
                 logger.debug(f"Failed to ack artifact op for {artifact_id}: {e}")
 

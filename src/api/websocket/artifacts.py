@@ -279,6 +279,7 @@ async def send_artifact_sync(
     artifact_id: int,
     snapshot: Dict[str, object],
     ops: Optional[list] = None,
+    rate_limit_per_minute: Optional[int] = None,
 ) -> bool:
     """
     Send an ARTIFACT_SYNC full snapshot to a single connection.
@@ -288,22 +289,28 @@ async def send_artifact_sync(
     only builds and emits the gateway payload through the connection's own
     send path, respecting its rate limit.
 
-    ``ops`` is an optional list of persisted operations (in ``seq`` order)
-    for late-joiner replay. Each entry is ``{seq, op_type, actor_id,
-    created_at, op}``.
-
     Args:
         connection: Target connection.
         artifact_id: Artifact the snapshot belongs to.
         snapshot: Full snapshot payload (caller-provided).
-        ops: Optional persisted ops to replay to the joiner.
+        ops: Optional persisted ops to replay to the joiner (each entry is
+            ``{seq, op_type, actor_id, created_at, op}``).
+        rate_limit_per_minute: The gateway's configured per-connection
+            limit. When omitted the connection's own default is used, so a
+            tighter operator-configured gateway limit is honored here too
+            (matching ``send_sum_sync``).
 
     Returns:
         True if the frame was sent successfully.
     """
+    limit = (
+        int(rate_limit_per_minute)
+        if rate_limit_per_minute is not None
+        else getattr(connection, "rate_limit_per_minute", 120)
+    )
     if not (
         hasattr(connection, "is_selftest") and connection.is_selftest
-    ) and not connection.check_rate_limit(120):
+    ) and not connection.check_rate_limit(limit):
         logger.debug(
             f"Artifact sync rate limited for connection {connection.connection_id}"
         )
@@ -330,16 +337,26 @@ async def send_artifact_ack(
     artifact_id: int,
     op: Dict[str, object],
     seq: int,
+    rate_limit_per_minute: Optional[int] = None,
 ) -> bool:
     """Echo a persisted op back to its actor with the assigned ``seq``.
 
     The actor already applied the op optimistically, so this frame is not a
     re-application; the client recognises its own ``client_id`` and treats the
     echo as an acknowledgement that lets it commit the pending op.
+
+    ``rate_limit_per_minute`` is the gateway's configured per-connection
+    limit; when omitted the connection's own default is used (matching
+    ``send_sum_sync``).
     """
+    limit = (
+        int(rate_limit_per_minute)
+        if rate_limit_per_minute is not None
+        else getattr(connection, "rate_limit_per_minute", 120)
+    )
     if not (
         hasattr(connection, "is_selftest") and connection.is_selftest
-    ) and not connection.check_rate_limit(120):
+    ) and not connection.check_rate_limit(limit):
         return False
 
     actor_id = getattr(connection, "user_id", None)
