@@ -54,13 +54,17 @@ class ArtifactSubscriptionRegistry:
     def unsubscribe(
         self, user_id: int, artifact_id: int, connection_id: Optional[str] = None
     ) -> None:
-        """Unsubscribe a user/connection from an artifact."""
+        """Unsubscribe a user/connection from an artifact.
+
+        Multi-tab safe: when ``connection_id`` is given, only that
+        connection's subscription is removed. The user is dropped from the
+        global ``_subs`` set only when no remaining connection by the same
+        user is still subscribed to the artifact, so one tab unsubscribing
+        (or closing its artifact panel) cannot silence relays to the user's
+        other tabs.
+        """
         with self._lock:
-            subs = self._subs.get(artifact_id)
-            if subs is not None:
-                subs.discard(user_id)
-                if not subs:
-                    self._subs.pop(artifact_id, None)
+            uid = int(user_id)
             if connection_id:
                 artifacts = self._connection_subs.get(connection_id)
                 if artifacts is not None:
@@ -68,6 +72,17 @@ class ArtifactSubscriptionRegistry:
                     if not artifacts:
                         self._connection_subs.pop(connection_id, None)
                         self._connection_users.pop(connection_id, None)
+            still_subscribed = bool(connection_id) and any(
+                artifact_id in conn_artifacts
+                and self._connection_users.get(conn) == uid
+                for conn, conn_artifacts in self._connection_subs.items()
+            )
+            if not still_subscribed:
+                subs = self._subs.get(artifact_id)
+                if subs is not None:
+                    subs.discard(uid)
+                    if not subs:
+                        self._subs.pop(artifact_id, None)
 
     def get_subscribers(self, artifact_id: int) -> Set[int]:
         """Return the set of subscribed user_ids for an artifact (copy)."""

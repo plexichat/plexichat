@@ -120,3 +120,27 @@ def test_subscription_cleanup_is_connection_scoped():
 
     registry.unsubscribe_connection("conn-c", 11)
     assert registry.get_subscribers(100) == set()
+
+
+def test_unsubscribe_is_connection_scoped_across_tabs():
+    """A user's remaining tabs keep receiving relays after one tab unsubscribes.
+
+    Closing the artifact panel in tab A (ARTIFACT_UNSUBSCRIBE) must not drop
+    the user from the artifact's subscriber set while tab B of the same user
+    is still subscribed; otherwise tab B silently misses live deltas.
+    """
+    registry = ArtifactSubscriptionRegistry()
+    registry.subscribe(10, 100, "conn-a")
+    registry.subscribe(10, 100, "conn-b")
+    registry.subscribe(11, 100, "conn-c")
+
+    # Tab conn-a unsubscribes: user 10 stays subscribed via conn-b.
+    registry.unsubscribe(10, 100, "conn-a")
+    assert registry.get_subscribers(100) == {10, 11}
+
+    # Last tab of user 10 unsubscribes: user 10 is now removed.
+    registry.unsubscribe(10, 100, "conn-b")
+    assert registry.get_subscribers(100) == {11}
+
+    registry.unsubscribe(11, 100, "conn-c")
+    assert registry.get_subscribers(100) == set()
