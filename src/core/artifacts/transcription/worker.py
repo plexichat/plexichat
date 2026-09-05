@@ -201,13 +201,26 @@ def _resolve_recording_ref(
         # fail open into a provider error; the worker will skip this call.
         return None, None
 
+    temporary_path = _materialize_media_file(int(file_id))
+    if temporary_path is None:
+        return None, None
+    return temporary_path, temporary_path
+
+
+def _materialize_media_file(file_id: int) -> Optional[str]:
+    """Copy a media object to a temporary local file; return its path.
+
+    Returns ``None`` when the media module is unavailable, the object cannot
+    be streamed/read, or the write fails. The caller owns unlinking the
+    returned path.
+    """
     temporary_path: Optional[str] = None
     try:
         import src.api as api
 
         media = api.get_media()
         if media is None:
-            return None, None
+            return None
         suffix = ".bin"
         stream = None
         content_type = None
@@ -243,7 +256,7 @@ def _resolve_recording_ref(
                             pass
                         temporary_path = None
                         raise
-                    return handle.name, handle.name
+                    return handle.name
             finally:
                 close = getattr(stream, "close", None)
                 if callable(close):
@@ -251,7 +264,7 @@ def _resolve_recording_ref(
 
         get_data = getattr(media, "get_file_data", None)
         if not callable(get_data):
-            return None, None
+            return None
         raw_data_result = get_data(int(file_id))
         if not isinstance(raw_data_result, (tuple, list)) or len(raw_data_result) != 2:
             raise TypeError("media.get_file_data returned an invalid result")
@@ -272,7 +285,7 @@ def _resolve_recording_ref(
                     pass
                 temporary_path = None
                 raise
-            return handle.name, handle.name
+            return handle.name
     except Exception as exc:
         logger.warning(
             "transcription: could not materialize recording file %s: %s",
@@ -284,7 +297,179 @@ def _resolve_recording_ref(
                 os.unlink(temporary_path)
             except OSError:
                 pass
-        return None, None
+        return None
+
+
+def _recording_segment_file_ids(call_payload: Dict[str, Any]) -> List[int]:
+    """Return the ordered media file ids of a multi-segment recording.
+
+    RecordingManager stores consent-interrupted recordings as several media
+    objects when ffmpeg combining fails; the artifact payload then carries
+    ``recording_file_ids`` with one entry per track. Single-segment
+    recordings (and malformed/empty lists) return ``[]`` so callers fall back
+    to the classic single-reference resolution.
+    """
+    raw_ids = call_payload.get("recording_file_ids")
+    if not isinstance(raw_ids, (list, tuple)) or len(raw_ids) <= 1:
+        return []
+    ids: List[int] = []
+    for raw in raw_ids:
+        try:
+            ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _resolve_local_recording_tracks(
+    ref: str, call_id: Optional[SnowflakeID] = None
+) -> List[str]:
+    """Expand a local multi-segment recording ref into every track file.
+
+    RecordingManager writes each consent-interrupted segment as
+    ``call_<id>_track_<n>.<ext>`` under the recording root. When ``ref`` names
+    one of those track files, return the full ordered track list (M27); a
+    plain single-file ``call_<id>.`` ref returns ``[ref]`` when it passes the
+    containment check. An unsafe/unknown path returns ``[]``.
+    """
+    try:
+        import utils.config as cfg
+        from src.core.voice.signaling.sfu.paths import ensure_within_recording_dir
+
+        artifacts_cfg = cfg.get("artifacts", {}) or {}
+        root = (
+            (artifacts_cfg.get("voice", {}) or {})
+            .get("recording", {})
+            .get("output_dir")
+        )
+        if not root:
+            return []
+        safe_path = ensure_within_recording_dir(
+            ref, os.path.realpath(os.path.expanduser(str(root)))
+        )
+    except Exception:
+        return []
+    if call_id is None:
+        return []
+    prefix = f"call_{int(call_id)}"
+    name = safe_path.name
+    if name.startswith(prefix + "."):
+        return [str(safe_path)]
+    if not name.startswith(prefix + "_track_"):
+        return []
+
+    track_prefix = prefix + "_track_"
+    indexed: List[Tuple[int, Any]] = []
+    try:
+        for child in safe_path.parent.iterdir():
+            child_name = child.name
+            if not child_name.startswith(track_prefix):
+                continue
+            if child.suffix != safe_path.suffix:
+                continue
+            try:
+                idx = int(child_name[len(track_prefix) :].split(".", 1)[0])
+            except ValueError:
+                continue
+            indexed.append((idx, child))
+    except OSError:
+        return []
+    indexed.sort(key=lambda item: item[0])
+    return [str(child) for _, child in indexed]
+
+
+def _resolve_recording_segments(
+    call_payload: Dict[str, Any],
+    db: Any,
+    provider_name: str,
+    call_id: Optional[SnowflakeID] = None,
+) -> List[Tuple[Optional[str], Optional[str]]]:
+    """Resolve a call recording into one entry per media segment (M27).
+
+    Consent-interrupted calls produce several SFU segments. RecordingManager
+    concatenates them with ffmpeg when possible, but when combining fails the
+    payload carries ``recording_file_ids`` (2+) and the worker must transcribe
+    EVERY segment - not just the first - or the transcript silently omits
+    most of the call.    Returns a list of ``(recording_ref, temporary_ref)`` pairs in recording
+    order (``temporary_ref`` is non-None only for media objects materialized
+    to a temp file; the caller unlinks it). Single-segment recordings resolve
+    exactly like :func:`_resolve_recording_ref`. Entries that fail to resolve
+    are skipped, so a partially-available recording still yields whatever
+    segments can be transcribed.
+    """
+    segment_ids = _recording_segment_file_ids(call_payload)
+    if not segment_ids:
+        single = _resolve_recording_ref(call_payload, db, provider_name, call_id)
+        return [single] if single[0] is not None else []
+
+    ref = call_payload.get("recording_ref")
+    if isinstance(ref, str) and os.path.isfile(ref):
+        # Local multi-segment recordings: transcribe every sibling track file.
+        return [
+            (track, None) for track in _resolve_local_recording_tracks(ref, call_id)
+        ]
+
+    results: List[Tuple[Optional[str], Optional[str]]] = []
+    for fid in segment_ids:
+        # Narrow the payload to this one segment so per-provider resolution
+        # (Azure signing, media materialization) runs exactly as it does for a
+        # single-file recording. The shared ref only names the FIRST track;
+        # forwarding it would re-resolve track 0 for every segment, so replace
+        # it with a synthetic relative ref that routes resolution through the
+        # segment's own file id (the ref value is unused once a file id is
+        # present, but the resolver requires a non-empty string).
+        segment_payload = dict(call_payload)
+        segment_payload["recording_file_id"] = fid
+        segment_payload["recording_ref"] = f"/media/segment-{fid}.webm"
+        resolved = _resolve_recording_ref(segment_payload, db, provider_name, call_id)
+        if resolved[0] is not None:
+            results.append(resolved)
+    return results
+
+
+def _merge_transcription_results(
+    results: List[TranscriptionResult],
+) -> TranscriptionResult:
+    """Merge per-segment transcription results into one coherent transcript.
+
+    The segments of a consent-interrupted call are consecutive recordings of
+    the same conversation, so each later result's timestamps are offset by the
+    cumulative duration of the segments before it (the previous result's final
+    segment end time). Speaker labels and per-segment text pass through
+    unchanged. A single result is returned untouched.
+    """
+    if not results:
+        return TranscriptionResult()
+    if len(results) == 1:
+        return results[0]
+
+    merged: List[Dict[str, Any]] = []
+    offset = 0.0
+    language = "unknown"
+    for result in results:
+        if result.language and result.language != "unknown":
+            if language == "unknown":
+                language = result.language
+        for seg in result.segments:
+            if not isinstance(seg, dict):
+                continue
+            shifted = dict(seg)
+            try:
+                start = float(seg.get("start") or 0.0)
+                end = float(seg.get("end") or 0.0)
+            except (TypeError, ValueError):
+                start, end = 0.0, 0.0
+            shifted["start"] = round(start + offset, 3)
+            shifted["end"] = round(end + offset, 3)
+            merged.append(shifted)
+            offset = max(offset, shifted["end"])
+
+    text = " ".join(
+        str(seg.get("text") or "").strip()
+        for seg in merged
+        if str(seg.get("text") or "").strip()
+    )
+    return TranscriptionResult(segments=merged, language=language, text=text)
 
 
 def _consent_allows(call: Any, participant_ids: Optional[List[Any]] = None) -> bool:
@@ -469,13 +654,18 @@ async def transcribe_call(
             )
             return None
 
-        recording_ref, temporary_ref = _resolve_recording_ref(
+        # M27: a consent-interrupted call may have several SFU segments
+        # (ffmpeg combining failed at record time). Resolve EVERY segment and
+        # transcribe each one, then merge the results with cumulative time
+        # offsets so the transcript covers the whole call - not just the first
+        # track. Single-segment recordings keep the exact single-file path.
+        resolved_segments = _resolve_recording_segments(
             call_payload,
             db,
             str(transcription_cfg.get("provider", "local_whisper")),
             call_id=call_id,
         )
-        if recording_ref is None:
+        if not resolved_segments:
             logger.warning(f"transcription: call {call_id} has no recording_ref; skip.")
             return None
 
@@ -483,15 +673,38 @@ async def transcribe_call(
             "language": transcription_cfg.get("language", "auto"),
             "diarize": transcription_cfg.get("diarize", False),
         }
-        logger.info(f"transcription: running provider for call {call_id}...")
+        logger.info(
+            f"transcription: running provider for call {call_id} over "
+            f"{len(resolved_segments)} segment(s)..."
+        )
+        transcribed: List[TranscriptionResult] = []
         try:
-            result: TranscriptionResult = await provider.transcribe(recording_ref, opts)
-        finally:
-            if temporary_ref:
+            for recording_ref, temporary_ref in resolved_segments:
+                if recording_ref is None:
+                    continue
                 try:
-                    os.unlink(temporary_ref)
-                except OSError:
-                    pass
+                    segment_result: TranscriptionResult = await provider.transcribe(
+                        recording_ref, opts
+                    )
+                finally:
+                    if temporary_ref:
+                        try:
+                            os.unlink(temporary_ref)
+                        except OSError:
+                            pass
+                transcribed.append(segment_result)
+        finally:
+            # Never leak temp files if a later segment raises mid-loop.
+            for _recording_ref, temporary_ref in resolved_segments:
+                if temporary_ref:
+                    try:
+                        os.unlink(temporary_ref)
+                    except OSError:
+                        pass
+        if not transcribed:
+            logger.warning(f"transcription: call {call_id} produced no results; skip.")
+            return None
+        result = _merge_transcription_results(transcribed)
 
         artifact_manager = ArtifactManager(db, config.get("artifacts", {}) or {})
         voice_manager = VoiceCallManager(
