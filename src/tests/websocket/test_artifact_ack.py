@@ -136,7 +136,6 @@ def test_subscribe_rolls_back_subscription_when_sync_is_rate_limited(monkeypatch
         assert result == (None, None, None)
         # The user must NOT remain subscribed after the sync was rejected.
         assert registry.get_subscribers(77) == set()
-        assert registry.get_subscribers(77) == set()
     finally:
         registry.unsubscribe_all(42)
 
