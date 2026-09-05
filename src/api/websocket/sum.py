@@ -168,6 +168,7 @@ async def relay_sum_op(
     op: Dict[str, object],
     actor_id: int,
     exclude_user_id: Optional[int] = None,
+    exclude_connection_id: Optional[str] = None,
 ) -> int:
     """
     Fan out a SUM_OP delta to the workbook's other subscribers.
@@ -177,6 +178,12 @@ async def relay_sum_op(
     sent, so grant revocations and scope changes take effect without waiting
     for a reconnect. Delivery reuses the dispatcher send path and the
     per-connection rate limit.
+
+    ``exclude_connection_id`` skips exactly one connection (the originating
+    tab). A user may hold several connections; excluding by ``user_id`` alone
+    would starve the actor's other tabs of the relay and leave their grid
+    stale until a reload. Ops are idempotent by ``operation_id``, so those
+    tabs applying the delta as a remote edit cannot double-apply.
 
     Returns the number of connections the op was delivered to.
     """
@@ -195,6 +202,12 @@ async def relay_sum_op(
 
     session_manager = dispatcher._session_manager
     connections = session_manager.get_connections_for_users(list(subscribers))
+    if exclude_connection_id is not None:
+        connections = [
+            conn for conn in connections if conn.connection_id != exclude_connection_id
+        ]
+    if not connections:
+        return 0
 
     payload = {
         "op": int(GatewayOpcode.SUM_OP),

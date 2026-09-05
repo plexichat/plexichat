@@ -197,6 +197,53 @@ async def test_sum_relay_delivers_to_authorized_subscribers_excludes_actor(
 
 
 @pytest.mark.asyncio
+async def test_sum_relay_reaches_actor_other_tab_when_excluding_connection(
+    sum_manager, workbook, two_users, patch_fabric
+):
+    """The actor's second tab must receive the relay (M32-style multi-tab)."""
+    owner, other = two_users
+    workbook_id = int(workbook["id"])
+    sheet_id = int(workbook["sheets"][0]["id"])
+    sum_manager.grant_workbook(owner.id, workbook_id, other.id, ["view"])
+
+    owner_tab_a = FakeConnection(owner.id, "conn-owner-a")
+    owner_tab_b = FakeConnection(owner.id, "conn-owner-b")
+    other_conn = FakeConnection(other.id, "conn-other")
+    dispatcher = FakeDispatcher([owner_tab_a, owner_tab_b, other_conn])
+
+    registry = get_sum_subscription_registry()
+    registry.subscribe(owner.id, workbook_id, "conn-owner-a")
+    registry.subscribe(owner.id, workbook_id, "conn-owner-b")
+    registry.subscribe(other.id, workbook_id, "conn-other")
+    try:
+        op = {
+            "operation_id": "op-multitab",
+            "operation_type": "set_cell",
+            "sheet_id": sheet_id,
+            "base_revision": 0,
+            "result_revision": 1,
+            "cells": [{"row": 1, "column": 1, "value_type": "number", "value": 9}],
+        }
+        sent = await relay_sum_op(
+            dispatcher,
+            workbook_id,
+            op,
+            owner.id,
+            exclude_connection_id="conn-owner-a",
+        )
+
+        # Origin tab excluded (no self echo); actor's other tab + grantee get it.
+        assert sent == 2
+        assert owner_tab_a.sent == []
+        assert len(owner_tab_b.sent) == 1
+        assert owner_tab_b.sent[0]["d"]["op"]["operation_id"] == "op-multitab"
+        assert len(other_conn.sent) == 1
+    finally:
+        registry.unsubscribe_all(owner.id)
+        registry.unsubscribe_all(other.id)
+
+
+@pytest.mark.asyncio
 async def test_sum_subscribe_resync_after_rate_limit(
     sum_manager, workbook, two_users, patch_fabric
 ):

@@ -308,13 +308,18 @@ class SumHandler:
             "result_revision": applied_revision,
             "cells": cells,
         }
+        # Relay to the workbook's other subscribers. Skip only the ORIGINATING
+        # connection: the actor's other tabs are distinct subscribers and must
+        # receive the delta (ops are idempotent by operation_id, so applying
+        # as a remote edit can never double-apply). Excluding the whole user
+        # left those tabs stale until reload.
         try:
             await relay_sum_op(
                 dispatcher=dispatcher,
                 workbook_id=workbook_id,
                 op=envelope,
                 actor_id=int(connection.user_id),
-                exclude_user_id=int(connection.user_id),
+                exclude_connection_id=connection.connection_id,
             )
         except Exception as e:
             logger.warning(f"Sum op relay failed for workbook {workbook_id}: {e}")
