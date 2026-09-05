@@ -126,6 +126,7 @@ async def relay_artifact_op(
     op: Dict[str, object],
     actor_id: int,
     exclude_user_id: Optional[int] = None,
+    exclude_connection_id: Optional[str] = None,
     seq: Optional[int] = None,
     forward_to_federation: bool = True,
 ) -> int:
@@ -142,7 +143,16 @@ async def relay_artifact_op(
         artifact_id: Artifact the op targets.
         op: The realtime op payload (must include ``op_type``).
         actor_id: User id that produced the op.
-        exclude_user_id: Optionally skip one user (typically the actor).
+        exclude_user_id: Optionally skip every connection of one user. Use
+            this only when the user must never see the op on ANY connection
+            (e.g. the actor already applied it and has no cross-tab fabric).
+        exclude_connection_id: Optionally skip exactly one connection
+            (typically the actor's originating connection). A user may hold
+            several connections (multi-tab); excluding by ``user_id`` alone
+            would starve the actor's other tabs of the relay and let their
+            optimistic state diverge until reload. Per-tab ``client_id``
+            stamps let those tabs recognize and drop their own echo, so only
+            the originating connection needs to be skipped here.
 
     Returns:
         Number of connections the op was delivered to.
@@ -169,6 +179,15 @@ async def relay_artifact_op(
 
     session_manager: SessionManager = dispatcher._session_manager
     connections = session_manager.get_connections_for_users(list(subscribers))
+    if exclude_connection_id is not None:
+        # Multi-tab: keep the actor's user in the subscriber set so their
+        # OTHER connections still receive the relay; only the originating
+        # connection is filtered out here (it gets the ack echo instead).
+        connections = [
+            conn for conn in connections if conn.connection_id != exclude_connection_id
+        ]
+    if not connections:
+        return 0
 
     d: Dict[str, object] = {
         # Snowflake ids exceed 2^53 — serialize as strings so JS clients

@@ -302,14 +302,19 @@ class ArtifactHandler:
             except Exception as e:
                 logger.warning(f"Failed to persist artifact op for {artifact_id}: {e}")
 
-        # Relay to other subscribers, carrying the server-assigned seq.
+        # Relay to the artifact's other subscribers, carrying the
+        # server-assigned seq. Exclude only the ORIGINATING connection, not
+        # the whole user: a second tab of the same user is a distinct
+        # subscriber (own per-tab client_id) and must receive the relay or
+        # its optimistic state diverges until reload. The originating
+        # connection is acknowledged separately below.
         try:
             await relay_artifact_op(
                 dispatcher=dispatcher,
                 artifact_id=artifact_id,
                 op=op,
                 actor_id=connection.user_id,
-                exclude_user_id=connection.user_id,
+                exclude_connection_id=connection.connection_id,
                 seq=seq,
             )
         except Exception as e:
