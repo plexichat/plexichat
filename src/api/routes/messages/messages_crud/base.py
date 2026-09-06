@@ -55,8 +55,9 @@ class MessagesCRUDBase:
                     if linked:
                         scope.add(int(linked))
                 except Exception as e:
-                    logger.debug(
-                        f"Failed to resolve conversation for channel {cid}: {e}"
+                    logger.warning(
+                        f"Channel scope resolution failed for channel {cid}: "
+                        f"{type(e).__name__}: {e}"
                     )
         return scope
 
