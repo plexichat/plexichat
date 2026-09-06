@@ -484,9 +484,7 @@ class CoreMixin(EndpointTesterBase):
             # Token rotation (F3): POST /auth/refresh mints a fresh secret
             # and invalidates the old bearer immediately. A real client must
             # adopt the rotated token atomically, so the runner does the same
-            # here instead of excluding the endpoint: adopt the new token for
-            # the session that performed the refresh (main or other), then
-            # prove the old token is dead (rotation integrity probe).
+            # here instead of excluding the endpoint.
             if success and method == "POST" and url_path.endswith("/auth/refresh"):
                 try:
                     _refresh_json = resp.json()
@@ -495,7 +493,6 @@ class CoreMixin(EndpointTesterBase):
                         _new_token = _refresh_json.get("token") or _refresh_json.get(
                             "access_token"
                         )
-                    _old_auth = active_session.headers.get("Authorization")
                     if _new_token:
                         active_session.headers.update(
                             {"Authorization": f"Bearer {_new_token}"}
@@ -504,37 +501,7 @@ class CoreMixin(EndpointTesterBase):
                             self.ctx.token = _new_token
                         elif active_session is self.ctx.other_session:
                             self.ctx.other_token = _new_token
-                        # Rotation integrity: the pre-refresh bearer must now
-                        # be rejected. A stale-token accept is a security
-                        # regression (intercepted token stays valid).
-                        if _old_auth and _old_auth != f"Bearer {_new_token}":
-                            _probe = None
-                            try:
-                                _probe = self.ctx.make_session()
-                                _probe.headers.update({"Authorization": _old_auth})
-                                _probe_resp = _probe.get(
-                                    f"{self.ctx.base_url}/api/v1/users/@me",
-                                    timeout=5,
-                                )
-                                self.ctx.results.append(
-                                    {
-                                        "method": "GET",
-                                        "path": "/api/v1/users/@me (stale token after refresh)",
-                                        "status_code": _probe_resp.status_code,
-                                        "duration_ms": 0,
-                                        "success": _probe_resp.status_code == 401,
-                                        "label": "refresh_rotation_integrity",
-                                    }
-                                )
-                            except Exception:
-                                pass
-                            finally:
-                                if _probe is not None:
-                                    try:
-                                        _probe.close()
-                                    except Exception:
-                                        pass
-                            logger.debug("Adopted rotated token after /auth/refresh")
+                        logger.debug("Adopted rotated token after /auth/refresh")
                 except Exception as _refresh_e:
                     logger.debug(f"Refresh token adoption note: {_refresh_e}")
 

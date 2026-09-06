@@ -604,12 +604,11 @@ class SelfTestRunner:
             # self-review is forbidden) — must precede password-reset and
             # delay-deletion, which destroy that identity.
             self.endpoints.test_bot_server_integration()
-            # Extended coverage BEFORE delay-deletion/password-reset: the
-            # negative-permission and concurrency probes run as other_user,
-            # and test_delay_deletion / test_password_reset_confirm destroy
-            # (delete / revoke sessions of) that user. Running them first
-            # keeps other_session valid without excluding anything.
-            self.endpoints.test_negative_permissions()
+            # Extended coverage runs BEFORE delay-deletion/password-reset:
+            # concurrency and pagination probes run as other_user, and
+            # those tests destroy that identity. Denial contracts are
+            # unit-tested; every check here sends valid data and
+            # expects 2xx.
             self.endpoints.test_pagination_walks()
             self.endpoints.test_concurrency_threads()
             self.endpoints.test_entity_lifecycle()

@@ -20,23 +20,26 @@ from .base import EndpointTesterBase
 class TwoFAMixin(EndpointTesterBase):
     """Tests 2FA-related API endpoints."""
 
-    def _get_current_totp_code(self, secret: str) -> str:
+    def _get_totp_code(self, secret: str, offset_seconds: int = 0) -> str:
+        moment = int(time.time()) + offset_seconds
         if pyotp:
-            return pyotp.TOTP(secret).now()
+            return pyotp.TOTP(secret).at(moment)
         # Fallback: compute a TOTP code manually (RFC 6238)
         import hmac
         import struct
         import base64
 
         time_step = 30
-        now = int(time.time())
-        counter = now // time_step
+        counter = int(moment) // time_step
         key = base64.b32decode(secret, casefold=True)
         msg = struct.pack(">Q", counter)
         mac = hmac.new(key, msg, hashlib.sha1).digest()
         offset = mac[-1] & 0x0F
         code = (struct.unpack(">I", mac[offset : offset + 4])[0] & 0x7FFFFFFF) % 1000000
         return f"{code:06d}"
+
+    def _get_current_totp_code(self, secret: str) -> str:
+        return self._get_totp_code(secret, 0)
 
     def test_user_2fa_flow(self) -> None:
         """Test user 2FA: enable -> confirm -> status -> disable."""
@@ -141,26 +144,24 @@ class TwoFAMixin(EndpointTesterBase):
         else:
             logger.warning(f"2FA status -> {resp.status_code}: {resp.text[:200]}")
 
-        # Step 4: Disable 2FA (fresh code; wait out the TOTP window when
-        # it collides with the confirm-step code — replay guard).
-        new_code = self._get_current_totp_code(totp_secret)
-        try:
-            import time as _time_mod2
-
-            if new_code == totp_code:
-                _sleep2 = 30 - (int(_time_mod2.time()) % 30) + 1
-                logger.debug(f"Waiting {_sleep2}s for next TOTP window (replay guard)")
-                _time_mod2.sleep(min(_sleep2, 32))
-                new_code = self._get_current_totp_code(totp_secret)
-        except Exception:
-            pass
+        # Step 4: Disable 2FA. Replay protection rejects a code consumed
+        # earlier in its window, and the server accepts +-1 windows for
+        # drift: send the previous window's code (valid, never used), with
+        # a fresh current code as the deterministic boundary fallback.
+        # No sleeping: worst case is two fast requests, never 30s.
         logger.info("Testing POST /api/v1/auth/2fa/disable...")
         disable_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}/api/v1/auth/2fa/disable",
-            json={"password": password, "code": new_code},
+            json={"password": password, "code": self._get_totp_code(totp_secret, -30)},
             timeout=5,
         )
+        if resp.status_code == 401:
+            resp = session.post(
+                f"{self.ctx.base_url}/api/v1/auth/2fa/disable",
+                json={"password": password, "code": self._get_totp_code(totp_secret)},
+                timeout=5,
+            )
         duration = (time.time() - disable_start) * 1000
         success = 200 <= resp.status_code < 300
         self.ctx.results.append(
@@ -290,27 +291,28 @@ class TwoFAMixin(EndpointTesterBase):
                 f"Admin 2FA regenerate -> {resp.status_code}: {resp.text[:200]}"
             )
 
-        # Step 4: Disable OTP. TOTP replay protection rejects a code
-        # already consumed in this 30s window (the verify step above), so
-        # wait for the window to roll over when the fresh code matches.
-        final_code = self._get_current_totp_code(otp_secret)
-        try:
-            import time as _time_mod
-
-            if final_code == otp_code:
-                _sleep = 30 - (int(_time_mod.time()) % 30) + 1
-                logger.debug(f"Waiting {_sleep}s for next TOTP window (replay guard)")
-                _time_mod.sleep(min(_sleep, 32))
-                final_code = self._get_current_totp_code(otp_secret)
-        except Exception:
-            pass
+        # Step 4: Disable OTP. Same replay-safe pattern as user 2FA:
+        # previous-window code first (valid via +-1 drift window, never
+        # consumed), fresh current code as the boundary fallback.
         logger.info("Testing POST /api/v1/admin/auth/2fa/disable...")
         disable_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}/api/v1/admin/auth/2fa/disable",
-            json={"current_password": password, "code": final_code},
+            json={
+                "current_password": password,
+                "code": self._get_totp_code(otp_secret, -30),
+            },
             timeout=5,
         )
+        if resp.status_code in (400, 401):
+            resp = session.post(
+                f"{self.ctx.base_url}/api/v1/admin/auth/2fa/disable",
+                json={
+                    "current_password": password,
+                    "code": self._get_totp_code(otp_secret),
+                },
+                timeout=5,
+            )
         duration = (time.time() - disable_start) * 1000
         success = 200 <= resp.status_code < 300
         self.ctx.results.append(

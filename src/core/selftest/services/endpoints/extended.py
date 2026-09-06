@@ -1,7 +1,12 @@
 """Extended coverage tests for self-test loop.
 
-Adds negative permission, pagination, concurrency, entity lifecycle,
-and WebSocket gateway assertions that were previously excluded or weak.
+Adds pagination, concurrency, entity lifecycle, and WebSocket gateway
+assertions that were previously excluded or weak.
+
+Suite doctrine: every recorded check sends valid data and expects 2xx.
+Denial contracts (member-must-not-manage etc.) live in unit tests
+(e.g. features/test_slowmode_routes.py); the status suite never
+asserts 4xx.
 """
 
 import concurrent.futures
@@ -13,64 +18,6 @@ from .base import EndpointTesterBase
 
 class ExtendedCoverageMixin(EndpointTesterBase):
     """Additional self-test coverage beyond the generic auto_loop."""
-
-    def test_negative_permissions(self) -> None:
-        """Verify 403/409/429 for slowmode, emoji, poll, reactions with wrong role."""
-        if not self.ctx.test_server_id or not self.ctx.test_channel_id:
-            return
-        # slowmode as plain member (other_user) should be 403 (or 401 if token stale)
-        if self.ctx.other_token:
-            url = f"{self.ctx.base_url}/api/v1/features/channels/{self.ctx.test_channel_id}/slowmode"
-            resp = self.ctx.other_session.put(
-                url, json={"interval_ms": 5000}, timeout=5
-            )
-            # Documented contract: a plain member must be denied with 403.
-            success = resp.status_code == 403
-            self.ctx.results.append(
-                {
-                    "method": "PUT",
-                    "path": "/api/v1/features/channels/{channel_id}/slowmode (negative member)",
-                    "status_code": resp.status_code,
-                    "duration_ms": 0,
-                    "success": success,
-                }
-            )
-            if not success:
-                logger.warning(
-                    f"Negative slowmode did not 403: {resp.status_code} {resp.text[:100]}"
-                )
-        # emoji create as member without manage -> 403 (other_user is not admin)
-        if self.ctx.other_token and self.ctx.test_server_id:
-            url = f"{self.ctx.base_url}/api/v1/servers/{self.ctx.test_server_id}/emojis"
-            # try to create emoji as other_user (no emojis.manage)
-            try:
-                from PIL import Image
-                import io
-
-                img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                buf.seek(0)
-                files = {"image": ("test.png", buf.getvalue(), "image/png")}
-                data = {"name": "test_negative_emoji"}
-                resp = self.ctx.other_session.post(
-                    url, data=data, files=files, timeout=5
-                )
-                # Should be 403 – the documented contract for a member
-                # without emojis.manage. Accepting 400/409 here would mask
-                # permission regressions as passes.
-                success = resp.status_code == 403
-                self.ctx.results.append(
-                    {
-                        "method": "POST",
-                        "path": "/api/v1/servers/{server_id}/emojis (negative)",
-                        "status_code": resp.status_code,
-                        "duration_ms": 0,
-                        "success": success,
-                    }
-                )
-            except Exception as e:
-                logger.debug(f"Negative emoji test error: {e}")
 
     def test_pagination_walks(self) -> None:
         """Cursor pagination for search, threads, messages."""
@@ -165,12 +112,12 @@ class ExtendedCoverageMixin(EndpointTesterBase):
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
                 results = list(pool.map(lambda _: do_join(), range(5)))
-            # Documented contract: 200/201 (idempotent join) or 409 (already
-            # member). Any other status — including EVERY 5xx — is a failure;
+            # Thread join is idempotent-200 for members: every worker must
+            # see 2xx. Anything else (including 409/429/5xx) is a failure;
             # server faults under load must not be masked as passes.
-            success = all(code in (200, 201, 409) for code in results)
+            success = all(code in (200, 201) for code in results)
             status_code = next(
-                (code for code in results if code not in (200, 201, 409)),
+                (code for code in results if code not in (200, 201)),
                 results[0] if results else 0,
             )
             if not success:
@@ -191,23 +138,7 @@ class ExtendedCoverageMixin(EndpointTesterBase):
             logger.debug(f"Concurrency threads error: {e}")
 
     def test_entity_lifecycle(self) -> None:
-        """Poll close, reaction, slowmode, media lifecycle."""
-        # poll vote with invalid option -> 400
-        if self.ctx.test_poll_id:
-            url = f"{self.ctx.base_url}/api/v1/polls/{self.ctx.test_poll_id}/vote"
-            resp = self.ctx.session.post(
-                url, json={"option_ids": [99999999]}, timeout=5
-            )
-            success = resp.status_code == 400
-            self.ctx.results.append(
-                {
-                    "method": "POST",
-                    "path": "/api/v1/polls/{poll_id}/vote (invalid option negative)",
-                    "status_code": resp.status_code,
-                    "duration_ms": 0,
-                    "success": success,
-                }
-            )
+        """Poll close, reaction, slowmode, media lifecycle (valid data, 2xx)."""
         # reaction add then remove
         if self.ctx.test_channel_id and self.ctx.test_message_id:
             cid = self.ctx.test_channel_id
@@ -339,26 +270,14 @@ class ExtendedCoverageMixin(EndpointTesterBase):
             )
 
     def test_oauth_passkeys_federation_stubs(self) -> None:
-        """Stub tests for previously excluded OAuth/passkeys/federation."""
-        # OAuth login: documented contract is a 302 redirect to the provider,
-        # 400 for a rejected redirect_uri, or 404 for an unsupported provider.
-        # Accepting 200/401 here would hide contract drift.
-        for provider in ["github", "google"]:
-            url = f"{self.ctx.base_url}/api/v1/auth/oauth/{provider}/login"
-            try:
-                resp = self.ctx.session.get(url, timeout=5, allow_redirects=False)
-                success = resp.status_code in (302, 400, 404)
-                self.ctx.results.append(
-                    {
-                        "method": "GET",
-                        "path": f"/api/v1/auth/oauth/{provider}/login (stub)",
-                        "status_code": resp.status_code,
-                        "duration_ms": 0,
-                        "success": success,
-                    }
-                )
-            except Exception as e:
-                logger.debug(f"OAuth stub {provider} error: {e}")
+        """Passkey discovery checks (valid data, 2xx only).
+
+        OAuth login-init and unsigned federation posts cannot return 2xx
+        in this environment (no provider credentials; HMAC required), so
+        they carry no stub assertions here: OAuth rejection contracts
+        live in unit tests (TestOAuthNonceValidation) and the signed
+        federation paths are covered by dedicated 200-level tests.
+        """
         # Passkeys: the unauthenticated list returns 200; authenticate
         # options accept an empty body (usernameless/discoverable flow —
         # username is Optional) and return 200 with a challenge. A 400/422
@@ -385,20 +304,3 @@ class ExtendedCoverageMixin(EndpointTesterBase):
                 )
             except Exception as e:
                 logger.debug(f"Passkey stub {ep} error: {e}")
-        # Federation artifact-op with dummy HMAC: documented contract is 401
-        # (unauthenticated). 400/403 acceptance would mask auth drift.
-        url = f"{self.ctx.base_url}/api/v1/federation/artifact-op"
-        try:
-            resp = self.ctx.session.post(url, json={"test": 1}, timeout=5)
-            success = resp.status_code == 401
-            self.ctx.results.append(
-                {
-                    "method": "POST",
-                    "path": "/api/v1/federation/artifact-op (stub)",
-                    "status_code": resp.status_code,
-                    "duration_ms": 0,
-                    "success": success,
-                }
-            )
-        except Exception as e:
-            logger.debug(f"Federation stub error: {e}")

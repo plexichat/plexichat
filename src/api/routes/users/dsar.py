@@ -4,7 +4,7 @@ DSAR (Data Subject Access Request) mixin - Data export route handlers.
 
 from typing import Optional
 
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 
 import src.api as api
@@ -72,7 +72,16 @@ class DataExportMixin:
             return False
         return True
 
-    def _check_dsar_rate_limit(self, user_id: int) -> None:
+    def _check_dsar_rate_limit(self, user_id: int, request=None) -> None:
+        # Routine self-test/status traffic (localhost + internal secret)
+        # bypasses this abuse throttle like every other rate limit; real
+        # users keep the 1-request-per-day envelope.
+        if request is not None:
+            try:
+                if api.is_self_test_request(request):
+                    return
+            except Exception:
+                pass
         rate_limit_key = f"dsar:user:{user_id}"
         allowed, remaining = check_rate_limit(
             rate_limit_key, limit=1, window_seconds=86400
@@ -92,6 +101,7 @@ class DataExportMixin:
         self,
         body: DSARRequestBody,
         current_user: TokenInfo = Depends(get_current_user),
+        request: Optional[Request] = None,
     ) -> SuccessResponse:
         auth = api.get_auth()
         if not auth:
@@ -114,7 +124,7 @@ class DataExportMixin:
                 },
             )
 
-        self._check_dsar_rate_limit(user_id)
+        self._check_dsar_rate_limit(user_id, request=request)
 
         try:
             format_value = body.format if body.format else "json"

@@ -8,7 +8,7 @@ including session fixation, session prediction, and token theft.
 import pytest
 import time
 
-from src.core.auth.exceptions import TokenExpiredError, TokenInvalidError
+from src.core.auth.exceptions import AuthError, TokenExpiredError, TokenInvalidError
 
 
 class TestSessionHijacking:
@@ -94,6 +94,25 @@ class TestSessionHijacking:
         # Token should still be valid after refresh
         token_info = auth_manager.verify_token(new_token)
         assert token_info is not None
+
+    def test_session_refresh_invalidates_old_token(self, auth_manager, test_user):
+        """Rotation must kill the pre-refresh bearer (F3).
+
+        An intercepted token stays valid only until the next refresh;
+        after rotation the old bearer must be rejected.
+        """
+        result = auth_manager.login(test_user.username, "TestPass123!")
+        old_token = result.token
+
+        new_token = auth_manager.refresh_session(old_token)
+        assert new_token is not None
+        assert new_token != old_token
+
+        with pytest.raises(AuthError):
+            auth_manager.verify_token(old_token)
+
+        # The rotated token works.
+        assert auth_manager.verify_token(new_token) is not None
 
     def test_session_fixation_prevented(self, auth_manager, test_user):
         """Test that session fixation attacks are prevented."""

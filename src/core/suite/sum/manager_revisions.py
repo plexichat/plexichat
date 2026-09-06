@@ -103,6 +103,15 @@ class SumManagerRevisions(SumManagerProtocol):
             return True
         try:
             self._blob.delete(path)
+        except ValueError:
+            # Path-confinement rejection: the path is not addressable in
+            # this store (e.g. a legacy non-namespaced blob_path), so
+            # there is nothing of ours to delete. Confirm absence via the
+            # fail-closed existence probe; absent means done.
+            try:
+                return not self._blob.exists(path)
+            except Exception:
+                return False
         except Exception:
             return False
         try:

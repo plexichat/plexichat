@@ -292,11 +292,21 @@ class MediaBlobStore(BlobStore):
         # successful delete as unconfirmed forever.
         checker = getattr(self._media, "blob_exists", None)
         if callable(checker):
-            return bool(checker(path))
+            try:
+                return bool(checker(path))
+            except ValueError:
+                # Path-confinement rejection (e.g. a legacy blob_path
+                # recorded without the ``plexisum/`` namespace): such a
+                # path is not addressable in this store, hence not
+                # present in it. Fail closed without treating it live.
+                return False
         try:
             self._media.retrieve_blob(path)
             return True
         except FileNotFoundError:
+            return False
+        except ValueError:
+            # Same confinement case on the retrieve fallback path.
             return False
         except Exception:
             # An unavailable/unauthorized backend is not proof of absence.

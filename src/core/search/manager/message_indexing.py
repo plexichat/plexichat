@@ -181,7 +181,10 @@ class MessageIndexingMixin(SearchManagerBase):
             batch_meta: List[Dict[str, Any]] = []
             for msg in page:
                 plaintext = self._decrypt_message_content(
-                    msg["content"], msg.get("content_encrypted"), msg["id"]
+                    msg["content"],
+                    msg.get("content_encrypted"),
+                    msg["id"],
+                    conversation_id=msg["conversation_id"],
                 )
                 batch.append(
                     IndexedMessage(
@@ -300,11 +303,17 @@ class MessageIndexingMixin(SearchManagerBase):
             )
 
     def _decrypt_message_content(
-        self, content: Optional[str], content_encrypted: Optional[str], message_id: int
+        self,
+        content: Optional[str],
+        content_encrypted: Optional[str],
+        message_id: int,
+        conversation_id: Optional[int] = None,
     ) -> str:
         if content and is_message_encrypted(content):
             try:
-                return decrypt_message(content, message_id)
+                return decrypt_message(
+                    content, message_id, conversation_id=conversation_id
+                )
             except Exception as e:
                 logger.warning(
                     f"Failed to decrypt message {message_id} for search indexing: {e}"
