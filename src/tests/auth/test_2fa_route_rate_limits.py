@@ -11,7 +11,23 @@ These tests parse the route module's AST and pin the contract.
 import ast
 from pathlib import Path
 
-TWO_FACTOR_ROUTES = Path("src/api/routes/auth/two_factor.py")
+
+def _find_two_factor_routes() -> Path:
+    """Locate the 2FA route module independent of the pytest CWD.
+
+    Walks up from this file so the contract holds whether pytest runs
+    from the project root or anywhere above it; falls back to the
+    historical CWD-relative path so the existence test below still
+    reports a clear assertion instead of an import-time error.
+    """
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / "src" / "api" / "routes" / "auth" / "two_factor.py"
+        if candidate.is_file():
+            return candidate
+    return Path("src/api/routes/auth/two_factor.py")
+
+
+TWO_FACTOR_ROUTES = _find_two_factor_routes()
 
 # Routes that verify a credential and therefore must be rate limited.
 # /2fa/status is a read-only GET on an already-authenticated session and is
