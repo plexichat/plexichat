@@ -23,162 +23,26 @@ class AdminMixin(EndpointTesterBase):
     # an admin-session login) -> execute — so the gates themselves are
     # exercised instead of bypassed.
 
-    def _third_admin_session(self):
-        """Log in as the third (support) admin via the admin realm.
+    def _third_user_session(self):
+        from src.core.selftest.services.approval_ceremony import (
+            third_user_session as _shared_third,
+        )
 
-        Returns a fresh session carrying an admin-session token, or None.
-        The session is caller-owned (must be closed).
-        """
-        if not getattr(self.ctx, "test_third_username", None):
-            return None
-        password = self.ctx._test_password
-        if not password:
-            return None
-        try:
-            sess = self.ctx.make_session()
-            internal_secret = None
-            try:
-                import src.api as _api
+        return _shared_third(self.ctx)
 
-                internal_secret = _api.get_internal_secret()
-            except Exception:
-                pass
-            if internal_secret:
-                sess.headers.update({"X-Plexichat-Internal-Secret": internal_secret})
-            resp = sess.post(
-                f"{self.ctx.base_url}/api/v1/admin/login",
-                json={
-                    "username": self.ctx.test_third_username,
-                    "password": password,
-                },
-                timeout=10,
-            )
-            if resp.status_code != 200:
-                logger.warning(
-                    f"Third admin login -> {resp.status_code}: {resp.text[:200]}"
-                )
-                try:
-                    sess.close()
-                except Exception:
-                    pass
-                return None
-            token = resp.json().get("token")
-            if not token:
-                logger.warning("Third admin login response missing token")
-                try:
-                    sess.close()
-                except Exception:
-                    pass
-                return None
-            sess.headers.update({"Authorization": f"Bearer {token}"})
-            return sess
-        except Exception as e:
-            logger.warning(f"Third admin login exception: {e}")
-            return None
+    def _ensure_user_session(self, session, username: str) -> bool:
+        from src.core.selftest.services.approval_ceremony import (
+            ensure_user_session as _shared_ensure,
+        )
+
+        return bool(_shared_ensure(self.ctx, session, username))
 
     def _approval_ceremony(self, action_type: str):
-        """Run the full approval ceremony for *action_type*.
+        from src.core.selftest.services.approval_ceremony import (
+            run_ceremony as _shared_ceremony,
+        )
 
-        Returns True when an APPROVED (consumable) request for the action
-        exists afterwards — i.e. request + 2 distinct approvals succeeded.
-        Every step is logged; failures return False (caller records them).
-        """
-        base = self.ctx.base_url
-        main = self.ctx.session
-        other = self.ctx.other_session
-        if not main.headers.get("Authorization") or not (
-            other and other.headers.get("Authorization")
-        ):
-            logger.warning(f"Approval ceremony skipped ({action_type}): no sessions")
-            return False
-        # 1. Request (other admin).
-        try:
-            req_resp = other.post(
-                f"{base}/api/v1/admin/approvals/request",
-                json={
-                    "action_type": action_type,
-                    "target_type": "system",
-                    "action_details": f"self-test ceremony for {action_type}",
-                },
-                timeout=10,
-            )
-        except Exception as e:
-            logger.warning(f"Approval request exception ({action_type}): {e}")
-            return False
-        if req_resp.status_code not in (200, 201):
-            logger.warning(
-                f"Approval request ({action_type}) -> {req_resp.status_code}: "
-                f"{req_resp.text[:200]}"
-            )
-            return False
-        # Resolve the fresh request id (the route returns it inside message).
-        approval_id = None
-        try:
-            import re as _re
-
-            m = _re.search(r"(\d{10,})", req_resp.text)
-            if m:
-                approval_id = int(m.group(1))
-        except Exception:
-            pass
-        if approval_id is None:
-            try:
-                import src.api as _api
-
-                _db = _api.get_db()
-                if _db:
-                    _row = _db.fetch_one(
-                        "SELECT id FROM admin_approvals WHERE action_type = ? "
-                        "AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
-                        (action_type,),
-                    )
-                    if _row:
-                        approval_id = int(
-                            _row["id"] if isinstance(_row, dict) else _row[0]
-                        )
-            except Exception:
-                pass
-        if approval_id is None:
-            logger.warning(f"Approval ceremony ({action_type}): no id resolved")
-            return False
-        # 2. Approve as main.
-        try:
-            a1 = main.post(
-                f"{base}/api/v1/admin/approvals/{approval_id}/approve", timeout=10
-            )
-        except Exception as e:
-            logger.warning(f"Approval approve#1 exception ({action_type}): {e}")
-            return False
-        if a1.status_code not in (200, 201):
-            logger.warning(
-                f"Approval approve#1 ({action_type}) -> {a1.status_code}: "
-                f"{a1.text[:200]}"
-            )
-            return False
-        # 3. Approve as third admin (second distinct vote -> approved).
-        third_sess = self._third_admin_session()
-        if third_sess is None:
-            return False
-        try:
-            a2 = third_sess.post(
-                f"{base}/api/v1/admin/approvals/{approval_id}/approve", timeout=10
-            )
-        except Exception as e:
-            logger.warning(f"Approval approve#2 exception ({action_type}): {e}")
-            return False
-        finally:
-            try:
-                third_sess.close()
-            except Exception:
-                pass
-        if a2.status_code not in (200, 201):
-            logger.warning(
-                f"Approval approve#2 ({action_type}) -> {a2.status_code}: "
-                f"{a2.text[:200]}"
-            )
-            return False
-        logger.info(f"Approval ceremony complete for {action_type} (id={approval_id})")
-        return True
+        return bool(_shared_ceremony(self.ctx, action_type))
 
     def test_migration_endpoints(self) -> None:
         """Test migration apply and rollback using the 001 selftest no-op migration.
@@ -763,64 +627,6 @@ class AdminMixin(EndpointTesterBase):
         else:
             logger.warning(f"DSAR status -> {resp.status_code}: {resp.text[:200]}")
 
-        # Steps 3b-3d: admin lifecycle on the same request (detail ->
-        # approve -> generate). Runs before the user cancels below.
-        base = self.ctx.base_url
-        admin_steps = [
-            (
-                "GET",
-                f"/api/v1/admin/data-export/{dsar_request_id}",
-                "dsar_admin_get",
-                None,
-            ),
-            (
-                "POST",
-                f"/api/v1/admin/data-export/{dsar_request_id}/approve",
-                "dsar_admin_approve",
-                None,
-            ),
-            (
-                "POST",
-                f"/api/v1/admin/data-export/{dsar_request_id}/generate",
-                "dsar_admin_generate",
-                None,
-            ),
-        ]
-        for method, path, label, body in admin_steps:
-            try:
-                if method == "GET":
-                    r = session.get(f"{base}{path}", timeout=15)
-                else:
-                    r = session.post(f"{base}{path}", json=body or {}, timeout=60)
-                ok = 200 <= r.status_code < 300
-                self.ctx.results.append(
-                    {
-                        "method": method,
-                        "path": path,
-                        "status_code": r.status_code,
-                        "duration_ms": 0,
-                        "success": ok,
-                        "label": label,
-                    }
-                )
-                if ok:
-                    logger.info(f"DSAR {label} PASSED -> {r.status_code}")
-                else:
-                    logger.warning(f"DSAR {label} -> {r.status_code}: {r.text[:200]}")
-            except Exception as e:
-                logger.warning(f"DSAR {label} exception: {e}")
-                self.ctx.results.append(
-                    {
-                        "method": method,
-                        "path": path,
-                        "status_code": 0,
-                        "duration_ms": 0,
-                        "success": False,
-                        "label": label,
-                        "error": str(e)[:200],
-                    }
-                )
-
         # Step 4: User cancels the request (cleanup).
 
         # Step 4: User cancels the request (cleanup).
@@ -850,7 +656,89 @@ class AdminMixin(EndpointTesterBase):
         else:
             logger.warning(f"DSAR cancel -> {resp.status_code}: {resp.text[:200]}")
 
-        # Step 5: deny flow on a second request (deny requires pending, so
+        # Step 5: admin lifecycle on a second request (detail -> approve
+        # -> generate). Uses its own row because approve/generate move the
+        # first request out of the cancellable states.
+        logger.info("Testing DSAR admin lifecycle (second request)...")
+        resp = session.post(
+            f"{self.ctx.base_url}/api/v1/users/@me/data-export",
+            json={"password": test_pass, "format": "json"},
+            timeout=10,
+        )
+        if 200 <= resp.status_code < 300:
+            admin_id = None
+            try:
+                import src.api as _api3
+
+                _db3 = _api3.get_db()
+                if _db3:
+                    _row3 = _db3.fetch_one(
+                        "SELECT id FROM dsar_requests WHERE user_id = ? "
+                        "AND status = 'pending' ORDER BY requested_at DESC LIMIT 1",
+                        (self.ctx.test_user_id,),
+                    )
+                    if _row3:
+                        admin_id = int(
+                            _row3["id"] if isinstance(_row3, dict) else _row3[0]
+                        )
+            except Exception:
+                pass
+            if admin_id:
+                base = self.ctx.base_url
+                for method, path, label in [
+                    (
+                        "GET",
+                        f"/api/v1/admin/data-export/{admin_id}",
+                        "dsar_admin_get",
+                    ),
+                    (
+                        "POST",
+                        f"/api/v1/admin/data-export/{admin_id}/approve",
+                        "dsar_admin_approve",
+                    ),
+                    (
+                        "POST",
+                        f"/api/v1/admin/data-export/{admin_id}/generate",
+                        "dsar_admin_generate",
+                    ),
+                ]:
+                    try:
+                        if method == "GET":
+                            r = session.get(f"{base}{path}", timeout=15)
+                        else:
+                            r = session.post(f"{base}{path}", json={}, timeout=60)
+                        ok = 200 <= r.status_code < 300
+                        self.ctx.results.append(
+                            {
+                                "method": method,
+                                "path": path,
+                                "status_code": r.status_code,
+                                "duration_ms": 0,
+                                "success": ok,
+                                "label": label,
+                            }
+                        )
+                        if ok:
+                            logger.info(f"DSAR {label} PASSED -> {r.status_code}")
+                        else:
+                            logger.warning(
+                                f"DSAR {label} -> {r.status_code}: {r.text[:200]}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"DSAR {label} exception: {e}")
+                        self.ctx.results.append(
+                            {
+                                "method": method,
+                                "path": path,
+                                "status_code": 0,
+                                "duration_ms": 0,
+                                "success": False,
+                                "label": label,
+                                "error": str(e)[:200],
+                            }
+                        )
+
+        # Step 6: deny flow on a third request (deny requires pending, so
         # it needs its own row). The denied row is terminal by design.
         logger.info("Testing DSAR deny flow (second request)...")
         resp = session.post(
@@ -907,8 +795,8 @@ class AdminMixin(EndpointTesterBase):
         Unlike the legacy /admin/database/migrations/* endpoints tested in
         test_migration_endpoints(), these use the richer MigrationRunRequest
         body with dry_run support and irreversible-migration checks. The run
-        uses dry_run (no live-DB mutation); rollback targets the 001 no-op.
-        Both are approval-gated: the real multi-admin ceremony precedes each.
+        applies 001 for real (the rollback step needs it applied); both are
+        approval-gated: the real multi-admin ceremony precedes each.
         """
         if not self.ctx.standalone_mode:
             return
@@ -920,8 +808,11 @@ class AdminMixin(EndpointTesterBase):
         mig_run = "/api/v1/admin/migrations/001/run"
         mig_rollback = "/api/v1/admin/migrations/001/rollback"
 
-        # --- Run (apply) migration 001 via new endpoint (dry-run) ---
-        logger.info("Testing POST /api/v1/admin/migrations/001/run (dry-run)...")
+        # --- Run (apply) migration 001 via new endpoint ---
+        # Applied for real (not dry-run): the rollback step below needs an
+        # applied 001 to roll back, and the legacy test may have left it
+        # rolled back. Net DB effect across both tests is zero.
+        logger.info("Testing POST /api/v1/admin/migrations/001/run (apply)...")
         if not self._approval_ceremony("migrations.run"):
             self.ctx.results.append(
                 {
@@ -938,7 +829,7 @@ class AdminMixin(EndpointTesterBase):
         run_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_run}",
-            json={"dry_run": True},
+            json={"dry_run": False},
             timeout=10,
         )
         duration = (time.time() - run_start) * 1000
