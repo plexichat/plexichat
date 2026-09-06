@@ -21,3 +21,17 @@ utils_path = os.path.join(project_root, "src", "utils")
 for path in [project_root, src_path, utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
+
+
+def pytest_addoption(parser):
+    """Pre-register the ``cache_dir`` ini option.
+
+    ``pytest.ini`` sets ``cache_dir`` (keeps caches out of the repo root),
+    but that option is owned by pytest's ``cacheprovider`` plugin — running
+    with ``-p no:cacheprovider`` makes the valid setting "unknown" and
+    emits ``PytestConfigWarning``. Registering it here keeps the option
+    known in both modes; when the plugin is enabled it re-registers the
+    same option (pytest overwrites duplicates without error) and the
+    ``pytest.ini`` value takes effect either way.
+    """
+    parser.addini("cache_dir", help="Cache directory path", default=".pytest_cache")
