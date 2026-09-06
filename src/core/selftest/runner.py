@@ -165,7 +165,9 @@ class SelfTestRunner:
                         f"{self.ctx.base_url}/api/v1/channels/invites/{invite_code}"
                     )
                     rejoin_resp = self.ctx.other_session.post(rejoin_url, timeout=5)
-                    if rejoin_resp.status_code in (200, 201, 204):
+                    # 409 means already a member (e.g. restored by an
+                    # earlier hook) — equally good for the leave test.
+                    if rejoin_resp.status_code in (200, 201, 204, 409):
                         return True
         except Exception:
             pass
@@ -596,6 +598,12 @@ class SelfTestRunner:
             self.endpoints.test_approval_gated_actions()
             self.endpoints.test_federation_inbound()
             self.endpoints.test_join_contract()
+            self.endpoints.test_new_migration_endpoints()
+            self.endpoints.test_bot_creation_via_api()
+            # Bot server flow needs other_user alive (non-owner requester;
+            # self-review is forbidden) — must precede password-reset and
+            # delay-deletion, which destroy that identity.
+            self.endpoints.test_bot_server_integration()
             # Extended coverage BEFORE delay-deletion/password-reset: the
             # negative-permission and concurrency probes run as other_user,
             # and test_delay_deletion / test_password_reset_confirm destroy
@@ -607,8 +615,8 @@ class SelfTestRunner:
             self.endpoints.test_entity_lifecycle()
             self.endpoints.test_websocket_thread_dispatch()
             self.endpoints.test_oauth_passkeys_federation_stubs()
-            self.endpoints.test_delay_deletion()
             self.endpoints.test_password_reset_confirm()
+            self.endpoints.test_delay_deletion()
             self.endpoints.test_media_upload_complete()
             self.endpoints.test_dsar()
             self.endpoints.test_transcript_export()
@@ -617,8 +625,8 @@ class SelfTestRunner:
             self.endpoints.test_poll_close()
             # New standalone tests for previously-excluded endpoints
             self.endpoints.test_onboarding_preset()
-            self.endpoints.test_new_migration_endpoints()
-            self.endpoints.test_bot_creation_via_api()
+            # Bot server flow already ran before delay-deletion (needs a
+            # live non-owner requester); nothing deferred here.
             self.endpoints.test_user_2fa_flow()
             self.endpoints.test_admin_2fa_flow()
             self.endpoints.test_interaction_callback()
@@ -647,8 +655,10 @@ class SelfTestRunner:
                     )
                 self.endpoints.test_endpoint(method, test_path, route)
 
-        # 8. Explicit bot server flow
-        self.endpoints.test_bot_server_integration()
+        # 8. Explicit bot server flow (standalone already ran it before
+        # delay-deletion; only run here outside standalone mode).
+        if not self.ctx.standalone_mode:
+            self.endpoints.test_bot_server_integration()
 
         # 9. DELETE endpoint testing
         self.endpoints.test_delete_resources()
