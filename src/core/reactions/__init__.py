@@ -68,6 +68,7 @@ __all__ = [
     "remove_reaction",
     "remove_all_reactions",
     "remove_all_reactions_for_emoji",
+    "resolve_message_channel",
     "get_reaction",
     "get_reactions",
     "get_reaction_users",
@@ -133,6 +134,18 @@ def add_reaction(user_id: int, message_id: int, emoji: str) -> Reaction:
 def remove_reaction(user_id: int, message_id: int, emoji: str) -> bool:
     """Remove a reaction from a message."""
     return _get_manager().remove_reaction(user_id, message_id, emoji)
+
+
+def resolve_message_channel(message_id: int) -> Optional[Dict]:
+    """Resolve the conversation and real channel id for a message.
+
+    Returns ``None`` when the message does not exist. ``channel_id`` is
+    the srv_channels id for server channels, otherwise the conversation
+    id itself. (Module-level wrapper: route channel-scope validation
+    calls this on the module, and its absence 404'd every reaction
+    write path.)
+    """
+    return _get_manager().resolve_message_channel(message_id)
 
 
 def remove_all_reactions(user_id: int, message_id: int) -> int:
