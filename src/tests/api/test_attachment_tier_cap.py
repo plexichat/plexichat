@@ -50,7 +50,7 @@ class TestAttachmentTierCap:
         user_id = 4242
 
         # Tier cap for this user: 10 MiB (config default branch).
-        async def fake_get_media():
+        def fake_get_media():
             return object()  # must be non-None to pass the module guard
 
         monkeypatch.setattr(api_module, "get_media", fake_get_media)
@@ -77,7 +77,7 @@ class TestAttachmentTierCap:
         later on channel resolution, which this wiring stubs out)."""
         user_id = 4243
 
-        async def fake_get_media():
+        def fake_get_media():
             return object()
 
         monkeypatch.setattr(api_module, "get_media", fake_get_media)

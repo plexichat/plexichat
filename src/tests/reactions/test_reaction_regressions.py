@@ -111,7 +111,14 @@ class TestRemoveReactionInvalidEmoji:
                 "src.api.routes.reactions._validate_message_in_channel",
                 return_value=5,
             ),
-            patch("asyncio.create_task"),
+            # Drop the fire-and-forget dispatch coroutine instead of
+            # scheduling it: a bare MagicMock return would leave the
+            # coroutine unawaited (RuntimeWarning) and could mask real
+            # dispatch errors as passes.
+            patch(
+                "asyncio.create_task",
+                side_effect=lambda coro: coro.close(),
+            ),
         ):
             response = await remove_reaction(
                 "5", "5", "%F0%9F%91%8D", request, current_user

@@ -716,27 +716,44 @@ class TestPostgreSQLConnectionPooling:
         try:
             db_setup = Database()
             db_setup.connect()
+            # Guard against config pollution: this test exercises the
+            # PostgreSQL pool. If a previous test left global config
+            # pointing at another backend, workers would land on a
+            # different database (missing table) and die with unhandled
+            # thread exceptions instead of a clean skip.
+            if getattr(db_setup, "type", None) != "postgres":
+                db_setup.close()
+                pytest.skip("PostgreSQL not available: backend is not postgres")
             db_setup.execute(
                 "CREATE TABLE IF NOT EXISTS pg_pool_test (id SERIAL PRIMARY KEY, data TEXT)"
             )
             db_setup.close()
 
+            errors = []
+            errors_lock = threading.Lock()
+
             def pg_worker(worker_id):
-                db = Database()
-                db.connect()
                 try:
-                    db.execute(
-                        "INSERT INTO pg_pool_test (data) VALUES (?)",
-                        (f"worker_{worker_id}",),
-                    )
-                finally:
-                    db.close()
+                    db = Database()
+                    db.connect()
+                    try:
+                        db.execute(
+                            "INSERT INTO pg_pool_test (data) VALUES (?)",
+                            (f"worker_{worker_id}",),
+                        )
+                    finally:
+                        db.close()
+                except Exception as e:
+                    with errors_lock:
+                        errors.append(e)
 
             threads = [threading.Thread(target=pg_worker, args=(i,)) for i in range(5)]
             for t in threads:
                 t.start()
             for t in threads:
                 t.join()
+
+            assert not errors, f"pool workers raised: {errors!r}"
 
             db_verify = Database()
             db_verify.connect()

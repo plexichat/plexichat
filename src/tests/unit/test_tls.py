@@ -223,7 +223,7 @@ class TestTLSModule:
 
     def _expired_cert_bytes(self, hostname, sans):
         import ipaddress
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         from cryptography import x509
         from cryptography.hazmat.backends import default_backend
@@ -240,7 +240,7 @@ class TestTLSModule:
                 names.append(x509.IPAddress(ipaddress.ip_address(s)))
             except ValueError:
                 pass
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -366,7 +366,7 @@ class TestTLSModule:
 
     def test_version_tolerant_validity_check(self):
         """F9: validity check handles naive/aware expiry datetimes."""
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         from cryptography import x509
         from cryptography.hazmat.backends import default_backend
@@ -379,7 +379,7 @@ class TestTLSModule:
             public_exponent=65537, key_size=2048, backend=default_backend()
         )
         subject = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "ok")])
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)

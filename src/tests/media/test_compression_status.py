@@ -70,4 +70,4 @@ class TestCompressionStatus:
         assert status.pillow_available is False
         assert status.ffmpeg_available is False
         assert status.ffprobe_available is False
-        assert "ffprobe_path" not in status.model_fields
+        assert "ffprobe_path" not in type(status).model_fields
