@@ -326,6 +326,43 @@ class AuthSetupMixin(SetupServiceBase):
         logger.warning("Failed to register third user after 2 attempts")
         return False
 
+    def create_fourth_user(self) -> bool:
+        """Register a permanently unprivileged user for moderation targets.
+
+        Hierarchy-gated moderation endpoints refuse targets that hold any
+        admin identity, so they need a plain user that is never promoted.
+        Best-effort: a snowflake fallback is used when registration fails.
+        """
+        password = self.ctx._test_password
+        for _attempt in range(2):
+            rand_suffix = secrets.token_hex(4)
+            fourth_username = f"selftest_fourth_{rand_suffix}"
+            fourth_email = f"fourth_{rand_suffix}@selftest.plexichat.com"
+            try:
+                register_resp = self.ctx.session.post(
+                    f"{self.ctx.base_url}/api/v1/auth/register",
+                    json={
+                        "username": fourth_username,
+                        "email": fourth_email,
+                        "password": password,
+                    },
+                    timeout=10,
+                )
+                if register_resp.status_code in (200, 201):
+                    user_obj = (register_resp.json().get("user")) or {}
+                    fourth_id = user_obj.get("id")
+                    if fourth_id is not None:
+                        self.ctx.test_fourth_user_id = int(fourth_id)
+                        logger.debug(
+                            f"Registered fourth user: {fourth_username} "
+                            f"(id={fourth_id})"
+                        )
+                        return True
+            except Exception as e:
+                logger.debug(f"Register fourth user attempt failed: {e}")
+        logger.warning("Failed to register fourth user after 2 attempts")
+        return False
+
     def block_selftest_username_prefix(self) -> None:
         try:
             _bl_db = api.get_db()

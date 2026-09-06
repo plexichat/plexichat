@@ -427,8 +427,10 @@ class AdminSetupMixin(SetupServiceBase):
         distinct approvers and forbid self-approval, so a two-admin suite
         can never reach quorum. The third admin (support role: users
         scopes + tickets + ``admin.approvals``) provides the second vote
-        for the approval-gated standalone tests. Journaled as an elevated
-        account so a crashed run is reconciled by the next run.
+        for the approval-gated standalone tests. The wildcard grants go
+        through the privileged auth path (explicit opt-in, merged onto the
+        existing map); journaled as an elevated account so a crashed run
+        is reconciled by the next run.
         """
         if not self.ctx.test_third_user_id:
             return
@@ -459,6 +461,13 @@ class AdminSetupMixin(SetupServiceBase):
                     user_id=third_id,
                     username=getattr(self.ctx, "test_third_username", None),
                 )
+            auth_mod = api.get_auth()
+            if auth_mod is not None and hasattr(auth_mod, "grant_permission"):
+                for _perm in ("admin.*", "*"):
+                    try:
+                        auth_mod.grant_permission(third_id, _perm, allow_wildcards=True)
+                    except TypeError:
+                        auth_mod.grant_permission(third_id, _perm)
             support_row = db.fetch_one(
                 "SELECT id FROM admin_roles WHERE name = ?",
                 ("support_admin",),

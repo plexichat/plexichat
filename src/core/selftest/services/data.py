@@ -113,11 +113,11 @@ class DataGenerator:
                     else _gen_snowflake()
                 )
             elif "/blocked-users" in path:
-                # Moderation hierarchy refuses actions against admins; the
-                # main session acts as an admin, so target the non-admin
-                # third user (falls back to a snowflake when absent).
+                # Moderation hierarchy refuses targets holding any admin
+                # identity; target the permanently unprivileged fourth user
+                # (falls back to a snowflake when absent).
                 val = str(
-                    getattr(self.ctx, "test_third_user_id", None) or _gen_snowflake()
+                    getattr(self.ctx, "test_fourth_user_id", None) or _gen_snowflake()
                 )
             else:
                 val = str(self.ctx.test_user_id)
@@ -200,7 +200,12 @@ class DataGenerator:
         elif "hash" in name_low:
             val = "a" * 64
         elif "emoji" in name_low:
-            if "id" in name_low or "name" not in name_low:
+            if "/reactions/" in path:
+                # Reaction endpoints need a valid unicode emoji (numeric
+                # ids 400 as invalid by design); custom-emoji detail is
+                # covered by the lifecycle test.
+                val = "👍"
+            elif "id" in name_low or "name" not in name_low:
                 val = str(self.ctx.test_emoji_id or _gen_snowflake())
             else:
                 val = "smile"
@@ -420,8 +425,19 @@ class DataGenerator:
                 # other_session sends the request, so recipient is admin (test_user_id)
                 # The sender is implicit (authenticated via other_session token)
 
+            if "blocked-users" in path and method == "POST":
+                # Platform hierarchy refuses admin targets: point at the
+                # permanently unprivileged fourth user (random ids would
+                # 404 later; self would 403 here).
+                _fourth = getattr(self.ctx, "test_fourth_user_id", None)
+                if _fourth:
+                    body["user_id"] = str(_fourth)
+
             if "admin/security/access-tokens" in path and "/rotate" in path:
-                body["token"] = secrets.token_urlsafe(48)
+                # Rotation values are always generated server-side (see the
+                # rotate-specific rule above); never supply one.
+                if isinstance(body, dict):
+                    body.pop("token", None)
 
             if "version/negotiate" in path:
                 body["client_version"] = "r.1.0-999"
@@ -696,6 +712,12 @@ class DataGenerator:
                 # (see _TUNING_BOUNDS); send in-range values so the endpoint
                 # itself (200 + audit) is exercised instead of the validator.
                 body = {"glide_request_timeout_ms": 1000}
+
+            if "soundboard" in path and path.endswith("/play") and method == "POST":
+                # Playback requires a voice channel in the sound's server
+                # (a text channel id 404s by design).
+                if getattr(self.ctx, "test_voice_channel_id", None):
+                    body["channel_id"] = str(self.ctx.test_voice_channel_id)
 
             if "admin-users" in path and "/toggle-status" in path and method == "POST":
                 if self.ctx.test_other_user_id:

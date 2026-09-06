@@ -59,6 +59,7 @@ class SetupService(
             logger.debug(f"Test third user ID: {self.ctx.test_third_user_id}")
             if self.ctx.test_third_user_id:
                 self.promote_third_to_support_admin()
+            self.create_fourth_user()
 
             if not self.login_main_user():
                 return False
@@ -76,6 +77,7 @@ class SetupService(
             self.join_other_user_to_server()
             self.create_test_webhook()
             self.create_dummy_test_file()
+            self.create_test_sound()
             self.resolve_log_filename()
             self.create_test_settings()
             self.create_test_application_and_bot()

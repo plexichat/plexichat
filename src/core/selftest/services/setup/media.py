@@ -77,6 +77,42 @@ class MediaSetupMixin(SetupServiceBase):
         except Exception as e:
             logger.warning(f"Failed to create dummy test file: {e}")
 
+    def create_test_sound(self) -> None:
+        """Seed a soundboard sound so id-addressed sound endpoints resolve.
+
+        The generic fuzzer runs endpoints in discovery order, so an upload
+        performed mid-loop cannot serve earlier id-addressed hits (play /
+        get / patch). A setup-seeded sound gives every hit a real id from
+        the start, independent of order.
+        """
+        if not self.ctx.test_server_id or not self.ctx.test_user_id:
+            return
+        try:
+            soundboard_mod = api.get_soundboard()
+            if not soundboard_mod:
+                return
+            ogg = (
+                b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" + b"\x00" * 512
+            )
+            create = getattr(soundboard_mod, "create_sound_from_upload", None)
+            if create is None:
+                manager = soundboard_mod._get_manager()
+                create = manager.create_sound_from_upload
+            sound = create(
+                user_id=self.ctx.test_user_id,
+                server_id=self.ctx.test_server_id,
+                name="selftest_sound",
+                file_data=ogg,
+                filename="test_sound.ogg",
+                content_type="audio/ogg",
+            )
+            if sound is not None and getattr(sound, "id", None) is not None:
+                self.ctx.test_soundboard_id = int(sound.id)
+                logger.info(f"Test soundboard sound ID: {self.ctx.test_soundboard_id}")
+        except Exception as e:
+            logger.warning(f"Failed to seed test sound: {e}")
+
     def resolve_log_filename(self) -> None:
         try:
             log_dir_raw = config_mod.get("media", {}).get("logs_dir")

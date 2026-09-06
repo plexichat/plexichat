@@ -37,8 +37,10 @@ class SelfTestContext:
         self.test_other_user_id: Optional[int] = None
         self.test_third_user_id: Optional[int] = None
         self.test_third_username: Optional[str] = None
+        self.test_fourth_user_id: Optional[int] = None
         self.test_server_id: Optional[int] = None
         self.test_channel_id: Optional[int] = None
+        self.test_voice_channel_id: Optional[int] = None
         self.test_conversation_id: Optional[int] = None
         self.test_message_id: Optional[int] = None
         self.test_artifact_id: Optional[int] = None

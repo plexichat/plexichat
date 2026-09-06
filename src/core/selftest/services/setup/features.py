@@ -425,74 +425,57 @@ class FeatureSetupMixin(SetupServiceBase):
         try:
             db_s = api.get_db()
             if db_s:
-                existing_pack = db_s.fetch_one(
-                    "SELECT id FROM sticker_packs WHERE name = ?",
-                    ("selftest_pack",),
+                # Fresh pack per run bound to THIS run's server: reusing a
+                # name-keyed pack from a previous run points at a deleted
+                # server, which fails the server-membership use check (403).
+                _uniq = secrets.token_hex(4)
+                _pack_name = f"selftest_pack_{_uniq}"
+                pack_id = self.ctx.data.generate_snowflake()
+                db_s.execute(
+                    "INSERT INTO sticker_packs (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        pack_id,
+                        _pack_name,
+                        "Self-test pack",
+                        "server",
+                        self.ctx.test_server_id,
+                        self.ctx.test_user_id,
+                        int(time.time()),
+                        int(time.time()),
+                    ),
                 )
-                if existing_pack:
-                    pack_id = (
-                        existing_pack["id"]
-                        if isinstance(existing_pack, dict)
-                        else existing_pack[0]
-                    )
-                else:
-                    pack_id = self.ctx.data.generate_snowflake()
+                sticker_id = self.ctx.data.generate_snowflake()
+                try:
                     db_s.execute(
-                        "INSERT INTO sticker_packs (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO sticker_stickers (id, name, pack_id, format, description, tags, url, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
+                            sticker_id,
+                            f"selftest_sticker_{_uniq}",
                             pack_id,
-                            "selftest_pack",
-                            "Self-test pack",
-                            "server",
-                            self.ctx.test_server_id,
-                            self.ctx.test_user_id,
-                            int(time.time()),
+                            "png",
+                            "Self-test sticker",
+                            '["test"]',
+                            "https://example.com/sticker.png",
+                            1024,
                             int(time.time()),
                         ),
                     )
-                existing_sticker = db_s.fetch_one(
-                    "SELECT id FROM sticker_stickers WHERE name = ?",
-                    ("selftest_sticker",),
-                )
-                if not existing_sticker:
-                    sticker_id = self.ctx.data.generate_snowflake()
-                    try:
-                        db_s.execute(
-                            "INSERT INTO sticker_stickers (id, name, pack_id, format, description, tags, url, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                sticker_id,
-                                "selftest_sticker",
-                                pack_id,
-                                "png",
-                                "Self-test sticker",
-                                '["test"]',
-                                "https://example.com/sticker.png",
-                                1024,
-                                int(time.time()),
-                            ),
-                        )
-                    except Exception:
-                        db_s.execute(
-                            "INSERT INTO sticker_stickers (id, name, pack_id, format, tags, url, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                sticker_id,
-                                "selftest_sticker",
-                                pack_id,
-                                "png",
-                                '["test"]',
-                                "https://example.com/sticker.png",
-                                1024,
-                                int(time.time()),
-                            ),
-                        )
-                    self.ctx.test_sticker_id = sticker_id
-                    logger.debug(f"Created test sticker ID: {self.ctx.test_sticker_id}")
-                else:
-                    self.ctx.test_sticker_id = (
-                        existing_sticker["id"]
-                        if isinstance(existing_sticker, dict)
-                        else existing_sticker[0]
+                except Exception:
+                    db_s.execute(
+                        "INSERT INTO sticker_stickers (id, name, pack_id, format, tags, url, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            sticker_id,
+                            f"selftest_sticker_{_uniq}",
+                            pack_id,
+                            "png",
+                            '["test"]',
+                            "https://example.com/sticker.png",
+                            1024,
+                            int(time.time()),
+                        ),
                     )
+                self.ctx.test_sticker_id = sticker_id
+                logger.debug(f"Created test sticker ID: {self.ctx.test_sticker_id}")
         except Exception as e:
             logger.warning(f"Failed to create test sticker: {e}")
 
