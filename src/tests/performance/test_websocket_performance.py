@@ -81,19 +81,24 @@ class TestWebSocketPerformance:
         session_manager = websocket_manager["session_manager"]
         user = test_user_with_token["user"]
 
-        async def create_connection():
+        # NOTE: this pytest-benchmark version only measures synchronous
+        # targets (it calls the target without awaiting), so the
+        # benchmarked unit is the synchronous registration path. An async
+        # wrapper would only create abandoned coroutines (RuntimeWarning)
+        # and measure nothing.
+        counter = [0]
+
+        def create_connection():
             from src.api.websocket import Connection
 
+            counter[0] += 1
             ws = AsyncMock()
-            conn = Connection(ws, f"test_conn_{time.time()}")
+            conn = Connection(ws, f"test_conn_perf_{counter[0]}_{time.time_ns()}")
             session_manager.add_connection(conn)
             session_manager.create_session(conn, user_id=user.id, intents=513)
             return conn
 
-        async def run_benchmark():
-            return await create_connection()
-
-        conn = await benchmark.pedantic(run_benchmark, rounds=10)
+        conn = benchmark(create_connection)
         assert conn is not None
         assert conn.connection_id is not None
         # The connection and its session must actually be registered.
@@ -101,11 +106,16 @@ class TestWebSocketPerformance:
         assert session_manager.get_user_connection_count(user.id) >= 1
 
     @pytest.mark.asyncio
-    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     async def test_event_dispatch_performance(
-        self, benchmark, websocket_manager, test_user_with_token
+        self, websocket_manager, test_user_with_token
     ):
-        """Benchmark event dispatching to a connection."""
+        """Exercise event dispatching to a connection (throughput smoke).
+
+        Dispatch itself is async, which this pytest-benchmark version
+        cannot measure (it never awaits coroutine targets), so this is a
+        plain functional test: 20 dispatches must all complete without
+        error. No ``benchmark`` fixture is requested on purpose.
+        """
         dispatcher = websocket_manager["dispatcher"]
         session_manager = websocket_manager["session_manager"]
         user = test_user_with_token["user"]
@@ -124,13 +134,8 @@ class TestWebSocketPerformance:
             data={"content": "Test message", "channel_id": "123"},
         )
 
-        async def dispatch_event():
+        for _ in range(20):
             await dispatcher.dispatch_event(event, [user.id])
-
-        async def run_benchmark():
-            await dispatch_event()
-
-        await benchmark.pedantic(run_benchmark, rounds=20)
 
     @pytest.mark.asyncio
     async def test_concurrent_connections(self, websocket_manager, stress_test_users):
