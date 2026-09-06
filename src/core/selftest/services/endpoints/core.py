@@ -147,23 +147,18 @@ class CoreMixin(EndpointTesterBase):
             else:
                 if "/soundboard" in path and method == "POST":
                     # Sound upload takes multipart ``file`` (audio) + ``name``.
-                    # Synthesize a minimal valid WAV (RIFF magic passes the
-                    # media pipeline's container allow-list).
-                    import io as _io
-                    import wave as _wave
-
+                    # Soundboard accepts MP3/OGG only: synthesize a minimal
+                    # OGG-capsule (OggS magic) like the voice-message probe.
                     file_field = "file"
-                    _buf = _io.BytesIO()
-                    with _wave.open(_buf, "wb") as _wf:
-                        _wf.setnchannels(1)
-                        _wf.setsampwidth(2)
-                        _wf.setframerate(8000)
-                        _wf.writeframes(b"\x00\x00" * 800)
+                    _ogg = (
+                        b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+                        b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" + b"\x00" * 512
+                    )
                     files = {
                         "file": (
-                            "test_sound.wav",
-                            _buf.getvalue(),
-                            "audio/wav",
+                            "test_sound.ogg",
+                            _ogg,
+                            "audio/ogg",
                         )
                     }
                 elif "/stickers" in path or "/emojis" in path:
@@ -328,6 +323,164 @@ class CoreMixin(EndpointTesterBase):
                 except Exception as exc:
                     logger.debug(f"Auto-unblock failed (non-fatal): {exc}")
 
+            # Ban/kick tests remove other_user's server membership; an
+            # unban does NOT restore it. Restore other immediately after a
+            # successful ban (unban + rejoin), unban, or kick so later
+            # membership-dependent tests (thread add/join, channel views)
+            # exercise a clean state instead of a stranded non-member.
+            if success and method in ("DELETE", "POST", "PUT"):
+                try:
+                    _oid = str(self.ctx.test_other_user_id or "")
+                    _is_ban = (
+                        method == "PUT"
+                        and "/bans/" in path
+                        and _oid
+                        and path.rstrip("/").endswith(f"/{_oid}")
+                    )
+                    _is_unban = (
+                        method == "DELETE"
+                        and "/bans/" in path
+                        and _oid
+                        and path.rstrip("/").endswith(f"/{_oid}")
+                    )
+                    _is_kick = "/kick" in path and _oid and _oid in path
+                    if _is_ban:
+                        # Unban right away: the ban endpoint itself is fully
+                        # exercised by the 200 above; leaving the ban in
+                        # place would strand every later membership test.
+                        try:
+                            _srv = path.split("/bans/")[0].rstrip("/").split("/")[-1]
+                            active_session.delete(
+                                f"{self.ctx.base_url}/api/v1/servers/"
+                                f"{_srv}/bans/{_oid}",
+                                timeout=5,
+                            )
+                        except Exception:
+                            pass
+                    if (_is_ban or _is_unban or _is_kick) and self.ctx.test_channel_id:
+                        _inv = active_session.post(
+                            f"{self.ctx.base_url}/api/v1/channels/"
+                            f"{self.ctx.test_channel_id}/invites",
+                            json={"max_uses": 5},
+                            timeout=5,
+                        )
+                        if 200 <= _inv.status_code < 300:
+                            _code = _inv.json().get("code")
+                            if _code:
+                                _rj = self.ctx.other_session.post(
+                                    f"{self.ctx.base_url}/api/v1/channels/"
+                                    f"invites/{_code}",
+                                    timeout=10,
+                                )
+                                if 200 <= _rj.status_code < 300:
+                                    logger.info(
+                                        "Rejoined other_user after ban/kick probe"
+                                    )
+                except Exception as exc:
+                    logger.debug(f"Membership restore note: {exc}")
+            # The leave test makes other_user leave the server by design;
+            # rejoin immediately afterwards so later membership-dependent
+            # tests (thread add/join, channel views) exercise a clean
+            # state instead of a stranded non-member.
+            if (
+                success
+                and method == "POST"
+                and "/leave" in path
+                and "/servers/" in path
+                and active_session is self.ctx.other_session
+                and self.ctx.test_channel_id
+            ):
+                try:
+                    _linv = self.ctx.session.post(
+                        f"{self.ctx.base_url}/api/v1/channels/"
+                        f"{self.ctx.test_channel_id}/invites",
+                        json={"max_uses": 5},
+                        timeout=5,
+                    )
+                    if 200 <= _linv.status_code < 300:
+                        _lcode = _linv.json().get("code")
+                        if _lcode:
+                            _lrj = self.ctx.other_session.post(
+                                f"{self.ctx.base_url}/api/v1/channels/invites/{_lcode}",
+                                timeout=10,
+                            )
+                            if 200 <= _lrj.status_code < 300:
+                                logger.info("Rejoined other_user after leave probe")
+                except Exception as exc:
+                    logger.debug(f"Leave-restore note: {exc}")
+            # Relationship blocks are privacy-enforcing (see above): unblock
+            # the same target right away so later social flows stay clean.
+            if success and method == "POST" and path.endswith("/relationships/block"):
+                try:
+                    _target = str(
+                        (json_body or {}).get("user_id")
+                        or (json_body or {}).get("blocked_id")
+                        or ""
+                    )
+                    if _target and _target.isdigit():
+                        _unblock_resp = active_session.delete(
+                            f"{self.ctx.base_url}/api/v1/relationships/{_target}",
+                            timeout=5,
+                        )
+                        if 200 <= _unblock_resp.status_code < 300:
+                            logger.info(
+                                "Auto-unblocked relationship target after "
+                                "POST /relationships/block"
+                            )
+                        if (
+                            _target
+                            == str(
+                                self.ctx.test_other_user_id
+                                if self.ctx.test_other_user_id
+                                else ""
+                            )
+                            and active_session is self.ctx.session
+                        ):
+                            try:
+                                self.ctx.other_session.post(
+                                    f"{self.ctx.base_url}/api/v1/relationships",
+                                    json={
+                                        "user_id": self.ctx.test_user_id,
+                                        "message": "Self-test friend request",
+                                    },
+                                    timeout=10,
+                                )
+                                logger.debug(
+                                    "Re-sent seeded friend request after unblock"
+                                )
+                            except Exception:
+                                pass
+                except Exception as exc:
+                    logger.debug(f"Relationship auto-unblock note: {exc}")
+
+            # Sound permission probes can leave deny rows behind, which
+            # would 403 the later playback test. Reset the same role to
+            # allow right away: the permission endpoint itself is fully
+            # exercised by the 200 above.
+            if (
+                success
+                and method == "PUT"
+                and "/soundboard/" in path
+                and "/permissions/" in path
+            ):
+                try:
+                    import re as _re2
+
+                    _m = _re2.search(
+                        r"/api/v1/servers/(\d+)/soundboard/(\d+)/permissions/(\d+)",
+                        path,
+                    )
+                    if _m:
+                        _srv, _snd, _rid = _m.groups()
+                        active_session.put(
+                            f"{self.ctx.base_url}/api/v1/servers/{_srv}/"
+                            f"soundboard/{_snd}/permissions/{_rid}",
+                            json={"can_use": True},
+                            timeout=5,
+                        )
+                        logger.debug("Reset soundboard permission to allow after probe")
+                except Exception as exc:
+                    logger.debug(f"Sound permission reset note: {exc}")
             # Token rotation (F3): POST /auth/refresh mints a fresh secret
             # and invalidates the old bearer immediately. A real client must
             # adopt the rotated token atomically, so the runner does the same
