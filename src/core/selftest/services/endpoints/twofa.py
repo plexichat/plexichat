@@ -141,8 +141,19 @@ class TwoFAMixin(EndpointTesterBase):
         else:
             logger.warning(f"2FA status -> {resp.status_code}: {resp.text[:200]}")
 
-        # Step 4: Disable 2FA
+        # Step 4: Disable 2FA (fresh code; wait out the TOTP window when
+        # it collides with the confirm-step code — replay guard).
         new_code = self._get_current_totp_code(totp_secret)
+        try:
+            import time as _time_mod2
+
+            if new_code == totp_code:
+                _sleep2 = 30 - (int(_time_mod2.time()) % 30) + 1
+                logger.debug(f"Waiting {_sleep2}s for next TOTP window (replay guard)")
+                _time_mod2.sleep(min(_sleep2, 32))
+                new_code = self._get_current_totp_code(totp_secret)
+        except Exception:
+            pass
         logger.info("Testing POST /api/v1/auth/2fa/disable...")
         disable_start = time.time()
         resp = session.post(
@@ -279,8 +290,20 @@ class TwoFAMixin(EndpointTesterBase):
                 f"Admin 2FA regenerate -> {resp.status_code}: {resp.text[:200]}"
             )
 
-        # Step 4: Disable OTP
+        # Step 4: Disable OTP. TOTP replay protection rejects a code
+        # already consumed in this 30s window (the verify step above), so
+        # wait for the window to roll over when the fresh code matches.
         final_code = self._get_current_totp_code(otp_secret)
+        try:
+            import time as _time_mod
+
+            if final_code == otp_code:
+                _sleep = 30 - (int(_time_mod.time()) % 30) + 1
+                logger.debug(f"Waiting {_sleep}s for next TOTP window (replay guard)")
+                _time_mod.sleep(min(_sleep, 32))
+                final_code = self._get_current_totp_code(otp_secret)
+        except Exception:
+            pass
         logger.info("Testing POST /api/v1/admin/auth/2fa/disable...")
         disable_start = time.time()
         resp = session.post(

@@ -46,12 +46,56 @@ class BotMixin(EndpointTesterBase):
 
         logger.info("Testing bot server integration (request -> approve)...")
 
+        # Request as other_user, review as the server owner (main): the
+        # review path forbids self-review, so a single identity can never
+        # complete the flow. Ensure other's session is live first (re-login
+        # when stale); fall back to the third identity when other is gone.
+        _req_session = None
+        for _cand, _uname in (
+            (self.ctx.other_session, getattr(self.ctx, "_setup_other_username", None)),
+            (
+                getattr(self.ctx, "third_session", None),
+                getattr(self.ctx, "test_third_username", None),
+            ),
+        ):
+            if _cand is None or not _cand.headers.get("Authorization"):
+                continue
+            try:
+                _probe = _cand.get(f"{self.ctx.base_url}/api/v1/users/@me", timeout=5)
+                if _probe.status_code == 200:
+                    _req_session = _cand
+                    break
+            except Exception:
+                continue
+        if _req_session is None:
+            # Last resort: fresh login as other (credentials are known and
+            # the account still exists at this phase).
+            try:
+                _ou = getattr(self.ctx, "_setup_other_username", None)
+                if _ou and self.ctx._test_password:
+                    _rl = self.ctx.other_session.post(
+                        f"{self.ctx.base_url}/api/v1/auth/login",
+                        json={"username": _ou, "password": self.ctx._test_password},
+                        timeout=10,
+                    )
+                    if _rl.status_code == 200:
+                        _tok = _rl.json().get("token") or _rl.json().get("access_token")
+                        if _tok:
+                            self.ctx.other_session.headers.update(
+                                {"Authorization": f"Bearer {_tok}"}
+                            )
+                            self.ctx.other_token = _tok
+                            _req_session = self.ctx.other_session
+            except Exception:
+                pass
+        if _req_session is None:
+            _req_session = self.ctx.session
         req_body = {"application_id": str(self.ctx.test_application_id)}
         req_path = f"/api/v1/bots/servers/{self.ctx.test_server_id}/request"
         start = time.time()
         request_succeeded = False
         try:
-            resp = self.ctx.session.post(
+            resp = _req_session.post(
                 f"{self.ctx.base_url}{req_path}",
                 json=req_body,
                 timeout=5,
