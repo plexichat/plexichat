@@ -161,26 +161,23 @@ class ChannelHandler:
                     # channel they just created. Without this, the owner
                     # can create channels but gets 404/denied on every
                     # message operation (only joiners were added via the
-                    # member-join path). Uses the participant service
-                    # directly: the manager-level add requires an existing
-                    # owner/admin participant, which cannot exist yet.
+                    # member-join path). Uses the messaging manager's
+                    # batch add (no owner/admin pre-check, which cannot
+                    # pass for the first participant by definition).
                     try:
-                        from src.core.messaging.exceptions import (
-                            ParticipantExistsError,
-                        )
                         from src.core.messaging.models import ParticipantRole
-                        from src.core.messaging.services.participant import (
-                            ParticipantService,
-                        )
 
-                        try:
-                            ParticipantService(self.db).add_participant(
-                                conv.id, user_id, ParticipantRole.OWNER
-                            )
-                        except ParticipantExistsError:
-                            pass
+                        self.manager._messaging.add_participant_to_conversations(
+                            user_id, [conv.id], ParticipantRole.OWNER
+                        )
                     except Exception as _part_e:
-                        logger.debug(f"Creator participant seed note: {_part_e}")
+                        # Loud on purpose: a channel whose creator cannot
+                        # participate is broken for its owner (message
+                        # reads/writes 404). Never swallow silently.
+                        logger.warning(
+                            f"Creator participant seed failed for channel "
+                            f"{channel_id}: {_part_e}"
+                        )
             except Exception:
                 if conv and hasattr(self.manager._messaging, "delete_conversation"):
                     try:
