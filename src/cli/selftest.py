@@ -1,4 +1,5 @@
 import sys
+import os
 import socket
 import threading
 import time
@@ -47,6 +48,11 @@ def handle_selftest(
 ) -> None:
     logger.info("Starting Self-Test Mode...")
     host = "127.0.0.1"
+
+    # Signal test-only allowances process-wide (the server runs in-thread
+    # here, so it inherits this): SSRF loopback targets for the fake remote
+    # federation instance, relaxed security checks, etc. Removed on teardown.
+    os.environ["PLEXICHAT_SELF_TEST"] = "1"
 
     if _is_port_in_use(host, port):
         logger.error(f"Port {port} is already in use - cannot start self-test")
@@ -100,6 +106,10 @@ def handle_selftest(
                 pass
         try:
             server.cleanup()
+        except Exception:
+            pass
+        try:
+            os.environ.pop("PLEXICHAT_SELF_TEST", None)
         except Exception:
             pass
         sys.exit(exit_code)

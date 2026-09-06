@@ -6,6 +6,7 @@ Handles outbound joins, inbound requests, traffic tracking, and health checks.
 
 import json
 import logging
+import os
 import secrets
 import time
 from typing import Any, Dict, List, Optional
@@ -53,7 +54,26 @@ def validate_remote_url(remote_url: str) -> None:
         raise RemoteURLBlockedError("remote_url is required")
     parsed_scheme = remote_url.split("://", 1)[0].lower() if "://" in remote_url else ""
     if parsed_scheme != "https":
-        raise RemoteURLBlockedError("remote_url must use the https scheme")
+        # Self-test allowance (TEST ONLY): the suite runs a fake remote
+        # peer over plain HTTP on loopback. Allowed ONLY when
+        # PLEXICHAT_SELF_TEST is set AND the host is a loopback literal.
+        # Production (env unset) still requires https, always.
+        from urllib.parse import urlparse as _urlparse
+
+        _host = (_urlparse(remote_url).hostname or "").lower()
+        if (
+            parsed_scheme == "http"
+            and os.getenv("PLEXICHAT_SELF_TEST") is not None
+            and _host in ("127.0.0.1", "localhost", "::1")
+        ):
+            logger.warning(
+                "SELF-TEST ONLY: accepting plain-HTTP federation URL for "
+                "loopback peer %s. This allowance is gated on "
+                "PLEXICHAT_SELF_TEST and never applies in production.",
+                remote_url,
+            )
+        else:
+            raise RemoteURLBlockedError("remote_url must use the https scheme")
     try:
         from src.utils.security import URLValidator
 

@@ -169,11 +169,16 @@ class FederationMixin(EndpointTesterBase):
             self._drop_connection(db, remote_id)
 
     def test_join_contract(self) -> None:
-        """End-to-end /Join client contract with real ids.
+        """End-to-end /Join client contract with real ids and real delivery.
 
-        request -> list -> approve/deny (seeded inbound ids) -> message
-        validation (pending links cannot send: 400 contract) -> break.
-        Break runs last: it deletes the connection under test.
+        A fake remote PlexiChat instance (local HTTPS server) runs alongside
+        the suite, so every delivery step genuinely executes: the manager
+        SSRF-validates, HMAC-signs and POSTs, and the fake peer answers with
+        valid data.
+
+        request -> list -> approve/deny (fresh inbound ids) -> message
+        (delivered to the fake peer) -> break. Break runs last: it deletes
+        the connection under test.
         """
         if not self.ctx.standalone_mode:
             return
@@ -210,29 +215,80 @@ class FederationMixin(EndpointTesterBase):
                 )
             return ok
 
-        # --- request (creates a pending connection; delivery best-effort) ---
-        # NOTE: the Join route SSRF-validates remote_url (https + resolving
-        # host), so point at a real domain; delivery failure is best-effort
-        # and still returns success.
-        uniq = secrets.token_hex(4)
+        # --- fake remote peer (local plain-HTTP server, valid answers) ---
+        from src.core.selftest.services.fake_remote import FakeRemoteInstance
+
+        fake = FakeRemoteInstance()
+        try:
+            fake.start()
+        except Exception as _e:
+            logger.warning(f"Join fake remote failed to start: {_e}")
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": "/api/v1/Join/request",
+                    "status_code": 0,
+                    "duration_ms": 0,
+                    "success": False,
+                    "label": "join_request",
+                }
+            )
+            return
+
+        try:
+            self._join_contract_steps(session, base, fake, _record)
+        finally:
+            try:
+                fake.stop()
+            except Exception:
+                pass
+
+    def _join_contract_steps(self, session, base, fake, _record) -> None:
+        """request -> list -> approve/deny -> message -> break via fake peer."""
+        # --- request (creates the connection; delivery to the fake peer
+        # is real, so assert the server confirms delivery) ---
         req_resp = session.post(
             f"{base}/api/v1/Join/request",
             json={
-                "remote_url": f"https://plexichat.com/join-test-{uniq}",
+                "remote_url": fake.base_url,
                 "note": "self-test join",
             },
             timeout=15,
         )
-        if not _record(
-            "join_request", "POST", "/api/v1/Join/request", req_resp, (200, 201)
-        ):
+        try:
+            _parsed = req_resp.json() if req_resp is not None else None
+        except Exception:
+            _parsed = None
+        _req_json = _parsed if isinstance(_parsed, dict) else {}
+        _delivered = bool(_req_json.get("delivered"))
+        # A reused connection from an earlier run reports existing=true
+        # without redelivering; delivery is still proven live by the
+        # message step below, so only fresh creates must show delivered.
+        _existing = bool(_req_json.get("existing"))
+        if not (_delivered or _existing):
+            logger.warning(
+                "Join request delivered=false "
+                f"(status={req_resp.status_code if req_resp is not None else 0})"
+            )
+        _req_ok = req_resp is not None and req_resp.status_code in (
+            200,
+            201,
+        )
+        self.ctx.results.append(
+            {
+                "method": "POST",
+                "path": "/api/v1/Join/request",
+                "status_code": req_resp.status_code if req_resp is not None else 0,
+                "duration_ms": 0,
+                "success": bool(_req_ok and (_delivered or _existing)),
+                "label": "join_request",
+            }
+        )
+        if not (_req_ok and (_delivered or _existing)):
             return
         join_id = None
-        try:
-            _data = req_resp.json()
-            join_id = _data.get("Join_id") or _data.get("connection_id")
-        except Exception:
-            pass
+        if isinstance(_req_json, dict):
+            join_id = _req_json.get("Join_id") or _req_json.get("connection_id")
 
         # --- list ---
         list_resp = session.get(f"{base}/api/v1/Join/list", timeout=10)
@@ -246,12 +302,50 @@ class FederationMixin(EndpointTesterBase):
             except Exception:
                 pass
 
-        # --- approve / reject use FRESH inbound rows created here: the
-        # setup-seeded rows are consumed by the admin plexijoin review
-        # endpoints in the auto-loop, so reusing them would 400 as
-        # "already processed" depending on discovery order.
+        # --- inbound rows, seeded fresh here ---
+        # The setup-seeded rows are consumed by the admin plexijoin review
+        # endpoints in the auto-loop, so this test mints its own pending
+        # rows. The approve row shares the new connection's
+        # remote_instance_id, which makes approval ACTIVATE the link (the
+        # precondition for delivering a real message below).
         import src.api as _api2
 
+        _remote_id = ""
+        # A reused connection from an earlier run still points at that
+        # run's (now dead) fake peer: repoint it at the live one and reset
+        # to pending so approve reactivates it deterministically.
+        if _existing and join_id is not None:
+            try:
+                _db0 = _api2.get_db()
+                if _db0:
+                    from urllib.parse import urlparse as _up
+
+                    _new_netloc = _up(fake.base_url).netloc
+                    _db0.execute(
+                        "UPDATE plexijoin_connections SET remote_url = ?, remote_instance_id = ?, status = 'pending' WHERE id = ?",
+                        (
+                            fake.base_url,
+                            f"remote:{_new_netloc}",
+                            int(join_id),
+                        ),
+                    )
+            except Exception as _e:
+                logger.debug(f"Join repoint note: {_e}")
+        try:
+            _db2 = _api2.get_db()
+            if _db2 and join_id is not None:
+                _conn_row = _db2.fetch_one(
+                    "SELECT remote_instance_id FROM plexijoin_connections WHERE id = ?",
+                    (int(join_id),),
+                )
+                if _conn_row:
+                    _remote_id = str(
+                        _conn_row["remote_instance_id"]
+                        if isinstance(_conn_row, dict)
+                        else _conn_row[0]
+                    )
+        except Exception as _e:
+            logger.debug(f"Join remote-id lookup note: {_e}")
         _fresh_approve = None
         _fresh_deny = None
         try:
@@ -264,8 +358,8 @@ class FederationMixin(EndpointTesterBase):
                     "INSERT INTO plexijoin_inbound_requests (id, remote_instance_id, remote_url, status, requested_at) VALUES (?, ?, ?, ?, ?)",
                     (
                         _fresh_approve,
-                        f"test-join-approve-{secrets.token_hex(4)}",
-                        "https://remote.example.invalid",
+                        _remote_id,
+                        fake.base_url,
                         "pending",
                         int(_t.time() * 1000),
                     ),
@@ -283,7 +377,7 @@ class FederationMixin(EndpointTesterBase):
                 )
         except Exception as _e:
             logger.debug(f"Join fresh-row seeding note: {_e}")
-        # --- approve the fresh inbound request ---
+        # --- approve the fresh inbound request (also activates the link) ---
         if _fresh_approve:
             appr = session.post(
                 f"{base}/api/v1/Join/{_fresh_approve}/approve",
@@ -312,32 +406,55 @@ class FederationMixin(EndpointTesterBase):
                 (200, 201),
             )
 
-        # --- message over a pending link: the 400 validation contract ---
+        # --- message over the now-ACTIVE link, really delivered ---
+        # The manager signs the envelope and POSTs it to the fake peer;
+        # success requires BOTH the 2xx here AND the fake peer's record of
+        # a signed envelope carrying our payload.
         if join_id is not None:
             msg = session.post(
                 f"{base}/api/v1/Join/{join_id}/message",
                 json={"message_type": "selftest.ping", "payload": {"n": 1}},
                 timeout=15,
             )
-            # Pending links cannot deliver: assert the documented 400 with
-            # a clear contract message (not a 500/exception).
-            msg_ok = (
-                msg.status_code == 400 and "not active" in msg.text.lower()
-            ) or 200 <= msg.status_code < 300
+            from src.core.plexijoin.manager import (
+                FEDERATION_MESSAGE_PATH as _MSG_PATH,
+            )
+
+            _seen = fake.received_for(_MSG_PATH)
+            _signed_ok = any(
+                "x-plexijoin-signature" in r["headers"]
+                and "x-plexijoin-timestamp" in r["headers"]
+                and isinstance(r["json"], dict)
+                and r["json"].get("message_type") == "selftest.ping"
+                and isinstance(r["json"].get("payload"), dict)
+                and r["json"]["payload"].get("n") == 1
+                for r in _seen
+            )
+            msg_ok = msg is not None and 200 <= msg.status_code < 300 and _signed_ok
+            if not _signed_ok:
+                logger.warning(
+                    "Join message reached no signed envelope at fake peer "
+                    f"(status={msg.status_code if msg is not None else 0}, "
+                    f"seen={len(_seen)})"
+                )
             self.ctx.results.append(
                 {
                     "method": "POST",
                     "path": "/api/v1/Join/{id}/message",
-                    "status_code": msg.status_code,
+                    "status_code": msg.status_code if msg is not None else 0,
                     "duration_ms": 0,
                     "success": msg_ok,
                     "label": "join_message",
                 }
             )
             if msg_ok:
-                logger.info("Join message contract PASSED")
+                logger.info("Join message PASSED (delivered to fake peer)")
             else:
-                logger.warning(f"Join message -> {msg.status_code}: {msg.text[:200]}")
+                logger.warning(
+                    f"Join message -> "
+                    f"{msg.status_code if msg is not None else 0}: "
+                    f"{msg.text[:200] if msg is not None else 'no response'}"
+                )
 
         # --- break (deletes the connection created above; runs last) ---
         if join_id is not None:
@@ -345,3 +462,17 @@ class FederationMixin(EndpointTesterBase):
                 f"{base}/api/v1/Join/{join_id}/break", json={}, timeout=10
             )
             _record("join_break", "POST", "/api/v1/Join/{id}/break", brk, (200, 201))
+
+        # --- hygiene: remove this run's inbound rows (break deletes the
+        # connection; the approved/denied rows would otherwise linger) ---
+        try:
+            _db3 = _api2.get_db()
+            if _db3:
+                for _rid in (_fresh_approve, _fresh_deny):
+                    if _rid is not None:
+                        _db3.execute(
+                            "DELETE FROM plexijoin_inbound_requests WHERE id = ?",
+                            (_rid,),
+                        )
+        except Exception as _e:
+            logger.debug(f"Join inbound cleanup note: {_e}")

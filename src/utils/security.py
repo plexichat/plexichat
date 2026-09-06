@@ -7,6 +7,7 @@ Provides:
 - Content-Type verification
 """
 
+import os
 import socket
 import ipaddress
 import secrets
@@ -99,6 +100,19 @@ class URLValidator:
             raise ValueError("Invalid URL: missing hostname")
 
         hostname_lower = hostname.lower()
+
+        # Self-test allowance (TEST ONLY): when the PLEXICHAT_SELF_TEST
+        # environment variable is set (self-test CLI mode), loopback
+        # literals resolve straight to 127.0.0.1/::1 without DNS. This lets
+        # the suite exercise outbound federation delivery against a fake
+        # remote instance running alongside the server. Scope is deliberately
+        # minimal: loopback literals only, env-gated, no effect on any other
+        # host. Without the env var every loopback URL below stays blocked.
+        if os.getenv("PLEXICHAT_SELF_TEST") is not None:
+            if hostname_lower in ("127.0.0.1", "localhost"):
+                return hostname, "127.0.0.1"
+            if hostname_lower == "::1":
+                return hostname, "::1"
 
         # 1. Block known forbidden hostnames
         if hostname_lower in self._blocked_hosts:

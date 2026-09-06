@@ -284,3 +284,43 @@ def test_build_admin_csp_header_contains_nonce_and_restrictions():
 
 def test_csp_header_differs_with_nonce():
     assert build_admin_csp_header("a") != build_admin_csp_header("b")
+
+
+# ---------------------------------------------------------------------------
+# PLEXICHAT_SELF_TEST loopback allowance (fake remote federation peer)
+# ---------------------------------------------------------------------------
+
+
+def test_loopback_blocked_without_selftest_env(monkeypatch):
+    monkeypatch.delenv("PLEXICHAT_SELF_TEST", raising=False)
+    for url in (
+        "https://127.0.0.1:8443/x",
+        "https://localhost/x",
+        "https://[::1]/x",
+    ):
+        with pytest.raises(ValueError):
+            URLValidator().validate_url_for_request(url)
+
+
+def test_loopback_allowed_with_selftest_env(monkeypatch):
+    monkeypatch.setenv("PLEXICHAT_SELF_TEST", "1")
+    host, ip = URLValidator().validate_url_for_request("https://127.0.0.1:8443/x")
+    assert host == "127.0.0.1"
+    assert ip == "127.0.0.1"
+    host, ip = URLValidator().validate_url_for_request("https://localhost/x")
+    assert ip == "127.0.0.1"
+    host, ip = URLValidator().validate_url_for_request("https://[::1]/x")
+    assert ip == "::1"
+
+
+def test_selftest_env_does_not_allow_non_loopback(monkeypatch):
+    # The allowance is loopback-literals only: any other host still goes
+    # through DNS + private-IP rejection even with the env var set.
+    monkeypatch.setenv("PLEXICHAT_SELF_TEST", "1")
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))],
+    )
+    with pytest.raises(ValueError, match="forbidden IP"):
+        URLValidator().validate_url_for_request("https://internal.example.com/x")
