@@ -292,9 +292,11 @@ class SumTester:
                 )
                 return
             sync_d = sync.get("d", {})
+            # Gateway frames carry ids as strings; compare stringified so a
+            # serialization choice never reads as a protocol failure.
             sync_ok = (
                 sync.get("op") == int(GatewayOpcode.SUM_SYNC)
-                and sync_d.get("workbook_id") == temporary_workbook_id
+                and str(sync_d.get("workbook_id")) == str(temporary_workbook_id)
                 and int(sync_d.get("revision") or 0) >= 1
                 and isinstance(sync_d.get("ops"), list)
                 and len(sync_d.get("ops", [])) == 1
@@ -351,8 +353,8 @@ class SumTester:
             relayed_op = d.get("op", {})
             ok = (
                 relayed.get("op") == int(GatewayOpcode.SUM_OP)
-                and d.get("workbook_id") == temporary_workbook_id
-                and d.get("actor_id") == owner_id
+                and str(d.get("workbook_id")) == str(temporary_workbook_id)
+                and str(d.get("actor_id")) == str(owner_id)
                 and isinstance(relayed_op, dict)
                 and relayed_op.get("operation_id")
                 == f"selftest-relay-{_SUM_TEST_NONCE}"

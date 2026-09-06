@@ -211,11 +211,14 @@ class FederationMixin(EndpointTesterBase):
             return ok
 
         # --- request (creates a pending connection; delivery best-effort) ---
+        # NOTE: the Join route SSRF-validates remote_url (https + resolving
+        # host), so point at a real domain; delivery failure is best-effort
+        # and still returns success.
         uniq = secrets.token_hex(4)
         req_resp = session.post(
             f"{base}/api/v1/Join/request",
             json={
-                "remote_url": f"https://jointest-{uniq}.example.com",
+                "remote_url": f"https://plexichat.com/join-test-{uniq}",
                 "note": "self-test join",
             },
             timeout=15,
@@ -243,10 +246,47 @@ class FederationMixin(EndpointTesterBase):
             except Exception:
                 pass
 
-        # --- approve the seeded inbound request ---
-        if self.ctx.test_plexijoin_request_id:
+        # --- approve / reject use FRESH inbound rows created here: the
+        # setup-seeded rows are consumed by the admin plexijoin review
+        # endpoints in the auto-loop, so reusing them would 400 as
+        # "already processed" depending on discovery order.
+        import src.api as _api2
+
+        _fresh_approve = None
+        _fresh_deny = None
+        try:
+            _db2 = _api2.get_db()
+            if _db2:
+                import time as _t
+
+                _fresh_approve = self.ctx.data.generate_snowflake()
+                _db2.execute(
+                    "INSERT INTO plexijoin_inbound_requests (id, remote_instance_id, remote_url, status, requested_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        _fresh_approve,
+                        f"test-join-approve-{secrets.token_hex(4)}",
+                        "https://remote.example.invalid",
+                        "pending",
+                        int(_t.time() * 1000),
+                    ),
+                )
+                _fresh_deny = self.ctx.data.generate_snowflake()
+                _db2.execute(
+                    "INSERT INTO plexijoin_inbound_requests (id, remote_instance_id, remote_url, status, requested_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        _fresh_deny,
+                        f"test-join-deny-{secrets.token_hex(4)}",
+                        "https://remote.example.invalid",
+                        "pending",
+                        int(_t.time() * 1000),
+                    ),
+                )
+        except Exception as _e:
+            logger.debug(f"Join fresh-row seeding note: {_e}")
+        # --- approve the fresh inbound request ---
+        if _fresh_approve:
             appr = session.post(
-                f"{base}/api/v1/Join/{self.ctx.test_plexijoin_request_id}/approve",
+                f"{base}/api/v1/Join/{_fresh_approve}/approve",
                 json={},
                 timeout=10,
             )
@@ -257,10 +297,10 @@ class FederationMixin(EndpointTesterBase):
                 appr,
                 (200, 201),
             )
-        # --- deny the seeded deny request ---
-        if self.ctx.test_plexijoin_deny_request_id:
+        # --- deny the fresh deny request ---
+        if _fresh_deny:
             deny = session.post(
-                f"{base}/api/v1/Join/{self.ctx.test_plexijoin_deny_request_id}/reject",
+                f"{base}/api/v1/Join/{_fresh_deny}/reject",
                 json={},
                 timeout=10,
             )

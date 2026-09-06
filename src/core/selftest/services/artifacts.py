@@ -638,10 +638,11 @@ class ArtifactsTester(ArtifactsEvalMixin):
             )
             # Subscribe replies with an ARTIFACT_SYNC placeholder snapshot.
             sub_msg = _recv_required_json(sub_ws, "subscriber ARTIFACT_SYNC")
-            if (
-                sub_msg.get("op") != int(GatewayOpcode.ARTIFACT_SYNC)
-                or sub_msg.get("d", {}).get("artifact_id") != artifact_id
-            ):
+            # Gateway frames carry ids as strings; compare stringified so a
+            # serialization choice never reads as a protocol failure.
+            if sub_msg.get("op") != int(GatewayOpcode.ARTIFACT_SYNC) or str(
+                sub_msg.get("d", {}).get("artifact_id")
+            ) != str(artifact_id):
                 self._record(
                     "WS",
                     "/gateway artifacts",
@@ -681,7 +682,7 @@ class ArtifactsTester(ArtifactsEvalMixin):
             d = relayed.get("d", {})
             ok = (
                 relayed.get("op") == int(GatewayOpcode.ARTIFACT_OP)
-                and d.get("artifact_id") == artifact_id
+                and str(d.get("artifact_id")) == str(artifact_id)
                 and isinstance(d.get("op"), dict)
                 and d.get("op", {}).get("op_type") == "update"
                 and d.get("op", {}).get("value") == "round-trip-marker"
@@ -766,15 +767,35 @@ class ArtifactsTester(ArtifactsEvalMixin):
             )
             art_id = int(art.id)
             try:
-                resp = self.ctx.session.delete(
-                    self.ctx.base_url + f"/api/v1/admin/artifacts/{art_id}"
-                )
-                self._check(
-                    "admin_artifacts_delete",
-                    f"/api/v1/admin/artifacts/{art_id} DELETE",
-                    200 <= resp.status_code < 400,
-                    f"DELETE failed: {resp.status_code}",
-                )
+                # Force-delete is approval-gated: run the real multi-admin
+                # ceremony first so the gate is exercised, not bypassed.
+                try:
+                    from src.core.selftest.services.approval_ceremony import (
+                        run_ceremony,
+                    )
+
+                    _approved = run_ceremony(self.ctx, "artifacts.force_delete")
+                except Exception as _cer_e:
+                    logger.debug("Force-delete ceremony note: %s", _cer_e)
+                    _approved = False
+                if not _approved:
+                    self._record(
+                        "ARTIFACT",
+                        f"/api/v1/admin/artifacts/{art_id} DELETE",
+                        False,
+                        "admin_artifacts_delete",
+                        "approval ceremony failed",
+                    )
+                else:
+                    resp = self.ctx.session.delete(
+                        self.ctx.base_url + f"/api/v1/admin/artifacts/{art_id}"
+                    )
+                    self._check(
+                        "admin_artifacts_delete",
+                        f"/api/v1/admin/artifacts/{art_id} DELETE",
+                        200 <= resp.status_code < 400,
+                        f"DELETE failed: {resp.status_code}",
+                    )
             finally:
                 try:
                     delete_artifact(db, art_id)
