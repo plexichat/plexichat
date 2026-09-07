@@ -34,6 +34,37 @@ RECORDING_FORMATS = {
 }
 DEFAULT_RECORDING_FORMAT = "webm"
 
+# ffmpeg audio codec used when concatenating SFU segments into one file, per
+# configured recording format. The container must match the format the file
+# is later uploaded as (extension + content type); previously every combined
+# file was written as a .webm/libopus stream even when the instance recorded
+# wav/mp4, so the stored file did not match its declared type (L12).
+_COMBINE_AUDIO_CODECS = {
+    "webm": "libopus",
+    "opus": "libopus",
+    "wav": "pcm_s16le",
+    "mp4": "aac",
+}
+
+
+def combine_output_target(recording_format: str) -> tuple:
+    """Return ``(suffix, audio_codec)`` for ffmpeg's combined-segment output.
+
+    The suffix matches the container declared by :data:`RECORDING_FORMATS`
+    for the configured format, and the codec is a container-appropriate audio
+    codec, so a combined recording keeps the extension/content-type of the
+    format it is configured to record (L12). Unrecognized formats fall back
+    to the default webm/opus behavior.
+    """
+    fmt = (
+        recording_format
+        if recording_format in RECORDING_FORMATS
+        else DEFAULT_RECORDING_FORMAT
+    )
+    suffix = "." + RECORDING_FORMATS[fmt][1]
+    codec = _COMBINE_AUDIO_CODECS.get(fmt, "libopus")
+    return suffix, codec
+
 
 class RecordingManager:
     """Manages the lifecycle of voice call audio recordings.
@@ -532,8 +563,13 @@ class RecordingManager:
             return None
 
         combine_dir = str(Path(filepaths[0]).expanduser().resolve().parent)
+        # L12: the combined file must use the container/codec of the
+        # configured recording format (it is uploaded with that format's
+        # extension and content type afterwards); previously the suffix and
+        # codec were hardcoded to webm/libopus regardless of configuration.
+        suffix, audio_codec = combine_output_target(self._recording_format)
         fd, out_path = tempfile.mkstemp(
-            suffix=".webm", prefix="recording_", dir=combine_dir
+            suffix=suffix, prefix="recording_", dir=combine_dir
         )
         os.close(fd)
 
@@ -551,7 +587,7 @@ class RecordingManager:
             ["ffmpeg", "-y"]
             + input_args
             + ["-filter_complex", filter_str]
-            + ["-map", "[a]", "-c:a", "libopus", out_path]
+            + ["-map", "[a]", "-c:a", audio_codec, out_path]
         )
 
         try:
