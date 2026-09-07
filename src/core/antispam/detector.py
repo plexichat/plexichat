@@ -381,14 +381,23 @@ class DMSpamDetector:
         # Collapse whitespace-split mention evasion ("< @123") before counting.
         mention_count = len(cls.MENTION_SPLIT_PATTERN.findall(content))
         lower = content.lower()
-        invite_present = any(marker in lower for marker in cls.INVITE_MARKERS)
+        # L4: invite markers count toward the URL bucket so invite-only spam
+        # (e.g. three discord.gg links and nothing else) reaches the URL
+        # threshold without needing http(s):// links at all.
+        invite_count = sum(lower.count(marker) for marker in cls.INVITE_MARKERS)
+        url_count += invite_count
 
         indicators = 0
         if url_count >= 3:
             indicators += 2
         if mention_count >= 5:
             indicators += 2
-        if invite_present and (url_count >= 2 or mention_count >= 2):
+        # L4: previously the invite signal only counted when paired with 2+
+        # URLs or mentions, so an isolated invite scored 0 and invite-only
+        # spam evaded the heuristic entirely. Score it unconditionally; a
+        # single shared invite (1 indicator) still cannot reach the block
+        # threshold of 3, so legitimate invites keep passing.
+        if invite_count:
             indicators += 1
         return indicators
 

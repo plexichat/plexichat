@@ -146,6 +146,23 @@ class TestDMSpamDetector:
             None,
         )
 
+    def test_invite_only_spam_blocked_without_urls(self, db):
+        # L4: three invite markers and nothing else must trip the heuristic —
+        # previously the invite signal only counted when paired with 2+ URLs
+        # or mentions, so invite-only spam scored 0 and always passed.
+        detector = _frozen_detector(db)
+        content = "discord.gg/abc123 discord.com/invite/def456 t.me/joinxyz"
+        allowed, reason = detector.check_message(1, 74, content)
+        assert allowed is False
+        assert reason == "Message flagged as potential spam"
+
+    def test_two_invites_alone_below_threshold(self, db):
+        # Two invites are not yet spam: URL bucket needs 3+, and the invite
+        # signal alone contributes only 1 indicator (block threshold is 3).
+        detector = _frozen_detector(db)
+        content = "discord.gg/abc123 t.me/joinxyz"
+        assert detector.check_message(1, 75, content) == (True, None)
+
     def test_custom_recipient_filter_threshold(self, db):
         detector = DMSpamDetector(db)
         detector._get_timestamp = lambda: T0_MS
