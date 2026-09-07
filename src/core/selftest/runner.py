@@ -47,11 +47,15 @@ class SelfTestRunner:
         base_url: str,
         standalone_mode: bool = True,
         unlicensed: bool = False,
+        status_only: bool = False,
     ):
         if requests is None:
             raise RuntimeError("requests dependency is required for selftest runner")
 
-        selftest_cfg = config.get("selftest", {})
+        # Status mode runs without app config (it can target a remote
+        # deployment): no config lookups here.
+        selftest_cfg = {} if status_only else config.get("selftest", {})
+        self.status_only = status_only
         self.ctx = SelfTestContext(
             base_url=base_url,
             config=selftest_cfg,
@@ -95,9 +99,10 @@ class SelfTestRunner:
         # endpoints as license-gated only when the operator passes
         # ``--unlicensed``. There is deliberately no auto-detection from
         # the license state of the machine -- a missing license file must
-        # surface as a self-test failure unless the operator opts in, so
+        # surface as self-test failure unless the operator opts in, so
         # CI and operators can rely on the flag being the sole switch.
         self.ctx.unlicensed = unlicensed
+        self.ctx.status_only = status_only
 
     def _resolve_test_path(self, path: str) -> Optional[str]:
         """Substitute path placeholders with concrete test values.
@@ -174,8 +179,10 @@ class SelfTestRunner:
         return False
 
     def run_all(self) -> bool:
-        """Run all discovered API tests."""
+        """Run all discovered API tests (or the status subset)."""
         try:
+            if self.status_only:
+                return self._run_status()
             return self._run_all()
         except Exception:
             # Error paths must not leak the RAM monitor thread.
@@ -184,6 +191,31 @@ class SelfTestRunner:
             except Exception:
                 pass
             raise
+
+    def _run_status(self) -> bool:
+        """Read-only liveness checks, safe for cron/Prometheus polling.
+
+        No authentication, no mutations, no fixtures, no test allowances:
+        every request goes through production middleware exactly as a
+        status page would. Safe to aim at a live deployment.
+        """
+        from src.cli.status_probe import run_status_checks
+
+        self.ctx.start_time = time.time()
+        logger.info("=" * 60)
+        logger.info("STATUS CHECK (read-only, unauthenticated)")
+        logger.info(f"Target: {self.ctx.base_url}")
+        logger.info("=" * 60)
+
+        for result in run_status_checks(self.ctx.base_url):
+            self.ctx.results.append(result)
+            if result["success"]:
+                logger.info(
+                    f"Status {result['label']} PASSED -> {result['status_code']}"
+                )
+            else:
+                logger.warning(f"Status {result['label']} -> {result['status_code']}")
+        return self.report.report_summary()
 
     def _run_all(self) -> bool:
         """Run all discovered API tests."""

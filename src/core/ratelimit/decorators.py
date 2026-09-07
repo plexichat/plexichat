@@ -88,6 +88,9 @@ def rate_limit(
                 is_admin = permissions.get("admin.*", False) or permissions.get(
                     "*", False
                 )
+            # Internal/self-test requests are marked by AuthenticationMiddleware;
+            # surface the flag so the manager bypass applies to decorated routes.
+            is_internal = bool(getattr(request.state, "is_internal", False))
             resource_id = None
             if per_resource:
                 resource_id = kwargs.get(resource_param)
@@ -109,6 +112,7 @@ def rate_limit(
                     resource_id=resource_id,
                     is_bot=is_bot,
                     is_admin=is_admin,
+                    is_internal=is_internal,
                 )
             finally:
                 if original_config:
@@ -179,6 +183,9 @@ def custom_rate_limit(
                 is_admin = permissions.get("admin.*", False) or permissions.get(
                     "*", False
                 )
+            # Internal/self-test requests are marked by AuthenticationMiddleware;
+            # surface the flag so the manager bypass applies to decorated routes.
+            is_internal = bool(getattr(request.state, "is_internal", False))
             resource_id = None
             if get_resource_id:
                 resource_id = get_resource_id(request, kwargs)
@@ -197,6 +204,7 @@ def custom_rate_limit(
                     resource_id=resource_id,
                     is_bot=is_bot,
                     is_admin=is_admin,
+                    is_internal=is_internal,
                 )
             finally:
                 manager._route_configs.pop(route, None)

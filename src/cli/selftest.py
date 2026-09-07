@@ -45,14 +45,31 @@ def handle_selftest(
     host: str,
     port: int,
     unlicensed: bool = False,
+    status_only: bool = False,
+    base_url: str | None = None,
 ) -> None:
+    if base_url:
+        # Remote status mode: probe a live deployment with read-only
+        # checks. No server start, no app imports, no test allowances, no
+        # teardown. The probe is dependency-free so it reports a result
+        # even when application code is broken.
+        from src.cli.status_probe import run_status_checks, summarize
+
+        # NOTE: utils.logger is unusable here (logger.setup runs inside
+        # _run_startup, which remote mode skips); the probe prints plainly.
+        print(f"Status mode: probing {base_url} (no local server)...")
+        sys.exit(0 if summarize(run_status_checks(base_url)) else 1)
+
     logger.info("Starting Self-Test Mode...")
     host = "127.0.0.1"
 
     # Signal test-only allowances process-wide (the server runs in-thread
     # here, so it inherits this): SSRF loopback targets for the fake remote
     # federation instance, relaxed security checks, etc. Removed on teardown.
-    os.environ["PLEXICHAT_SELF_TEST"] = "1"
+    # Status mode needs none of it: its checks are unauthenticated and
+    # allowance-free by construction.
+    if not status_only:
+        os.environ["PLEXICHAT_SELF_TEST"] = "1"
 
     if _is_port_in_use(host, port):
         logger.error(f"Port {port} is already in use - cannot start self-test")
@@ -82,6 +99,7 @@ def handle_selftest(
         runner = SelfTestRunner(
             base_url=f"http://{host}:{port}",
             unlicensed=unlicensed,
+            status_only=status_only,
         )
         success = runner.run_all()
         exit_code = 0 if success else 1

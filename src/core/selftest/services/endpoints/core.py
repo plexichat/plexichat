@@ -236,6 +236,10 @@ class CoreMixin(EndpointTesterBase):
 
         start = time.time()
         try:
+            # The media proxy fetches remote content server-side; its
+            # latency is bounded by the origin, not the app. Give that one
+            # path room (it still fails loudly past the deadline).
+            req_timeout = 30 if url_path.startswith("/api/v1/media/proxy") else 5
             resp = active_session.request(
                 method,
                 f"{self.ctx.base_url}{url_path}",
@@ -243,7 +247,7 @@ class CoreMixin(EndpointTesterBase):
                 data=form_data if form_data else None,
                 files=files,
                 params=query_params,
-                timeout=5,
+                timeout=req_timeout,
             )
             duration = (time.time() - start) * 1000
 

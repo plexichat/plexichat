@@ -241,6 +241,21 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         "license state. Without it, a missing/invalid license surfaces "
         "as self-test failures for those endpoints.",
     )
+    st_parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Read-only status mode: run 4 unauthenticated liveness checks "
+        "(health, API status + limiter headers, OpenAPI, version) and exit. "
+        "Creates nothing, mutates nothing, bypasses nothing — safe to run "
+        "against a live deployment on a schedule. Exit 0 when all pass.",
+    )
+    st_parser.add_argument(
+        "--base-url",
+        default=None,
+        help="Status-mode target, e.g. https://example.com. Only valid with "
+        "--status: no local server is started; checks run remotely. "
+        "Without it, --status targets a freshly booted local server.",
+    )
     st_parser.set_defaults(handler="_cmd_self_test")
 
     # create-config
@@ -560,12 +575,31 @@ def _cmd_migrate_kek(args: argparse.Namespace) -> None:
 
 
 def _cmd_self_test(args: argparse.Namespace) -> None:
+    status_only = getattr(args, "status", False)
+    base_url = getattr(args, "base_url", None)
+    if base_url and not status_only:
+        logger.error("--base-url requires --status")
+        sys.exit(2)
+    if base_url:
+        # Remote status mode: no local server, no app init. The status
+        # checker is dependency-free (plain HTTPS), so a bare handle call
+        # with server=None is all it takes.
+        handle_selftest(
+            None,
+            "remote",
+            0,
+            unlicensed=False,
+            status_only=True,
+            base_url=base_url,
+        )
+        return
     server, host, port, _config_path = _run_startup(args, project_root)
     handle_selftest(
         server,
         host,
         port,
         unlicensed=getattr(args, "unlicensed", False),
+        status_only=status_only,
     )
 
 

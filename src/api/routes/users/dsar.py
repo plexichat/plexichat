@@ -16,7 +16,6 @@ from src.api.schemas.dsar import (
     DSARRequestResponse,
     DSARRequestListResponse,
 )
-from src.core.database.cache.rate_limit import check_rate_limit
 from src.core.dsar import (
     request_data_export as dsar_request_export,
     get_user_requests,
@@ -25,6 +24,8 @@ from src.core.dsar import (
     get_export_file,
     mark_export_downloaded,
 )
+from src.core.ratelimit.decorators import custom_rate_limit
+from src.core.ratelimit.models import RateLimitConfig
 
 
 class DataExportMixin:
@@ -72,31 +73,10 @@ class DataExportMixin:
             return False
         return True
 
-    def _check_dsar_rate_limit(self, user_id: int, request=None) -> None:
-        # Routine self-test/status traffic (localhost + internal secret)
-        # bypasses this abuse throttle like every other rate limit; real
-        # users keep the 1-request-per-day envelope.
-        if request is not None:
-            try:
-                if api.is_self_test_request(request):
-                    return
-            except Exception:
-                pass
-        rate_limit_key = f"dsar:user:{user_id}"
-        allowed, remaining = check_rate_limit(
-            rate_limit_key, limit=1, window_seconds=86400
-        )
-        if not allowed:
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": {
-                        "code": 429,
-                        "message": "Data export request limit exceeded. Please wait 24 hours between requests.",
-                    }
-                },
-            )
-
+    # One export per user per day, enforced by the shared rate limiter
+    # (per-user-per-route bucket). Internal/self-test requests bypass via
+    # the manager, like every other limit; real users keep the envelope.
+    @custom_rate_limit(config=RateLimitConfig(requests=1, window_seconds=86400))
     async def request_data_export(
         self,
         body: DSARRequestBody,
@@ -123,8 +103,6 @@ class DataExportMixin:
                     }
                 },
             )
-
-        self._check_dsar_rate_limit(user_id, request=request)
 
         try:
             format_value = body.format if body.format else "json"
