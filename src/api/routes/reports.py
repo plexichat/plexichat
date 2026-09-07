@@ -111,6 +111,21 @@ async def report_message(
         reported_user_id = None
         message_content = None
 
+        # Fail closed when the messaging boundary is unavailable: without it
+        # the reported message/author cannot be verified, so accepting the
+        # report would store attacker-supplied IDs (F-AUTHZ-1).
+        if not messaging:
+            logger.error("Reports module cannot verify message: messaging unavailable")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": {
+                        "code": 503,
+                        "message": "Report submission temporarily unavailable",
+                    }
+                },
+            )
+
         if messaging:
             try:
                 msg = messaging.get_message(current_user.user_id, message_id)
@@ -261,19 +276,28 @@ async def report_user(
                 detail={"error": {"code": 400, "message": "Cannot report yourself"}},
             )
 
-        # The reported user must actually exist.
+        # The reported user must actually exist (fail closed when the DB
+        # is unavailable — otherwise arbitrary IDs are accepted).
         db = api.get_db()
-        if db is not None:
-            user_row = db.fetch_one(
-                "SELECT id FROM auth_users WHERE id = ?", (reported_user_id,)
+        if db is None:
+            logger.error("Reports module cannot verify user: database unavailable")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": {
+                        "code": 503,
+                        "message": "Report submission temporarily unavailable",
+                    }
+                },
             )
-            if not user_row:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": {"code": 400, "message": "Reported user not found"}
-                    },
-                )
+        user_row = db.fetch_one(
+            "SELECT id FROM auth_users WHERE id = ?", (reported_user_id,)
+        )
+        if not user_row:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Reported user not found"}},
+            )
 
         evidence_ids = None
         if body.evidence_message_ids:
