@@ -725,6 +725,13 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         "avatars": {
             "max_size": 512,
             "max_file_size": 5242880,
+            # M3: decompression-bomb guards consumed by the avatars image
+            # pipeline (manager/processing.py). These keys were previously
+            # absent here, so operator overrides were silently ignored and
+            # the hardcoded fallbacks always won. Values mirror
+            # media.image_processing.
+            "max_dimension": 16384,
+            "max_pixels": 178956970,
             "allowed_types": ["image/jpeg", "image/png", "image/gif", "image/webp"],
             "default_colors": [
                 "#e94560",
