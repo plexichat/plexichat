@@ -7,6 +7,7 @@ from src.api.schemas.servers import (
     ServerCreateRequest,
     ServerUpdateRequest,
     ServerResponse,
+    TransferOwnershipRequest,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 from src.core.database import (
@@ -229,6 +230,86 @@ async def update_server(
             )
 
         logger.error(f"Failed to update server {server_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.post(
+    "/{server_id}/transfer",
+    response_model=ServerResponse,
+    summary="Transfer server ownership",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid server or user ID"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {
+            "model": ErrorResponse,
+            "description": "Only the owner can transfer ownership",
+        },
+        404: {"model": ErrorResponse, "description": "Server or member not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def transfer_ownership(
+    server_id: str,
+    body: TransferOwnershipRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> ServerResponse:
+    """Transfer ownership to another member.
+
+    H1: the core ``transfer_ownership`` primitive (owner-only, new owner
+    must already be a member, caches invalidated, audit-logged) previously
+    had no HTTP route, so ownership could never change hands through the
+    API. Only the current owner may call this endpoint.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+
+    try:
+        try:
+            sid = int(server_id)
+            new_owner = int(body.new_owner_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid server or user ID"}},
+            )
+
+        server = servers_mod.transfer_ownership(current_user.user_id, sid, new_owner)
+        invalidate_server(sid)
+        invalidate_user_servers(current_user.user_id)
+        invalidate_user_servers(new_owner)
+        return _server_to_response(server)
+    except HTTPException:
+        raise
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": {"code": 404, "message": "Server or member not found"}
+                },
+            )
+        elif "Permission" in exc_name or "AccessDenied" in exc_name:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Only the owner can transfer ownership",
+                    }
+                },
+            )
+
+        logger.error(
+            f"Failed to transfer server {server_id} ownership: {e}", exc_info=True
+        )
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},

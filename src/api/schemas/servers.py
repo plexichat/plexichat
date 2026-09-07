@@ -50,6 +50,14 @@ class ServerUpdateRequest(BaseModel):
     )
 
 
+class TransferOwnershipRequest(BaseModel):
+    """Transfer server ownership to another member (owner-only)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    new_owner_id: SnowflakeID = Field(..., description="Member receiving ownership")
+
+
 class ServerResponse(BaseModel):
     """Server information response."""
 
