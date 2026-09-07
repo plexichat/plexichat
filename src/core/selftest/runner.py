@@ -612,6 +612,7 @@ class SelfTestRunner:
             self.endpoints.test_pagination_walks()
             self.endpoints.test_concurrency_threads()
             self.endpoints.test_entity_lifecycle()
+            self.endpoints.test_privileged_lifecycle()
             self.endpoints.test_websocket_thread_dispatch()
             self.endpoints.test_oauth_passkeys_federation_stubs()
             self.endpoints.test_password_reset_confirm()

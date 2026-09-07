@@ -44,6 +44,38 @@ def federation_headers(shared_key: str, body: bytes):
     }
 
 
+def provision_active_connection(db):
+    """Create an ACTIVE connection with a known shared key.
+
+    Returns (remote_instance_id, shared_key). Caller must delete the
+    row afterwards (suite hygiene).
+    """
+    import utils.encryption as _encryption
+
+    shared_key = secrets.token_hex(16)
+    enc_key = _encryption.encrypt_data(shared_key)
+    remote_id = f"selftest-fed-{secrets.token_hex(6)}"
+    now_ms = int(time.time() * 1000)
+    db.execute(
+        "INSERT INTO plexijoin_connections "
+        "(remote_instance_id, remote_url, shared_key_encrypted, "
+        "status, created_at, created_by) VALUES (?, ?, ?, 'active', ?, ?)",
+        (remote_id, "https://remote.example.invalid", enc_key, now_ms, 0),
+    )
+    return remote_id, shared_key
+
+
+def drop_connection(db, remote_id) -> None:
+    """Delete a provisioned connection row (suite hygiene)."""
+    try:
+        db.execute(
+            "DELETE FROM plexijoin_connections WHERE remote_instance_id = ?",
+            (remote_id,),
+        )
+    except Exception:
+        pass
+
+
 class FederationMixin(EndpointTesterBase):
     """Tests inbound federation + /Join contract with real signatures."""
 
@@ -53,28 +85,10 @@ class FederationMixin(EndpointTesterBase):
         Returns (remote_instance_id, shared_key). Caller must delete the
         row afterwards (suite hygiene).
         """
-        import utils.encryption as _encryption
-
-        shared_key = secrets.token_hex(16)
-        enc_key = _encryption.encrypt_data(shared_key)
-        remote_id = f"selftest-fed-{secrets.token_hex(6)}"
-        now_ms = int(time.time() * 1000)
-        db.execute(
-            "INSERT INTO plexijoin_connections "
-            "(remote_instance_id, remote_url, shared_key_encrypted, "
-            "status, created_at, created_by) VALUES (?, ?, ?, 'active', ?, ?)",
-            (remote_id, "https://remote.example.invalid", enc_key, now_ms, 0),
-        )
-        return remote_id, shared_key
+        return provision_active_connection(db)
 
     def _drop_connection(self, db, remote_id):
-        try:
-            db.execute(
-                "DELETE FROM plexijoin_connections WHERE remote_instance_id = ?",
-                (remote_id,),
-            )
-        except Exception:
-            pass
+        drop_connection(db, remote_id)
 
     def test_federation_inbound(self) -> None:
         """Signed join-request + message over a provisioned active link."""
