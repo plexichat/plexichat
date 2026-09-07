@@ -142,20 +142,27 @@ class FriendRequestMixin:
                         }
                     },
                 )
-            except (FriendRequestExistsError, AlreadyFriendsError) as exc:
+            except (FriendRequestExistsError, AlreadyFriendsError):
                 raise HTTPException(
                     status_code=409,
-                    detail={"error": {"code": 409, "message": str(exc)}},
+                    detail={
+                        "error": {
+                            "code": 409,
+                            "message": "Friend request already exists",
+                        }
+                    },
                 )
             except UserNotFoundError:
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "User not found"}},
                 )
-            except RelationshipValidationError as exc:
+            except RelationshipValidationError:
                 raise HTTPException(
                     status_code=400,
-                    detail={"error": {"code": 400, "message": str(exc)}},
+                    detail={
+                        "error": {"code": 400, "message": "Invalid friend request"}
+                    },
                 )
             except Exception as e:
                 logger.error(
@@ -167,7 +174,7 @@ class FriendRequestMixin:
                     detail={
                         "error": {
                             "code": 500,
-                            "message": f"Failed to send friend request: {str(e)}",
+                            "message": "Failed to send friend request",
                         }
                     },
                 )
@@ -350,10 +357,10 @@ class FriendRequestMixin:
                         "error": {"code": 404, "message": "Friend request not found"}
                     },
                 )
-            except PermissionDeniedError as exc:
+            except PermissionDeniedError:
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": str(exc)}},
+                    detail={"error": {"code": 403, "message": "Permission denied"}},
                 )
             except Exception as e:
                 logger.error(
@@ -365,7 +372,7 @@ class FriendRequestMixin:
                     detail={
                         "error": {
                             "code": 500,
-                            "message": f"Failed to accept friend request: {str(e)}",
+                            "message": "Failed to accept friend request",
                         }
                     },
                 )

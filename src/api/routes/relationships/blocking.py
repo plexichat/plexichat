@@ -66,10 +66,10 @@ class BlockingMixin:
                     status_code=400,
                     detail={"error": {"code": 400, "message": "Cannot block yourself"}},
                 )
-            except AlreadyBlockedError as exc:
+            except AlreadyBlockedError:
                 raise HTTPException(
                     status_code=409,
-                    detail={"error": {"code": 409, "message": str(exc)}},
+                    detail={"error": {"code": 409, "message": "User already blocked"}},
                 )
             except UserNotFoundError:
                 raise HTTPException(
@@ -86,7 +86,7 @@ class BlockingMixin:
                     detail={
                         "error": {
                             "code": 500,
-                            "message": f"Failed to block user: {str(e)}",
+                            "message": "Failed to block user",
                         }
                     },
                 )

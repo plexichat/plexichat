@@ -194,10 +194,10 @@ class DeletionMixin:
                         "error": {"code": 404, "message": "Relationship not found"}
                     },
                 )
-            except PermissionDeniedError as exc:
+            except PermissionDeniedError:
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": str(exc)}},
+                    detail={"error": {"code": 403, "message": "Permission denied"}},
                 )
             except Exception as e:
                 logger.error(
@@ -209,7 +209,7 @@ class DeletionMixin:
                     detail={
                         "error": {
                             "code": 500,
-                            "message": f"Failed to delete relationship: {str(e)}",
+                            "message": "Failed to delete relationship",
                         }
                     },
                 )
