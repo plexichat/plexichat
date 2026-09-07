@@ -100,8 +100,8 @@ class DataExportMixin:
     async def request_data_export(
         self,
         body: DSARRequestBody,
+        request: Request,
         current_user: TokenInfo = Depends(get_current_user),
-        request: Optional[Request] = None,
     ) -> SuccessResponse:
         auth = api.get_auth()
         if not auth:
