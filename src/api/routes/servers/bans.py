@@ -160,12 +160,20 @@ async def ban_member(
         elif "Permission" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Internal server error"}},
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
         elif "NotSupported" in exc_name:
+            # H6: message purge on ban is not implemented server-side.
+            # Surface an honest 400 (the request asked for something we do
+            # not support) instead of a misleading 500-style message.
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Internal server error"}},
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Message purge on ban is not supported; retry with delete_message_days=0",
+                    }
+                },
             )
 
         logger.error(
