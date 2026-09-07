@@ -106,6 +106,104 @@ def test_hard_delete_privacy_handles_cascaded_voice_call(db, artifact_builder):
     assert db.fetch_one("SELECT id FROM voice_calls WHERE id = 7401") is None
 
 
+def test_hard_delete_keeps_server_shared_artifact_but_scrubs_author(
+    db, artifact_builder
+):
+    """L22: hard erasure must not delete content shared with a server.
+
+    A SUM/workbook-like artifact the user authored and shared to a server is
+    co-owned by the server's other members; erasing the account must scrub
+    the user's identity from the row instead of destroying the document.
+    """
+    artifact = artifact_builder(
+        db,
+        author_id=41,
+        artifact_type="sum",
+        server_id=77,
+        title="Shared Workbook",
+        payload={"document": "shared with the team"},
+    )
+
+    touched = anonymize_user_artifacts(db, 41, {"anonymize_content": False})
+
+    assert touched >= 1
+    kept = get_artifact(db, artifact.id)
+    assert kept is not None
+    assert kept.server_id == 77
+    assert kept.author_id == 0  # anonymized sentinel, row survives
+    assert kept.title == "[deleted user content]"
+
+
+def test_hard_delete_scrubs_text_of_shared_document(db, artifact_builder):
+    """Shared content keeps its structure but loses the user's inline text."""
+    artifact = artifact_builder(
+        db,
+        author_id=41,
+        artifact_type="plexiscribe",
+        server_id=88,
+        title="Shared Notes",
+        payload={"text": "secret scribble by user 41", "meta": {"kept": True}},
+    )
+
+    anonymize_user_artifacts(db, 41, {"anonymize_content": False})
+
+    kept = get_artifact(db, artifact.id)
+    assert kept is not None
+    assert kept.server_id == 88
+    payload = kept.payload or {}
+    assert "text" not in payload
+    assert payload.get("meta") == {"kept": True}
+
+
+def test_hard_delete_unshared_artifact_is_still_removed(db, artifact_builder):
+    """The L22 guard only applies to server-shared content."""
+    private = artifact_builder(
+        db, author_id=41, artifact_type="upload", title="private file"
+    )
+    shared = artifact_builder(
+        db,
+        author_id=41,
+        artifact_type="upload",
+        server_id=99,
+        title="shared file",
+    )
+
+    anonymize_user_artifacts(db, 41, {"anonymize_content": False})
+
+    assert get_artifact(db, private.id) is None
+    assert get_artifact(db, shared.id) is not None
+
+
+def test_hard_delete_shared_voice_call_cascade_preserves_recorded_call(
+    db, artifact_builder
+):
+    """A recorded server call survives erasure; initiator linkage is scrubbed."""
+    artifact = artifact_builder(
+        db,
+        author_id=41,
+        artifact_type="voice_call",
+        server_id=55,
+        title="Team Call",
+        payload={"recording_ref": "media://call-7402"},
+    )
+    db.execute(
+        "INSERT INTO voice_calls "
+        "(id, artifact_id, conversation_id, server_id, initiator_id, started_at, "
+        "duration_seconds, recorded, consented_participants, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+        (7402, artifact.id, None, 55, 41, 1000, 5, "[41, 42]", 2000, 2000),
+    )
+
+    anonymize_user_artifacts(db, 41, {"anonymize_content": False})
+
+    kept = get_artifact(db, artifact.id)
+    assert kept is not None
+    assert kept.server_id == 55
+    row = db.fetch_one("SELECT * FROM voice_calls WHERE id = 7402")
+    assert row is not None
+    assert int(row["initiator_id"]) == 0
+
+
 def test_subscription_cleanup_is_connection_scoped():
     registry = ArtifactSubscriptionRegistry()
     registry.subscribe(10, 100, "conn-a")

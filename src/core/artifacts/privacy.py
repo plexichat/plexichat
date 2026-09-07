@@ -62,6 +62,48 @@ def _scrub_transcript_text(payload: Any) -> Optional[str]:
     return json.dumps(_scrub_node(data), ensure_ascii=False)
 
 
+def _scrub_owned_artifact_row(db, row: Dict[str, Any]) -> bool:
+    """Remove a user's identity from one owned artifact row, in place.
+
+    Sets ``author_id`` to the sentinel anonymized id, blanks title/summary,
+    and strips inline transcript/document text from the ``payload``. Shared
+    code path for the anonymize policy and for hard erasure of content that
+    must survive because other members co-own it (L22).
+    """
+    artifact_id = row["id"]
+    new_payload: Optional[str] = None
+    if row.get("artifact_type") in (
+        "transcript",
+        "plexiscribe",
+        "plexiscript",
+        "whiteboard",
+        "voice_call",
+    ):
+        new_payload = _scrub_transcript_text(row.get("payload"))
+    try:
+        if new_payload is not None:
+            db.execute(
+                """
+                UPDATE artifacts
+                SET author_id = ?, title = '[deleted user content]',
+                    summary = NULL, payload = ?
+                WHERE id = ?
+                """,
+                (ANONYMIZED_AUTHOR_ID, new_payload, artifact_id),
+            )
+        else:
+            db.execute(
+                """UPDATE artifacts
+                   SET author_id = ?, title = '[deleted user content]', summary = NULL
+                   WHERE id = ?""",
+                (ANONYMIZED_AUTHOR_ID, artifact_id),
+            )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to anonymize artifact {artifact_id}: {e}")
+        return False
+
+
 def anonymize_user_artifacts(
     db,
     user_id: int,
@@ -82,7 +124,10 @@ def anonymize_user_artifacts(
       (calls they initiated are anonymized rather than deleted).
     * ``anonymize_content=False`` — deletes artifacts authored by the user and
       any ``voice_calls`` rows they initiated; consented-participant entries
-      are simply removed from calls they did not start.
+      are simply removed from calls they did not start. Content the user
+      shared with a server (``server_id`` set) is co-owned by the server's
+      other members, so it is scrubbed rather than deleted even in this hard
+      mode (L22).
 
     Returns the number of rows touched (anonymized or deleted).
     """
@@ -93,7 +138,7 @@ def anonymize_user_artifacts(
     try:
         owned_artifacts = db.fetch_all(
             """
-            SELECT id, artifact_type, payload
+            SELECT id, artifact_type, payload, server_id
             FROM artifacts WHERE author_id = ?
             """,
             (user_id,),
@@ -117,7 +162,15 @@ def anonymize_user_artifacts(
         # intact: the documented policy preserves rows while removing the
         # user's identity. Hard deletion owns media cleanup through the
         # manager's cascade path below.
-        if not anonymize:
+        is_server_shared = row.get("server_id") is not None
+        # L22: content shared with a server (SUM docs, shared voice
+        # recordings, whiteboards, ...) is co-owned by the server's other
+        # members. Even a hard erasure must not delete it out from under
+        # them - scrub the deleted user's identity off the row instead.
+        if anonymize or is_server_shared:
+            if _scrub_owned_artifact_row(db, row):
+                touched += 1
+        else:
             try:
                 owned = artifact_manager.get(artifact_id)
                 if owned is not None:
@@ -126,38 +179,6 @@ def anonymize_user_artifacts(
                 logger.debug(
                     "Failed to purge media for artifact %s: %s", artifact_id, e
                 )
-        if anonymize:
-            new_payload: Optional[str] = None
-            if row.get("artifact_type") in (
-                "transcript",
-                "plexiscribe",
-                "plexiscript",
-                "whiteboard",
-                "voice_call",
-            ):
-                new_payload = _scrub_transcript_text(row.get("payload"))
-            try:
-                if new_payload is not None:
-                    db.execute(
-                        """
-                        UPDATE artifacts
-                        SET author_id = ?, title = '[deleted user content]',
-                            summary = NULL, payload = ?
-                        WHERE id = ?
-                        """,
-                        (ANONYMIZED_AUTHOR_ID, new_payload, artifact_id),
-                    )
-                else:
-                    db.execute(
-                        """UPDATE artifacts
-                           SET author_id = ?, title = '[deleted user content]', summary = NULL
-                           WHERE id = ?""",
-                        (ANONYMIZED_AUTHOR_ID, artifact_id),
-                    )
-                touched += 1
-            except Exception as e:
-                logger.error(f"Failed to anonymize artifact {artifact_id}: {e}")
-        else:
             try:
                 if artifact_manager.delete(artifact_id, purge_media=True):
                     touched += 1
@@ -217,15 +238,33 @@ def anonymize_user_artifacts(
                         # The owned-artifact pass may already have cascaded this
                         # voice_calls row. Only delete a still-existing linked
                         # artifact; otherwise remove an orphan call directly.
+                        # L22: a linked artifact that survived hard erasure
+                        # (server-shared content) must not be deleted here;
+                        # drop this call record's initiator linkage instead.
                         linked_artifact = artifact_manager.get(int(linked))
-                        if linked_artifact is not None:
-                            artifact_manager.delete(int(linked), purge_media=True)
-                        elif db.fetch_one(
-                            "SELECT id FROM voice_calls WHERE id = ?", (call_id,)
-                        ):
+                        if linked_artifact is None:
+                            if db.fetch_one(
+                                "SELECT id FROM voice_calls WHERE id = ?",
+                                (call_id,),
+                            ):
+                                db.execute(
+                                    "DELETE FROM voice_calls WHERE id = ?", (call_id,)
+                                )
+                        elif getattr(linked_artifact, "server_id", None) is not None:
                             db.execute(
-                                "DELETE FROM voice_calls WHERE id = ?", (call_id,)
+                                """
+                                UPDATE voice_calls
+                                SET initiator_id = ?, consented_participants = ?
+                                WHERE id = ?
+                                """,
+                                (
+                                    ANONYMIZED_AUTHOR_ID,
+                                    json.dumps(new_consented),
+                                    call_id,
+                                ),
                             )
+                        else:
+                            artifact_manager.delete(int(linked), purge_media=True)
                     else:
                         db.execute("DELETE FROM voice_calls WHERE id = ?", (call_id,))
                 touched += 1
