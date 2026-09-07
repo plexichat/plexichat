@@ -512,18 +512,27 @@ class GatewayDispatcher:
                 )
                 connections = []
 
-        payload = {
-            "op": int(GatewayOpcode.RATCHET_UPDATE),
-            "t": "RATCHET_UPDATE",
-            "d": {
-                "conversation_id": int(conversation_id),
-                **dict(update_data),
-            },
-        }
-
         for conn in connections:
             if not conn.is_authenticated:
                 continue
+            # F9: ratchet rotations must be sequenced and recorded in the
+            # session replay buffer exactly like every other dispatched
+            # event. Previously the frame was built once without an ``s``
+            # and sent raw, so clients could not dedupe it across
+            # reconnects and a rotation that fired while a participant was
+            # disconnected was never redelivered on resume -- leaving that
+            # client with a stale ratchet interval key.
+            payload = {
+                "op": int(GatewayOpcode.RATCHET_UPDATE),
+                "t": "RATCHET_UPDATE",
+                "s": conn.increment_sequence(),
+                "d": {
+                    "conversation_id": int(conversation_id),
+                    **dict(update_data),
+                },
+            }
+            if conn.session_id:
+                self._session_manager.record_event(conn.session_id, payload)
             tasks.append(self._send_to_connection(conn, payload))
 
         if tasks:

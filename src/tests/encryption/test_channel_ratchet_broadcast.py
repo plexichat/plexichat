@@ -103,6 +103,18 @@ class TestBroadcastRatchetUpdate:
         assert payload["d"]["reason"] == "rotation"
         assert payload["d"]["new_interval_id"] == 99
 
+        # F9 regression: every frame carries a per-connection sequence
+        # number and is recorded against the session so a rotation is
+        # never lost across a resume (dedup + replay).
+        assert "s" in payload
+        recorded = dispatcher._session_manager.record_event.call_args_list
+        assert {call.args[0] for call in recorded} == {"s1", "s2"}
+        for call in recorded:
+            body = call.args[1]
+            assert body["op"] == int(GatewayOpcode.RATCHET_UPDATE)
+            assert "s" in body
+            assert body["d"]["conversation_id"] == 42
+
     @pytest.mark.asyncio
     async def test_broadcast_empty_when_no_connections(self, dispatcher):
         dispatcher._session_manager.get_all_connections.return_value = []
