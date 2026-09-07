@@ -76,6 +76,27 @@ def _json_loads(value: Any) -> Any:
     return value
 
 
+def _parse_artifact_type(row: Dict[str, Any]) -> ArtifactType:
+    """Parse a persisted artifact_type string, tolerating legacy drift.
+
+    ``ArtifactType`` raises for unknown non-null strings (L18: silently
+    collapsing them to ``FUTURE`` masked schema drift and made divergent
+    rows unfilterable). A read of such a row must not crash the caller, but
+    the divergence must not pass silently either - log it and fall back to
+    the explicit ``FUTURE`` member.
+    """
+    raw_type = row["artifact_type"]
+    try:
+        return ArtifactType(raw_type)
+    except ValueError:
+        logger.error(
+            "artifact %s has unknown artifact_type %r; treating as 'future'",
+            row["id"],
+            raw_type,
+        )
+        return ArtifactType.FUTURE
+
+
 def row_to_artifact(row: Dict[str, Any]) -> Artifact:
     """Build an :class:`Artifact` from a DB row dict."""
     return Artifact(
@@ -84,7 +105,7 @@ def row_to_artifact(row: Dict[str, Any]) -> Artifact:
         channel_id=row.get("channel_id"),
         server_id=row.get("server_id"),
         author_id=row["author_id"],
-        artifact_type=ArtifactType(row["artifact_type"]),
+        artifact_type=_parse_artifact_type(row),
         title=row["title"],
         summary=row.get("summary"),
         status=ArtifactStatus(row["status"]),
