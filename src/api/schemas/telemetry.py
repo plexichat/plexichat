@@ -5,6 +5,12 @@ from typing import List, Optional, Union
 class ResponseTimeEntry(BaseModel):
     """A single response time measurement."""
 
+    # M1: unknown fields used to be silently dropped (pydantic's default
+    # ``ignore``), so a client typo like ``usr_id`` returned 200 while the
+    # entry was stored empty. Forbid extras so contract drift surfaces as a
+    # 422 instead of silent data loss.
+    model_config = ConfigDict(extra="forbid")
+
     endpoint: str = Field(
         ..., max_length=255, description="The endpoint being measured"
     )
@@ -29,6 +35,9 @@ class ResponseTimeEntry(BaseModel):
 
 class TelemetrySubmission(BaseModel):
     """Batch submission of response time data."""
+
+    # M1: forbid unknown top-level keys too (see ResponseTimeEntry).
+    model_config = ConfigDict(extra="forbid")
 
     entries: List[ResponseTimeEntry] = Field(
         ..., max_length=100, description="The list of measurements to submit"
