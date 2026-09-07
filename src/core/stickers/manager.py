@@ -260,10 +260,15 @@ class StickerManager(StickerUsageDiscoveryMixin):
             # Personal packs were previously created as SERVER packs with a NULL
             # server_id and therefore bypassed the per-server limit entirely,
             # letting a single user create an unbounded number of packs (S2).
+            # M6: the quota must also count those legacy rows — a SERVER-typed
+            # pack with NULL server_id owned by this user is a personal pack
+            # in everything but the enum value, and ignoring it lets legacy
+            # users keep minting packs past the cap.
             count_row = self._db.fetch_one(
                 "SELECT COUNT(*) as count FROM sticker_packs "
-                "WHERE created_by = ? AND pack_type = ?",
-                (user_id, PackType.PERSONAL.value),
+                "WHERE created_by = ? AND (pack_type = ? OR "
+                "(pack_type = ? AND server_id IS NULL))",
+                (user_id, PackType.PERSONAL.value, PackType.SERVER.value),
             )
             max_packs = self._config.get("max_packs_per_user", 100)
             if count_row and count_row["count"] >= max_packs:
