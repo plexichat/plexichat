@@ -98,6 +98,24 @@ class ReportGenerator:
         )
         logger.info(f"Total Duration:  {duration:.2f}s")
         logger.info("-" * 60)
+        logger.info("HARNESS ASSUMPTIONS (active during this run):")
+        logger.info("  Read 100% against these caveats, not as production proof:")
+        for line in (
+            "- rate limiting bypassed for localhost + internal-secret requests",
+            "- DSAR 1/day throttle bypassed for the same self-test requests",
+            "- federation delivery to loopback https peers allowed "
+            "(PLEXICHAT_SELF_TEST URLValidator allowance; prod needs public DNS)",
+            "- federation delivery verified against a fake peer: throwaway CA, "
+            "trust published via SSL_CERT_FILE process-scoped, restored after",
+            "- OAuth login-init uses shadowed test client_ids (in-process "
+            "config shadow; config files untouched; callback untestable offline)",
+            "- suite seeds its own DB rows (inbound requests, connections, "
+            "OAuth states, emoji/slowmode/poll fixtures) and deletes them after",
+            "- TOTP steps use previous-window codes (no sleeps); auth/session "
+            "expiry races are unit-tested, not suite-tested",
+        ):
+            logger.info(f"  {line}")
+        logger.info("-" * 60)
         logger.info("BREAKDOWN BY SOURCE:")
         for src in ["auto_loop", "standalone", "delete_batch"]:
             if src in by_source:

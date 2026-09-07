@@ -67,11 +67,13 @@ class TestRemoteURLValidation:
         with pytest.raises(RemoteURLBlockedError):
             validate_remote_url("http://127.0.0.1:8443/api")
 
-    def test_accepts_http_loopback_with_selftest_env(self, monkeypatch):
-        # Self-test-only allowance for the fake remote peer: plain HTTP on
-        # loopback is accepted iff PLEXICHAT_SELF_TEST is set.
+    def test_rejects_http_loopback_with_selftest_env(self, monkeypatch):
+        # Federation is https-only, always: the self-test allowance covers
+        # loopback resolution, never the scheme. The fake remote peer
+        # serves HTTPS for exactly this reason.
         monkeypatch.setenv("PLEXICHAT_SELF_TEST", "1")
-        validate_remote_url("http://127.0.0.1:8443/api")
+        with pytest.raises(RemoteURLBlockedError):
+            validate_remote_url("http://127.0.0.1:8443/api")
 
     def test_selftest_env_does_not_allow_http_non_loopback(self, monkeypatch):
         monkeypatch.setenv("PLEXICHAT_SELF_TEST", "1")
