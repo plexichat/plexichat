@@ -255,7 +255,7 @@ def _apply_retention_windows(db: Any, config: Optional[Dict[str, Any]] = None) -
         return 0
 
     per_day_ms = _seconds_per_day() * 1000
-    updated = 0
+    pending: list = []
     for row in rows:
         artifact_id = row.get("id")
         server_id = row.get("server_id")
@@ -271,16 +271,37 @@ def _apply_retention_windows(db: Any, config: Optional[Dict[str, Any]] = None) -
             continue
 
         expires_at = int(created_at) + policy_days * per_day_ms
-        try:
-            db.execute(
-                "UPDATE artifacts SET expires_at = ? WHERE id = ?",
-                (expires_at, artifact_id),
-            )
-            updated += 1
-        except Exception as e:
-            logger.warning(
-                f"Failed to apply retention window for artifact {artifact_id}: {e}"
-            )
+        pending.append((expires_at, artifact_id))
+
+    if not pending:
+        return 0
+
+    # L16: apply the windows in batched writes instead of one UPDATE per
+    # row (N+1 query storm on large backlogs). Fall back to per-row writes
+    # if the batch fails so a single bad row cannot block the rest.
+    updated = 0
+    try:
+        cursor = db.execute_many(
+            "UPDATE artifacts SET expires_at = ? WHERE id = ?",
+            pending,
+        )
+        rowcount = getattr(cursor, "rowcount", None)
+        updated = (
+            rowcount if isinstance(rowcount, int) and rowcount >= 0 else len(pending)
+        )
+    except Exception as e:
+        logger.warning(f"Retention window batch write failed, retrying per-row: {e}")
+        for expires_at, artifact_id in pending:
+            try:
+                db.execute(
+                    "UPDATE artifacts SET expires_at = ? WHERE id = ?",
+                    (expires_at, artifact_id),
+                )
+                updated += 1
+            except Exception as row_e:
+                logger.warning(
+                    f"Failed to apply retention window for artifact {artifact_id}: {row_e}"
+                )
 
     if updated:
         logger.info(f"Applied retention windows to {updated} artifact(s)")
@@ -337,9 +358,18 @@ class RetentionCleanupJob:
     def stop(self) -> None:
         """Stop the background cleanup loop."""
         self._is_running = False
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=5)
+        thread = self._thread
         self._thread = None
+        if thread is not None and thread.is_alive():
+            # L16: never join the current thread — stop() called reentrantly
+            # from inside the cleanup loop would deadlock forever.
+            if threading.current_thread() is thread:
+                logger.warning(
+                    "RetentionCleanupJob.stop called from its own worker thread; "
+                    "flagged for shutdown instead of joining"
+                )
+                return
+            thread.join(timeout=5)
 
     def run_once(self, db: Any = None) -> Dict[str, int]:
         """Run a single cleanup cycle: apply windows then purge expired.
