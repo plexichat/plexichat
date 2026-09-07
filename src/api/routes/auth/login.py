@@ -26,10 +26,6 @@ router = APIRouter()
     summary="User login",
     responses={
         401: {"model": ErrorResponse, "description": "Invalid credentials"},
-        403: {
-            "model": ErrorResponse,
-            "description": "Account locked or email not verified",
-        },
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -69,19 +65,15 @@ async def login(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid credentials"}},
         )
-    except AccountLockedError:
-        masked_username = mask_string(body.username)
-        logger.warning(f"Login failed for '{masked_username}': Account locked")
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Account locked"}},
-        )
-    except (EmailNotVerifiedError, AccountDisabledError) as e:
+    # Account-state enumeration guard (M3): locked/disabled/unverified must
+    # be indistinguishable from bad credentials, otherwise attackers can
+    # probe which usernames exist and their state via status/message deltas.
+    except (AccountLockedError, EmailNotVerifiedError, AccountDisabledError) as e:
         masked_username = mask_string(body.username)
         logger.warning(f"Login failed for '{masked_username}': {type(e).__name__}")
         raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid credentials"}},
         )
     except Exception as e:
         masked_username = mask_string(body.username)
