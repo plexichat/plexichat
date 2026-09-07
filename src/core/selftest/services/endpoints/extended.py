@@ -382,12 +382,12 @@ class ExtendedCoverageMixin(EndpointTesterBase):
             )
 
     def test_oauth_passkeys_federation_stubs(self) -> None:
-        """Passkey, federation artifact-op, and OAuth coverage.
+        """Passkey, federation artifact-op, and OAuth login-init coverage.
 
-        Passkeys and artifact-op run with valid data (2xx). OAuth
-        login-init has no valid exercise in this environment (no provider
-        credentials configured: any call is 4xx/5xx by design), so those two
-        probes are recorded honestly as SKIPPED, not hidden and not passed.
+        All with valid data (2xx): passkey discovery flows, a real-signed
+        artifact-op over a provisioned link, and OAuth login-init with test
+        provider credentials shadowed into config in-process (login-init
+        only builds the authorize URL locally — no external network).
         """
         # Passkeys: the unauthenticated list returns 200; authenticate
         # options accept an empty body (usernameless/discoverable flow —
@@ -471,19 +471,98 @@ class ExtendedCoverageMixin(EndpointTesterBase):
                 logger.debug(f"Federation artifact-op error: {e}")
             finally:
                 drop_connection(_db, remote_id)
-        # OAuth login-init: no provider credentials are configured in this
-        # environment, so no valid 2xx/3xx exercise exists (every call is
-        # 400/404/422/500 by design). Skipped honestly — counted, visible,
-        # neither passed nor failed.
-        for provider in ["github", "google"]:
-            self.ctx.results.append(
+        # OAuth login-init with test provider credentials shadowed into
+        # config for the duration of these calls only (in-process mock;
+        # prod config files are untouched). login-init builds the provider
+        # authorize URL locally — no external network — and answers 200
+        # with {auth_url, state} plus the state-binding cookie.
+        import time as _time
+        import secrets as _secrets_mod
+        from unittest import mock as _mock
+
+        import utils.config as _cfg_mod
+
+        _real_cfg_get = _cfg_mod.get
+        _test_oauth_cfg = {
+            "allow_localhost_redirects": True,
+            "github": {"client_id": "selftest-client"},
+            "google": {"client_id": "selftest-client"},
+        }
+
+        def _cfg_get(key, default=None):
+            if key == "oauth":
+                return dict(_test_oauth_cfg)
+            return _real_cfg_get(key, default)
+
+        _pkce_challenge = _secrets_mod.token_urlsafe(32)
+        _oauth_cases = [
+            ("github", "https://github.com/login/oauth/authorize", {}),
+            (
+                "google",
+                "https://accounts.google.com/o/oauth2/v2/auth",
                 {
-                    "method": "GET",
-                    "path": f"/api/v1/auth/oauth/{provider}/login (stub)",
-                    "status_code": 0,
-                    "duration_ms": 0,
-                    "success": False,
-                    "skipped": True,
-                    "note": "OAuth provider not configured; no valid 2xx/3xx exercise possible",
+                    "code_challenge": _pkce_challenge,
+                    "code_challenge_method": "S256",
+                },
+            ),
+        ]
+        _window_start_ms = int(_time.time() * 1000)
+        with _mock.patch.object(_cfg_mod, "get", _cfg_get):
+            for _provider, _auth_host, _extra in _oauth_cases:
+                _params = {
+                    "redirect_uri": "http://127.0.0.1:8000",
+                    **_extra,
                 }
-            )
+                try:
+                    _resp = self.ctx.session.get(
+                        f"{self.ctx.base_url}/api/v1/auth/oauth/{_provider}/login",
+                        params=_params,
+                        timeout=10,
+                    )
+                except Exception as e:
+                    logger.debug(f"OAuth login {_provider} error: {e}")
+                    _resp = None
+                try:
+                    _body = _resp.json() if _resp is not None else None
+                except Exception:
+                    _body = None
+                _oauth_ok = (
+                    _resp is not None
+                    and _resp.status_code == 200
+                    and isinstance(_body, dict)
+                    and isinstance(_body.get("auth_url"), str)
+                    and _body["auth_url"].startswith(_auth_host)
+                    and bool(_body.get("state"))
+                    and "plexichat_oauth_state"
+                    in (_resp.cookies if _resp is not None else {})
+                )
+                self.ctx.results.append(
+                    {
+                        "method": "GET",
+                        "path": f"/api/v1/auth/oauth/{_provider}/login (login-init)",
+                        "status_code": _resp.status_code if _resp is not None else 0,
+                        "duration_ms": 0,
+                        "success": _oauth_ok,
+                    }
+                )
+                if _oauth_ok:
+                    logger.info(f"OAuth login-init {_provider} PASSED")
+                else:
+                    logger.warning(
+                        f"OAuth login-init {_provider} -> "
+                        f"{_resp.status_code if _resp is not None else 0}: "
+                        f"{_resp.text[:200] if _resp is not None else 'no response'}"
+                    )
+        # Hygiene: remove this run's pending OAuth states so the per-IP
+        # cap (10 pending) can never fill up across repeat runs.
+        try:
+            _odb = _api.get_db()
+            if _odb is not None:
+                for _provider, _, _ in _oauth_cases:
+                    _odb.execute(
+                        "DELETE FROM auth_oauth_states WHERE provider = ? "
+                        "AND created_at >= ?",
+                        (_provider, _window_start_ms),
+                    )
+        except Exception as e:
+            logger.debug(f"OAuth state cleanup note: {e}")
