@@ -155,8 +155,58 @@ async def mark_read(
         return SuccessResponse(success=True, message=None)
     except NotificationNotFoundError:
         raise HTTPException(status_code=404, detail="Notification not found")
+    except HTTPException:
+        # A 400 raised above for a malformed id must not be re-wrapped as 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to mark notification {notification_id} read: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.delete(
+    "/users/@me/notifications/{notification_id}",
+    response_model=SuccessResponse,
+    summary="Delete a notification",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid notification ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Notification not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def delete_notification(
+    notification_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SuccessResponse:
+    """Delete a specific notification (removes the row and unread counts).
+
+    The core notification manager already implements the ownership check and
+    unread-count bookkeeping (``NotificationManager.delete_notification``),
+    but no HTTP endpoint exposed it, so clients could only dismiss
+    notifications by marking them read (F13).
+    """
+    notif_mod = api.get_notifications()
+    if not notif_mod:
+        raise HTTPException(status_code=500, detail="Notification module not available")
+
+    try:
+        try:
+            nid = int(notification_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid notification ID")
+
+        notif_mod.delete_notification(current_user.user_id, nid)
+        return SuccessResponse(success=True, message=None)
+    except NotificationNotFoundError:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    except HTTPException:
+        # A 400 raised above for a malformed id must not be re-wrapped as 500.
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete notification {notification_id}: {e}")
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
