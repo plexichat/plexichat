@@ -170,6 +170,29 @@ class MigrationManager:
 
         return []
 
+    def _migration_file_is_irreversible(self, file_path: str) -> bool:
+        """Check the codebase's irreversible marker for a migration file (M3).
+
+        The canonical marker is ``MIGRATION_METADATA`` with
+        ``"irreversible": true`` in the module docstring (see
+        ``validator.migration_is_irreversible`` and
+        ``migrations/README.md``). Missing/unreadable files fail open
+        (return False) so dependency validation never blocks on I/O.
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        try:
+            import ast
+
+            module_doc = ast.get_docstring(ast.parse(content))
+            metadata = validator.migration_metadata_from_docstring(module_doc)
+        except Exception:
+            return False
+        return bool(metadata.get("irreversible"))
+
     def validate_dependencies(self, migration: Migration, applied: List[str]) -> bool:
         """
         Validate that all dependencies for a migration are satisfied.
@@ -185,6 +208,18 @@ class MigrationManager:
             ValueError: If dependencies are not satisfied
         """
         if not migration.depends_on:
+            if self._migration_file_is_irreversible(migration.file_path):
+                raise ValueError(
+                    f"Migration {migration.version} is marked irreversible but "
+                    "declares no depends_on ordering dependency (missing "
+                    "Depends: header). Irreversible migrations must declare "
+                    "depends_on so the ordering gate has an explicit anchor."
+                )
+            logger.warning(
+                "Migration %s declares no depends_on ordering dependency; "
+                "dependency/ordering gate skipped for this reversible migration",
+                migration.version,
+            )
             return True
 
         applied_set = set(applied)
