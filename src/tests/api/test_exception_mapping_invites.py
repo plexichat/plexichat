@@ -28,16 +28,18 @@ def test_invite_max_uses_join_flow_maps_to_400():
     )
     with pytest.raises(HTTPException) as ei:
         map_invite_join_error(exc)
-    assert ei.value.status_code == 400
+    assert ei.value.status_code == 410
     # Static message — no internal error text leaked.
     assert "max_uses" not in str(ei.value.detail)
+    assert "1" not in str(ei.value.detail.get("error", {}).get("message", ""))
+    assert ei.value.detail["error"]["message"] == "Invite is no longer usable"
 
 
 def test_invite_max_uses_generic_mapping_maps_to_permission_family():
     exc = srv.InviteMaxUsesError("Invite has reached maximum uses")
     with pytest.raises(HTTPException) as ei:
         raise_mapped(exc)
-    assert ei.value.status_code == 403
+    assert ei.value.status_code == 410
 
 
 def test_invite_rate_limited_maps_to_429_with_retry_after():

@@ -69,6 +69,7 @@ class ChannelInvitesMixin(ChannelBase):
                     "description": "Invite not found or expired",
                 },
                 409: {"model": ErrorResponse, "description": "Already a member"},
+                410: {"model": ErrorResponse, "description": "Invite no longer usable"},
                 500: {"model": ErrorResponse, "description": "Internal server error"},
             },
         )
@@ -455,6 +456,9 @@ class ChannelInvitesMixin(ChannelBase):
                 # delete_invite the row is gone (or revoked) and
                 # get_invite returns None, which used to make us emit
                 # INVITE_DELETE with guild_id=0 that every client drops.
+                # F5: resolve the real guild id from the invite record;
+                # fall back to 0 (with a warning) only when the invite
+                # truly carries no server id.
                 try:
                     inv = servers_mod.get_invite(invite_code)
                     server_id = getattr(inv, "server_id", None)
@@ -465,9 +469,14 @@ class ChannelInvitesMixin(ChannelBase):
                 try:
                     from src.core.events.gateway_emit import emit_invite_delete
 
-                    emit_invite_delete(
-                        server_id if server_id is not None else 0, invite_code
-                    )
+                    if not server_id:
+                        logger.warning(
+                            f"INVITE_DELETE for {invite_code} has no server_id "
+                            "on the invite record; emitting guild_id=0 fallback"
+                        )
+                        emit_invite_delete(0, invite_code)
+                    else:
+                        emit_invite_delete(int(server_id), invite_code)
                 except Exception as ge:
                     logger.debug(f"emit_invite_delete failed: {ge}")
                 return {"success": True}

@@ -50,10 +50,13 @@ _PERMISSION_EXC = (
     srv.RoleAccessDeniedError,
     srv.PermissionDeniedError,
     srv.UserBannedError,
-    srv.InviteMaxUsesError,
     wh.WebhookAccessDeniedError,
     wh.PermissionDeniedError,
 )
+
+# 410 - gone: invite exhausted (uses >= max_uses). Kept out of the
+# 403 permission family on purpose: exhaustion is a resource state,
+# not an authorization failure, and clients retry/back off differently.
 
 # 400 - invalid client input / validation failure
 _INVALID_EXC = (
@@ -110,6 +113,11 @@ def raise_mapped(
     the recognized core-module types so unexpected errors keep reaching
     the caller's generic 500 handler with full logging context.
     """
+    if isinstance(exc, srv.InviteMaxUsesError):
+        # Exhausted invite: 410 Gone with a static message. The core
+        # exception carries max_uses/current_uses counters — never
+        # surface them (no str(exc) in the body).
+        raise _http(410, "Invite is no longer usable")
     if is_permission_denied(exc):
         raise _http(403, permission_message)
     if is_not_found(exc):
@@ -140,7 +148,13 @@ def map_invite_join_error(exc: BaseException) -> NoReturn:
     if isinstance(exc, srv.UserBannedError):
         raise _http(403, "You are banned from this server")
     if isinstance(exc, srv.InviteMaxUsesError):
-        raise _http(400, "Invite is no longer usable")
+        # Exhausted: 410 Gone, static message (counters stay server-side).
+        raise _http(410, "Invite is no longer usable")
+    if isinstance(exc, srv.InviteExpiredError):
+        # Expired: also gone, static message (no expired_at leaked).
+        raise _http(410, "Invite is no longer usable")
+    if isinstance(exc, srv.InviteNotFoundError):
+        raise _http(404, "Invite not found or expired")
     raise_mapped(
         exc,
         not_found_message="Invite not found or expired",
