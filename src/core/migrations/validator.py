@@ -8,6 +8,7 @@ import hashlib
 import os
 import logging
 import importlib.util
+import inspect
 import re
 from typing import List, Tuple, Optional, Iterable
 
@@ -294,6 +295,29 @@ def validate_migration_file(file_path: str) -> bool:
                 "(declare MIGRATION_METADATA with irreversible=true to opt out)"
             )
 
+    # M5: screen the forward migration's SQL before it can ever execute.
+    # validate_sql_safety alone is dead code unless something on the apply
+    # path invokes it, so validation fails closed here when up() contains
+    # destructive statements (DROP TABLE, TRUNCATE, DELETE without WHERE,
+    # DROP DATABASE/SCHEMA). Only up() is screened strictly: down()
+    # legitimately reverses DDL (e.g. dropping a table created by up()).
+    try:
+        up_source = inspect.getsource(module.up)
+    except Exception as e:
+        raise ValueError(
+            f"Migration file {file_path} up() SQL safety screening failed: {e}"
+        )
+    try:
+        _, up_warnings = validate_migration_up_sql(up_source)
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(
+            f"Migration file {file_path} up() SQL safety screening failed: {e}"
+        )
+    for warning in up_warnings:
+        logger.warning(f"Migration file {file_path} up(): {warning}")
+
     return True
 
 
@@ -368,5 +392,66 @@ def validate_sql_safety(sql: str) -> tuple[bool, list[str]]:
     for pattern, label in _WARNING_SQL_PATTERNS:
         if pattern.search(normalized_sql):
             warnings.append(f"Potentially destructive SQL detected: {label}")
+
+    return True, warnings
+
+
+# M5: forward migrations (up()) must never silently destroy data. These
+# patterns are hard blocks on the up() path only. down() is intentionally
+# excluded: rollbacks legitimately reverse DDL (e.g. dropping a table that
+# up() created), and the 000 rollback carries its own documented
+# MIGRATIONS_ALLOW_DESTRUCTIVE_ROLLBACK guard.
+_FORWARD_DANGEROUS_SQL_PATTERNS: Iterable[tuple[re.Pattern[str], str]] = (
+    (re.compile(r"\bDROP\s+TABLE\b", re.IGNORECASE), "DROP TABLE"),
+    (re.compile(r"\bTRUNCATE\b", re.IGNORECASE), "TRUNCATE"),
+)
+
+_DELETE_FROM_RE = re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE)
+_WHERE_RE = re.compile(r"\bWHERE\b", re.IGNORECASE)
+_LINE_COMMENT_RE = re.compile(r"--.*?$", re.MULTILINE)
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _contains_bare_delete(sql: str) -> bool:
+    """True when any statement DELETEs without a WHERE clause."""
+    stripped = _BLOCK_COMMENT_RE.sub(" ", _LINE_COMMENT_RE.sub(" ", sql))
+    for statement in stripped.split(";"):
+        if _DELETE_FROM_RE.search(statement) and not _WHERE_RE.search(statement):
+            return True
+    return False
+
+
+def validate_migration_up_sql(sql: str) -> tuple[bool, list[str]]:
+    """
+    Strict SQL safety gate for a forward migration (up()).
+
+    Blocks destructive statements that must never run implicitly against
+    production data: DROP TABLE, TRUNCATE, DELETE without WHERE, plus
+    everything validate_sql_safety already rejects (DROP DATABASE/SCHEMA,
+    TRUNCATE of the migrations history table).
+
+    Args:
+        sql: Source text of the migration's up() function
+
+    Returns:
+        (is_safe, warnings) for non-blocking observations (e.g. ALTER TABLE)
+
+    Raises:
+        ValueError: If destructive SQL is detected
+    """
+    _, warnings = validate_sql_safety(sql)
+
+    for pattern, label in _FORWARD_DANGEROUS_SQL_PATTERNS:
+        if pattern.search(sql):
+            raise ValueError(
+                f"Dangerous SQL detected in migration up(): {label} - "
+                "forward migrations must not drop or truncate tables"
+            )
+
+    if _contains_bare_delete(sql):
+        raise ValueError(
+            "Dangerous SQL detected in migration up(): DELETE without WHERE - "
+            "forward migrations must not delete unscoped rows"
+        )
 
     return True, warnings

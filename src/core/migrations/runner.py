@@ -68,22 +68,32 @@ class MigrationRunner:
         runner and manager never invoked it, so the destructive-SQL
         screening provided zero runtime protection. Migration SQL lives in
         ``up()``/``down()`` as inlined strings, so screening the function
-        source turns the validator into an execution-time guard: hard-fail
-        patterns (DROP DATABASE / DROP SCHEMA / TRUNCATE migrations_history)
-        block the run, softer patterns are logged as warnings.
+        source turns the validator into an execution-time guard.
+
+        Screening is direction-aware and fails closed: ``up()`` is gated by
+        ``validate_migration_up_sql`` (DROP TABLE / TRUNCATE / DELETE
+        without WHERE / DROP DATABASE / DROP SCHEMA block the run with a
+        clear error), while ``down()`` keeps the lenient check because
+        rollbacks legitimately reverse DDL. Any screening failure raises
+        ValueError so an unscreened migration never executes.
         """
         fn = getattr(migration_module, fn_name, None)
         if fn is None:
             return
         try:
             source = inspect.getsource(fn)
-            _, warnings = validator.validate_sql_safety(source)
+            if fn_name == "up":
+                _, warnings = validator.validate_migration_up_sql(source)
+            else:
+                _, warnings = validator.validate_sql_safety(source)
             for w in warnings:
                 logger.warning(f"Migration {version} {fn_name}(): {w}")
         except ValueError:
             raise
-        except Exception as e:  # pragma: no cover - defensive
-            logger.debug(f"Could not screen migration {version} {fn_name}() SQL: {e}")
+        except Exception as e:
+            raise ValueError(
+                f"Migration {version} {fn_name}() SQL safety screening failed: {e}"
+            )
 
     def execute_migration_up(
         self, migration_module, version: str, name: str
