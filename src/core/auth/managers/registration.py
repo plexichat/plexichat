@@ -1,5 +1,7 @@
 from typing import Optional, Dict
 
+import sqlite3
+
 import utils.logger as logger
 
 from ..exceptions import (
@@ -155,13 +157,17 @@ class RegistrationMixin(AuthManagerProtocol):
                 ),
             )
         except Exception as e:
-            import sqlite3
-
-            is_unique_violation = isinstance(e, sqlite3.IntegrityError) and (
-                "UNIQUE" in str(e).upper() or "auth_users.username" in str(e)
+            msg = str(e).upper()
+            unique_markers = (
+                "UNIQUE",
+                "DUPLICATE KEY",
+                "UNIQUE_VIOLATION",
+                "23505",
             )
-            if is_unique_violation:
-                raise UserExistsError("Registration failed", "username_or_email")
+            if isinstance(e, sqlite3.IntegrityError) or any(
+                marker in msg for marker in unique_markers
+            ):
+                raise UserExistsError("Registration failed", "username_or_email") from e
             raise
 
         if ip_address:
