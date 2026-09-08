@@ -26,6 +26,7 @@ import utils.logger as logger
 from src.api.websocket.opcodes import GatewayCloseCode
 from src.api.websocket.connection import Connection
 from src.api.websocket.artifacts import (
+    cap_snapshot_payload,
     get_artifact_subscription_registry,
     relay_artifact_op,
     send_artifact_ack,
@@ -154,7 +155,11 @@ class ArtifactHandler:
         )
         logger.debug(f"User {connection.user_id} subscribed to artifact {artifact_id}")
 
-        snapshot = artifact.payload
+        # L36: a payload can reach ~1 MB; cap what the gateway ships to a
+        # late joiner. Oversized payloads are omitted from the sync frame
+        # (flagged) so the client fetches the body over REST instead of the
+        # server pushing N x 1 MB frames for N concurrent joins.
+        snapshot, snapshot_truncated = cap_snapshot_payload(artifact.payload or {})
 
         # Replay the artifact's persisted ops so a late joiner can catch up on
         # changes that happened while it was offline. The client may hint at
@@ -184,6 +189,7 @@ class ArtifactHandler:
                 snapshot,
                 ops=ops,
                 rate_limit_per_minute=rate_limit_per_minute,
+                snapshot_truncated=snapshot_truncated,
             )
             if not sent:
                 # The sync was rejected (rate limit or send failure): do not

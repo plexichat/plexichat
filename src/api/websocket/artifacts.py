@@ -17,6 +17,7 @@ circular import between this module and ``dispatcher.py``.
 
 from typing import Dict, Optional, Set, TYPE_CHECKING
 import asyncio
+import json
 import threading
 
 import utils.logger as logger
@@ -128,6 +129,32 @@ class ArtifactSubscriptionRegistry:
 
 
 _artifact_subscription_registry = ArtifactSubscriptionRegistry()
+
+# L36: artifact payloads can reach ~1 MB (sum workbooks, whiteboards). Shipping
+# the FULL payload to every late joiner turns N joins into N x 1 MB gateway
+# frames. Payloads above this cap are omitted from the sync frame and the
+# client is told to fetch the artifact body over REST instead; the persisted
+# ops replay still delivers recent deltas, so no history is lost.
+_MAX_SNAPSHOT_PAYLOAD_BYTES = 256 * 1024
+
+
+def cap_snapshot_payload(payload: Dict[str, object]) -> tuple:
+    """Return ``(snapshot, truncated)`` for a late-join sync frame.
+
+    ``truncated`` is True when the payload exceeds
+    :data:`_MAX_SNAPSHOT_PAYLOAD_BYTES`; the returned snapshot is then empty
+    and the caller flags the frame so the client fetches the body over REST.
+    A non-dict payload (defensive) is treated as oversized.
+    """
+    if not isinstance(payload, dict):
+        return {}, True
+    try:
+        size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        return {}, True
+    if size > _MAX_SNAPSHOT_PAYLOAD_BYTES:
+        return {}, True
+    return payload, False
 
 
 def get_artifact_subscription_registry() -> ArtifactSubscriptionRegistry:
@@ -280,6 +307,7 @@ async def send_artifact_sync(
     snapshot: Dict[str, object],
     ops: Optional[list] = None,
     rate_limit_per_minute: Optional[int] = None,
+    snapshot_truncated: bool = False,
 ) -> bool:
     """
     Send an ARTIFACT_SYNC full snapshot to a single connection.
@@ -299,6 +327,9 @@ async def send_artifact_sync(
             limit. When omitted the connection's own default is used, so a
             tighter operator-configured gateway limit is honored here too
             (matching ``send_sum_sync``).
+        snapshot_truncated: True when the caller omitted an oversized
+            payload (see :func:`cap_snapshot_payload`); the frame then
+            carries the flag so the client fetches the body over REST.
 
     Returns:
         True if the frame was sent successfully.
@@ -323,6 +354,9 @@ async def send_artifact_sync(
             "artifact_id": str(artifact_id),
             "snapshot": snapshot,
             "ops": ops or [],
+            # L36: True when the payload was omitted because it exceeded the
+            # snapshot cap; the client must fetch the body over REST.
+            "snapshot_truncated": bool(snapshot_truncated),
         },
     }
     try:
