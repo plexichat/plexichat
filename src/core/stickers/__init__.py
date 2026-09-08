@@ -137,12 +137,23 @@ def add_sticker(
     size: int,
     tags: Optional[List[str]] = None,
     related_emoji: Optional[str] = None,
+    description: Optional[str] = None,
     width: Optional[int] = None,
     height: Optional[int] = None,
 ) -> Sticker:
     """Add a sticker to a pack."""
     return _get_manager().add_sticker(
-        user_id, pack_id, name, format, url, size, tags, related_emoji, width, height
+        user_id,
+        pack_id,
+        name,
+        format,
+        url,
+        size,
+        tags,
+        related_emoji,
+        description,
+        width,
+        height,
     )
 
 

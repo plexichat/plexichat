@@ -335,6 +335,7 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
             pack_id=row["pack_id"],
             name=row["name"],
             format=StickerFormat(row["format"]),
+            description=row.get("description"),
             tags=tags,
             related_emoji=row["related_emoji"],
             url=row["url"],

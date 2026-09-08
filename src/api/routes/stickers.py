@@ -193,6 +193,7 @@ async def create_sticker(
     name: str = Form(..., min_length=2, max_length=30),
     image: UploadFile = File(...),
     tags: Optional[str] = Form(None),  # Comma separated
+    description: Optional[str] = Form(None, max_length=200),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> StickerResponse:
     """
@@ -250,6 +251,7 @@ async def create_sticker(
             image_data=content,
             content_type=image.content_type,
             tags=tag_list,
+            description=description,
         )
 
         # Dispatch update as background task (don't block response)

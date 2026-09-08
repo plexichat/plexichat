@@ -113,6 +113,7 @@ class StickerManager(StickerUsageDiscoveryMixin):
         content_type: str,
         tags: Optional[List[str]] = None,
         related_emoji: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> Sticker:
         """
         Create a sticker from an uploaded file.
@@ -189,6 +190,7 @@ class StickerManager(StickerUsageDiscoveryMixin):
                 size=len(image_data),
                 tags=tags,
                 related_emoji=related_emoji,
+                description=description,
                 width=result.metadata.get("width") if result.metadata else None,
                 height=result.metadata.get("height") if result.metadata else None,
             )
@@ -410,6 +412,7 @@ class StickerManager(StickerUsageDiscoveryMixin):
         size: int,
         tags: Optional[List[str]] = None,
         related_emoji: Optional[str] = None,
+        description: Optional[str] = None,
         width: Optional[int] = None,
         height: Optional[int] = None,
     ) -> Sticker:
@@ -461,13 +464,17 @@ class StickerManager(StickerUsageDiscoveryMixin):
             )
         now = self._get_timestamp()
         sticker_id = self._generate_id()
+        # L1: the ``description`` column was declared in the schema but never
+        # written — persist the (plaintext) sticker description so the column
+        # is not dead schema and the model field round-trips.
         self._db.execute(
-            "INSERT INTO sticker_stickers (id, pack_id, name, format, tags, related_emoji, url, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sticker_stickers (id, pack_id, name, format, description, tags, related_emoji, url, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 sticker_id,
                 pack_id,
                 name,
                 format.value,
+                description,
                 json.dumps(tags) if tags else None,
                 related_emoji,
                 url,
@@ -577,14 +584,15 @@ class StickerManager(StickerUsageDiscoveryMixin):
         *,
         name: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        description: Optional[str] = None,
     ) -> Sticker:
         """Update editable fields on a sticker owned by `user_id`.
 
-        Only ``name`` and ``tags`` are mutable from this endpoint —
-        immutable fields like ``url``/``size``/``format`` are fixed at
-        creation.  Raises :class:`PermissionDeniedError` if the caller
-        does not own the parent pack (or has ``server.manage`` on the
-        owning server for server packs).
+        Only ``name``, ``tags`` and ``description`` are mutable from this
+        endpoint — immutable fields like ``url``/``size``/``format`` are
+        fixed at creation.  Raises :class:`PermissionDeniedError` if the
+        caller does not own the parent pack (or has ``server.manage`` on
+        the owning server for server packs).
         """
         sticker = self.get_sticker(sticker_id)
         if not sticker:
@@ -612,6 +620,11 @@ class StickerManager(StickerUsageDiscoveryMixin):
             # regardless of which writer produced the row.
             updates["tags"] = json.dumps(list(tags)) if list(tags) else None
             params.append(updates["tags"])
+        if description is not None:
+            # L1: previously ``description`` was never in the update
+            # allowlist, so the schema column stayed NULL forever.
+            updates["description"] = description
+            params.append(updates["description"])
         if not updates:
             return sticker
 

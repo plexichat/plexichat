@@ -264,6 +264,57 @@ class TestStickerFormats:
         )
 
 
+class TestStickerDescription:
+    """L1: the sticker ``description`` column must actually round-trip.
+
+    The schema declared ``sticker_stickers.description`` but neither the
+    INSERT nor the UPDATE allowlist ever wrote it, so every row came back
+    NULL and the model field was decorative.
+    """
+
+    def test_add_sticker_persists_description(self, sticker_manager):
+        """A description supplied at creation persists and round-trips."""
+        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
+        sticker = sticker_manager.add_sticker(
+            1,
+            pack.id,
+            "sticker",
+            StickerFormat.PNG,
+            "url",
+            1000,
+            description="A fluffy cat",
+        )
+        assert sticker.description == "A fluffy cat"
+
+        fetched = sticker_manager.get_sticker(sticker.id)
+        assert fetched is not None
+        assert fetched.description == "A fluffy cat"
+
+    def test_add_sticker_description_defaults_to_none(self, sticker_manager):
+        """Omitting the description stores NULL, not an empty string."""
+        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
+        sticker = sticker_manager.add_sticker(
+            1, pack.id, "sticker", StickerFormat.PNG, "url", 1000
+        )
+        assert sticker.description is None
+
+    def test_update_sticker_sets_description(self, sticker_manager):
+        """update_sticker can set the description on an existing sticker."""
+        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
+        sticker = sticker_manager.add_sticker(
+            1, pack.id, "sticker", StickerFormat.PNG, "url", 1000
+        )
+
+        updated = sticker_manager.update_sticker(
+            1, sticker.id, description="Renamed description"
+        )
+        assert updated.description == "Renamed description"
+
+        fetched = sticker_manager.get_sticker(sticker.id)
+        assert fetched is not None
+        assert fetched.description == "Renamed description"
+
+
 class TestStickerUsage:
     """Test sticker usage tracking."""
 
