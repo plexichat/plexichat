@@ -239,7 +239,13 @@ class MigrationManager:
                 )
 
         try:
-            # Check if irreversible migration can be run (skip for dry-run)
+            # Check if irreversible migration can be run (skip for dry-run).
+            # The gate check only PEEKS at the emergency override so read-only
+            # callers never burn it; when the gate passes via override the
+            # token is atomically claimed exactly once here, before executing
+            # (fail closed if it was raced or expired since the peek), and the
+            # tamper guard below reuses that claim instead of consuming again.
+            override_consumed = False
             if not dry_run:
                 import utils.config as config
 
@@ -253,8 +259,17 @@ class MigrationManager:
                 )
                 if not can_run:
                     raise ValueError(f"Cannot run migration {version}: {reason}")
+                if reason == self.tracker.EMERGENCY_OVERRIDE_ACTIVE_REASON:
+                    if not self.tracker.try_consume_emergency_override_from_env():
+                        raise ValueError(
+                            f"Cannot run migration {version}: emergency override "
+                            "token is no longer valid (already used or expired)."
+                        )
+                    override_consumed = True
 
-            return self._execute_migration(migration, dry_run)
+            return self._execute_migration(
+                migration, dry_run, _override_consumed=override_consumed
+            )
         finally:
             if not dry_run:
                 self.tracker.release_lock()
@@ -523,7 +538,10 @@ class MigrationManager:
         return results
 
     def _execute_migration(
-        self, migration: Migration, dry_run: bool = False
+        self,
+        migration: Migration,
+        dry_run: bool = False,
+        _override_consumed: bool = False,
     ) -> Dict[str, Any]:
         """
         Internal method to execute a migration.
@@ -531,6 +549,10 @@ class MigrationManager:
         Args:
             migration: Migration object to execute
             dry_run: If True, execute without committing or persisting tracker state
+            _override_consumed: If True, a single-use emergency override token
+                was already atomically claimed for this run (by the
+                irreversible gate); the tamper guard reuses that claim
+                instead of consuming a second time.
 
         Returns:
             Dictionary with execution result
@@ -564,7 +586,10 @@ class MigrationManager:
                                 "set a valid single-use EMERGENCY_MIGRATION_OVERRIDE "
                                 "token to proceed."
                             )
-                            if not self.tracker.try_consume_emergency_override_from_env():
+                            if (
+                                not _override_consumed
+                                and not self.tracker.try_consume_emergency_override_from_env()
+                            ):
                                 raise ValueError(
                                     f"Migration {migration.version} is BLOCKED: "
                                     "checksum mismatch with recorded history and no "
@@ -572,7 +597,7 @@ class MigrationManager:
                                     "provided."
                                 )
                             logger.error(
-                                f"Emergency override consumed for tampered "
+                                f"Emergency override accepted (single-use) for tampered "
                                 f"migration {migration.version}; proceeding once"
                             )
                     except ValueError:

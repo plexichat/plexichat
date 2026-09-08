@@ -307,11 +307,13 @@ class MigrationTracker(MigrationLockingMixin):
         if not metadata.get("irreversible"):
             return True, "Migration is reversible"
 
-        # Check for emergency override (single-use; consumed on success)
+        # Check for emergency override (single-use; CHECKED here but only
+        # CLAIMED at execution time, so read-only status views and gate
+        # pre-checks never burn the token).
         override_token = os.environ.get("EMERGENCY_MIGRATION_OVERRIDE")
         if override_token:
-            if self._validate_emergency_override(override_token):
-                return True, "Emergency override active"
+            if self._peek_emergency_override(override_token):
+                return True, self.EMERGENCY_OVERRIDE_ACTIVE_REASON
             else:
                 return False, "Invalid emergency override token"
 
@@ -370,6 +372,70 @@ class MigrationTracker(MigrationLockingMixin):
         """Hash an emergency override token for storage/lookup (SHA-256 hex)."""
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
+    #: Sentinel for dummy constant-time comparisons so rejection timing does
+    #: not reveal whether a token hash exists in the table.
+    _TOKEN_MISS_SENTINEL = "0" * 64
+
+    #: Gate reason returned when the irreversible check passes via override.
+    #: ``MigrationManager`` matches on this to claim the token exactly once
+    #: before executing (fail closed if it was raced/expired since the peek).
+    EMERGENCY_OVERRIDE_ACTIVE_REASON = "Emergency override active"
+
+    def peek_emergency_override_from_env(self) -> bool:
+        """Check the EMERGENCY_MIGRATION_OVERRIDE env token WITHOUT consuming.
+
+        Read-only gate/status paths must use this: peeking never burns the
+        strictly single-use token.
+        """
+        token = os.environ.get("EMERGENCY_MIGRATION_OVERRIDE")
+        if not token:
+            return False
+        return self._peek_emergency_override(token)
+
+    def _peek_emergency_override(self, token: str) -> bool:
+        """
+        Non-consuming validity check for an emergency override token.
+
+        The candidate is hashed first (plaintext secrets are never compared);
+        the stored digest is then verified with ``hmac.compare_digest``
+        (constant-time) and the row must be unused and unexpired. Fails
+        closed on any error or unparseable state.
+        """
+        try:
+            if not token:
+                return False
+            candidate = self._hash_token(token)
+            row = self.db.fetch_one(
+                "SELECT token, used_at, expires_at "
+                "FROM emergency_override_tokens WHERE token = ?",
+                (candidate,),
+            )
+            if row is None:
+                # Normalize timing so missing hashes are indistinguishable.
+                hmac.compare_digest(candidate, self._TOKEN_MISS_SENTINEL)
+                return False
+            if isinstance(row, (list, tuple)):
+                stored_hash = row[0] if len(row) > 0 else None
+                used_at = row[1] if len(row) > 1 else None
+                expires_at = row[2] if len(row) > 2 else None
+            else:
+                stored_hash = row.get("token")
+                used_at = row.get("used_at")
+                expires_at = row.get("expires_at")
+            if not isinstance(stored_hash, str) or not hmac.compare_digest(
+                candidate, stored_hash
+            ):
+                return False
+            if used_at is not None:
+                return False
+            expires = self._coerce_datetime(expires_at)
+            if expires is None:
+                return False
+            return expires > _utcnow()
+        except Exception as e:
+            logger.error(f"Failed to check emergency override: {e}")
+            return False
+
     def try_consume_emergency_override_from_env(self) -> bool:
         """Consume the EMERGENCY_MIGRATION_OVERRIDE env token, if present.
 
@@ -421,6 +487,9 @@ class MigrationTracker(MigrationLockingMixin):
                         "(single-use consumed; tokens stored hashed)"
                     )
                     return True
+                # Normalize rejection timing so invalid/expired/used tokens
+                # are indistinguishable from one another by response time.
+                hmac.compare_digest(candidate, self._TOKEN_MISS_SENTINEL)
                 logger.warning("Emergency override token rejected (invalid/expired)")
                 return False
 
