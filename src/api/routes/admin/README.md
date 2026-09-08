@@ -27,6 +27,7 @@ defined once on the parent router.
 | `dashboard.py` | System overview: server statistics, active users, message counts, storage usage, health indicators, and recent activity |
 | `data_export.py` | User data export generation and download |
 | `database.py` | Manual backup and restore triggers, `VACUUM` and `ANALYZE`, storage statistics, and replication status |
+| `device_trust.py` | Device-trust and session-duration overview (`GET /device-trust/overview`, requires `admin.security.devices` scope; aggregation helper lives in `device_overview.py`, which defines no routes) |
 | `licensing.py` | License key validation, activation, expiry tracking, and feature flag management |
 | `logs.py` | System log viewer with level filtering (`debug`, `info`, `warn`, `error`), time-range and source filtering, export, and rotation |
 | `migrations.py` | Migration status and history, running pending migrations, rollback, and integrity validation |
@@ -34,7 +35,7 @@ defined once on the parent router.
 | `plexijoin.py` | Federation connection management, status, and request approval |
 | `reindex.py` | Search index rebuild, status, statistics, and scheduled maintenance |
 | `roles.py` | Role create, update, and delete; permission sets; assignment; and inheritance |
-| `security.py` | Password policy, two-factor enforcement levels, IP blocking, rate limiting, and session timeout configuration |
+| `security.py` | IP blocking, API access token lifecycle, banned username patterns, and session force-logout, lock/unlock, and logout-all |
 | `telemetry.py` | Viewing and configuring collected telemetry, retention settings, and report export |
 | `tickets.py` | Support ticket listing, assignment, and status or priority management |
 | `ui.py` | Admin UI customization: branding, theming, announcements, login page, and footer or legal links |
@@ -62,17 +63,12 @@ bypass even when `request.state.user` is not set.
 ## Rate limiting
 
 Rate limits for admin endpoints are enforced by the shared
-`src.core.ratelimit` engine. The exact limits depend on server
-configuration. Typical defaults are:
-
-| Operation type | Limit |
-|----------------|-------|
-| Read | 100 requests per minute |
-| Write | 30 requests per minute |
-| Bulk | 5 requests per minute |
-
-Admin sessions identified by `request.state.admin_id` bypass per-user
-limits when the rate limiter detects an admin principal.
+`src.core.ratelimit` engine, which applies per-route limits (see
+`DEFAULT_ROUTE_LIMITS` in `src/core/ratelimit/config.py`; for example, the
+admin `ui-dashboard`, telemetry, and pool-health reads default to 120
+requests per minute). There are no per-role tiers. Admin sessions identified
+by `request.state.admin_id` bypass limits when the `rate_limiting.admin_bypass`
+config flag is enabled (default `true`).
 
 ## Add a new admin route
 

@@ -145,8 +145,9 @@ Router: `data_export`.
 | `POST` | `<admin-base>/security/lock-user` | Lock a user account | `admin.security.sessions` |
 | `POST` | `<admin-base>/security/unlock-user` | Unlock a user account | `admin.security.sessions` |
 | `POST` | `<admin-base>/security/logout-all` | Invalidate all user sessions | `admin.security.logout_all` |
+| `GET` | `<admin-base>/device-trust/overview` | Device-trust and session-duration overview | `admin.security.devices` |
 
-Router: `security`.
+Router: `security` (`device-trust/overview` is served by `device_trust.py`, registered directly on the admin router in `src/api/routes/admin/__init__.py`).
 
 ### Moderation and AutoMod
 
