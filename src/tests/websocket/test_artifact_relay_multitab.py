@@ -134,6 +134,50 @@ def test_relay_skips_only_originating_connection_of_actor(relay_env):
     assert conn_c.sent[0]["d"]["op"] == op
 
 
+def test_relay_checks_access_once_per_user(relay_env):
+    """L35: access is a property of the USER, so the relay must not run a
+    permission check per connection (a user with N tabs = N module calls per
+    op). With three connections across two users the check runs twice."""
+    from src.api.websocket.handlers.artifacts import ArtifactHandler
+
+    calls = {"n": 0}
+    original = ArtifactHandler._has_artifact_access
+
+    def counting_access(self, conn, artifact, permission="artifact.view"):
+        calls["n"] += 1
+        return original(self, conn, artifact, permission)
+
+    ArtifactHandler._has_artifact_access = counting_access
+    try:
+        registry = get_artifact_subscription_registry()
+        conn_a = _FakeConnection("conn-a", user_id=42)
+        conn_b = _FakeConnection("conn-b", user_id=42)  # same user, second tab
+        conn_c = _FakeConnection("conn-c", user_id=7)
+        _register(registry, [conn_a, conn_b, conn_c])
+
+        dispatcher = _FakeDispatcher([conn_a, conn_b, conn_c])
+        op = {"op_type": "edit", "client_id": "tab-a"}
+
+        sent = asyncio.run(
+            relay_artifact_op(
+                dispatcher,
+                ARTIFACT_ID,
+                op,
+                actor_id=42,
+                exclude_connection_id="conn-a",
+                seq=9,
+            )
+        )
+
+        assert sent == 2  # conn-b (same user) + conn-c
+        assert len(conn_b.sent) == 1
+        assert len(conn_c.sent) == 1
+        # One access check per distinct user (42, 7), not per connection.
+        assert calls["n"] == 2
+    finally:
+        ArtifactHandler._has_artifact_access = original
+
+
 def test_relay_exclude_user_id_still_excludes_whole_user(relay_env):
     """Backward-compat: exclude_user_id drops every connection of that user."""
     registry = get_artifact_subscription_registry()

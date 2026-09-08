@@ -251,8 +251,25 @@ async def relay_artifact_op(
     from src.api.websocket.handlers.artifacts import ArtifactHandler
 
     access_checker = ArtifactHandler()
+    # L35: the artifact row is already fetched once above; the remaining cost
+    # was a fresh permission check PER CONNECTION even though access is a
+    # property of the USER (one user with three tabs = three module calls per
+    # op). Memoize per user_id so a relay does at most one access check per
+    # distinct user, then filters their connections in memory.
+    access_cache: dict = {}
     for conn in connections:
-        if not access_checker._has_artifact_access(conn, artifact, "artifact.view"):
+        uid = getattr(conn, "user_id", None)
+        if uid in access_cache:
+            allowed = access_cache[uid]
+        else:
+            try:
+                allowed = access_checker._has_artifact_access(
+                    conn, artifact, "artifact.view"
+                )
+            except Exception:  # noqa: BLE001 - a bad check must deny, not crash the relay
+                allowed = False
+            access_cache[uid] = allowed
+        if not allowed:
             continue
         if not (
             hasattr(conn, "is_selftest") and conn.is_selftest
