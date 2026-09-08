@@ -133,20 +133,25 @@ class ConversationService(BaseService):
         lookup_id = self._generate_id()
         try:
             self._repo.create_dm_lookup(lookup_id, user_id, recipient_id, conv_id)
-        except Exception as exc:
-            lowered = str(exc).lower()
-            if "unique" in lowered or "integrity" in lowered:
-                existing_id = self._repo.get_dm_lookup(user_id, recipient_id)
-                if existing_id and valkey_available():
-                    cache_set(cache_key, existing_id, ttl=3600)
-                if existing_id is not None:
-                    conv = self.get_conversation(existing_id, user_id)
-                    if conv:
-                        logger.debug(
-                            f"DM {existing_id} already existed; returning winner's "
-                            f"conversation for {user_id}/{recipient_id}"
-                        )
-                        return conv
+        except Exception:
+            # M13: the concurrent-create race surfaces as a driver-specific
+            # IntegrityError whose message text varies across backends
+            # ("UNIQUE constraint failed", "duplicate key", "SQLSTATE 23505",
+            # ...). Sniffing the message is brittle; instead recover by
+            # re-querying the lookup — if a concurrent create won the race the
+            # row exists and its conversation is returned, otherwise the
+            # original error is re-raised unchanged.
+            existing_id = self._repo.get_dm_lookup(user_id, recipient_id)
+            if existing_id and valkey_available():
+                cache_set(cache_key, existing_id, ttl=3600)
+            if existing_id is not None:
+                conv = self.get_conversation(existing_id, user_id)
+                if conv:
+                    logger.debug(
+                        f"DM {existing_id} already existed; returning winner's "
+                        f"conversation for {user_id}/{recipient_id}"
+                    )
+                    return conv
             raise
 
         logger.debug(
