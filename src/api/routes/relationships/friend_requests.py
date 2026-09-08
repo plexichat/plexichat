@@ -126,21 +126,17 @@ class FriendRequestMixin:
                         }
                     },
                 )
-            except UserBlockedError:
-                # Deliberately generic: the exact direction of a block must
-                # not be revealed to the sender (anti-harassment).
+            except UserBlockedError as e:
+                # M3: block-status oracle — blocked and nonexistent targets
+                # must be indistinguishable (generic 404). Real reason stays
+                # server-side in the log only.
                 logger.debug(
                     f"User {current_user.user_id} blocked from sending friend "
-                    f"request to {target_id}"
+                    f"request to {target_id}: {e}"
                 )
                 raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "error": {
-                            "code": 403,
-                            "message": "Cannot send friend request to this user",
-                        }
-                    },
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "User not found"}},
                 )
             except (FriendRequestExistsError, AlreadyFriendsError):
                 raise HTTPException(

@@ -47,15 +47,27 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             )
 
         if self._is_blocked(sender_id, recipient_id):
+            # M3: block-status oracle — must be indistinguishable from
+            # "user not found". Keep the real reason server-side only.
+            logger.debug(
+                f"Friend request from {sender_id} to {recipient_id} refused: "
+                f"sender blocked recipient"
+            )
             raise UserBlockedError(
-                "Cannot send friend request to a user you have blocked",
+                f"User {recipient_id} not found",
                 blocked_by=sender_id,
                 blocked_user=recipient_id,
             )
 
         if self._is_blocked_by(sender_id, recipient_id):
+            # M3: block-status oracle — must be indistinguishable from
+            # "user not found". Keep the real reason server-side only.
+            logger.debug(
+                f"Friend request from {sender_id} to {recipient_id} refused: "
+                f"sender blocked by recipient"
+            )
             raise UserBlockedError(
-                "Cannot send friend request - you are blocked by this user",
+                f"User {recipient_id} not found",
                 blocked_by=recipient_id,
                 blocked_user=sender_id,
             )
