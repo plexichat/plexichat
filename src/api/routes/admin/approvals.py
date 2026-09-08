@@ -262,7 +262,10 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
     # Check if action requires approval
     import utils.config as config
 
-    from src.core.admin.permissions import APPROVAL_REQUIRED_ACTIONS
+    from src.core.admin.permissions import (
+        APPROVAL_REQUIRED_ACTIONS,
+        is_approval_required_action,
+    )
 
     admin_config = config.get("admin_ui", {})
     approval_config = admin_config.get("approval_workflows", {})
@@ -273,8 +276,7 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
         # If approval workflows are disabled, action can proceed directly.
         return SuccessResponse(success=True, message="Approval workflows disabled")
 
-    require_approval_for = approval_config.get("require_approval_for", [])
-    if approval_data.action_type not in require_approval_for and not canonical_action:
+    if not is_approval_required_action(approval_data.action_type, approval_config):
         # Action doesn't require approval
         return SuccessResponse(success=True, message="Action does not require approval")
 

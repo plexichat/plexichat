@@ -136,6 +136,29 @@ APPROVAL_REQUIRED_ACTIONS = {
 }
 
 
+def is_approval_required_action(
+    action: str, approval_config: Optional[Dict[str, Any]] = None
+) -> bool:
+    """
+    Check whether an action requires approval.
+
+    ``APPROVAL_REQUIRED_ACTIONS`` is the default (canonical) set. Operators
+    may extend — but never shrink — it via the
+    ``approval_workflows.require_approval_for`` config list.
+
+    Args:
+        action: The action being performed
+        approval_config: The ``approval_workflows`` config mapping (optional)
+
+    Returns:
+        True if the action requires approval, False otherwise
+    """
+    if action in APPROVAL_REQUIRED_ACTIONS:
+        return True
+    configured = (approval_config or {}).get("require_approval_for", []) or []
+    return action in set(configured)
+
+
 def check_permission(
     admin_id: int, required_permission: str, db, config: Optional[Dict[str, Any]] = None
 ) -> AdminPermission:
@@ -242,8 +265,9 @@ def check_approval_required(
                 # Only one admin - bypass approval
                 return AdminPermission(has_permission=True)
 
-        # Check if this action requires approval
-        requires_approval = action in approval_config.get("require_approval_for", [])
+        # Check if this action requires approval. The canonical default set
+        # (APPROVAL_REQUIRED_ACTIONS) always applies; config may add more.
+        requires_approval = is_approval_required_action(action, approval_config)
 
         if requires_approval:
             # Check if admin has super admin permissions
