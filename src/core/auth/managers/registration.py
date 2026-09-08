@@ -194,6 +194,21 @@ class RegistrationMixin(AuthManagerProtocol):
             else None,
         )
 
+    @staticmethod
+    def _token_field(rec, name: str, pos: int):
+        # fetch_one() normalizes to dict, but tolerate tuple/sqlite3.Row
+        # shapes so a driver change cannot turn into a KeyError/500.
+        if isinstance(rec, dict):
+            return rec.get(name)
+        try:
+            return rec[name]  # type: ignore[index]
+        except Exception:
+            pass
+        try:
+            return rec[pos]  # type: ignore[index]
+        except Exception:
+            return None
+
     def verify_email(self, token: str) -> bool:
         parsed = parse_token(token)
         if not parsed or parsed["token_type"] != "email":
@@ -201,25 +216,51 @@ class RegistrationMixin(AuthManagerProtocol):
         rec = self._db.fetch_one(
             "SELECT * FROM auth_email_tokens WHERE id = ?", (parsed["id"],)
         )
-        if not rec or rec["used"] or rec["expires_at"] < self._get_timestamp():
+        if not rec:
             return False
-        if rec["token_type"] != "verify_email":
+        # Column order of SELECT *: id(0), user_id(1), token_hash(2),
+        # token_type(3), expires_at(4), used(5), created_at(6).
+        used = self._token_field(rec, "used", 5)
+        expires_at = self._token_field(rec, "expires_at", 4)
+        token_type = self._token_field(rec, "token_type", 3)
+        token_hash = self._token_field(rec, "token_hash", 2)
+        rec_id = self._token_field(rec, "id", 0)
+        user_id = self._token_field(rec, "user_id", 1)
+        now = self._get_timestamp()
+        if used or expires_at is None or expires_at < now:
             return False
-        if not verify_token_hash(parsed["secret"], rec["token_hash"]):
+        if token_type != "verify_email":
+            return False
+        if not verify_token_hash(parsed["secret"], token_hash or ""):
             return False
 
-        # Atomic single-use consumption prevents concurrent requests from
-        # both consuming the same verification token (mirrors password.py).
+        # M3: atomic single-use consumption. The SELECT above is only a
+        # fast-path validity check; the conditional UPDATE is authoritative.
+        # Concurrent replays both pass the SELECT but only one UPDATE finds
+        # an unconsumed, unexpired row (rowcount 1). All other outcomes
+        # (already-used/invalid/expired/type-changed) yield rowcount 0 and
+        # fail closed without marking the user verified. The expiry bound
+        # is re-checked in the UPDATE so a token expiring between SELECT
+        # and UPDATE cannot be consumed.
         cursor = self._db.execute(
-            "UPDATE auth_email_tokens SET used = 1 WHERE id = ? AND used = 0",
-            (rec["id"],),
+            "UPDATE auth_email_tokens SET used = 1 "
+            "WHERE id = ? AND used = 0 AND token_type = 'verify_email' "
+            "AND expires_at >= ?",
+            (rec_id, now),
         )
-        if getattr(cursor, "rowcount", 0) == 0:
+        try:
+            rowcount = getattr(cursor, "rowcount", 0)
+        finally:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if rowcount != 1:
             return False
         self._db.execute(
-            "UPDATE auth_users SET email_verified = 1 WHERE id = ?", (rec["user_id"],)
+            "UPDATE auth_users SET email_verified = 1 WHERE id = ?", (user_id,)
         )
-        self._log_audit(AuditEventType.EMAIL_VERIFIED, rec["user_id"], True)
+        self._log_audit(AuditEventType.EMAIL_VERIFIED, user_id, True)
         return True
 
     def resend_verification(self, email: str) -> bool:
