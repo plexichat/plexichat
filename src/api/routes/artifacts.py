@@ -47,6 +47,8 @@ from src.api.routes.artifacts_helpers import (
     _require_artifact_capability,
     _require_server_permission,
     _validate_artifact_scope,
+    payload_revision,
+    stale_payload_write,
 )
 from src.api.routes.artifacts_export import (
     _artifact_board_text,
@@ -92,6 +94,8 @@ __all__ = [
     "_require_server_permission",
     "_strip_html_markup",
     "_validate_artifact_scope",
+    "payload_revision",
+    "stale_payload_write",
 ]
 
 router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
@@ -819,6 +823,10 @@ async def get_artifact(
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {"model": ErrorResponse, "description": "Not authorized"},
         404: {"model": ErrorResponse, "description": "Artifact not found"},
+        409: {
+            "model": ErrorResponse,
+            "description": "Stale revision: the artifact changed since this write was based on",
+        },
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -855,6 +863,30 @@ async def update_artifact(
         if body.status is not None:
             update_fields["status"] = ArtifactStatus(body.status.value)
         if body.payload is not None:
+            # Rev guard: the code/text editor stamps a monotonic ``rev`` into
+            # the payload on every autosave. A write whose rev is not NEWER
+            # than the persisted rev is stale — a concurrent tab already
+            # committed a later revision, and letting the older payload
+            # through would silently overwrite it (lost update). Reject with
+            # 409 so the client re-fetches and re-bases instead of retrying.
+            # Only enforced when both payloads carry a numeric ``rev``; other
+            # artifact types and legacy clients are unaffected.
+            if stale_payload_write(artifact.payload, body.payload):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": {
+                            "code": 409,
+                            "message": (
+                                "Stale artifact revision: the artifact is already "
+                                f"at revision {payload_revision(artifact.payload)}, "
+                                f"but this write is for revision "
+                                f"{payload_revision(body.payload)}. Reload the "
+                                "artifact and retry."
+                            ),
+                        }
+                    },
+                )
             # Merge (not replace) so a partial payload no longer clobbers
             # concurrently-updated keys. Editors that send the full payload
             # dict are unaffected (a superset merge is a no-op replacement).
